@@ -17,6 +17,7 @@ from app.kria.route_capabilities._types import (
     AskDecline,
     Handling,
     NotApplied,
+    RenderEntry,
     RouteReaders,
 )
 
@@ -87,6 +88,13 @@ READERS = RouteReaders(
         "pipeline/phone_speech_montage_plan.py",
         "services/speech_montage_planning.py",
     ),
+)
+
+RENDER_ENTRY = RenderEntry(
+    "pipeline/phone_speech_montage_plan.py:compile_phone_speech_montage_plan",
+    {
+        "length_s": "0.duration",
+    },
 )
 
 ASK_DECLINES: tuple[AskDecline, ...] = (

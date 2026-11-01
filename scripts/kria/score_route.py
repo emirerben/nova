@@ -7,10 +7,11 @@ is a recorded or reconstructed draft under ``tests/fixtures/kria_replay/<name>/f
 
     {"fixture_id", "route": "<RouteId>", "message", "planner_summary", "brief", "strategy",
      "clips": [{"id", "kind", "duration_s", "has_audio"?, "analysis"?}],
-     "client_protocol"?, "source": {"recorded": [...], "reconstructed": [...]},
+     "client_protocol"?, "replay_inputs"?: {...},
+     "source": {"recorded": [...], "reconstructed": [...]},
      "checks"?: {"fields": [...], "asks": ["r1", ...],
                  "honored"?: {"fields": {field: key}, "asks": {req_id: key}},
-                 "perturb"?: {key: value}, "not_graded"?: {item: why}}}
+                 "perturb"?: {"length_s": [seconds, ...]}, "not_graded"?: {item: why}}}
 
 ``checks`` defaults are read from the plan, never from the code: every creator-visible field
 the planner set away from the schema default (the pace always, since the card shows it; a length
@@ -41,47 +42,74 @@ nothing else counts), ``gate`` or ``route`` / ``report``.
           whose ask's own facts are about that field and whose text is the registry's decline
           for it. Free text never counts, whatever it says.
 3.<id>    disclosed_ok: the receipt is met (checked), or a typed decline before approval
-          (``not_possible``, checked, with a reason), or for a length ask the card's own
-          ``target_duration_s`` registry line; in both languages.
-4.<field> honored / 5.<id> honored: the render replay's recipe value meets what was asked
-          (``checks.honored``), under the replay contract below.
-10.claims gate: every field the route's table marks ``Applied`` is read off the strategy in the
-          route's code (``READERS``: a strategy receiver, so ``step.target_duration_s`` is not a
-          read), or its ``via`` names a function in the route's own ``READERS`` or one of the
-          ``SHARED_CARRIERS`` whose body reads the field off a strategy object (AST); a class,
-          another route's file or a symbol that only names the field is no carrier. A reader
-          file or function listed by two routes fails it too.
+          (``not_possible``, checked, with a reason; a route decline counts only when it is the
+          registry's decline for what the ask's own typed facts ask, the rule check 2 uses),
+          or for a length ask the card's own ``target_duration_s`` registry line; both languages.
+4.<field> honored / 5.<id> honored: the value the route's render entry returns meets what was
+          asked (``checks.honored``), under the replay contract below.
+10.claims gate: every field the route's table marks ``Applied`` is read by a function of the
+          route's code (``READERS``), or by its ``via``: a function in the route's own
+          ``READERS`` or one of the ``SHARED_CARRIERS``. Either way the function reads the field
+          off its strategy parameter (or a local computed from one; ``step.target_duration_s``
+          is no strategy) and lets that value reach what it returns, a call it makes for its
+          effect, an attribute it sets or a branch that returns or raises (AST, best effort); a
+          class, another route's file, a similarly named field, a local dict, a log-only read or
+          a helper that drops the field is no read. A named ``via`` that is no carrier fails
+          even when another line reads the field. A reader listed by two routes fails it.
 10.lines  gate: the card lines every route's table builds for fixed probe plans, both
           languages, with their typed codes, equal the recorded golden
-          (``tests/fixtures/kria_replay/golden_lines.json``): rewording a line, or turning it
-          into a claim that the value is applied, changes the golden, which a reviewer reads.
+          (``tests/fixtures/kria_replay/golden_lines.json``), and every not-applied line says
+          "not" in its language (``NEGATION``), so a line turned into a claim fails even after
+          the golden is re-recorded with it.
+10.entry  gate: the table's ``RENDER_ENTRY`` is a function of the route's own ``READERS`` that
+          another function of the route's code calls, with a parseable recipe path per key.
 10.       consumer gate (REPORT ONLY): fields the route ignores that the card does not disclose.
 
-Replay contract (render evidence for checks 2, 3, 4, 5). A lane adds
-``scripts/kria/route_replays/<route>.py`` exporting ``recipe(fx) -> {key: value}``: the render
-recipe values the route's own code builds for the fixture's inputs, never a verdict. Keys
-(``RECIPE_KEYS``): ``title_animation`` the entrance on the title rows (str, or one per row),
-``pace`` the pace the clip holds use, ``length_s`` the rendered seconds, ``caption_mode``
-none / sentence / word. The grader compares each value with the asked one (a field's strategy
-value, an ask's typed fact) and runs its own controls on the module, each needed for a claim:
+Replay contract (render evidence for checks 2, 3, 4, 5). Each route table names its render
+entry (``RENDER_ENTRY``): the one function the route's job runner builds the recipe with (for a
+huge job runner, the smallest pure function that compiles the recipe: the voiceover, Talking and
+narrated compilers, ``plan_lipsync_montage``, the speech compiler), and per key where its value
+sits in what the entry returns (``title_animation`` the title entrance, ``pace`` a pace name or
+the clip holds, ``length_s`` the rendered seconds, ``caption_mode`` none / sentence / word). A
+lane adds ``scripts/kria/route_replays/<route>.py`` with ``recipe(fx)`` that calls that entry
+with ``fx["strategy"]`` and ``fx["requirements"]`` (or ``fx["brief"]``) as they are, building
+any other input from ``fx["clips"]`` / ``fx["inputs"]`` (the fixture's ``replay_inputs``). Its
+return value is ignored: the grader takes the value at each path the moment the entry returns.
+The lane keeps the entry the single source by passing the plan into it, never by patching the
+recipe after it returns: a patch after the entry earns nothing here, and 10.entry checks the
+route's code calls the entry.
 
-* perturbation: the asked value changed (pop to fade, relaxed to fast, 30 s to 45 s, or
-  ``checks.perturb``) must change the value to match;
-* drop: one asked key removed (field, provenance and asks) reverts only that key to the value
-  with nothing asked; every other claimed key keeps its value;
-* switch off: with the lane switch (``LANE_SWITCH``) off the ask changes nothing;
-* provenance: every claimed value is one a function in the route's ``READERS`` returned during
-  that run, and the run entered the route's code;
-* switch probe: the lane switch is read only by the route's code, never by the module.
+Every run executes a fresh copy of the module in a fresh interpreter (one per lane-switch
+value, the switch set before the module first runs), in an order shuffled the same way for the
+same fixture. The plan and the asks reach the module as recording proxies: any access whose
+nearest owning frame is the module's file (getattr, item, ``.get``, iteration, ``dict()``,
+copy, ``==``, hash, ``repr``, ``.value``...) is noted, and so is the module reading the lane
+switch or the whole settings object, or handing the plan, the asks or a function of its own
+to any route function but the entry (a helper that reads the plan for it). A static pass
+refuses a module that imports beyond ``app`` (never ``app.config``) and plain stdlib, names the
+settings, introspects (``getattr``, ``type``, ``vars``, dunders, frames) or changes state that
+outlives a run. A claimed key must:
+
+* track every other value (every title animation, every pace, a length ladder or
+  ``checks.perturb.length_s``, every caption style), clip holds growing fast to relaxed;
+* hold with the plan field alone (typed ask dropped) and with the typed ask alone (field
+  dropped);
+* leave every other claimed value as it was when moved or dropped (a moved length may re-time
+  the clips), and with nothing asked for it equal the value with nothing asked at all;
+* change nothing with the lane switch (``LANE_SWITCH``) off;
+* come from runs that each call the entry exactly once with the fixture's own plan objects, with
+  no module access to the plan, the asks or the switch, no static-rule break and no error.
 
 A module that fails one makes the scorecard INVALID (exit 2). The same controls run every time
-on synthetic modules over a synthetic route: an honest one must pass; a constant, an ask-keyed,
-a switch-keyed and two echo modules must fail.
+on synthetic modules over synthetic routes through the same fresh interpreters: only the honest
+module over the honest entry may pass.
 
 Lane targets: ``tests/fixtures/kria_replay/lane_targets.json`` lists, per fixture, the checks
-expected NOT VERIFIED today and the lane that turns each green. The report splits failures into
-``expected_red`` (listed) and ``unexpected_red`` (not listed), and lists ``unexpected_green``
-targets (a lane landed: remove the entry). An unexpected red exits 1.
+expected NOT VERIFIED today and the lane that turns each green (``targets``), and every render
+target the fixture must keep grading (``must_grade``). The report splits failures into
+``expected_red`` and ``unexpected_red``, lists ``unexpected_green`` (a lane landed: remove it
+from ``targets``) and ``missing_targets`` (a target the fixture no longer grades). An unexpected
+red or a missing target exits 1.
 
 Negative controls (mandatory, INVALID rule as in ``score_29_ekim.py``): each check's predicate
 and the check functions themselves get a synthetic card that ignores the ask (must FAIL) and one
@@ -89,6 +117,21 @@ that honours it (must PASS); the gates get unread fields, claims with no reader,
 a shared reader file and a reworded line (all must be flagged). A control that cannot run
 because the registry fails to import is INVALID too; only code that predates the registry (no
 package) shows them n/a. A failed control makes the scorecard INVALID (exit 2).
+
+What a lane reviewer must still check by hand:
+
+* the job runner renders from the entry's return and does not override the claimed recipe
+  field afterwards (10.entry only shows it calls the entry);
+* the entry's recipe path is the field the phone actually draws (the title rows, not a copy),
+  and the entry takes no override parameter the module could feed the asked value through;
+* ``replay_inputs`` and the clips carry no plan or ask values;
+* the replay module, for Python-level escapes the static pass and the proxies do not see
+  (state hidden in imported objects, C-level reads, threads);
+* an ``Applied()`` field without ``via`` (a file-wide read scan, not a data flow), and a
+  ``via`` carrier whose value reaches a call or attribute the render never uses;
+* that a not-applied line's sentence is true for the route, beyond containing a negation;
+* outside approval readiness the planner summary can say "balanced pace for about 30 seconds"
+  above lines saying the pace and length are not applied (kept by design; KRI-1097 wave 2).
 """
 
 from __future__ import annotations
@@ -100,6 +143,7 @@ import copy
 import functools
 import importlib.util
 import inspect
+import itertools
 import json
 import os
 import re
@@ -109,6 +153,7 @@ import types
 import uuid
 from collections.abc import Mapping
 from dataclasses import replace
+from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, NamedTuple
@@ -130,6 +175,7 @@ LANGS = ("en", "tr")
 # The typed codes of a table's card lines (`route_capabilities._types`): a line counts only
 # with the code its table entry gives the field.
 TABLE_CODES = frozenset({"not_applied_on_route", "recorded_only_on_route"})
+NOT_APPLIED_CODE = "not_applied_on_route"
 # Each route's lane kill switch (`config.py`): off, the route is byte-identical to before the
 # lane, so an ask must change nothing in its recipe.
 LANE_SWITCH = {
@@ -330,9 +376,13 @@ class Target(NamedTuple):
 def honored_targets(fx: dict) -> list[Target]:
     """The fields and asks a lane will honor in the render (``checks.honored``)."""
     honored = (fx.get("checks") or {}).get("honored") or {}
+    by_field = {spec.field: key for key, spec in RECIPE_KEYS.items()}
     out = []
     for kind, prefix in (("fields", "4"), ("asks", "5")):
-        for ident, key in dict(honored.get(kind) or {}).items():
+        listed = honored.get(kind) or {}
+        if not isinstance(listed, Mapping):  # a bare list names fields, never their keys
+            listed = {str(i): by_field.get(str(i), str(i)) for i in listed}
+        for ident, key in listed.items():
             out.append(Target(f"{prefix}.{ident}", kind, ident, str(key)))
     return out
 
@@ -343,6 +393,20 @@ def lane_targets(fixture_id: str) -> dict[str, dict]:
         return {}
     data = json.loads(LANE_TARGETS.read_text(encoding="utf-8"))
     return dict((data.get("targets") or {}).get(fixture_id) or {})
+
+
+def must_grade(fixture_id: str) -> list[str]:
+    """Check ids this fixture must keep grading (``must_grade``: every render target, red or
+    green), whatever its ``checks`` say."""
+    if not LANE_TARGETS.is_file():
+        return []
+    data = json.loads(LANE_TARGETS.read_text(encoding="utf-8"))
+    return list((data.get("must_grade") or {}).get(fixture_id) or [])
+
+
+def missing_targets(required: list[str], graded: set[str]) -> list[str]:
+    """Required check ids (lane targets and ``must_grade``) the scorecard did not run."""
+    return sorted({i for i in required if i not in graded})
 
 
 # --------------------------------------------------------------------- route and card
@@ -460,6 +524,15 @@ def card_records(disclosures: list, reply: str, codes: Mapping[str, str]) -> lis
     ]
 
 
+def _registry_declines(lines: Any) -> tuple[tuple[Any, Any, str | None], ...]:
+    """``(ask predicate, decline text, field)`` for every registry route decline."""
+    return (
+        (lines.asks_text_animation, lines.animation_decline, "title_animation"),
+        (lines.asks_captions_on, lines.captions_decline, "caption_style"),
+        (lines.asks_title_position, lines.title_position_decline, None),
+    )
+
+
 def decline_field(req: Any, text: str) -> str | None:
     """The strategy field a route decline speaks for: decided by the declined ask's own typed
     facts and the registry's exact decline text in the card's language, never by the subject
@@ -467,14 +540,30 @@ def decline_field(req: Any, text: str) -> str | None:
     registry = _registry()
     if registry is None or req is None:
         return None
-    lines = registry.lines
-    for asks, decline, field in (
-        (lines.asks_text_animation, lines.animation_decline, "title_animation"),
-        (lines.asks_captions_on, lines.captions_decline, "caption_style"),
-    ):
-        if asks(req) and text == decline():
+    for asks, decline, field in _registry_declines(registry.lines):
+        if field and asks(req) and text == decline():
             return field
     return None
+
+
+def decline_about_ask(req: Any, text: str) -> bool:
+    """A route decline answers this ask only when it is the registry's decline, in the card's
+    language, for what the ask's own typed facts ask (`decline_field`'s rule): an animation
+    decline on an animation ask, never on a timing or framing ask."""
+    registry = _registry()
+    if registry is None or req is None:
+        return False
+    return any(
+        asks(req) and text == decline() for asks, decline, _ in _registry_declines(registry.lines)
+    )
+
+
+def is_route_decline(text: object) -> bool:
+    """``text`` is one of the registry's route-decline reasons, in either language."""
+    registry = _registry()
+    return registry is not None and str(text or "").startswith(
+        tuple(registry.lines.DECLINE_PREFIXES)
+    )
 
 
 def decline_records(
@@ -654,7 +743,7 @@ def field_disclosed(card: dict, field: str) -> bool:
 
 
 class RecipeKey(NamedTuple):
-    """A render recipe value a replay module returns, and what it answers: a strategy field
+    """A render recipe value the route's entry returns, and what it answers: a strategy field
     (with the server provenance that states it) and a typed ask fact."""
 
     field: str
@@ -682,8 +771,34 @@ _CAPTION_MODES = {
     "on": {"sentence", "word"},
     "word_by_word": {"word"},
 }
-_ANIMATION_PERTURB = ("fade", "typewriter", "pop", "slide")
-_PACE_PERTURB = ("fast", "relaxed", "balanced")
+# The value of each caption style as a typed caption fact, for the perturbation runs.
+_CAPTION_VALUES = (
+    ("none", "off"),
+    ("clean", "on"),
+    ("kinetic", "word_by_word"),
+    ("karaoke", "word_by_word"),
+    ("editorial", "on"),
+)
+# Lengths a stated length is moved to; a fixture whose footage cannot reach some of them lists
+# its own (``checks.perturb.length_s``, two or more).
+_LENGTH_LADDER = (10, 15, 20, 30, 45, 60)
+_PACE_ORDER = ("fast", "balanced", "relaxed")
+
+
+def _animation_values() -> tuple[str, ...]:
+    from typing import get_args
+
+    from app.schemas.text_style_intent import TitleAnimation
+
+    return tuple(get_args(TitleAnimation))
+
+
+def _pace_values() -> tuple[str, ...]:
+    from typing import get_args
+
+    from app.agents._schemas.creator_agent import CreativePace
+
+    return tuple(get_args(CreativePace))
 
 
 def _requirement(fx: dict, req_id: str) -> dict:
@@ -713,50 +828,63 @@ def _animation(value: Any) -> str | None:
     return normalize_title_animation(value)
 
 
+def _numbers(values: list) -> list[float]:
+    """Every value as seconds, or [] when one is not a number (a boolean is not one)."""
+    if any(isinstance(v, bool) or not isinstance(v, int | float) for v in values):
+        return []
+    return [float(v) for v in values]
+
+
 def honors(key: str, value: Any, wanted: Any, bound: str = "exact") -> bool:
-    """The recipe value meets the asked one (the grader's own comparison, per key)."""
+    """The recipe value meets the asked one (the grader's own comparison, per key). A pace is
+    a pace name, or the clip holds, each inside that pace's hold bounds (`pace_hold_bounds`)."""
     if wanted is None or value is None:
         return False
+    values = value if isinstance(value, list) else [value]
+    if not values:
+        return False
     if key == "title_animation":
-        values = value if isinstance(value, list) else [value]
-        if not values:
-            return False
         if str(wanted).strip().casefold() == "any":
             return all(_animation(v) is not None for v in values)
         want = _animation(wanted)
         return want is not None and all(_animation(v) == want for v in values)
     if key == "pace":
-        return isinstance(value, str) and value.casefold() == str(wanted).casefold()
+        if all(isinstance(v, str) for v in values):
+            return all(v.casefold() == str(wanted).casefold() for v in values)
+        from app.schemas.edit_proposal import PACE_HOLD_BOUNDS
+
+        holds, bounds = _numbers(values), PACE_HOLD_BOUNDS.get(str(wanted))
+        return (
+            bool(holds)
+            and bounds is not None
+            and all(bounds.minimum_s <= h <= bounds.maximum_s for h in holds)
+        )
     if key == "length_s":
         from app.services.length_policy import creator_duration_satisfied
 
-        if isinstance(value, bool) or not isinstance(value, int | float):
-            return False
-        return creator_duration_satisfied(float(value), float(wanted), bound)  # type: ignore[arg-type]
+        seconds = _numbers(values)
+        return len(seconds) == 1 and creator_duration_satisfied(seconds[0], float(wanted), bound)  # type: ignore[arg-type]
     if key == "caption_mode":
         modes = _CAPTION_MODES.get(str(wanted).strip().casefold())
-        return bool(modes) and value in modes
+        return bool(modes) and all(v in modes for v in values)
     return False
 
 
-def _perturbed(key: str, wanted: Any, override: Any = None) -> tuple[Any, Any]:
-    """``(field value, fact value)`` that asks for something else than ``wanted``."""
-    if override is not None:
-        return override, override
+def perturbations(fx: dict, key: str, wanted: Any) -> list[tuple[Any, Any]]:
+    """``(field value, fact value)`` for every other value ``key`` can be asked for."""
     if key == "title_animation":
         current = None if str(wanted).casefold() == "any" else _animation(wanted)
-        pick = next(a for a in _ANIMATION_PERTURB if _animation(a) != current)
-        return pick, pick
+        return [(a, a) for a in _animation_values() if a != current]
     if key == "pace":
-        pick = next(p for p in _PACE_PERTURB if p != str(wanted).casefold())
-        return pick, pick
+        return [(p, p) for p in _pace_values() if p != str(wanted).casefold()]
     if key == "length_s":
-        seconds = float(wanted) * 1.5
-        pick = round(seconds if seconds <= 60 else float(wanted) * 0.5)
-        return pick, pick
+        listed = ((fx.get("checks") or {}).get("perturb") or {}).get("length_s")
+        ladder = listed if isinstance(listed, list) else _LENGTH_LADDER
+        far = [s for s in ladder if abs(float(s) - float(wanted)) > 0.1 * float(wanted)]
+        return [(s, s) for s in far]
     if key == "caption_mode":
-        off = _CAPTION_MODES.get(str(wanted).strip().casefold()) == {"none"}
-        return ("kinetic", "word_by_word") if off else ("none", "off")
+        current = _CAPTION_MODES.get(str(wanted).strip().casefold())
+        return [(f, a) for f, a in _CAPTION_VALUES if _CAPTION_MODES[f] != current]
     raise KeyError(key)
 
 
@@ -776,17 +904,31 @@ def _set_key(fx: dict, key: str, field_value: Any, fact_value: Any) -> dict:
     return out
 
 
+def _drop_field(fx: dict, key: str) -> dict:
+    """``fx`` without the strategy field (and its provenance) for ``key``; the asks stay."""
+    out = copy.deepcopy(fx)
+    spec = RECIPE_KEYS[key]
+    for name in (spec.field, *spec.provenance):
+        out["strategy"].pop(name, None)
+    return out
+
+
+def _drop_asks(fx: dict, key: str) -> dict:
+    """``fx`` without the typed asks for ``key``; the strategy field stays."""
+    out = copy.deepcopy(fx)
+    fact = RECIPE_KEYS[key].fact
+    out["brief"]["requirements"] = [
+        r for r in out["brief"]["requirements"] if fact not in (r.get("facts") or {})
+    ]
+    return out
+
+
 def _drop_keys(fx: dict, keys: list[str]) -> dict:
     """``fx`` with nothing asked for ``keys``: the fields, their provenance and the asks."""
-    out = copy.deepcopy(fx)
+    out = fx
     for key in keys:
-        spec = RECIPE_KEYS[key]
-        for name in (spec.field, *spec.provenance):
-            out["strategy"].pop(name, None)
-        out["brief"]["requirements"] = [
-            r for r in out["brief"]["requirements"] if spec.fact not in (r.get("facts") or {})
-        ]
-    return out
+        out = _drop_asks(_drop_field(out, key), key)
+    return copy.deepcopy(out)
 
 
 def _same(a: Any, b: Any) -> bool:
@@ -803,66 +945,304 @@ def _same(a: Any, b: Any) -> bool:
     return a == b
 
 
-def _holds(obj: Any, value: Any, budget: list[int]) -> bool:
-    """``obj`` (a returned value) contains ``value`` somewhere within a bounded walk."""
-    stack = [(obj, 0)]
-    seen: set[int] = set()
-    while stack and budget[0] > 0:
+# --- recipe paths: where a key's value sits in what the render entry returns
+
+_SEGMENT = re.compile(
+    r"^(?P<name>\*\*|[A-Za-z_]\w*|\d+)?"
+    r"(?P<fan>\[(?:(?P<attr>[A-Za-z_]\w*)(?P<op>\^?=)(?P<value>[^\]]*))?\])?$"
+)
+
+
+class _Step(NamedTuple):
+    name: str | None
+    fan: bool
+    match: tuple[str, str, str] | None
+
+
+def parse_path(path: str) -> list[_Step] | None:
+    """``a.b[].c[id^=text-].d``: a key or attribute per segment, ``[]`` every item,
+    ``[attr=v]`` / ``[attr^=v]`` the items whose ``attr`` is (starts with) ``v``, ``**`` any
+    depth, a number an index. None when the path does not parse."""
+    if not isinstance(path, str) or not path:
+        return None
+    steps = []
+    for raw in path.split("."):
+        found = _SEGMENT.match(raw)
+        if found is None or not raw or (found["name"] == "**" and found["fan"]):
+            return None
+        match = (found["attr"], found["op"], found["value"]) if found["attr"] else None
+        steps.append(_Step(found["name"], bool(found["fan"]), match))
+    return steps
+
+
+def _child(node: Any, name: str, opaque: tuple[type, ...]) -> Any:
+    if node is None or isinstance(node, (*opaque, str, bytes)):
+        return None
+    if name.isdigit():
+        index = int(name)
+        return node[index] if isinstance(node, list | tuple) and index < len(node) else None
+    if isinstance(node, Mapping):
+        return node.get(name)
+    if name.startswith("_"):
+        return None
+    try:
+        return getattr(node, name, None)
+    except Exception:  # noqa: BLE001 - a property that raises holds no value
+        return None
+
+
+def _children(node: Any, opaque: tuple[type, ...]) -> list:
+    if node is None or isinstance(node, (*opaque, str, bytes, int, float)):
+        return []
+    if isinstance(node, Mapping):
+        return list(node.values())
+    if isinstance(node, list | tuple | set | frozenset):
+        return list(node)
+    if hasattr(node, "__dict__"):
+        return list(vars(node).values())
+    return [getattr(node, s, None) for s in getattr(node, "__slots__", ())]
+
+
+def _descend(node: Any, opaque: tuple[type, ...]) -> list:
+    out, stack, seen = [], [(node, 0)], set()
+    while stack and len(out) < 50_000:
         current, depth = stack.pop()
-        budget[0] -= 1
-        if type(current) is type(value) or (
-            isinstance(current, int | float) and isinstance(value, int | float)
-        ):
-            if not isinstance(current, bool) and _same(current, value):
-                return True
-        if depth >= 8 or id(current) in seen or isinstance(current, str | bytes | int | float):
+        if id(current) in seen:
             continue
         seen.add(id(current))
-        if isinstance(current, Mapping):
-            children = list(current.values())
-        elif isinstance(current, list | tuple | set | frozenset):
-            children = list(current)
-        elif hasattr(current, "__dict__"):
-            children = list(vars(current).values())
-        elif hasattr(current, "__slots__"):
-            children = [getattr(current, s, None) for s in current.__slots__]
+        out.append(current)
+        if depth < 12:
+            stack.extend((child, depth + 1) for child in _children(current, opaque))
+    return out
+
+
+def _matches(item: Any, match: tuple[str, str, str], opaque: tuple[type, ...]) -> bool:
+    attr, op, value = match
+    got = _child(item, attr, opaque)
+    got = getattr(got, "value", got) if isinstance(got, Enum) else got
+    if not isinstance(got, str | int | float):
+        return False
+    return str(got) == value if op == "=" else str(got).startswith(value)
+
+
+def _walk_path(node: Any, steps: list[_Step], opaque: tuple[type, ...]) -> list:
+    if not steps:
+        return [node]
+    step, rest = steps[0], steps[1:]
+    if step.name == "**":
+        return [v for sub in _descend(node, opaque) for v in _walk_path(sub, rest, opaque)]
+    current = _child(node, step.name, opaque) if step.name else node
+    if current is None:
+        return []
+    if not step.fan:
+        return _walk_path(current, rest, opaque)
+    items = list(current) if isinstance(current, list | tuple) else []
+    kept = [i for i in items if step.match is None or _matches(i, step.match, opaque)]
+    return [v for item in kept for v in _walk_path(item, rest, opaque)]
+
+
+def _leaf(value: Any) -> Any:
+    value = value.value if isinstance(value, Enum) else value
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    return f"<{type(value).__name__}>"
+
+
+def path_value(obj: Any, path: str, opaque: tuple[type, ...] = ()) -> Any:
+    """The value at ``path`` in ``obj``: None when nothing is there, the value when one leaf
+    holds it, else the list of leaves (one per title row, one per clip hold)."""
+    steps = parse_path(path)
+    if steps is None:
+        return None
+    leaves = [_leaf(v) for v in _walk_path(obj, steps, opaque) if v is not None]
+    return None if not leaves else leaves[0] if len(leaves) == 1 else leaves
+
+
+# --- the replay module's static rules
+
+_REPLAY_STDLIB = frozenset(
+    {
+        "__future__",
+        "collections",
+        "collections.abc",
+        "dataclasses",
+        "datetime",
+        "decimal",
+        "enum",
+        "fractions",
+        "functools",
+        "itertools",
+        "math",
+        "operator",
+        "types",
+        "typing",
+        "uuid",
+    }
+)
+_REPLAY_BANNED_NAMES = frozenset(
+    {
+        "settings",
+        "getattr",
+        "setattr",
+        "delattr",
+        "vars",
+        "dir",
+        "globals",
+        "locals",
+        "eval",
+        "exec",
+        "compile",
+        "__import__",
+        "open",
+        "type",
+        "object",
+        "super",
+        "breakpoint",
+        "hash",
+        "id",
+        "memoryview",
+        "input",
+        "help",
+        "exit",
+        "quit",
+        "__builtins__",
+    }
+)
+_REPLAY_BANNED_ATTRS = frozenset(
+    {"settings", "f_back", "f_locals", "f_globals", "f_code", "gi_frame", "cr_frame", "tb_frame"}
+)
+_MUTATORS = frozenset(
+    {
+        "append",
+        "extend",
+        "insert",
+        "pop",
+        "popitem",
+        "remove",
+        "clear",
+        "update",
+        "setdefault",
+        "add",
+        "discard",
+        "sort",
+        "reverse",
+    }
+)
+
+
+def _root(node: ast.AST) -> str | None:
+    """The name an expression hangs off: ``a`` for ``a.b[0].c()``."""
+    while True:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute | ast.Subscript | ast.Starred | ast.Await):
+            node = node.value
+        elif isinstance(node, ast.Call):
+            node = node.func
+        elif isinstance(node, ast.BoolOp):
+            node = node.values[0]
         else:
+            return None
+
+
+def _bound_names(fn: ast.AST) -> set[str]:
+    """Parameters and every name ``fn`` binds itself (its locals)."""
+    names: set[str] = set()
+    if isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+        a = fn.args
+        names |= {p.arg for p in (*a.posonlyargs, *a.args, *a.kwonlyargs)}
+        names |= {p.arg for p in (a.vararg, a.kwarg) if p is not None}
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            names.add(node.id)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
+        elif isinstance(node, ast.Import | ast.ImportFrom):
+            names |= {(a.asname or a.name).split(".")[0] for a in node.names}
+        elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node is not fn:
+            names.add(node.name)
+    return names
+
+
+def lint_replay_module(source: str, roots: tuple[str, ...] = ("app",)) -> list[str]:
+    """Why the replay module breaks the replay rules, one line each (empty when it keeps them):
+    it imports only the app's code (never ``app.config``) and plain stdlib, never names the
+    settings, introspects (``getattr``, ``type``, ``vars``, dunders, frames) or keeps state
+    from one run to the next, and defines ``recipe(fx)``."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return [f"does not parse: {exc}"]
+    problems: list[str] = []
+
+    def importable(name: str) -> bool:
+        if name == "app.config" or name.startswith("app.config."):
+            return False
+        return name in _REPLAY_STDLIB or any(name == r or name.startswith(f"{r}.") for r in roots)
+
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        line = f"line {getattr(node, 'lineno', '?')}"
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imported.add((alias.asname or alias.name).split(".")[0])
+                if not importable(alias.name):
+                    problems.append(f"{line}: imports {alias.name}")
+        elif isinstance(node, ast.ImportFrom):
+            imported |= {a.asname or a.name for a in node.names}
+            if node.level or not importable(node.module or ""):
+                problems.append(f"{line}: imports from {'.' * node.level}{node.module or ''}")
+            problems += [f"{line}: imports settings" for a in node.names if a.name == "settings"]
+        elif isinstance(node, ast.Name) and node.id in _REPLAY_BANNED_NAMES:
+            problems.append(f"{line}: names {node.id}")
+        elif isinstance(node, ast.Attribute) and (
+            node.attr in _REPLAY_BANNED_ATTRS
+            or (node.attr.startswith("__") and node.attr.endswith("__"))
+        ):
+            problems.append(f"{line}: reads .{node.attr}")
+        elif isinstance(node, ast.Global | ast.Nonlocal):
+            problems.append(f"{line}: {type(node).__name__.lower()} state")
+    for node in ast.walk(tree):
+        targets = (
+            node.targets
+            if isinstance(node, ast.Assign | ast.Delete)
+            else [node.target]
+            if isinstance(node, ast.AugAssign | ast.AnnAssign)
+            else []
+        )
+        for target in targets:
+            if isinstance(target, ast.Attribute | ast.Subscript) and _root(target) in imported:
+                problems.append(f"line {node.lineno}: changes {_root(target)} (imported code)")
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
             continue
-        stack.extend((child, depth + 1) for child in children)
-    return False
+        own = _bound_names(fn)
+        for node in ast.walk(fn):
+            changed = None
+            if isinstance(node, ast.Attribute | ast.Subscript) and isinstance(
+                node.ctx, ast.Store | ast.Del
+            ):
+                changed = _root(node)
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _MUTATORS
+            ):
+                changed = _root(node.func.value)
+            if changed is not None and changed not in own:
+                problems.append(
+                    f"line {node.lineno}: changes {changed}, which outlives the run (state "
+                    "kept between runs)"
+                )
+    recipe = next(
+        (n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "recipe"), None
+    )
+    if recipe is None:
+        problems.append("defines no recipe(fx)")
+    return sorted(set(problems))
 
 
-def returned_by_route(value: Any, returns: list) -> bool:
-    """Every part of ``value`` is in something the route's code returned during the run."""
-    parts = value if isinstance(value, list) else [value]
-    budget = [400_000]
-    return bool(parts) and all(any(_holds(r, part, budget) for r in returns) for part in parts)
-
-
-class SwitchProbe:
-    """A lane switch's value that records the code reading it (``readers``)."""
-
-    def __init__(self, value: bool, readers: list) -> None:
-        self.value = value
-        self.readers = readers
-
-    def _read(self) -> None:
-        self.readers.append(sys._getframe(2).f_code)
-
-    def __bool__(self) -> bool:
-        self._read()
-        return self.value
-
-    def __eq__(self, other: object) -> bool:
-        self._read()
-        return self.value == other
-
-    def __hash__(self) -> int:
-        return hash(self.value)
-
-    def __repr__(self) -> str:
-        self._read()
-        return repr(self.value)
+# --- one replay run, in a fresh interpreter (`replay_worker`)
 
 
 class RouteCode(NamedTuple):
@@ -894,46 +1274,735 @@ def route_code(route: str) -> RouteCode:
     )
 
 
-def _run(module: Any, fx: dict, code: RouteCode, switch: str | None, on: bool) -> dict:
-    """One ``module.recipe(fx)`` run with the lane switch ``on`` (a `SwitchProbe`): the recipe,
-    calls into the route's code, what that code returned, and who read the switch."""
-    from app.config import settings
+class _Recorder:
+    """Who touches the fixture's plan, asks and lane switch during a replay run. An access is
+    the replay module's when, walking out from it, a frame of the module's file comes before
+    any frame of the route's code (a helper the module calls reads on the module's behalf)."""
 
-    calls = [0]
-    returns: list = []
-    readers: list = []
+    def __init__(self, module_file: str, code: RouteCode) -> None:
+        self.module_file = module_file
+        self.code = code
+        self.on = False
+        self.paused = False
+        self.reads: list[str] = []
+        self.settings: list[str] = []
+
+    def _module_made(self, frame: Any) -> bool:
+        while frame is not None:
+            code = frame.f_code
+            if _real(code.co_filename) == self.module_file:
+                return True
+            if self.code.owns(code):
+                return False
+            frame = frame.f_back
+        return False
+
+    def read(self, what: str, frame: Any) -> None:
+        if self.on and not self.paused and self._module_made(frame):
+            self.reads.append(what)
+
+    def setting(self, name: str, frame: Any) -> None:
+        if self.on and not self.paused and self._module_made(frame):
+            self.settings.append(name)
+
+    def take(self) -> tuple[list[str], list[str]]:
+        reads, settings = sorted(set(self.reads)), sorted(set(self.settings))
+        self.reads, self.settings = [], []
+        return reads, settings
+
+
+def _recorded_mapping(data: dict, recorder: _Recorder, label: str) -> Any:
+    """``data`` behind a mapping that notes every access, its values held in this closure."""
+    from collections.abc import MutableMapping
+
+    def note(what: str) -> None:
+        recorder.read(f"{label}{what}", sys._getframe(2))
+
+    class RecordedMapping(MutableMapping):
+        __slots__ = ()
+
+        def __getattribute__(self, name: str) -> Any:
+            note(f".{name}")
+            return object.__getattribute__(self, name)
+
+        def __getattr__(self, name: str) -> Any:
+            raise AttributeError(name)
+
+        def __getitem__(self, key: Any) -> Any:
+            note(f"[{key!r}]")
+            return data[key]
+
+        def __setitem__(self, key: Any, value: Any) -> None:
+            note(f"[{key!r}]=")
+            data[key] = value
+
+        def __delitem__(self, key: Any) -> None:
+            note(f"del [{key!r}]")
+            del data[key]
+
+        def __iter__(self) -> Any:
+            note(" iter")
+            return iter(list(data))
+
+        def __len__(self) -> int:
+            note(" len")
+            return len(data)
+
+        def __contains__(self, key: object) -> bool:
+            note(f" contains {key!r}")
+            return key in data
+
+        def __eq__(self, other: object) -> bool:
+            note(" ==")
+            return data == other
+
+        def __ne__(self, other: object) -> bool:
+            note(" !=")
+            return data != other
+
+        def __hash__(self) -> int:
+            note(" hash")
+            raise TypeError("the fixture's plan is not hashable")
+
+        def __bool__(self) -> bool:
+            note(" bool")
+            return bool(data)
+
+        def __repr__(self) -> str:
+            note(" repr")
+            return repr(data)
+
+        def __format__(self, spec: str) -> str:
+            note(" format")
+            return format(repr(data), spec)
+
+        def __copy__(self) -> Any:
+            note(" copy")
+            return _recorded_mapping(dict(data), recorder, label)
+
+        def __deepcopy__(self, memo: dict) -> Any:
+            note(" deepcopy")
+            return _recorded_mapping(copy.deepcopy(data, memo), recorder, label)
+
+        def __reduce_ex__(self, protocol: Any) -> Any:
+            note(" pickle")
+            raise TypeError("the fixture's plan cannot be pickled")
+
+        def __or__(self, other: Any) -> dict:
+            note(" |")
+            return {**data, **other}
+
+        def __ror__(self, other: Any) -> dict:
+            note(" |")
+            return {**other, **data}
+
+        def __dir__(self) -> list[str]:
+            note(" dir")
+            return []
+
+        def copy(self) -> dict:
+            note(".copy()")
+            return dict(data)
+
+    return RecordedMapping()
+
+
+def _recorded_sequence(items: list, recorder: _Recorder, label: str) -> Any:
+    """``items`` behind a sequence that notes every access."""
+    from collections.abc import Sequence
+
+    def note(what: str) -> None:
+        recorder.read(f"{label}{what}", sys._getframe(2))
+
+    class RecordedSequence(Sequence):
+        __slots__ = ()
+
+        def __getattribute__(self, name: str) -> Any:
+            note(f".{name}")
+            return object.__getattribute__(self, name)
+
+        def __getattr__(self, name: str) -> Any:
+            raise AttributeError(name)
+
+        def __getitem__(self, index: Any) -> Any:
+            note(f"[{index!r}]")
+            return items[index]
+
+        def __iter__(self) -> Any:
+            note(" iter")
+            return iter(list(items))
+
+        def __len__(self) -> int:
+            note(" len")
+            return len(items)
+
+        def __contains__(self, value: object) -> bool:
+            note(" contains")
+            return any(value is item for item in items)
+
+        def __eq__(self, other: object) -> bool:
+            note(" ==")
+            return items == other
+
+        def __ne__(self, other: object) -> bool:
+            note(" !=")
+            return items != other
+
+        def __hash__(self) -> int:
+            note(" hash")
+            raise TypeError("the fixture's asks are not hashable")
+
+        def __bool__(self) -> bool:
+            note(" bool")
+            return bool(items)
+
+        def __repr__(self) -> str:
+            note(" repr")
+            return repr(items)
+
+        def __copy__(self) -> Any:
+            note(" copy")
+            return _recorded_sequence(list(items), recorder, label)
+
+        def __deepcopy__(self, memo: dict) -> Any:
+            note(" deepcopy")
+            return _recorded_sequence(copy.deepcopy(items, memo), recorder, label)
+
+        def __reduce_ex__(self, protocol: Any) -> Any:
+            note(" pickle")
+            raise TypeError("the fixture's asks cannot be pickled")
+
+        def __add__(self, other: Any) -> list:
+            note(" +")
+            return [*items, *other]
+
+        def __radd__(self, other: Any) -> list:
+            note(" +")
+            return [*other, *items]
+
+        def __dir__(self) -> list[str]:
+            note(" dir")
+            return []
+
+    return RecordedSequence()
+
+
+_WHOLE_SETTINGS = frozenset(
+    {
+        "__dict__",
+        "__getstate__",
+        "__reduce__",
+        "__reduce_ex__",
+        "model_dump",
+        "model_dump_json",
+        "model_copy",
+        "dict",
+        "json",
+        "copy",
+    }
+)
+
+
+@contextlib.contextmanager
+def _settings_guard(settings: Any, switch: str | None, recorder: _Recorder):  # noqa: ANN202
+    """Note the module reading the lane switch or the whole settings object."""
+    cls = type(settings)
+    previous = cls.__dict__.get("__getattribute__")
+    watched = {switch} | _WHOLE_SETTINGS if switch else set(_WHOLE_SETTINGS)
+
+    def guarded(self: Any, name: str) -> Any:
+        if name in watched:
+            recorder.setting(name, sys._getframe(1))
+        return object.__getattribute__(self, name)
+
+    cls.__getattribute__ = guarded
+    try:
+        yield
+    finally:
+        if previous is None:
+            del cls.__getattribute__
+        else:
+            cls.__getattribute__ = previous
+
+
+def _module_callable(value: Any, module_file: str) -> bool:
+    """``value`` is a function, method or partial defined in the replay module's file."""
+    func = getattr(value, "func", value) if isinstance(value, functools.partial) else value
+    func = getattr(func, "__func__", func)
+    code = getattr(func, "__code__", None) if isinstance(func, types.FunctionType) else None
+    return code is not None and _real(code.co_filename) == module_file
+
+
+def _plan_in(frame: Any, wanted: dict[int, str], module_file: str | None = None) -> set[str]:
+    """Which of the fixture's plan objects (by identity) a call received: its arguments, or
+    up to two levels inside a list, tuple, dict or object among them; ``"callable"`` when it
+    received a function of the replay module (``module_file``)."""
+    found: set[str] = set()
+    try:
+        stack = [(v, 0) for v in list(frame.f_locals.values())]
+    except Exception:  # noqa: BLE001 - an unreadable frame holds nothing
+        return found
+    while stack:
+        value, depth = stack.pop()
+        if id(value) in wanted:
+            found.add(wanted[id(value)])
+            continue
+        if module_file is not None and _module_callable(value, module_file):
+            found.add("callable")
+            continue
+        if depth >= 2:
+            continue
+        kind = type(value)
+        if kind in (list, tuple, set, frozenset):
+            stack += [(v, depth + 1) for v in value]
+        elif kind is dict:
+            stack += [(v, depth + 1) for v in value.values()]
+        else:
+            try:
+                inner = object.__getattribute__(value, "__dict__")
+            except Exception:  # noqa: BLE001 - no attributes to look in
+                continue
+            if isinstance(inner, dict):
+                stack += [(v, depth + 1) for v in inner.values()]
+    return found
+
+
+def _replay_run(
+    program: Any, module_file: str, run: dict, suite: dict, recorder: _Recorder
+) -> dict:
+    """One ``recipe(fx)`` call on a freshly executed module: the values at the table's paths
+    in what the entry returned (taken the moment it returns), and who touched what."""
+    module = types.ModuleType("route_replay")
+    module.__file__ = module_file
+    result: dict[str, Any] = {
+        "values": {},
+        "entry_plan_calls": 0,
+        "entry_other_calls": 0,
+        "route_calls": 0,
+        "module_reads": [],
+        "settings_reads": [],
+        "handed": [],
+        "error": None,
+    }
+    try:
+        exec(program, module.__dict__)  # noqa: S102 - the lane's replay module, a fresh copy
+    except Exception as exc:  # noqa: BLE001 - reported
+        result["error"] = f"the replay module does not load: {type(exc).__name__}: {exc}"
+        return result
+    recipe = module.__dict__.get("recipe")
+    strategy = _recorded_mapping(dict(run["strategy"]), recorder, "strategy")
+    requirements = _recorded_sequence(
+        [
+            _recorded_mapping(dict(r), recorder, f"requirements[{i}]")
+            for i, r in enumerate(run["brief"].get("requirements") or [])
+        ],
+        recorder,
+        "requirements",
+    )
+    brief = _recorded_mapping(
+        {"version": run["brief"].get("version"), "requirements": requirements}, recorder, "brief"
+    )
+    fx = {
+        "route": run["route"],
+        "strategy": strategy,
+        "requirements": requirements,
+        "brief": brief,
+        "clips": copy.deepcopy(run["clips"]),
+        "client_protocol": run.get("client_protocol"),
+        "inputs": copy.deepcopy(run.get("inputs") or {}),
+    }
+    plan = {id(strategy): "strategy", id(requirements): "asks", id(brief): "asks"}
+    entry = (_real(suite["entry"]["file"]), suite["entry"]["name"])
+    paths = suite["paths"]
+    opaque = (type(strategy), type(requirements), type(brief))
+    state: dict[str, Any] = {"depth": 0, "frame": None}
 
     def profile(frame: Any, event: str, arg: Any) -> None:
-        if event == "call" and code.owns(frame.f_code):
-            calls[0] += 1
-        elif event == "return" and arg is not None and code.owns(frame.f_code):
-            returns.append(arg)
+        if event != "call" and event != "return":
+            return
+        code = frame.f_code
+        is_entry = (_real(code.co_filename), code.co_qualname) == entry
+        if event == "call":
+            owned = recorder.code.owns(code)
+            if owned:
+                result["route_calls"] += 1
+            if owned and not is_entry:
+                back = frame.f_back
+                if back is not None and _real(back.f_code.co_filename) == module_file:
+                    recorder.paused = True
+                    try:
+                        handed = _plan_in(frame, plan, module_file)
+                    finally:
+                        recorder.paused = False
+                    if handed:
+                        result["handed"].append(f"{code.co_qualname}: {sorted(handed)}")
+            if not is_entry:
+                return
+            if state["depth"] == 0:
+                recorder.paused = True
+                try:
+                    given = _plan_in(frame, plan)
+                finally:
+                    recorder.paused = False
+                ok = "strategy" in given and ("asks" in given or not suite["needs_asks"])
+                result["entry_plan_calls" if ok else "entry_other_calls"] += 1
+                state["frame"] = frame
+            state["depth"] += 1
+        elif event == "return" and is_entry:
+            state["depth"] -= 1
+            if state["depth"] == 0 and frame is state["frame"] and not result["values"]:
+                recorder.paused = True
+                try:
+                    result["values"] = {k: path_value(arg, p, opaque) for k, p in paths.items()}
+                finally:
+                    recorder.paused = False
 
-    probe = (
-        patch.object(settings, switch, SwitchProbe(on, readers))
-        if switch is not None and hasattr(settings, switch)
-        else contextlib.nullcontext()
+    if not callable(recipe):
+        result["error"] = "the replay module defines no recipe(fx)"
+        return result
+    sys.setprofile(profile)
+    recorder.on = True
+    try:
+        recipe(fx)
+    except Exception as exc:  # noqa: BLE001 - reported
+        result["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        sys.setprofile(None)
+        recorder.on = False
+    result["module_reads"], result["settings_reads"] = recorder.take()
+    return result
+
+
+def _run_suite(suite: dict) -> dict:
+    """Every run of one replay module with the lane switch at the suite's value, set before
+    the module is first executed in this fresh interpreter."""
+    from app.config import settings
+
+    for extra in suite.get("sys_path") or ():
+        if extra not in sys.path:
+            sys.path.insert(0, extra)
+    module_file = _real(suite["module"])
+    code = RouteCode(
+        frozenset(_real(f) for f in suite["route_files"]), frozenset(suite["route_functions"])
     )
-    with probe:
-        sys.setprofile(profile)
-        try:
-            recipe = module.recipe(copy.deepcopy(fx))
-        except Exception as exc:  # noqa: BLE001 - recorded: a control that cannot run fails
-            return {
-                "recipe": {},
-                "calls": calls[0],
-                "returns": [],
-                "readers": readers,
-                "error": f"{type(exc).__name__}: {exc}",
-            }
-        finally:
-            sys.setprofile(None)
+    recorder = _Recorder(module_file, code)
+    try:
+        program = compile(Path(module_file).read_text(encoding="utf-8"), module_file, "exec")
+    except Exception as exc:  # noqa: BLE001 - reported
+        return {"setup_error": f"{type(exc).__name__}: {exc}", "runs": {}}
+    switch = suite.get("switch")
+    with contextlib.ExitStack() as stack:
+        if switch and hasattr(settings, switch):
+            stack.enter_context(patch.object(settings, switch, bool(suite["switch_on"])))
+        stack.enter_context(_settings_guard(settings, switch, recorder))
+        runs = {
+            run["id"]: _replay_run(program, module_file, run, suite, recorder)
+            for run in suite["runs"]
+        }
+    return {"setup_error": None, "runs": runs}
+
+
+def replay_worker(job_path: Path) -> int:
+    """``--replay-worker``: run the suites of one batch (one lane-switch value) and write the
+    results where the job says. Started by `_workers`, always in a fresh interpreter."""
+    job = json.loads(job_path.read_text(encoding="utf-8"))
+    _BASE._bootstrap()
+    with _prod_flags():
+        out = [_run_suite(suite) for suite in job["suites"]]
+    Path(job["out"]).write_text(json.dumps({"suites": out}, default=str), encoding="utf-8")
+    return 0
+
+
+def _workers(batches: list[list[dict]]) -> list[list[dict]]:
+    """Each batch of suites in its own fresh interpreter, side by side."""
+    import shutil
+    import subprocess
+
+    tmp = Path(tempfile.mkdtemp(prefix="route-replay-"))
+    started = []
+    try:
+        for i, suites in enumerate(batches):
+            job, out = tmp / f"job-{i}.json", tmp / f"out-{i}.json"
+            job.write_text(json.dumps({"suites": suites, "out": str(out)}, default=str), "utf-8")
+            proc = subprocess.Popen(  # noqa: S603 - this script, the same interpreter
+                [sys.executable, str(HERE / "score_route.py"), "--replay-worker", str(job)],
+                cwd=str(API),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            started.append((proc, out, suites))
+        results = []
+        for proc, out, suites in started:
+            try:
+                _, err = proc.communicate(timeout=900)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                err = "timed out after 900 s"
+            if out.is_file():
+                results.append(json.loads(out.read_text(encoding="utf-8"))["suites"])
+            else:
+                why = f"the replay worker failed: {(err or '')[-1500:]}"
+                results.append([{"setup_error": why, "runs": {}} for _ in suites])
+        return results
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# --- planning the runs and grading them
+
+
+class ReplayPlan(NamedTuple):
+    """The runs of one replay module over one fixture, with what grading them needs."""
+
+    fx: dict
+    targets: list[Target]
+    keys: list[str]
+    on: list[tuple[str, dict]]
+    off: list[tuple[str, dict]]
+    moves: dict[str, list[tuple[str, dict, Any]]]
+
+
+def _seed(fx: dict) -> int:
+    import hashlib
+
+    digest = hashlib.sha256(str(fx.get("fixture_id")).encode("utf-8")).hexdigest()
+    return int(digest[:12], 16)
+
+
+def plan_runs(fx: dict, targets: list[Target]) -> ReplayPlan:
+    """Switch on: the fixture, nothing asked, each key moved to every other value, dropped,
+    field only (its typed asks dropped) and ask only (its field dropped). Switch off: the
+    fixture, each move and each drop. Each list shuffled, the same way for the same fixture."""
+    import random
+
+    keys = sorted({t.key for t in targets if t.key in RECIPE_KEYS})
+    on = [("real", fx), ("stripped", _drop_keys(fx, keys))]
+    off = [("off", fx)]
+    moves: dict[str, list[tuple[str, dict, Any]]] = {}
+    for key in keys:
+        first = asked(fx, next(t for t in targets if t.key == key))[0]
+        moves[key] = []
+        if first is not None:
+            for i, (field_value, fact_value) in enumerate(perturbations(fx, key, first)):
+                moved = _set_key(fx, key, field_value, fact_value)
+                moves[key].append((f"moved:{key}:{i}", moved, fact_value))
+                on.append((f"moved:{key}:{i}", moved))
+                off.append((f"off:moved:{key}:{i}", moved))
+        on += [
+            (f"dropped:{key}", _drop_keys(fx, [key])),
+            (f"field_only:{key}", _drop_asks(fx, key)),
+            (f"ask_only:{key}", _drop_field(fx, key)),
+        ]
+        off.append((f"off:dropped:{key}", _drop_keys(fx, [key])))
+    rng = random.Random(_seed(fx))
+    rng.shuffle(on)
+    rng.shuffle(off)
+    return ReplayPlan(fx, targets, keys, on, off, moves)
+
+
+def _payload(run_id: str, fx: dict) -> dict:
     return {
-        "recipe": dict(recipe) if isinstance(recipe, Mapping) else {},
-        "calls": calls[0],
-        "returns": returns,
-        "readers": readers,
-        "error": None,
+        "id": run_id,
+        "route": fx.get("route"),
+        "strategy": fx["strategy"],
+        "brief": {
+            "version": fx["brief"].get("version"),
+            "requirements": fx["brief"]["requirements"],
+        },
+        "clips": fx.get("clips") or [],
+        "client_protocol": fx.get("client_protocol"),
+        "inputs": fx.get("replay_inputs") or {},
+    }
+
+
+def suites_for(plan: ReplayPlan, base: dict) -> tuple[dict, dict]:
+    """The switch-on and switch-off suites for `_workers` (``base``: module, entry, paths,
+    route code, switch)."""
+    needs_asks = any(t.kind == "asks" for t in plan.targets)
+    common = {**base, "needs_asks": needs_asks}
+    return (
+        {**common, "switch_on": True, "runs": [_payload(i, f) for i, f in plan.on]},
+        {**common, "switch_on": False, "runs": [_payload(i, f) for i, f in plan.off]},
+    )
+
+
+def _medians(values: list[Any]) -> float | None:
+    numbers = _numbers(values if isinstance(values, list) else [values]) if values else []
+    if not numbers:
+        return None
+    numbers.sort()
+    return numbers[len(numbers) // 2]
+
+
+def grade_runs(
+    plan: ReplayPlan, on: dict, off: dict, *, entry: str, switch: str | None, lint: list[str]
+) -> dict:
+    """The replay's claims and the grader's controls on them. ``honored[check_id]`` is the
+    grader's own comparison of the real run's entry return; ``valid`` is False when a control
+    fails (the scorecard is then INVALID)."""
+    fx, targets = plan.fx, plan.targets
+    runs = {**on.get("runs", {}), **off.get("runs", {})}
+    setup = [s["setup_error"] for s in (on, off) if s.get("setup_error")]
+    empty = {"values": {}, "error": "the run did not happen"}
+    real = runs.get("real", empty)
+    recipe = real.get("values") or {}
+    wanted = {t.check_id: asked(fx, t) for t in targets}
+    honored = {t.check_id: honors(t.key, recipe.get(t.key), *wanted[t.check_id]) for t in targets}
+    claimed = sorted({t.key for t in targets if honored[t.check_id]})
+    every = [(run_id, runs.get(run_id, empty)) for run_id, _ in [*plan.on, *plan.off]]
+    entry_bad = [
+        f"{run_id}: {r.get('entry_plan_calls', 0)} with the plan, {r.get('entry_other_calls', 0)} "
+        "without"
+        for run_id, r in every
+        if r.get("entry_plan_calls") != 1 or r.get("entry_other_calls")
+    ]
+    reads = sorted({f"{run_id}: {w}" for run_id, r in every for w in r.get("module_reads") or []})
+    sreads = sorted(
+        {f"{run_id}: {w}" for run_id, r in every for w in r.get("settings_reads") or []}
+    )
+    handed = sorted({f"{run_id}: {w}" for run_id, r in every for w in r.get("handed") or []})
+    errors = [*setup, *[f"{run_id}: {r['error']}" for run_id, r in every if r.get("error")]]
+    rows = [
+        _row(
+            "replay: a module that breaks the replay rules (settings, introspection, state "
+            "between runs, imports outside app/ and plain stdlib) must FAIL",
+            False,
+            bool(lint),
+            lint[:8],
+        ),
+        _row(
+            f"replay: a run that does not call the render entry {entry} exactly once with the "
+            "fixture's own plan and asks must FAIL",
+            False,
+            bool(entry_bad),
+            entry_bad[:6],
+        ),
+        _row(
+            "replay: the module reading the fixture's plan or asks itself (only the route's "
+            "code may) must FAIL",
+            False,
+            bool(reads),
+            reads[:8],
+        ),
+        _row(
+            f"replay: the module reading {switch or 'the lane switch'} or the settings (only "
+            "the route's code may) must FAIL",
+            False,
+            bool(sreads),
+            sreads[:8],
+        ),
+        _row(
+            "replay: the module handing the plan, the asks or its own function to route code "
+            "other than the render entry must FAIL",
+            False,
+            bool(handed),
+            handed[:6],
+        ),
+        _row("replay: a run that raised must FAIL", False, bool(errors), errors[:4]),
+    ]
+
+    def value(run_id: str, key: str) -> Any:
+        return (runs.get(run_id, empty).get("values") or {}).get(key)
+
+    def met(run_id: str, run_fx: dict, mine: list[Target]) -> bool:
+        return all(honors(t.key, value(run_id, t.key), *asked(run_fx, t)) for t in mine)
+
+    def kept(run_id: str, other: Target, moved_key: str) -> bool:
+        """Another claimed value through a move of ``moved_key``: unchanged, except that a
+        moved length may re-time the clips and a length is met within its own window."""
+        if moved_key == "length_s" or other.key == "length_s":
+            return honors(other.key, value(run_id, other.key), *wanted[other.check_id])
+        return _same(value(run_id, other.key), recipe.get(other.key))
+
+    for key in claimed:
+        mine = [t for t in targets if t.key == key and honored[t.check_id]]
+        others = [t for t in targets if t.key != key and t.key in claimed and honored[t.check_id]]
+        moved = plan.moves.get(key) or []
+        unfollowed = {
+            str(asked_value): value(run_id, key)
+            for run_id, run_fx, asked_value in moved
+            if not met(run_id, run_fx, mine)
+        }
+        leaked = [
+            run_id
+            for run_id in [*(m[0] for m in moved), f"dropped:{key}"]
+            if not all(kept(run_id, t, key) for t in others)
+        ]
+        fields = [t for t in mine if t.kind == "fields"]
+        ask_targets = [t for t in mine if t.kind == "asks"]
+        field_only = not fields or met(f"field_only:{key}", _drop_asks(fx, key), fields)
+        ask_only = not ask_targets or met(f"ask_only:{key}", _drop_field(fx, key), ask_targets)
+        switched = [f"off:moved:{key}:{i}" for i in range(len(moved))] + [f"off:dropped:{key}"]
+        moving = {r: value(r, key) for r in switched if not _same(value(r, key), value("off", key))}
+        numeric = bool(_numbers(recipe[key] if isinstance(recipe[key], list) else [recipe[key]]))
+        rows += [
+            _row(
+                f"replay {key}: a recipe that does not follow every other value asked "
+                f"({len(moved)} moves) must FAIL",
+                False,
+                bool(unfollowed) or not moved,
+                _json(unfollowed or ("no other value to move to" if not moved else {})),
+            ),
+            _row(
+                f"replay {key}: moving or dropping it changing another claimed value must FAIL",
+                False,
+                bool(leaked),
+                leaked[:6],
+            ),
+            _row(
+                f"replay {key}: the plan's field alone (typed ask dropped) not met must FAIL",
+                False,
+                not field_only,
+                _json(value(f"field_only:{key}", key)),
+            ),
+            _row(
+                f"replay {key}: the typed ask alone (plan field dropped) not met must FAIL",
+                False,
+                not ask_only,
+                _json(value(f"ask_only:{key}", key)),
+            ),
+            _row(
+                f"replay {key}: an ask that still changes the recipe with {switch} off must FAIL",
+                False,
+                bool(moving),
+                _json({"off": value("off", key), "moved": moving}),
+            ),
+        ]
+        if numeric and key == "pace":
+            order = {str(a).casefold(): _medians(value(r, key)) for r, _f, a in moved}
+            order[str(wanted[mine[0].check_id][0]).casefold()] = _medians(recipe[key])
+            ranked = [order[p] for p in _PACE_ORDER if order.get(p) is not None]
+            rising = all(a < b for a, b in itertools.pairwise(ranked))
+            rows.append(
+                _row(
+                    "replay pace: clip holds that do not grow from fast to balanced to relaxed "
+                    "must FAIL",
+                    False,
+                    not rising,
+                    _json(order),
+                )
+            )
+        elif not numeric:
+            rows.append(
+                _row(
+                    f"replay {key}: with nothing asked for it, a value other than the one with "
+                    "nothing asked at all must FAIL",
+                    False,
+                    not _same(value(f"dropped:{key}", key), value("stripped", key)),
+                    _json(
+                        {"dropped": value(f"dropped:{key}", key), "none": value("stripped", key)}
+                    ),
+                )
+            )
+    return {
+        "recipe": _json(recipe),
+        "asked": _json(wanted),
+        "honored": honored,
+        "controls": rows,
+        "valid": all(r["ok"] is True for r in rows),
+        "route_code_calls": real.get("route_calls", 0),
+        "runs": len(every),
     }
 
 
@@ -941,147 +2010,48 @@ def _json(value: Any) -> Any:
     return json.loads(json.dumps(value, default=str))
 
 
-def grade_recipe(
-    module: Any, fx: dict, code: RouteCode, switch: str | None, targets: list[Target]
-) -> dict:
-    """The module's recipe against what was asked, and the grader's controls on it.
-
-    ``honored[check_id]`` is the grader's comparison; ``valid`` is False when a control fails
-    for a key some target claims (the scorecard is then INVALID)."""
-    real = _run(module, fx, code, switch, True)
-    if real["error"] is not None:
-        raise RuntimeError(f"the route replay raised: {real['error']}")
-    recipe = real["recipe"]
-    wanted = {t.check_id: asked(fx, t) for t in targets}
-    honored = {t.check_id: honors(t.key, recipe.get(t.key), *wanted[t.check_id]) for t in targets}
-    claimed = sorted({t.key for t in targets if honored[t.check_id]})
-    rows: list[dict] = []
-    runs = [real]
-    if not claimed:
-        rows.append(_row("replay: the recipe meets no target, nothing to control", True, True))
-        return _replay_report(recipe, wanted, honored, rows, runs)
-    keys = sorted({t.key for t in targets})
-    perturb = dict((fx.get("checks") or {}).get("perturb") or {})
-    stripped = _run(module, _drop_keys(fx, keys), code, switch, True)
-    off = _run(module, fx, code, switch, False)
-    off_stripped = _run(module, _drop_keys(fx, keys), code, switch, False)
-    runs += [stripped, off, off_stripped]
-    rows.append(
-        _row(
-            "replay: a claim from a run that never entered the route's code must FAIL",
-            False,
-            real["calls"] == 0,
-            {"route_code_calls": real["calls"]},
-        )
-    )
-    for key in claimed:
-        mine = [t for t in targets if t.key == key and honored[t.check_id]]
-        first = wanted[mine[0].check_id][0]
-        field_value, fact_value = _perturbed(key, first, perturb.get(key))
-        moved_fx = _set_key(fx, key, field_value, fact_value)
-        moved = _run(module, moved_fx, code, switch, True)
-        dropped = _run(module, _drop_keys(fx, [key]), code, switch, True)
-        runs += [moved, dropped]
-        follows = all(
-            honors(key, moved["recipe"].get(key), *asked(moved_fx, t)) for t in mine
-        ) and not _same(moved["recipe"].get(key), recipe.get(key))
-        others = [k for k in claimed if k != key]
-        reverts = _same(dropped["recipe"].get(key), stripped["recipe"].get(key)) and all(
-            _same(dropped["recipe"].get(k), recipe.get(k)) for k in others
-        )
-        inert = _same(off["recipe"].get(key), off_stripped["recipe"].get(key))
-        traced = returned_by_route(recipe.get(key), real["returns"]) and returned_by_route(
-            moved["recipe"].get(key), moved["returns"]
-        )
-        rows += [
-            _row(
-                f"replay {key}: a value that does not follow the asked one ({first!r} -> "
-                f"{fact_value!r}) must FAIL",
-                False,
-                not follows,
-                _json({"real": recipe.get(key), "perturbed": moved["recipe"].get(key)}),
-            ),
-            _row(
-                f"replay {key}: dropping its ask must revert only its value to the no-ask "
-                "default, else FAIL",
-                False,
-                not reverts,
-                _json(
-                    {
-                        "dropped": {k: dropped["recipe"].get(k) for k in claimed},
-                        "default": stripped["recipe"].get(key),
-                        "real": {k: recipe.get(k) for k in claimed},
-                    }
-                ),
-            ),
-            _row(
-                f"replay {key}: an ask that still changes the recipe with {switch} off must FAIL",
-                False,
-                not inert,
-                _json(
-                    {"off": off["recipe"].get(key), "off_no_ask": off_stripped["recipe"].get(key)}
-                ),
-            ),
-            _row(
-                f"replay {key}: a value the route's code never returned must FAIL",
-                False,
-                not traced,
-            ),
-        ]
-    errors = [r["error"] for r in runs if r["error"]]
-    rows.append(
-        _row("replay: a claim whose control reruns raised must FAIL", False, bool(errors), errors)
-    )
-    outside = sorted(
-        {f"{c.co_filename}:{c.co_name}" for r in runs for c in r["readers"] if not code.owns(c)}
-    )
-    rows.append(
-        _row(
-            f"replay: {switch} read outside the route's code (by the replay module) must FAIL",
-            False,
-            bool(outside),
-            outside,
-        )
-    )
-    return _replay_report(recipe, wanted, honored, rows, runs)
-
-
-def _replay_report(recipe, wanted, honored, rows, runs) -> dict:  # noqa: ANN001
-    return {
-        "recipe": _json(recipe),
-        "asked": _json(wanted),
-        "honored": honored,
-        "controls": rows,
-        "valid": all(r["ok"] is True for r in rows),
-        "route_code_calls": runs[0]["calls"],
-    }
-
-
 def _shown_path(path: Path) -> str:
     return str(path.relative_to(REPO)) if path.is_relative_to(REPO) else str(path)
 
 
-def _replay_module(route: str):  # noqa: ANN202
-    script = REPLAYS / f"{route}.py"
-    if not script.is_file():
-        return None
-    spec = importlib.util.spec_from_file_location(f"route_replay_{route}", script)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def render_entry(route: str | None) -> Any:
+    """The route table's ``RENDER_ENTRY``, or None (no registry, no table, or none named)."""
+    registry = _registry()
+    table = registry.tables.table_for(route) if registry is not None and route else None
+    return getattr(table, "RENDER_ENTRY", None) if table is not None else None
 
 
 def route_replay(fx: dict, route: str) -> dict[str, Any]:
     """Render evidence from ``route_replays/<route>.py`` under the contract above (nothing
-    without one)."""
-    module = _replay_module(route)
-    if module is None:
+    without one): graded on what the route's render entry returns, never on what the module
+    returns."""
+    script = REPLAYS / f"{route}.py"
+    if not script.is_file():
         return {"source": None, "honored": {}, "controls": [], "valid": True, "recipe": None}
-    graded = grade_recipe(
-        module, fx, route_code(route), LANE_SWITCH.get(route), honored_targets(fx)
+    targets = honored_targets(fx)
+    entry = render_entry(route)
+    source = _shown_path(script)
+    if entry is None:
+        row = _row("replay: a route table that names no RENDER_ENTRY must FAIL", False, True)
+        return {"source": source, "honored": {}, "controls": [row], "valid": False, "recipe": None}
+    path, _, symbol = entry.entry.partition(":")
+    code = route_code(route)
+    base = {
+        "module": str(script),
+        "entry": {"file": str(APP / path), "name": symbol},
+        "paths": {k: v for k, v in entry.recipe.items() if k in RECIPE_KEYS},
+        "route_files": sorted(code.files),
+        "route_functions": sorted(code.functions),
+        "switch": LANE_SWITCH.get(route),
+    }
+    plan = plan_runs(fx, targets)
+    on, off = suites_for(plan, base)
+    (on_result,), (off_result,) = _workers([[on], [off]])
+    lint = lint_replay_module(script.read_text(encoding="utf-8"))
+    graded = grade_runs(
+        plan, on_result, off_result, entry=entry.entry, switch=base["switch"], lint=lint
     )
-    return {**graded, "source": _shown_path(REPLAYS / f"{route}.py")}
+    return {**graded, "source": source, "entry": entry.entry, "paths": base["paths"]}
 
 
 def applied(replay: dict, target_id: str) -> bool:
@@ -1106,10 +2076,16 @@ def field_verdict(field: str, cards: Mapping[str, dict], render: bool) -> dict[s
 
 
 def ask_verdict(
-    receipt: dict | None, honored: bool = False, card: dict | None = None, field: str | None = None
+    receipt: dict | None,
+    honored: bool = False,
+    card: dict | None = None,
+    field: str | None = None,
+    *,
+    decline_counts: bool = True,
 ) -> dict[str, Any]:
     """One language's card. ``field``: the strategy field whose own card line answers this ask
-    (a length ask and the route's ``target_duration_s`` line)."""
+    (a length ask and the route's ``target_duration_s`` line). ``decline_counts`` False: the
+    receipt's reason is a route decline about another ask (`check_ask`)."""
     receipt = receipt or {}
     checked = receipt.get("verification") == "checked"
     met = checked and receipt.get("status") == "met"
@@ -1117,6 +2093,7 @@ def ask_verdict(
         checked
         and receipt.get("status") == "not_possible"
         and bool(str(receipt.get("reason") or "").strip())
+        and decline_counts
     )
     line = next(
         (
@@ -1222,38 +2199,94 @@ def route_reads(
     return reads
 
 
-# --- carriers (AST): a function whose body reads the field off a strategy object
+# --- carriers (AST): a function that reads the field off its strategy parameter into what it
+# returns, passes on or writes
 
 _STRATEGY_NAME = re.compile(r"\w*strategy\w*")
 _STRATEGY_CALL = re.compile(r"strategy", re.I)
+# Methods that only log or trace: a value handed to one reaches no render.
+_LOG_METHODS = frozenset(
+    {"debug", "info", "warning", "warn", "error", "exception", "critical", "log"}
+)
+_LOG_FUNCTIONS = frozenset({"print", "record_pipeline_event", "trace", "_trace", "_log"})
 
 
 def _const_str(node: ast.AST) -> str | None:
     return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
 
 
-def _is_strategy(node: ast.AST, aliases: set[str]) -> bool:
-    """``node`` evaluates to a strategy: a name with "strategy" in it or an alias of one,
-    ``x.strategy``, ``(strategy or {})``, ``x.get("creator_strategy")``,
-    ``x["creator_strategy"]``."""
+def _params(fn: ast.AST) -> set[str]:
+    a = fn.args  # type: ignore[attr-defined]
+    names = {p.arg for p in (*a.posonlyargs, *a.args, *a.kwonlyargs)}
+    return names | {p.arg for p in (a.vararg, a.kwarg) if p is not None}
+
+
+def _assignments(fn: ast.AST) -> list[tuple[list[ast.AST], ast.AST]]:
+    """``(targets, value)`` for every binding in ``fn``: assignments, loops, ``with ... as``."""
+    out: list[tuple[list[ast.AST], ast.AST]] = []
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Assign):
+            out.append((list(node.targets), node.value))
+        elif isinstance(node, ast.AnnAssign | ast.AugAssign) and node.value is not None:
+            out.append(([node.target], node.value))
+        elif isinstance(node, ast.NamedExpr):
+            out.append(([node.target], node.value))
+        elif isinstance(node, ast.For | ast.AsyncFor | ast.comprehension):
+            out.append(([node.target], node.iter))
+        elif isinstance(node, ast.withitem) and node.optional_vars is not None:
+            out.append(([node.optional_vars], node.context_expr))
+    return out
+
+
+def _names_in(target: ast.AST) -> set[str]:
+    """The names a binding target sets: plain names, or the root of ``x[...]`` / ``x.a``."""
+    if isinstance(target, ast.Attribute | ast.Subscript):
+        root = _root(target)
+        return {root} if root else set()
+    return {n.id for n in ast.walk(target) if isinstance(n, ast.Name)}
+
+
+def _from_params(fn: ast.AST) -> set[str]:
+    """Parameters and every local computed from one (``job = load(job_id)``)."""
+    rooted = _params(fn)
+    bindings = [
+        ({n.id for n in ast.walk(value) if isinstance(n, ast.Name)}, targets)
+        for targets, value in _assignments(fn)
+    ]
+    for _ in range(6):
+        before = len(rooted)
+        for names, targets in bindings:
+            if names & rooted:
+                for target in targets:
+                    rooted |= _names_in(target)
+        if len(rooted) == before:
+            break
+    return rooted
+
+
+def _is_strategy(node: ast.AST, aliases: set[str], rooted: set[str]) -> bool:
+    """``node`` is the function's strategy: a strategy-named parameter (or a local computed
+    from a parameter), an alias of one, ``p.strategy``, ``(strategy or {})``,
+    ``p.get("creator_strategy")`` or ``p["creator_strategy"]`` off a parameter. A local
+    built from literals (``caption_strategy = {...}``) is no strategy whatever its name."""
     if isinstance(node, ast.Name):
-        return bool(_STRATEGY_NAME.fullmatch(node.id)) or node.id in aliases
+        return node.id in aliases or (bool(_STRATEGY_NAME.fullmatch(node.id)) and node.id in rooted)
     if isinstance(node, ast.Attribute):
-        return bool(_STRATEGY_NAME.fullmatch(node.attr))
+        return bool(_STRATEGY_NAME.fullmatch(node.attr)) and _root(node) in rooted
     if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
-        return _is_strategy(node.values[0], aliases)
+        return _is_strategy(node.values[0], aliases, rooted)
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
         key = _const_str(node.args[0]) if node.func.attr == "get" and node.args else None
-        return bool(key and _STRATEGY_NAME.fullmatch(key))
+        return bool(key and _STRATEGY_NAME.fullmatch(key)) and _root(node) in rooted
     if isinstance(node, ast.Subscript):
         key = _const_str(node.slice)
-        return bool(key and _STRATEGY_NAME.fullmatch(key))
+        return bool(key and _STRATEGY_NAME.fullmatch(key)) and _root(node) in rooted
     return False
 
 
-def _aliases(fn: ast.AST) -> set[str]:
-    """Names bound to a strategy in ``fn``: ``s = strategy or {}``, ``typed = _strategy(x)``
-    over a strategy, ``raw = dict(strategy)``."""
+def _aliases(fn: ast.AST, rooted: set[str]) -> set[str]:
+    """Names bound to the strategy in ``fn``: ``s = strategy or {}``, ``typed =
+    _strategy(strategy)``, ``raw = dict(strategy)``."""
     found: set[str] = set()
     for _ in range(3):
         for node in ast.walk(fn):
@@ -1266,9 +2299,9 @@ def _aliases(fn: ast.AST) -> set[str]:
                     _STRATEGY_CALL.search(ast.unparse(value.func))
                     or (isinstance(value.func, ast.Name) and value.func.id == "dict")
                 )
-                and any(_is_strategy(arg, found) for arg in value.args)
+                and any(_is_strategy(arg, found, rooted) for arg in value.args)
             )
-            if _is_strategy(value, found) or converted:
+            if _is_strategy(value, found, rooted) or converted:
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 found |= {t.id for t in targets if isinstance(t, ast.Name)}
     return found
@@ -1288,9 +2321,142 @@ def _loop_keys(fn: ast.AST) -> dict[str, set[str]]:
     return out
 
 
-def function_reads(fn: ast.AST, field: str) -> bool:
-    """``fn``'s body reads ``field`` off a strategy object."""
-    aliases = _aliases(fn)
+def _is_logging(call: ast.Call) -> bool:
+    func = call.func
+    if isinstance(func, ast.Attribute):
+        return func.attr in _LOG_METHODS
+    return isinstance(func, ast.Name) and func.id in _LOG_FUNCTIONS
+
+
+def _flows(fn: ast.AST, sources: list[ast.AST]) -> bool:
+    """A value read at ``sources`` reaches what ``fn`` returns or yields, a call it makes for
+    its effect (never a log or trace), an attribute it sets, or an item of a parameter it
+    sets, directly or through locals computed from it, or decides a branch that returns or
+    raises. Best effort: a value stored on a local nothing uses afterwards does not flow."""
+    ids = {id(n) for n in sources}
+    params = _params(fn)
+    tainted: set[str] = set()
+
+    def touched(expr: ast.AST | None) -> bool:
+        return expr is not None and any(
+            id(n) in ids
+            or (isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in tainted)
+            for n in ast.walk(expr)
+        )
+
+    def call_args(call: ast.Call) -> list[ast.AST]:
+        return [*call.args, *(k.value for k in call.keywords)]
+
+    nodes = list(ast.walk(fn))
+    bindings = _assignments(fn)
+    mutators = [
+        (node, root)
+        for node in nodes
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in _MUTATORS
+        and (root := _root(node.func.value))
+    ]
+    for _ in range(6):
+        before = len(tainted)
+        for targets, value in bindings:
+            if touched(value):
+                for target in targets:
+                    tainted |= _names_in(target)
+        for node, root in mutators:
+            if any(touched(a) for a in call_args(node)):
+                tainted.add(root)
+        if len(tainted) == before:
+            break
+    for node in nodes:
+        if isinstance(node, ast.Return | ast.Yield | ast.YieldFrom) and touched(node.value):
+            return True
+        if isinstance(node, ast.Assign | ast.AugAssign | ast.AnnAssign) and touched(node.value):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if isinstance(target, ast.Attribute) or (
+                    isinstance(target, ast.Subscript) and _root(target) in params
+                ):
+                    return True
+        if isinstance(node, ast.Expr):
+            call = node.value.value if isinstance(node.value, ast.Await) else node.value
+            if (
+                isinstance(call, ast.Call)
+                and not _is_logging(call)
+                and any(touched(a) for a in call_args(call))
+            ):
+                return True
+        if (
+            isinstance(node, ast.If | ast.While)
+            and touched(node.test)
+            and any(isinstance(n, ast.Return | ast.Raise) for n in ast.walk(node))
+        ):
+            return True
+    return False
+
+
+def _helper(func: ast.AST, tree: ast.Module, path: str | None) -> ast.AST | None:
+    """The definition a helper call resolves to: a top-level function of this file, or one
+    imported from ``app`` (``from app.x import name``)."""
+    if not isinstance(func, ast.Name):
+        return None
+    own = _definition(tree, func.id)
+    if isinstance(own, ast.FunctionDef | ast.AsyncFunctionDef):
+        return own
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom) or not (node.module or "").startswith("app."):
+            continue
+        for alias in node.names:
+            if (alias.asname or alias.name) == func.id:
+                source = APP / (node.module.removeprefix("app.").replace(".", "/") + ".py")
+                if source.is_file():
+                    found = _definition(ast.parse(source.read_text()), alias.name)
+                    if isinstance(found, ast.FunctionDef | ast.AsyncFunctionDef):
+                        return found
+    return None
+
+
+def _helper_reads(call: ast.Call, helper: ast.AST) -> bool:
+    """``helper(strategy, "field")`` reads its key argument off its strategy argument into
+    what it returns (``mapping[key]``, ``mapping.get(key)``, ``getattr(mapping, key)``): a
+    helper that drops or only compares the key is no read."""
+    a = helper.args  # type: ignore[attr-defined]
+    positional = [p.arg for p in (*a.posonlyargs, *a.args)]
+    bound = {
+        **{positional[i]: arg for i, arg in enumerate(call.args) if i < len(positional)},
+        **{k.arg: k.value for k in call.keywords if k.arg},
+    }
+    keys = {name for name, arg in bound.items() if _const_str(arg) is not None}
+    objects = {name for name in bound if name not in keys}
+    reads = []
+    for node in ast.walk(helper):
+        if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
+            pair = (_root(node.value), node.slice)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and node.args
+        ):
+            pair = (_root(node.func.value), node.args[0])
+        elif isinstance(node, ast.Call) and getattr(node.func, "id", None) == "getattr":
+            pair = (_root(node.args[0]), node.args[1]) if len(node.args) > 1 else (None, None)
+        else:
+            continue
+        receiver, key = pair
+        if receiver in objects and isinstance(key, ast.Name) and key.id in keys:
+            reads.append(node)
+    return bool(reads) and _flows(helper, reads)
+
+
+def strategy_reads(
+    fn: ast.AST, field: str, tree: ast.Module | None = None, path: str | None = None
+) -> list[ast.AST]:
+    """Where ``fn`` reads ``field`` off its strategy parameter (`_is_strategy`): attribute,
+    item or ``.get`` reads, ``getattr``, or a helper of this file or of ``app`` that reads the
+    key it is given (`_helper_reads`). A delete or a write is no read."""
+    rooted = _from_params(fn)
+    aliases = _aliases(fn, rooted)
     loops = _loop_keys(fn)
 
     def key(node: ast.AST) -> bool:
@@ -1298,21 +2464,40 @@ def function_reads(fn: ast.AST, field: str) -> bool:
             return True
         return isinstance(node, ast.Name) and field in loops.get(node.id, ())
 
+    found = []
     for node in ast.walk(fn):
         if isinstance(node, ast.Attribute) and node.attr == field:
-            if _is_strategy(node.value, aliases):
-                return True
-        elif isinstance(node, ast.Subscript) and _is_strategy(node.value, aliases):
-            if key(node.slice):
-                return True
+            if isinstance(node.ctx, ast.Load) and _is_strategy(node.value, aliases, rooted):
+                found.append(node)
+        elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
+            if _is_strategy(node.value, aliases, rooted) and key(node.slice):
+                found.append(node)
         elif isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Attribute) and func.attr == "get":
-                if _is_strategy(func.value, aliases) and node.args and key(node.args[0]):
-                    return True
-            if any(_is_strategy(a, aliases) for a in node.args) and any(key(a) for a in node.args):
-                return True  # getattr(strategy, "f"), _value(strategy, "f")
-    return False
+                if _is_strategy(func.value, aliases, rooted) and node.args and key(node.args[0]):
+                    found.append(node)
+                    continue
+            if not (
+                any(_is_strategy(a, aliases, rooted) for a in node.args)
+                and any(key(a) for a in node.args)
+            ):
+                continue
+            if isinstance(func, ast.Name) and func.id == "getattr":
+                found.append(node)
+            elif tree is not None and (helper := _helper(func, tree, path)) is not None:
+                if _helper_reads(node, helper):
+                    found.append(node)
+    return found
+
+
+def function_reads(
+    fn: ast.AST, field: str, tree: ast.Module | None = None, path: str | None = None
+) -> bool:
+    """``fn`` reads ``field`` off its strategy parameter and that value reaches what it
+    returns, passes on or writes (`strategy_reads`, `_flows`)."""
+    reads = strategy_reads(fn, field, tree, path)
+    return bool(reads) and _flows(fn, reads)
 
 
 def _definition(tree: ast.Module, symbol: str) -> ast.AST | None:
@@ -1352,16 +2537,28 @@ def via_problem(
 ) -> str | None:
     """Why ``Applied(via=...)`` is no carrier for ``field`` on ``route``, or None when it is:
     a function (``path:name`` or ``path:Class.method``) in the route's own ``READERS`` or one of
-    ``SHARED_CARRIERS``, whose body reads the field off a strategy object. ``readers`` and
-    ``texts`` (controls only) stand in for the route's readers and the files' source."""
+    ``SHARED_CARRIERS`` that reads the field off its strategy parameter into what it returns,
+    passes on or writes (`function_reads`). ``readers`` and ``texts`` (controls only) stand in
+    for the route's readers and the files' source."""
+    if readers is None and texts is None:
+        return _via_problem_cached(via, field, route)
+    return _via_problem(via, field, route, readers=readers, texts=texts)
+
+
+@functools.cache
+def _via_problem_cached(via: str, field: str, route: str | None) -> str | None:
+    return _via_problem(via, field, route, readers=None, texts=None)
+
+
+def _via_problem(
+    via: str, field: str, route: str | None, *, readers: Any, texts: Mapping[str, str] | None
+) -> str | None:
     path, _, symbol = via.partition(":")
     if not path.endswith(".py") or not all(p.isidentifier() for p in symbol.split(".")):
         return f"{via!r} is not <path under app/>:<function>"
     text = (texts or {}).get(path)
-    if text is None:
-        if not (APP / path).is_file():
-            return f"{path} does not exist"
-        text = (APP / path).read_text()
+    if text is None and not (APP / path).is_file():
+        return f"{path} does not exist"
     if readers is None and route is not None and _registry() is not None:
         table = _registry().tables.table_for(route)
         readers = table.READERS if table is not None else None
@@ -1373,15 +2570,18 @@ def via_problem(
         if other is not None:
             return f"{via} is in {other}'s code, not this route's"
         return f"{via} is neither in this route's READERS nor a shared carrier"
-    node = _definition(ast.parse(text), symbol)
+    tree = ast.parse(text) if text is not None else _parsed(path)
+    node = _definition(tree, symbol)
     if node is None:
         return f"{symbol} is not defined in {path}"
     if isinstance(node, ast.ClassDef):
         return f"{via} is a class: a schema names the field, it reads nothing"
     if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
         return f"{via} is not a function"
-    if not function_reads(node, field):
-        return f"{via} never reads {field} off a strategy"
+    if not strategy_reads(node, field, tree, path):
+        return f"{via} never reads {field} off its strategy parameter"
+    if not function_reads(node, field, tree, path):
+        return f"{via} reads {field} but nothing it returns, passes on or writes uses it"
     return None
 
 
@@ -1407,6 +2607,58 @@ def ownership_problems(route: str, extra_files: tuple[str, ...] = ()) -> list[st
     return out
 
 
+@functools.cache
+def _parsed(rel: str) -> ast.Module:
+    return ast.parse((APP / rel).read_text())
+
+
+def _readers_in(rel: str, tree: ast.Module, field: str, only: frozenset[str] | None) -> list[str]:
+    """``rel:function`` for each function of ``tree`` (top-level ones named in ``only``, when
+    given) that reads ``field`` off its strategy parameter (`function_reads`)."""
+    functions = (
+        [fn for fn in tree.body if getattr(fn, "name", None) in only]
+        if only is not None
+        else list(ast.walk(tree))
+    )
+    out = []
+    for fn in functions:
+        if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        named = {n.attr for n in ast.walk(fn) if isinstance(n, ast.Attribute)}
+        named |= {s for n in ast.walk(fn) if (s := _const_str(n))}
+        if field in named and function_reads(fn, field, tree, rel):
+            out.append(f"{rel}:{fn.name}")
+    return out
+
+
+@functools.cache
+def _file_readers(rel: str, field: str, only: frozenset[str] | None) -> tuple[str, ...]:
+    return tuple(_readers_in(rel, _parsed(rel), field, only))
+
+
+def strict_reads(
+    fields: list[str], readers: Any, sources: dict[str, list[str]] | None = None
+) -> dict[str, list[str]]:
+    """Functions of the route's code (``READERS`` files and builder functions) that read each
+    field off their strategy parameter into what they return, pass on or write
+    (`function_reads`). ``sources`` (controls only) replaces the route's code."""
+    out: dict[str, list[str]] = {f: [] for f in fields}
+    for field in fields:
+        if sources is not None:
+            for rel, lines in sources.items():
+                try:
+                    tree = ast.parse("\n".join(lines))
+                except SyntaxError:
+                    continue
+                out[field] += _readers_in(rel, tree, field, None)
+            continue
+        for rel in readers.files:
+            out[field] += _file_readers(rel, field, None)
+        if readers.functions:
+            out[field] += _file_readers(BUILDER, field, frozenset(readers.functions))
+    return out
+
+
 def consumer_gate(
     route: str,
     card: dict,
@@ -1417,11 +2669,13 @@ def consumer_gate(
 ) -> dict[str, Any]:
     """The route's registry table against its code and the card.
 
-    ``claimed_applied_unread``: marked ``Applied`` but no strategy read in ``READERS`` and no
-    valid carrier (``bad_carriers`` says why a ``via`` is none). ``unconsumed``: no reader and
-    no carrier; ``undisclosed``: of those, what the card does not disclose
-    (`field_disclosed`). ``shared_readers``: reader files another route lists too.
-    ``registry_drift`` is report-only detail."""
+    ``claimed_applied_unread``: marked ``Applied`` with a ``via`` that is no carrier
+    (``bad_carriers`` says why), or with none and no function of the route's code that reads
+    it off its strategy parameter into what it returns, passes on or writes (`strict_reads`).
+    ``unconsumed`` (report only, the line scan `route_reads`): no reader and no carrier;
+    ``undisclosed``: of those, what the card does not disclose (`field_disclosed`).
+    ``shared_readers``: reader files another route lists too. ``registry_drift`` is report-only
+    detail."""
     from app.kria.route_capabilities import Applied, NotApplied, RecordedOnly, table_for
 
     table = table_for(route)
@@ -1439,10 +2693,12 @@ def consumer_gate(
     carried = {
         f: h.via for f, h in handling.items() if isinstance(h, Applied) and h.via and f not in bad
     }
+    plain = [f for f, h in handling.items() if isinstance(h, Applied) and not h.via]
+    readers = strict_reads(plain, table.READERS, sources)
     claimed = sorted(
         f
         for f, h in handling.items()
-        if isinstance(h, Applied) and not reads[f] and f not in carried
+        if isinstance(h, Applied) and (f in bad if h.via else not readers[f])
     )
     unconsumed = [
         f for f in settable if not reads[f] and f not in carried and f not in EXEMPT_FIELDS
@@ -1466,6 +2722,7 @@ def consumer_gate(
         "disclosed": [f for f in unconsumed if f not in undisclosed],
         "exempt": EXEMPT_FIELDS,
         "carriers": carried,
+        "readers": readers,
     }
 
 
@@ -1517,6 +2774,81 @@ def claims_result(route: str, card: dict) -> dict:
         k: gate[k] for k in ("claimed_applied_unread", "bad_carriers", "carriers", "shared_readers")
     }
     return _kind(_result("10.claims", name, not why, why, evidence), "gate")
+
+
+def _calls(fn: ast.AST, name: str) -> bool:
+    return any(
+        isinstance(n, ast.Call)
+        and (getattr(n.func, "id", None) == name or getattr(n.func, "attr", None) == name)
+        for n in ast.walk(fn)
+    )
+
+
+def entry_problems(route: str, entry: Any = None) -> list[str]:
+    """Why the route's ``RENDER_ENTRY`` is no render entry (empty when it is): a function in
+    the route's own ``READERS`` that another function of the route's code calls (the job
+    runner renders from it), with a recipe path per known key that parses. ``entry``
+    (controls only) stands in for the table's."""
+    registry = _registry()
+    table = registry.tables.table_for(route) if registry is not None else None
+    if table is None:
+        return [f"no registry table for {route!r}"]
+    entry = entry if entry is not None else getattr(table, "RENDER_ENTRY", None)
+    if entry is None:
+        return ["the route's table names no RENDER_ENTRY"]
+    path, _, symbol = entry.entry.partition(":")
+    if not path.endswith(".py") or not all(p.isidentifier() for p in symbol.split(".")):
+        return [f"{entry.entry!r} is not <path under app/>:<function>"]
+    readers = table.READERS
+    if not (path in readers.files or (path == BUILDER and symbol in readers.functions)):
+        return [f"{entry.entry} is not in the route's READERS (route code)"]
+    if not (APP / path).is_file():
+        return [f"{path} does not exist"]
+    node = _definition(ast.parse((APP / path).read_text()), symbol)
+    if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+        return [f"{entry.entry} is not a function"]
+    name = symbol.rsplit(".", 1)[-1]
+    callers = []
+    for rel in readers.files:
+        tree = ast.parse((APP / rel).read_text())
+        callers += [
+            f"{rel}:{fn.name}"
+            for fn in ast.walk(tree)
+            if isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef)
+            and fn is not node
+            and not (rel == path and fn.name == name)
+            and _calls(fn, name)
+        ]
+    builder = ast.parse((APP / BUILDER).read_text())
+    callers += [
+        f"{BUILDER}:{fn.name}"
+        for fn in builder.body
+        if isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef)
+        and fn.name in readers.functions
+        and fn.name != name
+        and _calls(fn, name)
+    ]
+    problems = [] if callers else [f"no function of the route's code calls {symbol}"]
+    for key, recipe_path in dict(entry.recipe).items():
+        if key not in RECIPE_KEYS:
+            problems.append(f"recipe key {key!r} is none of {sorted(RECIPE_KEYS)}")
+        elif parse_path(recipe_path) is None:
+            problems.append(f"recipe path {recipe_path!r} for {key} does not parse")
+    return problems
+
+
+def entry_result(route: str) -> dict:
+    """Scored: the route's table names its render entry (`entry_problems`)."""
+    name = "render entry: the table names the function the route's job runner renders from"
+    if _registry() is None:
+        return _kind(_no_registry("10.entry", name), "gate")
+    problems = entry_problems(route)
+    entry = render_entry(route)
+    evidence = {
+        "entry": getattr(entry, "entry", None),
+        "recipe": dict(getattr(entry, "recipe", {}) or {}),
+    }
+    return _kind(_result("10.entry", name, not problems, problems, evidence), "gate")
 
 
 # ------------------------------------------------------------------- golden lines
@@ -1654,8 +2986,33 @@ def _diff_paths(a: Any, b: Any, where: str = "") -> list[str]:
     return [] if a == b else [where or "/"]
 
 
+# A word that says "not" in each card language: every not-applied line and route decline
+# carries one (Turkish: the negative verb forms -mıyor/-meyecek/-mez, "yok", "değil").
+NEGATION = {
+    "en": re.compile(r"\b(?:not|no|never|none|without|cannot)\b|n['’]t\b", re.I),
+    "tr": re.compile(r"m[ıiuü]yor|m[ae]y[ae]c[ae]k|m[ae]z\b|\byok\b|\bdeğil|\bhiçbir", re.I),
+}
+
+
+def negation_problems(routes: Mapping[str, Any]) -> list[str]:
+    """Not-applied lines and route declines (``golden_lines`` shape) with no negation word in
+    their language: a line reworded into a claim that the value is applied, even when the
+    golden is re-recorded with it."""
+    out = []
+    for route, langs in routes.items():
+        for lang, probes in (langs or {}).items():
+            pattern = NEGATION.get(lang)
+            for probe, got in probes.items():
+                for record in [*got.get("lines", []), *got.get("declines", [])]:
+                    text = str(record.get("text") or "")
+                    if record.get("code") in TABLE_CODES and pattern and not pattern.search(text):
+                        out.append(f"{route}/{lang}/{probe}: {text!r}")
+    return out
+
+
 def lines_result(route: str, current: dict[str, Any] | None = None) -> dict:
-    """Scored: the route's card lines equal the recorded golden (both languages, codes)."""
+    """Scored: the route's card lines equal the recorded golden (both languages, codes), and
+    each says the value is not applied (`negation_problems`)."""
     name = "card lines: the route's lines and their typed codes equal the recorded golden"
     if _registry() is None:
         return _kind(_no_registry("10.lines", name), "gate")
@@ -1665,15 +3022,17 @@ def lines_result(route: str, current: dict[str, Any] | None = None) -> dict:
     recorded = json.loads(GOLDEN_LINES.read_text(encoding="utf-8"))["routes"].get(route)
     now = (current if current is not None else golden_lines()).get(route)
     changed = _diff_paths(recorded, now)
-    why = (
-        [
+    affirmative = negation_problems({route: now})
+    why = []
+    if changed:
+        why.append(
             f"the {route} lines differ from the golden at {changed[:6]}: if the change is "
             "meant, re-record with --write-golden-lines and review the diff"
-        ]
-        if changed
-        else []
-    )
-    return _kind(_result("10.lines", name, not changed, why, {"changed": changed}), "gate")
+        )
+    if affirmative:
+        why.append(f"not-applied lines that do not say so: {affirmative[:4]}")
+    evidence = {"changed": changed, "no_negation": affirmative}
+    return _kind(_result("10.lines", name, not why, why, evidence), "gate")
 
 
 # ------------------------------------------------------------------------ the checks
@@ -1734,19 +3093,42 @@ def check_field(fx: dict, cards: Mapping[str, dict], replay: dict, field: str) -
     )
 
 
+def _decline_counts(req: dict, receipt: dict | None, card: dict, lang: str) -> bool:
+    """A not-possible receipt whose reason is a route decline (the route's decline for this
+    ask, or any registry decline text) counts only when that decline is about what this ask's
+    typed facts ask (`decline_about_ask`, in the card's language)."""
+    reason = str((receipt or {}).get("reason") or "")
+    route = {
+        d.get("text")
+        for d in card.get("declines") or []
+        if d.get("requirement_id") == req.get("id")
+    }
+    if reason not in route and not is_route_decline(reason):
+        return True
+    from app.kria.brief import BriefRequirement
+
+    try:
+        model = BriefRequirement.model_validate(req)
+    except Exception:  # noqa: BLE001 - an ask the brief cannot hold is about nothing
+        return False
+    with _language(lang):
+        return decline_about_ask(model, reason)
+
+
 def check_ask(fx: dict, cards: Mapping[str, dict], replay: dict, req_id: str) -> dict:
     req = _requirement(fx, req_id)
     field = ask_field(req)
     render = _target_render(replay, "asks", req_id, fx)
-    by_lang = {
-        lang: ask_verdict(
-            next((r for r in card["receipts"] if r.get("requirement_id") == req_id), None),
+    by_lang = {}
+    for lang, card in cards.items():
+        receipt = next((r for r in card["receipts"] if r.get("requirement_id") == req_id), None)
+        by_lang[lang] = ask_verdict(
+            receipt,
             render,
             card,
             field,
+            decline_counts=_decline_counts(req, receipt, card, lang),
         )
-        for lang, card in cards.items()
-    }
     ok = bool(by_lang) and all(v["pass"] for v in by_lang.values())
     first = by_lang.get(LANGS[0]) or next(iter(by_lang.values()), {})
     return _kind(
@@ -1782,9 +3164,15 @@ def _no_render_evidence(fx: dict, replay: dict, target: Target) -> str:
         )
     if not replay.get("valid"):
         return f"{replay['source']} failed the grader's replay controls, so no claim counts"
+    if target.key not in (replay.get("paths") or {}):
+        return (
+            f"the route's RENDER_ENTRY names no recipe path for {target.key}, so nothing the "
+            "entry returns can show it"
+        )
     value = (replay.get("recipe") or {}).get(target.key)
     return (
-        f"{replay['source']} returns {target.key}={value!r}, which does not meet the asked "
+        f"the render entry {replay.get('entry')} returns {target.key}={value!r} at "
+        f"{replay['paths'][target.key]!r}, which does not meet the asked "
         f"{(replay.get('asked') or {}).get(target.check_id)!r}"
     )
 
@@ -1839,7 +3227,20 @@ _SYNTHETIC_FX = {
     },
     "brief": {
         "requirements": [
-            {"id": "r1", "kind": "timing", "facts": {"duration_s": 30}, "description": "30 s"}
+            {
+                "id": "r1",
+                "kind": "timing",
+                "scope": "global",
+                "facts": {"duration_s": 30},
+                "description": "30 s",
+            },
+            {
+                "id": "r2",
+                "kind": "style",
+                "scope": "global",
+                "facts": {"animation": "pop"},
+                "description": "animate it",
+            },
         ]
     },
 }
@@ -1909,6 +3310,20 @@ def _card_check(field: str, card: dict, tr: dict | None = None) -> bool:
 
 def _ask_check(card: dict) -> bool:
     return check_ask(_SYNTHETIC_FX, {"en": card, "tr": card}, _NO_REPLAY, "r1")["pass"]
+
+
+def _decline_check(req_id: str, declined_id: str, decline: str) -> bool:
+    """Check 3 on ``req_id`` with the route's ``decline`` text answering ``declined_id``, one
+    card per language (each in its own words)."""
+    registry = _registry()
+    req = _requirement(_SYNTHETIC_FX, declined_id)
+    cards = {}
+    for lang in LANGS:
+        with _language(lang):
+            ask = _req(req["id"], req["kind"], req["scope"], req["facts"])
+            text = getattr(registry.lines, decline)()
+            cards[lang] = _synthetic_card([], [_decline(ask, "text_animation", text)])
+    return check_ask(_SYNTHETIC_FX, cards, _NO_REPLAY, req_id)["pass"]
 
 
 def check_function_controls() -> list[dict]:
@@ -2049,6 +3464,21 @@ def check_function_controls() -> list[dict]:
                 ),
             ),
         ),
+        _row(
+            "3 check_ask: the animation decline on an animation ask must PASS",
+            True,
+            _decline_check("r2", "r2", "animation_decline"),
+        ),
+        _row(
+            "3 check_ask: the animation decline answering a length ask must FAIL",
+            False,
+            _decline_check("r1", "r1", "animation_decline"),
+        ),
+        _row(
+            "3 check_ask: the title-position decline answering an animation ask must FAIL",
+            False,
+            _decline_check("r2", "r2", "title_position_decline"),
+        ),
     ]
     return rows
 
@@ -2110,6 +3540,21 @@ def predicate_controls() -> list[dict]:
         _row(
             "4 a length within 10% of the asked one must PASS", True, honors("length_s", 31.5, 30)
         ),
+        _row(
+            "4 clip holds inside the asked pace's hold bounds must PASS",
+            True,
+            honors("pace", [2.4, 2.6], "relaxed"),
+        ),
+        _row(
+            "4 clip holds outside the asked pace's hold bounds must FAIL",
+            False,
+            honors("pace", [0.9, 2.6], "relaxed"),
+        ),
+        _row(
+            "lane targets: a render target the fixture stopped grading must be flagged",
+            False,
+            not missing_targets(["4.title_animation", "5.r2"], {"4.title_animation"}),
+        ),
     ]
 
 
@@ -2128,6 +3573,47 @@ def reads_typed(raw_strategy):
     return typed.target_duration_s
 
 
+def similar_name(strategy):
+    return strategy.get("target_duration_s_hint")
+
+
+def unrelated_local(segments):
+    caption_strategy = {"target_duration_s": 30, "mode": "sentence"}
+    return caption_strategy.get("target_duration_s"), segments
+
+
+def log_only(strategy):
+    logger.info("length %s ignored", strategy.get("target_duration_s"))
+    return None
+
+
+def _without(mapping, key):
+    return {k: v for k, v in mapping.items() if k != key}
+
+
+def drops_it(strategy):
+    return _without(strategy, "target_duration_s")
+
+
+def deletes_it(strategy):
+    del strategy["target_duration_s"]
+    return strategy
+
+
+def _value(mapping, key):
+    return mapping.get(key)
+
+
+def reads_through_helper(strategy):
+    seconds = _value(strategy, "target_duration_s")
+    return {"length_s": seconds}
+
+
+def decides_a_refusal(strategy):
+    if strategy.get("target_duration_s") is None:
+        raise ValueError("a length is needed")
+
+
 class Plan:
     target_duration_s: float = 0.0
 """
@@ -2136,10 +3622,13 @@ class Plan:
 def gate_controls(route: str | None) -> list[dict]:
     """The consumer gate, its reader scan and the carrier rule, on synthetic claims and code."""
     collide = [
-        "        if step.in_s is None or step.target_duration_s is None:",
+        "def other_objects(step, view, row):",
+        "    if step.in_s is None or step.target_duration_s is None:",
+        "        return None",
         '    plan = {"target_duration_s": 3}',
         '    seconds = row["target_duration_s"]',
         "    target = view.target_duration_s",
+        "    return plan, seconds, target",
     ]
     writer = "pipeline/synthetic_writer.py"
     synthetic = SimpleNamespace(files=(writer,), functions=())
@@ -2189,6 +3678,29 @@ def gate_controls(route: str | None) -> list[dict]:
             True,
             carrier("reads_typed"),
         ),
+        _row(
+            "10 a read through a helper that returns the key it is given must PASS",
+            True,
+            carrier("reads_through_helper"),
+        ),
+        _row("10 a read that decides a refusal must PASS", True, carrier("decides_a_refusal")),
+        _row(
+            "10 a read of a similarly named field is not a carrier must FAIL",
+            False,
+            carrier("similar_name"),
+        ),
+        _row(
+            "10 a read off a local dict named like a strategy (not the parameter) must FAIL",
+            False,
+            carrier("unrelated_local"),
+        ),
+        _row("10 a read that is only logged must FAIL", False, carrier("log_only")),
+        _row(
+            "10 a helper that removes the field is not a read must FAIL",
+            False,
+            carrier("drops_it"),
+        ),
+        _row("10 deleting the field is not a read must FAIL", False, carrier("deletes_it")),
     ]
     registry = _registry()
     if registry is None or route is None or registry.tables.table_for(route) is None:
@@ -2278,6 +3790,45 @@ def gate_controls(route: str | None) -> list[dict]:
             gate["bad_carriers"].get("caption_style"),
         )
     )
+    entry = render_entry(route)
+    if entry is not None:
+        from app.kria.route_capabilities import RenderEntry
+
+        bad_entries = {
+            "an entry outside the route's code": RenderEntry(f"{other_file}:x", {}),
+            "an entry its file does not define": RenderEntry(
+                f"{entry.entry.partition(':')[0]}:_no_such_entry_{route}", {}
+            ),
+            "a recipe path that does not parse": RenderEntry(
+                entry.entry, {"title_animation": "text_layers[id^=]].effect"}
+            ),
+        }
+        rows += [
+            _row(f"10.entry {what} must be flagged", False, not entry_problems(route, bad))
+            for what, bad in bad_entries.items()
+        ]
+    affirmative = {
+        "en": "It is applied exactly as planned, the pace you chose",
+        "tr": "Tam planlandığı gibi uygulanıyor, seçtiğin tempo",
+    }
+    for lang, text in affirmative.items():
+        probe = {"p": {"lines": [{"code": NOT_APPLIED_CODE, "text": text}], "declines": []}}
+        rows.append(
+            _row(
+                f"10.lines a {lang.upper()} not-applied line with no negation must be flagged",
+                False,
+                not negation_problems({"probe": {lang: probe}}),
+            )
+        )
+    recorded = json.loads(GOLDEN_LINES.read_text(encoding="utf-8"))["routes"]
+    rows.append(
+        _row(
+            "10.lines every recorded not-applied line says so must PASS",
+            True,
+            not negation_problems(recorded),
+            negation_problems(recorded)[:3],
+        )
+    )
     table = table_for(route)
     field = next((f for f, h in table.FIELD_HANDLING.items() if isinstance(h, NotApplied)), None)
     if field is None:
@@ -2292,93 +3843,249 @@ def gate_controls(route: str | None) -> list[dict]:
         return rows
     claim = NotApplied(lambda _v, _s: "It is applied exactly as planned, nothing is skipped")
     with patch.dict(table.FIELD_HANDLING, {field: claim}):
-        reworded = lines_result(route)
-    rows.append(
+        rerecorded = golden_lines()
+        reworded = lines_result(route, rerecorded)
+    rows += [
         _row(
             f"10.lines a line reworded to say it is applied ({field}) must be flagged",
             False,
             reworded["pass"],
             reworded["why_it_fails"][:1],
-        )
-    )
+        ),
+        _row(
+            f"10.lines the reworded line with its golden re-recorded ({field}) must be flagged",
+            False,
+            not negation_problems({route: rerecorded[route]}),
+        ),
+    ]
     return rows
 
 
-# --- the replay contract on synthetic modules over a synthetic route
+# --- the replay contract on synthetic modules over synthetic routes
 
+# A route whose render entry ``plan`` follows the title animation, the pace (as clip holds)
+# and the stated length, field or typed ask, only with the lane switch on. Each variant breaks
+# one of those; ``entrance_for`` is a helper that reads the plan but is not the entry.
 _SYNTHETIC_ROUTE = """
 from app.config import settings
-
-DEFAULT_PACE = "balanced"
-DEFAULT_LENGTH_S = 18.0
+from app.schemas.edit_proposal import pace_hold_bounds
+from app.schemas.text_style_intent import normalize_title_animation
 
 
 def _fact(requirements, name):
-    return next((r["facts"][name] for r in requirements if name in (r.get("facts") or {})), None)
+    for req in requirements:
+        facts = req.get("facts") or {}
+        if name in facts:
+            return facts[name]
+    return None
 
 
-def plan(strategy, requirements):
-    follows = bool(settings.SWITCH)
-    animation = strategy.get("title_animation") or _fact(requirements, "animation")
-    pace = strategy.get("pacing")
-    length = strategy.get("creator_duration_s") or _fact(requirements, "duration_s")
-    return {
-        "rows": [{"entrance": animation if follows else None}],
-        "pace": pace if follows and pace else DEFAULT_PACE,
-        "length_s": float(length) if follows and length else DEFAULT_LENGTH_S,
-    }
+def entrance_for(strategy, requirements):
+    return normalize_title_animation(
+        strategy.get("title_animation") or _fact(requirements, "animation")
+    )
 
 
 def label(text):
     return {"text": str(text)}
+
+
+def plan(strategy, requirements, clips, entrance=None):
+    if ENTRANCE_HANDED:
+        return {
+            "title": {"rows": [{"text": "Three days in Kas", "entrance": entrance}]},
+            "clips": [{"id": clip["id"], "hold_s": 2.5} for clip in clips],
+            "length_s": 30.0,
+        }
+    follows = SWITCH_READ
+    animation = FIELD_ANIMATION or ASK_ANIMATION
+    pace = strategy.get("pacing")
+    length = FIELD_LENGTH or ASK_LENGTH
+    entrance = normalize_title_animation(animation) if follows and animation else None
+    if not (ENTRANCE_KEPT):
+        entrance = None
+    if not (PACE_KEPT):
+        pace = None
+    hold = pace_hold_bounds(pace if follows and pace else "balanced").preferred_s
+    return {
+        "title": {"rows": [{"text": "Three days in Kas", "entrance": ROW_ENTRANCE}]},
+        "clips": [{"id": clip["id"], "hold_s": hold} for clip in clips],
+        "length_s": float(length) if follows and length else 18.0,
+    }
 """
-_DEFAULTS = '{"title_animation": None, "pace": "balanced", "length_s": 18.0}'
-_ECHO = (
-    '{"title_animation": s.get("title_animation"), "pace": s.get("pacing") or "balanced", '
-    '"length_s": float(s.get("creator_duration_s") or 18.0)}'
-)
-_SYNTHETIC_MODULES = {
-    "an honest recipe from the route's code must PASS": (
+_ROUTE_PARTS = {
+    "SWITCH_READ": "bool(settings.SWITCH)",
+    "FIELD_ANIMATION": 'strategy.get("title_animation")',
+    "ASK_ANIMATION": '_fact(requirements, "animation")',
+    "FIELD_LENGTH": 'strategy.get("creator_duration_s")',
+    "ASK_LENGTH": '_fact(requirements, "duration_s")',
+    "ENTRANCE_KEPT": "True",
+    "PACE_KEPT": "True",
+    "ROW_ENTRANCE": "entrance",
+    "ENTRANCE_HANDED": "False",
+}
+_ROUTE_VARIANTS = {
+    "honest": {},
+    "noswitch": {"SWITCH_READ": "True"},
+    "two": {"ENTRANCE_KEPT": 'entrance in ("pop", "fade")'},
+    "field": {"ASK_ANIMATION": "None", "ASK_LENGTH": "None"},
+    "ask": {"FIELD_ANIMATION": "None", "FIELD_LENGTH": "None"},
+    "leak": {"PACE_KEPT": "animation"},
+    "hardcoded": {"ROW_ENTRANCE": '"fade"'},
+    "noread": {"ENTRANCE_HANDED": "True"},
+}
+_CALL = 'plan(fx["strategy"], fx["requirements"], fx["clips"])'
+# name -> (route variant, module source, whether the static rules apply, expected to pass)
+_SYNTHETIC_CASES: dict[str, tuple[str, str, bool, bool]] = {
+    "an honest module over an honest entry must PASS": (
+        "honest",
+        f"def recipe(fx):\n    return {_CALL}\n",
         True,
-        "def recipe(fx):\n"
-        "    out = route.plan(fx['strategy'], fx['brief']['requirements'])\n"
-        "    return {'title_animation': out['rows'][0]['entrance'], 'pace': out['pace'],\n"
-        "            'length_s': out['length_s']}\n",
+        True,
     ),
-    "a constant recipe must FAIL": (
+    "a constant recipe that never calls the entry must FAIL": (
+        "honest",
+        "def recipe(fx):\n    label('x')\n"
+        "    return {'title': {'rows': [{'entrance': 'pop'}]}, 'length_s': 30.0}\n",
+        True,
         False,
-        "def recipe(fx):\n"
-        "    route.label('x')\n"
-        "    return {'title_animation': 'pop', 'pace': 'relaxed', 'length_s': 30.0}\n",
     ),
-    "a recipe keyed on the asks being present must FAIL": (
-        False,
+    "a route helper that reads the plan (not the render entry) must FAIL": (
+        "honest",
         "def recipe(fx):\n"
-        "    route.label('x')\n"
-        "    if not fx['brief']['requirements']:\n"
-        f"        return {_DEFAULTS}\n"
-        "    return {'title_animation': 'pop', 'pace': 'relaxed', 'length_s': 30.0}\n",
-    ),
-    "a recipe keyed on the asks and the lane switch (one route call) must FAIL": (
+        "    return {'title': {'rows': [{'entrance': entrance_for(fx['strategy'], "
+        "fx['requirements'])}]}}\n",
+        True,
         False,
+    ),
+    "an entry fed a plan the module wrote, not the fixture's, must FAIL": (
+        "honest",
         "def recipe(fx):\n"
-        "    route.label('x')\n"
-        "    if not (fx['brief']['requirements'] and settings.SWITCH):\n"
-        f"        return {_DEFAULTS}\n"
-        "    return {'title_animation': 'pop', 'pace': 'relaxed', 'length_s': 30.0}\n",
-    ),
-    "an echo of the asked values keyed on the lane switch must FAIL": (
+        "    return plan({'title_animation': 'pop', 'pacing': 'relaxed', "
+        "'creator_duration_s': 30}, [], fx['clips'])\n",
+        True,
         False,
+    ),
+    "a module that reads the plan itself (.get) must FAIL": (
+        "honest",
+        f"def recipe(fx):\n    fx['strategy'].get('title_animation')\n    return {_CALL}\n",
+        True,
+        False,
+    ),
+    "a module that copies the plan (dict()) must FAIL": (
+        "honest",
+        f"def recipe(fx):\n    dict(fx['strategy'])\n    return {_CALL}\n",
+        True,
+        False,
+    ),
+    "a module that compares the plan (==) must FAIL": (
+        "honest",
+        f"def recipe(fx):\n    fx['strategy'] == {{}}\n    return {_CALL}\n",
+        True,
+        False,
+    ),
+    "a module that iterates the asks must FAIL": (
+        "honest",
+        f"def recipe(fx):\n    [r for r in fx['requirements']]\n    return {_CALL}\n",
+        True,
+        False,
+    ),
+    "a module that probes an attribute of the plan (.value) must FAIL": (
+        "honest",
+        "def recipe(fx):\n    try:\n        fx['strategy'].value\n    except AttributeError:\n"
+        f"        pass\n    return {_CALL}\n",
+        True,
+        False,
+    ),
+    "a module that feeds a route helper's reading of the plan into the entry must FAIL": (
+        "noread",
         "def recipe(fx):\n"
-        "    route.label('x')\n"
-        "    s = fx['strategy']\n"
-        "    if not settings.SWITCH:\n"
-        f"        return {_DEFAULTS}\n"
-        f"    return {_ECHO}\n",
-    ),
-    "an echo of the asked values beside one route call must FAIL": (
+        "    asked = entrance_for(fx['strategy'], fx['requirements'])\n"
+        "    return plan(fx['strategy'], fx['requirements'], fx['clips'], entrance=asked)\n",
+        True,
         False,
-        f"def recipe(fx):\n    route.label('x')\n    s = fx['strategy']\n    return {_ECHO}\n",
+    ),
+    "a module that hands the route a function of its own must FAIL": (
+        "honest",
+        f"def recipe(fx):\n    label(lambda: 'pop')\n    return {_CALL}\n",
+        True,
+        False,
+    ),
+    "a module that hashes the plan (static rules off) must FAIL": (
+        "honest",
+        "def recipe(fx):\n    try:\n        hash(fx['strategy'])\n    except TypeError:\n"
+        f"        pass\n    return {_CALL}\n",
+        False,
+        False,
+    ),
+    "a module that deep-copies the plan (static rules off) must FAIL": (
+        "honest",
+        "import copy\n\n\ndef recipe(fx):\n    copy.deepcopy(fx['strategy'])\n"
+        f"    return {_CALL}\n",
+        False,
+        False,
+    ),
+    "a module that calls the entry twice must FAIL": (
+        "honest",
+        f"def recipe(fx):\n    {_CALL}\n    return {_CALL}\n",
+        True,
+        False,
+    ),
+    "a module that reads the lane switch (static rules off) must FAIL": (
+        "honest",
+        "from app.config import settings\n\n\ndef recipe(fx):\n"
+        f"    if not settings.SWITCH:\n        return {{}}\n    return {_CALL}\n",
+        False,
+        False,
+    ),
+    "a module that hands the switch to a route helper (static rules off) must FAIL": (
+        "honest",
+        "from app.config import settings\n\n\ndef recipe(fx):\n"
+        f"    label(settings.SWITCH)\n    return {_CALL}\n",
+        False,
+        False,
+    ),
+    "a module that counts its runs must FAIL": (
+        "honest",
+        f"N = [0]\n\n\ndef recipe(fx):\n    N[0] += 1\n    return {_CALL}\n",
+        True,
+        False,
+    ),
+    "an entry that ignores the lane switch must FAIL": (
+        "noswitch",
+        f"def recipe(fx):\n    return {_CALL}\n",
+        True,
+        False,
+    ),
+    "an entry that follows only two of the animations must FAIL": (
+        "two",
+        f"def recipe(fx):\n    return {_CALL}\n",
+        True,
+        False,
+    ),
+    "an entry that reads only the plan field (ignores the typed ask) must FAIL": (
+        "field",
+        f"def recipe(fx):\n    return {_CALL}\n",
+        True,
+        False,
+    ),
+    "an entry that reads only the typed ask (ignores the plan field) must FAIL": (
+        "ask",
+        f"def recipe(fx):\n    return {_CALL}\n",
+        True,
+        False,
+    ),
+    "an entry whose pace follows only when an animation is asked must FAIL": (
+        "leak",
+        f"def recipe(fx):\n    return {_CALL}\n",
+        True,
+        False,
+    ),
+    "an entry whose helper follows the ask but whose recipe hard-codes the entrance must FAIL": (
+        "hardcoded",
+        f"def recipe(fx):\n    return {_CALL}\n",
+        True,
+        False,
     ),
 }
 _REPLAY_FX = {
@@ -2389,13 +4096,16 @@ _REPLAY_FX = {
         "pacing": "relaxed",
         "creator_duration_s": 30,
         "target_duration_s": 30,
+        "target_duration_requested": True,
     },
     "brief": {
+        "version": 1,
         "requirements": [
             {"id": "r1", "kind": "style", "scope": "global", "facts": {"animation": "pop"}},
             {"id": "r2", "kind": "timing", "scope": "global", "facts": {"duration_s": 30}},
-        ]
+        ],
     },
+    "clips": [{"id": f"c{i}", "kind": "video", "duration_s": 6.0} for i in range(3)],
     "checks": {
         "honored": {
             "fields": {
@@ -2407,45 +4117,70 @@ _REPLAY_FX = {
         }
     },
 }
+_REPLAY_PATHS = {
+    "title_animation": "title.rows[].entrance",
+    "pace": "clips[].hold_s",
+    "length_s": "length_s",
+}
 
 
-def replay_contract_controls() -> list[dict]:
-    """`grade_recipe` on synthetic modules over a synthetic route file: only the honest one
-    may come out valid with every target met."""
+@functools.cache
+def replay_contract_controls() -> tuple[dict, ...]:
+    """The replay contract on synthetic modules over synthetic routes, through the same fresh
+    interpreters a lane's replay runs in: only the honest module over the honest entry may come
+    out valid with every target met. Run once per process."""
     from app.config import settings
 
     switch = "talking_head_route_follows_prompt_enabled"
     if not hasattr(settings, switch):
-        return [
+        return tuple(
             _row(f"replay contract: {name}", want, None, "no lane switch on this code")
-            for name, (want, _src) in _SYNTHETIC_MODULES.items()
-        ]
-    rows = []
+            for name, (_v, _s, _l, want) in _SYNTHETIC_CASES.items()
+        )
+    targets = honored_targets(_REPLAY_FX)
+    plan = plan_runs(_REPLAY_FX, targets)
     with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "synthetic_route.py"
-        path.write_text(_SYNTHETIC_ROUTE.replace("SWITCH", switch), encoding="utf-8")
-        spec = importlib.util.spec_from_file_location("synthetic_route", path)
-        assert spec is not None and spec.loader is not None
-        route = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(route)
-        code = RouteCode(frozenset({_real(str(path))}), frozenset())
-        targets = honored_targets(_REPLAY_FX)
-        for name, (want, source) in _SYNTHETIC_MODULES.items():
-            module = types.ModuleType("synthetic_replay")
-            module.__dict__.update(route=route, settings=settings)
-            exec(
-                compile(source.replace("SWITCH", switch), f"<control: {name}>", "exec"),  # noqa: S102
-                module.__dict__,
-            )
-            graded = grade_recipe(module, _REPLAY_FX, code, switch, targets)
-            got = graded["valid"] and all(graded["honored"].values())
-            failed = [r["name"] for r in graded["controls"] if r["ok"] is not True]
-            rows.append(_row(f"replay contract: {name}", want, got, failed))
-    return rows
+        routes = {}
+        for variant, parts in _ROUTE_VARIANTS.items():
+            source = _SYNTHETIC_ROUTE
+            for marker, default in _ROUTE_PARTS.items():
+                source = source.replace(marker, parts.get(marker, default))
+            path = Path(tmp) / f"synthetic_route_{variant}.py"
+            path.write_text(source.replace("SWITCH", switch), encoding="utf-8")
+            routes[variant] = path
+        on_suites, off_suites, lints = [], [], []
+        for i, (variant, module_source, linted, _want) in enumerate(_SYNTHETIC_CASES.values()):
+            route = routes[variant]
+            source = f"from synthetic_route_{variant} import entrance_for, label, plan\n\n\n"
+            source += module_source.replace("SWITCH", switch)
+            module = Path(tmp) / f"replay_case_{i}.py"
+            module.write_text(source, encoding="utf-8")
+            base = {
+                "module": str(module),
+                "entry": {"file": str(route), "name": "plan"},
+                "paths": _REPLAY_PATHS,
+                "route_files": [_real(str(route))],
+                "route_functions": [],
+                "switch": switch,
+                "sys_path": [tmp],
+            }
+            on, off = suites_for(plan, base)
+            on_suites.append(on)
+            off_suites.append(off)
+            roots = ("app", f"synthetic_route_{variant}")
+            lints.append(lint_replay_module(source, roots) if linted else [])
+        on_results, off_results = _workers([on_suites, off_suites])
+    rows = []
+    for name, lint, on, off in zip(_SYNTHETIC_CASES, lints, on_results, off_results, strict=True):
+        graded = grade_runs(plan, on, off, entry="plan", switch=switch, lint=lint)
+        got = graded["valid"] and all(graded["honored"].values())
+        failed = [r["name"] for r in graded["controls"] if r["ok"] is not True]
+        rows.append(_row(f"replay contract: {name}", _SYNTHETIC_CASES[name][3], got, failed))
+    return tuple(rows)
 
 
 def replay_controls(replay: dict) -> list[dict]:
-    """The real route replay module's own controls (`grade_recipe`)."""
+    """The real route replay module's own controls (`grade_runs`)."""
     if replay.get("source") is None:
         why = "the route replay raised" if replay.get("error") else "no route replay"
         return [_row(f"replay: {why}, so no render claim to control", True, True)]
@@ -2458,7 +4193,7 @@ def negative_controls(route: str | None, replay: dict | None = None) -> list[dic
         *predicate_controls(),
         *check_function_controls(),
         *gate_controls(route),
-        *replay_contract_controls(),
+        *[dict(row) for row in replay_contract_controls()],
     ]
     if replay is not None:
         rows += replay_controls(replay)
@@ -2516,6 +4251,7 @@ def run_offline(fixture_dir: Path, route: str | None = None) -> dict:
             )
         )
         checks.append(_guarded("10.lines", "card lines", lambda: lines_result(fx["route"])))
+        checks.append(_guarded("10.entry", "render entry", lambda: entry_result(fx["route"])))
         gate = _guarded(10, "consumer gate", lambda: gate_result(10, fx["route"], cards()["en"]))
         checks.append({**gate, "report_only": True, "kind": "report"})
         try:
@@ -2530,11 +4266,13 @@ def run_offline(fixture_dir: Path, route: str | None = None) -> dict:
             shown = {"error": f"{type(exc).__name__}: {exc}"}
     for c in checks:  # a guarded check that raised carries no kind of its own
         c.setdefault("kind", _KIND_OF_ID.get(str(c["id"]).split(".")[0], "disclosed_ok"))
-        if str(c["id"]) in {"10.claims", "10.lines"}:
+        if str(c["id"]) in {"10.claims", "10.lines", "10.entry"}:
             c["kind"] = "gate"
     scored = [c for c in checks if not c.get("report_only")]
     targets = lane_targets(fx["fixture_id"])
     red = [str(c["id"]) for c in scored if not c["pass"]]
+    graded = {str(c["id"]) for c in checks}
+    missing = missing_targets([*targets, *must_grade(fx["fixture_id"])], graded)
     by_kind = {
         kind: {
             "passed": sum(1 for c in scored if c["kind"] == kind and c["pass"]),
@@ -2558,7 +4296,8 @@ def run_offline(fixture_dir: Path, route: str | None = None) -> dict:
         "lane_targets": targets,
         "expected_red": [i for i in red if i in targets],
         "unexpected_red": [i for i in red if i not in targets],
-        "unexpected_green": sorted(set(targets) - set(red)),
+        "unexpected_green": sorted((set(targets) & graded) - set(red)),
+        "missing_targets": missing,
         "not_graded": (fx.get("checks") or {}).get("not_graded") or {},
         "exclusions": exclusions(fx),
         "report_only": [c["id"] for c in checks if c.get("report_only")],
@@ -2604,6 +4343,8 @@ def summary(report: dict) -> str:
         f"expected red (lane targets): {report['expected_red'] or 'none'}",
         f"unexpected red: {report['unexpected_red'] or 'none'}",
         f"unexpected green (remove from lane_targets.json): {report['unexpected_green'] or 'none'}",
+        "lane targets this fixture no longer grades (restore them in its checks.honored): "
+        f"{report['missing_targets'] or 'none'}",
         f"left out of grading by the fixture's lists: {left_out['count']} "
         f"(fields {left_out['fields']}, asks {left_out['asks']}; "
         f"without a reason in not_graded: {left_out['unexplained'] or 'none'})",
@@ -2623,11 +4364,11 @@ def summary(report: dict) -> str:
 
 
 def exit_code(report: dict, *, strict: bool = False) -> int:
-    """2 INVALID; 1 an unexpected red, a fixture exclusion with no reason, or (``strict``)
-    any red; else 0."""
+    """2 INVALID; 1 an unexpected red, a lane target the fixture no longer grades, a fixture
+    exclusion with no reason, or (``strict``) any red; else 0."""
     if not report["controls_ok"]:
         return 2
-    if report["unexpected_red"] or report["exclusions"]["unexplained"]:
+    if report["unexpected_red"] or report["missing_targets"] or report["exclusions"]["unexplained"]:
         return 1
     return 1 if strict and not report["all_green"] else 0
 
@@ -2640,11 +4381,14 @@ def main(argv: list[str] | None = None) -> int:
     where.add_argument(
         "--write-golden-lines", action="store_true", help="re-record the card-line golden"
     )
+    where.add_argument("--replay-worker", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--route", help="grade against this route instead of the fixture's")
     parser.add_argument("--out", type=Path, help="JSON report path")
     parser.add_argument("--json", action="store_true", help="print the full JSON report")
     parser.add_argument("--strict", action="store_true", help="exit 1 unless every check passes")
     args = parser.parse_args(argv)
+    if args.replay_worker:
+        return replay_worker(args.replay_worker)
     _BASE._bootstrap()
     if args.write_golden_lines:
         print(f"wrote {_shown_path(write_golden_lines())}")

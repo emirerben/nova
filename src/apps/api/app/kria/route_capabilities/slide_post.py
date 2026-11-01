@@ -14,6 +14,7 @@ from app.kria.route_capabilities._types import (
     AskDecline,
     Handling,
     NotApplied,
+    RenderEntry,
     RouteReaders,
 )
 
@@ -62,8 +63,10 @@ READERS = RouteReaders(
         *sorted(f"pipeline/slide_post/{p.name}" for p in _SLIDE_PIPELINE.glob("*.py")),
         "services/slide_post_compose.py",
     ),
-    functions=("_run_slide_post_job",),
+    functions=("_run_slide_post_job", "_build_slide_post_result"),
 )
+
+RENDER_ENTRY = RenderEntry("tasks/generative_build.py:_build_slide_post_result", {})
 
 ASK_DECLINES: tuple[AskDecline, ...] = (
     AskDecline(

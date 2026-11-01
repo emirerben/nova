@@ -84,6 +84,20 @@ class AskDecline:
 
 
 @dataclass(frozen=True)
+class RenderEntry:
+    """The one function the route's job runner builds its render recipe with.
+
+    ``entry`` is ``"<path under app/>:<function>"`` inside the route's ``READERS``. ``recipe``
+    maps a replay key (``title_animation``, ``pace``, ``length_s``, ``caption_mode``) to where
+    its value sits in what ``entry`` returns (`scripts/kria/score_route.py` reads it there:
+    ``a.b[]`` every item, ``[id^=text-]`` the items whose id starts with it, ``**`` any depth).
+    """
+
+    entry: str
+    recipe: Mapping[str, str]
+
+
+@dataclass(frozen=True)
 class RouteReaders:
     """Where the route's code lives, for the consumer gate's read scan.
 

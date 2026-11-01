@@ -72,4 +72,5 @@ at these in the video: lip sync to the uploaded song".
 ## What the checks do not prove
 
 The field's own registry line (whole lines within the 640-character budget, then one compact line naming every line that did not fit) plus typed declines; no wording quality, no native
-render. Honored checks need `scripts/kria/route_replays/lipsync_song.py`.
+render. Honored checks need `scripts/kria/route_replays/lipsync_song.py`, which calls the
+route's `RENDER_ENTRY` with this fixture's own plan and asks.

@@ -19,6 +19,7 @@ from app.kria.route_capabilities._types import (
     AskDecline,
     Handling,
     NotApplied,
+    RenderEntry,
     RouteReaders,
 )
 
@@ -112,6 +113,15 @@ READERS = RouteReaders(
         "_run_phone_unified_montage_job",
         "_creator_selected_clip_paths",
     ),
+)
+
+RENDER_ENTRY = RenderEntry(
+    "pipeline/unified_montage.py:plan_unified_montage",
+    {
+        "title_animation": "snapshot.title_animation",
+        "pace": "snapshot.pace",
+        "length_s": "duration_s",
+    },
 )
 
 

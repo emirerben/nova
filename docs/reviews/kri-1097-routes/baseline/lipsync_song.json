@@ -31,7 +31,7 @@
   "network_attempts_blocked": 0,
   "registry": true,
   "pre_registry": false,
-  "passed": 10,
+  "passed": 12,
   "failed": 2,
   "all_green": false,
   "by_kind": {
@@ -48,7 +48,7 @@
       "failed": 2
     },
     "gate": {
-      "passed": 1,
+      "passed": 3,
       "failed": 0
     }
   },
@@ -71,6 +71,7 @@
   ],
   "unexpected_red": [],
   "unexpected_green": [],
+  "missing_targets": [],
   "not_graded": {
     "r1": "lip sync to the uploaded song is the route itself: check 1 verifies the draft resolves to lipsync_song",
     "song_section": "the recorded song range (0:00 to 4:31) is the filming range the aligner searched, and the takes were placed inside it (62.9 to 123.8 s). No typed song-section ask exists in the brief or the strategy for a creator song, so a section the route ignores cannot be graded offline yet"
@@ -103,16 +104,9 @@
       "detail": ""
     },
     {
-      "name": "2 render evidence applies the field must PASS",
+      "name": "2 a render recipe that meets the field must PASS",
       "expected_pass": true,
       "got_pass": true,
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "name": "2 render evidence that is not a literal True must FAIL",
-      "expected_pass": false,
-      "got_pass": false,
       "ok": true,
       "detail": ""
     },
@@ -138,16 +132,58 @@
       "detail": ""
     },
     {
-      "name": "4 no render evidence for a lane target must FAIL",
+      "name": "4 a recipe value that is not the asked animation must FAIL",
       "expected_pass": false,
       "got_pass": false,
       "ok": true,
       "detail": ""
     },
     {
-      "name": "4 render evidence that applies the lane target must PASS",
+      "name": "4 a recipe value that is the asked animation must PASS",
       "expected_pass": true,
       "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 a boolean where a value belongs must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 a length 50% off the asked one must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 a length within 10% of the asked one must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 clip holds inside the asked pace's hold bounds must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 clip holds outside the asked pace's hold bounds must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "lane targets: a render target the fixture stopped grading must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
       "ok": true,
       "detail": ""
     },
@@ -166,21 +202,7 @@
       "detail": ""
     },
     {
-      "name": "2 check_field: a decline about another ask (title position) must FAIL",
-      "expected_pass": false,
-      "got_pass": false,
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "name": "2 check_field: a text-animation decline discloses the title animation must PASS",
-      "expected_pass": true,
-      "got_pass": true,
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "name": "2 check_field: a route decline no receipt carries is not on the card must FAIL",
+      "name": "2 check_field: a line on the English card the Turkish card lacks must FAIL",
       "expected_pass": false,
       "got_pass": false,
       "ok": true,
@@ -195,6 +217,13 @@
     },
     {
       "name": "2 check_field: a line with another code (not the route's table) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a line whose code is not the one the table gives the field must FAIL",
       "expected_pass": false,
       "got_pass": false,
       "ok": true,
@@ -236,15 +265,74 @@
       "detail": ""
     },
     {
+      "name": "2 check_field: a text-animation decline on an animation ask discloses the title animation must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a decline labelled text_animation on a framing ask must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a text_animation decline with another decline's text must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a decline about another ask (title position) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a route decline no receipt carries is not on the card must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: the animation decline on an animation ask must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: the animation decline answering a length ask must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: the title-position decline answering an animation ask must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
       "name": "10 an assembly step's target_duration_s is not a strategy read must FAIL",
       "expected_pass": false,
       "got_pass": false,
       "ok": true,
       "detail": [
-        "        if step.in_s is None or step.target_duration_s is None:",
+        "def other_objects(step, view, row):",
+        "    if step.in_s is None or step.target_duration_s is None:",
+        "        return None",
         "    plan = {\"target_duration_s\": 3}",
         "    seconds = row[\"target_duration_s\"]",
-        "    target = view.target_duration_s"
+        "    target = view.target_duration_s",
+        "    return plan, seconds, target"
       ]
     },
     {
@@ -269,18 +357,104 @@
       "detail": ""
     },
     {
-      "name": "10 a real symbol that never names the field is not its carrier must FAIL",
+      "name": "10 a function that only names the field is not a carrier must FAIL",
       "expected_pass": false,
       "got_pass": false,
       "ok": true,
       "detail": ""
     },
     {
-      "name": "10 a real symbol that reads the field is its carrier must PASS",
+      "name": "10 a class that names the field is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a function in the route's own files that reads the field must PASS",
       "expected_pass": true,
       "got_pass": true,
       "ok": true,
       "detail": ""
+    },
+    {
+      "name": "10 a read through a converted strategy (typed = _strategy(s)) must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read through a helper that returns the key it is given must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read that decides a refusal must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read of a similarly named field is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read off a local dict named like a strategy (not the parameter) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read that is only logged must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a helper that removes the field is not a read must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 deleting the field is not a read must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 the schema class CreativeStrategy is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": "agents/_schemas/creator_agent.py:CreativeStrategy is neither in this route's READERS nor a shared carrier"
+    },
+    {
+      "name": "10 a function in another route's file is not this route's carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": "pipeline/unified_montage.py:x is in unified_montage's code, not this route's"
+    },
+    {
+      "name": "10 a route that lists another route's reader file must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "pipeline/unified_montage.py is also unified_montage's reader file"
+      ]
     },
     {
       "name": "10 a new unconsumed field must be flagged",
@@ -318,7 +492,282 @@
       "expected_pass": false,
       "got_pass": false,
       "ok": true,
-      "detail": "'the captions just work' is not <path under app/>:<symbol>"
+      "detail": "'the captions just work' is not <path under app/>:<function>"
+    },
+    {
+      "name": "10.entry an entry outside the route's code must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10.entry an entry its file does not define must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10.entry a recipe path that does not parse must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10.lines a EN not-applied line with no negation must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10.lines a TR not-applied line with no negation must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10.lines every recorded not-applied line says so must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "10.lines a line reworded to say it is applied (intro_hook) must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "the lipsync_song lines differ from the golden at ['/en/every_field/card', '/en/every_field/lines', '/en/voice_no_captions/card', '/en/voice_no_captions/lines', '/tr/every_field/card', '/tr/every_field/lines']: if the change is meant, re-record with --write-golden-lines and review the diff"
+      ]
+    },
+    {
+      "name": "10.lines the reworded line with its golden re-recorded (intro_hook) must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "replay contract: an honest module over an honest entry must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "replay contract: a constant recipe that never calls the entry must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: a run that does not call the render entry plan exactly once with the fixture's own plan and asks must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a route helper that reads the plan (not the render entry) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: a run that does not call the render entry plan exactly once with the fixture's own plan and asks must FAIL",
+        "replay: the module handing the plan, the asks or its own function to route code other than the render entry must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: an entry fed a plan the module wrote, not the fixture's, must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: a run that does not call the render entry plan exactly once with the fixture's own plan and asks must FAIL",
+        "replay length_s: a recipe that does not follow every other value asked (5 moves) must FAIL",
+        "replay pace: a recipe that does not follow every other value asked (2 moves) must FAIL",
+        "replay pace: clip holds that do not grow from fast to balanced to relaxed must FAIL",
+        "replay title_animation: a recipe that does not follow every other value asked (9 moves) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that reads the plan itself (.get) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module reading the fixture's plan or asks itself (only the route's code may) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that copies the plan (dict()) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module reading the fixture's plan or asks itself (only the route's code may) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that compares the plan (==) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module reading the fixture's plan or asks itself (only the route's code may) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that iterates the asks must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module reading the fixture's plan or asks itself (only the route's code may) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that probes an attribute of the plan (.value) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module reading the fixture's plan or asks itself (only the route's code may) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that feeds a route helper's reading of the plan into the entry must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module handing the plan, the asks or its own function to route code other than the render entry must FAIL",
+        "replay length_s: a recipe that does not follow every other value asked (5 moves) must FAIL",
+        "replay pace: a recipe that does not follow every other value asked (2 moves) must FAIL",
+        "replay pace: clip holds that do not grow from fast to balanced to relaxed must FAIL",
+        "replay title_animation: an ask that still changes the recipe with talking_head_route_follows_prompt_enabled off must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that hands the route a function of its own must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module handing the plan, the asks or its own function to route code other than the render entry must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that hashes the plan (static rules off) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module reading the fixture's plan or asks itself (only the route's code may) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that deep-copies the plan (static rules off) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module reading the fixture's plan or asks itself (only the route's code may) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that calls the entry twice must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: a run that does not call the render entry plan exactly once with the fixture's own plan and asks must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that reads the lane switch (static rules off) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: a run that does not call the render entry plan exactly once with the fixture's own plan and asks must FAIL",
+        "replay: the module reading talking_head_route_follows_prompt_enabled or the settings (only the route's code may) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that hands the switch to a route helper (static rules off) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module reading talking_head_route_follows_prompt_enabled or the settings (only the route's code may) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that counts its runs must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: a module that breaks the replay rules (settings, introspection, state between runs, imports outside app/ and plain stdlib) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: an entry that ignores the lane switch must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay length_s: an ask that still changes the recipe with talking_head_route_follows_prompt_enabled off must FAIL",
+        "replay pace: an ask that still changes the recipe with talking_head_route_follows_prompt_enabled off must FAIL",
+        "replay title_animation: an ask that still changes the recipe with talking_head_route_follows_prompt_enabled off must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: an entry that follows only two of the animations must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay title_animation: a recipe that does not follow every other value asked (9 moves) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: an entry that reads only the plan field (ignores the typed ask) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay length_s: the typed ask alone (plan field dropped) not met must FAIL",
+        "replay title_animation: the typed ask alone (plan field dropped) not met must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: an entry that reads only the typed ask (ignores the plan field) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay length_s: the plan's field alone (typed ask dropped) not met must FAIL",
+        "replay title_animation: the plan's field alone (typed ask dropped) not met must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: an entry whose pace follows only when an animation is asked must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay title_animation: moving or dropping it changing another claimed value must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: an entry whose helper follows the ask but whose recipe hard-codes the entrance must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": []
     },
     {
       "name": "replay: no route replay, so no render claim to control",
@@ -329,81 +778,165 @@
     }
   ],
   "replay": {
-    "fields": {},
-    "asks": {},
     "source": null,
-    "recipe": null,
-    "route_code_calls": 0
+    "honored": {},
+    "controls": [],
+    "valid": true,
+    "recipe": null
   },
   "card": {
-    "route": "lipsync_song",
-    "lines_shown": true,
-    "reply": "Not everything you asked for made it in:\n- Couldn't: animate the title in (I can't animate on-screen text on this video yet, so the text shows without motion)\nHeads-up for this video:\n- I can't follow the planned story structure (Establish the singer looking into the c…, Cut between takes to match the energy o…) on this video yet, so it won't change the order of the clips\n- The balanced pacing isn't applied on this video yet: your song sets where the cuts fall\n- The native direction isn't applied on this video yet: it is cut to your song\n- I can't apply the karaoke caption style on this video yet, so it won't be used\n- I can't make this video the length you asked for yet: its length follows your song\n- I can't animate the title (pop) on this video yet, so it shows without motion",
-    "changes": [
-      "Balanced pacing",
-      "Montage format"
-    ],
-    "receipts": [
-      {
-        "requirement_id": "r3",
-        "brief_version": null,
-        "generation_id": null,
-        "status": "not_possible",
-        "verification": "checked",
-        "stage": "checked",
-        "target_media_ids": [],
-        "reason": "I can't animate on-screen text on this video yet, so the text shows without motion",
-        "inferred": [],
-        "inferred_labels": []
-      }
-    ],
-    "not_applied": [
-      {
-        "code": "not_applied_on_route",
-        "subject": "story_structure",
-        "text": "I can't follow the planned story structure (Establish the singer looking into the c…, Cut between takes to match the energy o…) on this video yet, so it won't change the order of the clips",
-        "on_card": true
-      },
-      {
-        "code": "not_applied_on_route",
-        "subject": "pacing",
-        "text": "The balanced pacing isn't applied on this video yet: your song sets where the cuts fall",
-        "on_card": true
-      },
-      {
-        "code": "not_applied_on_route",
-        "subject": "direction",
-        "text": "The native direction isn't applied on this video yet: it is cut to your song",
-        "on_card": true
-      },
-      {
-        "code": "not_applied_on_route",
-        "subject": "caption_style",
-        "text": "I can't apply the karaoke caption style on this video yet, so it won't be used",
-        "on_card": true
-      },
-      {
-        "code": "not_applied_on_route",
-        "subject": "target_duration_s",
-        "text": "I can't make this video the length you asked for yet: its length follows your song",
-        "on_card": true
-      },
-      {
-        "code": "not_applied_on_route",
-        "subject": "title_animation",
-        "text": "I can't animate the title (pop) on this video yet, so it shows without motion",
-        "on_card": true
-      }
-    ],
-    "declines": [
-      {
-        "requirement_id": "r3",
-        "subject": "text_animation",
-        "field": "title_animation",
-        "text": "I can't animate on-screen text on this video yet, so the text shows without motion",
-        "on_card": true
-      }
-    ]
+    "en": {
+      "route": "lipsync_song",
+      "lines_shown": true,
+      "reply": "I'll lip-sync your takes to your song, placing each one where it fits the music.\n- Couldn't: animate the title in (I can't animate on-screen text on this video yet, so the text shows without motion)\nHeads-up for this video:\n- I can't follow the planned story structure (Establish the singer looking into the c…, Cut between takes to match the energy o…) on this video yet, so it won't change the order of the clips\n- The balanced pacing isn't applied on this video yet: your song sets where the cuts fall\n- The native direction isn't applied on this video yet: it is cut to your song\n- I can't apply the karaoke caption style on this video yet, so it won't be used\n- I can't make this video the length you asked for yet: its length follows your song\n- I can't animate the title (pop) on this video yet, so it shows without motion",
+      "changes": [
+        "Balanced pacing",
+        "Montage format"
+      ],
+      "receipts": [
+        {
+          "requirement_id": "r3",
+          "brief_version": null,
+          "generation_id": null,
+          "status": "not_possible",
+          "verification": "checked",
+          "stage": "checked",
+          "target_media_ids": [],
+          "reason": "I can't animate on-screen text on this video yet, so the text shows without motion",
+          "inferred": [],
+          "inferred_labels": []
+        }
+      ],
+      "not_applied": [
+        {
+          "code": "not_applied_on_route",
+          "subject": "story_structure",
+          "text": "I can't follow the planned story structure (Establish the singer looking into the c…, Cut between takes to match the energy o…) on this video yet, so it won't change the order of the clips",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "recorded_only_on_route",
+          "subject": "pacing",
+          "text": "The balanced pacing isn't applied on this video yet: your song sets where the cuts fall",
+          "on_card": true,
+          "table_code": "recorded_only_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "direction",
+          "text": "The native direction isn't applied on this video yet: it is cut to your song",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "caption_style",
+          "text": "I can't apply the karaoke caption style on this video yet, so it won't be used",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "target_duration_s",
+          "text": "I can't make this video the length you asked for yet: its length follows your song",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "title_animation",
+          "text": "I can't animate the title (pop) on this video yet, so it shows without motion",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        }
+      ],
+      "declines": [
+        {
+          "requirement_id": "r3",
+          "subject": "text_animation",
+          "field": "title_animation",
+          "text": "I can't animate on-screen text on this video yet, so the text shows without motion",
+          "on_card": true
+        }
+      ]
+    },
+    "tr": {
+      "route": "lipsync_song",
+      "lines_shown": true,
+      "reply": "I'll lip-sync your takes to your song, placing each one where it fits the music.\n- Yapamadım: animate the title in (Bu videoda ekrandaki yazıyı henüz canlandıramıyorum, o yüzden yazı hareketsiz görünecek)\nBu video için not:\n- Planlanan hikâye yapısını (Establish the singer looking into the c…, Cut between takes to match the energy o…) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek\n- balanced tempo bu videoda henüz uygulanmıyor: kesimlerin yerini şarkın belirliyor\n- native yönü bu videoda henüz uygulanmıyor: şarkına göre kesiliyor\n- karaoke altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu şarkını takip ediyor\n- Başlığı (pop) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek",
+      "changes": [
+        "Tempo: Dengeli",
+        "Format: Montaj"
+      ],
+      "receipts": [
+        {
+          "requirement_id": "r3",
+          "brief_version": null,
+          "generation_id": null,
+          "status": "not_possible",
+          "verification": "checked",
+          "stage": "checked",
+          "target_media_ids": [],
+          "reason": "Bu videoda ekrandaki yazıyı henüz canlandıramıyorum, o yüzden yazı hareketsiz görünecek",
+          "inferred": [],
+          "inferred_labels": []
+        }
+      ],
+      "not_applied": [
+        {
+          "code": "not_applied_on_route",
+          "subject": "story_structure",
+          "text": "Planlanan hikâye yapısını (Establish the singer looking into the c…, Cut between takes to match the energy o…) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "recorded_only_on_route",
+          "subject": "pacing",
+          "text": "balanced tempo bu videoda henüz uygulanmıyor: kesimlerin yerini şarkın belirliyor",
+          "on_card": true,
+          "table_code": "recorded_only_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "direction",
+          "text": "native yönü bu videoda henüz uygulanmıyor: şarkına göre kesiliyor",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "caption_style",
+          "text": "karaoke altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "target_duration_s",
+          "text": "Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu şarkını takip ediyor",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "title_animation",
+          "text": "Başlığı (pop) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        }
+      ],
+      "declines": [
+        {
+          "requirement_id": "r3",
+          "subject": "text_animation",
+          "field": "title_animation",
+          "text": "Bu videoda ekrandaki yazıyı henüz canlandıramıyorum, o yüzden yazı hareketsiz görünecek",
+          "on_card": true
+        }
+      ]
+    }
   },
   "checks": [
     {
@@ -429,6 +962,10 @@
         "pass": true,
         "applied": false,
         "disclosed_on_card": true,
+        "disclosed_by_language": {
+          "en": true,
+          "tr": true
+        },
         "value": "native",
         "render_evidence": null
       },
@@ -444,6 +981,10 @@
         "pass": true,
         "applied": false,
         "disclosed_on_card": true,
+        "disclosed_by_language": {
+          "en": true,
+          "tr": true
+        },
         "value": "balanced",
         "render_evidence": null
       },
@@ -459,6 +1000,10 @@
         "pass": true,
         "applied": false,
         "disclosed_on_card": true,
+        "disclosed_by_language": {
+          "en": true,
+          "tr": true
+        },
         "value": [
           "Establish the singer looking into the camera",
           "Cut between takes to match the energy of the song"
@@ -477,6 +1022,10 @@
         "pass": true,
         "applied": false,
         "disclosed_on_card": true,
+        "disclosed_by_language": {
+          "en": true,
+          "tr": true
+        },
         "value": "karaoke",
         "render_evidence": null
       },
@@ -492,6 +1041,10 @@
         "pass": true,
         "applied": false,
         "disclosed_on_card": true,
+        "disclosed_by_language": {
+          "en": true,
+          "tr": true
+        },
         "value": 30,
         "render_evidence": null
       },
@@ -507,6 +1060,10 @@
         "pass": true,
         "applied": false,
         "disclosed_on_card": true,
+        "disclosed_by_language": {
+          "en": true,
+          "tr": true
+        },
         "value": "pop",
         "render_evidence": null
       },
@@ -529,6 +1086,10 @@
           "status": null,
           "verification": null,
           "reason": null
+        },
+        "by_language": {
+          "en": true,
+          "tr": true
         },
         "requirement": {
           "id": "r2",
@@ -563,6 +1124,10 @@
           "verification": "checked",
           "reason": "I can't animate on-screen text on this video yet, so the text shows without motion"
         },
+        "by_language": {
+          "en": true,
+          "tr": true
+        },
         "requirement": {
           "id": "r3",
           "kind": "style",
@@ -584,12 +1149,11 @@
       "pass": false,
       "verdict": "NOT VERIFIED",
       "why_it_fails": [
-        "the plan chose title_animation='pop'; no render replay for this route (scripts/kria/route_replays/lipsync_song.py): only the render can show it applied"
+        "the plan chose title_animation='pop'; no render replay for this route (scripts/kria/route_replays/lipsync_song.py): only the render's recipe can show it applied"
       ],
       "evidence": {
-        "pass": false,
+        "recipe_key": "title_animation",
         "applied_at_render": false,
-        "value": "pop",
         "render_evidence": null
       },
       "kind": "honored"
@@ -600,23 +1164,11 @@
       "pass": false,
       "verdict": "NOT VERIFIED",
       "why_it_fails": [
-        "'animate the title in': no render replay for this route (scripts/kria/route_replays/lipsync_song.py): only the render can show it applied"
+        "'animate the title in'; no render replay for this route (scripts/kria/route_replays/lipsync_song.py): only the render's recipe can show it applied"
       ],
       "evidence": {
-        "pass": false,
+        "recipe_key": "title_animation",
         "applied_at_render": false,
-        "requirement": {
-          "id": "r3",
-          "kind": "style",
-          "scope": "global",
-          "literal": null,
-          "description": "animate the title in",
-          "facts": {
-            "animation": "pop"
-          },
-          "source_turn_id": "synthetic-turn",
-          "status": "open"
-        },
         "render_evidence": null
       },
       "kind": "honored"
@@ -632,10 +1184,39 @@
         "bad_carriers": {},
         "carriers": {
           "opening_title": "pipeline/unified_montage.py:_title",
-          "edit_format": "tasks/generative_build.py:_run_generative_job_impl",
+          "edit_format": "kria/runtime.py:_apply_strategy_approval_media",
           "audio_strategy": "services/creator_render_contract.py:build_render_contract",
           "media_scope": "tasks/content_plan_build.py:_creator_selected_clip_paths",
           "selected_media_ids": "tasks/content_plan_build.py:_creator_selected_clip_paths"
+        },
+        "shared_readers": []
+      },
+      "kind": "gate"
+    },
+    {
+      "id": "10.lines",
+      "name": "card lines: the route's lines and their typed codes equal the recorded golden",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "changed": [],
+        "no_negation": []
+      },
+      "kind": "gate"
+    },
+    {
+      "id": "10.entry",
+      "name": "render entry: the table names the function the route's job runner renders from",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "entry": "pipeline/lipsync_montage.py:plan_lipsync_montage",
+        "recipe": {
+          "title_animation": "snapshot.title_animation",
+          "pace": "snapshot.pace",
+          "length_s": "duration_s"
         }
       },
       "kind": "gate"
@@ -667,6 +1248,7 @@
         "settable_fields": 32,
         "claimed_applied_unread": [],
         "bad_carriers": {},
+        "shared_readers": [],
         "unconsumed": [
           "direction",
           "archetype",
@@ -722,10 +1304,24 @@
         },
         "carriers": {
           "opening_title": "pipeline/unified_montage.py:_title",
-          "edit_format": "tasks/generative_build.py:_run_generative_job_impl",
+          "edit_format": "kria/runtime.py:_apply_strategy_approval_media",
           "audio_strategy": "services/creator_render_contract.py:build_render_contract",
           "media_scope": "tasks/content_plan_build.py:_creator_selected_clip_paths",
           "selected_media_ids": "tasks/content_plan_build.py:_creator_selected_clip_paths"
+        },
+        "readers": {
+          "opening_title_duration_s": [
+            "pipeline/lipsync_montage.py:plan_lipsync_montage"
+          ],
+          "closing_title": [
+            "pipeline/lipsync_montage.py:plan_lipsync_montage"
+          ],
+          "font_family": [
+            "pipeline/lipsync_montage.py:plan_lipsync_montage"
+          ],
+          "text_color": [
+            "pipeline/lipsync_montage.py:plan_lipsync_montage"
+          ]
         }
       },
       "report_only": true,

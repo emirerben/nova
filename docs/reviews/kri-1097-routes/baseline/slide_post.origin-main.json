@@ -18,8 +18,9 @@
   },
   "network_attempts_blocked": 0,
   "registry": false,
+  "pre_registry": true,
   "passed": 0,
-  "failed": 13,
+  "failed": 16,
   "all_green": false,
   "by_kind": {
     "route": {
@@ -33,33 +34,20 @@
     "honored": {
       "passed": 0,
       "failed": 0
+    },
+    "gate": {
+      "passed": 0,
+      "failed": 3
     }
   },
   "inconclusive": [
+    "10.claims",
+    "10.lines",
+    "10.entry",
     "10"
   ],
-  "lane_targets": {
-    "2.opening_title": {
-      "lane": "L6",
-      "kind": "disclosed_ok",
-      "why": "disclosure gap: the table's opening-title line falls past the card's 640-character budget, so the creator never reads it"
-    },
-    "2.target_duration_s": {
-      "lane": "L6",
-      "kind": "disclosed_ok",
-      "why": "disclosure gap: the table's length line falls past the card's 640-character budget, so the creator never reads it"
-    },
-    "3.r2": {
-      "lane": "L6",
-      "kind": "disclosed_ok",
-      "why": "disclosure gap: keep it 20 seconds has no receipt on a first draft (unchecked) and its card length line is past the budget"
-    }
-  },
-  "expected_red": [
-    "2.opening_title",
-    "2.target_duration_s",
-    "3.r2"
-  ],
+  "lane_targets": {},
+  "expected_red": [],
   "unexpected_red": [
     "1",
     "2.direction",
@@ -67,14 +55,27 @@
     "2.intro_hook",
     "2.story_structure",
     "2.caption_style",
+    "2.opening_title",
     "2.title_animation",
+    "2.target_duration_s",
     "2.audio_strategy",
     "3.r1",
-    "3.r3"
+    "3.r2",
+    "3.r3",
+    "10.claims",
+    "10.lines",
+    "10.entry"
   ],
   "unexpected_green": [],
+  "missing_targets": [],
   "not_graded": {
     "honored": "no render target: the slide lane (L6) discloses every video-only field and changes the planner prompt, which an offline replay of a written strategy cannot show"
+  },
+  "exclusions": {
+    "count": 0,
+    "fields": [],
+    "asks": [],
+    "unexplained": []
   },
   "report_only": [
     10
@@ -82,21 +83,21 @@
   "controls_ok": true,
   "negative_controls": [
     {
-      "name": "2 the card names the pace without saying it is dropped must FAIL",
+      "name": "2 a card that names the pace without its registry line must FAIL",
       "expected_pass": false,
       "got_pass": false,
       "ok": true,
       "detail": ""
     },
     {
-      "name": "2 the card says the pace is not applied must PASS",
+      "name": "2 the card's pacing registry line must PASS",
       "expected_pass": true,
       "got_pass": true,
       "ok": true,
       "detail": ""
     },
     {
-      "name": "2 render evidence applies the field must PASS",
+      "name": "2 a render recipe that meets the field must PASS",
       "expected_pass": true,
       "got_pass": true,
       "ok": true,
@@ -124,100 +125,515 @@
       "detail": ""
     },
     {
-      "name": "2 an unchecked hedge on the card is not a disclosure must FAIL",
+      "name": "4 a recipe value that is not the asked animation must FAIL",
       "expected_pass": false,
       "got_pass": false,
       "ok": true,
       "detail": ""
     },
     {
-      "name": "2 a typed decline that names the field must PASS",
+      "name": "4 a recipe value that is the asked animation must PASS",
       "expected_pass": true,
       "got_pass": true,
       "ok": true,
       "detail": ""
     },
     {
-      "name": "2 a line about subtitles does not name the title must FAIL",
+      "name": "4 a boolean where a value belongs must FAIL",
       "expected_pass": false,
       "got_pass": false,
       "ok": true,
       "detail": ""
     },
     {
-      "name": "2 another field's line that names the word does not disclose this field must FAIL",
+      "name": "4 a length 50% off the asked one must FAIL",
       "expected_pass": false,
       "got_pass": false,
       "ok": true,
       "detail": ""
     },
     {
-      "name": "2 a line past the card's budget is not read must FAIL",
-      "expected_pass": false,
-      "got_pass": false,
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "name": "3 a length ask with no receipt and a card line that keeps the length must FAIL",
-      "expected_pass": false,
-      "got_pass": false,
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "name": "3 a length ask with the card line saying the length is not applied must PASS",
+      "name": "4 a length within 10% of the asked one must PASS",
       "expected_pass": true,
       "got_pass": true,
       "ok": true,
       "detail": ""
     },
     {
-      "name": "4 no render evidence for a lane target must FAIL",
+      "name": "4 clip holds inside the asked pace's hold bounds must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 clip holds outside the asked pace's hold bounds must FAIL",
       "expected_pass": false,
       "got_pass": false,
       "ok": true,
       "detail": ""
     },
     {
-      "name": "4 render evidence that applies the lane target must PASS",
+      "name": "lane targets: a render target the fixture stopped grading must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: another field's card line does not disclose this one must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: the field's own card line must PASS",
       "expected_pass": true,
       "got_pass": true,
       "ok": true,
       "detail": ""
+    },
+    {
+      "name": "2 check_field: a line on the English card the Turkish card lacks must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: an opposite-meaning free-text line naming the field must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a line with another code (not the route's table) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a line whose code is not the one the table gives the field must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 on_card: a recorded line the reply does not carry is not on the card must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: a length ask with only another field's line must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: a length ask with the length registry line must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: a length ask with an opposite-meaning free-text line must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 on_card: a line the compact card line names is on the card must PASS",
+      "expected_pass": true,
+      "got_pass": null,
+      "ok": null,
+      "detail": "pre-registry code: no compact line or registry declines"
+    },
+    {
+      "name": "2 decline controls",
+      "expected_pass": true,
+      "got_pass": null,
+      "ok": null,
+      "detail": "pre-registry code: no compact line or registry declines"
+    },
+    {
+      "name": "10 an assembly step's target_duration_s is not a strategy read must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "def other_objects(step, view, row):",
+        "    if step.in_s is None or step.target_duration_s is None:",
+        "        return None",
+        "    plan = {\"target_duration_s\": 3}",
+        "    seconds = row[\"target_duration_s\"]",
+        "    target = view.target_duration_s",
+        "    return plan, seconds, target"
+      ]
+    },
+    {
+      "name": "10 strategy.get('target_duration_s') is a strategy read must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a carrier that is free text is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a carrier in a file that does not exist must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a function that only names the field is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a class that names the field is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a function in the route's own files that reads the field must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read through a converted strategy (typed = _strategy(s)) must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read through a helper that returns the key it is given must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read that decides a refusal must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read of a similarly named field is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read off a local dict named like a strategy (not the parameter) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read that is only logged must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a helper that removes the field is not a read must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 deleting the field is not a read must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 the schema class CreativeStrategy is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "pre-registry code: no table to gate"
+    },
+    {
+      "name": "10 a function in another route's file is not this route's carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "pre-registry code: no table to gate"
+    },
+    {
+      "name": "10 a route that lists another route's reader file must be flagged",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "pre-registry code: no table to gate"
     },
     {
       "name": "10 a new unconsumed field must be flagged",
       "expected_pass": false,
       "got_pass": null,
       "ok": null,
-      "detail": "no registry table on this code"
+      "detail": "pre-registry code: no table to gate"
     },
     {
       "name": "10 an Applied claim with no reader must be flagged",
       "expected_pass": false,
       "got_pass": null,
       "ok": null,
-      "detail": "no registry table on this code"
+      "detail": "pre-registry code: no table to gate"
+    },
+    {
+      "name": "10 an Applied claim read only as step.<field> must be flagged",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "pre-registry code: no table to gate"
+    },
+    {
+      "name": "10 an Applied claim with a free-text carrier must be flagged",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "pre-registry code: no table to gate"
+    },
+    {
+      "name": "10.lines a line reworded to say it is applied must be flagged",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "pre-registry code: no table to gate"
+    },
+    {
+      "name": "replay contract: an honest module over an honest entry must PASS",
+      "expected_pass": true,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a constant recipe that never calls the entry must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a route helper that reads the plan (not the render entry) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: an entry fed a plan the module wrote, not the fixture's, must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that reads the plan itself (.get) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that copies the plan (dict()) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that compares the plan (==) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that iterates the asks must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that probes an attribute of the plan (.value) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that feeds a route helper's reading of the plan into the entry must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that hands the route a function of its own must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that hashes the plan (static rules off) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that deep-copies the plan (static rules off) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that calls the entry twice must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that reads the lane switch (static rules off) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that hands the switch to a route helper (static rules off) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that counts its runs must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: an entry that ignores the lane switch must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: an entry that follows only two of the animations must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: an entry that reads only the plan field (ignores the typed ask) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: an entry that reads only the typed ask (ignores the plan field) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: an entry whose pace follows only when an animation is asked must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: an entry whose helper follows the ask but whose recipe hard-codes the entrance must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay: no route replay, so no render claim to control",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
     }
   ],
   "replay": {
-    "fields": {},
-    "asks": {},
-    "source": null
+    "source": null,
+    "honored": {},
+    "controls": [],
+    "valid": true,
+    "recipe": null
   },
   "card": {
-    "route": null,
-    "lines_shown": false,
-    "reply": "I'll make a fast slide post of Kas: arrival, old town, sunset, with your title popping in and music, about 20 seconds.",
-    "changes": [
-      "Fast pacing",
-      "Slides format"
-    ],
-    "receipts": [],
-    "not_applied": [],
-    "text": "I'll make a fast slide post of Kas: arrival, old town, sunset, with your title popping in and music, about 20 seconds.",
-    "disclosure_text": ""
+    "en": {
+      "route": null,
+      "lines_shown": false,
+      "reply": "I'll make a fast slide post of Kas: arrival, old town, sunset, with your title popping in and music, about 20 seconds.",
+      "changes": [
+        "Fast pacing",
+        "Slides format"
+      ],
+      "receipts": [],
+      "not_applied": [],
+      "declines": []
+    },
+    "tr": {
+      "route": null,
+      "lines_shown": false,
+      "reply": "I'll make a fast slide post of Kas: arrival, old town, sunset, with your title popping in and music, about 20 seconds.",
+      "changes": [
+        "Tempo: Hızlı",
+        "Format: Slayt"
+      ],
+      "receipts": [],
+      "not_applied": [],
+      "declines": []
+    }
   },
   "checks": [
     {
@@ -241,12 +657,16 @@
       "pass": false,
       "verdict": "NOT VERIFIED",
       "why_it_fails": [
-        "the plan chose direction='guided_story'; no render evidence applies it and the card does not say it is not applied"
+        "the plan chose direction='guided_story'; no render recipe applies it and the card carries no registry line or route decline for it in ['en', 'tr']"
       ],
       "evidence": {
         "pass": false,
         "applied": false,
         "disclosed_on_card": false,
+        "disclosed_by_language": {
+          "en": false,
+          "tr": false
+        },
         "value": "guided_story",
         "render_evidence": null
       },
@@ -258,12 +678,16 @@
       "pass": false,
       "verdict": "NOT VERIFIED",
       "why_it_fails": [
-        "the plan chose pacing='fast'; no render evidence applies it and the card does not say it is not applied"
+        "the plan chose pacing='fast'; no render recipe applies it and the card carries no registry line or route decline for it in ['en', 'tr']"
       ],
       "evidence": {
         "pass": false,
         "applied": false,
         "disclosed_on_card": false,
+        "disclosed_by_language": {
+          "en": false,
+          "tr": false
+        },
         "value": "fast",
         "render_evidence": null
       },
@@ -275,12 +699,16 @@
       "pass": false,
       "verdict": "NOT VERIFIED",
       "why_it_fails": [
-        "the plan chose intro_hook='Three days, zero plans'; no render evidence applies it and the card does not say it is not applied"
+        "the plan chose intro_hook='Three days, zero plans'; no render recipe applies it and the card carries no registry line or route decline for it in ['en', 'tr']"
       ],
       "evidence": {
         "pass": false,
         "applied": false,
         "disclosed_on_card": false,
+        "disclosed_by_language": {
+          "en": false,
+          "tr": false
+        },
         "value": "Three days, zero plans",
         "render_evidence": null
       },
@@ -292,12 +720,16 @@
       "pass": false,
       "verdict": "NOT VERIFIED",
       "why_it_fails": [
-        "the plan chose story_structure=['Arrival', 'The old town', 'Sunset']; no render evidence applies it and the card does not say it is not applied"
+        "the plan chose story_structure=['Arrival', 'The old town', 'Sunset']; no render recipe applies it and the card carries no registry line or route decline for it in ['en', 'tr']"
       ],
       "evidence": {
         "pass": false,
         "applied": false,
         "disclosed_on_card": false,
+        "disclosed_by_language": {
+          "en": false,
+          "tr": false
+        },
         "value": [
           "Arrival",
           "The old town",
@@ -313,12 +745,16 @@
       "pass": false,
       "verdict": "NOT VERIFIED",
       "why_it_fails": [
-        "the plan chose caption_style='kinetic'; no render evidence applies it and the card does not say it is not applied"
+        "the plan chose caption_style='kinetic'; no render recipe applies it and the card carries no registry line or route decline for it in ['en', 'tr']"
       ],
       "evidence": {
         "pass": false,
         "applied": false,
         "disclosed_on_card": false,
+        "disclosed_by_language": {
+          "en": false,
+          "tr": false
+        },
         "value": "kinetic",
         "render_evidence": null
       },
@@ -330,12 +766,16 @@
       "pass": false,
       "verdict": "NOT VERIFIED",
       "why_it_fails": [
-        "the plan chose opening_title='Three days in Kas'; no render evidence applies it and the card does not say it is not applied"
+        "the plan chose opening_title='Three days in Kas'; no render recipe applies it and the card carries no registry line or route decline for it in ['en', 'tr']"
       ],
       "evidence": {
         "pass": false,
         "applied": false,
         "disclosed_on_card": false,
+        "disclosed_by_language": {
+          "en": false,
+          "tr": false
+        },
         "value": "Three days in Kas",
         "render_evidence": null
       },
@@ -347,12 +787,16 @@
       "pass": false,
       "verdict": "NOT VERIFIED",
       "why_it_fails": [
-        "the plan chose title_animation='pop'; no render evidence applies it and the card does not say it is not applied"
+        "the plan chose title_animation='pop'; no render recipe applies it and the card carries no registry line or route decline for it in ['en', 'tr']"
       ],
       "evidence": {
         "pass": false,
         "applied": false,
         "disclosed_on_card": false,
+        "disclosed_by_language": {
+          "en": false,
+          "tr": false
+        },
         "value": "pop",
         "render_evidence": null
       },
@@ -364,12 +808,16 @@
       "pass": false,
       "verdict": "NOT VERIFIED",
       "why_it_fails": [
-        "the plan chose target_duration_s=20; no render evidence applies it and the card does not say it is not applied"
+        "the plan chose target_duration_s=20; no render recipe applies it and the card carries no registry line or route decline for it in ['en', 'tr']"
       ],
       "evidence": {
         "pass": false,
         "applied": false,
         "disclosed_on_card": false,
+        "disclosed_by_language": {
+          "en": false,
+          "tr": false
+        },
         "value": 20,
         "render_evidence": null
       },
@@ -381,12 +829,16 @@
       "pass": false,
       "verdict": "NOT VERIFIED",
       "why_it_fails": [
-        "the plan chose audio_strategy='licensed_music'; no render evidence applies it and the card does not say it is not applied"
+        "the plan chose audio_strategy='licensed_music'; no render recipe applies it and the card carries no registry line or route decline for it in ['en', 'tr']"
       ],
       "evidence": {
         "pass": false,
         "applied": false,
         "disclosed_on_card": false,
+        "disclosed_by_language": {
+          "en": false,
+          "tr": false
+        },
         "value": "licensed_music",
         "render_evidence": null
       },
@@ -398,18 +850,23 @@
       "pass": false,
       "verdict": "NOT VERIFIED",
       "why_it_fails": [
-        "'animate the title in' has receipt {'status': None, 'verification': None, 'reason': None}: neither met nor a typed decline"
+        "'animate the title in' has receipt {'status': None, 'verification': None, 'reason': None}: neither met nor a typed decline in ['en', 'tr']"
       ],
       "evidence": {
         "pass": false,
         "met": false,
         "declined_before_approval": false,
         "disclosed_on_card": false,
+        "card_line": null,
         "honored_at_render": false,
         "receipt": {
           "status": null,
           "verification": null,
           "reason": null
+        },
+        "by_language": {
+          "en": false,
+          "tr": false
         },
         "requirement": {
           "id": "r1",
@@ -422,8 +879,7 @@
           },
           "source_turn_id": "synthetic-turn",
           "status": "open"
-        },
-        "card_line": null
+        }
       },
       "kind": "disclosed_ok"
     },
@@ -433,18 +889,23 @@
       "pass": false,
       "verdict": "NOT VERIFIED",
       "why_it_fails": [
-        "'keep it 20 seconds' has receipt {'status': None, 'verification': None, 'reason': None}: neither met nor a typed decline, and the card has no target_duration_s line"
+        "'keep it 20 seconds' has receipt {'status': None, 'verification': None, 'reason': None}: neither met nor a typed decline in ['en', 'tr'], and the card has no target_duration_s registry line"
       ],
       "evidence": {
         "pass": false,
         "met": false,
         "declined_before_approval": false,
         "disclosed_on_card": false,
+        "card_line": null,
         "honored_at_render": false,
         "receipt": {
           "status": null,
           "verification": null,
           "reason": null
+        },
+        "by_language": {
+          "en": false,
+          "tr": false
         },
         "requirement": {
           "id": "r2",
@@ -457,8 +918,7 @@
           },
           "source_turn_id": "synthetic-turn",
           "status": "open"
-        },
-        "card_line": null
+        }
       },
       "kind": "disclosed_ok"
     },
@@ -468,18 +928,23 @@
       "pass": false,
       "verdict": "NOT VERIFIED",
       "why_it_fails": [
-        "'kinetic captions' has receipt {'status': None, 'verification': None, 'reason': None}: neither met nor a typed decline"
+        "'kinetic captions' has receipt {'status': None, 'verification': None, 'reason': None}: neither met nor a typed decline in ['en', 'tr']"
       ],
       "evidence": {
         "pass": false,
         "met": false,
         "declined_before_approval": false,
         "disclosed_on_card": false,
+        "card_line": null,
         "honored_at_render": false,
         "receipt": {
           "status": null,
           "verification": null,
           "reason": null
+        },
+        "by_language": {
+          "en": false,
+          "tr": false
         },
         "requirement": {
           "id": "r3",
@@ -492,14 +957,46 @@
           },
           "source_turn_id": "synthetic-turn",
           "status": "open"
-        },
-        "card_line": null
+        }
       },
       "kind": "disclosed_ok"
     },
     {
+      "id": "10.claims",
+      "name": "registry claims: every field the table marks applied is read by the route's code",
+      "pass": false,
+      "verdict": "INCONCLUSIVE",
+      "why_it_fails": [
+        "no route registry on this code: the gate reads the route's table"
+      ],
+      "evidence": {},
+      "kind": "gate"
+    },
+    {
+      "id": "10.lines",
+      "name": "card lines: the route's lines and their typed codes equal the recorded golden",
+      "pass": false,
+      "verdict": "INCONCLUSIVE",
+      "why_it_fails": [
+        "no route registry on this code: the gate reads the route's table"
+      ],
+      "evidence": {},
+      "kind": "gate"
+    },
+    {
+      "id": "10.entry",
+      "name": "render entry: the table names the function the route's job runner renders from",
+      "pass": false,
+      "verdict": "INCONCLUSIVE",
+      "why_it_fails": [
+        "no route registry on this code: the gate reads the route's table"
+      ],
+      "evidence": {},
+      "kind": "gate"
+    },
+    {
       "id": 10,
-      "name": "consumer gate (REPORT ONLY): needs the route's registry table",
+      "name": "consumer gate (REPORT ONLY): fields the route ignores and the card does not disclose",
       "pass": false,
       "verdict": "INCONCLUSIVE",
       "why_it_fails": [

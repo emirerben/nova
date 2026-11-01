@@ -13,6 +13,7 @@ from app.kria.route_capabilities._types import (
     AskDecline,
     Handling,
     NotApplied,
+    RenderEntry,
     RouteReaders,
 )
 
@@ -60,6 +61,14 @@ READERS = RouteReaders(
         "pipeline/phone_subtitled_title.py",
     ),
     functions=("_run_phone_subtitled_job",),
+)
+
+RENDER_ENTRY = RenderEntry(
+    "pipeline/phone_subtitled_plan.py:compile_phone_subtitled_plan",
+    {
+        "title_animation": "text_layers[id^=text-].animation_phases.entrance",
+        "length_s": "duration",
+    },
 )
 
 ASK_DECLINES: tuple[AskDecline, ...] = (

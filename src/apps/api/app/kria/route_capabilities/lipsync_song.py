@@ -18,6 +18,7 @@ from app.kria.route_capabilities._types import (
     Handling,
     NotApplied,
     RecordedOnly,
+    RenderEntry,
     RouteReaders,
 )
 
@@ -61,6 +62,15 @@ FIELD_HANDLING: dict[str, Handling] = {
 READERS = RouteReaders(
     files=("pipeline/lipsync_montage.py", "services/song_order.py"),
     functions=("_plan_phone_user_song_core",),
+)
+
+RENDER_ENTRY = RenderEntry(
+    "pipeline/lipsync_montage.py:plan_lipsync_montage",
+    {
+        "title_animation": "snapshot.title_animation",
+        "pace": "snapshot.pace",
+        "length_s": "duration_s",
+    },
 )
 
 ASK_DECLINES: tuple[AskDecline, ...] = (

@@ -66,4 +66,5 @@ title nor that it drew it.
 
 As for every route fixture: the field's own registry line (whole lines within the 640-character budget, then one compact line naming every line that did not fit) plus typed declines, no
 wording quality, no native render. Honored checks need
-`scripts/kria/route_replays/narrated.py`.
+`scripts/kria/route_replays/narrated.py`, which calls the route's `RENDER_ENTRY` with this
+fixture's own plan and asks.

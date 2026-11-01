@@ -50,4 +50,5 @@ with this fixture's animation ask; the voiceover lane adds a fixture of its own 
 
 A synthetic plan shows what the card says for these choices, not that a planner would make them.
 The field's own registry line (whole lines within the 640-character budget, then one compact line naming every line that did not fit) plus typed declines; no native render. Honored checks
-need `scripts/kria/route_replays/voiceover_montage.py`.
+need `scripts/kria/route_replays/voiceover_montage.py`, which calls the route's `RENDER_ENTRY`
+with this fixture's own plan and asks.

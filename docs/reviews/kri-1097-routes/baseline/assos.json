@@ -500,6 +500,7 @@
         "settable_fields": 32,
         "claimed_applied_unread": [],
         "bad_carriers": {},
+        "shared_readers": [],
         "unconsumed": [
           "archetype",
           "hero_media_id",
@@ -524,7 +525,7 @@
           "rationale": "explanatory prose shown to the creator, nothing to apply"
         },
         "carriers": {
-          "edit_format": "tasks/generative_build.py:_run_generative_job_impl",
+          "edit_format": "kria/runtime.py:_apply_strategy_approval_media",
           "render_program": "agents/_schemas/creator_policy.py:effective_render_program",
           "audio_strategy": "services/creator_render_contract.py:build_render_contract",
           "media_scope": "pipeline/unified_montage.py:selected_visual_ids",
@@ -539,6 +540,30 @@
           "video_reuse_policy": "tasks/generative_build.py:_run_generative_job_impl",
           "montage_audio": "pipeline/unified_montage.py:_keeps_source_audio",
           "execution_contract": "agents/_schemas/creator_policy.py:effective_render_program"
+        },
+        "readers": {
+          "editorial_plan": [
+            "pipeline/unified_montage.py:plan_unified_montage",
+            "services/length_planning.py:_editorial_reading_floors"
+          ],
+          "title_animation": [
+            "pipeline/unified_montage.py:plan_unified_montage"
+          ],
+          "label_position": [
+            "pipeline/unified_montage.py:plan_unified_montage"
+          ],
+          "image_layout": [
+            "pipeline/unified_montage.py:plan_unified_montage"
+          ],
+          "mixed_media_timing": [
+            "pipeline/unified_montage.py:plan_unified_montage",
+            "pipeline/story_direction.py:story_blocker",
+            "services/length_planning.py:_sources"
+          ],
+          "montage_cadence": [
+            "pipeline/story_direction.py:story_blocker",
+            "kria/duplicate_uploads.py:duplicate_aliases"
+          ]
         }
       },
       "report_only": true
@@ -573,7 +598,7 @@
         "claimed_applied_unread": [],
         "bad_carriers": {},
         "carriers": {
-          "edit_format": "tasks/generative_build.py:_run_generative_job_impl",
+          "edit_format": "kria/runtime.py:_apply_strategy_approval_media",
           "render_program": "agents/_schemas/creator_policy.py:effective_render_program",
           "audio_strategy": "services/creator_render_contract.py:build_render_contract",
           "media_scope": "pipeline/unified_montage.py:selected_visual_ids",
@@ -588,7 +613,8 @@
           "video_reuse_policy": "tasks/generative_build.py:_run_generative_job_impl",
           "montage_audio": "pipeline/unified_montage.py:_keeps_source_audio",
           "execution_contract": "agents/_schemas/creator_policy.py:effective_render_program"
-        }
+        },
+        "shared_readers": []
       },
       "kind": "gate"
     }

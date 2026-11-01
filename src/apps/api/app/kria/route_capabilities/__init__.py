@@ -9,6 +9,8 @@ One module per route (``<route>.py``), each exporting:
 * ``READERS``: where the route's code lives, for the consumer gate
   (`scripts/kria/score_route.py`): a field marked ``Applied`` that no reader in those files
   reads off the strategy, and whose ``via`` names no ``file:symbol`` that reads it, fails it.
+* ``RENDER_ENTRY``: the one function the route's job runner builds its render recipe with, and
+  where each replay key sits in what it returns (the route replays grade only that return).
 * optionally ``NOTICES`` (route limits no single field owns) and ``story_verdict``.
 
 `resolve_route_id` picks the route for a draft from the predicates the worker's dispatch uses
@@ -39,6 +41,7 @@ from app.kria.route_capabilities._types import (
     Handling,
     NotApplied,
     RecordedOnly,
+    RenderEntry,
     RouteReaders,
     WithAsks,
     registry_enabled,
@@ -50,6 +53,7 @@ __all__ = [
     "Handling",
     "NotApplied",
     "RecordedOnly",
+    "RenderEntry",
     "RouteId",
     "RouteReaders",
     "WithAsks",

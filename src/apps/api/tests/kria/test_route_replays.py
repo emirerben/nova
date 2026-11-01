@@ -9,7 +9,8 @@ turn runs; no model, network or database.
 Disclosure checks (kind ``route`` / ``disclosed_ok``) must pass. Render checks (kind
 ``honored``) are the lanes' targets and are red until a lane lands its route replay. Every red
 check is listed in `tests/fixtures/kria_replay/lane_targets.json` with its lane; a red check
-missing from the list fails, and so does a listed one that turned green (the lane removes it).
+missing from the list fails, and so does a listed one that turned green (the lane removes it)
+or one the fixture stopped grading (``must_grade``: restore it in the fixture's checks).
 """
 
 from __future__ import annotations
@@ -112,8 +113,14 @@ def test_lane_targets_are_current(reports, route, record_property) -> None:
         "red checks not listed in lane_targets.json",
         report["unexpected_red"],
     )
+    assert not report["missing_targets"], (
+        "render targets the fixture no longer grades: restore them in its checks.honored "
+        "(lane_targets.json must_grade lists every one, red or green)",
+        report["missing_targets"],
+    )
     assert not report["unexpected_green"], (
-        "lane targets that now pass: remove them from lane_targets.json",
+        "lane targets that now pass under the replay controls: remove them from "
+        "lane_targets.json targets (keep them in must_grade)",
         report["unexpected_green"],
     )
     assert not report["exclusions"]["unexplained"], (

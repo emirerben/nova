@@ -68,5 +68,5 @@ as not graded here rather than silently dropped.
 
 A disclosure check reads the card the creator sees (the field's own registry line, whole lines within the 640-character budget, then one compact line naming every line that did not fit,
 plus typed route declines); it does not prove the line is the best wording. Honored checks need a
-route replay module (`scripts/kria/route_replays/talking_head.py`) that runs the writer's planning
-code on this fixture. The native iPhone render is not covered.
+route replay module (`scripts/kria/route_replays/talking_head.py`) that calls the route's
+`RENDER_ENTRY` with this fixture's own plan and asks. The native iPhone render is not covered.
