@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.86.0] - 2026-11-01
+
+### Changed
+- feat(kria): a Talking edit plays a chosen footage cutaway's own sound under a muted speaker (KRI-1151) (#2032) <!-- release-pr: 2032 -->
+
 ## [0.83.85.0] - 2026-11-01
 
 ### Changed
