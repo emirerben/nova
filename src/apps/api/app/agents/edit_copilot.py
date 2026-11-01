@@ -82,11 +82,11 @@ log = structlog.get_logger()
 # v102 (KRI-1139): a media backdrop ({"kind":"media","asset_id"}) in the tilt, taught in
 # clip_tilt_media.txt and the BACKDROP POOL section only where `tilt_backdrop_media` is open;
 # every other prompt, including a tilt-open one without it, is byte-identical.
-# v104 (KRI-1097 wave 2): set_edit_direction takes the creator's direction (fast_montage,
-# text_explainer, guided_story) and a stated pace (edit_copilot_ops/direction.txt), taught only
-# where a guided revision offers the direction family and COPILOT_DIRECTION_FOLLOWS_REQUEST_ENABLED
-# is on; every other prompt is byte-identical. (v103 is reserved by the commentary green-screen
-# branch, PR #2045.)
+# v104 (KRI-1097 wave 2): set_edit_direction carries the creator's direction (fast_montage,
+# text_explainer, guided_story) and a stated pace (edit_copilot_ops/direction.txt); the server
+# names what this editor cannot restage. Taught only where a guided revision offers the direction
+# family and COPILOT_DIRECTION_FOLLOWS_REQUEST_ENABLED is on; every other prompt is byte-identical.
+# (v103 is reserved by the commentary green-screen branch, PR #2045.)
 EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v104"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
@@ -382,7 +382,6 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     "set_edit_direction": frozenset(
         {
             "direction",
-            "pace",
             "revision_number",
             "base_generation",
             "hard_cuts",
@@ -3451,19 +3450,20 @@ def _guided_revision_identity(snapshot: dict) -> tuple[int, str] | None:
     return number, generation.strip()
 
 
-# KRI-1097 wave 2: a client that can stage a server-planned story replacement (story beats with
-# their thoughts) lists this family. The web drawer stages fast-montage cuts only.
-STORY_DIRECTION_FAMILY = "story_direction"
-
-
-def _stages_story_direction(snapshot: dict) -> bool:
-    families = snapshot.get("allowed_op_families") if isinstance(snapshot, dict) else None
-    return isinstance(families, list) and STORY_DIRECTION_FAMILY in families
+def _op_fields(name: str) -> frozenset[str]:
+    """The fields the parser and the typed wire keep for an op. ``pace`` on set_edit_direction
+    (the pace the creator stated) exists only while ``COPILOT_DIRECTION_FOLLOWS_REQUEST_ENABLED``
+    is on, so with it off the parser and `_creator_wire.copilot_schema` match the foundation."""
+    fields = _OP_FIELDS[name]
+    if name == "set_edit_direction" and settings.copilot_direction_follows_request_enabled:
+        return fields | {"pace"}
+    return fields
 
 
 def _story_direction_not_staged(direction: str) -> str:
     """The registry's direction line (`route_capabilities._lines.direction_line`) for a story
-    direction this editor cannot restage: nothing changes, and the creator reads why."""
+    direction: the editor drawer stages fast-montage cuts only (no client stages story beats),
+    so nothing changes, and the creator reads why."""
     from app.kria.route_capabilities import _lines as lines  # noqa: PLC0415
 
     line = lines.direction_line(
@@ -4175,7 +4175,7 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
         payload = dict(raw_payload)
     else:
         payload = {k: v for k, v in raw_op.items() if k not in {"op", "type"}}
-    payload = {k: v for k, v in payload.items() if k in _OP_FIELDS[name]}
+    payload = {k: v for k, v in payload.items() if k in _op_fields(name)}
     if name in _BULK_OPS and "selector" not in payload:
         selector = {
             key: payload[key] for key in ("scope", "media_kind", "quantifier") if key in payload
@@ -5219,29 +5219,22 @@ def _coerce_payload(
         return _coerce_label_each_clip(name, out, snapshot, state)
 
     if name == "set_edit_direction":
-        follows = bool(settings.copilot_direction_follows_request_enabled)
         direction = out.get("direction")
-        pace = out.pop("pace", None)
-        if follows:
+        if settings.copilot_direction_follows_request_enabled:
             from app.schemas.edit_proposal import ProposalPace  # noqa: PLC0415
-            from app.services.length_policy import (  # noqa: PLC0415
-                FALLBACK_ROUTE_DIRECTION,
-                STORY_DIRECTIONS,
-            )
+            from app.services.length_policy import STORY_DIRECTIONS  # noqa: PLC0415
 
-            if direction not in (FALLBACK_ROUTE_DIRECTION, *STORY_DIRECTIONS) or (
-                pace is not None and pace not in get_args(ProposalPace)
-            ):
-                state.invalid_value()
-                return None
-            if direction in STORY_DIRECTIONS and not _stages_story_direction(snapshot):
+            if direction in STORY_DIRECTIONS:
                 state.reject(
                     op=name,
                     reason="capability_unavailable",
                     detail=_story_direction_not_staged(direction),
                 )
                 return None
-        elif direction != "fast_montage":
+            if out.get("pace") not in (None, *get_args(ProposalPace)):
+                state.invalid_value()
+                return None
+        if direction != "fast_montage":
             state.invalid_value()
             return None
         identity = _guided_revision_identity(snapshot)
@@ -5266,14 +5259,9 @@ def _coerce_payload(
             return None
         out["revision_number"] = requested_revision
         out["base_generation"] = base_generation.strip()
-        # A fast montage cuts hard with minimal text; a story direction keeps its text and its
-        # transitions follow the pace.
-        montage = direction == "fast_montage"
-        if out.get("hard_cuts") is not montage or out.get("minimal_text") is not montage:
+        if out.get("hard_cuts") is not True or out.get("minimal_text") is not True:
             state.invalid_value()
             return None
-        if follows and pace is not None:
-            out["pace"] = pace
         # The Copilot only selects the direction. The route replaces this
         # request with cuts from the canonical proposal planner over the
         # server-owned media analysis before anything reaches the browser.

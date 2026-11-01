@@ -1,25 +1,32 @@
-"""Copilot ``set_edit_direction`` takes direction and pace from the creator (KRI-1097 wave 2).
+"""Copilot ``set_edit_direction`` follows the creator's direction and pace, or says why it can't
+(KRI-1097 wave 2).
 
-Guard for ``COPILOT_DIRECTION_FOLLOWS_REQUEST_ENABLED``. Each case runs the real op path: a
+Guard for ``COPILOT_DIRECTION_FOLLOWS_REQUEST_ENABLED``. Each turn runs the real op path: a
 recorded Copilot answer through the real ``EditCopilotAgent`` prompt + parser, the plan-item
 route, the real ``validate_guided_snapshot`` over a stored approval, the real
 ``plan_direction_snapshot`` and a recorded planner answer through the real
-``EditProposalAgent.parse``. The planner's return (the stamped snapshot) and the staged op are
-read back. Only the guided revision token and the two model answers are stand-ins.
+``EditProposalAgent.parse`` (or the planner's own fallback after a ``TerminalError``). The stamped
+snapshot and the staged op are read back. Only the guided revision token and the two model
+answers are stand-ins.
+
+The editor drawer stages one direction: a fast montage. Its cuts do not follow a stated pace
+(the planner's 1.2 s fast-cut cap, ``deterministic_fast_cuts`` takes no pace, the web validator
+accepts 0.4 to 1.2 s cuts). No client stages story beats.
 
 Failure modes written before the change:
-F1  the parser still refuses text_explainer / guided_story, so the creator's direction is lost;
-F2  the parser accepts it but the route still plans fast_montage;
-F3  the planner gets the direction but the op re-stamps fast_montage;
-F4  a stated pace never reaches the planner (it still gets "fast");
-F5  no pace stated, yet the fast montage op or its planner call changes (it must not);
-F6  an unknown direction or pace reaches the planner (a 500 or a vague failure);
-F7  a story op reaches a client that only stages fast-montage cuts (it rejects it after a reply
-    that claimed a draft was built): the parser must say, in the registry's own line, what
-    this editor cannot restage, and the planner must not run;
-F8  a story plan is staged from fast_cuts (None), so the turn fails as "no cuts";
-F9  a story op clears the story's thoughts (minimal_text) or keeps fast-montage-only fields;
-F10 with the switch off anything differs: the op, the planner call, the reply, the prompt.
+F1  a text_explainer / guided_story ask is lost as a bare invalid_value, or restaged as a fast
+    montage: the parser must decline it with the registry's direction line, before any planner
+    call;
+F2  a stated balanced / relaxed pace is claimed in the reply or put on the op while the cuts stay
+    fast (the recorded planner and the deterministic fallback alike): the op must be the plain
+    montage op and the reply must name the pace with the registry's pacing line;
+F3  a stated "fast" pace (what the montage does) gets a "not applied" line;
+F4  no pace stated, yet the fast montage op, its planner call or its reply changes;
+F5  an unknown direction or pace reaches the planner;
+F6  the typed wire (EDIT_COPILOT_OUTPUT_MODE native / json_guarded) fails to build
+    (`unregistered wire field type: pace`), cannot carry the stated pace with the switch on, or
+    accepts it with the switch off;
+F7  with the switch off anything differs: the op, the planner call, the reply, the prompt.
 """
 
 from __future__ import annotations
@@ -32,6 +39,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.agents import edit_proposal
+from app.agents._creator_wire import WireContract, copilot_schema
+from app.agents._runtime import TerminalError
 from app.agents.edit_copilot import EditCopilotAgent
 from app.auth import get_current_user
 from app.config import settings
@@ -54,6 +63,18 @@ MEDIA_IDS = (
     "clip-taverna",
 )
 DIRECTION_FRAGMENT = "EDIT DIRECTION FOLLOWS THE CREATOR"
+FAST_REPLY = "I built a fast, music-led replacement draft from the strongest analyzed moments."
+MONTAGE_OP_KEYS = [
+    "op",
+    "direction",
+    "revision_number",
+    "base_generation",
+    "server_planned",
+    "cuts",
+    "clear_text",
+    "hard_cuts",
+    "minimal_text",
+]
 
 
 def _approved() -> EditProposalSnapshot:
@@ -106,46 +127,22 @@ def _guided_edit(approved: EditProposalSnapshot) -> dict:
     }
 
 
-def _planner_raw(direction: str) -> str:
-    """Recorded planner answers (aliases m001.. as the planner prompt shows the media)."""
-    if direction == "fast_montage":
-        return json.dumps(
-            {
-                "title": "Corfu, fast",
-                "duration_s": 6,
-                "fast_cuts": [
-                    {
-                        "cut_id": f"cut-{index + 1}",
-                        "media_id": f"m{index + 1:03d}",
-                        "source_start_s": 2.0,
-                        "source_end_s": 3.0,
-                        "output_duration_s": 1.0,
-                        "role": "hook" if index == 0 else "payoff" if index == 5 else "build",
-                    }
-                    for index in range(6)
-                ],
-            }
-        )
+def _planner_raw() -> str:
+    """The recorded fast-montage planner answer (aliases m001.. as the planner prompt shows)."""
     return json.dumps(
         {
-            "title": "Corfu, explained",
+            "title": "Corfu, fast",
             "duration_s": 6,
-            "story_beats": [
+            "fast_cuts": [
                 {
-                    "beat_id": f"beat-{index + 1}",
-                    "topic": topic,
-                    "thought": thought,
-                    "media_ids": [f"m{index + 1:03d}"],
-                    "layout": "fullscreen",
-                    "duration_s": 2,
+                    "cut_id": f"cut-{index + 1}",
+                    "media_id": f"m{index + 1:03d}",
+                    "source_start_s": 2.0,
+                    "source_end_s": 3.0,
+                    "output_duration_s": 1.0,
+                    "role": "hook" if index == 0 else "payoff" if index == 5 else "build",
                 }
-                for index, (topic, thought) in enumerate(
-                    (
-                        ("Harbour", "Boats leave before the heat"),
-                        ("Market", "Figs are cheapest at nine"),
-                        ("Sunset", "The west cliffs fill up early"),
-                    )
-                )
+                for index in range(6)
             ],
         }
     )
@@ -176,9 +173,10 @@ def _op(direction: str, *, pace: str | None = None) -> dict:
     }
 
 
-def _snapshot(*, story: bool) -> dict:
+def _snapshot() -> dict:
+    """The web drawer's snapshot for a guided revision (`snapshot.ts` lists `direction`)."""
     return {
-        "allowed_op_families": ["direction", "story_direction"] if story else ["direction"],
+        "allowed_op_families": ["direction"],
         "guided_revision": dict(REVISION),
         "slots": [
             {
@@ -260,7 +258,7 @@ def turn(monkeypatch):
         generative_jobs, "variant_render_baseline", lambda _variant: REVISION["base_generation"]
     )
 
-    seen: dict = {"stamped": [], "planner_inputs": [], "prompts": []}
+    seen: dict = {"stamped": [], "planner_inputs": [], "prompts": [], "planner_fails": False}
 
     class _RecordedPlanner:
         def __init__(self, _client) -> None:  # noqa: ANN001
@@ -268,8 +266,10 @@ def turn(monkeypatch):
 
         def run(self, agent_input, ctx=None):  # noqa: ANN001, ARG002
             seen["planner_inputs"].append(agent_input)
+            if seen["planner_fails"]:
+                raise TerminalError("recorded planner outage")
             real = edit_proposal.EditProposalAgent(None)  # type: ignore[arg-type]
-            return real.parse(_planner_raw(agent_input.direction), agent_input)
+            return real.parse(_planner_raw(), agent_input)
 
     real_plan = edit_direction_planner.plan_direction_snapshot
 
@@ -281,8 +281,9 @@ def turn(monkeypatch):
     monkeypatch.setattr(edit_direction_planner, "EditProposalAgent", _RecordedPlanner)
     monkeypatch.setattr(edit_direction_planner, "plan_direction_snapshot", _stamping)
 
-    def submit(op: dict, *, story_client: bool = False, message: str = "change the direction"):
+    def submit(op: dict, *, message: str = "change the direction", planner_fails: bool = False):
         raw = _copilot_raw(op)
+        seen["planner_fails"] = planner_fails
 
         class _RecordedCopilot:
             def __init__(self, _client) -> None:  # noqa: ANN001
@@ -296,7 +297,7 @@ def turn(monkeypatch):
         monkeypatch.setattr(copilot_route, "EditCopilotAgent", _RecordedCopilot)
         response = TestClient(app, raise_server_exceptions=False).post(
             f"/plan-items/{item.id}/variants/v1/copilot/turn",
-            json={"message": message, "turns": [], "snapshot": _snapshot(story=story_client)},
+            json={"message": message, "turns": [], "snapshot": _snapshot()},
         )
         assert response.status_code == 200, response.text
         return response.json(), seen
@@ -315,114 +316,95 @@ def test_fast_montage_without_a_pace_is_the_same_op_either_way(turn, monkeypatch
     body, seen = turn(_op("fast_montage"), message="make it a fast paced montage")
 
     (op,) = body["ops"]
-    assert list(op) == [
-        "op",
-        "direction",
-        "revision_number",
-        "base_generation",
-        "server_planned",
-        "cuts",
-        "clear_text",
-        "hard_cuts",
-        "minimal_text",
-    ]
+    assert list(op) == MONTAGE_OP_KEYS
     assert op["direction"] == "fast_montage"
     assert op["clear_text"] == [{"id": "guided-thought-1", "expected_text": "AI thought"}]
     assert len(op["cuts"]) == 6
-    assert body["reply"] == (
-        "I built a fast, music-led replacement draft from the strongest analyzed moments."
-    )
+    assert body["reply"] == FAST_REPLY
     (stamped,) = seen["stamped"]
     assert (stamped.direction, stamped.pace) == ("fast_montage", "fast")
     assert seen["planner_inputs"][0].goal == "Show the strongest visual moments quickly."
     assert (DIRECTION_FRAGMENT in seen["prompts"][0]) is follows
 
 
-def test_text_explainer_is_planned_and_staged_as_a_story(turn, monkeypatch) -> None:
-    _flag(monkeypatch, True)
-    body, seen = turn(
-        _op("text_explainer"), story_client=True, message="turn this into a text explainer"
-    )
-
-    (stamped,) = seen["stamped"]
-    assert stamped.direction == "text_explainer"
-    assert stamped.pace == "balanced"  # the approved story's pace: none was stated
-    assert [beat.thought for beat in stamped.story_beats] == [
-        "Boats leave before the heat",
-        "Figs are cheapest at nine",
-        "The west cliffs fill up early",
-    ]
-    (op,) = body["ops"]
-    assert op["direction"] == "text_explainer"
-    assert "pace" not in op
-    assert "cuts" not in op and "clear_text" not in op
-    assert op["minimal_text"] is False and op["hard_cuts"] is False
-    assert [beat["thought"] for beat in op["beats"]] == [
-        beat.thought for beat in stamped.story_beats
-    ]
-    assert [beat["media_ids"] for beat in op["beats"]] == [[m] for m in MEDIA_IDS[:3]]
-    assert body["reply"] == (
-        "I built a balanced text explainer replacement draft from your analyzed footage."
-    )
-
-
-def test_relaxed_pace_reaches_the_planner_and_the_op(turn, monkeypatch) -> None:
-    _flag(monkeypatch, True)
-    body, seen = turn(
-        _op("guided_story", pace="relaxed"),
-        story_client=True,
-        message="make it a calm story, let each moment breathe",
-    )
-
-    (stamped,) = seen["stamped"]
-    assert (stamped.direction, stamped.pace) == ("guided_story", "relaxed")
-    assert seen["planner_inputs"][0].pace == "relaxed"
-    (op,) = body["ops"]
-    assert (op["direction"], op["pace"]) == ("guided_story", "relaxed")
-    assert op["hard_cuts"] is False  # a relaxed story crossfades
-
-
-def test_relaxed_montage_on_the_web_client_keeps_cuts_and_records_the_pace(
-    turn, monkeypatch
+@pytest.mark.parametrize("planner_fails", [False, True], ids=["planner", "fallback"])
+@pytest.mark.parametrize("pace", ["relaxed", "balanced"])
+def test_a_pace_the_montage_cannot_follow_is_named_not_claimed(
+    turn, monkeypatch, pace, planner_fails
 ) -> None:
     _flag(monkeypatch, True)
-    body, seen = turn(_op("fast_montage", pace="relaxed"), message="a montage, but calm")
+    plain, _ = turn(_op("fast_montage"), planner_fails=planner_fails)
+    body, seen = turn(
+        _op("fast_montage", pace=pace), message="a montage, but calm", planner_fails=planner_fails
+    )
 
-    (stamped,) = seen["stamped"]
-    assert (stamped.direction, stamped.pace) == ("fast_montage", "relaxed")
-    (op,) = body["ops"]
-    assert (op["direction"], op["pace"]) == ("fast_montage", "relaxed")
-    assert len(op["cuts"]) == 6 and op["minimal_text"] is True
-    assert "fast, music-led" not in body["reply"]
+    assert body["ops"] == plain["ops"]
+    assert list(body["ops"][0]) == MONTAGE_OP_KEYS
+    assert [(s.direction, s.pace) for s in seen["stamped"]] == [("fast_montage", "fast")] * 2
+    assert body["outcome"] == "applied"
+    assert body["reply"] == (
+        f"{FAST_REPLY} The {pace} pacing isn't applied on this video yet: a fast montage keeps "
+        "its short cuts."
+    )
 
 
-def test_story_direction_on_a_cuts_only_client_is_said_not_planned(turn, monkeypatch) -> None:
+def test_a_stated_fast_pace_is_what_the_montage_does(turn, monkeypatch) -> None:
     _flag(monkeypatch, True)
-    body, seen = turn(_op("text_explainer"), message="turn this into a text explainer")
+    plain, _ = turn(_op("fast_montage"))
+    body, _ = turn(_op("fast_montage", pace="fast"), message="a snappy montage")
+
+    assert body["ops"] == plain["ops"]
+    assert body["reply"] == FAST_REPLY
+
+
+@pytest.mark.parametrize("direction", ["text_explainer", "guided_story"])
+@pytest.mark.parametrize("pace", [None, "relaxed"])
+def test_a_story_direction_is_said_not_planned(turn, monkeypatch, direction, pace) -> None:
+    _flag(monkeypatch, True)
+    body, seen = turn(_op(direction, pace=pace), message="turn this into something calmer")
 
     assert body["ops"] == []
     assert body["outcome"] == "unsupported"
     assert body["rejection_reasons"][0]["reason"] == "capability_unavailable"
     assert body["reply"] == (
-        "The text explainer direction isn't applied on this video yet: this editor can only "
-        "restage it as a fast montage, so nothing changed. A different direction needs a fresh "
-        "edit."
+        f"The {direction.replace('_', ' ')} direction isn't applied on this video yet: this "
+        "editor can only restage it as a fast montage, so nothing changed. A different "
+        "direction needs a fresh edit."
     )
     assert seen["stamped"] == [] and seen["planner_inputs"] == []
 
 
-def test_stated_pace_not_applied_is_said(turn, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "op", [{**_op("fast_montage"), "direction": "story"}, {**_op("fast_montage"), "pace": "slow"}]
+)
+def test_unknown_direction_or_pace_never_reaches_the_planner(turn, monkeypatch, op) -> None:
     _flag(monkeypatch, True)
-    monkeypatch.setattr(settings, "pace_drives_cuts_enabled", False)
-    body, seen = turn(_op("fast_montage", pace="relaxed"), message="a montage, but calm")
+    body, seen = turn(op)
 
-    (stamped,) = seen["stamped"]
-    assert stamped.pace == "fast"
-    (op,) = body["ops"]
-    assert "pace" not in op
-    assert body["reply"].endswith(
-        "The relaxed pacing isn't applied on this video yet: it keeps the fast pace."
+    assert body["ops"] == [] and body["outcome"] == "failed"
+    assert body["rejection_reasons"][0]["reason"] == "invalid_value"
+    assert seen["stamped"] == []
+
+
+@pytest.mark.parametrize("follows", [True, False])
+def test_typed_wire_carries_the_stated_pace_only_with_the_switch_on(monkeypatch, follows) -> None:
+    _flag(monkeypatch, follows)
+    contract = WireContract(copilot_schema())
+    value = {"intent": "edit", "reply": "Prepared", "ops": [_op("fast_montage", pace="relaxed")]}
+
+    if not follows:
+        with pytest.raises(ValueError):
+            contract.encode(value)
+        return
+    assert contract.decode(contract.encode(value)) == value
+    with pytest.raises(ValueError):
+        contract.encode({**value, "ops": [_op("fast_montage", pace="slow")]})
+    agent = EditCopilotAgent(None)  # type: ignore[arg-type]
+    data = agent.Input.model_validate(
+        {"utterance": "calm montage", "variant_snapshot": _snapshot()}
     )
+    (parsed,) = agent.parse(json.dumps(contract.decode(contract.encode(value))), data).ops
+    assert parsed["pace"] == "relaxed"
 
 
 @pytest.mark.parametrize(
@@ -436,30 +418,16 @@ def test_stated_pace_not_applied_is_said(turn, monkeypatch) -> None:
 )
 def test_switch_off_is_the_foundation_contract(turn, monkeypatch, op) -> None:
     _flag(monkeypatch, False)
-    body, seen = turn(op, story_client=True)
+    body, seen = turn(op)
 
-    if op.get("direction") == "fast_montage" and op.get("pace") != "slow":
+    if op.get("direction") == "fast_montage":
         (sent,) = body["ops"]
-        assert "pace" not in sent and sent["direction"] == "fast_montage"
+        assert list(sent) == MONTAGE_OP_KEYS
+        assert body["reply"] == FAST_REPLY
         (stamped,) = seen["stamped"]
         assert (stamped.direction, stamped.pace) == ("fast_montage", "fast")
-    elif op.get("pace") == "slow":
-        (sent,) = body["ops"]
-        assert "pace" not in sent
     else:
         assert body["ops"] == [] and body["outcome"] == "failed"
         assert body["rejection_reasons"][0]["reason"] == "invalid_value"
         assert seen["stamped"] == []
     assert DIRECTION_FRAGMENT not in seen["prompts"][0]
-
-
-@pytest.mark.parametrize(
-    "op", [{**_op("fast_montage"), "direction": "story"}, {**_op("fast_montage"), "pace": "slow"}]
-)
-def test_unknown_direction_or_pace_never_reaches_the_planner(turn, monkeypatch, op) -> None:
-    _flag(monkeypatch, True)
-    body, seen = turn(op, story_client=True)
-
-    assert body["ops"] == [] and body["outcome"] == "failed"
-    assert body["rejection_reasons"][0]["reason"] == "invalid_value"
-    assert seen["stamped"] == []
