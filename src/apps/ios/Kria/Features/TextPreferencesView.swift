@@ -509,9 +509,11 @@ struct TextPreferencesView: View {
             groupLabel("Placement and color")
             pickerRow(.placement) {
                 Picker("Placement", selection: Binding(get: { effective.position ?? "" }, set: { rule.position = $0.isEmpty ? nil : $0 })) {
-                    if inheritsNoPosition { Text(defaults.placement).tag("") }
+                    if inheritsNoPosition { Text(defaults.placement == TextRoleSpec.kriaPicksPlacement ? "Kria picks" : defaults.placement).tag("") }
                     ForEach(TextRoleSpec.positions, id: \.self) { Text(TextRoleSpec.positionName($0)).tag($0) }
-                }.accessibilityIdentifier("text-preference-placement")
+                }
+                .accessibilityIdentifier("text-preference-placement")
+                .accessibilityHint(inheritsNoPosition && defaults.placement == TextRoleSpec.kriaPicksPlacement ? "Kria picks the clearest spot" : "")
             }
             VStack(alignment: .leading, spacing: 4) {
                 settingHeader(.color)
@@ -635,6 +637,7 @@ struct TextPreferencesView: View {
 
     /// A type either follows All text or has its own value. The tag says which, and "Changed" is also the way back.
     @ViewBuilder private func sourceTag(_ setting: TextSetting) -> some View {
+        // Both states fill the capsule's height so toggling "Changed" never shifts the rows below.
         let id = "text-preference-\(setting.rawValue)-source"
         if !isAllText {
             if rule.overrides(setting) {
@@ -652,6 +655,7 @@ struct TextPreferencesView: View {
             } else {
                 Text("From All text")
                     .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                    .frame(minHeight: 44)
                     .accessibilityLabel("\(setting.title) from All text")
                     .accessibilityIdentifier(id)
             }
