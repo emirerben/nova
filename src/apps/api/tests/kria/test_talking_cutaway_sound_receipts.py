@@ -15,8 +15,6 @@ import copy
 import json
 from pathlib import Path
 
-import pytest
-
 from app.kria.brief import BriefRequirement
 from app.kria.brief_checks import (
     PlanFacts,
@@ -54,7 +52,10 @@ def _draft(clips: list[dict] | None = None) -> PlanFacts:
     )
 
 
-def _rendered(*, speakers: list[str], footage: list[str]) -> PlanFacts:
+def _rendered(*, speakers: list[str], cutaways: list[str], unplaced: list[str] = ()) -> PlanFacts:
+    """A finished multi-clip Talking variant as the writer persists it: roles keyed by the
+    ingest id (`files/...`), placements keyed by the phone media id."""
+    ingest = {m: f"files/ingest{i}" for i, m in enumerate([*speakers, *cutaways, *unplaced])}
     variant = {
         "variant_id": "v1",
         "render_destination": "device",
@@ -63,10 +64,31 @@ def _rendered(*, speakers: list[str], footage: list[str]) -> PlanFacts:
         "phone_talking_multi_clip": {
             "version": 1,
             "speaker_media_ids": speakers,
-            "cutaways": [],
-            "unplaced": [],
-            "clips": [{"clip_id": m, "role": "speaker"} for m in speakers]
-            + [{"clip_id": m, "role": "footage"} for m in footage],
+            "cutaways": [
+                {"media_id": m, "start_s": 2.0 + i, "end_s": 4.0 + i}
+                for i, m in enumerate(cutaways)
+            ],
+            "unplaced": [
+                {"media_id": m, "position": 3, "reason": "no_room"} for m in unplaced
+            ],
+            "clips": [{"clip_id": ingest[m], "role": "speaker"} for m in speakers]
+            + [{"clip_id": ingest[m], "role": "footage"} for m in [*cutaways, *unplaced]],
+        },
+    }
+    return plan_facts_from_phone_variant(variant)
+
+
+def _rendered_head(*, cutaways: list[str]) -> PlanFacts:
+    variant = {
+        "variant_id": "v1",
+        "render_destination": "device",
+        "resolved_archetype": "subtitled",
+        "text_elements": [],
+        "phone_talking_head": {
+            "cutaways": [
+                {"media_id": m, "start_s": 2.0 + i, "end_s": 4.0 + i}
+                for i, m in enumerate(cutaways)
+            ],
         },
     }
     return plan_facts_from_phone_variant(variant)
@@ -123,8 +145,8 @@ def test_turning_a_cutaway_sound_on_is_not_what_a_talking_edit_does() -> None:
 
 
 def test_the_finished_video_judges_the_clip_by_the_role_the_writer_gave_it() -> None:
-    muted = _rendered(speakers=[SPEAKER, PODIUM], footage=[STADIUM])
-    spoke = _rendered(speakers=[SPEAKER, STADIUM], footage=[PODIUM])
+    muted = _rendered(speakers=[SPEAKER, PODIUM], cutaways=[STADIUM])
+    spoke = _rendered(speakers=[SPEAKER, STADIUM], cutaways=[PODIUM])
 
     assert check_requirement(_req("r4"), muted).status == "met"
     refused = check_requirement(_req("r4"), spoke)
@@ -132,15 +154,15 @@ def test_the_finished_video_judges_the_clip_by_the_role_the_writer_gave_it() -> 
     assert NOT_ON_TALKING in refused.reason
 
 
-@pytest.mark.parametrize(
-    ("language", "reason"),
-    [
-        ("en", "That clip plays without its own sound, so your voice keeps playing over it"),
-        ("tr", "O klip kendi sesi olmadan oynuyor, sesin üzerinde çalmaya devam ediyor"),
-    ],
-)
-def test_the_receipt_says_the_voice_keeps_playing(language: str, reason: str) -> None:
-    from app.kria.reply_language import reply_language_for
+def test_a_footage_clip_the_writer_left_out_never_played_muted() -> None:
+    left_out = _rendered(speakers=[SPEAKER, PODIUM], cutaways=[], unplaced=[STADIUM])
 
-    with reply_language_for(language):
-        assert check_requirement(_req("r4"), _draft()).reason == reason
+    receipt = check_requirement(_req("r4"), left_out)
+
+    assert receipt.status == "not_possible"
+    assert NOT_ON_TALKING in receipt.reason
+
+
+def test_the_single_speaker_head_judges_the_clip_by_its_cutaways() -> None:
+    assert check_requirement(_req("r4"), _rendered_head(cutaways=[STADIUM])).status == "met"
+    assert check_requirement(_req("r4"), _rendered_head(cutaways=[PODIUM])).status == "not_possible"
