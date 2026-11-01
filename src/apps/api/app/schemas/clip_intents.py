@@ -39,6 +39,7 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
+from collections.abc import Iterable
 from typing import Literal
 
 import regex
@@ -775,6 +776,111 @@ def vision_evidence_text(record: ClipUnderstanding) -> str:
     parts.extend(record.props)
     parts.extend(record.actions)
     return " ".join(p for p in parts if p)
+
+
+# KRI-1108: the words of a first/last ask that place a clip or say it is one, never what it
+# shows ("End on the trophy celebration clip": only "trophy celebration" is footage), and
+# the words that never name anything at all.
+_PIN_FRAME_WORDS = frozenset(
+    "clip clips video videos footage shot shots moment moments part parts scene scenes photo "
+    "photos image images picture pictures thing things end ending start starting beginning "
+    "opening opener closing closer intro outro finale first last final finally whole entire "
+    "rest order sequence montage".split()
+)
+_PIN_STOP_WORDS = frozenset(
+    "the a an my our your their his her its this that these those of to in on at by for with "
+    "from and or but into onto over under after before during while as is are was were be it "
+    "them me us you we they he she who which what when where how all any each every some no "
+    "not only just very more most other another such then than so too also up down out off "
+    "about one ones".split()
+)
+# A word of the ask is one a record says when both have the same root: the word without its
+# English ending, cut to ``_ROOT_CHARS`` letters (``spoken_quotes`` stems alike). Longest
+# ending first; the root keeps at least three letters.
+_WORD_ENDINGS = (
+    ("ations", ""),
+    ("ation", ""),
+    ("ings", ""),
+    ("ing", ""),
+    ("ions", ""),
+    ("ion", ""),
+    ("ies", "i"),
+    ("ers", ""),
+    ("er", ""),
+    ("es", ""),
+    ("ed", ""),
+    ("s", ""),
+    ("e", ""),
+    ("y", "i"),
+)
+# "cutting" / "cuts", "hugging" / "hug"; never "fall", "glass", "staff".
+_UNDOUBLED = frozenset("bdgmnprt")
+_ROOT_CHARS = 5
+
+
+def _word_root(word: str) -> str:
+    """One root for "smiling" / "smiles" / "smile", "trophies" / "trophy", "celebrating" /
+    "celebration" and "cutting" / "cuts"."""
+    for ending, replacement in _WORD_ENDINGS:
+        stem = word[: -len(ending)]
+        if not word.endswith(ending) or len(stem) < 3:
+            continue
+        if (ending == "s" and stem.endswith("s")) or (ending == "y" and stem[-1] in "aeiou"):
+            break  # "glass", "play"
+        doubled = stem[-1] == stem[-2] and stem[-1] in _UNDOUBLED
+        if doubled and ending in ("ing", "ings", "ed", "er", "ers"):
+            stem = stem[:-1]
+        word = stem + replacement
+        break
+    return word[:_ROOT_CHARS]
+
+
+def _record_roots(record: ClipUnderstanding) -> set[str]:
+    """What a clip's record says, as word roots: the vision model's own words, the text and
+    brands it read in the frame, and what is said in the clip."""
+    text = " ".join(
+        [
+            vision_evidence_text(record),
+            record.on_screen_text,
+            *record.brands,
+            record.speech.transcript,
+        ]
+    )
+    return {_word_root(word) for word in _word_list(text)}
+
+
+def pin_subject_unfound(
+    attribute: str,
+    matched: Iterable[ClipUnderstanding],
+    records: Iterable[ClipUnderstanding],
+) -> bool:
+    """True when no record of the clips ``matched`` to a first/last ask says any word of it,
+    part of it is in no record of ``records`` (the whole batch), and another record says the
+    rest of it.
+
+    KRI-1108 (Leverkusen M3): "End on the trophy celebration" was matched to the Nürnberg
+    players thanking their fans at confidence 0.9. No record says "trophy"; another clip's
+    record says "celebrating", and the matched one says neither. A real ending said in other
+    words ("the Nürnberg players thanking their fans") shares a word with its clip
+    ("players"); one matched clip that says it vouches for the others ("Taha celebrating in
+    both goal clips": only one record says "celebrating"); an ask whose words are all
+    somewhere in the batch is a choice between clips, not something missing. An ask no record
+    says any word of ("the final whistle", a person's name, an ask in another language) is
+    beyond what words can judge, so it is never held here. Words only: what the ask means is
+    never judged. File names and numbers are not footage words.
+    """
+    wanted = {
+        _word_root(word)
+        for word in _word_list(attribute)
+        if len(word) >= 3
+        and not any(char.isdigit() for char in word)
+        and word not in _PIN_STOP_WORDS
+        and word not in _PIN_FRAME_WORDS
+    }
+    if not wanted or any(wanted & _record_roots(record) for record in matched):
+        return False
+    said = set().union(*(_record_roots(other) for other in records))
+    return bool(wanted - said) and bool(wanted & said)
 
 
 # KRI-612: "explain the footages", "a short summary on each clip", "say what's happening

@@ -31,7 +31,7 @@ import re
 import tempfile
 import threading
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
@@ -59,7 +59,7 @@ from app.agents.clip_request_resolver import (
     ResolverIntentOut,
 )
 from app.config import settings
-from app.kria.reply_language import current_reply_language, say
+from app.kria.reply_language import current_reply_language, detect_chat_language, say
 from app.schemas.clip_intents import (
     EXCLUDE_MIN_CONFIDENCE,
     LABEL_MIN_CONFIDENCE,
@@ -78,6 +78,7 @@ from app.schemas.clip_intents import (
     ground_label,
     ground_placeholder_label,
     is_clip_description_label,
+    pin_subject_unfound,
 )
 from app.schemas.clip_understanding import ClipUnderstanding
 from app.services.clip_facts import order_by_capture_time
@@ -384,6 +385,9 @@ class _IntentWork:
     # KRI-779: every clip the resolver put forward for this intent (an assignment at any
     # confidence, or a vision check), whatever the check said after.
     considered_media_ids: set[str] = field(default_factory=set)
+    # KRI-1108: clips the resolver matched to a first/last ask whose subject no record shows
+    # (`_unfound_pin`). Never kept, and never a picker pre-tick.
+    unfound_media_ids: set[str] = field(default_factory=set)
 
 
 def _cached_answer(clip: IntentClip, question_norm: str) -> dict[str, Any] | None:
@@ -846,6 +850,56 @@ def _found_rows_text(labels: list[str]) -> str:
     )
 
 
+def _unfound_rows_text(labels: list[str]) -> str:
+    """KRI-1108: the question for picker rows whose subject no clip's record shows."""
+    shown = ", ".join(f'"{label}"' for label in labels[:4])
+    if len(labels) == 1:
+        return say(
+            en=(
+                f"I couldn't find {shown} in your clips. "
+                "Tap the clip that shows it, or tell me there isn't one."
+            ),
+            tr=f"{shown} kliplerinde bulamadım. Onu gösteren klibe dokun ya da olmadığını söyle.",
+        )
+    more = say(
+        en=f" and {len(labels) - 4} more" if len(labels) > 4 else "",
+        tr=f" ve {len(labels) - 4} tane daha" if len(labels) > 4 else "",
+    )
+    return say(
+        en=(
+            f"I couldn't find {shown}{more} in your clips. "
+            "Tap the clip for each one, or mark the ones that aren't there."
+        ),
+        tr=(
+            f"Şunları kliplerinde bulamadım: {shown}{more}. "
+            "Her biri için klibe dokun ya da olmayanları işaretle."
+        ),
+    )
+
+
+def _unfound_pin(
+    intent: ClipIntent,
+    matched: list[ClipUnderstanding],
+    records: Iterable[ClipUnderstanding],
+) -> bool:
+    """KRI-1108: a first/last ask the resolver matched only to clips that do not show it.
+
+    Leverkusen M3: "End on the trophy celebration" was seated on the Nürnberg players
+    thanking their fans at confidence 0.9, and the creator was never told there is no trophy
+    shot. Membership confidence is the resolver's own word, so the ask's words are checked
+    against the records (``pin_subject_unfound``). The records are written in English, so an
+    ask written in Turkish is never judged by its words. A pin decides where the edit starts
+    or ends, so only those are held: a flagged match is asked about, never rejected.
+    """
+    return (
+        intent.op == "order"
+        and intent.position is not None
+        and bool(matched)
+        and detect_chat_language(intent.attribute) != "tr"
+        and pin_subject_unfound(intent.attribute, matched, records)
+    )
+
+
 def picker_eligible(intent: ClipIntent) -> bool:
     """True when the creator tapping clips fully answers this intent.
 
@@ -1025,6 +1079,8 @@ def _build_clip_question(
         near_misses = (work.failed_media_ids | work.considered_media_ids) - (
             work.vision_no_media_ids - work.failed_media_ids
         )
+        # KRI-1108: a clip matched to a subject no record shows is no suggestion.
+        near_misses -= work.unfound_media_ids
         if found and work.intent.op in _FOUND_SETTLES_OPS and not work.intent.exclusive:
             near_misses = set()
         live = _live_photo_ids(work, clips, records_by_id) if narrow_photos else set()
@@ -1495,6 +1551,18 @@ async def resolve_clip_intents_for_turn(
 
         candidate_media = list(dict.fromkeys([*assignment_by_media, *vision_media]))
         soft_low: list[tuple[float, str]] = []
+        matched = [
+            alias_to_media[alias] for alias in assignment_by_media if alias in alias_to_media
+        ]
+        unfound_pin = _unfound_pin(
+            intent,
+            [
+                records_by_id[media_id]
+                for media_id in matched
+                if intent.accepts_source_kind(clip_by_id[media_id].kind)
+            ],
+            records_by_id.values(),
+        )
         for alias in candidate_media:
             media_id = alias_to_media.get(alias)
             if media_id is None or not intent.accepts_source_kind(clip_by_id[media_id].kind):
@@ -1702,6 +1770,11 @@ async def resolve_clip_intents_for_turn(
                     )
                     continue
                 if assignment is None:
+                    continue
+                if unfound_pin:
+                    # KRI-1108: never seated, at any confidence; the creator is asked, with
+                    # nothing ticked.
+                    work.unfound_media_ids.add(media_id)
                     continue
                 # Leverkusen M2: a hidden part on the wrong clip shows what the creator hid on
                 # the right one, so its clip is held to the label bar; below it the vision
@@ -2330,6 +2403,7 @@ async def resolve_clip_intents_for_turn(
                 )
             )
 
+    unfound_pins = sum(len(w.unfound_media_ids) for w in work_by_id.values())
     redacted_counts = {
         # Redacted counts only (no creator text / model output).
         "resolver_question_intents": question_intents,
@@ -2347,6 +2421,7 @@ async def resolve_clip_intents_for_turn(
         "found_settled": found_settled,
         # Omitted when nothing failed, so every other turn's diagnostics are unchanged.
         **({"vision_error_types": vision_errors[:8]} if vision_errors else {}),
+        **({"unfound_pins": unfound_pins} if unfound_pins else {}),
     }
     clip_order = {clip.media_id: index for index, clip in enumerate(clips)}
     exclusion_suspects = {
@@ -2422,7 +2497,22 @@ async def resolve_clip_intents_for_turn(
                 for c in clip_question["categories"]
                 if found_keys & {r["key"] for r in answered_rows(c)}
             ]
-            open_rows = [c for c in clip_question["categories"] if c not in found_rows]
+            # KRI-1108: a row whose subject no clip shows says so, never "I couldn't tell which".
+            unfound_keys = {
+                intent_key(w.intent) for w in creator_work if w.unfound_media_ids and not w.kept
+            }
+            unfound_rows = [
+                c
+                for c in clip_question["categories"]
+                if c not in found_rows
+                and not c["suggested_media_ids"]
+                and unfound_keys & {r["key"] for r in answered_rows(c)}
+            ]
+            open_rows = [
+                c
+                for c in clip_question["categories"]
+                if c not in found_rows and c not in unfound_rows
+            ]
             # KRI-779: a picker whose only candidate is the one video asks whether the
             # moment is in it at all, in plain words, never "which of your clips".
             in_the_video = (
@@ -2437,6 +2527,7 @@ async def resolve_clip_intents_for_turn(
                 part
                 for part in (
                     _found_rows_text([c["label"] for c in found_rows]) if found_rows else "",
+                    _unfound_rows_text([c["label"] for c in unfound_rows]) if unfound_rows else "",
                     clip_question_text(open_rows, only_video=in_the_video) if open_rows else "",
                 )
                 if part
