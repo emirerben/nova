@@ -101,6 +101,19 @@ def test_an_on_ask_plays_the_footages_own_sound_over_a_muted_speaker(monkeypatch
     assert receipt.status == "met"
 
 
+def test_the_render_ready_review_rejudges_the_pinned_recipe_not_the_montage_clips(monkeypatch):
+    from app.services.phone_clip_sound_toggle import rendered_toggle_receipt
+
+    job, recipe, variant = _run(monkeypatch, flag=True, state="on")
+    [row] = rendered_toggle_receipt(job.assembly_plan, variant, recipe)["rows"]
+    assert (row["requirement_id"], row["status"]) == ("r2", "met")
+
+    unmuted = recipe.model_copy(deep=True)
+    unmuted.audio.mute_windows = []
+    [row] = rendered_toggle_receipt(job.assembly_plan, variant, unmuted)["rows"]
+    assert row["status"] == "partial"
+
+
 def test_an_off_ask_keeps_the_footage_silent_and_says_so(monkeypatch):
     _job, recipe, variant = _run(monkeypatch, flag=True, state="off")
     assert _sound_track(recipe) is None

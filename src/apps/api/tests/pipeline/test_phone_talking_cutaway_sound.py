@@ -22,10 +22,6 @@ Ways this can fail, each pinned below:
 from __future__ import annotations
 
 import pytest
-from app.pipeline.phone_talking_cutaway_sound import (
-    judge_cutaway_sound,
-    plan_cutaway_sound,
-)
 
 from app.config import settings
 from app.kria.brief import BriefRequirement
@@ -37,6 +33,10 @@ from app.pipeline.phone_subtitled_plan import (
     PhoneCutaway,
     compile_phone_subtitled_plan,
     cutaways_from_recipe,
+)
+from app.pipeline.phone_talking_cutaway_sound import (
+    judge_cutaway_sound,
+    plan_cutaway_sound,
 )
 from app.services.phone_rollout import validate_phone_pilot_recipe
 from tests.pipeline.test_phone_subtitled_plan import _CUES, _binding
