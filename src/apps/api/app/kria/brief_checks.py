@@ -2278,8 +2278,8 @@ def _talking_footage_ids(variant: Mapping[str, Any]) -> tuple[str, ...] | None:
     """The clips a finished phone Talking render played muted over the speaker, by phone
     media id: the placed cutaways of the multi-clip writer, else those of the one-speaker head.
     A footage clip the writer left out never played, so it is not listed."""
-    for field in ("phone_talking_multi_clip", "phone_talking_head"):
-        receipt = variant.get(field)
+    for key in ("phone_talking_multi_clip", "phone_talking_head"):
+        receipt = variant.get(key)
         if isinstance(receipt, Mapping) and isinstance(receipt.get("cutaways"), list):
             return tuple(
                 dict.fromkeys(
