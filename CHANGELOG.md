@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.44.0] - 2026-11-01
+
+### Changed
+- fix(kria): let a label on a Visuals photo pass the phone text check (KRI-1102) (#1993) <!-- release-pr: 1993 -->
+
 ## [0.83.43.0] - 2026-11-01
 
 ### Fixed
