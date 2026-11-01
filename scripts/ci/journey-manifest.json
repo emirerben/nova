@@ -2134,6 +2134,15 @@
       ]
     },
     {
+      "id": "kri-1150-talking-muted-cutaway-audio",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_talking_cutaway_sound_receipts.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri1150_talking_keep_audio_thread.json",
+        "src/apps/api/tests/kria/test_talking_cutaway_sound_receipts.py"
+      ]
+    },
+    {
       "id": "kri-957-after-voice-clip-line",
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri957_after_voice_line.py tests/tasks/test_kri842_narrated_clip_sound.py tests/agents/test_main_creator_user_song.py tests/agents/test_brief_extractor.py",
