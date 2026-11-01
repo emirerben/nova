@@ -415,6 +415,13 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
             "Cropped clips await native parity and device qualification",
             capability="sourceCrop",
         )
+    if recipe_has_clip_tilt(recipe) and "clipTilt" not in set(
+        settings.phone_render_verified_features
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Tilted clips await native parity and device qualification",
+            capability="clipTilt",
+        )
     missing = recipe.required_capabilities - set(settings.phone_render_verified_features)
     if missing:
         raise PhoneCapabilityUnavailable(
@@ -763,6 +770,50 @@ def speaker_background_unavailable_reason(*, require_client: bool | None = None)
     if not speaker_background_client_supported(require_client=require_client):
         return "client_protocol_below_min"
     return None
+
+
+def recipe_has_clip_tilt(recipe: Any) -> bool:
+    """Does any clip of this recipe turn (`rotation_degrees != 0`) or carry a `backdrop`?"""
+    return any(
+        clip.transform.rotation_degrees != 0 or getattr(clip, "backdrop", None) is not None
+        for track in getattr(recipe, "tracks", None) or []
+        for clip in track.clips
+    )
+
+
+def clip_tilt_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode a recipe's ``clipTilt`` capability?
+
+    At least ``media_tilt_min_client_protocol`` (28) knows the capability token; an older
+    build cannot decode ``required_capabilities`` and fails the recipe. ``require_client``
+    ``None`` applies the gate only inside an HTTP request (workers have no app build to
+    qualify); pass ``True``/``False`` to force it.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.media_tilt_min_client_protocol
+
+
+def clip_tilt_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "may a phone edit be tilted right now".
+
+    True iff the kill switch (``media_tilt_enabled``, default off) is on, ``clipTilt`` is in
+    ``phone_render_verified_features`` (the device-parity gate) and the app-build gate holds
+    (`clip_tilt_client_supported`).
+    """
+    return bool(
+        settings.media_tilt_enabled
+        and "clipTilt" in set(settings.phone_render_verified_features)
+        and clip_tilt_client_supported(require_client=require_client)
+    )
 
 
 # Variant field an HTTP editor Save writes when it compiled one-word captions for a build
