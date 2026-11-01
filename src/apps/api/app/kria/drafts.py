@@ -484,6 +484,25 @@ def _editor_snapshot(variant: dict[str, Any], generation_id: str | None) -> dict
     return {"base_generation": generation_id or "", "sections": sections}
 
 
+def bootstrap_editor_payload(
+    job: Any, variant_key: str, generation_id: str | None
+) -> dict[str, Any]:
+    """A fresh draft's editor payload for ``job``'s variant.
+
+    Starts from the variant as the status route serves it: a never-Saved phone Talking
+    edit keeps its speaker background, sounds and cards only in the pinned device recipe,
+    which the route projects on read (KRI-1165).
+    """
+    from app.routes.generative_jobs import (  # noqa: PLC0415
+        _augment_variant_with_phone_subtitled_editor_sections,
+    )
+
+    variant = dict(_variant(job, variant_key) or {})
+    return _editor_snapshot(
+        _augment_variant_with_phone_subtitled_editor_sections(job, variant), generation_id
+    )
+
+
 async def read_or_bootstrap_draft(
     db: AsyncSession, *, thread_id: uuid.UUID, creator_id: uuid.UUID
 ) -> DraftSnapshotOut:
@@ -496,9 +515,7 @@ async def read_or_bootstrap_draft(
             intent=str(state.get("intent") or "")[:4000],
             edit_format=str(target.item.edit_format or state.get("edit_format") or "montage"),
             editor_payload=(
-                _editor_snapshot(
-                    dict(_variant(target.job, target.variant_key) or {}), target.generation_id
-                )
+                bootstrap_editor_payload(target.job, target.variant_key, target.generation_id)
                 if target.job is not None
                 else None
             ),
