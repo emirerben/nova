@@ -121,8 +121,31 @@ def test_the_ending_clip_is_left_to_its_own_rule():
         _records(talk=False, end=False, me=True),
         protect={"m-end"},
     )
-    assert roles.speakers == ("end", "me")
+    assert roles.speakers == ("me", "end")
     assert [r["clip_id"] for r in rows] == ["talk"]
+
+
+def test_the_protected_ending_clip_is_not_the_take_that_must_remain():
+    roles, rows, kept = _demote(
+        _roles(["me", "end"]),
+        _records(me=True, end=True),
+        named={"m-me"},
+        whole=False,
+        protect={"m-end"},
+    )
+    assert (roles.speakers, rows, kept) == (("me", "end"), [], KEPT_NO_CREATOR_TAKE)
+
+
+def test_naming_the_creators_own_take_never_demotes_it():
+    roles, rows, kept = _demote(
+        _roles(["me", "talk"]), _records(me=True, talk=False), named={"m-me"}, whole=False
+    )
+    assert (roles.speakers, rows, kept) == (("me", "talk"), [], KEPT_NO_CREATOR_TAKE)
+
+
+def test_the_kept_take_leads_the_main_track():
+    roles, _rows, _ = _demote(_roles(["x", "talk", "me"]), _records(x=None, talk=False, me=True))
+    assert roles.speakers == ("me", "x")
 
 
 def test_an_ask_about_no_clip_in_particular_leaves_a_clip_that_speaks_to_camera():
@@ -296,3 +319,28 @@ def test_a_clip_is_named_by_the_phone_file_name_or_a_unique_id_part():
     assert match_media_id("analysis-proxy-ios-AF8BF2A5-B06D-4089-A8CA-C55BF924F243.mp4", ids)
     assert match_media_id("2781", ids) is None
     assert match_media_id("zzzzzz", ids) is None
+
+
+def test_ordinary_shared_words_are_not_a_mention():
+    # "bizim" and "uzeri" are everyday words: two shared, none distinctive.
+    words = _creator((0.0, FILLER), (12.0, "bizim kagit uzeri"))
+    clip = _clip("a", "bizim kagit uzeri getirirsiniz")
+    _w, _u, [anchor] = schedule_mention_cutaways([clip], words=words, duration_s=40.0)
+    assert anchor.basis == BASIS_SPREAD
+
+
+def test_a_photo_pop_in_ask_is_not_a_show_the_talks_ask():
+    ask = full_screen_show_ask(
+        [_req("r1", "style", "global", display_mode="fullscreen", triggers=["grill"])]
+    )
+    assert ask is None
+
+
+def test_a_talk_with_its_own_sound_starts_after_the_creator_has_said_it():
+    words = _creator((0.0, FILLER), (12.0, "the Euro2032 final Maltepe stadium capacity"))
+    [silent], _u, _a = schedule_mention_cutaways([_clip("a", TALK)], words=words, duration_s=40.0)
+    [sounding], _u, _a = schedule_mention_cutaways(
+        [_clip("a", TALK, cap=6.0)], words=words, duration_s=40.0
+    )
+    assert sounding.start_s > silent.start_s
+    assert sounding.start_s >= 14.5

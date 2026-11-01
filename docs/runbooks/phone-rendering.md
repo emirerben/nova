@@ -994,32 +994,40 @@ said `speaks_to_camera: false`), played them back to back ahead of the creator, 
 then spread mechanically, never at a mention.
 
 - **Request**: the one typed fact the brief already carries, a live `style`/`select`/`timing`
-  requirement with `facts.display_mode = fullscreen` (`app/kria/cutaway_show_ask.py`; no wording is
-  matched, KRI-667). `clip:<id>` scope names a clip; `global` names none. A live `order`
+  requirement with `facts.display_mode = fullscreen` and no `triggers` (a photo pop-in on a spoken word,
+  KRI-840, is not this ask) (`app/kria/cutaway_show_ask.py`; no wording is matched, KRI-667).
+  `clip:<id>` scope names a clip (a Visuals-pool photo or a clip outside this edit means no ask);
+  `global` names none. A live `order`
   requirement means the creator also arranged the clips, so nothing moves (`kept:
   clip_order_asked`). No full-screen ask, or the flag off: today's behavior, byte-identical.
 - **Roles** (`phone_talking_mentions.demote_speakers_to_cutaways`, runs right after the pace
   classifier): a named clip becomes footage; for a global ask a clip whose analysis says it is NOT
   the creator speaking to camera becomes footage when another clip does speak to camera. A failed or
-  degraded analysis is "unknown", never evidence. The creator's take must remain (`kept:
-  no_creator_take_left` otherwise). The ending clip (KRI-841) keeps its own rule.
+  degraded analysis is "unknown", never evidence. A clip left that the analysis says speaks to
+  camera (not the ending clip) must remain and leads the main track, else nothing moves (`kept:
+  no_creator_take_left`, the edit is left exactly as before). Speakers and spread follow upload order. The ending clip (KRI-841) keeps its own rule.
 - **Placement** (`schedule_mention_cutaways`, called from `_schedule_talking_footage`): each footage
   clip's words (its own Whisper words plus its analysis: transcript, hook, summary, subject, brands,
   props) are compared with the creator's spoken-pass word timeline. Words are folded, split at
   letter/digit seams ("Euro2032"), cut to a 5-letter stem (Turkish endings) and weighted by rarity
   (1 / times the creator says it / clips that carry it). A mention needs two distinct shared words
-  within 6 s and a weighted total of 1.0. The window starts at the first matched word, runs up to 4 s
-  (6 s when the clip's own sound plays, `PHONE_TALKING_CUTAWAY_SOUND_ENABLED`), stops where the next
+  within 6 s, one of them distinctive (a number of 3+ digits or a word of 6+ letters), and a weighted
+  total of 1.0. The clip's English summary is not compared. The window starts at the first matched
+  word and runs up to 4 s; when the clip's own sound plays (`PHONE_TALKING_CUTAWAY_SOUND_ENABLED`) it
+  starts after the last matched word, so his mention stays audible, runs up to 6 s and a clip no
+  mention placed stays silent. It stops where the next
   clip's mention starts, keeps the 2.5 s hook and the last second clear, and shifts at most 3 s to
   find room. No match or no room: the mechanical spread, with `reason`
   `no_mention_found` / `no_room_at_mention`. Only timing comes from the analysis; none of it reaches
   the screen. A cut take (speech cleanup) has no uncut word timeline, so every clip is spread.
 - **Sound**: nothing new. With the sound lane off a cutaway is muted and
   `mention_cutaways.sound = {asked: true, applied: false, reason: sound_not_enabled}` says so (the
-  creator-facing note reads "Their own sound isn't available on this edit yet"). The sound lane
-  also matches a brief scope written as the phone's file name to the edit's `analysis-proxy-ios-`
-  id, but only behind this flag (without it the old exact match applies, so the sound lane's
-  behavior is unchanged while this is off).
+  creator-facing note reads "Their own sound isn't available on this edit yet"). With this flag on,
+  the sound lane (every Talking edit, ask or not) also matches a brief scope written as the phone's
+  file name to the edit's `analysis-proxy-ios-` id; without that, "keep my audio while the stadium is
+  shown" never matched and the whole-video "on" ask turned the stadium's sound on too. Flag off:
+  the old exact match, unchanged. The talk plays from its own start (`source_start_s` 0): the editor
+  preview assumes it.
 - **Receipt**: `variants[i].phone_talking_multi_clip.mention_cutaways` = `{version, demoted[{clip_id,
   media_id, reason}], kept, placements[{media_id, basis: mention|spread, start_s, end_s, at_s?,
   reason?}], sound?}` (only with the flag on and a full-screen ask); the roles receipt `clips` marks
@@ -1030,7 +1038,8 @@ then spread mechanically, never at a mention.
   --app nova-video` + restart api + worker (Fly only, no Vercel twin, no app build: recipe-only, no
   new protocol). Rollback: `=false` the same way. To hear the talks' own audio also set
   `PHONE_TALKING_CUTAWAY_SOUND_ENABLED` and `PHONE_CLIP_SOUND_WINDOWS_ENABLED` (above).
-- **Known gaps**: the signal is the display fact plus the clip analysis; a creator who says "when I
+- **Known gaps**: a creator take the analysis marks not-to-camera next to another person's clip
+  marked to-camera is read the other way round under a global ask; the signal is the display fact plus the clip analysis; a creator who says "when I
   mention them" without a full-screen word gets today's behavior (a typed "show when mentioned" fact
   would need a brief-extractor prompt bump and live evals). Matching is lexical on the clip's own
   speech and analysis against the creator's words, so a clip about something the creator never

@@ -38,6 +38,10 @@ class FullScreenShowAsk:
 
 
 def _is_full_screen(req: BriefRequirement) -> bool:
+    if req.facts.get("triggers"):
+        # A photo / sticker pop-in on a spoken word (KRI-840 `display_mode` with `triggers`)
+        # is a reaction-beat ask about Visuals, not about the creator's clips.
+        return False
     value = req.facts.get(DISPLAY_MODE_FACT)
     if not isinstance(value, str):
         return False

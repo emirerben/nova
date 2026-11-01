@@ -698,19 +698,29 @@ def _mention_cutaway_notes(receipt: object) -> list[str]:
         notes.append("Couldn't tell which clip is you talking, so I left your clips as they were")
     placements = [row for row in receipt.get("placements") or [] if isinstance(row, dict)]
     matched = sum(1 for row in placements if row.get("basis") == "mention")
-    spread = sum(1 for row in placements if row.get("basis") == "spread")
+    unmatched = sum(
+        1
+        for r in placements
+        if r.get("basis") == "spread" and r.get("reason") != "no_room_at_mention"
+    )
+    crowded = sum(1 for r in placements if r.get("reason") == "no_room_at_mention")
     if matched:
         notes.append(
             f"Showed {_plural(matched, 'clip')} right where you mention "
             f"{'it' if matched == 1 else 'them'}"
         )
-    if spread:
+    if unmatched:
         notes.append(
-            f"Couldn't tell where you mention {_plural(spread, 'other clip')}, "
-            f"so I spread {'it' if spread == 1 else 'them'} across the video"
+            f"Couldn't tell where you mention {_plural(unmatched, 'other clip')}, "
+            f"so I spread {'it' if unmatched == 1 else 'them'} across the video"
+        )
+    if crowded:
+        notes.append(
+            f"There wasn't room next to where you mention {_plural(crowded, 'clip')}, "
+            f"so I spread {'it' if crowded == 1 else 'them'} across the video"
         )
     sound = receipt.get("sound")
-    if isinstance(sound, dict) and sound.get("asked") and not sound.get("applied"):
+    if placements and isinstance(sound, dict) and sound.get("asked") and not sound.get("applied"):
         notes.append("Their own sound isn't available on this edit yet, so the clips play silent")
     return notes
 

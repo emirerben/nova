@@ -103,17 +103,23 @@ def match_keys(text: object) -> list[str]:
     """The comparable words of ``text``: folded, split at letter/digit seams ("Euro2032" ->
     euro, 2032), words under four letters and zero runs dropped, long words cut to a stem so
     Turkish endings ("tahsis", "tahsis edilmesinin") still meet."""
+    return [key for key, _strong in _key_parts(text)]
+
+
+def _key_parts(text: object) -> list[tuple[str, bool]]:
+    """``match_keys`` with whether each word is distinctive: a number of 3+ digits or a word
+    of 6+ letters (a short everyday word alone never makes a mention)."""
     from app.services.spoken_quotes import fold_tokens  # noqa: PLC0415
 
-    keys: list[str] = []
+    found: list[tuple[str, bool]] = []
     for token in fold_tokens(text):
         for part in _PARTS.findall(token):
             if part.isdigit():
                 if len(part) >= 2 and set(part) != {"0"}:
-                    keys.append(part)
+                    found.append((part, len(part) >= 3))
             elif len(part) >= 4:
-                keys.append(part[:_STEM])
-    return keys
+                found.append((part[:_STEM], len(part) >= 6))
+    return found
 
 
 def match_media_id(ref: str, media_ids: Iterable[str]) -> str | None:
@@ -177,12 +183,18 @@ def demote_speakers_to_cutaways(
     if not reasons:
         return roles, [], None
     remaining = [c for c in roles.speakers if c not in reasons]
-    if not remaining:
+    # The creator's take must stay: a clip left that the analysis says speaks to camera (the
+    # protected ending clip does not count). It leads the main track.
+    takes = [
+        c
+        for c in remaining
+        if by_id.get(c) is not None
+        and by_id[c].speaks_to_camera is True
+        and by_id[c].media_id not in protected
+    ]
+    if not takes:
         return roles, [], KEPT_NO_CREATOR_TAKE
-    if all(r == DEMOTED_NOT_TO_CAMERA for r in reasons.values()) and not any(
-        by_id.get(c) is not None and by_id[c].speaks_to_camera is True for c in remaining
-    ):
-        return roles, [], KEPT_NO_CREATOR_TAKE
+    remaining = takes + [c for c in remaining if c not in takes]
     order = [row["clip_id"] for row in roles.receipt]
     footage_ids = set(roles.footage) | set(reasons)
     footage = tuple(c for c in order if c in footage_ids)
@@ -208,36 +220,45 @@ def demote_speakers_to_cutaways(
 class _Token:
     key: str
     start_s: float
+    end_s: float
+    strong: bool
 
 
 def _timeline_tokens(words: Iterable[Any]) -> list[_Token]:
     tokens: list[_Token] = []
     for word in words:
         start = float(getattr(word, "start_s", 0.0))
-        tokens.extend(_Token(key, start) for key in match_keys(getattr(word, "text", "")))
+        end = float(getattr(word, "end_s", start))
+        tokens.extend(
+            _Token(key, start, end, strong) for key, strong in _key_parts(getattr(word, "text", ""))
+        )
     return sorted(tokens, key=lambda t: t.start_s)
 
 
 def _best_mention(
     clip: FootageClip, tokens: Sequence[_Token], weight: dict[str, float]
-) -> tuple[float, float] | None:
-    """``(score, first_matched_word_start_s)`` of the best mention window of ``clip``, else
-    None when no window has MIN_MENTION_KEYS distinct matched words reaching MIN_MENTION_SCORE.
-    Earlier windows win ties."""
-    best: tuple[float, float] | None = None
+) -> tuple[float, float, float] | None:
+    """``(score, first_matched_word_start_s, last_matched_word_end_s)`` of the best mention
+    window of ``clip``, else None when no window has MIN_MENTION_KEYS distinct matched words,
+    one of them distinctive, reaching MIN_MENTION_SCORE. Earlier windows win ties."""
+    best: tuple[float, float, float] | None = None
     for begin, token in enumerate(tokens):
         if token.key not in clip.keys:
             continue
         seen: dict[str, float] = {}
+        strong = False
+        last_end = token.end_s
         for other in tokens[begin:]:
             if other.start_s - token.start_s > MENTION_WINDOW_S:
                 break
             if other.key in clip.keys:
                 seen.setdefault(other.key, other.start_s)
+                strong = strong or other.strong
+                last_end = max(last_end, other.end_s)
         score = sum(weight[key] for key in seen)
-        if len(seen) >= MIN_MENTION_KEYS and score >= MIN_MENTION_SCORE:
+        if len(seen) >= MIN_MENTION_KEYS and strong and score >= MIN_MENTION_SCORE:
             if best is None or score > best[0] + 1e-9:
-                best = (score, token.start_s)
+                best = (score, token.start_s, last_end)
     return best
 
 
@@ -288,7 +309,7 @@ def schedule_mention_cutaways(
     hi = max(duration - TAIL_FREE_S, lo)
     taken: list[tuple[float, float]] = [(float(a), float(b)) for a, b in blocked]
 
-    scored: list[tuple[float, float, FootageClip]] = []
+    scored: list[tuple[float, float, float, FootageClip]] = []
     spread: dict[str, str] = {}
     for clip in clips:
         if float(clip.footage_s) < MIN_WINDOW_S:
@@ -297,19 +318,22 @@ def schedule_mention_cutaways(
         if best is None:
             spread[clip.clip_id] = SPREAD_NO_MENTION
         else:
-            scored.append((best[0], best[1], clip))
+            # A silent cutaway starts as the creator says it; one whose own sound plays
+            # starts once he has said it, so his mention stays audible.
+            sounding = clip.max_window_s > MAX_WINDOW_S
+            scored.append((best[0], best[1], best[2] if sounding else best[1], clip))
 
-    mentions = sorted(at_s for _score, at_s, _clip in scored)
+    mentions = sorted(begin_s for _score, _at, begin_s, _clip in scored)
     placed: list[FootageCutawayWindow] = []
     at_mention: dict[str, float] = {}
-    for _score, at_s, clip in sorted(scored, key=lambda row: (-row[0], row[1])):
+    for _score, at_s, begin_s, clip in sorted(scored, key=lambda row: (-row[0], row[1])):
         length = min(clip.max_window_s, float(clip.footage_s))
         # A window stops where the next clip's mention starts, when that leaves it a slot.
-        later = next((m for m in mentions if m > at_s + 1e-9), None)
-        if later is not None and later - max(at_s, lo) >= MIN_SLOT_S:
-            length = min(length, later - max(at_s, lo))
+        later = next((m for m in mentions if m > begin_s + 1e-9), None)
+        if later is not None and later - max(begin_s, lo) >= MIN_SLOT_S:
+            length = min(length, later - max(begin_s, lo))
         free = _free_intervals(lo, hi, taken)
-        fit = _fit_at(max(at_s, lo), length, free)
+        fit = _fit_at(max(begin_s, lo), length, free)
         if fit is None:
             spread[clip.clip_id] = SPREAD_NO_ROOM
             continue

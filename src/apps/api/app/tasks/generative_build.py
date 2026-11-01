@@ -7691,6 +7691,9 @@ def _apply_talking_mention_ask(
         )
     media_ids = [record.media_id for record in records]
     named = {m for ref in ask.media_refs if (m := match_media_id(ref, media_ids)) is not None}
+    if not ask.whole_video and not named:
+        # Every clip it names is a Visuals-pool photo or something not in this edit.
+        return roles, None, None
     roles, demoted, kept = demote_speakers_to_cutaways(
         roles,
         records,
@@ -7700,6 +7703,25 @@ def _apply_talking_mention_ask(
     )
     receipt["demoted"] = demoted
     receipt["kept"] = kept
+    if kept is not None:
+        # The creator's take could not be told apart: leave the edit exactly as it was.
+        return roles, None, receipt
+    # The creator's take leads the main track and the rest follow upload order, not the
+    # order the analyses finished in.
+    upload = {b.media_id: i for i, b in enumerate(binding_by_proxy.values())}
+    by_clip = {r.clip_id: r for r in records}
+
+    def _speaker_key(clip_id: str) -> tuple[bool, int]:
+        record = by_clip.get(clip_id)
+        if record is None:
+            return True, len(upload)
+        return record.speaks_to_camera is not True, upload.get(record.media_id, len(upload))
+
+    roles = replace(
+        roles,
+        speakers=tuple(sorted(roles.speakers, key=_speaker_key)),
+        footage=tuple(sorted(roles.footage, key=lambda c: _speaker_key(c)[1])),
+    )
     return roles, ask, receipt
 
 
@@ -7732,7 +7754,6 @@ def _talking_mention_footage_clips(
             texts += [
                 getattr(meta, "transcript", ""),
                 getattr(meta, "hook_text", ""),
-                getattr(meta, "clip_summary", ""),
                 getattr(meta, "detected_subject", ""),
                 *(getattr(meta, "clip_brands", None) or []),
                 *(getattr(meta, "clip_props", None) or []),
@@ -8783,7 +8804,9 @@ def _run_phone_subtitled_job(
             cutaways: tuple = ()
             cutaway_sound_plans: list = []
 
-            def _with_cutaway_sound(found: tuple, speakers: list) -> tuple:
+            def _with_cutaway_sound(
+                found: tuple, speakers: list, silenced: frozenset[str] = frozenset()
+            ) -> tuple:
                 """KRI-1151: turn on the sound of each footage cutaway the approved brief
                 asked for, while the lane is switched on; ``found`` untouched otherwise.
                 Sound that would change the approved contract's camera-audio sources stays
@@ -8811,6 +8834,7 @@ def _run_phone_subtitled_job(
                     c.model_copy(
                         update={
                             "sound": c.binding.media_id in plan.on_media_ids
+                            and c.binding.media_id not in silenced
                             and c.binding.original.has_audio is not False
                         }
                     )
@@ -9584,6 +9608,12 @@ def _run_phone_subtitled_job(
                         for w in windows
                     ),
                     [binding, *extra_speaker_bindings],
+                    # A clip no mention placed would mute the creator at an arbitrary moment.
+                    silenced=frozenset(
+                        row["media_id"]
+                        for row in (mention_receipt or {}).get("placements", [])
+                        if row["basis"] == "spread"
+                    ),
                 )
 
             sfx_duck: dict | None = None

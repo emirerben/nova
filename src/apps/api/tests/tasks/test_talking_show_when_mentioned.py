@@ -248,10 +248,17 @@ def test_flag_on_with_sound_the_talks_play_their_own_audio_and_the_stadium_keeps
 ):
     _job, recipe, variant = _run(monkeypatch, mention=True, sound=True)
     audio = _tracks(recipe)["talking-head-cutaway-audio"]
-    assert {c.source_asset_id for c in audio.clips} == TALKS
+    # Only the talks placed at a mention play their sound; the congress talk, spread to an
+    # arbitrary moment, stays silent rather than muting him there.
+    sounding = {FINAL_TALK, ALLOCATE_TALK}
+    assert {c.source_asset_id for c in audio.clips} == sounding
     windows = _cutaway_windows(recipe)
     muted = {(round(w.start, 2), round(w.end, 2)) for w in recipe.audio.mute_windows}
-    assert {(round(windows[m][0], 2), round(windows[m][1], 2)) for m in TALKS} == muted
+    assert {(round(windows[m][0], 2), round(windows[m][1], 2)) for m in sounding} == muted
+    # His own words ("statın kulübe tahsis edilmesinin ...", "75.000 kişilik stat Euro2032
+    # finali") end before each talk starts, so they stay audible.
+    assert windows[ALLOCATE_TALK][0] >= 12.4
+    assert windows[FINAL_TALK][0] >= 17.0
     # A talk with its own sound may run longer than a silent cutaway, never over another.
     assert max(end - start for start, end in (windows[m] for m in TALKS)) <= 6.0 + 1e-6
     assert variant[gb.PHONE_TALKING_MULTI_CLIP_FIELD]["mention_cutaways"]["sound"] == {
@@ -345,3 +352,39 @@ def test_wrong_content_control_the_window_follows_what_a_clip_says_not_its_slot(
     assert 14.5 <= rows[CONGRESS_TALK]["start_s"] <= 17.0
     assert rows[FINAL_TALK]["basis"] == "spread"
     assert rows[FINAL_TALK]["reason"] == "no_mention_found"
+
+
+def test_a_full_screen_photo_pop_in_ask_does_not_turn_the_talks_into_cutaways(monkeypatch):
+    photo = BriefRequirement(
+        id="r9",
+        kind="style",
+        scope="global",
+        status="open",
+        description="Show the grill photo full screen when I say grill",
+        facts={"display_mode": "fullscreen", "triggers": ["grill"]},
+        source_turn_id="t1",
+    )
+    _j, _recipe, variant = _run(
+        monkeypatch, mention=True, brief=_brief(drop=("r1", "r3"), extra=(photo,))
+    )
+    receipt = variant[gb.PHONE_TALKING_MULTI_CLIP_FIELD]
+    assert len(receipt["speaker_media_ids"]) == 4
+    assert "mention_cutaways" not in receipt
+
+
+def test_a_full_screen_ask_naming_a_pool_photo_changes_nothing(monkeypatch):
+    photo = BriefRequirement(
+        id="r9",
+        kind="style",
+        scope="clip:asset-c938251c-3b28-4a71-b5eb-8e32f9605735",
+        status="open",
+        description="Show the photo full screen",
+        facts={"display_mode": "fullscreen"},
+        source_turn_id="t1",
+    )
+    _j, _recipe, variant = _run(
+        monkeypatch, mention=True, brief=_brief(drop=("r1", "r3"), extra=(photo,))
+    )
+    receipt = variant[gb.PHONE_TALKING_MULTI_CLIP_FIELD]
+    assert len(receipt["speaker_media_ids"]) == 4
+    assert "mention_cutaways" not in receipt
