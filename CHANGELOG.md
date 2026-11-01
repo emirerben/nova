@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.68.0] - 2026-11-01
+
+### Changed
+- Preserve notification Stop and Resume across retries (#1977) <!-- release-pr: 1977 -->
+
 ## [0.83.67.0] - 2026-11-01
 
 ### Changed
