@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.88.0] - 2026-11-01
+
+### Changed
+- feat(ios): a photo or video from the pool behind a tilted clip, protocol 31 (KRI-1139) (#2038) <!-- release-pr: 2038 -->
+
 ## [0.83.87.0] - 2026-11-01
 
 ### Changed
