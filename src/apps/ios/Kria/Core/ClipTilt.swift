@@ -4,6 +4,9 @@ import KriaMediaEngine
 /// A creator's tilt of one clip or photo, as the editor row stores it in `clips[i].raw["tilt"]`
 /// (KRI-1136): `{"rotation_deg": Double, "backdrop": {"kind": ...}}`.
 ///
+/// A `media` backdrop is `{"kind": "media", "asset_id": "<Visuals-pool visual id>"}` on the row and in the recipe
+/// alike (KRI-1139); the compiler declares the pool visual that id names.
+///
 /// `rotationDeg` is clockwise on screen, wrapped to `(-180, 180]` and rounded to hundredths. The row key is
 /// omitted when the clip is upright with a blank backdrop, and a blank backdrop is absent from the row, so an
 /// untouched or reset clip is byte-identical to one that was never tilted. Mirrors `app.kria.clip_tilt.ClipTilt`
@@ -52,6 +55,7 @@ struct ClipTilt: Equatable, Sendable {
         case .blank: break
         case .blur: fields["backdrop"] = .object(["kind": .string("blur")])
         case .color(let hex): fields["backdrop"] = .object(["kind": .string("color"), "color": .string(hex)])
+        case .media(let poolID): fields["backdrop"] = .object(["kind": .string("media"), "asset_id": .string(poolID)])
         }
         return .object(fields)
     }

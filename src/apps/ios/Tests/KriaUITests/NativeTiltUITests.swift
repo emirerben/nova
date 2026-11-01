@@ -4,10 +4,11 @@ import XCTest
 /// background, saves through the stub commit transport and reopens to find the tilt where it was left.
 @MainActor
 final class NativeTiltUITests: XCTestCase {
-    private func launch(reset: Bool, capability: Bool = true) -> XCUIApplication {
+    private func launch(reset: Bool, capability: Bool = true, media: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-text"]
         if capability { app.launchArguments += ["-ui-testing-editor-tilt"] }
+        if media { app.launchArguments += ["-ui-testing-editor-tilt-media"] }
         if reset && capability { app.launchArguments += ["-ui-testing-editor-tilt-reset"] }
         app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
         app.launch()
@@ -91,6 +92,47 @@ final class NativeTiltUITests: XCTestCase {
         let dial = app.descendants(matching: .any)["native-editor-tilt-dial"].firstMatch
         XCTAssertTrue(dial.exists)
         XCTAssertEqual(dial.value as? String, "1°")
+    }
+
+    /// KRI-1139: the fourth Background option opens the editor's shared pool picker; the chosen photo shows as a
+    /// thumbnail, and Reset returns to the blank background.
+    func testPhotoOrVideoBackgroundIsPickedShownAndResetToBlank() {
+        let app = launch(reset: true, media: true)
+        openTilt(app)
+        let option = app.buttons["native-editor-tilt-backdrop-media"]
+        XCTAssertTrue(option.waitForExistence(timeout: 5), "the server opened clips.tilt_backdrop_media")
+        XCTAssertTrue(option.isHittable)
+        XCTAssertEqual(option.frame.height, app.buttons["native-editor-tilt-backdrop-blur"].frame.height, accuracy: 0.5,
+                       "the same capsule target as the other options")
+        for _ in 0..<10 { app.buttons["native-editor-tilt-nudge-right"].tap() }
+        option.tap()
+
+        let photo = app.buttons["native-editor-tilt-media-visual-fixture-bg-photo"]
+        XCTAssertTrue(photo.waitForExistence(timeout: 5), "the item's pool photo is offered")
+        XCTAssertTrue(app.buttons["native-editor-tilt-media-visual-fixture-bg-video"].exists, "and its pool video")
+        XCTAssertTrue(app.buttons["native-editor-tilt-media-add"].exists)
+        XCTAssertTrue(app.buttons["native-editor-tilt-media-none"].isSelected, "nothing chosen yet")
+        attach(app, "Pool picker for a tilt background")
+        photo.tap()
+
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-tilt-media-thumbnail"].firstMatch.waitForExistence(timeout: 5),
+                      "the chosen photo is shown")
+        XCTAssertTrue(app.buttons["native-editor-tilt-backdrop-media"].isSelected)
+        XCTAssertTrue(app.buttons["native-editor-tilt-media-change"].exists)
+        XCTAssertEqual(app.staticTexts["native-editor-tilt-value"].label, "10°", "choosing a background keeps the angle")
+        attach(app, "Tilt sheet with a photo behind the clip")
+
+        app.buttons["native-editor-tilt-reset"].tap()
+        XCTAssertEqual(app.staticTexts["native-editor-tilt-value"].label, "0°")
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-tilt-media-thumbnail"].firstMatch.exists)
+        XCTAssertTrue(app.buttons["native-editor-tilt-backdrop-blank"].isSelected, "Reset returns to the blank background")
+    }
+
+    func testPhotoOrVideoIsOfferedOnlyWhereTheServerListsIt() {
+        let app = launch(reset: true)
+        openTilt(app)
+        XCTAssertTrue(app.buttons["native-editor-tilt-backdrop-blur"].exists)
+        XCTAssertFalse(app.buttons["native-editor-tilt-backdrop-media"].exists)
     }
 
     func testTiltIsHiddenWhereTheServerDoesNotOfferIt() {

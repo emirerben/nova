@@ -255,7 +255,7 @@ import XCTest
     private let red = (230, 20, 20), blue = (20, 20, 230)
 
     private func backdropName(_ backdrop: ClipBackdrop) -> String {
-        switch backdrop { case .blank: "blank"; case .blur: "blur"; case .color: "colour" }
+        switch backdrop { case .blank: "blank"; case .blur: "blur"; case .color: "colour"; case .media: "media" }
     }
 
     /// What a canvas pixel must show for the halves photo, from the shared geometry alone: a half colour, "backdrop", or nil

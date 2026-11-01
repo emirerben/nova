@@ -147,7 +147,7 @@ struct NativeEditorView: View {
             .navigationBarBackButtonHidden(true)
             .sheet(isPresented: $showsResearchSources) { NativeResearchSourcesView(document: session.document) }
             .sheet(item: $inspector) { inspector in
-                NativeEditorInspectorView(inspector: inspector, session: session)
+                NativeEditorInspectorView(inspector: inspector, session: session, uploads: model.uploads, projectID: project.id)
                     // The sheet is its own presentation; hand it the editor's text size explicitly.
                     .environment(\.dynamicTypeSize, dynamicTypeSize)
                     .presentationDetents([.medium, .large])
@@ -1126,6 +1126,8 @@ private enum NativeEditorInspector: Identifiable {
 private struct NativeEditorInspectorView: View {
     let inspector: NativeEditorInspector
     @ObservedObject var session: NativeEditorSession
+    @ObservedObject var uploads: BackgroundUploadCoordinator
+    let projectID: UUID
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -1141,7 +1143,7 @@ private struct NativeEditorInspectorView: View {
                 case .selection(let selection): NativeSelectionInspector(selection: selection, session: session)
                 case .adjust: NativeAdjustInspector(session: session)
                 case .crop(let selection): NativeCropSheet(session: session, selection: selection, embedded: true)
-                case .tilt(let selection): NativeTiltSheet(session: session, selection: selection)
+                case .tilt(let selection): NativeTiltSheet(session: session, uploads: uploads, projectID: projectID, selection: selection)
                 case .sourceWindow(let selection): NativeSourceWindowSheet(session: session, selection: selection, embedded: true)
                 case .videoShape: NativeVideoShapeInspector(session: session)
                 }

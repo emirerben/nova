@@ -185,7 +185,7 @@ import UIKit
             .concatenating(CGAffineTransform(translationX: centre.x, y: centre.y))
         let under: CIImage
         switch tilt.backdrop {
-        case .blank:
+        case .blank, .media:
             under = CIImage(color: .black).cropped(to: extent)
         case .color(let hex):
             guard let rgb = SlidePostTilt.rgb(hex) else { under = CIImage(color: .black).cropped(to: extent); break }

@@ -334,6 +334,8 @@
       "KriaUITests/NativeTiltUITests/testTiltFifteenDegreesWithABlurredBackgroundSavesAndSurvivesReopen",
       "KriaUITests/NativeTiltUITests/testTurnNinetyAndResetStraightenTheClipWithNothingLeftToSave",
       "KriaUITests/NativeTiltUITests/testNudgeMovesTheDialClockwiseAndCounterClockwiseByOneDegree",
+      "KriaUITests/NativeTiltUITests/testPhotoOrVideoBackgroundIsPickedShownAndResetToBlank",
+      "KriaUITests/NativeTiltUITests/testPhotoOrVideoIsOfferedOnlyWhereTheServerListsIt",
       "KriaUITests/NativeTiltUITests/testTiltIsHiddenWhereTheServerDoesNotOfferIt",
       "KriaUITests/ResearchSourcesUITests/testPreparedResearchSourcesAndPreview",
       "KriaUITests/NativeEditorInspectorUITests/testLongPressDraggingClipReordersKeepsLengthAndUndoesInOneStep",
