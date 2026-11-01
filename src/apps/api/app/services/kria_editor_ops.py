@@ -811,14 +811,20 @@ def _sfx_base_missing(variant: dict[str, Any]) -> bool:
 _OVERLAY_SNAPSHOT_FIELDS = ("start_s", "end_s", "x_frac", "y_frac", "scale", "z")
 
 
-def _overlay_snapshot(variant: dict[str, Any]) -> dict[str, Any]:
+def _overlay_snapshot(variant: dict[str, Any], *, tilt: bool = False) -> dict[str, Any]:
     """The picture cards the copilot may address (KRI-661): path-free, indexed.
 
     ``counts`` is the whole picture even when the prompt can only list the first few
     rows, so "put all my photos on top" is answerable with ONE bulk op instead of
     thirty patches. ``asset_pool`` stays empty on purpose: a Talking Save refuses a
     photo Kria did not pin for this edit, so ``add_overlay`` fails closed in the parser.
+
+    ``tilt`` (KRI-1141, ``editor_capabilities.media_overlay_tilt``) opens ``patch_overlay``'s
+    ``rotation_deg`` / ``rotation_delta_deg`` and lists a tilted card's angle. It is present only
+    when ON, so a closed gate leaves the snapshot, and so the prompt, byte-identical.
     """
+    from app.agents.editor_ops_v2.overlays import card_rotation  # noqa: PLC0415
+
     rows = [row for row in variant.get("media_overlays") or [] if isinstance(row, dict)]
     cards = []
     for index, row in enumerate(rows):
@@ -830,6 +836,10 @@ def _overlay_snapshot(variant: dict[str, Any]) -> dict[str, Any]:
             "display_mode": "fullscreen" if row.get("display_mode") == "fullscreen" else "pip",
         }
         card.update({key: row.get(key) for key in _OVERLAY_SNAPSHOT_FIELDS})
+        if tilt:
+            angle = card_rotation(row)
+            if angle:
+                card["rotation_deg"] = angle
         label = row.get("label")
         if isinstance(label, str) and label:
             card["label"] = label[:60]
@@ -844,6 +854,7 @@ def _overlay_snapshot(variant: dict[str, Any]) -> dict[str, Any]:
         },
         "asset_pool": [],
         "pending_suggestions": [],
+        **({"tilt": True} if tilt else {}),
     }
 
 
@@ -1377,7 +1388,9 @@ def build_editor_snapshot(
             "catalog": list(clip_context.get("sfx_catalog") or []),
         }
     if "overlay" in snapshot["allowed_op_families"]:
-        snapshot["overlays"] = _overlay_snapshot(variant)
+        snapshot["overlays"] = _overlay_snapshot(
+            variant, tilt=caps.get("media_overlay_tilt") is True
+        )
     background = _background_snapshot(job, variant, clip_context)
     if background is not None:
         # Present only while the lane has something to say, so every other snapshot is

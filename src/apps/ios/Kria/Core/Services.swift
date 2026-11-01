@@ -1239,7 +1239,11 @@ enum KriaClientProtocolContract {
     /// `transform.rotation_degrees` (clockwise on screen). The server offers tilt only to this protocol (and only
     /// with `MEDIA_TILT_ENABLED` + `clipTilt` verified) and answers 426 `client_update_required` (`clip_tilt`)
     /// to an older build polling a recipe that already carries one.
-    static let version = 28
+    /// 30 (KRI-1141): turns a PLACED picture card (a Talking card, a clip with a `visual_placement`) by its clip's
+    /// `transform.rotation_degrees`. Builds 28 and 29 decode `clipTilt` but draw such a card upright, so the server
+    /// answers 426 `client_update_required` (`card_tilt`) to them for a recipe that carries a tilted card, and
+    /// offers `editor_capabilities.media_overlay_tilt` only from here.
+    static let version = 30
     static let header = "X-Kria-Client-Protocol"
 }
 

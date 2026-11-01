@@ -100,12 +100,12 @@ final class SuggestionChipsTests: XCTestCase {
         {"state":"ready","status":"ok","chips":[
          {"id":"a","label":"Add captions","message":"Add captions","rank":1,"requires_protocol":null},
          {"id":"b","label":"Bend the title","message":"Bend the title","rank":2,"requires_protocol":9},
-         {"id":"c","label":"Newer thing","message":"Do the newer thing","rank":3,"requires_protocol":29}]}
+         {"id":"c","label":"Newer thing","message":"Do the newer thing","rank":3,"requires_protocol":31}]}
         """)
-        XCTAssertEqual(set.chips(forState: "ready").map(\.id), ["a", "b"], "Protocol 29 is above this app")
+        XCTAssertEqual(set.chips(forState: "ready").map(\.id), ["a", "b"], "Protocol 31 is above this app")
         XCTAssertEqual(set.chips(forState: "ready", appProtocol: 8).map(\.id), ["a"])
-        XCTAssertEqual(set.chips(forState: "ready", appProtocol: 29).map(\.id), ["a", "b", "c"])
-        XCTAssertEqual(KriaClientProtocolContract.version, 28, "Update this fixture when the app's protocol moves")
+        XCTAssertEqual(set.chips(forState: "ready", appProtocol: 31).map(\.id), ["a", "b", "c"])
+        XCTAssertEqual(KriaClientProtocolContract.version, 30, "Update this fixture when the app's protocol moves")
     }
 
     func testCapabilityDefaultsOffWhenKeyIsMissing() throws {

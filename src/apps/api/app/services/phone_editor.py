@@ -84,6 +84,7 @@ from app.services.phone_editor_sources import (
 )
 from app.services.phone_rollout import (
     SINGLE_WORD_CAPTIONS_STAMP,
+    card_tilt_supported,
     freehand_drawing_client_supported,
     freeze_frame_client_supported,
     phone_guided_sfx_supported,
@@ -1225,6 +1226,23 @@ def _persist_lane_state(
         row.pop(SFX_DUCK_RECEIPT_FIELD, None)
 
 
+def _require_card_tilt_supported(previous: Any, lanes: Any) -> None:
+    """KRI-1141: refuse a NEW or CHANGED card angle while the tilt gates are closed.
+
+    Keeping a stored angle and straightening one are always allowed (a Save that does not touch
+    the tilt of a card the edit already holds must not fail because the kill switch was flipped
+    afterwards).
+    """
+    held = {card.id: card.rotation_deg for card in (previous.overlays if previous else [])}
+    changed = [
+        card
+        for card in lanes.overlays
+        if card.rotation_deg != 0 and card.rotation_deg != held.get(card.id, 0.0)
+    ]
+    if changed and not card_tilt_supported():
+        raise ValueError("tilting a picture isn't available on this edit yet")
+
+
 def _compile_subtitled_editor_commit(
     staged: Any,
     assembly: dict,
@@ -1270,6 +1288,8 @@ def _compile_subtitled_editor_commit(
         background_touched=bool(prep.get("speaker_background_touched")),
         background=_background_lane(prep.get("speaker_background_override"), visuals),
     )
+
+    _require_card_tilt_supported(previous_lanes, lanes)
 
     caption_cues = prep.get("caption_cues_override")
     caption_cues_overridden = caption_cues is not None
@@ -1525,6 +1545,7 @@ def _commit_voiceover_lanes(
         media_overlays=prep.get("media_overlays_override"),
         visuals=visuals,
     )
+    _require_card_tilt_supported(previous_lanes, lanes)
     recipe = replace_editor_lanes(
         recipe, lanes=lanes, visuals=visuals, video_track_id=video_track_id
     )

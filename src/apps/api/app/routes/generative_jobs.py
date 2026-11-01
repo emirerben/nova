@@ -7553,6 +7553,10 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             **(capabilities.get("clips") if isinstance(capabilities.get("clips"), dict) else {}),
             "tilt": {"editable": True, "reason": None},
         }
+    if _media_overlay_tilt_capability(variant, capabilities):
+        # KRI-1141: present only when ON (same reason as `text_bend`); the editor opens the
+        # rotate gesture and the Rotation slider for a card, and nothing else of `editor_style`.
+        capabilities["media_overlay_tilt"] = True
     from app.services.client_protocol import CAPTION_STYLE_SCOPE_PROTOCOL, current_client_protocol
 
     protocol = current_client_protocol()
@@ -7564,6 +7568,26 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     ):
         capabilities["caption_style_scope"] = True
     return capabilities
+
+
+def _media_overlay_tilt_capability(variant: dict, capabilities: dict) -> bool:
+    """KRI-1141: may the app tilt a picture card (``editor_capabilities.media_overlay_tilt``)?
+
+    Only a device-rendered Talking variant whose card lane is open: that Save recompiles each
+    card's ``editor_style.rotation_deg`` into the pinned recipe (`SubtitledOverlayCard`), while
+    the clamp keeps ``visual_editor_style`` (zoom, fit, animation) closed. And only while the
+    kill switch, the ``clipTilt`` verified token and the requesting build's protocol all hold.
+    """
+    from app.services.phone_rollout import card_tilt_supported  # noqa: PLC0415
+    from app.services.phone_subtitled_editor import (  # noqa: PLC0415
+        is_phone_subtitled_editor_variant,
+    )
+
+    return bool(
+        is_phone_subtitled_editor_variant(variant)
+        and capabilities.get("overlays") is True
+        and card_tilt_supported()
+    )
 
 
 def _clip_tilt_capability(job: Job, variant: dict, capabilities: dict) -> bool:

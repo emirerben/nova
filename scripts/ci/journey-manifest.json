@@ -2843,6 +2843,31 @@
         "src/apps/ios/Tests/KriaTests/ClipTiltRenderTests.swift",
         "src/apps/ios/Tests/KriaUITests/NativeTiltUITests.swift"
       ]
+    },
+    {
+      "id": "kri-1141-overlay-card-tilt",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_overlay_card_tilt.py tests/routes/test_overlay_card_tilt_chat.py tests/agents/test_clip_tilt_ai.py tests/agents/test_creator_wire_contract.py tests/evals/test_edit_copilot_evals.py",
+      "xctests": [
+        "KriaTests/NativeOverlayCardTiltTests/testAngleIsWrittenAsTheCardsEditorStyleAndSurvivesTheSaveSnapshot",
+        "KriaTests/NativeOverlayCardTiltTests/testStraighteningLeavesTheCardExactlyAsItWasLoaded",
+        "KriaTests/NativeOverlayCardTiltTests/testTheSavedAnglePlacesTheCardInThePreviewOnTheSameClockwiseAngle"
+      ],
+      "paths": [
+        "src/apps/api/prompts/edit_copilot_ops/overlay_tilt.txt",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/overlay_tilt_a_bit.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/overlay_tilt_a_bit_more.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/overlay_tilt_absolute_left.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/overlay_tilt_gate_closed_refusal.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/overlay_tilt_straighten.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/overlay_tilt_turkish.json",
+        "src/apps/api/app/agents/editor_ops_v2/overlays.py",
+        "src/apps/api/tests/routes/test_overlay_card_tilt.py",
+        "src/apps/api/tests/routes/test_overlay_card_tilt_chat.py",
+        "tests/fixtures/card-tilt-parity/v1.json",
+        "src/apps/ios/Tests/KriaTests/NativeOverlayCardTiltTests.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/PlacedCardTiltTests.swift"
+      ]
     }
   ]
 }

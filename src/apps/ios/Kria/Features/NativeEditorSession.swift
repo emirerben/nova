@@ -5504,15 +5504,30 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
     }
 
+    /// KRI-1141: a Talking picture card can turn (`editor_capabilities.media_overlay_tilt`) while the rest of
+    /// `editor_style` (zoom, fit, animation) stays closed (`visual_editor_style`), because the pinned recipe keeps
+    /// only the angle. Anything with the full style capability may turn; a card needs a pip card, not a cutaway.
+    func canRotateVisual(_ selection: EditorSelection) -> Bool {
+        if canEdit("visual_editor_style") { return true }
+        guard selection.kind == .mediaOverlay, canEdit("media_overlay_tilt"),
+              let card = document.mediaOverlays.first(where: { $0.id == selection.id }) else { return false }
+        return card.raw["display_mode"]?.stringValue != "fullscreen"
+    }
+
     func setVisualEditorStyle(_ selected: EditorSelection, key: String, value: JSONValue, animationPhase: String? = nil) {
-        guard canEdit("visual_editor_style"), let raw = visualRaw(selected) else { return }
+        let tiltOnly = key == "rotation_deg" && !canEdit("visual_editor_style") && canRotateVisual(selected)
+        guard canEdit("visual_editor_style") || tiltOnly, let raw = visualRaw(selected) else { return }
         var style = NativeVisualAuthoring.style(for: raw)
         style[key] = value
         guard (try? NativeEditorRenderCompiler.visualEditorStyle(.object(style))) != nil else { return }
+        // A card that can only turn keeps a style while it is turned: upright it carries none, so Reset is the
+        // untouched card (the server compiles the angle alone and projects none back for an upright card).
+        let uprightTiltOnly: Bool = tiltOnly && style == NativeVisualAuthoring.defaultStyle
+        let storedStyle: JSONValue? = uprightTiltOnly ? nil : JSONValue.object(style)
         switch selected.kind {
         case .mediaOverlay:
             mutateTimedEffect(kind: .mediaOverlay, id: selected.id, section: .mediaOverlays, operationKeys: ["media_overlays", "overlays"]) {
-                $0.raw["editor_style"] = .object(style)
+                $0.raw["editor_style"] = storedStyle
                 if key == "animation" {
                     if animationPhase == nil || animationPhase == "entrance" { $0.raw["entrance_token"] = .string("none") }
                     if animationPhase == nil || animationPhase == "exit" { $0.raw["exit_token"] = .string("none") }
@@ -6379,7 +6394,13 @@ struct NativeEditorTemporaryVideo: Sendable {
         mutateTimedEffect(kind: .mediaOverlay, id: id, section: .mediaOverlays, operationKeys: ["lanes.overlays.scale", "overlays.scale", "media_overlays.scale", "lanes.overlays"]) { $0.raw["scale"] = .number(min(max(0.05, scale), 1)) }
     }
     func setMediaOverlayDisplayMode(id: String, mode: String) {
-        mutateTimedEffect(kind: .mediaOverlay, id: id, section: .mediaOverlays, operationKeys: ["lanes.overlays.display_mode", "overlays.display_mode", "media_overlays.display_mode", "lanes.overlays"]) { $0.raw["display_mode"] = .string(mode) }
+        // KRI-1141: a full-screen cutaway has nothing to turn, and the server refuses its angle, so a card that can
+        // only turn (no full style capability) goes full screen upright.
+        let dropsTilt = mode == "fullscreen" && !canEdit("visual_editor_style")
+        mutateTimedEffect(kind: .mediaOverlay, id: id, section: .mediaOverlays, operationKeys: ["lanes.overlays.display_mode", "overlays.display_mode", "media_overlays.display_mode", "lanes.overlays"]) {
+            $0.raw["display_mode"] = .string(mode)
+            if dropsTilt { $0.raw["editor_style"] = nil }
+        }
     }
     func setMediaOverlayZIndex(id: String, z: Double) {
         mutateTimedEffect(kind: .mediaOverlay, id: id, section: .mediaOverlays, operationKeys: ["layers.reorder", "layer_order", "lanes.overlays.z_order", "lanes.overlays"]) { $0.raw["z"] = .number(z) }
