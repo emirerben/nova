@@ -3261,3 +3261,29 @@ the same draft with the fix is `unverified`.
 - Kill switch: `KRIA_RESEARCHED_LOOK_AFTER_RENDER_ENABLED` (default true). `false` + restart api
   and worker restores the old hold exactly (pinned by
   `test_kill_switch_off_holds_the_researched_animation_ask_as_before`).
+
+## [2026-11-01] Research before approval: the writer retries, truncation is not a source limit
+
+Fully live local runs of the Assos prompt on main (real Main Creator, search, writer, reviewer),
+after #2012, #2013 and #2015, still refused or stalled in 3 of 3 runs, each for a different
+reason: the copy writer ran out of its 8,192 output tokens (Gemini 3 counts thinking against
+it) and the preview filed that as "no usable cited facts from institutional sources" (a
+deterministic limit, cached for an hour); the writer's captions overlapped ("Research
+explanations overlap") and the first miss ended the turn; a reading-time conflict asked a
+question instead of choosing. A live prod thread also ended "I couldn't turn that into a plan"
+(Main Creator `TerminalError` after 5 s; cause not recoverable, errors are masked and prod DB
+reads were not available).
+
+- Writer (`nova.research.caption_binding` v10): `max_attempts=2` with
+  `enable_clarification_retries=True` so the runtime's KRI-542 retry at "low" thinking runs on a
+  truncation; `max_output_tokens` 8192 -> 16384.
+- `research_preview._schema_failure`: a truncated answer is transient (never a source limit,
+  never cached); a malformed answer still is.
+- `run_researched_revision`: one correction round. A rejected answer (overlap, timing,
+  evidence, the claim reviewer) goes back to the writer once with the reason (`correction`).
+  Kill switch `RESEARCH_CORRECTION_ROUND_ENABLED` (default true; false = no correction round).
+- Not changed: the reading-time question ("longer edit or fewer parts") and the Main Creator
+  planning failure. Both are listed on KRI-1097.
+- Verified: 3 of 3 fully live runs on the fixed code ended on the approval card with sourced
+  wording (`scripts/kria/live_assos_turn.py --live`); the same code before the change refused or
+  stalled 3 of 3. Small samples; the models vary run to run.

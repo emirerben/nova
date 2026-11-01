@@ -311,10 +311,16 @@ def _failed(
 
 
 def _schema_failure(exc: BaseException) -> BaseException | None:
-    from app.agents._runtime import SchemaError  # noqa: PLC0415
+    """The malformed-answer failure behind ``exc``, else None.
+
+    A truncated answer is not one: the model spent its output budget, which says nothing
+    about the sources, so it is transient (never filed, or cached, as a source limit)."""
+    from app.agents._runtime import SchemaError, _OutputTruncatedError  # noqa: PLC0415
 
     seen: BaseException | None = exc
     while seen is not None:
+        if isinstance(seen, _OutputTruncatedError):
+            return None
         if isinstance(seen, SchemaError):
             return seen
         seen = seen.__cause__
