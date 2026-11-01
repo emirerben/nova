@@ -66,7 +66,9 @@ log = structlog.get_logger()
 # six designed animations are offered; the model writes the id, not the label.
 # v96 (KRI-1077): CAPTION ANIMATION: set_caption_meta animation_phases for all captions, only
 # where CAPTIONS shows `caption_animation: available`; otherwise an honest "can't animate yet".
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-30-v96"
+# v97 (KRI-1117): set_background / remove_background and the BACKGROUND section, taught only
+# where the snapshot offers the `background` family; every other prompt is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-31-v97"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1945,6 +1947,40 @@ def _format_snapshot(snapshot: dict) -> str:
                 )
         else:
             lines.append("(none)")
+
+    if isinstance(snapshot.get("background"), dict):
+        background = snapshot["background"]
+        lines.append("\nBACKGROUND BEHIND THE SPEAKER (use asset_id exactly as shown):")
+        if background.get("available") is False:
+            lines.append(
+                f"Not available on this edit: {_field(background.get('reason'), max_chars=160)}. "
+                "Say that reason plainly as an unmet request; do not emit a background op."
+            )
+        else:
+            current = background.get("current")
+            if isinstance(current, dict):
+                lines.append(
+                    f"current: kind={_field(current.get('kind'), max_chars=20)!r} "
+                    f"id={_field(current.get('media_id'), max_chars=80)!r} "
+                    f"start={_fmt_round3(_first_number(current, ('source_start_s',)))}s"
+                )
+            else:
+                lines.append("current: (none)")
+            pool = background.get("pool") if isinstance(background.get("pool"), list) else []
+            lines.append("POOL:")
+            if pool:
+                for asset in _component_rows(pool, 12, component_context_enabled):
+                    if not isinstance(asset, dict):
+                        continue
+                    lines.append(
+                        f"- id={_field(asset.get('id'), max_chars=80)!r} "
+                        f"kind={_field(asset.get('kind'), max_chars=20)!r} "
+                        f"label={_field(asset.get('label'), max_chars=60)!r} "
+                        f"duration={_fmt_round3(_first_number(asset, ('duration_s',)))}s "
+                        f"context={_field(asset.get('context'), max_chars=80)!r}"
+                    )
+            else:
+                lines.append("(none)")
 
     if isinstance(snapshot.get("captions"), dict):
         captions = snapshot["captions"]

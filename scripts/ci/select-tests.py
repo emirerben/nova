@@ -9,6 +9,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ios"))
+import render_evidence
 import ui_tests
 
 SUITES = ("api", "ios", "ios_ui", "shared_motion")
@@ -66,6 +67,7 @@ JOURNEY_POLICY_PATHS = (
     "scripts/ci/test_journey_gate.py",
     "scripts/ci/test_select_tests.py",
     "scripts/ci/wait-for-jobs.py",
+    "scripts/ios/render_evidence.py",
 )
 
 
@@ -424,6 +426,23 @@ def selection_details(event, base, head):
         )
 
 
+def render_evidence_selection(event, base, head):
+    """PRs run the slow export/OCR unit proofs only when their code changed.
+
+    Everything except a pull request with a readable diff runs them, so main
+    pushes, nightly and manual runs keep the whole unit suite (fail closed).
+    """
+    if event != "pull_request":
+        return True
+    try:
+        ancestor = git("merge-base", base, head).decode().strip()
+        raw = git("diff", "--no-renames", "--name-only", "-z", ancestor, head)
+        paths = [p.decode("utf-8") for p in raw.split(b"\0") if p]
+    except (subprocess.CalledProcessError, UnicodeError, OSError):
+        return True
+    return not paths or render_evidence.triggered(paths)
+
+
 def journey_selection(event, base, head):
     """Select the expensive offline journey, fail closed when diff data is absent."""
     return journey_details(event, base, head)[0]
@@ -675,6 +694,10 @@ def main():
     )
     output += f"ios_ui_groups={groups}\nios_ui_shards={shards}\njourney={str(journey).lower()}\njourney_coverage={coverage}\njourney_ids={journey_ids}\njourney_needs_native={str(native).lower()}\n"
     output += f"native_legs={json.dumps(legs)}\n"
+    render = render_evidence_selection(
+        event, os.environ.get("CI_BASE", ""), os.environ.get("CI_HEAD", "")
+    )
+    output += f"ios_render_evidence={str(render).lower()}\n"
     print(reason + "\n" + output)
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
@@ -685,6 +708,7 @@ def main():
                 f"## CI selection\n\n{reason}\n\niOS UI groups: {groups}"
                 f" ({shards} native leg{'s' if shards > 1 else ''})\n\n"
                 f"iPhone validation legs: {', '.join(legs)}\n\n"
+                f"Export/OCR unit proofs: {'run' if render else 'skipped (no render code changed; main runs them)'}\n\n"
                 + "\n".join(
                     f"- {s}: {'run' if s in suites else 'not applicable'}"
                     for s in SUITES

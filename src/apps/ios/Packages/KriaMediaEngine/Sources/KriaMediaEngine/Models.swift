@@ -22,12 +22,13 @@ public struct EditRecipe: Codable, Equatable, Sendable {
     public var textLayers: [PortableTextLayer]
     public var drawingLayers: [PortableDrawingLayer]
     public var visualFills: [VisualCanvasFill]
+    public var speakerBackground: SpeakerBackgroundLayer?
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, rendererVersion, canvas, frameRate, assets, tracks, audio, requiredCapabilities, assetManifest, textLayers, cameraPulses, motionScenes, visualFills, drawingLayers
+        case schemaVersion, rendererVersion, canvas, frameRate, assets, tracks, audio, requiredCapabilities, assetManifest, textLayers, cameraPulses, motionScenes, visualFills, drawingLayers, speakerBackground
     }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["schemaVersion", "rendererVersion", "canvas", "frameRate", "assets", "tracks", "audio", "requiredCapabilities", "assetManifest", "textLayers", "cameraPulses", "motionScenes", "visualFills", "drawingLayers"])
+        try rejectUnknownAssetFields(decoder, allowed: ["schemaVersion", "rendererVersion", "canvas", "frameRate", "assets", "tracks", "audio", "requiredCapabilities", "assetManifest", "textLayers", "cameraPulses", "motionScenes", "visualFills", "drawingLayers", "speakerBackground"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
         rendererVersion = try c.decode(String.self, forKey: .rendererVersion)
@@ -48,6 +49,8 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if schemaVersion == 1 && c.contains(.textLayers) { throw RecipeError.invalidTimeline }
         drawingLayers = try c.decodeIfPresent([PortableDrawingLayer].self, forKey: .drawingLayers) ?? []
         if schemaVersion == 1 && c.contains(.drawingLayers) { throw RecipeError.invalidTimeline }
+        speakerBackground = try c.decodeIfPresent(SpeakerBackgroundLayer.self, forKey: .speakerBackground)
+        if schemaVersion == 1 && c.contains(.speakerBackground) { throw RecipeError.invalidTimeline }
     }
 
     public init(schemaVersion: Int = 1,
@@ -56,11 +59,11 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                 frameRate: Double = 30,
                 assets: [MediaAsset] = [], tracks: [TimelineTrack] = [],
                 audio: AudioMixRecipe = .default, requiredCapabilities: Set<MediaCapability> = [],
-                assetManifest: RenderAssetManifest? = nil, textLayers: [PortableTextLayer] = [], cameraPulses: [CameraPulse] = [], motionScenes: MotionSceneProgram? = nil, visualFills: [VisualCanvasFill] = [], drawingLayers: [PortableDrawingLayer] = []) {
+                assetManifest: RenderAssetManifest? = nil, textLayers: [PortableTextLayer] = [], cameraPulses: [CameraPulse] = [], motionScenes: MotionSceneProgram? = nil, visualFills: [VisualCanvasFill] = [], drawingLayers: [PortableDrawingLayer] = [], speakerBackground: SpeakerBackgroundLayer? = nil) {
         self.schemaVersion = schemaVersion; self.rendererVersion = rendererVersion
         self.canvas = canvas; self.frameRate = frameRate; self.assets = assets
         self.tracks = tracks; self.audio = audio; self.requiredCapabilities = requiredCapabilities
-        self.assetManifest = assetManifest; self.textLayers = textLayers; self.cameraPulses = cameraPulses; self.motionScenes = motionScenes; self.visualFills = visualFills; self.drawingLayers = drawingLayers
+        self.assetManifest = assetManifest; self.textLayers = textLayers; self.cameraPulses = cameraPulses; self.motionScenes = motionScenes; self.visualFills = visualFills; self.drawingLayers = drawingLayers; self.speakerBackground = speakerBackground
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -75,6 +78,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if !cameraPulses.isEmpty { try c.encode(cameraPulses, forKey: .cameraPulses) }
         if schemaVersion == 2 { try c.encode(textLayers, forKey: .textLayers) }
         if !drawingLayers.isEmpty { try c.encode(drawingLayers, forKey: .drawingLayers) }
+        try c.encodeIfPresent(speakerBackground, forKey: .speakerBackground)
     }
 
     public func validate() throws {
@@ -88,7 +92,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                       let expected = manifest.assets.first(where: { $0.id == asset.id }),
                       asset.fingerprint == expected.fingerprint.assetFingerprint else { throw RecipeError.invalidTimeline }
             }
-        } else if assetManifest != nil || !textLayers.isEmpty || !cameraPulses.isEmpty || motionScenes != nil || !visualFills.isEmpty || !drawingLayers.isEmpty { throw RecipeError.invalidTimeline }
+        } else if assetManifest != nil || !textLayers.isEmpty || !cameraPulses.isEmpty || motionScenes != nil || !visualFills.isEmpty || !drawingLayers.isEmpty || speakerBackground != nil { throw RecipeError.invalidTimeline }
         guard visualFills.count <= 100, Set(visualFills.map(\.id)).count == visualFills.count else { throw RecipeError.invalidTimeline }
         for fill in visualFills { try fill.validate(duration: TimelineMath.totalDuration(of: self)) }
         guard cameraPulses.count <= 100, Set(cameraPulses.map(\.id)).count == cameraPulses.count else { throw RecipeError.invalidTimeline }
@@ -100,6 +104,12 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         for layer in drawingLayers {
             try layer.validate()
             guard layer.end <= TimelineMath.totalDuration(of: self) else { throw RecipeError.invalidTimeline }
+        }
+        if let background = speakerBackground {
+            try background.validate()
+            guard assetManifest?.assets.contains(where: {
+                if case .visual(_, _, let kind) = $0.source { $0.id == background.assetID && kind == background.mediaKind } else { false }
+            }) == true else { throw RecipeError.missingAssetReference }
         }
         guard textLayers.count <= Self.maxTextLayers, Set(textLayers.map(\.id)).count == textLayers.count else { throw RecipeError.invalidTimeline }
         for layer in textLayers { try layer.validate(duration: TimelineMath.totalDuration(of: self), manifest: assetManifest) }
@@ -198,6 +208,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if !audio.muteWindows.isEmpty || !visualFills.isEmpty || clips.contains(where: { $0.visualPlacement != nil }) { result.insert(.visualBlocks) }
         if !cameraPulses.isEmpty { result.insert(.cameraEffects) }
         if !drawingLayers.isEmpty { result.insert(.freehandDrawing) }
+        if speakerBackground != nil { result.insert(.speakerBackground) }
         if textLayers.contains(where: { ($0.bend ?? 0) != 0 }) { result.insert(.textBend) }
         if textLayers.contains(where: { $0.karaoke?.singleWord == true }) { result.insert(.singleWordText) }
         if textLayers.contains(where: { $0.behindSubject == true }) { result.insert(.behindSubject) }
@@ -491,7 +502,7 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export,
          captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
          soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, singleWordText, freezeFrame,
-         behindSubject
+         behindSubject, speakerBackground
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }

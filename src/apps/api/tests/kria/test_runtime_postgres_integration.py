@@ -2999,6 +2999,7 @@ async def test_approval_output_shape_is_validated_stashed_and_applied_at_claim(
             assert execution.result["render_shape"] == {
                 "output_orientation": "portrait",
                 "landscape_fit": "fill",
+                "origin": "creator",
             }
             assert db.get(PlanItem, item_id).landscape_fit == "fit"  # applied at claim
 
@@ -3014,6 +3015,7 @@ async def test_approval_output_shape_is_validated_stashed_and_applied_at_claim(
         assert captured["kwargs"]["creator_render_shape"] == {
             "output_orientation": "portrait",
             "landscape_fit": "fill",
+            "origin": "creator",
         }
         with sync_session() as db:
             assert db.get(PlanItem, item_id).landscape_fit == "fill"
@@ -3147,6 +3149,7 @@ async def test_landscape_choice_reaches_dispatch_and_keeps_the_bars_preference(
         assert captured["kwargs"]["creator_render_shape"] == {
             "output_orientation": "landscape",
             "landscape_fit": "fill",
+            "origin": "creator",
         }
         with sync_session() as db:
             assert db.get(PlanItem, item_id).landscape_fit == "fit"

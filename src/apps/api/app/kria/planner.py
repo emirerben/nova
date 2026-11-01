@@ -34,6 +34,8 @@ from app.agents._runtime import (
     ProviderQuotaExceededError,
     RunContext,
     TerminalError,
+    TerminalSchemaError,
+    TransientError,
 )
 from app.agents._schemas.brief_extractor import BriefExtractionOutput
 from app.agents._schemas.creator_agent import (
@@ -189,6 +191,7 @@ from app.services.clip_intent_planning import (
 )
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_order_sequence import stated_anchors
+from app.services.clip_pick_collisions import plan_without_pick_collisions
 from app.services.clip_selection import answered_rows, fold_clip_selections
 from app.services.clip_understanding import understanding_incomplete
 from app.services.creative_copy_decisions import (
@@ -211,10 +214,12 @@ from app.services.creator_sessions import (
 from app.services.kept_sound_lines import kept_line_records
 from app.services.kria_editor_ops import (
     EDITOR_STATE_STALE_REPLY,
+    MAX_BACKGROUND_POOL_ROWS,
     MAX_EDITOR_OPS,
     SPEECH_CUT_NEEDS_SAVE_REPLY,
     EditorDraftBasis,
     EditorStateStaleError,
+    background_state,
     build_editor_snapshot,
     clip_facts_by_media_id,
     clip_seen_by_media_id,
@@ -383,8 +388,10 @@ def _enrich_best_parts_snapshot(
     if not isinstance(media_snapshot, dict):
         return media_snapshot
     from app.kria.asset_holds import asset_holds, visual_budget  # noqa: PLC0415
+    from app.pipeline.story_direction import story_floor_for  # noqa: PLC0415
     from app.pipeline.unified_montage import (  # noqa: PLC0415
         MIN_READABLE_SHOT_S,
+        brief_view,
         unheld_still_frames,
     )
     from app.services.creator_render_contract import build_render_contract  # noqa: PLC0415
@@ -418,6 +425,16 @@ def _enrich_best_parts_snapshot(
     if recording is None and isinstance(media_snapshot.get("voiceover"), dict):
         recording = media_snapshot["voiceover"].get("duration_s")
     moments = brief_moment_ask(brief)
+    # A planner direction of text_explainer / guided_story holds every clip at least that
+    # direction's own minimum moment, so the approved windows already play as the story the
+    # render builds (and the length on the card is its length). Only where nothing the
+    # creator asked keeps the draft a fast montage; the worker decides the rest with the
+    # same rule (`story_direction.story_blocker`).
+    story_floor_s = (
+        story_floor_for(strategy, brief_view(brief))
+        if strategy.get("edit_format") == "montage" and recording is None
+        else None
+    )
     held = _held_closing_ids(closing_quote)
     grounded = {str(row.get("quote")): row for row in named_lines or () if isinstance(row, Mapping)}
     named = [
@@ -531,6 +548,7 @@ def _enrich_best_parts_snapshot(
             skipped_moments=(
                 [pin.json() for pin in moment_pins.skipped] if moment_pins is not None else None
             ),
+            story_floor_s=story_floor_s,
         )
 
     # KRI-585: the clips' words seat the welcome's line and a quiet ending. "Fast cuts" is
@@ -1587,6 +1605,8 @@ _OTHER_ANSWER_KEYS = frozenset(
         SONG_RANGE_ANSWER_KEY,
     }
 )
+# KRI-1125: every payload key that makes a creator event a tap or card answer, not a typed line.
+_TAP_ANSWER_KEYS = frozenset({"clip_selection", *_OTHER_ANSWER_KEYS})
 
 
 def _picker_answer_turn_id(events: Sequence[tuple[str, Any]]) -> str | None:
@@ -2014,7 +2034,61 @@ async def _copilot_clip_context(
             context["sfx_catalog"] = catalog
     except Exception:  # noqa: BLE001 - fail closed: empty catalog => no add_sfx
         log.warning("kria_copilot_sfx_catalog_unavailable", thread_id=str(thread_id), exc_info=True)
+    try:
+        # KRI-1117: the photos and videos a Talking edit's background can be. No query while
+        # the lane is closed for this variant, so every other turn reads exactly what it read.
+        if background_state(job, variant)[0]:
+            pool = await _background_pool_rows(db, item)
+            if pool:
+                context["background_pool"] = pool
+    except Exception:  # noqa: BLE001 - fail closed: empty pool => no set_background
+        log.warning(
+            "kria_copilot_background_pool_unavailable", thread_id=str(thread_id), exc_info=True
+        )
     return context
+
+
+async def _background_pool_rows(db: AsyncSession, item: PlanItem) -> list[dict]:
+    """The item's own ready photos and videos for ``set_background`` (one query, savepoint).
+
+    Only THIS item's pool (S19): the id the model copies is the pool row id the Save pins.
+    The speaker's own clips are not Visuals and never appear here.
+    """
+    from app.models import PlanItemAsset  # noqa: PLC0415
+
+    owner = select(ContentPlan.user_id).where(ContentPlan.id == item.content_plan_id)
+    async with db.begin_nested():
+        rows = (
+            (
+                await db.execute(
+                    select(PlanItemAsset)
+                    .where(
+                        PlanItemAsset.plan_item_id == item.id,
+                        PlanItemAsset.user_id == owner.scalar_subquery(),
+                        PlanItemAsset.status == "ready",
+                        PlanItemAsset.kind.in_(("image", "video")),
+                        PlanItemAsset.deduplicated_to_asset_id.is_(None),
+                    )
+                    .order_by(PlanItemAsset.created_at, PlanItemAsset.id)
+                    .limit(MAX_BACKGROUND_POOL_ROWS)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    pool: list[dict] = []
+    for row in rows:
+        entry: dict[str, Any] = {"id": str(row.id), "kind": row.kind}
+        label = " ".join(str(row.source_filename or "").split())[:60]
+        if label:
+            entry["label"] = label
+        if row.kind == "video" and isinstance(row.duration_s, (int, float)):
+            entry["duration_s"] = round(float(row.duration_s), 2)
+        context_note = " ".join(str(getattr(row, "user_context", None) or "").split())[:80]
+        if context_note:
+            entry["context"] = context_note
+        pool.append(entry)
+    return pool
 
 
 SFX_CATALOG_LIMIT = 40
@@ -2742,6 +2816,43 @@ async def _call_main_creator(
         raise RuntimeError("Kria could not produce a reliable editorial plan") from exc
 
 
+# Prompt fidelity (errors unit): the extractor is read-only, so ONE bounded retry after a
+# provider/transport failure is safe. The agent runtime already spent its own attempts and
+# fallback models, so a short pause gives a transient outage a chance to pass.
+_EXTRACTOR_RETRY_BACKOFF_S = 1.0
+_EXTRACTOR_RETRY_MIN_BUDGET_S = 20.0
+
+
+def _error_honesty_enabled() -> bool:
+    return bool(settings.kria_error_honesty_enabled)
+
+
+def _is_provider_fault(exc: BaseException) -> bool:
+    """True when an agent failed for provider/transport reasons, not because its answer was bad.
+
+    ``TerminalSchemaError`` is the extractor producing output the schema rejects (a real
+    misread: the creator is asked to rephrase). Any other wrapped ``TerminalError`` (retries
+    exhausted on 5xx/429/timeouts, a truncated answer, a refusal) says nothing about the
+    creator's words, so the honest reply is "try again", not "I couldn't read your request".
+    """
+    cause = exc.__cause__
+    return isinstance(cause, TerminalError) and not isinstance(cause, TerminalSchemaError)
+
+
+def _extractor_retry_allowed(exc: TerminalError) -> bool:
+    if not _error_honesty_enabled():
+        return False
+    # Only an exhausted-transient failure; schema, refusal and fenced outcomes never retry.
+    if type(exc) is not TerminalError or not isinstance(exc.__cause__, TransientError):
+        return False
+    deadline = turn_deadline.get()
+    return (
+        deadline is None
+        or deadline - _POST_UNDERSTANDING_RESERVE_S - time.monotonic()
+        >= _EXTRACTOR_RETRY_MIN_BUDGET_S
+    )
+
+
 async def _call_brief_extractor(
     inputs: _CreatorInputs,
     *,
@@ -2762,12 +2873,12 @@ async def _call_brief_extractor(
         require_request_scope=True,
     )
 
-    def _run_agent():  # noqa: ANN202 - inferred BriefExtractionOutput
+    def _run_agent(request_id: str):  # noqa: ANN202 - inferred BriefExtractionOutput
         deadline = turn_deadline.get()
         return BriefExtractorAgent(default_client()).run(
             agent_input,
             ctx=RunContext(
-                request_id=str(thread_id),
+                request_id=request_id,
                 creator_id=str(creator_id),
                 plan_item_id=str(item_id),
                 creator_agent_session_id=(
@@ -2780,12 +2891,23 @@ async def _call_brief_extractor(
         )
 
     try:
-        return await asyncio.to_thread(_run_agent)
+        return await asyncio.to_thread(_run_agent, str(thread_id))
     except (ProviderOutcomeUnknownError, ProviderQuotaExceededError, AiBudgetExceededError):
         # A spend cap is not a reading failure: the turn fails with its own code (A1).
         raise
     except TerminalError as exc:
-        raise RuntimeError("Kria could not extract the creative brief reliably") from exc
+        if not _extractor_retry_allowed(exc):
+            raise RuntimeError("Kria could not extract the creative brief reliably") from exc
+        log.warning("kria_extractor_retry", **_recovery_cause("followup_extraction", exc))
+        await asyncio.sleep(_EXTRACTOR_RETRY_BACKOFF_S)
+        try:
+            # A distinct request id: the paid-call reservation key is stable per request id
+            # and attempt number, so the retry must not collide with the failed run's.
+            return await asyncio.to_thread(_run_agent, f"{thread_id}:extractor-retry")
+        except (ProviderOutcomeUnknownError, ProviderQuotaExceededError, AiBudgetExceededError):
+            raise
+        except TerminalError as retry_exc:
+            raise RuntimeError("Kria could not extract the creative brief reliably") from retry_exc
 
 
 def _extraction_request_scope(
@@ -3428,7 +3550,12 @@ async def _plan_turn_clip_intents(
     # KRI-1067: a filming-order brief's first / last clip the inventory may leave out.
     brief_anchors = stated_anchors(effective_brief) if wants_capture_order else {}
     await _kick_clip_understanding(item_id, intent_clips)
-    planned = await plan_and_resolve_clip_intents(
+    # KRI-1125: one photo is never silently the answer for two ordered beats, and a typed
+    # correction newer than the tap that caused it sends the beat back to the resolver.
+    planned = await plan_without_pick_collisions(
+        plan_and_resolve_clip_intents,
+        thread_events=thread_events,
+        answer_keys=_TAP_ANSWER_KEYS,
         # KRI-522: the creator's own words (verified quote source), never
         # only the brief paraphrase; the brief rides along as recall aid.
         creator_request=inputs.raw_creator_request or creator_request or user_message,
@@ -4754,6 +4881,11 @@ def _request_recovery(
             en="I couldn't prepare those edits this time.",
             tr="Bu sefer bu düzenlemeleri hazırlayamadım.",
         ),
+        # The reading step hit a provider/transport failure: not a misread request.
+        "request_extraction_provider_failed": say(
+            en="I couldn't prepare those edits this time.",
+            tr="Bu sefer bu düzenlemeleri hazırlayamadım.",
+        ),
     }.get(
         reason,
         say(
@@ -4766,7 +4898,12 @@ def _request_recovery(
             en="Try again, or tell me the most important change first.",
             tr="Tekrar dene ya da önce en önemli değişikliği söyle.",
         )
-        if reason in {"creator_planning_failed", "editor_planning_failed"}
+        if reason
+        in {
+            "creator_planning_failed",
+            "editor_planning_failed",
+            "request_extraction_provider_failed",
+        }
         else say(
             en="Which clip or part of the edit should I work on first?",
             tr="Önce düzenlemenin hangi klibi ya da bölümü üzerinde çalışayım?",
@@ -6134,13 +6271,13 @@ async def _plan_live_turn(
         and not answers_clip_question
         and _fast_path_eligible(user_message)
     )
-    failed_editor_correction = correction_candidate and _is_text_edit_ask(user_message)
-    if (
-        correction_candidate
-        and not failed_editor_correction
-        and any(
-            row.get("render_status") in {"failed", "needs_attention"} for row in latest_variants
-        )
+    text_correction = correction_candidate and _is_text_edit_ask(user_message)
+    failed_variant = any(
+        row.get("render_status") in {"failed", "needs_attention"} for row in latest_variants
+    )
+    saved_heads = []
+    if (text_correction and not latest_variants) or (
+        correction_candidate and not text_correction and failed_variant
     ):
         saved_heads = (
             (
@@ -6157,6 +6294,20 @@ async def _plan_live_turn(
             .scalars()
             .all()
         )
+    # A text ask corrects the failed render (staged on its editor head, or refused honestly)
+    # only when that render left something to correct: a variant, or editor work built on the
+    # job. A render that failed before making any video (Leverkusen M2 10-31: phone plan
+    # refused, no `variants` key) leaves only the strategy draft, so the change re-plans like
+    # every other follow-up to a failed first render.
+    failed_editor_correction = text_correction and (
+        bool(latest_variants)
+        or any(
+            isinstance(head, CreatorEditDraft)
+            and (head.snapshot_json or {}).get("kind") == "editor"
+            for head in saved_heads
+        )
+    )
+    if correction_candidate and not text_correction and failed_variant:
         failed_editor_correction = any(
             failed_editor_draft_basis(
                 head, latest_job, row, thread_id=thread_id, creator_id=creator_id, item_id=item.id
@@ -6459,6 +6610,8 @@ async def _plan_live_turn(
                 updates=pre_extracted_updates if extraction_complete else (),
                 reason="editor_planning_failed"
                 if extraction_complete
+                else "request_extraction_provider_failed"
+                if _error_honesty_enabled() and _is_provider_fault(exc)
                 else "request_extraction_failed",
                 cause=cause,
             )

@@ -789,6 +789,13 @@ class Settings(BaseSettings):
     # Apply: `fly secrets set CAPTION_ANIMATION_ENABLED=false` (api + worker) + restart.
     caption_animation_enabled: bool = True
     caption_animation_min_client_protocol: int = 24
+    # Prompt fidelity (animation): "with animations" / "animated text" reaches the rendered text.
+    # Default TRUE. brief_view reads an animation ask at any text scope, an unnamed ask gets one
+    # tasteful entrance (`animation_ask.DEFAULT_TEXT_ENTRANCE`), the creation text pass applies
+    # and verifies it (never raises), and the receipt checker judges it. False: byte-identical to
+    # before (title-scope asks only, unnamed asks stay prose, no verification pass).
+    # Apply: `fly secrets set TEXT_ANIMATION_ASK_ENABLED=false` (api + worker) + restart.
+    text_animation_ask_enabled: bool = True
     # Text behind people ON THE PHONE (the device twin of `text_behind_subject_enabled`
     # below, which is the cloud Skia lane). When True, `compile_text_overlay` stamps
     # `behind_subject` on a phone recipe text layer whose text element asks for it, and
@@ -806,6 +813,30 @@ class Settings(BaseSettings):
     # `fly machine restart <id>` (api + worker); rollback = `...=false` + restart.
     text_behind_subject_phone_enabled: bool = False
     text_behind_subject_phone_min_client_protocol: int = 21
+    # Talk-to-camera green screen ON THE PHONE (KRI-1115): `speaker_background` on a V2
+    # recipe names a photo or looping video that `KriaMediaEngine` composites behind the
+    # speaker clip's Vision person mask. Also needs `speakerBackground` in
+    # PHONE_RENDER_VERIFIED_FEATURES (fly secret, set after a physical-device preview +
+    # export check) and, inside an app request, a build declaring
+    # `X-Kria-Client-Protocol` >= the min protocol (27: the first build that decodes the
+    # key). When any of the three is missing the compile STRIPS the lane and the edit
+    # renders with the creator's own background -- the recipe is byte-identical to
+    # today's. A pinned recipe that already carries it answers 426
+    # `client_update_required` (`speaker_background`) to an older build, which cannot
+    # decode the key. The same gate hides the capability (`editor_capabilities.
+    # speaker_background`, device-rendered Talk-to-camera variants only; thread capability
+    # `speaker_background`) and refuses an editor Save that SETS one (422
+    # `speaker_background_disabled`, 426 below the min protocol). Clearing a background
+    # always works, so a rollback never traps one on an edit. Default FALSE (dark ship).
+    # Apply: `fly secrets set SPEAKER_BACKGROUND_ENABLED=true --app nova-video` +
+    # `fly machine restart <id>` (api + worker), AFTER `speakerBackground` is in
+    # PHONE_RENDER_VERIFIED_FEATURES (set that first: with the flag on and the token
+    # missing every request is stripped). Rollback = kill switch, never a code revert:
+    # `fly secrets set SPEAKER_BACKGROUND_ENABLED=false` + restart (api + worker); recipes
+    # already pinned keep their background, new compiles strip it. Runbook:
+    # docs/pipelines/speaker-background.md.
+    speaker_background_enabled: bool = False
+    speaker_background_min_client_protocol: int = 27
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,
@@ -928,6 +959,13 @@ class Settings(BaseSettings):
     # Default TRUE; kill switch = false + restart (the field is dropped, no question is
     # asked, the montage behaves exactly as before).
     kria_choice_questions_enabled: bool = True
+    # Prompt fidelity, errors unit: a provider/transport failure on a follow-up is answered
+    # with the honest "try again" reply (after ONE bounded extractor retry) instead of "I
+    # couldn't reliably read every requested change"; sensitive agents keep the error CLASS
+    # (never text) in their logged error; the "Animate the title" chip is offered only when
+    # the editor can resolve a title. Default TRUE; kill switch = false + restart (api +
+    # worker) -> byte-identical to the previous behaviour on all three.
+    kria_error_honesty_enabled: bool = True
     # KRI-724: on a one-take phone Talking draft, ask the creator which time a spoken word /
     # line is meant ("the first time SHE says Merope"; a line to cut said twice) before
     # approval, and render exactly that occurrence. Default false; on = Fly secret
@@ -1051,6 +1089,13 @@ class Settings(BaseSettings):
     # sourced wording + citations, and pin them to the approval (`app.kria.research_preview`).
     # false => the render researches after approval exactly as before. Restart api + worker.
     kria_research_preview_enabled: bool = True
+    # Prompt fidelity (disclosure): before approval, say what the route that will render the
+    # draft does not read (unread strategy fields, asks like animated text, research after
+    # approval), show the length the plan renders, and approve (with that disclosure) an ask
+    # whose checker cannot decide before render instead of holding the draft. Never blocks.
+    # Default TRUE; false + restart (api + worker) = byte-identical to before
+    # (`app.kria.route_disclosure`, agents/DECISIONS.md "Route disclosure").
+    kria_route_disclosure_enabled: bool = True
     # KRI-721: enroll new approval writers only after API/worker readers deploy.
     # Existing stamped assessments remain mandatory when enrollment is disabled.
     kria_approval_readiness_enabled: bool = False
@@ -2209,6 +2254,18 @@ class Settings(BaseSettings):
     # client_update_required. Apply: `fly secrets set SLIDE_POST_STICKERS_ENABLED=false
     # --app nova-video` (api + worker) + restart. Never roll the CODE back once stickers exist.
     slide_post_stickers_enabled: bool = True
+    # Prompt-fidelity honesty (a): an approval body that carries a shape is not proof the
+    # creator picked it (the app echoes the preselected default). On => the plan says "The
+    # creator selected this output format." only for an explicit pick. Off => byte-identical
+    # to before. Apply: `fly secrets set RENDER_SHAPE_ORIGIN_HONEST_ENABLED=false` (api +
+    # worker) + restart.
+    render_shape_origin_honest_enabled: bool = True
+    # Prompt-fidelity honesty (b): the live "look" chip names the font the phone actually
+    # burned, not the plan's pre-typography default. Off => the pre-fix chip.
+    look_chip_burned_font_enabled: bool = True
+    # Prompt-fidelity honesty (c): a phone export whose on-screen text check was rejected
+    # (it still ships) leaves a creator-facing render note. Off => no note.
+    export_text_note_enabled: bool = True
     slide_post_sticker_min_client_protocol: int = 8
     # KRI-557: provider-marked Gemini thought summaries for native creation and
     # slide-post calls. Deploy dark; enable after production canary with
@@ -2368,6 +2425,14 @@ class Settings(BaseSettings):
     # When False: both agent routes return 404 — byte-identical to pre-M2 behavior.
     style_agent_enabled: bool = False
 
+    # Song rule (legal): only a creator-uploaded song ever plays on a Kria creator job. true = the
+    # render-time auto-matcher (`_match_best_track`) is never run for a creator job (a phone job,
+    # or a cloud/guided job stamped with the creator render contract), so no catalog track is
+    # picked for it; a track the creator approved (frozen licensed music) is a separate path and
+    # is unchanged. false = byte-identical to before. Rollback: `fly secrets set
+    # CREATOR_JOBS_NEVER_AUTO_MATCH_CATALOG_SONG_ENABLED=false` (api + worker) + restart.
+    creator_jobs_never_auto_match_catalog_song_enabled: bool = True
+
     # Chat-based full-editor copilot. When True,
     # POST /plan-items/{item}/variants/{variant}/copilot/turn is live and returns
     # proposed draft edit ops; it never writes Job/PlanItem rows. Frontend twin:
@@ -2406,6 +2471,25 @@ class Settings(BaseSettings):
     # stored nor shown to any prompt. Emergency rollback: `fly secrets set
     # SPEECH_EXCERPT_MONTAGE_ENABLED=false --app nova-video` + restart api+worker.
     speech_excerpt_montage_enabled: bool = True
+    # Pace unit (prompt fidelity): the planner's `pacing` (relaxed / balanced / fast) sets how
+    # long each clip is held in a phone montage, and the plan's snapshot carries the strategy's
+    # pace instead of the constant "fast". true = pacing drives cut lengths (shared rule
+    # `schemas.edit_proposal.pace_hold_bounds`, used by approval-time length planning and by
+    # the render); false = every cut length and the snapshot pace are byte-identical to before.
+    # A creator-stated length always wins over pace and no clip is ever dropped for it.
+    # Rollback: `fly secrets set PACE_DRIVES_CUTS_ENABLED=false --app nova-video` + restart
+    # api+worker.
+    pace_drives_cuts_enabled: bool = True
+    # Text-explainer unit (prompt fidelity): a planner direction of `text_explainer` or
+    # `guided_story` is built as a story on the phone montage route (story beats from
+    # `story_structure`, the text step's captions as the beat text, every moment held at least
+    # the direction's own minimum, crossfades) instead of always a hard-cut fast montage. true =
+    # built where the footage and the creator's asks allow it; anything else (a per-clip text
+    # ask, a freeze, a stated length the holds cannot fit, a text step that fails) is cut as the
+    # fast montage and the plan says so. Never refuses a render. false = byte-identical to
+    # before. Rollback: `fly secrets set STORY_DIRECTIONS_ON_MONTAGE_ENABLED=false --app
+    # nova-video` + restart api+worker.
+    story_directions_on_montage_enabled: bool = True
     # KRI-808: a clip's timed words are kept only when whisper's language agrees with the
     # clip's Gemini transcript; a pass that disagrees (whisper TRANSLATED accented speech) is
     # re-transcribed in the language Gemini or the chat heard, else stored as no words. Also

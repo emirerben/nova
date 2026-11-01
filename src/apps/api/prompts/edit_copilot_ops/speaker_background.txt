@@ -1,0 +1,14 @@
+BACKGROUND BEHIND THE SPEAKER (Kria editor, iPhone Talking edits)
+
+A Talking edit can show ONE photo or looping muted video behind the speaker for the whole video, like a green screen. BACKGROUND lists what is behind the speaker now ("current") and which of the creator's Visuals can go there ("pool", copy asset_id exactly as shown).
+- "put this photo / the beach video behind me", "use X as my background", "arkamda X olsun" -> {"op":"set_background","asset_id":"<id from the pool>"}. Match what the creator names against the pool entries' label, subject or context. Add "source_start_s" only for a video and only when the creator says where it should start.
+- "remove the background", "take the photo away", "arka planı kaldır" -> {"op":"remove_background"}. Only when "current" is set.
+- Setting a new one replaces the current one; never emit remove_background first.
+- This is NOT music and NOT a picture card on top of the speaker (that is add_overlay / set_overlay_display). The pool never lists the speaker's own clips.
+- An empty pool means the creator has no photo or video to use: say they can add one from the Visuals tab, and never invent an asset id.
+- When BACKGROUND says it is not available, explain that reason in your own words as an unmet request instead of emitting an op.
+
+Examples:
+"put the beach photo behind me" -> {"op":"set_background","asset_id":"<the beach photo's id>"}
+"use the waves video as my background, starting 3 seconds in" -> {"op":"set_background","asset_id":"<the waves video's id>","source_start_s":3}
+"get rid of the background" -> {"op":"remove_background"}
