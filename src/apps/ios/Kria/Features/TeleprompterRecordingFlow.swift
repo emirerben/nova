@@ -5,6 +5,33 @@ import SwiftUI
 /// the local manifest until the existing intake proves the take was attached.
 enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String) }
 
+/// KRI-1119: what the client knows about a background it handed to the visual upload next to a take. This is the seam
+/// the server work consumes: nothing tells the server WHICH visual is the speaker background yet.
+/// The visual's identity is `recordID`: the upload reserves it as `client_upload_id = "ios-<recordID>"` (the
+/// reservation id is `UploadRecoveryRecord.visualReservationID` once reserved, and the pool asset `CreationVisual.id`
+/// once analysed). Resolve it with `mediaID(in:)`.
+struct CameraBackgroundSelection: Equatable, Sendable {
+    let projectID: UUID
+    let itemID: String
+    let recordID: UUID
+    let kind: SpeakerBackgroundKind
+    let fileName: String
+
+    var clientUploadID: String { "ios-\(recordID.uuidString)" }
+
+    /// The reservation id the server minted for this upload, once the upload has reserved. Nil before that.
+    func mediaID(in records: [UploadRecoveryRecord]) -> String? {
+        records.first { $0.id == recordID }?.visualReservationID
+    }
+}
+
+/// States (or clears) which visual is the background on the server. Returns how it ended.
+typealias BackgroundStatement = (SpeakerBackgroundIntent) async -> SpeakerBackgroundOutcome
+
+enum BackgroundIntakeResult: Equatable, Sendable { case queued(CameraBackgroundSelection), failed(String) }
+/// Uploads a take's background file as a visual. Called after the take itself was handed to intake, never before.
+typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReference, URL) async -> BackgroundIntakeResult
+
 @MainActor final class TeleprompterRecordingFlow: ObservableObject {
     enum Stage: Equatable { case script, camera, countdown, starting, recording, finalizing, review }
     static let silentTakeMessage = "This take has no sound. Your microphone didn’t record anything, so it can’t be used for a talking video."
@@ -23,6 +50,25 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
     @Published var attachmentFinished = false
     /// A non-blocking note when the raw take could not be copied to Photos (KRI-653).
     @Published var photosNote: String?
+    /// KRI-1119: the background the creator is filming in front of (nil = none). Always nil while the capability is off.
+    @Published private(set) var background: TeleprompterBackgroundChoice?
+    /// A non-blocking note about the background (it could not be saved, or it could not be uploaded). Never blocks the take.
+    @Published var backgroundNote: String?
+    let speakerBackgroundEnabled: Bool
+    /// The live matted preview, created the first time a background is shown. Nil without a background.
+    @Published private(set) var livePreview: LiveBackgroundPreview?
+    private let makeLivePreview: () -> LiveBackgroundPreview
+    typealias BackgroundProviderFactory = @Sendable (SpeakerBackgroundReference, URL) async throws -> any LiveBackgroundProviding
+    private let makeBackgroundProvider: BackgroundProviderFactory
+    private let backgroundIntake: BackgroundIntake?
+    private let backgroundStatement: BackgroundStatement?
+    private var uploadingBackground = false
+    private var statingBackground = false
+    static let statementFailureNote = "Couldn’t tell Kria which picture is your background. Your take is saved."
+
+    /// Set when the background reached the visual upload. The seam for the server to learn which visual it is.
+    @Published private(set) var queuedBackground: CameraBackgroundSelection?
+    private var backgroundLoad: Task<Void, Never>?
     private var countdownTask: Task<Void, Never>?
     private var activeTake: TeleprompterTakeManifest?
     private var finalizedTake: TeleprompterTakeManifest?
@@ -34,7 +80,17 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
 
     init(accountID: String, projectID: UUID, root: URL? = nil,
          photoSaver: PhotoLibrarySaving = PhotoLibrarySaver(),
+         speakerBackgroundEnabled: Bool = false,
+         makeLivePreview: @escaping () -> LiveBackgroundPreview = { LiveBackgroundPreview() },
+         backgroundIntake: BackgroundIntake? = nil,
+         backgroundStatement: BackgroundStatement? = nil,
+         makeBackgroundProvider: @escaping BackgroundProviderFactory = TeleprompterRecordingFlow.liveBackgroundProvider,
          reportDiagnostic: @escaping (RecorderDiagnosticReport) -> Void = { _ in }) {
+        self.speakerBackgroundEnabled = speakerBackgroundEnabled
+        self.makeLivePreview = makeLivePreview
+        self.backgroundIntake = backgroundIntake
+        self.backgroundStatement = backgroundStatement
+        self.makeBackgroundProvider = makeBackgroundProvider
         store = TeleprompterStore(accountID: accountID, projectID: projectID, root: root)
         script = TeleprompterScript()
         self.photoSaver = photoSaver
@@ -56,6 +112,7 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
             #endif
             do { if let draft = try store.loadDraft() { script.draft = draft } }
             catch { self.error = "Couldn’t restore the script. Your saved takes are still available." }
+            restoreBackground()
             let recovery = try store.loadManifestsRecoveringCorruption()
             if let warning = recovery.recoveryWarning { self.error = warning }
             var takes = recovery.manifests.filter { $0.status != .accepted }
@@ -109,8 +166,9 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
             guard let self, self.generation == token, !Task.isCancelled, self.stage == .countdown else { return }
             guard self.camera.phase == .ready else { self.stage = .camera; return }
             do {
-                let take = TeleprompterTakeManifest(script: self.script.draft,
+                var take = TeleprompterTakeManifest(script: self.script.draft,
                                                   slot: self.pendingTake == nil ? .pending : .candidate)
+                take.speakerBackground = self.speakerBackgroundEnabled ? self.background?.reference : nil
                 try self.store.save(manifest: take)
                 self.activeTake = take
                 self.autoScrollAfterStart = !manual
@@ -135,6 +193,8 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
             cancelCountdown()
         } else if phase == .recording, stage == .starting {
             stage = .recording
+            // The movie output has really started: a video background plays from its first frame, as the edit will.
+            livePreview?.restartBackground()
             if autoScrollAfterStart { script.resume() }
         } else if phase == .finalizing {
             script.pause(); stage = .finalizing; persistDraft()
@@ -157,6 +217,7 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
     #if DEBUG
     /// Test seam: the real path sets this when the countdown ends and the file output starts.
     func seedActiveTakeForTesting(_ take: TeleprompterTakeManifest) { activeTake = take }
+    func seedSelectedTakeForTesting(_ take: TeleprompterTakeManifest) { selectedTake = take }
     #endif
 
     private func finalized(url: URL?, message: String?) {
@@ -165,6 +226,8 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
         take.status = url == nil ? .invalid : .review
         take.interrupted = camera.interrupted
         take.audioCheck = url == nil ? nil : camera.finalizedAudioCheck
+        // The choice at the end of filming wins: the picker may change while recording.
+        take.speakerBackground = speakerBackgroundEnabled ? background?.reference : nil
         finalizedTake = take
         script.pause(); stage = .review
         error = message
@@ -185,6 +248,160 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
         // Every playable take is copied to Photos (silent ones too: the footage is still the creator's),
         // after the session is stopped so a first-run permission prompt cannot interrupt a recording.
         if take.status == .review { savePhotoCopy(of: take) }
+    }
+
+    // MARK: Speaker background (KRI-1119)
+
+    private func restoreBackground() {
+        guard speakerBackgroundEnabled else { return }
+        do {
+            guard let choice = try store.loadBackgroundChoice() else { return }
+            if FileManager.default.fileExists(atPath: store.backgroundFileURL(for: choice.reference).path) {
+                background = choice
+                showBackgroundLive()
+            } else { try? store.removeBackgroundChoice() }
+        } catch { backgroundNote = "Couldn’t restore your background. Pick it again to see yourself in front of it." }
+    }
+
+    /// Copies a picked file into the take store and makes it the project's background. Nothing is uploaded here.
+    func chooseBackground(from url: URL, kind: SpeakerBackgroundKind) {
+        // Not during a take: changing the capture graph under a running recording is not something we measured.
+        guard speakerBackgroundEnabled, !usingTake, !captureBusy else { return }
+        do {
+            let reference = try store.importBackground(from: url, kind: kind)
+            let choice = TeleprompterBackgroundChoice(reference: reference)
+            try store.save(backgroundChoice: choice)
+            background = choice; backgroundNote = nil
+            pruneBackgroundFiles()
+            showBackgroundLive()
+        } catch { backgroundNote = "Couldn’t save this background. Free some storage and try again." }
+    }
+
+    func clearBackground() {
+        guard let cleared = background, !usingTake, !captureBusy else { return }
+        // The server already knows this pick: it must hear about the clear too.
+        if cleared.stated == true { try? store.markServerClearPending(eventID: "speaker-bg-clear-\(UUID().uuidString)") }
+        background = nil; backgroundNote = nil
+        try? store.removeBackgroundChoice()
+        pruneBackgroundFiles()
+        showBackgroundLive()
+    }
+
+    /// A photo is decoded once off the main thread; a video is a muted, looping player.
+    static let liveBackgroundProvider: BackgroundProviderFactory = { reference, url in
+        switch reference.kind {
+        case .image: try await Task.detached { try StillBackground(url: url) }.value
+        case .video: try await LoopingVideoBackground(url: url)
+        }
+    }
+
+    /// Points the camera's frame output and the live preview at the current choice (or away from it). Any failure leaves
+    /// the plain camera preview, and nothing here is on the recording's path.
+    private func showBackgroundLive() {
+        backgroundLoad?.cancel()
+        guard let choice = background else {
+            camera.setLiveFrameConsumer(nil)
+            livePreview?.setBackground(nil)
+            livePreview = nil
+            return
+        }
+        let preview = livePreview ?? makeLivePreview()
+        guard preview.isAvailable else { return }
+        let url = store.backgroundFileURL(for: choice.reference), reference = choice.reference, make = makeBackgroundProvider
+        backgroundLoad = Task { [weak self] in
+            do {
+                let provider = try await make(reference, url)
+                guard let self, !Task.isCancelled, self.background?.reference == choice.reference else { provider.stop(); return }
+                preview.setBackground(provider)
+                self.livePreview = preview
+                self.camera.setLiveFrameConsumer(preview)
+            } catch is CancellationError {
+            } catch {
+                guard let self, self.background?.reference == choice.reference else { return }
+                self.camera.setLiveFrameConsumer(nil)
+                self.livePreview = nil
+                self.backgroundNote = "Couldn’t show this background in the preview. It is still saved with your take."
+            }
+        }
+    }
+
+    /// Hands the take's background file to the visual upload once, then (re)states which visual it is. Either failing is a
+    /// note: the take stays attached.
+    func uploadBackgroundIfNeeded() async {
+        await handOverBackground()
+        await syncBackgroundStatement()
+    }
+
+    /// Tells the server which visual is the background, or that it was cleared. Safe to call at any time: it sends only
+    /// what the server has not heard yet, with idempotency keys that are stable across retries and relaunches. A failure
+    /// keeps the choice and is tried again at the next opening.
+    func syncBackgroundStatement() async {
+        guard speakerBackgroundEnabled, let backgroundStatement, !statingBackground else { return }
+        statingBackground = true; defer { statingBackground = false }
+        let pendingSet = background.flatMap { $0.uploaded == true && $0.stated != true ? $0 : nil }
+        if let clearID = store.pendingServerClearEventID {
+            // A new pick replaces the old one on the server, so its set makes the clear unnecessary.
+            if pendingSet == nil {
+                switch await backgroundStatement(.clear(eventID: clearID)) {
+                case .saved, .unavailable: store.removeServerClearPending()
+                case .failed: backgroundNote = Self.statementFailureNote; return
+                }
+            } else { store.removeServerClearPending() }
+        }
+        guard let choice = pendingSet else { return }
+        let intent = SpeakerBackgroundIntent.set(clientUploadID: "ios-\(choice.reference.id.uuidString)",
+                                                 eventID: "speaker-bg-set-\(choice.reference.id.uuidString)")
+        switch await backgroundStatement(intent) {
+        case .saved, .unavailable:
+            // Unavailable means the server turned it off: nothing more to say, and nothing to retry.
+            markBackgroundStated(choice.reference.id)
+        case .failed:
+            backgroundNote = Self.statementFailureNote
+        }
+    }
+
+    private func markBackgroundStated(_ id: UUID) {
+        guard var choice = background, choice.reference.id == id else { return }
+        choice.stated = true
+        guard (try? store.save(backgroundChoice: choice)) != nil else { return }
+        background = choice
+    }
+
+    private func handOverBackground() async {
+        guard speakerBackgroundEnabled, let backgroundIntake, !uploadingBackground,
+              let take = selectedTake ?? pendingTake, take.status == .attaching || take.status == .accepted,
+              let reference = take.speakerBackground else { return }
+        if background?.reference.id == reference.id, background?.uploaded == true { return }
+        let file = store.backgroundFileURL(for: reference)
+        guard FileManager.default.fileExists(atPath: file.path) else {
+            backgroundNote = "Your take was added, but its background file is gone. Add the background again from your edit."
+            return
+        }
+        uploadingBackground = true; defer { uploadingBackground = false }
+        switch await backgroundIntake(take, reference, file) {
+        case .queued(let selection):
+            queuedBackground = selection; backgroundNote = nil
+            markBackgroundUploaded(reference.id)
+        case .failed(let message):
+            backgroundNote = "Your take was added, but its background couldn’t be uploaded. \(message)"
+        }
+    }
+
+    /// Records that the background file reached the visual upload, so later takes do not upload it again.
+    private func markBackgroundUploaded(_ id: UUID) {
+        guard var choice = background, choice.reference.id == id, choice.uploaded != true else { return }
+        choice.uploaded = true
+        guard (try? store.save(backgroundChoice: choice)) != nil else { return }
+        background = choice
+    }
+
+    private func pruneBackgroundFiles() {
+        var names = Set<String>()
+        if let background { names.insert(background.reference.fileName) }
+        for take in [selectedTake, pendingTake, activeTake, finalizedTake] {
+            if let name = take?.speakerBackground?.fileName { names.insert(name) }
+        }
+        store.pruneBackgrounds(keeping: names)
     }
 
     // MARK: Photos copy of the raw take (KRI-653)
@@ -283,7 +500,11 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
             if let previous, previous.id != take.id, previous.status != .accepted {
                 try removeTake(previous)
             }
-            apply(await intake(request, store.fileURL(for: take)))
+            let result = await intake(request, store.fileURL(for: take))
+            apply(result)
+            // The take is handed over first and never waits on, or fails because of, its background.
+            if case .failed = result { return }
+            await uploadBackgroundIfNeeded()
         } catch { self.error = "Your video is kept, but its details couldn’t be saved. Try again." }
     }
 

@@ -96,6 +96,13 @@ from app.kria.reply_language import (
     say,
     thread_reply_language,
 )
+from app.kria.route_disclosure import (
+    UNIFIED_MONTAGE,
+    card_disclosures,
+    card_text,
+    planned_card_length,
+    with_route_declines,
+)
 from app.kria.select_asks import exclusion_facts, only_video_ask
 from app.kria.voiceover_script import event_content as voiceover_script_content
 from app.models import (
@@ -159,6 +166,7 @@ from app.services.kria_editor_ops import (
     _clip_label_links,
     build_editor_snapshot,
     compile_editor_ops,
+    editor_payload_dump,
     editor_state_has_lanes,
     failed_editor_draft_basis,
     merge_editor_draft,
@@ -167,7 +175,12 @@ from app.services.kria_editor_ops import (
     unknown_editor_render_query,
 )
 from app.services.kria_editor_ops_diff import describe_diff
+from app.services.length_policy import creator_duration
 from app.services.phone_rollout import stamped_client_protocol
+from app.services.phone_speaker_background import (
+    BACKGROUND_REFUSALS,
+    pin_background_for_commit_sync,
+)
 from app.services.pin_withdrawal import pin_block_coverage, unrepeated_reply
 from app.services.song_order import model_text
 from app.services.thought_summaries import (
@@ -1140,6 +1153,32 @@ def _approved_draft_coverage(db: Any, execution: Any) -> Mapping[str, Any]:
     return coverage if isinstance(coverage, Mapping) else {}
 
 
+def _offered_brief_revision(
+    offered: object,
+    brief: CreativeBrief,
+    named: Sequence[object],
+    source_event: CreationThreadEvent,
+) -> bool:
+    """``brief`` is the revision a named simpler-version offer was made at, or (KRI-1113) the
+    next one, written by the answering turn itself restating only the asks it names.
+
+    Prod thread 83f2dcaa (2026-10-31 13:51): the Main Creator restated r4 when the creator
+    tapped "Make it without these", the turn persisted brief v8 and the v7 offer stopped
+    counting, so the same offer came back. A restatement of what is being left out is not a new
+    instruction (the runtime still refuses one beside it).
+    """
+    if offered == brief.version:
+        return True
+    turn_id = str((source_event.payload or {}).get("turn_id") or "")
+    written = {req.id for req in brief.requirements if turn_id and req.source_turn_id == turn_id}
+    return (
+        isinstance(offered, int)
+        and brief.version == offered + 1
+        and bool(written)
+        and written <= {str(req_id) for req_id in named}
+    )
+
+
 def _simpler_version_consent(
     db,  # noqa: ANN001 - SQLAlchemy sync Session
     thread_id: uuid.UUID,
@@ -1184,9 +1223,10 @@ def _simpler_version_consent(
         if isinstance(named, list):
             # KRI-968: consent covers exactly what the reply named, at that revision. A
             # changed set (a new miss, a different draft) is offered again, never dropped.
-            if (
-                set(requirement_ids) != {str(req_id) for req_id in named}
-                or question.get("brief_version") != brief.version
+            if set(requirement_ids) != {
+                str(req_id) for req_id in named
+            } or not _offered_brief_revision(
+                question.get("brief_version"), brief, named, source_event
             ):
                 return None
             consent: SimplerConsent = "named"
@@ -1709,7 +1749,7 @@ def _complete_draft_turn(
                         reverted_fields=[*repair.reverted_fields, *repair.reverted_bars],
                     )
                 if isinstance(compiled.payload, EditorCommitRequest):
-                    repaired_data = compiled.payload.model_dump(mode="json", exclude_none=True)
+                    repaired_data = editor_payload_dump(compiled.payload)
                     if not plan_review.lanes_in(repaired_data):
                         raise KriaEditorOpError(
                             say(
@@ -1751,9 +1791,7 @@ def _complete_draft_turn(
                 intent=arguments.summary,
                 edit_format=str(item.edit_format or "montage"),
                 editor_payload=(
-                    merge_editor_draft(
-                        prior_payload, compiled.payload.model_dump(mode="json", exclude_none=True)
-                    )
+                    merge_editor_draft(prior_payload, editor_payload_dump(compiled.payload))
                     if isinstance(compiled.payload, EditorCommitRequest)
                     else compiled.payload
                 ),
@@ -1803,6 +1841,8 @@ def _complete_draft_turn(
         )
         brief = None
         speed_notice: str | None = None  # KRI-689
+        route_name: str | None = None  # the render route this strategy draft lands on
+        route_disclosures: list = []  # route_disclosure: what that route does not read
         phone_blockers: list = []  # KRI-775
         draft_research = None  # KRI-881
         if planned.brief_route is not None:
@@ -1959,6 +1999,41 @@ def _complete_draft_turn(
                             creator_id=thread.creator_id,
                         ),
                     )
+                    if facts.phone_montage and settings.kria_route_disclosure_enabled:
+                        route_name = UNIFIED_MONTAGE
+                        # The length on the draft is the length the plan renders.
+                        _card_media = (
+                            planned.media_snapshot
+                            if planned.media_snapshot is not None
+                            else _draft_media(item)
+                        )
+                        # Research prepared for the planner's strategy is pinned to its digest
+                        # (`research_preview.basis_digest`), so that strategy stays as planned.
+                        # A length the creator stated (message, brief, answer) is theirs.
+                        _card_source = db.get(CreationThreadEvent, turn.source_event_id)
+                        _stated = creator_duration(
+                            creator_texts=[_card_source.content or ""] if _card_source else [],
+                            brief=brief,
+                            authoritative_answers=(document.strategy or {}).get("choice_answers")
+                            or (),
+                        )
+                        _card_length = (
+                            None
+                            if planned.prepared_research is not None or _stated is not None
+                            else planned_card_length(
+                                document.strategy or {}, _card_media, route=route_name
+                            )
+                        )
+                        if _card_length is not None:
+                            document = document.model_copy(
+                                update={
+                                    "strategy": {
+                                        **(document.strategy or {}),
+                                        "target_duration_s": _card_length,
+                                    }
+                                }
+                            )
+                            snapshot, snapshot_hash = canonical_snapshot(document)
                     checked = brief.live()
                     # KRI-190: the unified montage planner writes the per-clip text,
                     # order and title at render time and reports on them then. Judging
@@ -2085,6 +2160,11 @@ def _complete_draft_turn(
                         else receipt
                         for receipt in receipts
                     ]
+                    if route_name is not None and readiness_required and not editor_turn:
+                        # An ask the render route does not read is answered plainly now.
+                        receipts = with_route_declines(
+                            receipts, checked, document.strategy, route=route_name
+                        )
                     bound = False
                     if editor_turn and not compiled.diff.unavailable:
                         try:
@@ -2143,6 +2223,18 @@ def _complete_draft_turn(
             from app.kria import research_preview  # noqa: PLC0415
 
             reply_text = f"{reply_text}\n{research_preview.preview_lines(draft_research.prepared)}"
+        if route_name is not None and brief is not None and readiness_required:
+            route_disclosures = card_disclosures(
+                brief.live(),
+                document.strategy,
+                route=route_name,
+                research_previewed=draft_research is not None and draft_research.ready,
+                # The pinned length plan: whether a story direction's holds fit the length.
+                media=_card_media,
+            )
+        route_notice = card_text(route_disclosures) if route_disclosures else None
+        if route_notice:
+            reply_text = f"{reply_text}\n{route_notice}"
         if brief is not None:
             # A repeated offer can have no new updates to persist in the response
             # transaction. Its receipts still name the revision it checked.
@@ -2316,8 +2408,12 @@ def _complete_draft_turn(
                 and apply_intent.tool_name == "draft.apply_strategy"
                 and settings.brief_binding_for(thread.creator_id)
                 # A concurrent/new instruction needs its own offer, even if its stable
-                # requirement IDs happen to be the same. Never waive model-authored updates.
-                and not planned.brief_updates
+                # requirement IDs happen to be the same. Never waive model-authored updates,
+                # except a restatement of exactly what is being left out (KRI-1113).
+                and all(
+                    update.operation == "change" and update.target_requirement_id in unmet_ids
+                    for update in planned.brief_updates
+                )
                 and not (readiness_report or {}).get("policy_problem")
             )
             else None
@@ -2362,9 +2458,10 @@ def _complete_draft_turn(
                 )
                 for req in omitted
             )
-            if automatic_omission:
-                # The turn's creator additions were already persisted above.  Append
-                # the server-owned omission as its own immutable brief revision.
+            if automatic_omission or planned.brief_updates:
+                # The turn's creator additions (KRI-1113: or the model's restatement of what
+                # the creator just left out) were already persisted above.  Append the
+                # server-owned omission as its own immutable brief revision.
                 brief = _append_automatic_omissions_sync(
                     db,
                     thread_id=thread.id,
@@ -2473,7 +2570,9 @@ def _complete_draft_turn(
                 else ""
             )
             reply_text = "\n".join(
-                part for part in (lead, _with_left_out(kept, omissions), speed_notice) if part
+                part
+                for part in (lead, _with_left_out(kept, omissions), speed_notice, route_notice)
+                if part
             )
         mark_gate = _protected_region_gate_sync(
             db,
@@ -3013,6 +3112,7 @@ def _complete_draft_turn(
                 for part in (
                     f"Render this draft: {approval_summary}",
                     speed_notice if speed_notice and speed_notice not in approval_summary else None,
+                    route_notice if route_notice and route_notice not in approval_summary else None,
                 )
                 if part
             ),
@@ -3056,6 +3156,11 @@ def _complete_draft_turn(
                 "receipt_ids": [str(draft_execution.id)],
                 **_state_event_fields(state_id, state_trace),
                 **({"requirement_receipts": requirement_receipts} if requirement_receipts else {}),
+                **(
+                    {"not_applied": [item.as_record() for item in route_disclosures]}
+                    if route_disclosures
+                    else {}
+                ),
                 **_receipt_lead_fields(reply_lead, also_changed, requirement_receipts),
                 **(
                     {"research_preview": _research_preview_payload(draft_research)}
@@ -5182,6 +5287,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                     else None
                 )
                 device_variant = _is_device_variant(current_job, approval.target_variant_id)
+                plan_before_background_pin = current_job.assembly_plan
                 try:
                     # Inside the try: deriving the lanes re-validates the pinned
                     # recipe, and a device recipe that fails is a refusal too.
@@ -5189,6 +5295,15 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                         db,
                         current_job,
                         _find_variant(current_job, approval.target_variant_id) or {},
+                    )
+                    # KRI-1117: a chat edit that sets a Talking background pins its pool
+                    # visual first, like the HTTP Save route (never any other Save).
+                    pin_background_for_commit_sync(
+                        db,
+                        current_job,
+                        approval.target_variant_id,
+                        editor_payload,
+                        plan_item_id=item.id,
                     )
                     editor_prep = prepare_editor_commit(
                         current_job,
@@ -5221,6 +5336,9 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                         temporary=explicitly_temporary(document.intent),
                     )
                 except (HTTPException, ValueError, KeyError) as exc:
+                    # A refused Save leaves no pinned receipt behind (the pin replaces the
+                    # plan dict, never edits it in place).
+                    current_job.assembly_plan = plan_before_background_pin
                     if not device_variant:
                         raise
                     # A device variant re-compiles its phone recipe here
@@ -5359,6 +5477,13 @@ _DEVICE_EDIT_REFUSALS = {
         "so I left the video as it was."
     ),
 }
+# KRI-1117: a background the Save or the pin refused, with the reason (S18).
+_DEVICE_EDIT_REFUSALS.update(
+    {
+        code: f"{en}, so I left the video as it was."
+        for code, (en, _tr) in BACKGROUND_REFUSALS.items()
+    }
+)
 _DEVICE_EDIT_REFUSAL_FALLBACK = (
     "I couldn't apply that change on your iPhone, so I left the video as it was."
 )
@@ -5380,6 +5505,12 @@ _DEVICE_EDIT_REFUSALS_TR = {
         "olduğu gibi bıraktım."
     ),
 }
+_DEVICE_EDIT_REFUSALS_TR.update(
+    {
+        code: f"{tr}, o yüzden videoyu olduğu gibi bıraktım."
+        for code, (_en, tr) in BACKGROUND_REFUSALS.items()
+    }
+)
 _DEVICE_EDIT_REFUSAL_FALLBACK_TR = (
     "Bu değişikliği iPhone'unda uygulayamadım, o yüzden videoyu olduğu gibi bıraktım."
 )

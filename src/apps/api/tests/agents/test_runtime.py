@@ -5,6 +5,7 @@ Every retry/refusal/schema/fallback path is exercised against the MockModelClien
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import ClassVar
@@ -457,7 +458,9 @@ def test_sensitive_failures_never_expose_model_text(
 
     assert "PRIVATE-MODEL-OUTPUT" not in str(exc_info.value)
     run_payload = captured[0]
-    assert run_payload["error"] == "sensitive_agent_error"
+    # Only the exception CLASS survives (closed vocabulary), never the model text.
+    assert re.fullmatch(r"sensitive_agent_error(:[a-z_]+)+", str(run_payload["error"]))
+    assert "PRIVATE" not in str(run_payload["error"])
     assert "raw_text_preview" not in run_payload
 
 
@@ -484,7 +487,7 @@ def test_sensitive_terminal_failure_never_exposes_provider_text(
         SensitiveSampleAgent(mock_client).run(SampleInput(topic="private creator direction"))
 
     assert "PRIVATE-MODEL-OUTPUT" not in str(exc_info.value)
-    assert captured[0]["error"] == "sensitive_agent_error"
+    assert captured[0]["error"] == "sensitive_agent_error:terminal_error"
 
 
 @pytest.mark.parametrize(
