@@ -927,6 +927,20 @@ enum NativeEditorRenderError: Error, Equatable {
             }
             speakerBackground = layer
         }
+        // KRI-1139: a clip's media backdrop is one pinned pool-visual asset. A photo or video the session could not
+        // read (deleted, or still preparing) drops that backdrop from the PREVIEW only; the row and Save keep it.
+        for poolID in Self.mediaBackdropPoolIDs(in: video) {
+            let assetID = EditorSpeakerBackground.assetID(forMediaID: poolID)
+            guard let source = mediaSources[Self.tiltBackdropSourceKey(forPoolID: poolID)], let fingerprint = source.asset.fingerprint,
+                  let kind = source.visualKind else {
+                for index in video.indices where video[index].backdrop == .media(poolID) { video[index].backdrop = nil }
+                continue
+            }
+            assets[assetID] = MediaAsset(id: assetID, relativePath: assetID, fingerprint: fingerprint)
+            references[assetID] = RenderAssetReference(id: assetID, fingerprint: try RenderFingerprint(fingerprint),
+                source: .visual(visualID: poolID, generation: source.visualGeneration ?? "0", mediaKind: kind))
+            urls[assetID] = source.url
+        }
         // Past the cap `recipe.validate()` would throw a bare `invalidTimeline`, which reads as a transient failure.
         guard text.count <= Self.maxTextLayers else { throw NativeEditorRenderError.tooManyTextLayers }
         var recipe = KriaMediaEngine.EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: canvas,
@@ -964,6 +978,16 @@ enum NativeEditorRenderError: Error, Equatable {
         let contain = min(canvasWidth / display.width, canvasHeight / display.height)
         let cover = max(canvasWidth / display.width, canvasHeight / display.height)
         return MediaTransform(scale: contain / cover)
+    }
+
+    /// The `mediaSources` key under which the session resolves a media tilt backdrop's bytes for this compiler.
+    static func tiltBackdropSourceKey(forPoolID id: String) -> String { "tilt_backdrop:" + id }
+
+    /// Every distinct pool visual id the clips' `.media` backdrops name, in a stable order.
+    static func mediaBackdropPoolIDs(in clips: [TimelineClip]) -> [String] {
+        var ids = Set<String>()
+        for clip in clips { if case .media(let id)? = clip.backdrop { ids.insert(id) } }
+        return ids.sorted()
     }
 
     static func clipTilt(_ raw: JSONValue?) throws -> ClipTilt? {

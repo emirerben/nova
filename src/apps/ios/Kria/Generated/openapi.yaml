@@ -926,8 +926,17 @@
       },
       "ClipBackdrop": {
         "additionalProperties": false,
-        "description": "What shows behind a main-track clip where the clip does not cover the canvas.\n\nMirrors ``KriaMediaEngine.ClipBackdrop``: ``{\"kind\": \"blank\" | \"color\" | \"blur\",\n\"color\": \"#RRGGBB\"}`` with ``color`` present for ``color`` only. ``blank`` is black\n(drawn as nothing); ``blur`` is a blurred cover-fit copy of the same clip frame.",
+        "description": "What shows behind a main-track clip where the clip does not cover the canvas.\n\nMirrors ``KriaMediaEngine.ClipBackdrop``: ``{\"kind\": \"blank\" | \"color\" | \"blur\" | \"media\",\n\"color\": \"#RRGGBB\", \"asset_id\": \"<pool visual id>\"}`` with ``color`` present for ``color``\nonly and ``asset_id`` for ``media`` only. ``blank`` is black (drawn as nothing); ``blur``\nis a blurred cover-fit copy of the same clip frame; ``media`` is a Visuals-pool photo (held)\nor video (looping, muted) cover-fit to the canvas. ``asset_id`` is the pool visual id\n(``VisualRenderAsset.visual_id``), the same value a clip row's ``tilt`` carries.",
         "properties": {
+          "asset_id": {
+            "default": null,
+            "maxLength": 160,
+            "minLength": 1,
+            "nullable": true,
+            "pattern": "^\\S+$",
+            "title": "Asset Id",
+            "type": "string"
+          },
           "color": {
             "default": null,
             "nullable": true,
@@ -939,7 +948,8 @@
             "enum": [
               "blank",
               "color",
-              "blur"
+              "blur",
+              "media"
             ],
             "title": "Kind",
             "type": "string"
@@ -3235,6 +3245,7 @@
                 "speakerBackground",
                 "speakerBackgroundWindows",
                 "clipTilt",
+                "clipBackdropMedia",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -3363,6 +3374,7 @@
                 "speakerBackground",
                 "speakerBackgroundWindows",
                 "clipTilt",
+                "clipBackdropMedia",
                 "captions",
                 "customEffects",
                 "mediaCards",

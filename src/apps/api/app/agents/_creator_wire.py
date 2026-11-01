@@ -251,7 +251,13 @@ def copilot_schema():
                 {
                     "rotation_deg": number,
                     "rotation_delta_deg": number,
-                    "backdrop": obj({"kind": enum("blank", "color", "blur"), "color": string}),
+                    "backdrop": obj(
+                        {
+                            "kind": enum("blank", "color", "blur", "media"),
+                            "color": string,
+                            "asset_id": string,
+                        }
+                    ),
                 }
             )
         if name in map_fields:

@@ -391,6 +391,11 @@ public struct PreviewComposition: @unchecked Sendable {
         if let background = recipe.speakerBackground {
             layers += try await Self.speakerBackgroundLayers(background, assetURLs: assetURLs, composition: composition, canvas: canvas, duration: total)
         }
+        for backdrop in Self.mediaBackdrops(in: recipe) {
+            guard let url = assetURLs[backdrop.assetID] else { throw MediaEngineError.missingAsset(backdrop.assetID) }
+            layers.append(try await Self.mediaBackdropLayer(poolID: backdrop.poolID, assetID: backdrop.assetID, kind: backdrop.kind,
+                                                            url: url, composition: composition, canvas: canvas, duration: total))
+        }
         try Task.checkCancellation()
         if let musicID = recipe.audio.musicAssetID {
             guard let url = assetURLs[musicID] else { throw MediaEngineError.missingAsset(musicID) }

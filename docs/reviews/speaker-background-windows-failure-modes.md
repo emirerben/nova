@@ -52,12 +52,12 @@ Rules, enforced identically by `app/kria/portable_speaker_background.py` and
 
 ### Protocol and gates
 
-- Client protocol **31** = decodes `windows` + `speaker_frame` + the `speakerBackgroundWindows` capability
-  (`KriaClientProtocolContract.version` 28 → 31 (29 is left unused and 30 is taken by the open card-tilt PR #2033, KRI-1141); `KriaTests`/`SuggestionChipsTests` header assertions move).
-- Server: `speaker_background_windows_min_client_protocol: int = 31` (`app/config.py`). Gate
+- Client protocol **32** = decodes `windows` + `speaker_frame` + the `speakerBackgroundWindows` capability
+  (`KriaClientProtocolContract.version` 28 → 32 (29 is left unused, 30 is the card-tilt build (#2033, KRI-1141) and 31 the media-backdrop build (#2038, KRI-1139)); `KriaTests`/`SuggestionChipsTests` header assertions move).
+- Server: `speaker_background_windows_min_client_protocol: int = 32` (`app/config.py`). Gate
   `speaker_background_windows_supported(require_client=...)` in `app/services/phone_rollout.py` =
   `speaker_background_supported()` AND `speakerBackgroundWindows` in `phone_render_verified_features` AND
-  (inside an app request) protocol >= 31. `speaker_background_windows_unavailable_reason()` names the
+  (inside an app request) protocol >= 32. `speaker_background_windows_unavailable_reason()` names the
   first failing check: `disabled`, `token_not_verified`, `windows_token_not_verified`, `client_protocol_below_min`.
   No new env flag: `SPEAKER_BACKGROUND_ENABLED` stays the one kill switch; the new verified token is the
   device-parity gate for the new drawing.
@@ -67,7 +67,7 @@ Rules, enforced identically by `app/kria/portable_speaker_background.py` and
   reason. The result equals a request that asked for the single background only.
 - `validate_phone_pilot_recipe` refuses a recipe carrying `windows`/`speaker_frame` without the token.
 - Device-render poll and editor Save answer 426 `client_update_required` (`feature: "speaker_background_windows"`,
-  `minimum_client_protocol: 31`) to a build below 31 for a pinned recipe / stored variant that carries them.
+  `minimum_client_protocol: 32`) to a build below 32 for a pinned recipe / stored variant that carries them.
 
 ### Server lane (`app/pipeline/phone_subtitled_lanes.py`)
 
@@ -160,7 +160,7 @@ meet exactly; that is fine).
 | S29 | Speech cut moves the take but not the windows (background shows during the wrong sentence) | Windows live on original take time and are remapped by `remap_lanes_for_cut` with `remap_range`; a window inside a removal is dropped with a receipt; the fill is untouched. | `tests/kria/test_speaker_background_windows.py::test_windows_follow_a_speech_cut`, `::test_a_window_inside_a_cut_is_dropped_with_a_receipt` |
 | S30 | Video window shorter than its window, or `source_start` past its end | Loops inside the window from `source_start` (own composition track per window, muted, S11); compile fails the lane when no footage remains from `source_start`; a photo is held. | `SpeakerBackgroundTests.testShortVideoWindowLoopsInsideItsWindow`, `tests/kria/test_speaker_background_windows.py::test_a_video_window_without_footage_fails_the_lane` |
 | S31 | Decode cost: many video windows decoded at once | Each video window is its own composition track inserted ONLY for its window; at most one background track has samples at any time, so per-frame cost equals the single-video case. Memory/time check on device owed before the token is verified. | `NativeCompositionTests.testBackgroundWindowsNeverOverlapInTheComposition`; device (owed) |
-| S32 | Old app build receives `windows`/`speaker_frame` | Unknown keys below protocol 31 (strict decoder); the compile strips both below 31 or without the token; a pinned recipe answers 426 `speaker_background_windows` on poll and Save. | `tests/kria/test_speaker_background_windows.py::test_protocol_below_31_strips_windows_keeps_fill`, `tests/routes/test_speaker_background_windows_editor.py::test_poll_tells_an_old_build_to_update`, `::test_save_from_old_build_is_426` |
+| S32 | Old app build receives `windows`/`speaker_frame` | Unknown keys below protocol 32 (strict decoder); the compile strips both below 32 or without the token; a pinned recipe answers 426 `speaker_background_windows` on poll and Save. | `tests/kria/test_speaker_background_windows.py::test_protocol_below_32_strips_windows_keeps_fill`, `tests/routes/test_speaker_background_windows_editor.py::test_poll_tells_an_old_build_to_update`, `::test_save_from_old_build_is_426` |
 | S33 | Token not verified / kill switch off | Base gate closed: whole lane stripped (S17 unchanged). Windows token missing: `windows` + `speaker_frame` stripped, fill kept, trace `speaker_background_windows_phone_fallback`; `validate_phone_pilot_recipe` refuses an unstripped recipe. A recipe with neither field is byte-identical to today. | `tests/kria/test_speaker_background_windows.py::test_windows_token_missing_strips_windows_keeps_fill`, `::test_pilot_validation_refuses_unverified_windows`, `::test_no_windows_no_frame_is_byte_identical_to_today` |
 | S34 | Python and Swift disagree on the new fields | Shared fixture `tests/fixtures/speaker-background-parity/v2.json` (valid → normalized, invalid rejected) read by both test suites; v1.json still passes on both. | `tests/kria/test_speaker_background_windows.py::test_shared_fixture_v2`, `SpeakerBackgroundTests.testSharedFixtureV2…` |
 | S35 | A window names a visual outside this item's pool / another user's | Same pin as S19 per window id (`pin_pool_visual_for_background` for each new id before validation); the validator accepts only pinned ids; worker resolves only against the job's ready pool. | `tests/routes/test_speaker_background_windows_editor.py::test_a_window_from_outside_the_pool_is_refused`, `tests/tasks/test_speaker_background_strategy_worker.py::test_sequence_entries_outside_the_pool_are_dropped_with_receipts` |
@@ -170,7 +170,7 @@ meet exactly; that is fine).
 | S39 | Chat: a sequence longer than the take, or a take longer than the sequence | Windows past the take end are cut at the take end (dropped when nothing remains); a shorter sequence cycles with `cadence_s` until the take ends. | `tests/tasks/test_speaker_background_strategy_worker.py::test_sequence_cycles_to_the_take_end`, `::test_windows_past_the_take_end_are_clipped` |
 | S40 | Editor parity drift: new iOS session functions without agent ops | Parity group `speaker_background` gains `setSpeakerBackgroundWindows`, `setSpeakerFrame`, `clearSpeakerFrame`. | `test_ios_editor_actions_have_agent_ops` |
 | S41 | Capability drift | `speakerBackgroundWindows` in both `MediaCapability` mirrors and the capability-matrix doc. | `tests/kria/test_capability_matrix.py` |
-| S42 | Protocol collision | Server's newest is 28 (`media_tilt_min_client_protocol`), app `version = 28`; the open card-tilt PR #2033 (KRI-1141) takes 30 and leaves 29 unused, so this feature takes **31**. Re-check open branches before merge. | `KriaTests` header assertions |
+| S42 | Protocol collision | Server's newest is 28 (`media_tilt_min_client_protocol`), app `version = 28`; the open card-tilt PR #2033 (KRI-1141) takes 30, #2038 (KRI-1139) takes 31 and 29 is unused, so this feature takes **32**. Re-check open branches before merge. | `KriaTests` header assertions |
 | S43 | The fill asset is also a window asset, or a window asset is also a card | Allowed for fill == window (same photo may fill and open); window/fill ids are reserved from `used_media_ids` so they are never also a cutaway or card. | `tests/tasks/test_speaker_background_strategy_worker.py::test_window_ids_are_reserved_from_cards` |
 | S44 | Live camera preview shows one background while the plan will switch | The camera pick stays single (the fill). The teleprompter shows "Preview" and never claims parity (S24); nothing new to draw there in this cut. | n/a, copy review |
 

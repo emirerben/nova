@@ -1,5 +1,5 @@
 {
- "description": "Clip tilt ROW contract (KRI-1136). `clips[i].raw[\"tilt\"]` = {rotation_deg, backdrop}. Python (app.kria.clip_tilt, phone_recipe_shared.clip_tilt_fields) and Swift (ClipTilt) must each turn every `valid` tilt into `normalized` (null = the key is omitted from the row) and into the recipe fields `recipe` (rotation_degrees is clockwise, backdrop null for a blank one); every `invalid` tilt is rejected by both. rotation_deg wraps to (-180, 180] and rounds to hundredths; a blank backdrop is absent from the stored row.",
+ "description": "Clip tilt ROW contract (KRI-1136). `clips[i].raw[\"tilt\"]` = {rotation_deg, backdrop}. A `media` backdrop is `{\"kind\": \"media\", \"asset_id\": \"<Visuals-pool visual id>\"}` with no colour and is the same on the row and in the recipe (KRI-1139). Python (app.kria.clip_tilt, phone_recipe_shared.clip_tilt_fields) and Swift (ClipTilt) must each turn every `valid` tilt into `normalized` (null = the key is omitted from the row) and into the recipe fields `recipe` (rotation_degrees is clockwise, backdrop null for a blank one); every `invalid` tilt is rejected by both. rotation_deg wraps to (-180, 180] and rounds to hundredths; a blank backdrop is absent from the stored row.",
  "valid": [
   {"name": "absent-fields", "tilt": {}, "normalized": null, "recipe": {"rotation_degrees": 0, "backdrop": null}},
   {"name": "upright-blank", "tilt": {"rotation_deg": 0, "backdrop": {"kind": "blank"}}, "normalized": null, "recipe": {"rotation_degrees": 0, "backdrop": null}},
@@ -8,6 +8,8 @@
   {"name": "tilt-blur", "tilt": {"rotation_deg": 15, "backdrop": {"kind": "blur"}}, "normalized": {"rotation_deg": 15, "backdrop": {"kind": "blur"}}, "recipe": {"rotation_degrees": 15, "backdrop": {"kind": "blur"}}},
   {"name": "tilt-counter-clockwise-colour", "tilt": {"rotation_deg": -12.5, "backdrop": {"kind": "color", "color": "#E91E8C"}}, "normalized": {"rotation_deg": -12.5, "backdrop": {"kind": "color", "color": "#E91E8C"}}, "recipe": {"rotation_degrees": -12.5, "backdrop": {"kind": "color", "color": "#E91E8C"}}},
   {"name": "upright-with-blur", "tilt": {"rotation_deg": 0, "backdrop": {"kind": "blur"}}, "normalized": {"rotation_deg": 0, "backdrop": {"kind": "blur"}}, "recipe": {"rotation_degrees": 0, "backdrop": {"kind": "blur"}}},
+  {"name": "tilt-media", "tilt": {"rotation_deg": 15, "backdrop": {"kind": "media", "asset_id": "5b2f9d1e-8c3a-4f6b-9e21-7a0d4c3b2a10"}}, "normalized": {"rotation_deg": 15, "backdrop": {"kind": "media", "asset_id": "5b2f9d1e-8c3a-4f6b-9e21-7a0d4c3b2a10"}}, "recipe": {"rotation_degrees": 15, "backdrop": {"kind": "media", "asset_id": "5b2f9d1e-8c3a-4f6b-9e21-7a0d4c3b2a10"}}},
+  {"name": "upright-with-media", "tilt": {"rotation_deg": 0, "backdrop": {"kind": "media", "asset_id": "pool-7"}}, "normalized": {"rotation_deg": 0, "backdrop": {"kind": "media", "asset_id": "pool-7"}}, "recipe": {"rotation_degrees": 0, "backdrop": {"kind": "media", "asset_id": "pool-7"}}},
   {"name": "wrap-190", "tilt": {"rotation_deg": 190, "backdrop": {"kind": "blur"}}, "normalized": {"rotation_deg": -170, "backdrop": {"kind": "blur"}}, "recipe": {"rotation_degrees": -170, "backdrop": {"kind": "blur"}}},
   {"name": "wrap-minus-190", "tilt": {"rotation_deg": -190}, "normalized": {"rotation_deg": 170}, "recipe": {"rotation_degrees": 170, "backdrop": null}},
   {"name": "half-turn-either-way", "tilt": {"rotation_deg": -180}, "normalized": {"rotation_deg": 180}, "recipe": {"rotation_degrees": 180, "backdrop": null}},
@@ -23,7 +25,9 @@
   {"name": "rotation-bool", "tilt": {"rotation_deg": true}},
   {"name": "unknown-key", "tilt": {"rotation_deg": 5, "zoom": 1.2}},
   {"name": "rotation-radians-key", "tilt": {"rotation_degrees": 5}},
-  {"name": "backdrop-media", "tilt": {"rotation_deg": 5, "backdrop": {"kind": "media", "asset_id": "visual-1"}}},
+  {"name": "backdrop-media-without-asset", "tilt": {"rotation_deg": 5, "backdrop": {"kind": "media"}}},
+  {"name": "backdrop-media-with-colour", "tilt": {"rotation_deg": 5, "backdrop": {"kind": "media", "asset_id": "pool-7", "color": "#000000"}}},
+  {"name": "backdrop-media-with-spaced-asset", "tilt": {"rotation_deg": 5, "backdrop": {"kind": "media", "asset_id": "pool 7"}}},
   {"name": "backdrop-colour-missing", "tilt": {"rotation_deg": 5, "backdrop": {"kind": "color"}}},
   {"name": "backdrop-blur-with-colour", "tilt": {"rotation_deg": 5, "backdrop": {"kind": "blur", "color": "#000000"}}},
   {"name": "backdrop-colour-name", "tilt": {"rotation_deg": 5, "backdrop": {"kind": "color", "color": "red"}}}

@@ -22,7 +22,15 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.kria.clip_tilt_row import parse_row_tilt
 from app.kria.portable_drawing import compile_drawing_layers
-from app.kria.recipes import Canvas, ClipBackdrop, MediaTransform, TimelineClip
+from app.kria.recipes import (
+    AssetFingerprint,
+    Canvas,
+    ClipBackdrop,
+    MediaAsset,
+    MediaSize,
+    MediaTransform,
+    TimelineClip,
+)
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest, RenderFingerprint
 
@@ -171,6 +179,61 @@ def clip_tilt_fields(row: Any) -> tuple[dict[str, float], ClipBackdrop | None]:
         return {}, None
     patch = {"rotation_degrees": tilt.rotation_deg} if tilt.rotation_deg != 0 else {}
     return patch, tilt.backdrop
+
+
+def backdrop_asset_ids(clips: Iterable[TimelineClip]) -> set[str]:
+    """The manifest ids (``visual-<media id>``) of every media backdrop the ``clips`` draw."""
+    return {
+        f"visual-{clip.backdrop.asset_id}"
+        for clip in clips
+        if clip.backdrop is not None and clip.backdrop.kind == "media"
+    }
+
+
+def register_backdrop_visuals(
+    clips: Iterable[TimelineClip],
+    *,
+    visuals: Sequence[Any],
+    assets: dict[str, Any],
+    manifest: dict[str, Any],
+) -> None:
+    """Declare the Visuals-pool photo or video each media backdrop names (KRI-1139).
+
+    The device draws a backdrop from a recipe asset it downloads like any pool visual, so the
+    pinned ``PhoneVisualBinding`` becomes a ``VisualRenderAsset`` in the manifest and a
+    ``MediaAsset`` beside the clips. A backdrop whose visual the job never pinned fails the
+    compile closed (the Save pins it first), never a recipe the device cannot read.
+    """
+    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+
+    for clip in clips:
+        backdrop = clip.backdrop
+        if backdrop is None or backdrop.kind != "media":
+            continue
+        visual = next((value for value in visuals if value.media_id == backdrop.asset_id), None)
+        if visual is None:
+            raise UnsupportedPhonePlan(
+                "a media backdrop needs a photo or video pinned to this video",
+                capability="clipBackdropMedia",
+            )
+        asset = visual.render_asset()
+        manifest[asset.id] = asset
+        assets[asset.id] = MediaAsset(
+            id=asset.id,
+            relative_path=asset.id,
+            fingerprint=AssetFingerprint(hex=visual.sha256, byte_count=visual.byte_count),
+            duration=(
+                visual.duration_s
+                if visual.kind == "video" and (visual.duration_s or 0) <= 1800
+                else None
+            ),
+            natural_size=(
+                None
+                if visual.kind == "image"
+                else MediaSize(width=visual.width or 1, height=visual.height or 1)
+            ),
+            orientation_degrees=visual.orientation_degrees,
+        )
 
 
 def _fit_eligible(clip: TimelineClip) -> bool:

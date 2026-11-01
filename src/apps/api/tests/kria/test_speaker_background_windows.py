@@ -413,7 +413,7 @@ def test_a_cut_that_removes_nothing_returns_the_lanes_untouched():
 # --- S32/S33: gates -----------------------------------------------------------------------------
 
 
-def test_protocol_below_31_strips_windows_keeps_fill(monkeypatch, events):
+def test_protocol_below_32_strips_windows_keeps_fill(monkeypatch, events):
     _open(monkeypatch)
     background = _three_windows(frame=_frame())
     set_client_protocol(30)
@@ -435,7 +435,7 @@ def test_protocol_below_31_strips_windows_keeps_fill(monkeypatch, events):
         )
     ]
     events.clear()
-    set_client_protocol(31)
+    set_client_protocol(32)
     assert _compile(background).speaker_background.windows is not None
     assert events == []
 
@@ -521,10 +521,10 @@ def test_pilot_validation_refuses_windows_added_after_compile(monkeypatch):
     assert refused.value.capability == "speakerBackgroundWindows"
 
 
-def test_the_windows_protocol_is_31_and_the_token_is_dark_in_production():
+def test_the_windows_protocol_is_32_and_the_token_is_dark_in_production():
     from app.config import Settings
 
-    assert Settings.model_fields["speaker_background_windows_min_client_protocol"].default == 31
+    assert Settings.model_fields["speaker_background_windows_min_client_protocol"].default == 32
     assert "speakerBackgroundWindows" not in Settings.model_fields[
         "phone_render_verified_features"
     ].get_default(call_default_factory=True)

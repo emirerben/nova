@@ -113,6 +113,9 @@ def timeline_patch_capabilities(job: Any, variant: dict[str, Any]) -> dict[str, 
     if enabled("tilt", default=False):
         # KRI-1137: present only while open, so every other snapshot and prompt is unchanged.
         fields["tilt"] = True
+        if enabled("tilt_backdrop_media", default=False):
+            # KRI-1139: a pool photo or video behind a tilted clip; same rule, open-only.
+            fields["tilt_backdrop_media"] = True
     return fields
 
 
@@ -1328,6 +1331,15 @@ def build_editor_snapshot(
             for slot, row in zip(slots, slot_rows, strict=True):
                 if tilt := ClipTilt.from_row(row.get("tilt")).row():
                     slot["tilt"] = tilt
+        if snapshot["timeline_patch_capabilities"].get("tilt_backdrop_media") is True:
+            # KRI-1139: the item's ready photos and videos a backdrop may name, the same rows
+            # the Talking background lists (the planner owns the DB read). Empty => the parser
+            # refuses every media backdrop, like add_overlay with no asset pool.
+            snapshot["tilt_backdrop_pool"] = [
+                row
+                for row in clip_context.get("background_pool") or []
+                if isinstance(row, dict) and row.get("kind") in {"image", "video"}
+            ][:MAX_BACKGROUND_POOL_ROWS]
         # Unlocks add_unused_sources/set_media_duration/stack_images bulk
         # selectors — see `_source_pool_rows`.
         snapshot["source_pool"] = _source_pool_rows(job, variant)

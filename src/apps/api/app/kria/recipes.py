@@ -99,25 +99,32 @@ class NormalizedSourceCrop(_RecipeModel):
 class ClipBackdrop(_RecipeModel):
     """What shows behind a main-track clip where the clip does not cover the canvas.
 
-    Mirrors ``KriaMediaEngine.ClipBackdrop``: ``{"kind": "blank" | "color" | "blur",
-    "color": "#RRGGBB"}`` with ``color`` present for ``color`` only. ``blank`` is black
-    (drawn as nothing); ``blur`` is a blurred cover-fit copy of the same clip frame.
+    Mirrors ``KriaMediaEngine.ClipBackdrop``: ``{"kind": "blank" | "color" | "blur" | "media",
+    "color": "#RRGGBB", "asset_id": "<pool visual id>"}`` with ``color`` present for ``color``
+    only and ``asset_id`` for ``media`` only. ``blank`` is black (drawn as nothing); ``blur``
+    is a blurred cover-fit copy of the same clip frame; ``media`` is a Visuals-pool photo (held)
+    or video (looping, muted) cover-fit to the canvas. ``asset_id`` is the pool visual id
+    (``VisualRenderAsset.visual_id``), the same value a clip row's ``tilt`` carries.
     """
 
-    kind: Literal["blank", "color", "blur"]
+    kind: Literal["blank", "color", "blur", "media"]
     color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    asset_id: str | None = Field(default=None, min_length=1, max_length=160, pattern=r"^\S+$")
 
     @model_validator(mode="after")
-    def _color_only_for_color(self) -> ClipBackdrop:
+    def _fields_match_kind(self) -> ClipBackdrop:
         if (self.kind == "color") != (self.color is not None):
             raise ValueError("a backdrop carries a color if and only if its kind is color")
+        if (self.kind == "media") != (self.asset_id is not None):
+            raise ValueError("a backdrop carries an asset_id if and only if its kind is media")
         return self
 
     @model_serializer(mode="wrap")
-    def _omit_unused_color(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+    def _omit_unused_fields(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         result = handler(self)
-        if self.color is None:
-            result.pop("color", None)
+        for key in ("color", "asset_id"):
+            if result.get(key) is None:
+                result.pop(key, None)
         return result
 
 
@@ -272,6 +279,9 @@ MediaCapability = Literal[
     # A tilted clip (`transform.rotation_degrees != 0`) and/or a `backdrop` under a main-track
     # clip, drawn on device by `KriaMediaEngine`'s compositor (KRI-1134).
     "clipTilt",
+    # A clip's `backdrop` of kind `media`: a Visuals-pool photo or looping video drawn under the
+    # clip (KRI-1139). Always accompanies `clipTilt`.
+    "clipBackdropMedia",
     # Vocabulary for lanes the V2 recipe schema has no fields for yet — see
     # docs/reviews/kri-29/capability-matrix.md. Naming these does not enable
     # them: `phone_guided_plan.compile_phone_guided_plan` still rejects the
@@ -342,6 +352,10 @@ class EditRecipeV1(_RecipeModel):
                     raise ValueError("a backdrop requires a main-track clip without a placement")
                 if clip.transform.rotation_degrees != 0 or clip.backdrop is not None:
                     self.required_capabilities |= {"clipTilt"}
+                if clip.backdrop is not None and clip.backdrop.kind == "media":
+                    if self.schema_version != 2:
+                        raise ValueError("a media backdrop requires a V2 recipe")
+                    self.required_capabilities |= {"clipBackdropMedia"}
                 if clip.source_crop is not None:
                     if clip.still_layout is not None or clip.visual_placement is not None:
                         raise ValueError(

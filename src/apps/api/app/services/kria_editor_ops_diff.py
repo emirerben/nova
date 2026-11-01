@@ -971,8 +971,12 @@ def _describe_tilt(entry: DiffEntry, who: str) -> str:
     behind_en = behind_tr = ""
     if backdrop is not None:
         kind = backdrop.color if backdrop.kind == "color" else backdrop.kind
-        behind_en = {"blur": "blurred background"}.get(kind, f"{kind} background")
-        behind_tr = {"blur": "bulanık arka plan"}.get(kind, f"{kind} arka plan")
+        behind_en = {"blur": "blurred background", "media": "photo or video behind it"}.get(
+            kind, f"{kind} background"
+        )
+        behind_tr = {"blur": "bulanık arka plan", "media": "arkasında fotoğraf ya da video"}.get(
+            kind, f"{kind} arka plan"
+        )
     if all(ClipTilt.from_row(t.before).rotation_deg == tilt.rotation_deg for t in entry.targets):
         return say(
             en=f"Changed the background behind {who}: {behind_en or 'plain'}",

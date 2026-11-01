@@ -1,7 +1,7 @@
 """KRI-1162: background windows + the speaker frame over the HTTP editor surface.
 
 Rows S32 and S35 of `docs/reviews/speaker-background-windows-failure-modes.md`: poll and Save
-answer a build below protocol 31 with 426, the editor capability is advertised only where the
+answer a build below protocol 32 with 426, the editor capability is advertised only where the
 phone can draw it, and Save sets or clears the windows and the frame.
 """
 
@@ -89,7 +89,7 @@ def windows_job(monkeypatch, *, pinned=POOL):
     """A phone Talking variant whose pinned recipe already carries windows and a frame."""
     job = background_job(monkeypatch, pinned=pinned)
     _open_windows(monkeypatch)
-    set_client_protocol(31)
+    set_client_protocol(32)
     save(job, speaker_background=_windowed())
     clear_request_context()
     return job
@@ -115,9 +115,9 @@ def test_poll_tells_an_old_build_to_update(monkeypatch) -> None:
     assert refusal == {
         "code": "client_update_required",
         "feature": "speaker_background_windows",
-        "minimum_client_protocol": 31,
+        "minimum_client_protocol": 32,
     }
-    assert detail(job, 31) is None
+    assert detail(job, 32) is None
     # A first-cut recipe (fill only) is still fine on protocol 27..30, and still 426 below 27.
     assert detail(fill_only, 28) is None
     assert detail(fill_only, 26)["feature"] == "speaker_background"
@@ -135,7 +135,7 @@ def test_save_from_old_build_is_426(monkeypatch) -> None:
     assert refused.value.detail == {
         "code": "client_update_required",
         "feature": "speaker_background_windows",
-        "minimum_client_protocol": 31,
+        "minimum_client_protocol": 32,
     }
     assert device_status(job, "subtitled").request.identity.recipe_revision == before
     assert _recipe(job).speaker_background.windows is not None
@@ -157,9 +157,9 @@ def test_setting_windows_needs_a_new_enough_build_and_the_token(monkeypatch) -> 
         save(job, speaker_background=_windowed())
     assert old_build.value.status_code == 426
     assert old_build.value.detail["feature"] == "speaker_background_windows"
-    assert old_build.value.detail["minimum_client_protocol"] == 31
+    assert old_build.value.detail["minimum_client_protocol"] == 32
 
-    set_client_protocol(31)
+    set_client_protocol(32)
     _open_windows(monkeypatch, token=False)
     with pytest.raises(HTTPException) as dark:
         save(job, speaker_background=_windowed())
@@ -180,7 +180,7 @@ def test_setting_windows_needs_a_new_enough_build_and_the_token(monkeypatch) -> 
 def test_save_sets_windows_and_frame_and_the_document_carries_them(monkeypatch) -> None:
     job = background_job(monkeypatch, pinned=POOL)
     _open_windows(monkeypatch)
-    set_client_protocol(31)
+    set_client_protocol(32)
     before = device_status(job, "subtitled").request.identity.recipe_revision
     prep = save(job, speaker_background=_windowed())
 
@@ -205,7 +205,7 @@ def test_save_sets_windows_and_frame_and_the_document_carries_them(monkeypatch) 
 
 def test_a_later_save_of_another_lane_keeps_windows_and_frame(monkeypatch) -> None:
     job = windows_job(monkeypatch)
-    set_client_protocol(31)
+    set_client_protocol(32)
     _resave(job, sound_effects=[])
     assert len(_recipe(job).speaker_background.windows) == 2
     assert _recipe(job).speaker_background.speaker_frame is not None
@@ -222,7 +222,7 @@ def test_the_recipe_alone_projects_windows_and_frame_for_the_editor(monkeypatch)
 
 def test_a_save_without_the_new_keys_replaces_windows_and_frame(monkeypatch) -> None:
     job = windows_job(monkeypatch)
-    set_client_protocol(31)
+    set_client_protocol(32)
     save_result = _resave(job, speaker_background=_document(PHOTO))
     assert save_result["sections"]["speaker_background"] is True
     assert _recipe(job).speaker_background.windows is None
@@ -234,7 +234,7 @@ def test_a_save_without_the_new_keys_replaces_windows_and_frame(monkeypatch) -> 
 def test_a_frame_alone_without_windows_is_a_valid_save(monkeypatch) -> None:
     job = background_job(monkeypatch, pinned=POOL)
     _open_windows(monkeypatch)
-    set_client_protocol(31)
+    set_client_protocol(32)
     save(job, speaker_background=_document(PHOTO) | {"speaker_frame": CORNER})
     assert _recipe(job).speaker_background.windows is None
     assert _recipe(job).speaker_background.speaker_frame.model_dump() == CORNER
@@ -243,7 +243,7 @@ def test_a_frame_alone_without_windows_is_a_valid_save(monkeypatch) -> None:
 
 def test_clearing_is_still_allowed_with_windows_in_place(monkeypatch) -> None:
     job = windows_job(monkeypatch)
-    set_client_protocol(31)
+    set_client_protocol(32)
     monkeypatch.setattr(settings, "speaker_background_enabled", False)
     _open_windows(monkeypatch, token=False)
     _resave(job, speaker_background=None)
@@ -254,7 +254,7 @@ def test_clearing_is_still_allowed_with_windows_in_place(monkeypatch) -> None:
 
 def test_an_echo_of_the_stored_windows_commits_nothing(monkeypatch) -> None:
     job = windows_job(monkeypatch)
-    set_client_protocol(31)
+    set_client_protocol(32)
     prep = _resave(job, speaker_background=_windowed())
     assert prep["has_render_section"] is False
 
@@ -265,7 +265,7 @@ def test_an_echo_of_the_stored_windows_commits_nothing(monkeypatch) -> None:
 def test_a_window_from_outside_the_pool_is_refused(monkeypatch) -> None:
     job = background_job(monkeypatch, pinned=(PHOTO, SECOND))
     _open_windows(monkeypatch)
-    set_client_protocol(31)
+    set_client_protocol(32)
     before = device_status(job, "subtitled").request.identity.recipe_revision
     for media_id in (VIDEO.media_id, str(uuid.uuid4()), "../../other-users-photo"):
         outsider = _entry(SECOND, 0.0, 3.0, media_id=media_id)
@@ -280,7 +280,7 @@ def test_a_window_from_outside_the_pool_is_refused(monkeypatch) -> None:
 def test_overlapping_windows_are_refused(monkeypatch) -> None:
     job = background_job(monkeypatch, pinned=POOL)
     _open_windows(monkeypatch)
-    set_client_protocol(31)
+    set_client_protocol(32)
     cases = {
         "overlap": [_entry(SECOND, 0.0, 3.5), _entry(PHOTO, 3.0, 6.0)],
         "unsorted": [_entry(PHOTO, 3.0, 6.0), _entry(SECOND, 0.0, 3.0)],
@@ -318,7 +318,7 @@ def test_overlapping_windows_are_refused(monkeypatch) -> None:
 def test_a_window_that_cannot_play_is_refused_with_its_reason(monkeypatch, entry, code) -> None:
     job = background_job(monkeypatch, pinned=POOL)
     _open_windows(monkeypatch)
-    set_client_protocol(31)
+    set_client_protocol(32)
     with pytest.raises(HTTPException) as refused:
         save(job, speaker_background=_document(PHOTO) | {"windows": [entry]})
     assert (refused.value.status_code, refused.value.detail["code"]) == (422, code)
@@ -375,7 +375,7 @@ def test_the_document_omits_the_new_keys_while_unused() -> None:
 def test_the_pin_request_names_the_fill_and_every_window_once(monkeypatch) -> None:
     job = background_job(monkeypatch, pinned=(PHOTO,))
     _open_windows(monkeypatch)
-    set_client_protocol(31)
+    set_client_protocol(32)
     payload = gj.EditorCommitRequest(
         base_generation="first",
         speaker_background=_document(PHOTO)
@@ -404,7 +404,7 @@ def test_the_pin_request_names_the_fill_and_every_window_once(monkeypatch) -> No
 
 @pytest.mark.parametrize(
     ("protocol", "token", "expected"),
-    [(31, True, True), (30, True, False), (None, True, False), (31, False, False)],
+    [(32, True, True), (31, True, False), (None, True, False), (32, False, False)],
 )
 def test_the_windows_capability_only_while_the_gate_is_open(
     monkeypatch, protocol, token, expected
@@ -422,7 +422,7 @@ def test_the_windows_capability_only_while_the_gate_is_open(
 def test_the_windows_capability_needs_the_base_capability(monkeypatch) -> None:
     job = background_job(monkeypatch)
     _open_windows(monkeypatch)
-    set_client_protocol(31)
+    set_client_protocol(32)
     monkeypatch.setattr(settings, "speaker_background_enabled", False)
     capabilities = gj._editor_capabilities(job, _variant(job))
     assert "speaker_background_windows" not in capabilities

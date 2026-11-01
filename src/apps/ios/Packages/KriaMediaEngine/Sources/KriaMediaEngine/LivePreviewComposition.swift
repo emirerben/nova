@@ -229,6 +229,11 @@ public struct LivePreviewExportSnapshot: Sendable {
         guard instructions.count == current.instructions.count, let first = instructions.first else {
             throw NativePreviewFeatureError("LivePreviewComposition-101")
         }
+        // A media backdrop is drawn from a layer built with the composition; one the build never made (or no longer
+        // needed) takes the full rebuild instead of silently drawing nothing.
+        guard Set(AVPlayerPreviewComposer.mediaBackdrops(in: next).map(\.poolID)) == Set(instructions.flatMap(\.layers).compactMap(\.backdropAssetID)) else {
+            throw NativePreviewFeatureError("LivePreviewComposition-media-backdrop")
+        }
         let previous = first.text
         var painted = previous.filter { $0.portable == nil }
         let remaining = 64 * 1024 * 1024 - painted.reduce(0) { $0 + $1.bitmapBytes }
