@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.60.0] - 2026-11-01
+
+### Added
+- feat(kria): Lip-sync card in the new-video picker (KRI-1093) (#1990) <!-- release-pr: 1990 -->
+
 ## [0.83.59.0] - 2026-11-01
 
 ### Changed
