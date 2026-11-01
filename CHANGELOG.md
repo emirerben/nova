@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.87.0] - 2026-11-01
+
+### Changed
+- feat(overlays): rotate Talking overlay cards from the editor and chat, protocol 30 (KRI-1141) (#2033) <!-- release-pr: 2033 -->
+
 ## [0.83.86.0] - 2026-11-01
 
 ### Changed
