@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.42.0] - 2026-11-01
+
+### Changed
+- ci: skip slow export/OCR unit proofs on PRs that don't touch render code (#2010) <!-- release-pr: 2010 -->
+
 ## [0.83.41.0] - 2026-10-31
 
 ### Added
