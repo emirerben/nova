@@ -2285,7 +2285,7 @@ private struct LibraryPosterRequest: Encodable {
 /// KRI-653: why the in-app recorder produced (or is producing) a silent take. Enumerated labels and
 /// numbers only: no file names, script text, or anything the creator typed or said.
 struct RecorderDiagnosticReport: Encodable, Equatable, Sendable {
-    enum Kind: String, Encodable, Sendable { case takeSilent = "take_silent", liveMicSilent = "live_mic_silent" }
+    enum Kind: String, Encodable, Sendable { case takeSilent = "take_silent", liveMicSilent = "live_mic_silent", takeFinished = "take_finished" }
     let kind: Kind
     let audioCategory: String?
     let audioMode: String?
@@ -2298,11 +2298,13 @@ struct RecorderDiagnosticReport: Encodable, Equatable, Sendable {
     let maxPowerDb: Double?
     let takeDurationS: Double?
     let appBuild: String?
+    /// `TakeStopReason.rawValue` of the take this report describes; nil for a live recording that has not stopped.
+    let stopReason: String?
     enum CodingKeys: String, CodingKey {
         case kind, audioCategory = "audio_category", audioMode = "audio_mode"
         case routeInputs = "route_inputs", routeOutputs = "route_outputs", otherAudioPlaying = "other_audio_playing"
         case phaseHistory = "phase_history", channelCount = "channel_count", maxPowerDb = "max_power_db"
-        case takeDurationS = "take_duration_s", appBuild = "app_build"
+        case takeDurationS = "take_duration_s", appBuild = "app_build", stopReason = "stop_reason"
     }
 }
 /// Identity of a failed editor player item: numeric AVFoundation codes and domains only, never URLs or error text.
