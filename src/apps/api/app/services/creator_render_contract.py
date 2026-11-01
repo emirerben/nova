@@ -743,6 +743,17 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "licensed_sfx.max_placements",
         note="a named licensed effect is required but no verifier proves its placement",
     ),
+    **_rules(
+        "upstream_resolved",
+        "planner_boundary",
+        "planner_declines[]",
+        "planner_declines[].field",
+        "planner_declines[].value",
+        note=(
+            "KRI-1097 wave 2: what the Main Creator parse could not keep, written there and read "
+            "only by the approval card (route_disclosure); the render never reads it"
+        ),
+    ),
 }
 
 
@@ -750,6 +761,8 @@ def field_matrix_for_strategy(strategy: Mapping[str, Any]) -> dict[str, FieldRul
     unused = set()
     if not strategy.get("confirmed_order_replacement"):
         unused.add("confirmed_order_replacement")
+    if not strategy.get("planner_declines"):
+        unused.add("planner_declines[]")
     if not strategy.get("selection_reconciliation"):
         unused.add("selection_reconciliation")
     if not any(

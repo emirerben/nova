@@ -1,0 +1,642 @@
+{
+ "about": "KRI-1097 wave 2, planner boundary lane (L7). Raw Main Creator responses, one per failure mode, run through MainCreatorAgent.parse with PLANNER_BOUNDARY_HONEST_ENABLED on and off by tests/kria/test_planner_boundary_replay.py; declines also through route_disclosure. The responses are authored in the recorded fixture format (prod redacts model I/O); the live model leg (whether the model writes the quotes the v109 prompt asks for) is not replayed. 'on'/'off' list the post-parse strategy fields each switch state must produce; 'off' is the foundation's behaviour.",
+ "manifests": {
+  "guided": {
+   "draft_guided_proposal": {
+    "available": true
+   },
+   "edit_format:montage": {
+    "available": true
+   }
+  },
+  "no_guided": {
+   "draft_guided_proposal": {
+    "available": false,
+    "reason_code": "disabled_by_setting"
+   },
+   "edit_format:montage": {
+    "available": true
+   }
+  }
+ },
+ "cases": [
+  {
+   "id": "es_timing",
+   "about": "F1: a photo/video timing asked in Spanish (the recognizers read English and Turkish only), quoted by the model",
+   "message": "Las fotos tienen que pasar muy rápido y los videos un poco más largos",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "mixed_media_timing": {
+       "image_hold": "very_fast",
+       "video_hold": "longer",
+       "boundary_style": "cut"
+      }
+     },
+     "summary": "A quick Lisbon montage.",
+     "render_intent_evidence": {
+      "mixed_media_timing": "Las fotos tienen que pasar muy rápido y los videos un poco más largos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": {
+      "image_hold": "very_fast",
+      "video_hold": "longer",
+      "boundary_style": "cut"
+     },
+     "video_reuse_policy": "once",
+     "montage_cadence": null,
+     "planner_declines": null
+    },
+    "off": {
+     "mixed_media_timing": null,
+     "video_reuse_policy": "once",
+     "montage_cadence": null,
+     "planner_declines": null
+    }
+   }
+  },
+  {
+   "id": "es_cadence",
+   "about": "F1: an alternating cut asked in Spanish, quoted by the model",
+   "message": "Alterna entre los dos videos cada 2 segundos",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "montage_cadence": {
+       "mode": "round_robin",
+       "source_media_ids": [
+        "clip-1",
+        "clip-2"
+       ],
+       "cut_duration_s": 2.0,
+       "reuse_policy": "no_repeat"
+      }
+     },
+     "summary": "A quick Lisbon montage.",
+     "render_intent_evidence": {
+      "montage_cadence": "Alterna entre los dos videos cada 2 segundos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "montage_cadence": {
+      "mode": "round_robin",
+      "source_media_ids": [
+       "clip-1",
+       "clip-2"
+      ],
+      "cut_duration_s": 2.0,
+      "reuse_policy": "no_repeat"
+     },
+     "video_reuse_policy": "distinct_windows",
+     "direction": "fast_montage",
+     "render_program": "guided",
+     "planner_declines": null
+    },
+    "off": {
+     "montage_cadence": null,
+     "video_reuse_policy": "once",
+     "planner_declines": null
+    }
+   }
+  },
+  {
+   "id": "es_reuse",
+   "about": "F1: repeated footage asked in Spanish, quoted by the model",
+   "message": "Repite los videos en bucle hasta el final",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "video_reuse_policy": "allow_repeat"
+     },
+     "summary": "A quick Lisbon montage.",
+     "render_intent_evidence": {
+      "video_reuse_policy": "Repite los videos en bucle"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "video_reuse_policy": "allow_repeat",
+     "direction": "fast_montage",
+     "render_program": "guided",
+     "planner_declines": null
+    },
+    "off": {
+     "video_reuse_policy": "once",
+     "planner_declines": null
+    }
+   }
+  },
+  {
+   "id": "unquoted_inventions",
+   "about": "F2/F6: a model timing, repeat and cadence nobody asked for: quotes that are not the creator's words, or a single word, ground nothing",
+   "message": "Crea un montaje lento del verano en Madrid",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "mixed_media_timing": {
+       "image_hold": "very_fast",
+       "video_hold": "longer",
+       "boundary_style": "cut"
+      },
+      "video_reuse_policy": "allow_repeat",
+      "montage_cadence": {
+       "mode": "round_robin",
+       "source_media_ids": [
+        "clip-1",
+        "clip-2"
+       ],
+       "cut_duration_s": 2.0,
+       "reuse_policy": "no_repeat"
+      }
+     },
+     "summary": "A quick Lisbon montage.",
+     "render_intent_evidence": {
+      "mixed_media_timing": "las fotos muy rápido",
+      "video_reuse_policy": "repite los videos",
+      "montage_cadence": "Madrid"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "video_reuse_policy": "once",
+     "montage_cadence": null,
+     "planner_declines": null
+    },
+    "off": {
+     "mixed_media_timing": null,
+     "video_reuse_policy": "once",
+     "montage_cadence": null,
+     "planner_declines": null
+    }
+   }
+  },
+  {
+   "id": "regex_wins",
+   "about": "F3: the recognizer's explicit reading (every 1 second) beats a quoted model value (2 seconds)",
+   "message": "Alternate between the two videos every 1 second",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "montage_cadence": {
+       "mode": "round_robin",
+       "source_media_ids": [
+        "clip-1",
+        "clip-2"
+       ],
+       "cut_duration_s": 2.0,
+       "reuse_policy": "no_repeat"
+      }
+     },
+     "summary": "A quick Lisbon montage.",
+     "render_intent_evidence": {
+      "montage_cadence": "Alternate between the two videos every 1 second"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "montage_cadence": {
+      "mode": "round_robin",
+      "source_media_ids": [
+       "clip-1",
+       "clip-2"
+      ],
+      "cut_duration_s": 1.0,
+      "reuse_policy": "no_repeat"
+     },
+     "video_reuse_policy": "distinct_windows",
+     "planner_declines": null
+    },
+    "off": {
+     "montage_cadence": {
+      "mode": "round_robin",
+      "source_media_ids": [
+       "clip-1",
+       "clip-2"
+      ],
+      "cut_duration_s": 1.0,
+      "reuse_policy": "no_repeat"
+     },
+     "video_reuse_policy": "distinct_windows",
+     "planner_declines": null
+    }
+   }
+  },
+  {
+   "id": "stop_alternating",
+   "about": "F4: the latest turn says stop alternating; the model's stale cadence quoted from an earlier turn stays out",
+   "message": "Stop alternating, just make a normal montage",
+   "conversation": [
+    "Alterna entre los dos videos cada 2 segundos"
+   ],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "montage_cadence": {
+       "mode": "round_robin",
+       "source_media_ids": [
+        "clip-1",
+        "clip-2"
+       ],
+       "cut_duration_s": 2.0,
+       "reuse_policy": "no_repeat"
+      }
+     },
+     "summary": "A quick Lisbon montage.",
+     "render_intent_evidence": {
+      "montage_cadence": "Alterna entre los dos videos cada 2 segundos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "montage_cadence": null,
+     "video_reuse_policy": "once",
+     "planner_declines": null
+    },
+    "off": {
+     "montage_cadence": null,
+     "video_reuse_policy": "once",
+     "planner_declines": null
+    }
+   }
+  },
+  {
+   "id": "es_timing_no_guided",
+   "about": "F5: a quoted timing this manifest cannot render (no guided proposals) falls back to the server's reading instead of a refusal, and the card names it",
+   "message": "Las fotos tienen que pasar muy rápido y los videos un poco más largos",
+   "conversation": [],
+   "manifest": "no_guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "native",
+      "media_scope": "selected",
+      "selected_media_ids": [
+       "clip-1",
+       "clip-2",
+       "photo-1"
+      ],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "mixed_media_timing": {
+       "image_hold": "very_fast",
+       "video_hold": "longer",
+       "boundary_style": "cut"
+      }
+     },
+     "summary": "A quick Lisbon montage.",
+     "render_intent_evidence": {
+      "mixed_media_timing": "Las fotos tienen que pasar muy rápido y los videos un poco más largos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "render_program": "native",
+     "planner_declines": [
+      {
+       "field": "mixed_media_timing"
+      }
+     ]
+    },
+    "off": {
+     "mixed_media_timing": null,
+     "render_program": "native",
+     "planner_declines": null
+    },
+    "card_subjects": [
+     "planner_mixed_media_timing"
+    ]
+   }
+  },
+  {
+   "id": "unknown_looks",
+   "about": "F7/F11: a title animation and a label spot the renderer has no name for are declined on the card; the render is unchanged",
+   "message": "Make the title bounce in and put the clip labels in the upper middle",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "title_animation": "bounce",
+      "label_position": "upper middle",
+      "opening_title": "Lisbon"
+     },
+     "summary": "A quick Lisbon montage.",
+     "render_intent_evidence": {
+      "opening_title": "Make the title bounce in"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "title_animation": null,
+     "label_position": null,
+     "planner_declines": [
+      {
+       "field": "title_animation",
+       "value": "bounce"
+      },
+      {
+       "field": "label_position",
+       "value": "upper middle"
+      }
+     ]
+    },
+    "off": {
+     "title_animation": null,
+     "label_position": null,
+     "planner_declines": null
+    },
+    "card_subjects": [
+     "planner_title_animation",
+     "planner_label_position"
+    ]
+   }
+  },
+  {
+   "id": "known_looks",
+   "about": "F8: a known look word, an off word and an alias are never declined",
+   "message": "Animate the title with typewriter and put the labels bottom left",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "title_animation": "Typewriter",
+      "label_position": "bottom left"
+     },
+     "summary": "A quick Lisbon montage."
+    }
+   },
+   "expect": {
+    "on": {
+     "title_animation": "typewriter",
+     "label_position": "bottom_left",
+     "planner_declines": null
+    },
+    "off": {
+     "title_animation": "typewriter",
+     "label_position": "bottom_left",
+     "planner_declines": null
+    }
+   }
+  },
+  {
+   "id": "off_word_look",
+   "about": "F8: \"none\" asks for no animation: no decline",
+   "message": "Keep the title still",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "title_animation": "none"
+     },
+     "summary": "A quick Lisbon montage."
+    }
+   },
+   "expect": {
+    "on": {
+     "title_animation": null,
+     "planner_declines": null
+    },
+    "off": {
+     "title_animation": null,
+     "planner_declines": null
+    }
+   }
+  },
+  {
+   "id": "forged_declines",
+   "about": "F9: a model-written planner_declines is server-owned and wiped",
+   "message": "Make a quick Lisbon montage",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "planner_declines": [
+       {
+        "field": "title_animation",
+        "value": "spin"
+       }
+      ]
+     },
+     "summary": "A quick Lisbon montage."
+    }
+   },
+   "expect": {
+    "on": {
+     "planner_declines": null
+    },
+    "off": {
+     "planner_declines": null
+    }
+   }
+  }
+ ]
+}

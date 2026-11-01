@@ -177,6 +177,11 @@ def strategy_notices(
             text = None
         if text:
             out.append(Disclosure(NOT_APPLIED, subject, text))
+    if settings.planner_boundary_honest_enabled:
+        # What the Main Creator parse could not keep, on every route (KRI-1097 wave 2).
+        from app.kria.planner_declines import decline_lines  # noqa: PLC0415
+
+        out += [Disclosure(NOT_APPLIED, subject, text) for subject, text in decline_lines(strategy)]
     return out
 
 

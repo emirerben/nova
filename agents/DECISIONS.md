@@ -3306,3 +3306,75 @@ reads were not available).
 - Verified: 3 of 3 fully live runs on the fixed code ended on the approval card with sourced
   wording (`scripts/kria/live_assos_turn.py --live`); the same code before the change refused or
   stalled 3 of 3. Small samples; the models vary run to run.
+
+## [2026-11-01] Prompt fidelity wave 2: planner
+
+**What changed (`MainCreatorAgent.parse`, switch `PLANNER_BOUNDARY_HONEST_ENABLED`):**
+`mixed_media_timing`, `montage_cadence` and `video_reuse_policy` follow the `media_scope` rule
+(KRI-129 part C): the English/Turkish recognizers' explicit reading still wins, and where they
+are silent the model's own value now stays, but only when the model quotes the creator's words
+for it (`render_intent_evidence.<field>`, a phrase of two words or more found verbatim in what
+the creator wrote, the rule titles and pinned texts already follow; prompt v109 teaches the three
+quotes). A latest-turn "stop alternating" still keeps any cadence out. A quoted ask the manifest
+cannot render (no guided proposals, a voiceover beside a cadence) no longer costs a retry: the
+parse falls back to the server's own reading, which is what it kept before. A title animation or
+label position the renderer has no name for ("bounce", "upper middle") used to become None in
+the strategy validators and vanish. Both cases are now recorded on the strategy as server-owned
+`planner_declines` (out of every model schema, omitted when empty, wiped if a model writes it),
+and `route_disclosure.strategy_notices` names them on the approval card on every route (code
+`not_applied_on_route`, subjects `planner_<field>`, English and Turkish, `app/kria/planner_declines.py`).
+They are card lines only: never a receipt, a question or a block, and the render is unchanged.
+
+**Deviation from the plan's literal rule ("else keep the model's value"):** an unquoted model
+value is not kept. The overwrite was not only a silent override. It also stops the model from
+inventing asks: `test_creator_initial_and_followup_reuse_is_grounded` ("the provider cannot grant
+itself permission to loop footage"), `test_main_creator_drops_model_invented_timing_for_unrelated_request`,
+and the recorded `video_reuse_default` response (very fast photo timing written for "Create a slow
+Summer in Madrid montage"). Keeping those values would put the model's guess ahead of the creator's
+prompt. The quote rule keeps every ask the creator actually made in words the recognizers miss
+(Spanish, German, ...), and still drops what nobody asked for.
+
+**Failure modes, listed before the code** (each pinned in `tests/kria/test_planner_boundary_replay.py`
+over `tests/fixtures/kria_replay/planner_boundary/cases.json`, both switch states):
+F1 an ask in words the recognizers do not read is erased (Spanish timing, cadence, repeats);
+F2 a model invention is kept (timing, cadence, repeats nobody asked for); F3 the recognizers'
+explicit reading loses to the model (every 1 s vs a quoted 2 s); F4 a latest "stop alternating"
+loses to a stale quoted cadence; F5 a kept ask the manifest cannot render makes the parse refuse;
+F6 a paraphrase or a one-word quote grounds a value; F7 an unknown look vanishes; F8 a known
+word, an alias or "none" is declined; F9 a model writes `planner_declines`; F10 the switch off is
+not byte-identical; F11 a decline blocks approval or changes the render. Mutation check: making
+every quote count fails F2 (the case and three recorded responses), never keeping a model value
+fails F1/F5, and refusing instead of falling back fails F5.
+
+**Wipes left as they are (justified):** `pacing_requested`, `selected_music_section`,
+`song_captions`, `resolved_song_takes`, `choice_answers`, `selection_reconciliation` and
+`confirmed_order_replacement` are server-owned provenance that the route or the planner re-stamps
+from the creator's words or a server resolver; wiping the model's copy loses no creator ask.
+`execution_contract` (native-only manifest, KRI-598) and `editorial_plan` (misfit, KRI-806) are
+mechanisms and model plans, not creator asks; their visible consequences are already reported
+(KRI-594 downgrade notices, the story fallback notes).
+
+**Kill switch:** `PLANNER_BOUNDARY_HONEST_ENABLED` (default `true`, reserved by the foundation).
+`false` + restart api and worker: the prompt is v108 byte for byte (`V108_PROMPT_SHA` in
+`tests/agents/test_main_creator_user_song.py`), every recorded Main Creator response and every
+case parses as on the foundation, and the card shows no planner line even for a stored strategy
+that carries one. Apply: `fly secrets set PLANNER_BOUNDARY_HONEST_ENABLED=false --app nova-video`
+(api + worker) + restart.
+
+**Verification:** the 89 recorded Main Creator responses parse identically with the switch on and
+off (and identically to the foundation); the Assos draft (its recorded post-parse strategy over its
+16 clips) parses the same on and off; `make kria-replay` for all eight fixtures gives byte-identical
+reports to the foundation (Assos also with the switch off); evals replay green.
+
+**Limits:** (1) the live model leg is not replayed: the cases are authored responses in the
+recorded format, so whether the live model writes the v109 quotes is unmeasured (a paid live eval
+would answer it). (2) Any creator phrase counts as a quote, the trust level of the title quotes;
+a model that quotes a negated sentence ("don't make the photos very fast") as an ask would keep its
+timing, since the timing recognizer returns None for negation and silence alike. (3) The web-only
+v1 route (`routes/creator_agent._apply_explicit_render_intent`) still re-derives
+`mixed_media_timing` from the recognizer; Kria (iOS) does not run it. (4) A fallback reverts all
+three fields together. (5) With the switch off the parser still accepts the three new evidence
+keys and wipes a model-written `planner_declines` (both used to be a schema error, i.e. a retry).
+(6) `FIELD_MATRIX` gains the three `planner_declines` paths (`upstream_resolved`), which changes
+`worker_capabilities_digest` on deploy like any new strategy field; per-strategy readiness digests
+are unchanged when no decline is recorded (`field_matrix_for_strategy` leaves the paths out).

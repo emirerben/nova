@@ -2833,6 +2833,16 @@
         "src/apps/ios/Tests/KriaTests/ClipTiltRenderTests.swift",
         "src/apps/ios/Tests/KriaUITests/NativeTiltUITests.swift"
       ]
+    },
+    {
+      "id": "kri-1097-planner-boundary",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_planner_boundary_replay.py tests/agents/test_main_creator_agent.py tests/agents/test_main_creator_user_song.py",
+      "paths": [
+        "src/apps/api/app/kria/planner_declines.py",
+        "src/apps/api/tests/kria/test_planner_boundary_replay.py",
+        "src/apps/api/tests/fixtures/kria_replay/planner_boundary/"
+      ]
     }
   ]
 }

@@ -77,7 +77,15 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v106 (prompt fidelity, animation): the two brief-enabled hashes re-pinned (one added paragraph).
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
+# v109 (KRI-1097 wave 2, planner boundary): all four re-pinned for the three evidence keys;
+# with PLANNER_BOUNDARY_HONEST_ENABLED off the render is v108's, byte for byte (V108_PROMPT_SHA).
 PRE_CHANGE_PROMPT_SHA = {
+    (True, True): "911bdde00255e89e6fe63c418bed4863c89604acab4943ed3d43a1c6d0719d82",
+    (True, False): "c6eebf012438640fedc47e39a9dba642967386d5b27162d7a2eb6777a90791da",
+    (False, True): "b20c7580e8df40be73bda2b3122c94a4a90a6bfab17b758ac98ca11cf4758528",
+    (False, False): "76835269144b5d25b0970129a1ac05d5af8001e850da18c55431e01e7f83b869",
+}
+V108_PROMPT_SHA = {
     (True, True): "d457efa4baba63866bd42139f883bb07d8b691995109ecdb8168b601c4b6d6b9",
     (True, False): "e3de37c194b88bd906568375111a33a5d8ec8bdab981a29ff6f377162710e87e",
     (False, True): "1b9ba5be3204a86bce34fb042e62eb839bd628641481540f6d22cfaf30b243a6",
@@ -104,12 +112,14 @@ def _song_input() -> MainCreatorInput:
     return _input().model_copy(update={"capability_manifest": manifest})
 
 
+@pytest.mark.parametrize("honest", [True, False])
 @pytest.mark.parametrize(("clip_intents", "brief"), sorted(PRE_CHANGE_PROMPT_SHA))
 def test_prompt_without_a_song_preserves_base_under_editorial_skills(
-    monkeypatch, clip_intents, brief
+    monkeypatch, clip_intents, brief, honest
 ) -> None:
     monkeypatch.setattr(settings, "clip_intents_enabled", clip_intents)
     monkeypatch.setattr(settings, "creator_montage_shapes_enabled", False)
+    monkeypatch.setattr(settings, "planner_boundary_honest_enabled", honest)
 
     prompt = _render(_input().model_copy(update={"brief_enabled": brief}))
 
@@ -125,7 +135,7 @@ def test_prompt_without_a_song_preserves_base_under_editorial_skills(
     base_prompt = prompt.removeprefix(skills)
     assert (
         hashlib.sha256(base_prompt.encode()).hexdigest()
-        == PRE_CHANGE_PROMPT_SHA[(clip_intents, brief)]
+        == (PRE_CHANGE_PROMPT_SHA if honest else V108_PROMPT_SHA)[(clip_intents, brief)]
     )
     assert "UPLOADED SONG" not in prompt
     assert "$user_song_section" not in prompt
@@ -162,7 +172,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-01-v108"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-01-v109"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

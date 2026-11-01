@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import ClassVar, Literal
+from collections.abc import Callable
+from typing import Any, ClassVar, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -21,7 +22,9 @@ from app.agents._schemas.creator_agent import (
     STORY_LINE_MAX_CHARS,
     CreativeStrategy,
     CreatorAgentOutput,
+    CreatorRenderIntentEvidence,
     DraftVoiceoverScript,
+    PlannerDecline,
     ProposeStrategy,
     ResolvedCreatorManifest,
 )
@@ -42,6 +45,7 @@ from app.kria.text_sequence import last_quoted_literal, refile_text_sequences
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import (
     MAX_OPENING_TITLE_DURATION_S,
+    MixedMediaTimingProfile,
     MontageCadenceConstraint,
     recognize_cadence_reuse_policy,
     recognize_explicit_cadence_reuse_policy,
@@ -51,6 +55,7 @@ from app.schemas.edit_proposal import (
     resolve_video_reuse_policy,
     turkish_media_scope,
 )
+from app.schemas.text_style_intent import normalize_label_position, normalize_title_animation
 from app.services.creator_capabilities import (
     CAPABILITY_REACTION_BEATS,
     CAPABILITY_TIMED_CARDS,
@@ -178,7 +183,10 @@ log = structlog.get_logger()
 # v108 (KRI-1093): the Lip-sync picker card (`manifest.chosen_format`) defaults an attached song
 # to `lipsync`; the song section gains one paragraph only on that manifest, so every other
 # render is byte-identical.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-01-v108"
+# v109 (KRI-1097 wave 2, planner boundary): `render_intent_evidence` gains `mixed_media_timing`,
+# `montage_cadence` and `video_reuse_policy` quotes, taught only with
+# PLANNER_BOUNDARY_HONEST_ENABLED; off, the prompt is byte-identical to v108.
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-01-v109"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -230,6 +238,19 @@ _DESCRIBED_TEXT_EXCEPTION = (
     " when described: an introduction, an explanation or facts about the place or topic"
     ' ("some facts about Lisbon to show why people should go, an introductory explanation")'
     " follows Researched explanations, and a hook is the opening title."
+)
+
+# KRI-1097 wave 2: the quotes that keep a typed timing, cadence or reuse ask the server's
+# English/Turkish recognizers do not read (`_timing_cadence_reuse`). Appended to the
+# `licensed_sfx` evidence line (the `$boundary_evidence_keys` slot) only with
+# PLANNER_BOUNDARY_HONEST_ENABLED; "" off, so that prompt is byte-identical.
+_BOUNDARY_EVIDENCE_KEYS = (
+    ',\n      "mixed_media_timing": "verbatim creator excerpt, in their own language, asking for'
+    ' the photo and video timing you set, or null",'
+    '\n      "montage_cadence": "verbatim creator excerpt, in their own language, asking for the'
+    ' alternating cut and its seconds, or null",'
+    '\n      "video_reuse_policy": "verbatim creator excerpt, in their own language, asking to'
+    ' repeat, loop or alternate footage, or null"'
 )
 
 # KRI-118 item 1: guidance for the chat-picked "shape" layered on top of
@@ -993,6 +1014,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             described_text_exception=(
                 _DESCRIBED_TEXT_EXCEPTION if settings.clip_intents_enabled else ""
             ),
+            boundary_evidence_keys=(
+                _BOUNDARY_EVIDENCE_KEYS if settings.planner_boundary_honest_enabled else ""
+            ),
             # KRI-118 item 1: only mention story shapes when they could
             # actually render this turn (rollout flag + guided proposal
             # capability + no recorded voiceover) -- defense in depth, since
@@ -1124,6 +1148,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         }
                     else:
                         raise ValueError("propose_strategy must explain its duration in rationale")
+            unknown_looks = (
+                _unknown_text_looks(raw_action) if settings.planner_boundary_honest_enabled else []
+            )
             action = CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(raw_action)
             if isinstance(action, DraftVoiceoverScript) and not input.voiceover_script_available:
                 # KRI-815: only offered with footage and no voiceover; elsewhere it is a miss.
@@ -1177,21 +1204,6 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         cut_duration_s=cadence_cut_s,
                         reuse_policy=reuse_policy,
                     )
-                reuse = "once"
-                for message in [request_contract, *user_messages, input.user_message]:
-                    reuse = resolve_video_reuse_policy(message, reuse)
-                reuse = resolve_video_reuse_policy(input.user_message, reuse, cadence)
-                if reuse == "once":
-                    # A numeric cadence structurally requires reusing (or at
-                    # least re-cutting between) the same two sources more
-                    # than once; "once" only happens here when the creator's
-                    # own latest wording explicitly forbade any repeat/loop,
-                    # which is incompatible with that cadence. Falling back
-                    # to an ordinary montage (not erroring) mirrors the
-                    # route's identical rule (creator_agent.py, same "once"
-                    # check), so this is existing, intentional policy rather
-                    # than a silent drop of unrelated creator intent.
-                    cadence = None
                 # KRI-129 part C: the regex is evidence FOR an explicit scope,
                 # never a veto over what the model itself read from the full
                 # conversation. Regex silence must not erase a model-authored
@@ -1208,86 +1220,123 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 resolved_scope = (
                     explicit_scope if explicit_scope is not None else action.strategy.media_scope
                 )
-                strategy = action.strategy.model_copy(
-                    update={
-                        # Server-owned approval provenance.  Read this from
-                        # creator text, never from the model's always-present
-                        # planning field or its marker.
-                        "target_duration_requested": (
-                            True if requested_duration_s is not None else None
+                boundary_kwargs = {
+                    "timing": timing,
+                    "regex_cadence": cadence,
+                    "reuse_messages": [request_contract, *user_messages, input.user_message],
+                    "latest_message": input.user_message,
+                }
+                server_reads = _timing_cadence_reuse(action.strategy, **boundary_kwargs)
+                honest = bool(settings.planner_boundary_honest_enabled)
+                reads = (
+                    _timing_cadence_reuse(
+                        action.strategy,
+                        **boundary_kwargs,
+                        quoted=_creator_quote(
+                            action.render_intent_evidence,
+                            [*user_messages, request_contract, input.user_message],
                         ),
-                        "creator_duration_s": requested_duration_s,
-                        # Pace provenance is server-owned too; the route re-stamps it from
-                        # the creator's words (`_apply_explicit_render_intent`).
-                        "pacing_requested": None,
-                        "selected_music_section": None,
-                        # Preserve the actual requested target rather than a
-                        # conflicting model-selected duration.
-                        "target_duration_s": (
-                            requested_duration_s
-                            if requested_duration_s is not None
-                            else action.strategy.target_duration_s
-                        ),
-                        # KRI-374: server-owned, like `resolved_clip_intents`: a
-                        # model-authored per-take song placement is never trusted.
-                        "resolved_song_takes": None,
-                        "selection_reconciliation": None,
-                        "confirmed_order_replacement": None,
-                        # KRI-578: the caption pin is the planner's call, never the model's.
-                        "song_captions": None,
-                        # KRI-476: server-owned conflict answers, never model-authored.
-                        "choice_answers": None,
-                        "mixed_media_timing": timing,
-                        "montage_cadence": cadence,
-                        "video_reuse_policy": reuse,
-                        "media_scope": resolved_scope,
-                    }
-                )
-                if strategy.execution_contract is not None and native_voiceover_only(
-                    input.capability_manifest
-                ):
-                    # KRI-598: this manifest (runtime v2) never offers the guided contract.
-                    # Repair, like KRI-586's envelope repairs, instead of refusing: every
-                    # refusal spends a retry and three end the turn. The planner's policy
-                    # check then resolves "all" to every own clip and says what the native
-                    # voiceover edit leaves out.
-                    log.info(
-                        "main_creator_contract_dropped_native_only",
-                        media_scope=strategy.media_scope,
-                        reaction_beats=len(strategy.reaction_beats or ()),
                     )
-                    strategy = strategy.model_copy(update={"execution_contract": None})
-                strategy = _repair_unrecorded_voiceover(
-                    input.capability_manifest,
-                    strategy,
-                    source_audio_stated=input.brief_enabled
-                    and _states_source_audio(
-                        data.get("brief_updates"),
-                        input.creator_request,
-                        starts_fresh=data.get("starts_fresh") is True,
-                    ),
+                    if honest
+                    else server_reads
                 )
-                strategy = normalize_creator_strategy_media(
-                    input.capability_manifest,
-                    strategy,
-                    repair_model_output=True,
-                )
-                if strategy.editorial_plan is not None:
-                    misfit = _editorial_plan_misfit(input.capability_manifest, strategy)
-                    if misfit:
-                        # KRI-806: the story plan is optional and only runs on a music-led
-                        # phone montage of the selected clips. Repair, like KRI-598, instead
-                        # of refusing: each refusal spends one of three attempts (Don Julio M1
-                        # lost its last one here). Counts only: beats carry creator wording.
-                        log.info(
-                            "main_creator_editorial_plan_dropped",
-                            reasons=misfit,
-                            beats=len(strategy.editorial_plan.beats),
-                            text_goals=sum(
-                                1 for beat in strategy.editorial_plan.beats if beat.text_goal
+
+                def finish(reads: dict[str, Any]) -> CreativeStrategy:
+                    strategy = action.strategy.model_copy(
+                        update={
+                            # Server-owned approval provenance.  Read this from
+                            # creator text, never from the model's always-present
+                            # planning field or its marker.
+                            "target_duration_requested": (
+                                True if requested_duration_s is not None else None
                             ),
+                            "creator_duration_s": requested_duration_s,
+                            # Pace provenance is server-owned too; the route re-stamps it from
+                            # the creator's words (`_apply_explicit_render_intent`).
+                            "pacing_requested": None,
+                            "selected_music_section": None,
+                            # Preserve the actual requested target rather than a
+                            # conflicting model-selected duration.
+                            "target_duration_s": (
+                                requested_duration_s
+                                if requested_duration_s is not None
+                                else action.strategy.target_duration_s
+                            ),
+                            # KRI-374: server-owned, like `resolved_clip_intents`: a
+                            # model-authored per-take song placement is never trusted.
+                            "resolved_song_takes": None,
+                            "selection_reconciliation": None,
+                            "confirmed_order_replacement": None,
+                            # KRI-578: the caption pin is the planner's call, never the model's.
+                            "song_captions": None,
+                            # KRI-476: server-owned conflict answers, never model-authored.
+                            "choice_answers": None,
+                            **reads,
+                            "media_scope": resolved_scope,
+                        }
+                    )
+                    if strategy.execution_contract is not None and native_voiceover_only(
+                        input.capability_manifest
+                    ):
+                        # KRI-598: this manifest (runtime v2) never offers the guided contract.
+                        # Repair, like KRI-586's envelope repairs, instead of refusing: every
+                        # refusal spends a retry and three end the turn. The planner's policy
+                        # check then resolves "all" to every own clip and says what the native
+                        # voiceover edit leaves out.
+                        log.info(
+                            "main_creator_contract_dropped_native_only",
+                            media_scope=strategy.media_scope,
+                            reaction_beats=len(strategy.reaction_beats or ()),
                         )
-                        strategy = strategy.model_copy(update={"editorial_plan": None})
+                        strategy = strategy.model_copy(update={"execution_contract": None})
+                    strategy = _repair_unrecorded_voiceover(
+                        input.capability_manifest,
+                        strategy,
+                        source_audio_stated=input.brief_enabled
+                        and _states_source_audio(
+                            data.get("brief_updates"),
+                            input.creator_request,
+                            starts_fresh=data.get("starts_fresh") is True,
+                        ),
+                    )
+                    strategy = normalize_creator_strategy_media(
+                        input.capability_manifest,
+                        strategy,
+                        repair_model_output=True,
+                    )
+                    if strategy.editorial_plan is not None:
+                        misfit = _editorial_plan_misfit(input.capability_manifest, strategy)
+                        if misfit:
+                            # KRI-806: the story plan is optional and only runs on a music-led
+                            # phone montage of the selected clips. Repair, like KRI-598, instead
+                            # of refusing: each refusal spends one of three attempts (Don Julio
+                            # M1 lost its last one here). Counts only: beats carry creator
+                            # wording.
+                            log.info(
+                                "main_creator_editorial_plan_dropped",
+                                reasons=misfit,
+                                beats=len(strategy.editorial_plan.beats),
+                                text_goals=sum(
+                                    1 for beat in strategy.editorial_plan.beats if beat.text_goal
+                                ),
+                            )
+                            strategy = strategy.model_copy(update={"editorial_plan": None})
+                    return strategy
+
+                unrenderable: list[str] = []
+                try:
+                    strategy = finish(reads)
+                except ValueError:
+                    if reads == server_reads:
+                        raise
+                    # KRI-1097 wave 2: a quoted ask this manifest cannot render falls back to
+                    # the server's own reading (what the parse kept before) instead of
+                    # spending a retry, and the card names it (`planner_declines`).
+                    unrenderable = [f for f in reads if reads[f] != server_reads[f]]
+                    log.info("main_creator_quoted_ask_unrenderable", fields=unrenderable)
+                    strategy = finish(server_reads)
+                declines = [*unknown_looks, *(PlannerDecline(field=f) for f in unrenderable)]
+                strategy = strategy.model_copy(update={"planner_declines": declines or None})
                 action = action.model_copy(update={"strategy": strategy})
             brief_updates = (
                 _refile_text_sequences(
@@ -1387,6 +1436,96 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             + (f"\nCorrect these schema errors: {feedback}." if feedback else "")
             + " Use only documented fields, exact enum values, and #RRGGBB colors."
         )
+
+
+def _timing_cadence_reuse(
+    strategy: CreativeStrategy,
+    *,
+    timing: MixedMediaTimingProfile | None,
+    regex_cadence: MontageCadenceConstraint | None,
+    reuse_messages: list[str],
+    latest_message: str,
+    quoted: Callable[[str], bool] | None = None,
+) -> dict[str, Any]:
+    """`mixed_media_timing`, `montage_cadence` and `video_reuse_policy` at the parse boundary.
+
+    The recognizers' explicit reading of the creator's words always wins. ``quoted`` None is
+    the server's reading alone: a model value they do not read is dropped. With ``quoted``
+    (``PLANNER_BOUNDARY_HONEST_ENABLED``, KRI-1097 wave 2) the model's own value stays where the
+    recognizers are silent and the model quotes the creator's words for it, the rule
+    `media_scope` follows (KRI-129 part C). An unquoted value is no creator ask, so the model
+    still cannot grant itself repeats or a timing nobody asked for. A latest-turn "stop
+    alternating" keeps any cadence out.
+    """
+    keep = quoted or (lambda _field: False)
+    if timing is None and strategy.mixed_media_timing is not None and keep("mixed_media_timing"):
+        timing = strategy.mixed_media_timing
+    cadence = regex_cadence
+    if (
+        cadence is None
+        and strategy.montage_cadence is not None
+        and not rejects_round_robin_cadence(latest_message)
+        and keep("montage_cadence")
+    ):
+        cadence = strategy.montage_cadence
+    reuse = (strategy.video_reuse_policy if keep("video_reuse_policy") else None) or "once"
+    for message in reuse_messages:
+        reuse = resolve_video_reuse_policy(message, reuse)
+    reuse = resolve_video_reuse_policy(latest_message, reuse, cadence)
+    if reuse == "once":
+        # A numeric cadence structurally requires reusing (or at
+        # least re-cutting between) the same two sources more
+        # than once; "once" only happens here when the creator's
+        # own latest wording explicitly forbade any repeat/loop,
+        # which is incompatible with that cadence. Falling back
+        # to an ordinary montage (not erroring) mirrors the
+        # route's identical rule (creator_agent.py, same "once"
+        # check), so this is existing, intentional policy rather
+        # than a silent drop of unrelated creator intent.
+        cadence = None
+    return {"mixed_media_timing": timing, "montage_cadence": cadence, "video_reuse_policy": reuse}
+
+
+def _creator_quote(
+    evidence: CreatorRenderIntentEvidence | None, creator_texts: list[str]
+) -> Callable[[str], bool]:
+    """Whether a field's `render_intent_evidence` quote is the creator's own words: a phrase
+    of two words or more found verbatim (spacing aside) in what the creator wrote, the rule
+    the title and pinned-text quotes follow."""
+    sources = [" ".join(str(text or "").split()) for text in creator_texts]
+
+    def quoted(field: str) -> bool:
+        quote = " ".join(str(getattr(evidence, field, None) or "").split())
+        return len(quote.split()) >= 2 and any(quote in source for source in sources)
+
+    return quoted
+
+
+# A title animation / label position value that asks for no look at all.
+_LOOK_OFF_WORDS = frozenset({"none", "null", "no", "off", "default", "static"})
+
+
+def _unknown_text_looks(raw_action: object) -> list[PlannerDecline]:
+    """Title animation / label position words the renderer has no name for (KRI-1097 wave 2).
+
+    The strategy's validators read such a word as unset, the default look. The model fills
+    these fields only when the creator named a look, so the word is kept for the card to say
+    it is not used instead of vanishing. A known word, an empty value or an "off" word is none.
+    """
+    strategy = raw_action.get("strategy") if isinstance(raw_action, dict) else None
+    if not isinstance(strategy, dict):
+        return []
+    out: list[PlannerDecline] = []
+    for field, known in (
+        ("title_animation", normalize_title_animation),
+        ("label_position", normalize_label_position),
+    ):
+        value = strategy.get(field)
+        word = " ".join(value.split()) if isinstance(value, str) else ""
+        if not word or word.casefold() in _LOOK_OFF_WORDS or known(word) is not None:
+            continue
+        out.append(PlannerDecline(field=field, value=word[:80]))
+    return out
 
 
 def _editorial_plan_misfit(

@@ -41,6 +41,7 @@ SERVER_FIELDS = {
     "target_duration_requested",
     "pacing_requested",
     "selected_music_section",
+    "planner_declines",
 }
 MODEL_HIDDEN = {
     "clip_intents",
