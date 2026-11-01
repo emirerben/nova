@@ -128,6 +128,30 @@ import XCTest
         XCTAssertTrue(shadow.buttons["On"].isSelected, "Changing scope must retain the unsaved draft")
     }
 
+    func testOneSavePersistsEveryEditedTextTypeAcrossReopen() {
+        let app = launch(mode: "text-preferences")
+        let manage = app.buttons["Manage account"]
+        reveal(manage, app: app); manage.tap()
+        app.buttons["account-text-preferences"].tap()
+        selectRole("title", app: app)
+        let shadow = app.segmentedControls["text-preference-shadow"]
+        reveal(shadow, app: app); shadow.buttons["On"].tap()
+        selectRole("label", app: app)
+        let outline = app.segmentedControls["text-preference-outline"]
+        reveal(outline, app: app); outline.buttons["On"].tap()
+        let save = app.buttons["text-preferences-save"]
+        reveal(save, app: app); save.tap()
+        XCTAssertTrue(app.staticTexts["Saved for future videos."].waitForExistence(timeout: 5))
+        app.navigationBars.buttons.firstMatch.tap()
+        app.buttons["account-text-preferences"].tap()
+        selectRole("title", app: app)
+        reveal(shadow, app: app)
+        XCTAssertTrue(shadow.buttons["On"].isSelected, "Title shadow must survive one Save and reopening")
+        selectRole("label", app: app)
+        reveal(outline, app: app)
+        XCTAssertTrue(outline.buttons["On"].isSelected, "Label outline must survive one Save and reopening")
+    }
+
     func testTextPreferencesSaveOffEffectsAndReopen() {
         let app = launch(mode: "text-preferences")
         let manage = app.buttons["Manage account"]

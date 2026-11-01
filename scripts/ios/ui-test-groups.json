@@ -152,6 +152,7 @@
       "KriaUITests/TeleprompterUITests/testReviewNamesTheBackgroundAndKeepsTheTakeUsable",
       "KriaUITests/AccountPrivacyUITests/testExcludedFontSurvivesPickerReturnSaveAndReopen",
       "KriaUITests/AccountPrivacyUITests/testTextPreferenceDraftSurvivesRoleSwitch",
+      "KriaUITests/AccountPrivacyUITests/testOneSavePersistsEveryEditedTextTypeAcrossReopen",
       "KriaUITests/AccountPrivacyUITests/testTextPreferencesSaveOffEffectsAndReopen",
       "KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload",
       "KriaUITests/AccountPrivacyUITests/testEachTextRoleExplainsItselfAndKeepsThePreview",
