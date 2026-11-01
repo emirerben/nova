@@ -254,6 +254,10 @@ import XCTest
 
     private let red = (230, 20, 20), blue = (20, 20, 230)
 
+    private func backdropName(_ backdrop: ClipBackdrop) -> String {
+        switch backdrop { case .blank: "blank"; case .blur: "blur"; case .color: "colour" }
+    }
+
     /// What a canvas pixel must show for the halves photo, from the shared geometry alone: a half colour, "backdrop", or nil
     /// near an edge or the seam where anti-aliasing makes the answer ambiguous.
     private func expected(_ point: CGPoint, canvas: CGSize, image: CGSize, fit: Bool, degrees: Double) -> String? {
@@ -275,6 +279,10 @@ import XCTest
         let slide = SlidePostSlide(id: "s", assetID: "a", kind: "image", edits: SlidePostEdits(fit: fit, tilt: tilt))
         let asset = SlidePostAsset(id: "a", kind: "image", status: "ready", sourceURL: url)
         let data = try await SlidePostOnDeviceRender.renderSlide(slide: slide, asset: asset, profile: profile, aspect: nil, scale: 1)
+        // Optional artifact for side-by-side review with the cloud render (TEST_RUNNER_KRIA_TILT_ARTIFACTS=<dir>).
+        if let dir = ProcessInfo.processInfo.environment["KRIA_TILT_ARTIFACTS"] {
+            try data.write(to: URL(fileURLWithPath: dir).appending(path: "device-\(Int(degrees))-\(fit?.rawValue ?? "fill")-\(backdropName(backdrop)).jpg"))
+        }
         let out = try pixels(data)
         let canvas = SlidePostOnDeviceRender.canvas(profile: profile, aspect: nil)
         XCTAssertEqual(CGSize(width: out.width, height: out.height), canvas, file: file, line: line)

@@ -415,7 +415,9 @@ import XCTest
         XCTAssertTrue(tilt.waitForExistence(timeout: 8), "the Tilt tool is offered when the server advertises slide_post_tilt")
         let preview = app.descendants(matching: .any)["slidepost-preview-image"].firstMatch
         XCTAssertTrue(preview.waitForExistence(timeout: 8))
-        XCTAssertFalse((preview.value as? String ?? "").contains("|tilt:"), "a fresh photo is upright")
+        // The preview element is briefly absent while a slide switch reloads it: read it defensively.
+        func previewValue() -> String { preview.exists ? (preview.value as? String ?? "") : "" }
+        XCTAssertFalse(previewValue().contains("|tilt:"), "a fresh photo is upright")
 
         tilt.tap()
         let dial = app.sliders["slidepost-tilt-dial"]
@@ -424,30 +426,36 @@ import XCTest
         XCTAssertEqual(readout.label, "Upright")
         app.buttons["slidepost-tilt-bg-blur"].tap()
         dial.adjust(toNormalizedSliderPosition: 0.75)
-        expectation(for: NSPredicate(format: "label == %@", "90\u{00B0} right"), evaluatedWith: readout); waitForExpectations(timeout: 5)
-        expectation(for: NSPredicate(format: "value CONTAINS %@", "|tilt:90"), evaluatedWith: preview); waitForExpectations(timeout: 5)
-        attach(app, "Slide tilted 90 degrees with a blurred background")
+        // A drag lands near 90 degrees, not exactly on it, and how near depends on simulator load: assert what the readout says.
+        XCTAssertTrue(eventually { readout.label.hasSuffix("\u{00B0} right") && readout.label != "Upright" }, "readout \(readout.label)")
+        let turned = Int(readout.label.prefix { $0.isNumber }) ?? 0
+        XCTAssertTrue((60...120).contains(turned), "the dial turned to \(turned)")
+        XCTAssertTrue(eventually { previewValue().contains("|tilt:\(turned)") }, "preview \(previewValue())")
+        attach(app, "Slide tilted with a blurred background")
 
         app.buttons["slidepost-tilt-minus"].tap()
-        expectation(for: NSPredicate(format: "label == %@", "89\u{00B0} right"), evaluatedWith: readout); waitForExpectations(timeout: 5)
+        XCTAssertTrue(eventually { readout.label == "\(turned - 1)\u{00B0} right" }, "readout \(readout.label)")
         app.buttons["slidepost-done"].tap()
         XCTAssertTrue(app.buttons["slidepost-tool-text"].waitForExistence(timeout: 3), "back to the browse dock")
 
         // The save keeps it, on this slide only.
+        let kept = "|tilt:\(turned - 1)"
         saveDraft(app)
         app.buttons["slidepost-tile-2"].tap()
-        expectation(for: NSPredicate(format: "NOT (value CONTAINS %@)", "|tilt:"), evaluatedWith: preview); waitForExpectations(timeout: 5)
+        XCTAssertTrue(eventually { !previewValue().contains("|tilt:") }, "slide 2 stays upright: \(previewValue())")
         app.buttons["slidepost-tile-1"].tap()
-        expectation(for: NSPredicate(format: "value CONTAINS %@", "|tilt:89"), evaluatedWith: preview); waitForExpectations(timeout: 5)
+        XCTAssertTrue(eventually { previewValue().contains(kept) }, "the saved tilt is back on slide 1: \(previewValue())")
 
         // Reset puts the photo back, and undo brings the turn back.
         tilt.tap()
         XCTAssertTrue(app.buttons["slidepost-tilt-reset"].waitForExistence(timeout: 3))
         app.buttons["slidepost-tilt-reset"].tap()
-        expectation(for: NSPredicate(format: "NOT (value CONTAINS %@)", "|tilt:"), evaluatedWith: preview); waitForExpectations(timeout: 5)
+        XCTAssertTrue(eventually { !previewValue().contains("|tilt:") }, "preview \(previewValue())")
         app.buttons["slidepost-done"].tap()
-        app.buttons["slidepost-undo"].tap()
-        expectation(for: NSPredicate(format: "value CONTAINS %@", "|tilt:89"), evaluatedWith: preview); waitForExpectations(timeout: 5)
+        let undo = app.buttons["slidepost-undo"]
+        XCTAssertTrue(eventually { undo.exists && undo.isEnabled }, "undo is available after the reset")
+        undo.tap()
+        XCTAssertTrue(eventually { previewValue().contains(kept) }, "undo brings the turn back: \(previewValue())")
     }
 
     /// True once the preview element is square (polls; `frame` is not predicate-addressable).
