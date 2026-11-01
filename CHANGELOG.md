@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.49.0] - 2026-11-01
+
+### Changed
+- fix(kria): "Animate the title" no longer dead-ends before render (KRI-1113) (#2002) <!-- release-pr: 2002 -->
+
 ## [0.83.48.0] - 2026-11-01
 
 ### Changed
