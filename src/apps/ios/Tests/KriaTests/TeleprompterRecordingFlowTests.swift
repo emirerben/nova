@@ -30,6 +30,91 @@ import XCTest
         XCTAssertEqual(flow.stage, .camera)
     }
 
+    // MARK: KRI-1149 — a take ends only when the creator ends it
+
+    private func recordingFlow(script: TeleprompterScript = TeleprompterScript(), grace: Duration = .milliseconds(30)) throws -> TeleprompterRecordingFlow {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let flow = TeleprompterRecordingFlow(accountID: "test", projectID: UUID(), root: root, script: script, viewRemovalGrace: grace)
+        flow.camera.seedRecordingForTesting()
+        flow.seedActiveTakeForTesting(TeleprompterTakeManifest(script: flow.script.draft, slot: .pending))
+        flow.stage = .recording
+        return flow
+    }
+
+    func testTakeKeepsRecordingPastTheEndOfTheScriptAndPastSixtySeconds() throws {
+        var now: TimeInterval = 0
+        let script = TeleprompterScript(text: "one two", wordsPerMinute: 240, uptime: { now })
+        script.setLayout(lines: [TeleprompterVisualLine(range: 0..<3, anchor: 0, text: "one"), TeleprompterVisualLine(range: 4..<7, anchor: 100, text: "two")], travelDistance: 100)
+        let flow = try recordingFlow(script: script)
+        script.resume()
+        for second in [5.0, 20, 61, 70] {
+            now = second; script.tick()
+            XCTAssertEqual(flow.stage, .recording, "t=\(second)s")
+            XCTAssertEqual(flow.camera.phase, .recording, "t=\(second)s")
+        }
+        XCTAssertTrue(script.hasEnded)
+        XCTAssertNil(flow.camera.stopReason)
+    }
+
+    func testSceneInactiveWhileRecordingDoesNotStopTheTake() throws {
+        let flow = try recordingFlow()
+        flow.scenePhaseChanged(.inactive)
+        flow.scenePhaseChanged(.active)
+        XCTAssertEqual(flow.stage, .recording)
+        XCTAssertEqual(flow.camera.phase, .recording)
+        XCTAssertNil(flow.camera.stopReason)
+    }
+
+    func testBackgroundingWhileRecordingStopsTheTakeAsBackgrounded() throws {
+        let flow = try recordingFlow()
+        flow.scenePhaseChanged(.inactive)
+        flow.scenePhaseChanged(.background)
+        XCTAssertEqual(flow.stage, .finalizing)
+        XCTAssertEqual(flow.camera.stopReason, .backgrounded)
+    }
+
+    func testTransientDisappearanceThatComesBackDoesNotStopTheTake() async throws {
+        let flow = try recordingFlow(grace: .milliseconds(150))
+        flow.viewDisappeared()
+        try await Task.sleep(for: .milliseconds(30))
+        flow.viewAppeared()
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(flow.stage, .recording)
+        XCTAssertEqual(flow.camera.phase, .recording)
+        XCTAssertNil(flow.camera.stopReason)
+    }
+
+    func testViewThatStaysGoneStopsTheTakeAfterTheGrace() async throws {
+        let flow = try recordingFlow(grace: .milliseconds(30))
+        flow.viewDisappeared()
+        XCTAssertEqual(flow.stage, .recording, "the stop waits for the grace so a transient disappearance can come back")
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(flow.stage, .finalizing)
+        XCTAssertEqual(flow.camera.stopReason, .viewRemoved)
+    }
+
+    func testCreatorStopIsRecordedAsUserAndNotAsAnInterruption() throws {
+        let flow = try recordingFlow()
+        flow.stop()
+        XCTAssertEqual(flow.camera.stopReason, .user)
+        XCTAssertFalse(flow.camera.interrupted)
+    }
+
+    func testFinalizedTakeManifestCarriesTheStopReason() async throws {
+        let (flow, _) = try makeFlow(saver: RecordingSaver())
+        let take = try seedFinalizedTake(flow, check: TakeAudioCheck(verdict: .ok, peakDb: -12, activeFraction: 0.8))
+        XCTAssertNil(flow.selectedTake?.stopReason)
+        XCTAssertEqual(flow.selectedTake?.id, take.id)
+
+        let (interruptedFlow, _) = try makeFlow(saver: RecordingSaver())
+        interruptedFlow.camera.seedRecordingForTesting()
+        interruptedFlow.camera.stopRecording(reason: .backgrounded)
+        _ = try seedFinalizedTake(interruptedFlow, check: TakeAudioCheck(verdict: .ok, peakDb: -12, activeFraction: 0.8))
+        XCTAssertEqual(interruptedFlow.selectedTake?.stopReason, .backgrounded)
+        XCTAssertEqual(interruptedFlow.selectedTake?.interrupted, true)
+    }
+
     // MARK: KRI-653 — silent takes and the Photos copy
     //
     // Failure modes written before the code:

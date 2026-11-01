@@ -25,6 +25,7 @@ import UIKit
     @Published private(set) var recordingStartedAt: TimeInterval?
     @Published private(set) var finalizedURL: URL?
     @Published private(set) var interrupted = false
+    @Published private(set) var stopReason: TakeStopReason?
     /// The live microphone has delivered nothing for several seconds of an active recording.
     @Published private(set) var micSilent = false
     /// Measured level of the take handed to `onFinalized` (nil when the take was not valid).
@@ -192,6 +193,8 @@ import UIKit
             if self.recordingRequested, output.isRecording { output.stopRecording() }
         }
     }
+
+    func stopRecording(reason: TakeStopReason) { stopRecording(interrupted: reason != .user) }
 
     /// Stops preview and audio. If a movie is in flight, its partial result is finalized first.
     func stopSession() {
@@ -430,6 +433,12 @@ import UIKit
     #if DEBUG
     /// Test seam: stands in for `finishRecording`'s measurement of the written movie.
     func seedFinalizedAudioCheckForTesting(_ check: TakeAudioCheck?) { finalizedAudioCheck = check }
+    /// Test seam: a take the movie output has confirmed started, without a capture device.
+    func seedRecordingForTesting() {
+        phase = .recording
+        recordingStartedAt = ProcessInfo.processInfo.systemUptime
+    }
+    var phaseLabelsForTesting: [String] { phaseHistory.map(\.label) }
     #endif
 
     // MARK: Live microphone meter (KRI-653)
@@ -494,7 +503,8 @@ import UIKit
             // A dead mic reports -infinity, which JSONEncoder refuses; clamp to the server's floor.
             maxPowerDb: lastMaxPowerDb.map { Double(max($0, -200)) },
             takeDurationS: takeDuration,
-            appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String))
+            appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+            stopReason: stopReason?.rawValue))
     }
 
     private func activateIdleTimerProtection() {

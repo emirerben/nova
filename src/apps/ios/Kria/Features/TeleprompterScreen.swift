@@ -61,18 +61,9 @@ struct TeleprompterScreen: View {
             }
         }
         .onReceive(flow.camera.$phase) { phase in flow.cameraChanged(phase) }
-        .onChange(of: scenePhase) { _, phase in
-            // KRI-653: whatever happened to the audio session while we were away (Control Center, a
-            // call, the app switcher), the next prepare() must rebuild the capture graph.
-            if phase == .inactive { flow.camera.sceneBecameInactive() }
-            else if phase == .active { flow.camera.sceneBecameActive() }
-            // Privacy prompts briefly make the scene inactive. They must not
-            // cancel the prepare operation whose grant they are requesting.
-            if phase == .background || (phase == .inactive && flow.captureBusy) { flow.leaveCapture() }
-            else if phase == .inactive { flow.script.pause(); flow.persistDraft() }
-            else if flow.stage == .camera, flow.camera.phase != .preparing { Task { await flow.camera.prepare() } }
-        }
-        .onDisappear { flow.leaveCapture() }
+        .onChange(of: scenePhase) { _, phase in flow.scenePhaseChanged(phase) }
+        .onAppear { flow.viewAppeared() }
+        .onDisappear { flow.viewDisappeared() }
         .confirmationDialog("Discard this take?", isPresented: $confirmsDiscard, titleVisibility: .visible) {
             Button("Discard take", role: .destructive) { flow.discardSelected() }
         } message: { Text("Your script and any previous take stay saved.") }

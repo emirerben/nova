@@ -40,6 +40,8 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
     let store: TeleprompterStore
     let script: TeleprompterScript
     let camera = TeleprompterCamera()
+    private let viewRemovalGrace: Duration
+    private var pendingViewRemoval: Task<Void, Never>?
     @Published var stage: Stage = .script
     @Published var error: String?
     @Published var countdown = 3
@@ -79,6 +81,8 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
     private var photoSaves: [UUID: Task<Bool, Never>] = [:]
 
     init(accountID: String, projectID: UUID, root: URL? = nil,
+         script: TeleprompterScript = TeleprompterScript(),
+         viewRemovalGrace: Duration = .seconds(1),
          photoSaver: PhotoLibrarySaving = PhotoLibrarySaver(),
          speakerBackgroundEnabled: Bool = false,
          makeLivePreview: @escaping () -> LiveBackgroundPreview = { LiveBackgroundPreview() },
@@ -92,7 +96,8 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         self.backgroundStatement = backgroundStatement
         self.makeBackgroundProvider = makeBackgroundProvider
         store = TeleprompterStore(accountID: accountID, projectID: projectID, root: root)
-        script = TeleprompterScript()
+        self.script = script
+        self.viewRemovalGrace = viewRemovalGrace
         self.photoSaver = photoSaver
         camera.reportDiagnostic = reportDiagnostic
         camera.onFinalized = { [weak self] url, message in self?.finalized(url: url, message: message) }
@@ -207,6 +212,21 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         script.pause(); persistDraft(); stage = .finalizing
         camera.stopRecording(interrupted: interrupted)
     }
+
+    func scenePhaseChanged(_ phase: ScenePhase) {
+        // KRI-653: whatever happened to the audio session while we were away (Control Center, a
+        // call, the app switcher), the next prepare() must rebuild the capture graph.
+        if phase == .inactive { camera.sceneBecameInactive() }
+        else if phase == .active { camera.sceneBecameActive() }
+        // Privacy prompts briefly make the scene inactive. They must not
+        // cancel the prepare operation whose grant they are requesting.
+        if phase == .background || (phase == .inactive && captureBusy) { leaveCapture() }
+        else if phase == .inactive { script.pause(); persistDraft() }
+        else if stage == .camera, camera.phase != .preparing { Task { await camera.prepare() } }
+    }
+
+    func viewDisappeared() { leaveCapture() }
+    func viewAppeared() {}
 
     func leaveCapture() {
         cancelCountdown(); script.pause(); persistDraft()

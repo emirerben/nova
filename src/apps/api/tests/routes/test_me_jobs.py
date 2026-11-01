@@ -1550,12 +1550,53 @@ def test_recorder_diagnostics_logs_a_silent_take_for_the_caller() -> None:
     db.execute.assert_not_awaited()
 
 
+def test_recorder_diagnostics_logs_every_finished_take_with_its_stop_reason() -> None:
+    """KRI-1149: a take that stopped without the creator's stop button names its trigger in the logs."""
+    user = _user()
+    db = _db([])
+    _override(user, db)
+    finished = {
+        **_RECORDER_DIAGNOSTIC,
+        "kind": "take_finished",
+        "stop_reason": "audio_interruption_began",
+        "take_duration_s": 57.94,
+    }
+
+    with structlog.testing.capture_logs() as logs:
+        response = client.post("/me/recorder-diagnostics", json=finished)
+
+    assert response.status_code == 204
+    events = [entry for entry in logs if entry["event"] == "recorder_take_finished"]
+    assert len(events) == 1
+    assert events[0]["user_id"] == str(user.id)
+    assert events[0]["stop_reason"] == "audio_interruption_began"
+    assert events[0]["take_duration_s"] == 57.94
+    assert [entry for entry in logs if entry["event"] == "recorder_audio_silent"] == []
+    db.execute.assert_not_awaited()
+
+
+def test_recorder_diagnostics_silent_take_keeps_its_event_name_and_accepts_a_stop_reason() -> None:
+    user = _user()
+    _override(user, _db([]))
+    silent = {**_RECORDER_DIAGNOSTIC, "stop_reason": "user"}
+
+    with structlog.testing.capture_logs() as logs:
+        response = client.post("/me/recorder-diagnostics", json=silent)
+
+    assert response.status_code == 204
+    events = [entry for entry in logs if entry["event"] == "recorder_audio_silent"]
+    assert len(events) == 1
+    assert events[0]["stop_reason"] == "user"
+
+
 def test_recorder_diagnostics_rejects_unbounded_or_unknown_input() -> None:
     user = _user()
     _override(user, _db([]))
 
     unknown_event = {**_RECORDER_DIAGNOSTIC, "kind": "other"}
     assert client.post("/me/recorder-diagnostics", json=unknown_event).status_code == 422
+    long_reason = {**_RECORDER_DIAGNOSTIC, "stop_reason": "x" * 500}
+    assert client.post("/me/recorder-diagnostics", json=long_reason).status_code == 422
     long_label = {**_RECORDER_DIAGNOSTIC, "phase_history": ["x" * 500]}
     assert client.post("/me/recorder-diagnostics", json=long_label).status_code == 422
     too_many = {**_RECORDER_DIAGNOSTIC, "phase_history": ["a"] * 40}
