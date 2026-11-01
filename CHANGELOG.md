@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.77.0] - 2026-11-01
+
+### Changed
+- feat(slides): tilt a slide's photo or video, device + cloud + chat, dark (KRI-1138) (#2019) <!-- release-pr: 2019 -->
+
 ## [0.83.76.0] - 2026-11-01
 
 ### Fixed
