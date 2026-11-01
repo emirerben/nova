@@ -17,6 +17,13 @@ Three ops that exist ONLY on the slide-post surface (``snapshot["surface"] ==
   ``snapshot["post"]["allowed_aspects"]``.
 * ``set_slide_fit{slide_indexes|all, fit, background?}`` (KRI-606): show a photo whole
   with bars (``fit: "fit"``) or fill the frame (``fit: "fill"``). Same gate.
+* ``set_slide_tilt{slide_indexes|all, rotation_deg?, backdrop?, color?, reset?}``
+  (KRI-1138): turn a photo or video to any angle (clockwise-positive, -180..180) over a
+  blank, colour or blurred backdrop. A SIBLING op of ``set_slide_framing`` rather than
+  two more fields on it: framing is photo-only, gated on ``framing_enabled`` and is about
+  the crop, while a tilt turns videos too, is gated on ``tilt_enabled`` (MEDIA_TILT_ENABLED
+  and a protocol-28 build) and persists in its own ``SlideEdits.tilt`` key. Only offered
+  while ``snapshot["post"]["tilt_enabled"]`` is true.
 
 Do not import app.agents.edit_copilot / app.services.kria_editor_ops at module top
 level (circular); import lazily inside functions.
@@ -24,6 +31,7 @@ level (circular); import lazily inside functions.
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -335,6 +343,118 @@ def _coerce_set_slide_fit(name: str, payload: dict, snapshot: dict, state: Any) 
     return {"changes": changes}
 
 
+_TILT_BACKDROPS = ("blank", "color", "blur")
+_HEX_COLOUR = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
+def _tilt_enabled(post: Any) -> bool:
+    return isinstance(post, dict) and post.get("tilt_enabled") is True
+
+
+def _slot_tilt(slot: dict) -> dict | None:
+    """The slide's current tilt as the snapshot shows it (None = upright)."""
+    tilt = slot.get("tilt")
+    return tilt if isinstance(tilt, dict) else None
+
+
+def _coerce_set_slide_tilt(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
+    post = snapshot.get("post") if isinstance(snapshot.get("post"), dict) else {}
+    if not _tilt_enabled(post):
+        state.reject(
+            op=name, reason="capability_unavailable", detail="tilting slides isn't available yet"
+        )
+        return None
+    slots = _active_slots(snapshot)
+    if payload.get("all") is True:
+        indexes = list(range(len(slots)))
+    else:
+        raw = payload.get("slide_indexes")
+        if (
+            not isinstance(raw, list)
+            or not raw
+            or any(
+                isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < len(slots)
+                for i in raw
+            )
+        ):
+            state.invalid_value()
+            return None
+        indexes = list(dict.fromkeys(raw))
+    rotation = payload.get("rotation_deg")
+    backdrop = payload.get("backdrop")
+    colour = payload.get("color")
+    reset = payload.get("reset") is True
+    if rotation is not None and (
+        isinstance(rotation, bool)
+        or not isinstance(rotation, (int, float))
+        or not math.isfinite(rotation)
+    ):
+        state.invalid_value()
+        return None
+    if backdrop is not None and backdrop not in _TILT_BACKDROPS:
+        state.invalid_value()
+        return None
+    if (backdrop == "color") != (colour is not None) or (
+        colour is not None and not (isinstance(colour, str) and _HEX_COLOUR.match(colour))
+    ):
+        # A colour goes with backdrop "color" and only with it, as a #RRGGBB.
+        state.invalid_value()
+        return None
+    if reset and (rotation is not None or backdrop is not None):
+        state.invalid_value()
+        return None
+    if rotation is None and backdrop is None and not reset:
+        state.invalid_value()
+        return None
+    target_rotation: float | None = None
+    if rotation is not None:
+        # "turn it 200 degrees right" is 160 degrees left: fold into -180..180.
+        folded = math.fmod(float(rotation), 360.0)
+        folded = folded - 360.0 if folded > 180.0 else folded + 360.0 if folded < -180.0 else folded
+        target_rotation = round(folded, 3)
+    changes: list[dict[str, Any]] = []
+    for index in indexes:
+        slot = slots[index]
+        slide_id = slot.get("media_id")
+        if slot.get("removed") or not isinstance(slide_id, str) or not slide_id:
+            state.reject(op=name, reason="stale_target", detail="that slide is no longer available")
+            return None
+        current = _slot_tilt(slot)
+        if reset:
+            changes.append({"slide_id": slide_id, "tilt": None})
+            continue
+        current_backdrop = (
+            dict(current["backdrop"])
+            if current is not None and isinstance(current.get("backdrop"), dict)
+            else {"kind": "blank"}
+        )
+        if backdrop is not None:
+            current_backdrop = {"kind": backdrop, **({"color": colour} if colour else {})}
+        degrees = target_rotation
+        if degrees is None:
+            if current is None:
+                # A background with no turn draws nothing; say so instead of storing it.
+                state.reject(
+                    op=name,
+                    reason="capability_unavailable",
+                    detail="Turn the slide first, then pick what shows behind it.",
+                )
+                return None
+            degrees = float(current.get("rotation_deg") or 0.0)
+        changes.append(
+            {
+                "slide_id": slide_id,
+                "tilt": None
+                if degrees == 0
+                else {"rotation_deg": degrees, "backdrop": current_backdrop},
+            }
+        )
+    if not changes:
+        state.invalid_value()
+        return None
+    return {"changes": changes}
+
+
 SPECS: list[OpSpec] = [
     OpSpec(
         name="set_slide_cover",
@@ -370,6 +490,13 @@ SPECS: list[OpSpec] = [
         fields=frozenset({"slide_indexes", "all", "fit", "background"}),
         family=_FAMILY,
         coerce=_coerce_set_slide_fit,
+    ),
+    OpSpec(
+        name="set_slide_tilt",
+        required=frozenset(),
+        fields=frozenset({"slide_indexes", "all", "rotation_deg", "backdrop", "color", "reset"}),
+        family=_FAMILY,
+        coerce=_coerce_set_slide_tilt,
     ),
 ]
 
@@ -457,6 +584,21 @@ def _op_set_slide_fit(state: Any, op: dict[str, Any]) -> None:
     state.summary = f"Change the fit on {len(changes)} slide{'s' if len(changes) != 1 else ''}"
 
 
+def _op_set_slide_tilt(state: Any, op: dict[str, Any]) -> None:
+    from app.services.kria_editor_ops import KriaEditorOpError  # noqa: PLC0415
+
+    changes = op.get("changes")
+    if not isinstance(changes, list) or not changes:
+        raise KriaEditorOpError("That tilt change is not valid")
+    rows = {str(row.get("media_id")): row for row in state.slots if not row.get("removed")}
+    for change in changes:
+        row = rows.get(str(change.get("slide_id")))
+        if row is None:
+            raise KriaEditorOpError("That slide is no longer in the post")
+        row["tilt"] = change.get("tilt")
+    state.summary = f"Change the tilt on {len(changes)} slide{'s' if len(changes) != 1 else ''}"
+
+
 def register_handlers() -> None:
     from app.services import kria_editor_ops  # noqa: PLC0415
 
@@ -465,3 +607,4 @@ def register_handlers() -> None:
     kria_editor_ops.register_handler("set_slide_framing", _op_set_slide_framing)
     kria_editor_ops.register_handler("set_post_aspect", _op_set_post_aspect)
     kria_editor_ops.register_handler("set_slide_fit", _op_set_slide_fit)
+    kria_editor_ops.register_handler("set_slide_tilt", _op_set_slide_tilt)

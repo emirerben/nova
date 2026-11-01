@@ -5310,6 +5310,11 @@ async def chat_edit_slide_post(
                 and settings.slide_post_framing_enabled
                 and (client_protocol or 0) >= settings.slide_post_sizes_min_client_protocol
             ),
+            # set_slide_tilt needs an app that round-trips the tilt (KRI-1138).
+            tilt_enabled=bool(
+                settings.media_tilt_enabled
+                and (client_protocol or 0) >= settings.media_tilt_min_client_protocol
+            ),
         )
     except Exception:
         if thoughts is not None:

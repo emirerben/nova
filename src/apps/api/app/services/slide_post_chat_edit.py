@@ -190,6 +190,10 @@ def _slide_rows(draft: SlidePostDraft) -> list[dict[str, Any]]:
             "orientation": _framing_of(slide)[0],
             "source_crop": _framing_of(slide)[1],
             "fit": slide.edits.fit if slide.edits else None,
+            # Wire shape of the slide's tilt (KRI-1138), None = upright; a row of a compiled turn.
+            "tilt": slide.edits.tilt.model_dump(mode="json")
+            if slide.edits is not None and slide.edits.tilt is not None
+            else None,
         }
         if slide.edits is not None and slide.edits.drawing is not None:
             # Read-only hint (KRI-589): the creator drew on this slide. Present only
@@ -283,12 +287,16 @@ def build_slide_post_snapshot(
     user_id: object = None,
     brief_binding: BriefBinding | None = None,
     sizes_enabled: bool = False,
+    tilt_enabled: bool = False,
 ) -> dict[str, Any]:
     """The copilot's view of a slide post (``surface: "slide_post"``, editor ops v2).
 
     ``sizes_enabled`` (KRI-606) is decided by the route: the flags AND a client that
     round-trips the post size and per-photo Fit. Without it the size/fit ops are
     refused, so an older app is never told "it's square now" and then drops the field.
+    ``tilt_enabled`` (KRI-1138) is the same kind of gate for ``set_slide_tilt``:
+    MEDIA_TILT_ENABLED AND a protocol-28 build. Closed, the snapshot (and so the prompt)
+    carries no tilt at all.
     """
     facts_on = settings.clip_facts_for(user_id)
     slots: list[dict[str, Any]] = []
@@ -316,6 +324,8 @@ def build_slide_post_snapshot(
             )
             if source_aspect is not None:
                 slot["source_aspect"] = source_aspect
+        if tilt_enabled and row.get("tilt") is not None:
+            slot["tilt"] = row["tilt"]
         slots.append(slot)
     rows, meta = _bars_and_meta(draft)
     text_bars: list[dict[str, Any]] = []
@@ -358,6 +368,8 @@ def build_slide_post_snapshot(
         snapshot["post"]["sizes_enabled"] = True
         snapshot["post"]["aspect"] = draft.aspect or spec.default_aspect
         snapshot["post"]["allowed_aspects"] = list(spec.allowed_aspects)
+    if tilt_enabled:
+        snapshot["post"]["tilt_enabled"] = True
     if any(slot.get("facts") for slot in slots):
         snapshot["label_facts"] = True
     binding = brief_binding or draft.brief_binding
@@ -634,6 +646,7 @@ def compile_slide_post_ops(
         for row in surviving
     }
     fit_by_id = {str(row["media_id"]): row.get("fit") for row in surviving}
+    tilt_by_id = {str(row["media_id"]): row.get("tilt") for row in surviving}
     alive = set(new_order)
 
     # Group the final bars per slide, in bar order (originals first, then new).
@@ -706,6 +719,7 @@ def compile_slide_post_ops(
     look_changed = 0
     framing_changed = 0
     fit_changed = 0
+    tilt_changed = 0
     for position, sid in enumerate(new_order):
         slide = by_id[sid]
         elements = per_slide[sid]
@@ -723,7 +737,14 @@ def compile_slide_post_ops(
         fit = fit_by_id[sid]
         original_fit = slide.edits.fit if slide.edits else None
         fit_same = fit == original_fit
-        if same_text and look == original_look and framing_same and fit_same:
+        tilt = tilt_by_id[sid]
+        original_tilt = (
+            slide.edits.tilt.model_dump(mode="json")
+            if slide.edits is not None and slide.edits.tilt is not None
+            else None
+        )
+        tilt_same = tilt == original_tilt
+        if same_text and look == original_look and framing_same and fit_same and tilt_same:
             new_slides.append(slide)
             continue
         if not same_text:
@@ -734,6 +755,8 @@ def compile_slide_post_ops(
             framing_changed += 1
         if not fit_same:
             fit_changed += 1
+        if not tilt_same:
+            tilt_changed += 1
         payload: dict[str, Any] = {
             "text": None,
             "look_preset": look,
@@ -751,6 +774,9 @@ def compile_slide_post_ops(
             payload["framing"] = {"orientation": orientation, "source_crop": crop}
         if fit is not None:
             payload["fit"] = fit
+        if tilt is not None:
+            # Rebuilt from scratch above: carry the turn through a text or look change (KRI-1138).
+            payload["tilt"] = tilt
         if slide.edits is not None and slide.edits.drawing is not None:
             # Rebuilt from scratch above: copy the creator's ink through, or a text/look
             # change on a drawn slide would silently erase it (KRI-589).
@@ -822,6 +848,8 @@ def compile_slide_post_ops(
         )
     if fit_changed:
         changes.append(f"Fit changed on {fit_changed} slide{'s' if fit_changed != 1 else ''}")
+    if tilt_changed:
+        changes.append(f"Tilt changed on {tilt_changed} slide{'s' if tilt_changed != 1 else ''}")
     if new_order[cover_index] != draft.slides[draft.cover_index].id:
         changes.append(f"Cover is now slide {cover_index + 1}")
     if caption != draft.caption:
@@ -884,6 +912,7 @@ async def run_slide_post_chat_edit(
     run_context: RunContext | None = None,
     brief_binding: BriefBinding | None = None,
     sizes_enabled: bool = False,
+    tilt_enabled: bool = False,
 ) -> SlidePostChatEditResponse:
     """One chat-edit turn. Never writes; every outcome is honest about what changed."""
     from app.agents._model_client import default_client  # noqa: PLC0415
@@ -915,6 +944,7 @@ async def run_slide_post_chat_edit(
         user_id=user_id,
         brief_binding=active_binding,
         sizes_enabled=sizes_enabled,
+        tilt_enabled=tilt_enabled,
     )
     agent_input = EditCopilotInput(
         utterance=message,

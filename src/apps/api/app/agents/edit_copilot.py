@@ -68,7 +68,9 @@ log = structlog.get_logger()
 # where CAPTIONS shows `caption_animation: available`; otherwise an honest "can't animate yet".
 # v97 (KRI-1117): set_background / remove_background and the BACKGROUND section, taught only
 # where the snapshot offers the `background` family; every other prompt is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-31-v97"
+# v98 (KRI-1138): set_slide_tilt in the slides fragment, taught only on the slide-post surface and
+# only where `post.tilt_enabled`; video and gate-closed slide prompts are otherwise unchanged.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v98"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -195,6 +197,7 @@ _SLIDE_POST_ONLY_OPS = frozenset(
         "set_slide_framing",
         "set_post_aspect",
         "set_slide_fit",
+        "set_slide_tilt",
     }
 )
 SLIDE_POST_OPS = frozenset(
@@ -2175,6 +2178,18 @@ def _format_slide_post_block(snapshot: dict, field: Any) -> list[str]:
     lines.append(f"slide_count: {len(_snapshot_list(snapshot, _SLOT_INDEX_KEYS))}")
     lines.append(f"platform_profile: {field(post.get('platform_profile'), max_chars=40)}")
     lines.append(f"caption: {field(post.get('caption'), max_chars=300)!r}")
+    if post.get("tilt_enabled") is True:
+        # KRI-1138: the gate and each tilted slide's current angle, so "a bit more" resolves.
+        lines.append("tilt_enabled: true")
+        for number, slot in enumerate(_snapshot_list(snapshot, _SLOT_INDEX_KEYS), start=1):
+            tilt = slot.get("tilt") if isinstance(slot, dict) else None
+            if not isinstance(tilt, dict):
+                continue
+            backdrop = tilt.get("backdrop") if isinstance(tilt.get("backdrop"), dict) else {}
+            kind = field(backdrop.get("kind") or "blank", max_chars=12)
+            colour = f" {field(backdrop['color'], max_chars=9)}" if backdrop.get("color") else ""
+            degrees = field(tilt.get("rotation_deg"), max_chars=12)
+            lines.append(f"slide {number} tilt: rotation_deg={degrees} backdrop={kind}{colour}")
     return lines
 
 
