@@ -1,6 +1,6 @@
 """KRI-1139: the editor Save contract of a tilt backdrop of kind `media` (a pool photo or video).
 
-Capability `clips.tilt_backdrop_media` (tilt gate + `clipBackdropMedia` verified + protocol 29), a
+Capability `clips.tilt_backdrop_media` (tilt gate + `clipBackdropMedia` verified + protocol 31), a
 Save that names a pool visual the job pinned, the 422s (not in the pool / gate closed), the 426 an
 older build gets on a variant that already stores one, and the pin a Save makes first so storage
 retention keeps the file.
@@ -227,7 +227,7 @@ def test_a_build_below_29_cannot_replace_the_timeline_of_a_variant_holding_a_med
     assert refused.value.detail == {
         "code": "client_update_required",
         "feature": "clip_backdrop_media",
-        "minimum_client_protocol": 29,
+        "minimum_client_protocol": 31,
     }
 
 

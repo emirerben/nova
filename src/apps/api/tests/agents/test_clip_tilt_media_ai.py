@@ -203,7 +203,7 @@ def test_the_chat_draft_reaches_the_save_pin_with_the_pool_id(monkeypatch):
     monkeypatch.setattr(
         settings, "phone_render_verified_features", ["clipTilt", "clipBackdropMedia"]
     )
-    set_client_protocol(29)
+    set_client_protocol(31)
     try:
         assert backdrop_pin_requests(job, variant["variant_id"], payload) == ["pool-photo-2"]
         monkeypatch.setattr(settings, "phone_render_verified_features", ["clipTilt"])

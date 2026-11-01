@@ -3857,7 +3857,7 @@ Slide posts are out of scope: a slide backdrop stays blank, colour or blur, and 
 
 | Capability | Where it is derived | Gate |
 |---|---|---|
-| `clipBackdropMedia` | any main-track clip whose `backdrop.kind` is `media` (V2 recipe only; always with `clipTilt`) | `MEDIA_TILT_ENABLED` + `clipTilt` verified, then `clipBackdropMedia` in `PHONE_RENDER_VERIFIED_FEATURES` and client protocol >= `MEDIA_BACKDROP_MIN_CLIENT_PROTOCOL` (29) |
+| `clipBackdropMedia` | any main-track clip whose `backdrop.kind` is `media` (V2 recipe only; always with `clipTilt`) | `MEDIA_TILT_ENABLED` + `clipTilt` verified, then `clipBackdropMedia` in `PHONE_RENDER_VERIFIED_FEATURES` and client protocol >= `MEDIA_BACKDROP_MIN_CLIENT_PROTOCOL` (31) |
 
 **Renderer.** No new renderer. The compositor reuses the speaker background's layer builder
 (`AVPlayerPreviewComposer.speakerBackgroundLayer`): one layer per distinct pool asset spans the edit, a photo is
@@ -3873,7 +3873,7 @@ Live preview takes the full rebuild when a media backdrop was not built into the
 `clipBackdropMedia`) when the job never pinned it. A cut that drops the last backdrop drops the asset.
 Save (`_require_clip_tilt_gates`): a backdrop is accepted only for a ready photo or video of THIS item's pool
 (`422 clip_backdrop_media_not_in_pool` otherwise), `422 clip_backdrop_media_unavailable` while the gate is closed, and
-`426 client_update_required` (`feature: "clip_backdrop_media"`, minimum 29) for a build below 29 that polls a recipe
+`426 client_update_required` (`feature: "clip_backdrop_media"`, minimum 31) for a build below 31 that polls a recipe
 with one or replaces the timeline of a variant that stores one. Before validation the Save pins the pool visual through
 the speaker background's receipt path (`phone_speaker_background.pin_background_for_commit`, also used by both chat
 apply paths): the receipt in `assembly_plan["_phone_visuals_v1"]` is what the storage-retention scanner treats as a
@@ -3888,7 +3888,7 @@ gone and the row still saves.
 
 **Chat.** `patch_slots.tilt.backdrop` accepts `{"kind": "media", "asset_id": ...}` only while
 `timeline_patch_capabilities.tilt_backdrop_media` is open and only for an id in the snapshot's `tilt_backdrop_pool`
-(`clip_tilt_media.txt` teaches it, `EDIT_COPILOT_PROMPT_VERSION` `2026-11-01-v100`); an id outside the pool is refused in
+(`clip_tilt_media.txt` teaches it, `EDIT_COPILOT_PROMPT_VERSION` `2026-11-01-v102`); an id outside the pool is refused in
 a plain sentence and never reaches the draft.
 
 Failure modes and what pins each: an older build decodes the recipe (426 above, `test_clip_backdrop_media.py`);
@@ -3902,4 +3902,4 @@ tilt); the AI naming an id outside the pool (`test_clip_tilt_media_ai.py` and a 
 
 Rollout: after `MEDIA_TILT_ENABLED` is on, add `clipBackdropMedia` to `PHONE_RENDER_VERIFIED_FEATURES` on Fly (api and
 worker, restart) once a physical-device preview and export check has passed, then ship the TestFlight build that
-declares protocol 29. Rollback is removing the token or `MEDIA_TILT_ENABLED=false`, never a code revert.
+declares protocol 31. Rollback is removing the token or `MEDIA_TILT_ENABLED=false`, never a code revert.

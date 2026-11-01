@@ -299,7 +299,7 @@ def test_the_row_value_is_the_recipe_value():
 
 
 def test_the_gate_extends_the_tilt_gate_and_needs_its_own_token_and_build(monkeypatch):
-    def gate(*, enabled=True, tilt=True, media=True, protocol=29, require_client=True):
+    def gate(*, enabled=True, tilt=True, media=True, protocol=31, require_client=True):
         monkeypatch.setattr(settings, "media_tilt_enabled", enabled)
         monkeypatch.setattr(
             settings,
@@ -315,7 +315,7 @@ def test_the_gate_extends_the_tilt_gate_and_needs_its_own_token_and_build(monkey
     assert not gate(enabled=False)
     assert not gate(tilt=False)
     assert not gate(media=False)
-    assert not gate(protocol=28)
+    assert not gate(protocol=30)
     assert not gate(protocol=None)
     assert gate(protocol=None, require_client=False)
 
@@ -323,7 +323,7 @@ def test_the_gate_extends_the_tilt_gate_and_needs_its_own_token_and_build(monkey
 def test_the_flag_and_protocol_defaults():
     fields = Settings.model_fields
     assert (
-        fields["media_backdrop_min_client_protocol"].default == CLIP_BACKDROP_MEDIA_PROTOCOL == 29
+        fields["media_backdrop_min_client_protocol"].default == CLIP_BACKDROP_MEDIA_PROTOCOL == 31
     )
     assert fields["media_tilt_enabled"].default is False
 
@@ -364,11 +364,11 @@ def test_an_old_build_is_told_to_update_instead_of_decoding_a_media_backdrop():
         rotation=30, backdrop={"kind": "media", "asset_id": POOL_VISUAL_ID}, pool_media_kind="image"
     )
     blur = tilted_document(rotation=30, backdrop={"kind": "blur"})
-    assert detail(media, 29) is None
+    assert detail(media, 31) is None
     assert detail(blur, 28) is None
-    assert detail(media, 28) == {
+    assert detail(media, 30) == {
         "code": "client_update_required",
         "feature": "clip_backdrop_media",
-        "minimum_client_protocol": 29,
+        "minimum_client_protocol": 31,
     }
     assert detail(media, 27)["feature"] == "clip_tilt"

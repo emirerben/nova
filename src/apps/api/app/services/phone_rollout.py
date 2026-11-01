@@ -821,7 +821,7 @@ def recipe_has_clip_backdrop_media(recipe: Any) -> bool:
 def clip_backdrop_media_client_supported(*, require_client: bool | None = None) -> bool:
     """Does the requesting app build decode a clip backdrop of kind ``media``?
 
-    At least ``media_backdrop_min_client_protocol`` (29) knows the ``clipBackdropMedia``
+    At least ``media_backdrop_min_client_protocol`` (31) knows the ``clipBackdropMedia``
     token and the ``asset_id`` key; an older build fails the whole recipe on either.
     ``require_client`` follows `clip_tilt_client_supported`.
     """
@@ -843,7 +843,7 @@ def clip_backdrop_media_supported(*, require_client: bool | None = None) -> bool
 
     The tilt gate (`clip_tilt_supported`: ``media_tilt_enabled``, ``clipTilt`` verified, a
     build at protocol 28) plus ``clipBackdropMedia`` in ``phone_render_verified_features`` and
-    a build at protocol 29.
+    a build at protocol 31.
     """
     return bool(
         clip_tilt_supported(require_client=require_client)

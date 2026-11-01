@@ -28,7 +28,7 @@ SPEAKER_BACKGROUND_PROTOCOL = 27
 CLIP_TILT_PROTOCOL = 28
 # The first build that decodes a clip backdrop of kind `media` (the `clipBackdropMedia`
 # capability).
-CLIP_BACKDROP_MEDIA_PROTOCOL = 29
+CLIP_BACKDROP_MEDIA_PROTOCOL = 31
 
 
 def caption_style_scope_supported() -> bool:

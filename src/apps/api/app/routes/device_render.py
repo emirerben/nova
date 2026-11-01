@@ -632,7 +632,7 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "minimum_client_protocol": settings.media_tilt_min_client_protocol,
         }
     if not clip_backdrop_media_client_supported() and recipe_has_clip_backdrop_media(recipe):
-        # KRI-1139: a build below protocol 29 cannot decode a media backdrop (the
+        # KRI-1139: a build below protocol 31 cannot decode a media backdrop (the
         # `clipBackdropMedia` token and the backdrop's `asset_id`), so the whole recipe would
         # fail instead of rendering the clip without its photo or video.
         return {

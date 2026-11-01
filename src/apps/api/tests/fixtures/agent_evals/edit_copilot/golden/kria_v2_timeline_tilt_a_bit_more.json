@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-11-01-v100",
+  "prompt_version": "2026-11-01-v102",
   "input": {
     "utterance": "tilt it a bit more",
     "prior_turns": [

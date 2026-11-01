@@ -74,10 +74,10 @@ log = structlog.get_logger()
 # snapshot's timeline_patch_capabilities opens `tilt`; every other prompt is byte-identical.
 # v99 (KRI-1138): set_slide_tilt in the slides fragment, taught only on the slide-post surface and
 # only where `post.tilt_enabled`; video and gate-closed slide prompts are otherwise unchanged.
-# v100 (KRI-1139): a media backdrop ({"kind":"media","asset_id"}) in the tilt, taught in
+# v102 (KRI-1139): a media backdrop ({"kind":"media","asset_id"}) in the tilt, taught in
 # clip_tilt_media.txt and the BACKDROP POOL section only where `tilt_backdrop_media` is open;
 # every other prompt, including a tilt-open one without it, is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v100"
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v102"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
