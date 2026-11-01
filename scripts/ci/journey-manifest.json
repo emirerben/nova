@@ -2781,7 +2781,7 @@
     {
       "id": "kri-1137-chat-tilt",
       "needs_native": false,
-      "api_tests": "tests/agents/test_clip_tilt_ai.py tests/evals/test_edit_copilot_evals.py tests/agents/test_creator_wire_contract.py tests/agents/test_editor_ops_v2.py tests/agents/test_timeline_capability_context.py tests/kria/test_editor_capability_parity.py tests/services/test_kria_ask_cli.py",
+      "api_tests": "tests/agents/test_clip_tilt_ai.py tests/evals/test_edit_copilot_evals.py tests/agents/test_creator_wire_contract.py tests/agents/test_editor_ops_v2.py tests/agents/test_timeline_capability_context.py tests/kria/test_editor_capability_parity.py tests/services/test_kria_ask_cli.py tests/agents/test_clip_tilt_media_ai.py",
       "paths": [
         "src/apps/api/app/kria/clip_tilt.py",
         "src/apps/api/prompts/edit_copilot_ops/clip_tilt.txt",
@@ -2795,18 +2795,23 @@
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_straighten.json",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_turkish.json",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_look_clip_refusal.json",
-        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_gate_closed.json"
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_gate_closed.json",
+        "src/apps/api/prompts/edit_copilot_ops/clip_tilt_media.txt",
+        "src/apps/api/tests/agents/test_clip_tilt_media_ai.py",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_media_second_photo.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_media_not_in_pool_refusal.json"
       ]
     },
     {
       "id": "kri-1136-clip-tilt-editor",
       "needs_native": true,
-      "api_tests": "tests/kria/test_clip_tilt_writers.py tests/routes/test_clip_tilt_editor_save.py tests/routes/test_editor_save_code_catalog.py",
+      "api_tests": "tests/kria/test_clip_tilt_writers.py tests/routes/test_clip_tilt_editor_save.py tests/routes/test_editor_save_code_catalog.py tests/kria/test_clip_backdrop_media.py tests/routes/test_clip_backdrop_media_save.py",
       "xctests": [
         "KriaTests/ClipTiltTests/testSharedFixtureValidTiltsNormalizeAndMapToRecipeFields",
         "KriaTests/ClipTiltTests/testSettingATiltStoresTheRowAndResetRestoresAByteIdenticalRow",
         "KriaTests/ClipTiltTests/testCompilerComposesTheTiltWithTheLetterboxInsteadOfReplacingIt",
-        "KriaTests/ClipTiltRenderTests/testARowTiltRendersClockwiseOverTheColourAndBlurBackdrops"
+        "KriaTests/ClipTiltRenderTests/testARowTiltRendersClockwiseOverTheColourAndBlurBackdrops",
+        "KriaTests/ClipTiltMediaBackdropTests/testTheEditorsRecipeRendersThePhotoInTheCornersOfATiltedClip"
       ],
       "paths": [
         "src/apps/api/app/kria/clip_tilt_row.py",
@@ -2817,7 +2822,12 @@
         "src/apps/ios/Kria/Features/NativeTiltSheet.swift",
         "src/apps/ios/Tests/KriaTests/ClipTiltTests.swift",
         "src/apps/ios/Tests/KriaTests/ClipTiltRenderTests.swift",
-        "src/apps/ios/Tests/KriaUITests/NativeTiltUITests.swift"
+        "src/apps/ios/Tests/KriaUITests/NativeTiltUITests.swift",
+        "src/apps/api/tests/kria/test_clip_backdrop_media.py",
+        "src/apps/api/tests/routes/test_clip_backdrop_media_save.py",
+        "src/apps/ios/Kria/Features/NativeVisualPoolPicker.swift",
+        "src/apps/ios/Tests/KriaTests/ClipTiltMediaBackdropTests.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/ClipBackdropMediaCompositionTests.swift"
       ]
     }
   ]
