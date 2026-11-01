@@ -2779,6 +2779,26 @@
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_look_clip_refusal.json",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_gate_closed.json"
       ]
+    },
+    {
+      "id": "kri-1136-clip-tilt-editor",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_clip_tilt_writers.py tests/routes/test_clip_tilt_editor_save.py tests/routes/test_editor_save_code_catalog.py",
+      "xctests": [
+        "KriaTests/ClipTiltTests",
+        "KriaTests/ClipTiltRenderTests"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/clip_tilt_row.py",
+        "src/apps/api/tests/kria/test_clip_tilt_writers.py",
+        "src/apps/api/tests/routes/test_clip_tilt_editor_save.py",
+        "tests/fixtures/clip-tilt-row/v1.json",
+        "src/apps/ios/Kria/Core/ClipTilt.swift",
+        "src/apps/ios/Kria/Features/NativeTiltSheet.swift",
+        "src/apps/ios/Tests/KriaTests/ClipTiltTests.swift",
+        "src/apps/ios/Tests/KriaTests/ClipTiltRenderTests.swift",
+        "src/apps/ios/Tests/KriaUITests/NativeTiltUITests.swift"
+      ]
     }
   ]
 }
