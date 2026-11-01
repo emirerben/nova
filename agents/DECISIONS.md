@@ -3227,3 +3227,37 @@ the whole creator request, so a style ask in it looked like a research ask nobod
   request sends the same data as before. Prompt versions bumped; replay evals pass.
 - Verified offline with a reviewer that rejects when the data does not name the ask. The real
   Gemini reviewer has not been run against this prompt (paid live runs need an approved ledger).
+
+## [2026-11-01] Research proven + a look judged after render is approvable (Assos, third refusal)
+
+Third refusal of "With animations, explain why people should visit Assos, Turkey" (prod 07:54,
+after #2012 and #2013): "I can't make this yet: ... I can't confirm this draft does it yet."
+Research had passed. Reproduced locally with the real Main Creator and real Gemini research
+(`scripts/kria/live_assos_turn.py`, reports under `.dev/assos-live/`). The Main Creator writes
+ONE requirement `r1` (text, global, no literal) whose facts hold both `research` (topic, quote)
+and `animation: "any"`. Its receipt is `met` + `unchecked` ("the text will animate in as it
+appears; I'll check it in the finished video"), because the research part is proven by the
+preview and the animation is judged on the finished video (`brief_checks._research_with_animation`).
+
+Root cause (`approval_readiness._no_pre_render_checker`): any requirement carrying a research
+fact returned "a draft check can settle this", so an unchecked receipt became
+`evidence_missing`, which holds approval. That rule is right for research that is NOT proven
+(no preview, a limit, a failure) and wrong once the sourced wording is on the card: what is left
+is the look, which no draft can show. Premise tested, not assumed: the live row was
+`evidence_missing/brief_checks` with `prepared_research.status == "ready"` and three texts, and
+the same draft with the fix is `unverified`.
+
+- A requirement whose research the preview proved (`_check_research` is `met` + `checked`)
+  falls through to the checks of its other facts, so its look becomes `unverified` (approved,
+  named after render). Research that is not proven still blocks; the claim reviewer, the copy
+  writer and the preview are untouched. Keep-text-off marks still block.
+- Same class checked: research with a named animation, a position, a font or a colour on one
+  requirement. Animation shapes were held, position/font/colour were already approved because
+  `_check_research` answers first (their receipt reads "checked"; that overclaim is not
+  changed here).
+- The journey file `test_kri881_research_before_approval.py` never turned the readiness gate on
+  (code default off, prod on), which is why three research fixes shipped without seeing it. The
+  new rows run the gate on, with `r1` recorded from the live run (`assos/live_r1.json`).
+- Kill switch: `KRIA_RESEARCHED_LOOK_AFTER_RENDER_ENABLED` (default true). `false` + restart api
+  and worker restores the old hold exactly (pinned by
+  `test_kill_switch_off_holds_the_researched_animation_ask_as_before`).

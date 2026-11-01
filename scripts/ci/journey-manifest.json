@@ -1441,6 +1441,7 @@
         "src/apps/api/tests/fixtures/kria_replay/assos/README.md",
         "src/apps/api/tests/fixtures/kria_replay/assos/fixture.json",
         "src/apps/api/tests/fixtures/kria_replay/assos/research.json",
+        "src/apps/api/tests/fixtures/kria_replay/assos/live_r1.json",
         "src/apps/api/app/kria/planner.py",
         "src/apps/api/app/kria/runtime.py",
         "src/apps/api/app/kria/plan_review.py",

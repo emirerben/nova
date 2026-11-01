@@ -1109,6 +1109,12 @@ class Settings(BaseSettings):
     # Default TRUE; false + restart (api + worker) = byte-identical to before
     # (`app.kria.route_disclosure`, agents/DECISIONS.md "Route disclosure").
     kria_route_disclosure_enabled: bool = True
+    # Assos (2026-11-01, third refusal): a requirement with a research fact AND a look fact
+    # ("with animations, explain ...") whose research the preview proved is approvable, with
+    # the look named as judged on the finished video; the research part is never weakened.
+    # Default TRUE; false + restart (api + worker) = byte-identical to before
+    # (`approval_readiness._no_pre_render_checker`, agents/DECISIONS.md).
+    kria_researched_look_after_render_enabled: bool = True
     # KRI-721: enroll new approval writers only after API/worker readers deploy.
     # Existing stamped assessments remain mandatory when enrollment is disabled.
     kria_approval_readiness_enabled: bool = False
