@@ -170,13 +170,19 @@ public enum KriaBranding {
             overlayAboveText: true, overlayPreserveAlpha: true, visualOrder: 9_000)
     }
 
-    /// Fill `canvas` with a source of `naturalSize`, matching how a clip covers
-    /// the frame. The outro is authored 9:16, so this only does real work when
-    /// the export canvas is not.
-    static func coverTransform(naturalSize: CGSize, preferred: CGAffineTransform,
-                               canvas: CGSize) -> CGAffineTransform {
+    /// Fit a source of `naturalSize` whole inside `canvas`, centred. The outro is
+    /// authored 9:16, so this only does real work when the export canvas is not.
+    ///
+    /// Fit, not cover (KRI-1154): covering a 16:9 canvas with the 9:16 card
+    /// scaled it by 1.78 and cropped it top and bottom, so the wordmark filled
+    /// ~40% of a landscape frame's height against ~13% on portrait. Fitting
+    /// keeps the signed-off portrait card's proportions on every canvas; the
+    /// layer's `extendsEdgesToCanvas` paints the uncovered sides with the
+    /// card's own paper, so the result is one flat card, not a letterbox.
+    static func fitTransform(naturalSize: CGSize, preferred: CGAffineTransform,
+                             canvas: CGSize) -> CGAffineTransform {
         let rect = CGRect(origin: .zero, size: naturalSize).applying(preferred)
-        let scale = max(canvas.width / max(abs(rect.width), 1),
+        let scale = min(canvas.width / max(abs(rect.width), 1),
                         canvas.height / max(abs(rect.height), 1))
         return preferred
             .concatenating(CGAffineTransform(translationX: -rect.minX, y: -rect.minY))

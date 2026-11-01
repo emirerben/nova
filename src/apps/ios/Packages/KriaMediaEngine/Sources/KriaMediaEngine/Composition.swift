@@ -456,9 +456,10 @@ public struct PreviewComposition: @unchecked Sendable {
             let end = total + cached.duration.seconds
             layers.append(RecipeVideoLayer(
                 trackID: track.trackID, image: nil,
-                transform: KriaBranding.coverTransform(naturalSize: cached.naturalSize, preferred: cached.preferredTransform, canvas: canvas),
+                transform: KriaBranding.fitTransform(naturalSize: cached.naturalSize, preferred: cached.preferredTransform, canvas: canvas),
                 start: total, end: end, fadeIn: 0, isPrimary: false, clipID: "kria-outro",
-                naturalSize: cached.naturalSize, preferredTransform: cached.preferredTransform, visualOrder: 9_001))
+                naturalSize: cached.naturalSize, preferredTransform: cached.preferredTransform, visualOrder: 9_001,
+                extendsEdgesToCanvas: true))
             brandedTotal = end
         }
 

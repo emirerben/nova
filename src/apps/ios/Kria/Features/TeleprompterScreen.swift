@@ -168,12 +168,11 @@ struct TeleprompterScreen: View {
                         .accessibilityIdentifier("teleprompter-cancel-countdown")
                 }.padding(16).kriaGlassPanel(cornerRadius: 24)
             } else if flow.stage == .starting || flow.stage == .finalizing {
-                HStack(spacing: 10) {
-                    KriaSpinner()
-                    Text(flow.stage == .starting ? "Starting recording…" : "Saving take…").font(KriaFont.body(15).weight(.semibold))
-                }.padding(16).kriaGlassPanel(cornerRadius: 24)
+                TeleprompterSavingLabel(camera: flow.camera, starting: flow.stage == .starting)
             } else {
                 TeleprompterCaptureControls(script: flow.script, camera: flow.camera,
+                    cinematic: .init(availability: flow.cinematicAvailability, enabled: flow.cinematicEnabled,
+                                     set: { flow.setCinematic($0) }),
                     recording: flow.stage == .recording,
                     manual: manualScrolling,
                     enableAutomaticScroll: UIAccessibility.isVoiceOverRunning ? nil : { allowsAutomaticScroll = true },
@@ -206,6 +205,11 @@ struct TeleprompterScreen: View {
                         if take.audioCheck?.verdict == .quiet {
                             Text(TeleprompterRecordingFlow.quietTakeMessage).font(KriaFont.body(14))
                                 .foregroundStyle(KriaColor.mutedInk).accessibilityIdentifier("teleprompter-quiet-take")
+                        }
+                        if let cinematic = take.cinematic, take.status != .invalid {
+                            Label(cinematic.creatorMessage, systemImage: cinematic == .applied ? "camera.aperture" : "info.circle")
+                                .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                                .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("teleprompter-review-cinematic")
                         }
                         if take.speakerBackground != nil {
                             Text("Your background is added with this take. The recording itself stays unedited.")
@@ -410,10 +414,31 @@ private struct TeleprompterCameraErrorCard: View {
         Button("Settings", action: openSettings).buttonStyle(KriaSecondaryButtonStyle(minHeight: 44)).fixedSize(horizontal: false, vertical: true)
     }
 }
+/// "Starting recording…" / "Saving take…", and KRI-1160's longer "Applying Cinematic look…" while a take is baked.
+private struct TeleprompterSavingLabel: View {
+    @ObservedObject var camera: TeleprompterCamera
+    let starting: Bool
+    var body: some View {
+        HStack(spacing: 10) {
+            KriaSpinner()
+            Text(starting ? "Starting recording…" : camera.applyingCinematic ? "Applying Cinematic look…" : "Saving take…")
+                .font(KriaFont.body(15).weight(.semibold))
+        }.padding(16).kriaGlassPanel(cornerRadius: 24)
+    }
+}
+
+/// KRI-1160: the Cinematic switch's state, owned by the recording flow.
+struct TeleprompterCinematicChoice {
+    let availability: TeleprompterCinematic.Availability
+    let enabled: Bool
+    let set: (Bool) -> Void
+}
+
 private struct TeleprompterCaptureControls: View {
     @ObservedObject var script: TeleprompterScript
     @ObservedObject var camera: TeleprompterCamera
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let cinematic: TeleprompterCinematicChoice
     let recording: Bool
     let manual: Bool
     let enableAutomaticScroll: (() -> Void)?
@@ -438,6 +463,8 @@ private struct TeleprompterCaptureControls: View {
 
     private var options: some View {
         VStack(spacing: 12) {
+            // Chosen before a take; while recording the mode cannot change, so the space goes to reading controls.
+            if !recording { cinematicOption }
             VStack(spacing: 4) {
                 HStack {
                     Text("\(script.wordsPerMinute) words/min").font(KriaFont.body(14).weight(.semibold))
@@ -463,6 +490,29 @@ private struct TeleprompterCaptureControls: View {
             }
             if script.hasEnded { Text("End of script").font(KriaFont.body(13)) }
         }
+    }
+
+    /// Unavailable iPhones see the switch off and disabled, with why, so a standard take is never mistaken for Cinematic.
+    private var cinematicOption: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle(isOn: Binding(get: { cinematic.enabled }, set: cinematic.set)) {
+                Label("Cinematic", systemImage: "camera.aperture").font(KriaFont.body(14).weight(.semibold))
+            }
+            .tint(KriaColor.sky)
+            .disabled(cinematic.availability != .available || camera.phase == .preparing)
+            .accessibilityHint("Softly blurs the background behind you, like the Camera app’s Cinematic mode.")
+            .accessibilityIdentifier("teleprompter-cinematic")
+            Text(cinematicCaption).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("teleprompter-cinematic-note")
+        }
+    }
+
+    private var cinematicCaption: String {
+        if let message = cinematic.availability.creatorMessage { return message }
+        if cinematic.enabled, let note = camera.cinematicNote { return note }
+        return cinematic.enabled ? "Your background is softly blurred, like the Camera app’s Cinematic mode."
+            : "Blur the background behind you, like the Camera app’s Cinematic mode."
     }
 
     @ViewBuilder private var manualReadingControls: some View {
