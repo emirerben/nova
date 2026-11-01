@@ -433,7 +433,7 @@ import UIKit
             stopRecording(reason: reason)
         } else {
             stopSession()
-            error = reason.creatorMessage
+            error = reason.previewMessage
             phase = .failed
         }
     }

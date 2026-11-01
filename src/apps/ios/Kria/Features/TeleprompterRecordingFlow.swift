@@ -218,8 +218,10 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         case .inactive:
             // KRI-653: whatever happened to the audio session while we were away (Control Center, an
             // alert, the app switcher), the next prepare() must rebuild the capture graph. Inactive
-            // never takes the camera away, so a running take keeps going (KRI-1149).
+            // never takes the camera away, so a running take keeps going (KRI-1149). A countdown is not a take: it
+            // is cancelled so the take never starts on a graph this call just marked stale.
             camera.sceneBecameInactive()
+            if stage == .countdown { cancelCountdown() }
             if !captureBusy { script.pause(); persistDraft() }
         case .background:
             leaveCapture(reason: .backgrounded)

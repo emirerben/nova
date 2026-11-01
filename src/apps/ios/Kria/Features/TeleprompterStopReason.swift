@@ -29,6 +29,20 @@ enum TakeStopReason: String, Codable, Sendable, CaseIterable {
         case .systemFinished: "Recording stopped on its own."
         }
     }
+
+    /// What the camera card says when the loss hit the preview and no take was running.
+    var previewMessage: String {
+        switch self {
+        case .user, .systemFinished: "The camera stopped."
+        case .backgrounded: "The camera stopped when Kria went to the background."
+        case .audioInterruptionBegan: "Audio was interrupted."
+        case .captureSessionInterrupted: "Camera capture was interrupted."
+        case .runtimeError: "Camera capture failed."
+        case .routeLost: "The microphone connection changed."
+        case .mediaServicesReset: "Audio services restarted."
+        case .viewRemoved, .sessionTornDown: "The camera was shut down."
+        }
+    }
 }
 
 /// Something the system or the screen reported while a take may be running.

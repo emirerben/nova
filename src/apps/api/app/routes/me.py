@@ -2040,8 +2040,11 @@ async def report_recorder_audio_silent(body: RecorderDiagnostic, user: CurrentUs
     stopped (`recorder_take_finished`), so the next occurrence names its own trigger in
     the Fly logs.
     """
-    event = "recorder_take_finished" if body.kind == "take_finished" else "recorder_audio_silent"
-    log.warning(event, user_id=str(user.id), **body.model_dump())
+    if body.kind == "take_finished":
+        emit = log.info if body.stop_reason == "user" else log.warning
+        emit("recorder_take_finished", user_id=str(user.id), **body.model_dump())
+        return
+    log.warning("recorder_audio_silent", user_id=str(user.id), **body.model_dump())
 
 
 @router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
