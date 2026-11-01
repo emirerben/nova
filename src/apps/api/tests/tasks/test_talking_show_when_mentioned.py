@@ -71,8 +71,10 @@ def _run(
     mention: bool,
     sound: bool = False,
     brief: CreativeBrief | None = None,
+    clips: list[dict] | None = None,
 ):
-    bindings = {c["media_id"]: _binding(c["media_id"], duration_s=c["duration_s"]) for c in CLIPS}
+    clips = CLIPS if clips is None else clips
+    bindings = {c["media_id"]: _binding(c["media_id"], duration_s=c["duration_s"]) for c in clips}
     snapshot = {
         PHONE_SOURCES_FIELD: [b.model_dump(mode="json") for b in bindings.values()],
         "creator_generation_id": "generation",
@@ -95,11 +97,11 @@ def _run(
     monkeypatch.setattr(gb.settings, "phone_clip_sound_windows_enabled", sound)
     monkeypatch.setattr(gb.settings, "phone_talking_cutaway_sound_enabled", sound)
     # The worker saw the clips in the order their analyses finished, not the upload order.
-    finished = [CLIPS[3], CLIPS[4], CLIPS[1], CLIPS[2], CLIPS[0]]
-    by_id = {c["media_id"]: c for c in CLIPS}
-    path_of = {c["clip_id"]: f"/tmp/{c['clip_id'].split('/')[1]}.mp4" for c in CLIPS}
+    finished = [clips[3], clips[4], clips[1], clips[2], clips[0]]
+    by_id = {c["media_id"]: c for c in clips}
+    path_of = {c["clip_id"]: f"/tmp/{c['clip_id'].split('/')[1]}.mp4" for c in clips}
     clip_of_path = {path: cid for cid, path in path_of.items()}
-    media_of_clip = {c["clip_id"]: c["media_id"] for c in CLIPS}
+    media_of_clip = {c["clip_id"]: c["media_id"] for c in clips}
 
     def _meta(c):
         m = c["meta"]
@@ -125,12 +127,12 @@ def _run(
         "_ingest_clips",
         lambda *a, **k: {
             "clip_metas": [_meta(c) for c in finished],
-            "clip_id_to_gcs": {c["clip_id"]: bindings[c["media_id"]].proxy_path for c in CLIPS},
+            "clip_id_to_gcs": {c["clip_id"]: bindings[c["media_id"]].proxy_path for c in clips},
             "clip_id_to_local": path_of,
             "probe_map": {
-                path_of[c["clip_id"]]: SimpleNamespace(duration_s=c["duration_s"]) for c in CLIPS
+                path_of[c["clip_id"]]: SimpleNamespace(duration_s=c["duration_s"]) for c in clips
             },
-            "hero": _meta(CLIPS[0]),
+            "hero": _meta(clips[0]),
         },
         raising=False,
     )
@@ -316,3 +318,30 @@ def test_the_creator_is_told_what_was_matched_what_was_spread_and_that_sound_was
         "Couldn't tell where you mention 2 other clips, so I spread them across the video",
         "Their own sound isn't available on this edit yet, so the clips play silent",
     ]
+
+
+def test_wrong_content_control_the_window_follows_what_a_clip_says_not_its_slot(monkeypatch):
+    """Swap what the 2032-final talk and the congress talk contain (words and analysis) while
+    their files, durations, upload slots and `speaks_to_camera` stay put. A check that only
+    counted cutaways would pass; this one must move: the file that now holds the final talk is
+    the one placed at the 75,000-seat mention, and the file that now holds the congress talk is
+    spread."""
+    swapped = []
+    by_clip = {c["clip_id"]: c for c in CLIPS}
+    final, congress = by_clip["files/5y0pv0icb952"], by_clip["files/3d0mpvir0ez8"]
+    for c in CLIPS:
+        if c is final:
+            swapped.append({**c, "words": congress["words"], "meta": congress["meta"]})
+        elif c is congress:
+            swapped.append({**c, "words": final["words"], "meta": final["meta"]})
+        else:
+            swapped.append(c)
+    _job, recipe, variant = _run(monkeypatch, mention=True, clips=swapped)
+    rows = {
+        row["media_id"]: row
+        for row in variant[gb.PHONE_TALKING_MULTI_CLIP_FIELD]["mention_cutaways"]["placements"]
+    }
+    assert rows[CONGRESS_TALK]["basis"] == "mention"
+    assert 14.5 <= rows[CONGRESS_TALK]["start_s"] <= 17.0
+    assert rows[FINAL_TALK]["basis"] == "spread"
+    assert rows[FINAL_TALK]["reason"] == "no_mention_found"
