@@ -35,6 +35,7 @@ from app.kria.brief import (
     apply_updates,
     load_latest_brief_sync,
     persist_brief_version_sync,
+    removed_target_ids,
     render_brief_request,
 )
 from app.kria.brief_binding import BriefBindingRequestTooLongError
@@ -1441,7 +1442,9 @@ def _append_automatic_omissions_sync(
     unsupported text/style requirement after compiling the draft.  ``source_turn_id``
     stays NULL because the first version already owns the turn's source updates.
     """
-    merged = apply_updates(brief, updates, source_turn_id=None)
+    merged = apply_updates(
+        brief, updates, source_turn_id=None, server_removed_ids=removed_target_ids(updates)
+    )
     next_version = (
         int(
             db.execute(
@@ -2495,6 +2498,7 @@ def _complete_draft_turn(
                     thread_id=thread.id,
                     turn_id=turn.id,
                     updates=effective_brief_updates,
+                    server_removed_ids=removed_target_ids(effective_brief_updates),
                 )
             if settings.kria_choice_questions_enabled:
                 brief = answered_brief(brief, document.strategy)
