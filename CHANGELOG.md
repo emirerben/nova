@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.51.0] - 2026-11-01
+
+### Fixed
+- fix(kria): judge a Visuals photo label on that photo in the plan receipt (KRI-1102) (#2007) <!-- release-pr: 2007 -->
+
 ## [0.83.50.0] - 2026-11-01
 
 ### Fixed
