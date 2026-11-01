@@ -382,6 +382,11 @@ PERSISTENT_TEXT_MIN_SHARE = 0.5
 PERSISTENT_TEXT_END_SLACK_S = 1.0
 
 
+def _edit_length(variant: dict) -> float:
+    """Footage length the phone's clips cover; the saved total also holds the brand tail."""
+    return float(variant.get("edit_duration_s") or variant.get("duration_s") or 0)
+
+
 def is_persistent_text(row: dict, duration_s: float | None) -> bool:
     """A title or pin held to the video's end frames the footage; it claims no moment."""
     start, end = row.get("start_s"), row.get("end_s")
@@ -539,8 +544,7 @@ def plan_context(
     current = list(base.projected.get("caption_cues") or [])
     speech_timing_holds = current_timing == saved_timing or (
         variant.get("resolved_archetype") in SEPARATE_NARRATION_ARCHETYPES
-        and abs(clock.output_duration - float(variant.get("duration_s") or 0))
-        <= NARRATION_LENGTH_TOLERANCE_S
+        and abs(clock.output_duration - _edit_length(variant)) <= NARRATION_LENGTH_TOLERANCE_S
     )
     evidence = speech_evidence(originals, current) if speech_timing_holds else []
     narration = getattr(item, "voiceover_gcs_path", None)

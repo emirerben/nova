@@ -882,3 +882,15 @@ def test_a_cut_edit_still_drops_speech_for_spoken_to_camera_footage():
     assert not [
         r for r in plan_context(job, variant, item, body, []).evidence if r["kind"] == "speech"
     ]
+
+
+def test_narration_timing_ignores_the_brand_tail_the_phone_does_not_send():
+    from app.services.overlay_generation import plan_context
+
+    job, variant, item, body = _narrated_edit(_slots(5, 5))
+    variant["duration_s"] = 11.6
+    variant["edit_duration_s"] = 10
+    speech = [
+        r for r in plan_context(job, variant, item, body, []).evidence if r["kind"] == "speech"
+    ]
+    assert speech
