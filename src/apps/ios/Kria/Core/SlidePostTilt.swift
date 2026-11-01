@@ -97,9 +97,14 @@ enum SlidePostTiltGeometry {
         let cosine = cos(radians), sine = sin(radians)
         let cx = Double(canvas.width) / 2, cy = Double(canvas.height) / 2
         let w = Double(size.width) / 2, h = Double(size.height) / 2
-        return [(-w, -h), (w, -h), (w, h), (-w, h)].map { dx, dy in
-            CGPoint(x: cx + dx * cosine - dy * sine, y: cy + dx * sine + dy * cosine)
+        let offsets: [(dx: Double, dy: Double)] = [(-w, -h), (w, -h), (w, h), (-w, h)]
+        var corners: [CGPoint] = []
+        for offset in offsets {
+            let x: Double = cx + offset.dx * cosine - offset.dy * sine
+            let y: Double = cy + offset.dx * sine + offset.dy * cosine
+            corners.append(CGPoint(x: x, y: y))
         }
+        return corners
     }
 
     /// True when the turned media still covers every canvas pixel, so no backdrop shows.
@@ -107,10 +112,15 @@ enum SlidePostTiltGeometry {
         let radians = degrees * .pi / 180
         let cosine = cos(radians), sine = sin(radians)
         let epsilon = 1e-6
-        for (x, y) in [(0.0, 0.0), (Double(canvas.width), 0.0), (Double(canvas.width), Double(canvas.height)), (0.0, Double(canvas.height))] {
-            let dx = x - Double(canvas.width) / 2, dy = y - Double(canvas.height) / 2
-            let mx = dx * cosine + dy * sine, my = -dx * sine + dy * cosine
-            if abs(mx) > Double(size.width) / 2 + epsilon || abs(my) > Double(size.height) / 2 + epsilon { return false }
+        let canvasW = Double(canvas.width), canvasH = Double(canvas.height)
+        let halfW = Double(size.width) / 2 + epsilon, halfH = Double(size.height) / 2 + epsilon
+        let corners: [(x: Double, y: Double)] = [(0, 0), (canvasW, 0), (canvasW, canvasH), (0, canvasH)]
+        for corner in corners {
+            let dx: Double = corner.x - canvasW / 2
+            let dy: Double = corner.y - canvasH / 2
+            let mx: Double = dx * cosine + dy * sine
+            let my: Double = -dx * sine + dy * cosine
+            if abs(mx) > halfW || abs(my) > halfH { return false }
         }
         return true
     }
