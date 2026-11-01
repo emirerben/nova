@@ -612,7 +612,6 @@ struct NativeEditorToolRail: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var selectionNamespace
     let selected: NativeEditorTool?
-    var availableWidth: CGFloat = 328
     var connected = false
     /// The Draw tool is offered only when the server opens drawings for this variant.
     var showsDraw = false
@@ -626,44 +625,24 @@ struct NativeEditorToolRail: View {
     }
 
     var body: some View {
-        HStack(spacing: NativeEditorIslandMetrics.toolSpacing) {
-            ForEach(tools) { tool in
-                Button { onSelect(tool) } label: {
-                    VStack(spacing: 4) {
-                        Image(systemName: tool.icon)
-                            .font(.system(size: 17, weight: .medium))
-                        Text(tool.rawValue)
-                            .font(KriaFont.body(11).weight(selected == tool ? .semibold : .medium))
-                            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                            .lineLimit(1)
-                            // The island pins each tool to a fixed width, so
-                            // larger Dynamic Type shrinks the label instead
-                            // of truncating it.
-                            .minimumScaleFactor(0.7)
+        GeometryReader { proxy in
+            let layout = NativeEditorIslandMetrics.toolRailLayout(toolCount: tools.count, railWidth: proxy.size.width)
+            ScrollViewReader { scroller in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: NativeEditorIslandMetrics.toolSpacing) {
+                        ForEach(tools) { tool in toolButton(tool, itemWidth: layout.itemWidth) }
                     }
-                    .foregroundStyle(selected == tool ? KriaColor.ink : KriaColor.zinc)
-                    .frame(width: min(NativeEditorIslandMetrics.toolWidth, max(44, (availableWidth - 22) / CGFloat(tools.count))), height: NativeEditorIslandMetrics.toolHeight)
-                    .background {
-                        if selected == tool {
-                            if shouldReduceMotion {
-                                Capsule().fill(KriaColor.ink.opacity(0.07))
-                            } else {
-                                Capsule().fill(KriaColor.ink.opacity(0.07))
-                                    .matchedGeometryEffect(id: "native-editor-tool-selection", in: selectionNamespace)
-                            }
-                        }
-                    }
-                    .contentShape(Capsule())
+                    .padding(.vertical, NativeEditorIslandMetrics.islandVerticalPadding)
+                    // A rail that fits stays centred; one that overflows is wider than this and scrolls.
+                    .frame(minWidth: proxy.size.width - 2 * NativeEditorIslandMetrics.islandHorizontalPadding)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(tool.rawValue)
-                .accessibilityHint(selected == tool ? "Close this panel" : tool.accessibilityHint)
-                .accessibilityAddTraits(selected == tool ? .isSelected : [])
-                .accessibilityIdentifier("native-editor-tool-\(tool.rawValue.lowercased())")
+                .contentMargins(.horizontal, NativeEditorIslandMetrics.islandHorizontalPadding, for: .scrollContent)
+                .scrollDisabled(!layout.scrolls)
+                .excludesDrawerGestureWhen(layout.scrolls)
+                .onChange(of: selected) { _, tool in reveal(tool, in: scroller, animated: true) }
+                .onChange(of: layout) { _, _ in reveal(selected, in: scroller, animated: false) }
             }
         }
-        .padding(.horizontal, NativeEditorIslandMetrics.islandHorizontalPadding)
-        .padding(.vertical, NativeEditorIslandMetrics.islandVerticalPadding)
         .frame(height: NativeEditorIslandMetrics.islandHeight)
         .accessibilityElement(children: .contain)
         // `.glassEffect()` (used by `.nativeEditorIslandSurface()` on iOS
@@ -687,6 +666,48 @@ struct NativeEditorToolRail: View {
         )
         .nativeEditorIslandSurface(isEnabled: !connected)
         .animation(shouldReduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.86), value: selected)
+    }
+
+    private func toolButton(_ tool: NativeEditorTool, itemWidth: CGFloat) -> some View {
+        Button { onSelect(tool) } label: {
+            VStack(spacing: 4) {
+                Image(systemName: tool.icon)
+                    .font(.system(size: 17, weight: .medium))
+                Text(tool.rawValue)
+                    .font(KriaFont.body(11).weight(selected == tool ? .semibold : .medium))
+                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .foregroundStyle(selected == tool ? KriaColor.ink : KriaColor.zinc)
+            .frame(width: itemWidth, height: NativeEditorIslandMetrics.toolHeight)
+            .background {
+                if selected == tool {
+                    if shouldReduceMotion {
+                        Capsule().fill(KriaColor.ink.opacity(0.07))
+                    } else {
+                        Capsule().fill(KriaColor.ink.opacity(0.07))
+                            .matchedGeometryEffect(id: "native-editor-tool-selection", in: selectionNamespace)
+                    }
+                }
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(tool.rawValue)
+        .accessibilityHint(selected == tool ? "Close this panel" : tool.accessibilityHint)
+        .accessibilityAddTraits(selected == tool ? .isSelected : [])
+        .accessibilityIdentifier("native-editor-tool-\(tool.rawValue.lowercased())")
+    }
+
+    /// Keeps the open tool on screen when the rail scrolls (a no-op when everything fits).
+    private func reveal(_ tool: NativeEditorTool?, in scroller: ScrollViewProxy, animated: Bool) {
+        guard let tool else { return }
+        if animated && !shouldReduceMotion {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { scroller.scrollTo(tool.id, anchor: .center) }
+        } else {
+            scroller.scrollTo(tool.id, anchor: .center)
+        }
     }
 }
 

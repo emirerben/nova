@@ -29,6 +29,9 @@ enum NativeEditorUITestFixtures {
         /// KRI-589: a 6 s cut whose variant opens the drawings lane; Save commits through a stub transport
         /// that keeps the saved drawings across relaunches (`-ui-testing-editor-drawing-reset` starts clean).
         case drawing = "drawing"
+        /// A Talking edit whose variant opens both Background and Draw: the rail's full six tools, which overflow it.
+        /// Declared before `speakerBackground` so its flag wins when both are passed (that one wires the stub transport).
+        case railSixTools = "rail-six-tools"
         /// KRI-1118: a Talking edit whose variant opens the `speaker_background` capability, with two ready pool visuals
         /// (a photo and a video). Save commits through the same stub transport and keeps the saved lane across
         /// relaunches (`-ui-testing-editor-speaker-background-reset` starts with no background).
@@ -151,6 +154,7 @@ enum NativeEditorUITestFixtures {
         case .retimedClips: retimedClips
         case .songTrim: songTrim
         case .drawing: drawing
+        case .railSixTools: railSixTools
         case .speakerBackground: speakerBackground
         case .reorderClips: reorderClips
         }
@@ -186,6 +190,14 @@ enum NativeEditorUITestFixtures {
             payload["sections"] = .object(sections)
             value.serverSnapshot["editor_payload"] = .object(payload)
         }
+        return value
+    }
+
+    static var railSixTools: EditorDraft {
+        var value = speakerBackground
+        var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
+        caps["drawings"] = .object(["add": .bool(true), "edit": .bool(true), "trim": .bool(true), "delete": .bool(true)])
+        value.serverSnapshot["editor_capabilities"] = .object(caps)
         return value
     }
 
