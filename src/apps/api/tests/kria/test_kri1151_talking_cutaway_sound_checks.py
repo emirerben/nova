@@ -122,3 +122,13 @@ def test_the_finished_render_is_judged_from_the_workers_record(
     assert receipt.status == "partial"
     record["rows"][0].update(status="met", reason_code=None, on_windows=[[3.0, 6.0]])
     assert check_requirement(REQS["r2"], _talking_draft(clip_sound_toggles=record)).status == "met"
+
+
+def test_one_clip_has_nothing_to_cut_away_to_so_no_sound_is_promised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _switch(monkeypatch, cutaway_sound=True)
+    alone = PlanFacts(phone_talking=True, edit_format="subtitled", clip_ids=(STADIUM,))
+    receipt = check_requirement(REQS["r2"], alone)
+    assert receipt.status == "not_possible"
+    assert UNSUPPORTED in receipt.reason

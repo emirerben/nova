@@ -262,3 +262,50 @@ def test_the_judge_confirms_a_named_off_cutaway_stays_silent():
     assert row["off_windows"] == [[3.0, 6.0]]
     [row] = judge_cutaway_sound(plan, _recipe(_cutaway(STADIUM, 3.0, 6.0, sound=True)))["rows"]
     assert row["status"] == "not_possible"
+
+
+# -- review round: captions follow the audible voice -------------------------------------
+
+_SPOKEN = [
+    {"text": "first line here", "start_s": 0.5, "end_s": 2.5},
+    {"text": "muted words under cutaway", "start_s": 3.5, "end_s": 5.5},
+    {"text": "after the cutaway", "start_s": 7.0, "end_s": 9.0},
+]
+
+
+def _captioned(*cutaways: PhoneCutaway):
+    return compile_phone_subtitled_plan(
+        (_binding(SPEAKER, duration_s=20.0),), caption_cues=_SPOKEN, cutaways=cutaways
+    )
+
+
+def _caption_texts(recipe) -> list[str]:
+    return [" ".join(run.text for run in layer.runs) for layer in recipe.text_layers]
+
+
+def test_captions_for_words_the_viewer_cannot_hear_are_not_shown():
+    recipe = _captioned(_cutaway(STADIUM, 3.0, 6.0, sound=True))
+    assert _caption_texts(recipe) == ["first line here", "after the cutaway"]
+
+
+def test_a_silent_cutaway_keeps_every_caption_because_the_speaker_still_talks():
+    recipe = _captioned(_cutaway(STADIUM, 3.0, 6.0))
+    assert len(recipe.text_layers) == 3
+
+
+def test_a_caption_mostly_outside_the_muted_stretch_stays():
+    recipe = _captioned(_cutaway(STADIUM, 5.0, 6.0, sound=True))
+    assert len(recipe.text_layers) == 3
+
+
+def test_an_overridden_on_ask_is_not_judged_met():
+    asks = _asks(
+        _req("r2", "on", scope=f"clip:{STADIUM}"), _req("r4", "off", scope=f"clip:{STADIUM}")
+    )
+    plan = plan_cutaway_sound(asks, cutaway_media_ids=[STADIUM], speaker_media_ids=[SPEAKER])
+    rows = {
+        r["requirement_id"]: r
+        for r in judge_cutaway_sound(plan, _recipe(_cutaway(STADIUM, 3.0, 6.0)))["rows"]
+    }
+    assert (rows["r2"]["status"], rows["r2"]["reason_code"]) == ("not_possible", "overridden")
+    assert rows["r4"]["status"] == "met"

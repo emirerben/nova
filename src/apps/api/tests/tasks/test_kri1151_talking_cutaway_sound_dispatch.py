@@ -21,6 +21,7 @@ import pytest
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_binding import BriefBinding
 from app.kria.brief_checks import PlanFacts, check_requirement
+from app.services.creator_render_contract import CONTRACT_FIELD, build_render_contract
 from app.services.device_render import device_status
 from app.tasks import generative_build as gb
 from tests.tasks.test_phone_subtitled_narrated_dispatch import _setup_talking_multi
@@ -51,14 +52,34 @@ def _req(state: str, rid: str = "r2") -> BriefRequirement:
     )
 
 
-def _run(monkeypatch, *, flag: bool, state: str | None):
+def _run(
+    monkeypatch,
+    *,
+    flag: bool,
+    state: str | None,
+    windows: bool | None = None,
+    audio_source_ids: tuple[str, ...] = (),
+):
     job, snapshot, _bindings = _setup_talking_multi(
         monkeypatch, clips=[("take", 30.0, 60), (STADIUM, 6.0, 0)]
     )
     monkeypatch.setattr(gb.settings, "phone_render_verified_features", _FEATURES)
     monkeypatch.setattr(gb.settings, "phone_editor_media_enabled", True)
-    monkeypatch.setattr(gb.settings, "phone_clip_sound_windows_enabled", flag)
+    monkeypatch.setattr(
+        gb.settings, "phone_clip_sound_windows_enabled", flag if windows is None else windows
+    )
     monkeypatch.setattr(gb.settings, "phone_talking_cutaway_sound_enabled", flag)
+    if audio_source_ids:
+        strategy = {
+            "edit_format": "subtitled",
+            "audio_strategy": "original_audio",
+            "montage_audio": {
+                "preserve_source_audio": True,
+                "source_media_ids": list(audio_source_ids),
+            },
+        }
+        contract = build_render_contract(strategy, brief=None, generation_id="generation")
+        job.assembly_plan[CONTRACT_FIELD] = contract.model_dump(mode="json")
     if state is not None:
         brief = CreativeBrief(version=1, requirements=[_req(state)])
         binding = BriefBinding.create(uuid.uuid4(), brief).model_dump(mode="json")
@@ -125,3 +146,36 @@ def test_no_ask_means_no_sound_lane_and_no_record(monkeypatch):
     _job, recipe, variant = _run(monkeypatch, flag=True, state=None)
     assert _sound_track(recipe) is None
     assert "clip_sound_toggles" not in variant
+
+
+def test_a_contract_that_names_the_speaker_as_the_only_camera_audio_keeps_the_footage_silent(
+    monkeypatch,
+):
+    job, recipe, variant = _run(monkeypatch, flag=True, state="on", audio_source_ids=("take",))
+    assert job.status == "awaiting_device", job.error_detail
+    assert _sound_track(recipe) is None
+    assert recipe.audio.mute_windows == []
+    [row] = variant["clip_sound_toggles"]["rows"]
+    assert (row["status"], row["reason_code"]) == ("not_possible", "contract_conflict")
+
+
+def test_a_contract_that_lists_the_footage_among_the_camera_audio_still_plays_it(monkeypatch):
+    job, recipe, variant = _run(
+        monkeypatch, flag=True, state="on", audio_source_ids=("take", STADIUM)
+    )
+    assert job.status == "awaiting_device", job.error_detail
+    assert _sound_track(recipe) is not None
+
+
+def test_the_kill_switch_alone_keeps_the_footage_silent_while_mute_windows_stay_on(monkeypatch):
+    job, recipe, variant = _run(monkeypatch, flag=False, state="on", windows=True)
+    assert _sound_track(recipe) is None
+    assert "clip_sound_toggles" not in variant
+
+
+def test_the_finished_render_review_is_unchanged_while_the_lane_is_off(monkeypatch):
+    from app.services.phone_clip_sound_toggle import rendered_toggle_receipt
+
+    job, recipe, variant = _run(monkeypatch, flag=False, state="on")
+    [row] = rendered_toggle_receipt(job.assembly_plan, variant, recipe)["rows"]
+    assert (row["status"], row["reason_code"]) == ("not_possible", "not_in_edit")
