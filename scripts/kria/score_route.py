@@ -2379,7 +2379,7 @@ def strategy_read(field: str) -> re.Pattern:
     )
 
 
-def reads_in(lines: list[str], field: str) -> list[int]:
+def reads_in(lines: Sequence[str], field: str) -> list[int]:
     """Line numbers (1-based) that read ``field`` off a strategy."""
     pattern = strategy_read(field)
     return [i + 1 for i, t in enumerate(lines) if pattern.search(t) and not _NOT_A_READ.match(t)]
@@ -2407,24 +2407,33 @@ def route_reads(
 
     ``sources`` (controls only) replaces the route's code with synthetic files."""
     if sources is None:
-        sources = {rel: (APP / rel).read_text().splitlines() for rel in readers.files}
-        gb_text = (APP / BUILDER).read_text()
-        gb_lines = gb_text.splitlines()
-        for node in ast.walk(ast.parse(gb_text)):
-            if (
-                isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
-                and node.name in readers.functions
-            ):
-                body = gb_lines[node.lineno - 1 : node.end_lineno]
-                sources[f"{BUILDER}:{node.name}"] = [""] * (node.lineno - 1) + body
-    reads: dict[str, list[str]] = {}
-    for field in fields:
-        reads[field] = [
-            f"{rel.split(':')[0]}:{n}"
-            for rel, lines in sources.items()
-            for n in reads_in(lines, field)
-        ]
-    return reads
+        files, functions = tuple(readers.files), tuple(readers.functions)
+        return {field: list(_disk_reads(files, functions, field)) for field in fields}
+    return {field: _reads(sources.items(), field) for field in fields}
+
+
+def _reads(sources: Sequence[tuple[str, Sequence[str]]], field: str) -> list[str]:
+    return [f"{rel.split(':')[0]}:{n}" for rel, lines in sources for n in reads_in(lines, field)]
+
+
+@functools.cache
+def _disk_sources(
+    files: tuple[str, ...], functions: tuple[str, ...]
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """The route's code on disk: its files, then its generative_build functions (each at its
+    own line numbers). Read once per run; the scan and its verdicts are the same each time."""
+    sources = {rel: tuple((APP / rel).read_text().splitlines()) for rel in files}
+    gb_lines = (APP / BUILDER).read_text().splitlines()
+    for node in ast.walk(_parsed(BUILDER)):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name in functions:
+            body = gb_lines[node.lineno - 1 : node.end_lineno]
+            sources[f"{BUILDER}:{node.name}"] = ("",) * (node.lineno - 1) + tuple(body)
+    return tuple(sources.items())
+
+
+@functools.cache
+def _disk_reads(files: tuple[str, ...], functions: tuple[str, ...], field: str) -> tuple[str, ...]:
+    return tuple(_reads(_disk_sources(files, functions), field))
 
 
 # --- carriers (AST): a function that reads the field off its strategy parameter into what it
@@ -3032,13 +3041,13 @@ def entry_problems(route: str, entry: Any = None) -> list[str]:
         return [f"{entry.entry} is not in the route's READERS (route code)"]
     if not (APP / path).is_file():
         return [f"{path} does not exist"]
-    node = _definition(ast.parse((APP / path).read_text()), symbol)
+    node = _definition(_parsed(path), symbol)
     if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
         return [f"{entry.entry} is not a function"]
     name = symbol.rsplit(".", 1)[-1]
     callers = []
     for rel in readers.files:
-        tree = ast.parse((APP / rel).read_text())
+        tree = _parsed(rel)
         callers += [
             f"{rel}:{fn.name}"
             for fn in ast.walk(tree)
@@ -3047,10 +3056,9 @@ def entry_problems(route: str, entry: Any = None) -> list[str]:
             and not (rel == path and fn.name == name)
             and _calls(fn, name)
         ]
-    builder = ast.parse((APP / BUILDER).read_text())
     callers += [
         f"{BUILDER}:{fn.name}"
-        for fn in builder.body
+        for fn in _parsed(BUILDER).body
         if isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef)
         and fn.name in readers.functions
         and fn.name != name

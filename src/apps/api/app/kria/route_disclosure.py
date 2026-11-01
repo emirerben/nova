@@ -210,7 +210,7 @@ def ask_declines(
         decline = next((ask for ask in asks if ask.applies(req, strategy)), None)
         if decline is not None:
             out.append(
-                Disclosure(NOT_APPLIED, decline.subject, decline.text(), requirement_id=req.id)
+                Disclosure(NOT_APPLIED, decline.subject, decline.sentence(), requirement_id=req.id)
             )
     return out
 
@@ -371,12 +371,30 @@ def card_text(disclosures: Sequence[Disclosure], *, limit: int = 640) -> str:
     silently). A subject with no short name keeps its whole sentence. With the registry or the
     disclosure switch off the lines past the budget are dropped, as before the registry."""
     whole, rest = card_layout(disclosures, limit=limit)
+    return _card_lines(whole, rest if decoupled_from_readiness() else [])
+
+
+def card_text_within(disclosures: Sequence[Disclosure], room: int) -> str:
+    """``card_text`` in at most ``room`` characters, for a reply with a hard length limit (a
+    held draft): fewer whole sentences, the rest named on the compact line, so no line is cut
+    mid-sentence. Registry or disclosure switch off: ``card_text`` as it is."""
+    text = card_text(disclosures)
+    if len(text) <= room or not decoupled_from_readiness():
+        return text
+    whole, _rest = card_layout(disclosures)
+    for keep in range(len(whole) - 1, -1, -1):
+        text = _card_lines(disclosures[:keep], disclosures[keep:])
+        if len(text) <= room:
+            break
+    return text
+
+
+def _card_lines(whole: Sequence[Disclosure], rest: Sequence[Disclosure]) -> str:
     out = [f"- {item.text}" for item in whole]
-    if rest and decoupled_from_readiness():
-        named = [item.subject for item in rest if lines.subject_label(item.subject)]
-        if named:
-            out.append(f"- {lines.compact_line(named)}")
-        out += [f"- {item.text}" for item in rest if not lines.subject_label(item.subject)]
+    named = [item.subject for item in rest if lines.subject_label(item.subject)]
+    if named:
+        out.append(f"- {lines.compact_line(named)}")
+    out += [f"- {item.text}" for item in rest if not lines.subject_label(item.subject)]
     if not out:
         return ""
     heads_up = say(en="Heads-up for this video:", tr="Bu video için not:")

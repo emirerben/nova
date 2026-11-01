@@ -73,14 +73,14 @@ Handling = Applied | RecordedOnly | NotApplied
 class AskDecline:
     """A typed brief ask the route cannot do, answered as a route decline before approval.
 
-    ``applies`` reads typed facts only (KRI-667: never the creator's wording). ``text`` is
-    the receipt reason; every reason is listed in ``route_disclosure.ROUTE_DECLINE_PREFIXES``
+    ``applies`` reads typed facts only (KRI-667: never the creator's wording). ``sentence``
+    is the receipt reason; every reason is listed in ``route_disclosure.ROUTE_DECLINE_PREFIXES``
     so approval readiness treats it as a format limit, never a "simpler version?" question.
     """
 
     subject: str
     applies: Callable[[BriefRequirement, Mapping[str, Any]], bool]
-    text: Callable[[], str]
+    sentence: Callable[[], str]
 
 
 @dataclass(frozen=True)

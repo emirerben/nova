@@ -99,8 +99,10 @@ from app.kria.reply_language import (
 )
 from app.kria.route_disclosure import (
     UNIFIED_MONTAGE,
+    Disclosure,
     card_disclosures,
     card_text,
+    card_text_within,
     decoupled_from_readiness,
     draft_route,
     planned_card_length,
@@ -1091,11 +1093,22 @@ def _simpler_version_offer(
     return sentence, question
 
 
-def _fit_reply(body: str, tail: str) -> str:
+def _fit_reply(
+    body: str,
+    tail: str,
+    *,
+    notice: str | None = None,
+    disclosures: Sequence[Disclosure] = (),
+) -> str:
     """``body``, then ``tail`` on its own line, within the turn plan's response limit. The
     tail (what is held back, what the simpler version leaves out, the question) stays whole;
-    the receipt lines above it are shortened first."""
+    the receipt lines above it are shortened first. The route heads-up (``notice``, the end of
+    ``body``) keeps whole sentences and names the ones that do not fit on its compact line."""
     room = _MAX_TURN_RESPONSE_CHARS - len(tail) - 1
+    if notice and len(body) > room and body.endswith(notice):
+        head = body[: -len(notice)].rstrip("\n")
+        fitted = card_text_within(disclosures, room - len(head) - 1)
+        body = f"{head}\n{fitted}" if head else fitted
     if len(body) > room:
         body = body[: max(0, room - 1)].rstrip() + "…"
     return f"{body}\n{tail}"
@@ -2737,7 +2750,10 @@ def _complete_draft_turn(
                 turn_value="question",
                 choice_question=simpler_question,
                 response=_fit_reply(
-                    reply_text, " ".join(part for part in (draft_state, leaves_out, ask) if part)
+                    reply_text,
+                    " ".join(part for part in (draft_state, leaves_out, ask) if part),
+                    notice=route_notice,
+                    disclosures=route_disclosures,
                 ),
             )
             completed = _complete_response_turn(

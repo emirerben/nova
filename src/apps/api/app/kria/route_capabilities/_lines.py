@@ -216,9 +216,28 @@ def text_look(value: Any, _s: Mapping[str, Any]) -> str | None:
     )
 
 
+def accepted_natural_length(strategy: Mapping[str, Any]) -> bool:
+    """The creator answered the length question with the natural length (the take, the voice,
+    the song): the length they now ask for is the one the route renders."""
+    from app.services.choice_questions import (  # noqa: PLC0415
+        CONFLICT_LENGTH_VS_NATURAL,
+        OPT_ACCEPT_NATURAL,
+    )
+
+    return any(
+        isinstance(answer, Mapping)
+        and answer.get("kind") == CONFLICT_LENGTH_VS_NATURAL
+        and answer.get("option") == OPT_ACCEPT_NATURAL
+        for answer in strategy.get("choice_answers") or ()
+    )
+
+
 def length_stated(strategy: Mapping[str, Any], requirements: Sequence[BriefRequirement]) -> bool:
     """The creator stated a length: the server's provenance on the strategy, or a typed length
-    ask in the brief (`length_policy.creator_duration`, which leaves out a moment's seconds)."""
+    ask in the brief (`length_policy.creator_duration`, which leaves out a moment's seconds),
+    and did not then choose the natural length instead."""
+    if accepted_natural_length(strategy):
+        return False
     if strategy.get("creator_duration_s") is not None or strategy.get("target_duration_requested"):
         return True
     from app.kria.brief import CreativeBrief  # noqa: PLC0415
