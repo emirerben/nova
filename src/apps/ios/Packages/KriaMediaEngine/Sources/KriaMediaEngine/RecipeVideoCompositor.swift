@@ -38,6 +38,9 @@ struct RecipeVideoLayer: @unchecked Sendable {
     var overlayFade: OverlayFadeWindow? = nil
     /// Set only when the recipe has a `speakerBackground` (KRI-1116).
     var speakerRole: SpeakerBackgroundRole? = nil
+    /// Paint the canvas the fitted source leaves uncovered with the source's own edge pixels. Only the Kria
+    /// outro sets it: a flat paper card fitted to a non-9:16 canvas, whose edges ARE the paper (KRI-1154).
+    var extendsEdgesToCanvas: Bool = false
 }
 
 /// The two layers the speaker matte composes: the background replaces the speaker's room.
@@ -299,7 +302,10 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                                    instruction: RecipeVideoInstruction, request: AVAsynchronousVideoCompositionRequest,
                                    time: Double) throws -> CIImage {
         var frame = background
-        guard let source = try sourceImage(of: layer, request: request) else { return frame }
+        guard var source = try sourceImage(of: layer, request: request) else { return frame }
+        // Clamped BEFORE the transform, on the decoded frame's whole-pixel extent: clamping after it would
+        // repeat the resampled, partly transparent edge column and leave grey bars over the black canvas.
+        if layer.extendsEdgesToCanvas { source = source.clampedToExtent() }
         var alpha = layer.visualPlacement?.alpha(at: time) ?? (layer.fadeIn > 0 ? min(1, max(0, (time - layer.start) / layer.fadeIn)) : 1)
         if layer.visualPlacement == nil, let fade = layer.overlayFade { alpha *= fade.alpha(at: time) }
         var positioned = Self.positionedSource(source, layer: layer, canvas: instruction.canvas, time: time)
