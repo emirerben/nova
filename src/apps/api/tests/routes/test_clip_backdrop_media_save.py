@@ -355,6 +355,11 @@ async def test_a_save_pins_the_pool_photo_or_video_before_it_is_validated(monkey
     )
     assert seen["pins"] == {str(ASSET_ID): (kind, f"users/u/plan/{ITEM_ID}/pool/a.jpg", "7")}
     assert [r["media_id"] for r in job.assembly_plan[PHONE_VISUALS_FIELD]] == [str(ASSET_ID)]
+    from app.tasks.storage_retention import _walk_paths  # noqa: PLC0415
+
+    assert f"users/u/plan/{ITEM_ID}/pool/a.jpg" in _walk_paths(job.assembly_plan), (
+        "the receipt is a reference storage retention honours"
+    )
 
 
 @pytest.mark.asyncio

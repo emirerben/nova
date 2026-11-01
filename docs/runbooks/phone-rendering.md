@@ -3845,3 +3845,61 @@ clockwise, like the Nudge right button and the corner-rotate handle), +-1 degree
 Background row (Blank / Colour / Blur, plus "use this background on every clip", which leaves clips that cannot
 tilt untouched). The preview updates through the live-composition path. The overlay corner-rotate gesture snaps
 to 90 degrees too.
+
+### Media backdrop (KRI-1139, PR E)
+
+A tilted clip, or an untilted clip with bars, can sit on one of the creator's own Visuals-pool photos or videos instead
+of black, a colour or a blur. Wire (row and recipe alike, strict, no colour): `{"kind": "media", "asset_id":
+"<Visuals-pool visual id>"}`. `asset_id` is the pool row id (`PlanItemAsset.id`, the `visual_id` of the recipe's
+`VisualRenderAsset`), so a row's `tilt` is the recipe's `backdrop` byte for byte. Blank, colour and blur keep their
+wire shapes and pixels; `tests/fixtures/clip-tilt-parity/v1.json` and `clip-tilt-row/v1.json` pin both languages.
+Slide posts are out of scope: a slide backdrop stays blank, colour or blur, and the slide decoder refuses `media`.
+
+| Capability | Where it is derived | Gate |
+|---|---|---|
+| `clipBackdropMedia` | any main-track clip whose `backdrop.kind` is `media` (V2 recipe only; always with `clipTilt`) | `MEDIA_TILT_ENABLED` + `clipTilt` verified, then `clipBackdropMedia` in `PHONE_RENDER_VERIFIED_FEATURES` and client protocol >= `MEDIA_BACKDROP_MIN_CLIENT_PROTOCOL` (29) |
+
+**Renderer.** No new renderer. The compositor reuses the speaker background's layer builder
+(`AVPlayerPreviewComposer.speakerBackgroundLayer`): one layer per distinct pool asset spans the edit, a photo is
+fitted to the canvas once, a video gets its own muted composition track looped from its first frame on the edit clock
+(its audio is never inserted), and the layer is read under every clip that names it, inside that clip's own layer, so it
+sits behind the clip and below text and is never composed alone. That was chosen over a per-clip layer because it
+reuses the photo orientation and looping code the green screen already proves and keeps one decoder per asset.
+Live preview takes the full rebuild when a media backdrop was not built into the composition.
+
+**Server.** Every phone writer (guided, authored, voiceover cut, voiceover montage, subtitled) calls
+`phone_recipe_shared.register_backdrop_visuals`, which declares the pinned `PhoneVisualBinding` as a
+`VisualRenderAsset` + `MediaAsset` and fails the compile closed (`UnsupportedPhonePlan`, capability
+`clipBackdropMedia`) when the job never pinned it. A cut that drops the last backdrop drops the asset.
+Save (`_require_clip_tilt_gates`): a backdrop is accepted only for a ready photo or video of THIS item's pool
+(`422 clip_backdrop_media_not_in_pool` otherwise), `422 clip_backdrop_media_unavailable` while the gate is closed, and
+`426 client_update_required` (`feature: "clip_backdrop_media"`, minimum 29) for a build below 29 that polls a recipe
+with one or replaces the timeline of a variant that stores one. Before validation the Save pins the pool visual through
+the speaker background's receipt path (`phone_speaker_background.pin_background_for_commit`, also used by both chat
+apply paths): the receipt in `assembly_plan["_phone_visuals_v1"]` is what the storage-retention scanner treats as a
+live reference, so retention cannot delete the file while a variant uses it. Capability:
+`editor_capabilities.clips.tilt_backdrop_media`, present only while the gate is open.
+
+**Editor.** The Tilt sheet's Background row gains a fourth option, "Photo or video", only where the server lists
+`clips.tilt_backdrop_media`. It opens the editor's shared `NativeVisualPoolPicker` (the same view the Talking
+Background tool shows, now extracted from `NativeBackgroundPanel`), shows the chosen thumbnail with a Change button, and
+Reset returns to blank. A photo or video the session cannot read drops out of the preview only; the sheet says it is
+gone and the row still saves.
+
+**Chat.** `patch_slots.tilt.backdrop` accepts `{"kind": "media", "asset_id": ...}` only while
+`timeline_patch_capabilities.tilt_backdrop_media` is open and only for an id in the snapshot's `tilt_backdrop_pool`
+(`clip_tilt_media.txt` teaches it, `EDIT_COPILOT_PROMPT_VERSION` `2026-11-01-v100`); an id outside the pool is refused in
+a plain sentence and never reaches the draft.
+
+Failure modes and what pins each: an older build decodes the recipe (426 above, `test_clip_backdrop_media.py`);
+asset not in the pool or not ready (the 422 and `test_clip_backdrop_media_save.py`); asset deleted after Save (the
+pin receipt, plus the preview's soft drop); video not looping or audio leaking
+(`ClipBackdropMediaCompositionTests.testVideoBackdropAdvancesAndLoopsAndExportsWithoutItsAudio`); backdrop over the
+clip or text (`testBackdropNeverShowsThroughAClipThatCoversTheCanvas`, and the layer is composed inside the clip's own
+layer, below text by construction); blur, colour and blank bytes changing (the shared fixtures and the existing tilt
+tests); Python and Swift JSON drift (the shared fixtures); a media backdrop on a clip with a look (refused like any
+tilt); the AI naming an id outside the pool (`test_clip_tilt_media_ai.py` and a replay golden).
+
+Rollout: after `MEDIA_TILT_ENABLED` is on, add `clipBackdropMedia` to `PHONE_RENDER_VERIFIED_FEATURES` on Fly (api and
+worker, restart) once a physical-device preview and export check has passed, then ship the TestFlight build that
+declares protocol 29. Rollback is removing the token or `MEDIA_TILT_ENABLED=false`, never a code revert.
