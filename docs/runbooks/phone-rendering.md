@@ -936,6 +936,49 @@ butcher clip", "no sound from 5 to 8 seconds" on a phone Montage (every edit thr
   drops them (the receipt then says so); the speech-excerpt route doesn't apply the asks (its
   recipe is judged as it is).
 
+#### Footage cutaway plays its own sound in a Talking edit (KRI-1151, `PHONE_TALKING_CUTAWAY_SOUND_ENABLED`)
+
+"Show the talks full screen and use their audio" on a multi-clip Talking (`subtitled`) edit:
+the footage clips cover the speaker full screen (`phone_talking_cutaways`), silent by default.
+With the flag on, a cutaway the creator turned the sound on for plays its own file for its
+window with the speaker muted under it.
+
+- **Request**: the same typed `clip_sound` facts as the montage lane (`app/kria/clip_sound_toggle_ask.py`).
+  `app/pipeline/phone_talking_cutaway_sound.py` (pure) resolves them: whole-video asks first, then
+  asks naming a clip; a cutaway plays nothing unless an "on" ask paints it. Seconds, a spoken line,
+  "first/last clip" and `sound_except` are not expressible on a cutaway (`cutaway_only`). A
+  whole-video "off" or an ask about the speaker builds nothing and records no row.
+- **Recipe, no new capability or protocol**: `PhoneCutaway(sound=True)` adds an `audio` track
+  `talking-head-cutaway-audio` (clip `cutaway-sound-<i>`: the cutaway's own file, same window) and one
+  recipe `mute_windows` entry over the speaker's main-track clips. That is the shape the engine already
+  renders for the speech-excerpt montage (audio track from a video asset) and KRI-942 mute windows
+  (25 ms ramps per edge). A cutaway file with no audio track is refused at compile
+  (`UnsupportedPhonePlan`): the engine throws on an audio clip whose asset has no audio.
+- **Gate**: `phone_rollout.phone_talking_cutaway_sound_supported()` = this flag AND
+  `phone_clip_sound_windows_supported()` (`PHONE_CLIP_SOUND_WINDOWS_ENABLED` + `visualBlocks`) AND
+  `audioMix`, `visualVideos`, `alphaOverlay` verified. Off (default): the draft still says clip
+  sound by clip works on a montage, no cutaway gets sound, nothing changes for existing recipes.
+  An editor Save drops cutaway sound while the gate is off (otherwise the pilot refuses the
+  mute window). Apply / rollback: `fly secrets set PHONE_TALKING_CUTAWAY_SOUND_ENABLED=true|false
+  --app nova-video` + restart api + worker. Fly only (no `NEXT_PUBLIC_` twin, no app build).
+- **Receipt**: `variants[i].clip_sound_toggles` (the KRI-942 row shape), judged against the
+  compiled recipe by `judge_cutaway_sound` (met only when the cutaway's file plays across its
+  window AND the speaker is muted across it; sound but no mute = partial). The render-ready review
+  re-judges the pinned recipe (`rendered_cutaway_receipt`, editor Saves included).
+- **Known gaps**: the in-app editor preview does not play the cutaway's sound or mute the
+  speaker (it previews cutaways from the receipt, silent); a clip the classifier files as an extra
+  *speaker* (it has clear speech, e.g. the thread 6fa36e51 "talks") plays back to back on the main
+  track with its own sound and is never a cutaway, so "show it when I mention it" is not built.
+- **Evidence** (real `KriaMediaEngine` exporter, macOS host, not a physical iPhone):
+  `python scripts/ios/phone-audio-parity.py prepare OUT --cases talking_cutaway_sound`, then
+  `(cd src/apps/ios/Packages/KriaMediaEngine && KRIA_AUDIO_PARITY_DIR=OUT swift test --filter
+  AudioParityFixtureTests)`, then `... compare OUT`: the export holds the speaker tone outside
+  the window, the cutaway tone inside it only, the speaker silent inside it, with two negative
+  controls (`_no_mute`, `_no_audio`) the harness must catch. Tests:
+  `tests/pipeline/test_phone_talking_cutaway_sound.py`,
+  `tests/kria/test_kri1151_talking_cutaway_sound_checks.py` (replay of thread 6fa36e51),
+  `tests/tasks/test_kri1151_talking_cutaway_sound_dispatch.py`.
+
 #### Phase 2: PiP cards grounded from the transcript (KRI-176)
 
 **Gate:** `app.services.phone_rollout.phone_subtitled_overlays_supported()` --
