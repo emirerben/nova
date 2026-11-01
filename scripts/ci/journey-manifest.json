@@ -2601,9 +2601,10 @@
       "needs_native": true,
       "api_tests": "tests/routes/test_native_activity_postgres.py tests/routes/test_device_render.py tests/tasks/test_device_render_reaper.py tests/routes/test_background_export_verification.py",
       "xctests": [
-        "KriaUITests/ActivityUITests/testReadyActivityOpensItsCurrentProject",
-        "KriaUITests/ActivityUITests/testStaleActivityCannotNavigateToCachedProject",
-        "KriaUITests/ActivityUITests/testFailedReadAcknowledgementDoesNotNavigate"
+        "KriaTests/NotificationActivityOpeningTests/testFreshActivityProjectAndSuccessfulAcknowledgementPrecedeSelection",
+        "KriaTests/NotificationActivityOpeningTests/testTapOpensTheNotifiedProjectWhileAnotherIsSelected",
+        "KriaTests/NotificationActivityOpeningTests/testDeletedProjectIsNeverReopenedByATap",
+        "KriaTests/NotificationActivityOpeningTests/testFailedFreshFetchOrAcknowledgementNeverUsesCachedProject"
       ],
       "paths": [
         "src/apps/api/app/routes/native_activity.py",
@@ -2614,8 +2615,7 @@
         "src/apps/api/app/tasks/export_verification.py",
         "src/apps/api/tests/routes/test_native_activity_postgres.py",
         "src/apps/ios/Kria/Core/NativeActivity.swift",
-        "src/apps/ios/Kria/Features/ActivityView.swift",
-        "src/apps/ios/Tests/KriaUITests/ActivityUITests.swift"
+        "src/apps/ios/Tests/KriaTests/NotificationActivityOpeningTests.swift"
       ]
     },
     {
@@ -2641,7 +2641,6 @@
         "src/apps/ios/Kria/Core/NativeActivity.swift",
         "src/apps/ios/Kria/Core/Services.swift",
         "src/apps/ios/Kria/Features/AccountUITestTransport.swift",
-        "src/apps/ios/Kria/Features/ActivityView.swift",
         "src/apps/ios/Kria/Features/ChatUITestTransport.swift",
         "src/apps/ios/Kria/Features/PerfFixtures.swift",
         "src/apps/ios/Kria/KriaApp.swift",
@@ -2697,12 +2696,15 @@
         "KriaTests/NativeNotificationsTests/testAccountSwitchDuringPermissionRequestNeverRegistersForNextAccount",
         "KriaTests/NativeNotificationsTests/testAccountSwitchDuringPendingCleanupStopsOldCapabilityRead",
         "KriaTests/NativeNotificationsTests/testColdStartTapWaitsForAuthenticationAndAccountSwitchDropsPendingTap",
+        "KriaTests/NativeNotificationsTests/testAccountControlFollowsCapabilityOptInAndFailedCleanup",
         "KriaTests/NotificationAccountBoundaryTests/testAccountSwitchDuringPreflightRefreshNeverSendsInstallationOrOverwritesNewAccount",
         "KriaTests/NotificationAccountBoundaryTests/testAccountSwitchDuring401RefreshNeverReplaysAsNewAccount",
         "KriaTests/NotificationAccountBoundaryTests/testAccountSwitchDuringFailedRefreshNeverClearsNewAccount",
         "KriaTests/NotificationAccountBoundaryTests/testAccountSwitchDuringSuccessful401ReplayRejectsStaleReceipt",
         "KriaTests/NotificationAccountBoundaryTests/testRegistrationBodyContainsOnlyTokenAndEnabledAndDecodesServerVersion",
         "KriaTests/NotificationActivityOpeningTests/testFreshActivityProjectAndSuccessfulAcknowledgementPrecedeSelection",
+        "KriaTests/NotificationActivityOpeningTests/testTapOpensTheNotifiedProjectWhileAnotherIsSelected",
+        "KriaTests/NotificationActivityOpeningTests/testDeletedProjectIsNeverReopenedByATap",
         "KriaTests/NotificationActivityOpeningTests/testReadAcknowledgement401NeverReplaysUnderSwitchedAccount",
         "KriaTests/NotificationActivityOpeningTests/testFailedFreshFetchOrAcknowledgementNeverUsesCachedProject",
         "KriaTests/NotificationAtomicSessionTests/testSignOutInsideOldReadWriteGapCannotResurrectSession",
@@ -2752,7 +2754,6 @@
         "src/apps/ios/Kria/Core/NativeActivity.swift",
         "src/apps/ios/Kria/Core/Services.swift",
         "src/apps/ios/Kria/Features/AccountUITestTransport.swift",
-        "src/apps/ios/Kria/Features/ActivityView.swift",
         "src/apps/ios/Kria/Features/ChatUITestTransport.swift",
         "src/apps/ios/Kria/Features/NativeEditorSession.swift",
         "src/apps/ios/Kria/Features/PerfFixtures.swift",
