@@ -780,6 +780,62 @@ def with_brief_labels(
     return [*intents, *added] if added else intents
 
 
+# KRI-1111: words that never tell two things apart ("my ticket" is the ticket), as in
+# `clip_order_sequence`'s moment names.
+_THING_FILLER = frozenset({"a", "an", "the", "my", "our", "your", "his", "her", "its", "their"})
+# Ops whose text the resolver writes from the footage unless the creator dictated it.
+_AUTHORED_TEXT_OPS = frozenset({"label", "caption"})
+
+
+def _thing(text: str | None) -> tuple[str, ...]:
+    return tuple(word for word in loose_words(text or "") if word not in _THING_FILLER)
+
+
+def excluded_anchors(intents: Sequence[ClipIntent], anchors: Mapping[str, str]) -> dict[str, str]:
+    """The brief's first / last clips this turn's inventory leaves out instead (KRI-1111).
+
+    Leverkusen M3 (thread 83f2dcaa, 2026-10-31): "Start with my ticket", then "Then leave the
+    ticket out" and "Leave the ticket out completely". The brief kept ``first_clip: "my
+    ticket"`` (a change that leaves a sticky fact out carries it back, KRI-522); the planner,
+    which reads every creator message, pinned no first clip and wrote an ``exclude`` for "the
+    ticket" (13:21 and 13:27). A clip left out of the edit cannot open it, so such an end is
+    not added back (``with_brief_anchors``) and the turn takes it off the brief
+    (``anchor_exclusions.withdraw_excluded_anchors``).
+
+    Only a leave-out of the same thing counts: exactly the end's words, case, accents,
+    articles and "my" / "your" aside. "The blurry clip" or "the ticket stub" leave it as it
+    is, and so does a spot the planner pinned itself.
+    """
+    pinned = {i.position for i in intents if i.op == "order" and not i.order_by and i.position}
+    left_out = {_thing(i.attribute) for i in intents if i.op == "exclude"} - {()}
+    out: dict[str, str] = {}
+    for position in ("first", "last"):
+        words = " ".join(str(anchors.get(position) or "").split())
+        if words and position not in pinned and _thing(words) in left_out:
+            out[position] = words
+    return out
+
+
+def authored_text_withdrawn(brief: CreativeBrief | None) -> bool:
+    """The creator withdrew every brief ask for clip text the server writes (KRI-1111).
+
+    Leverkusen M3: "Label each goal clip with who scored and in which minute" (r5) was
+    superseded by "Leave the names and minutes out, just write "TOR!"" (13:22), yet the planner,
+    reading every creator message, wrote the scorer and minute labels again on three turns and
+    the creator was asked "I couldn't find any clips for "who scored"" each time. Only text
+    asks with no dictated words count (a title, or "TOR!", is never authored). False when one
+    is still live, or when the brief never recorded one: the planner's labels then stand.
+    """
+    if brief is None:
+        return False
+    asks = [
+        req
+        for req in brief.requirements
+        if req.kind == "text" and req.scope != "title" and not req.literal
+    ]
+    return bool(asks) and not any(req.live for req in asks)
+
+
 def with_brief_anchors(intents: list[ClipIntent], anchors: Mapping[str, str]) -> list[ClipIntent]:
     """Seat the first / last clip a filming-order brief names that no planned row places (KRI-1067).
 
@@ -792,9 +848,11 @@ def with_brief_anchors(intents: list[ClipIntent], anchors: Mapping[str, str]) ->
     (KRI-282, KRI-1025). Its id and attribute come from the brief's words alone, so the answer
     still binds on the next turn, when the planner may leave it out again.
 
-    A spot the planner already pinned (in any words) is left as it is. Words it already wrote
-    as a plain order row are that row's spot, not a second row's (two rows for the same words
-    would argue, KRI-764), so that row takes the position in place (KRI-1123). Leverkusen M4
+    A spot the planner already pinned (in any words) is left as it is, and so is an end the
+    creator has since left out (``excluded_anchors``, KRI-1111): a clip left out of the edit
+    is never seated or added back as its first / last clip. Words it already wrote as a plain
+    order row are that row's spot, not a second row's (two rows for the same words would
+    argue, KRI-764), so that row takes the position in place (KRI-1123). Leverkusen M4
     (2026-10-31): "tell the evening as a story, in this order: the stadium from outside, ...
     the Nürnberg players thanking their fans at the end" was planned as one plain row per beat,
     so the brief's ``first_clip`` / ``last_clip`` each had a row and neither was seated; the
@@ -806,12 +864,13 @@ def with_brief_anchors(intents: list[ClipIntent], anchors: Mapping[str, str]) ->
     pinned = {i.position for i in rows if i.position}
     have = {label_key(i.attribute) for i in rows}
     taken = {intent.intent_id for intent in intents}
+    left_out = excluded_anchors(intents, anchors)
     seated = list(intents)
     added: list[ClipIntent] = []
     for position in ("first", "last"):
         words = " ".join(str(anchors.get(position) or "").split())
         key = label_key(words)
-        if not key or position in pinned:
+        if not key or position in pinned or position in left_out:
             continue
         same = next(
             (
@@ -1185,6 +1244,7 @@ async def plan_and_resolve_clip_intents(
     sequence_texts: Sequence[str] = (),
     checked_inventory: Any = None,
     brief_anchors: Mapping[str, str] | None = None,
+    authored_text_asks_withdrawn: bool = False,
 ) -> PlannedIntentResolution:
     """``describe_clips`` (KRI-612): the Creative Brief asks for a line on each clip saying
     what it shows, so the inventory always carries one description label for it.
@@ -1213,7 +1273,11 @@ async def plan_and_resolve_clip_intents(
 
     ``brief_anchors`` (KRI-1067, ``stated_anchors``): a filming-order brief's first / last
     clip, by the creator's words. One the inventory leaves unplaced joins it
-    (``with_brief_anchors``), and its picker row ticks the end of filming order."""
+    (``with_brief_anchors``), and its picker row ticks the end of filming order.
+
+    ``authored_text_asks_withdrawn`` (KRI-1111, ``authored_text_withdrawn``): the creator
+    withdrew every brief ask for clip text the server writes, so a label or caption the
+    planner wrote without the creator's own words (fresh or reused) is left out, never asked."""
     if len(creator_request) > CREATOR_REQUEST_MAX_CHARS:
         return PlannedIntentResolution(
             [],
@@ -1307,6 +1371,13 @@ async def plan_and_resolve_clip_intents(
     silent_drops = dict(output.silent_drops)
     if len(planned_intents) < len(output.intents):
         silent_drops["whole_video_caption_dropped"] = len(output.intents) - len(planned_intents)
+    if authored_text_asks_withdrawn:
+        # KRI-1111: the planner re-reads every message, so the withdrawn "who scored" ask
+        # came back every turn; the brief says the creator took it back.
+        kept = [i for i in planned_intents if i.op not in _AUTHORED_TEXT_OPS or i.creator_text]
+        if len(kept) < len(planned_intents):
+            silent_drops["withdrawn_text_dropped"] = len(planned_intents) - len(kept)
+            planned_intents = kept
     if silent_drops:
         # KRI-456 / KRI-945: style asks, title lines and whole-video texts the planner minted
         # as caption intents, dropped without asking. Closed-vocabulary counts only, never text.

@@ -4280,6 +4280,54 @@
         "KRI-1107"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1111-withdrawn-asks-come-back",
+      "tickets": [
+        "KRI-1111",
+        "KRI-1067",
+        "KRI-522"
+      ],
+      "symptom": "Leverkusen M3 run 1 (thread 83f2dcaa, 2026-10-31): \"Start with my ticket\" and \"Label each goal clip with who scored and in which minute\" were withdrawn (13:20 \"Then leave the ticket out.\", 13:22 \"Leave the names and minutes out\", 13:26 \"Leave the ticket out completely.\"). All 8 brief versions kept r1 first_clip \"my ticket\" (a change that omits a sticky fact carries it back), the clip planner wrote only a leave-out of \"the ticket\" (13:21, 13:27), and with_brief_anchors re-added the opening as a picker row pre-ticking IMG_1028 (a light-show video). The superseded r5 scorer/minute labels, re-read by the planner from every message and replayed by KRI-950 reuse, were asked 3 more times (\"I couldn't find any clips for \\\"who scored\\\"\").",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1111",
+      "paths": [
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/app/services/anchor_exclusions.py",
+        "src/apps/api/app/kria/planner.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_m3_kri1111_repro.py",
+        "tests/kria/test_kri1067_filming_order_end_picker.py",
+        "tests/kria/test_kri1068_pin_withdrawal.py",
+        "tests/services/test_request_following_kri522.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The 13:26:57 turn through the real runtime-v2 planner (_plan_from_creator_output) over the recorded brief v4: real clip-intent planning, resolver plumbing, question builder and exclusion picker; the planner inventory, resolver answer and vision answer are replayed. The brief withdrawal runs over the recorded brief v3 and the Main Creator's 13:26:57 batch reconstructed from v3 -> v4 (row-for-row equal to v4). On origin/main d7ee70f5f 8 of 14 fail (the bug), 6 guards pass; on the fix all 14 pass.",
+        "live_model": "Not run (no paid calls); no prompt change.",
+        "native_output": "Not applicable: chat, picker and brief only; no render path changed.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "the model's r1 change omitted first_clip or repeated it: both end without it, the model's new ending kept",
+        "start with X and no leave-out of X keeps the opening (KRI-1067, KRI-522)",
+        "a leave-out of something else (the blurry clip) or a near miss (the ticket stub) keeps the opening",
+        "same thing with case and my / your / the aside (My Ticket, your ticket)",
+        "a live authored-label ask, or none ever recorded, keeps the planner's labels; the creator's own words (TOR!) always stay"
+      ],
+      "neighbours_gap": [
+        "A withdrawal with no leave-out (\"don't open on the ticket\") still relies on the Main Creator writing first_clip: null; the prompt does not teach it yet.",
+        "Turkish possessive suffixes (biletim / bileti) never count as the same thing: the opening stays (no false withdrawal).",
+        "Authored labels are dropped only when every authored-text ask was withdrawn; with one still live, a superseded one the planner re-reads is still asked.",
+        "The exclusion picker still asks which clips to leave out for \"the ticket\" though brief r10 already scopes the ticket photo (the resolver matched nothing)."
+      ],
+      "follow_ups": [
+        "Leverkusen M3 iPhone re-send after deploy (with KRI-1108..1113)"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

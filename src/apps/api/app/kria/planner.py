@@ -158,6 +158,7 @@ from app.schemas.user_song import (
     SONG_ORDER_ANSWER_KEY,
     SONG_RANGE_ANSWER_KEY,
 )
+from app.services.anchor_exclusions import withdraw_excluded_anchors
 from app.services.choice_questions import (
     CONFLICT_ORDER_VS_GROUP,
     ORDER_VS_GROUP_OPTIONS,
@@ -182,7 +183,9 @@ from app.services.clip_intent_answers import persist_clip_intent_vision_answers
 from app.services.clip_intent_planning import (
     KeptLabel,
     PlannedIntentResolution,
+    authored_text_withdrawn,
     brief_label_asks,
+    excluded_anchors,
     kept_labels_from_strategy,
     plan_and_resolve_clip_intents,
     sequence_text_literals,
@@ -1000,6 +1003,31 @@ async def _withdraw_stuck_pins(
     if withdrawal.notices:
         log.info("kria_stuck_pin_withdrawn", thread_id=str(thread_id))
     return withdrawal.updates, withdrawal.notices
+
+
+def _without_excluded_anchors(
+    planned: PlannedKriaTurn,
+    prior: CreativeBrief | None,
+    updates: tuple[BriefUpdate, ...],
+    notices: tuple[str, ...],
+) -> tuple[PlannedKriaTurn, tuple[BriefUpdate, ...], tuple[str, ...]]:
+    """KRI-1111: a brief first / last clip this turn's inventory left out comes off the brief.
+
+    The clip planning kept it off the picker (`excluded_anchors`); without this the brief
+    still names it and the next draft's render contract refuses on it. A draft says so with
+    its other notices; a reply that asks first (the clip picker) says so after its question.
+    """
+    excluded = turn_excluded_anchors.get()
+    if not excluded:
+        return planned, updates, notices
+    withdrawal = withdraw_excluded_anchors(prior, updates, excluded)
+    fresh = tuple(n for n in withdrawal.notices if n not in notices)
+    if fresh:
+        log.info("kria_excluded_anchor_withdrawn", positions=sorted(excluded))
+    if fresh and planned.plan.mode == "respond" and planned.plan.response:
+        response = " ".join([planned.plan.response.strip(), *fresh])
+        planned = replace(planned, plan=planned.plan.model_copy(update={"response": response}))
+    return planned, withdrawal.updates, (*notices, *fresh)
 
 
 def _fresh_if_declared(prior, updates, outputs):  # noqa: ANN001, ANN202
@@ -2184,6 +2212,11 @@ def _job_never_rendered(job: Any) -> bool:
     )
 
 
+# KRI-1111: the brief's first / last clips this turn's clip inventory left out instead of
+# placing (`excluded_anchors`), so `_plan_live_turn` takes them off the brief.
+turn_excluded_anchors: contextvars.ContextVar[dict[str, str] | None] = contextvars.ContextVar(
+    "kria_turn_excluded_anchors", default=None
+)
 # Why the last `_load_editor_target` in this task returned None (None = it did not miss).
 _editor_target_miss: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "kria_editor_target_miss", default=None
@@ -3549,6 +3582,8 @@ async def _plan_turn_clip_intents(
     sequence_texts = sequence_text_literals(effective_brief)
     # KRI-1067: a filming-order brief's first / last clip the inventory may leave out.
     brief_anchors = stated_anchors(effective_brief) if wants_capture_order else {}
+    # KRI-1111: the creator withdrew every ask for clip text Kria writes ("leave the names out").
+    text_withdrawn = authored_text_withdrawn(effective_brief)
     await _kick_clip_understanding(item_id, intent_clips)
     # KRI-1125: one photo is never silently the answer for two ordered beats, and a typed
     # correction newer than the tap that caused it sends the beat back to the resolver.
@@ -3596,12 +3631,15 @@ async def _plan_turn_clip_intents(
         **({"sequence_texts": sequence_texts} if sequence_texts else {}),
         **({"checked_inventory": checked_inventory} if checked_inventory else {}),
         **({"brief_anchors": brief_anchors} if brief_anchors else {}),
+        **({"authored_text_asks_withdrawn": True} if text_withdrawn else {}),
         # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
         # never a clip question; its receipt tells the creator.
         **(
             {"spoken_text": spoken_text} if spoken_text and _is_voiceover_strategy(strategy) else {}
         ),
     )
+    if brief_anchors:
+        turn_excluded_anchors.set(excluded_anchors(planned.requested_intents, brief_anchors))
     return planned, thread_events
 
 
@@ -6894,6 +6932,7 @@ async def _plan_live_turn(
             thread_id=str(thread_id),
             item_id=str(item_id),
         )
+    turn_excluded_anchors.set(None)
     planned = await _plan_from_creator_output(
         db,
         thread_id=thread_id,
@@ -6919,6 +6958,9 @@ async def _plan_live_turn(
         # about the script, so it must not become a timing requirement on the video, and
         # nothing the brief already holds changes.
         return planned
+    planned, updates, pin_notices = _without_excluded_anchors(
+        planned, prior_brief, updates, pin_notices
+    )
     return replace(
         planned,
         brief_updates=updates,
