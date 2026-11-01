@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.54.0] - 2026-11-01
+
+### Changed
+- fix(kria): seat a stated first/last beat the planner already wrote; say a draft-wide refusal once (KRI-1123) (#2004) <!-- release-pr: 2004 -->
+
 ## [0.83.53.0] - 2026-11-01
 
 ### Changed
