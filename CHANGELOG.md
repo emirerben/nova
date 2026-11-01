@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.76.0] - 2026-11-01
+
+### Fixed
+- fix(overlays): keep narration speech timing for narrated edits (KRI-1142) (#2027) <!-- release-pr: 2027 -->
+
 ## [0.83.75.0] - 2026-11-01
 
 ### Fixed

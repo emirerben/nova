@@ -42,6 +42,8 @@ extension Color {
 
 enum SlidePostMode: Equatable {
     case browse, text, look
+    /// KRI-1138: the Tilt panel for the selected photo or video; the stage turns it live.
+    case tilt
     /// KRI-44: the stage becomes the Crop editor for the selected photo.
     case crop
     /// KRI-589: a finger canvas over the preview, with the drawing toolbar in place of the strip and dock.
@@ -560,6 +562,9 @@ struct SlidePostToolBar: View {
     /// Crop shows only when the server's `slide_post_framing` is on and the slide is a photo.
     var showsCrop = false
     var onCrop: () -> Void = {}
+    /// KRI-1138: Tilt shows when the server's `slide_post_tilt` is on (photos and videos both turn).
+    var showsTilt = false
+    var onTilt: () -> Void = {}
     /// KRI-606: the post-wide Size sheet, when the server's `slide_post_sizes` is on.
     var showsSize = false
     var onSize: () -> Void = {}
@@ -598,6 +603,7 @@ struct SlidePostToolBar: View {
             item("star.square", "Cover", id: "slidepost-tool-cover", active: false, enabled: canCover, action: onCover)
             item("circle.lefthalf.filled", "Look", id: "slidepost-tool-look", active: mode == .look, action: onLook)
             if showsCrop { item("crop", "Crop", id: "slidepost-tool-crop", active: mode == .crop, action: onCrop) }
+            if showsTilt { item("rotate.right", "Tilt", id: "slidepost-tool-tilt", active: mode == .tilt, action: onTilt) }
             if showsSize { item("aspectratio", "Size", id: "slidepost-tool-size", active: false, action: onSize) }
             if showsDraw { item("pencil.tip", "Draw", id: "slidepost-tool-draw", active: mode == .draw, action: onDraw) }
             if let onPaste { pasteItem(onPaste) }

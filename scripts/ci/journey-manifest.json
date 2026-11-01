@@ -381,16 +381,31 @@
     {
       "id": "slide-post-binding-recovery",
       "needs_native": true,
-      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/routes/test_slide_post_binding_save_postgres.py tests/routes/test_slide_post_stable_target_postgres.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py tests/routes/test_slide_post_chat_edit_route.py tests/evals/test_edit_copilot_evals.py",
+      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/routes/test_slide_post_binding_save_postgres.py tests/routes/test_slide_post_stable_target_postgres.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py tests/routes/test_slide_post_chat_edit_route.py tests/evals/test_edit_copilot_evals.py tests/pipeline/test_slide_post_tilt.py tests/routes/test_slide_post_tilt_routes.py tests/services/test_slide_post_tilt_chat.py",
       "xctests": [
         "KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave",
         "KriaTests/SlidePostFramingTests/testEncodingAlwaysWritesTheFramingKeySoAClearIsNeverMistakenForAnOlderApp",
         "KriaTests/SlidePostFramingTests/testPlacementMatchesTheSharedParityFixtureWithinAHundredthOfAPixel",
         "KriaTests/SlidePostSizeTests/testFitPlacementMatchesTheSharedFixtureWithinAHundredthOfAPixel",
-        "KriaTests/SlidePostSizeTests/testSaveRequestAndDraftAlwaysSayWhichSizeTheyHold"
+        "KriaTests/SlidePostSizeTests/testSaveRequestAndDraftAlwaysSayWhichSizeTheyHold",
+        "KriaTests/SlidePostTiltTests/testGeometryMatchesTheSharedFixture",
+        "KriaTests/SlidePostTiltTests/testEncodingAlwaysWritesTheTiltKeySoAClearIsNeverMistakenForAnOlderApp"
       ],
       "paths": [
         "src/apps/api/app/pipeline/slide_post/build.py",
+        "src/apps/api/app/pipeline/slide_post/tilt.py",
+        "src/apps/api/tests/pipeline/test_slide_post_tilt.py",
+        "src/apps/api/tests/routes/test_slide_post_tilt_routes.py",
+        "src/apps/api/tests/services/test_slide_post_tilt_chat.py",
+        "tests/fixtures/slide-tilt-parity/",
+        "src/apps/ios/Kria/Core/SlidePostTilt.swift",
+        "src/apps/ios/Kria/Features/SlidePostTiltPanel.swift",
+        "src/apps/ios/Tests/KriaTests/SlidePostTiltTests.swift",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_tilt_all_crooked_blur.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_tilt_gate_closed_refusal.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_tilt_one_right.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_tilt_relative_more_left_tr.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_tilt_straighten_reset.json",
         "src/apps/api/app/pipeline/slide_post/stickers.py",
         "src/apps/api/tests/pipeline/test_slide_post_stickers.py",
         "src/apps/api/tests/routes/test_slide_post_sticker_routes.py",

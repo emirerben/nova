@@ -61,6 +61,7 @@ from app.agents._schemas.edit_format import (
     SLIDES_RENDERER_VERSION,
     SLIDES_SIZES_RENDERER_VERSION,
     SLIDES_STICKER_RENDERER_VERSION,
+    SLIDES_TILT_RENDERER_VERSION,
     coerce_edit_format,
     guided_edit_applicable,
 )
@@ -13930,8 +13931,15 @@ def _build_slide_post_result(
     has_stickers = any(
         asset.get("edits") is not None and asset["edits"].stickers for asset in ordered_assets
     )
+    # ...and a post with any tilted slide by the tilt renderer (KRI-1138), newest of all.
+    has_tilt = any(
+        asset.get("edits") is not None and asset["edits"].tilt is not None
+        for asset in ordered_assets
+    )
     export_renderer_version = (
-        SLIDES_STICKER_RENDERER_VERSION
+        SLIDES_TILT_RENDERER_VERSION
+        if has_tilt
+        else SLIDES_STICKER_RENDERER_VERSION
         if has_stickers
         else SLIDES_DRAWING_RENDERER_VERSION
         if has_drawing
@@ -13986,6 +13994,7 @@ def _build_slide_post_result(
             # Only a drawn slide gets a painter version, so every other key is unchanged.
             wm_suffix += slide_build.drawing_key_suffix(edits)
             wm_suffix += slide_build.sticker_key_suffix(edits)
+            wm_suffix += slide_build.tilt_key_suffix(edits)
             export_canvas = slide_build.slide_canvas(platform_profile, edits, aspect)
             normalized_key = (
                 f"generative-jobs/{job_id}/slides/normalized/"
@@ -14124,6 +14133,8 @@ def _build_slide_post_result(
             # dispatch stamp above stays at 2 so a mixed API/worker deploy never
             # rejects queued jobs; only the export-currency check reads this one.
             # v4 = also paints static slide drawings (KRI-589); stamped only on a drawn post.
+            # v5 = stickers (KRI-647), v6 = a tilted photo or video (KRI-1138); each only
+            # on a post that uses it.
             "renderer_version": export_renderer_version,
             "aspect": slide_profiles.coerce_aspect(platform_profile, aspect),  # type: ignore[arg-type]
             "validation": {

@@ -24,6 +24,9 @@ import UIKit
     @Published private(set) var paused = false
     /// What the player is actually doing, for the control's accessibility value.
     @Published private(set) var timeControlStatus: AVPlayer.TimeControlStatus = .paused
+    /// The decoded picture's size once the item is ready (KRI-1138): a turned video is laid out at its own cover size so the
+    /// pixels beyond the frame rotate into view, as they do in the export. nil until then.
+    @Published private(set) var videoSize: CGSize?
     /// The workspace is on screen, the app is active and nothing covers the preview.
     private var allowed = false
     private var token = 0
@@ -91,6 +94,7 @@ import UIKit
         // A player that failed itself (not just its item, e.g. after a media-services reset) never plays again.
         if made?.status == .failed { made = nil; timeControlObservation = nil }
         assetID = nil
+        videoSize = nil
         phase = .idle
     }
 
@@ -114,6 +118,8 @@ import UIKit
         switch status {
         case .readyToPlay:
             guard phase == .loading else { return }
+            let size = player.currentItem?.presentationSize ?? .zero
+            videoSize = size.width > 0 && size.height > 0 ? size : nil
             phase = .ready
             apply()
         case .failed:
@@ -134,9 +140,31 @@ import UIKit
 struct SlidePostVideoPicture: View {
     @ObservedObject var playback: SlidePostVideoPlayback
     let assetID: String
+    /// KRI-1138: the slide's turn. The poster beneath draws the backdrop; this turns the picture about the canvas centre.
+    var tilt: SlidePostTilt? = nil
 
     var body: some View {
-        if playback.assetID == assetID, playback.phase == .ready { SlidePostVideoSurface(player: playback.player) }
+        if playback.assetID == assetID, playback.phase == .ready {
+            if let tilt, !tilt.isUpright {
+                GeometryReader { proxy in
+                    let media = Self.coverSize(video: playback.videoSize, canvas: proxy.size)
+                    SlidePostVideoSurface(player: playback.player, gravity: playback.videoSize == nil ? .resizeAspectFill : .resizeAspect)
+                        .frame(width: media.width, height: media.height)
+                        .rotationEffect(.degrees(tilt.rotationDeg))
+                        .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+                }
+                .clipped()
+            } else {
+                SlidePostVideoSurface(player: playback.player)
+            }
+        }
+    }
+
+    /// The video scaled to cover `canvas` (the cover scale `SlidePostTiltGeometry.mediaSize` uses), or the canvas itself
+    /// while its size is unknown.
+    static func coverSize(video: CGSize?, canvas: CGSize) -> CGSize {
+        guard let video else { return canvas }
+        return SlidePostTiltGeometry.mediaSize(imageSize: video, crop: nil, canvas: canvas, fit: false)
     }
 }
 
@@ -144,15 +172,19 @@ struct SlidePostVideoPicture: View {
 /// crop), and draws nothing until a frame is decoded, so the poster shows while a video loads.
 struct SlidePostVideoSurface: UIViewRepresentable {
     let player: AVPlayer
+    /// Aspect-fill by default; a turned video is laid out at its own cover size and shows whole (`resizeAspect`).
+    var gravity: AVLayerVideoGravity = .resizeAspectFill
 
     func makeUIView(context: Context) -> Surface {
         let view = Surface()
         view.playerLayer.player = player
+        view.playerLayer.videoGravity = gravity
         return view
     }
 
     func updateUIView(_ view: Surface, context: Context) {
         if view.playerLayer.player !== player { view.playerLayer.player = player }
+        if view.playerLayer.videoGravity != gravity { view.playerLayer.videoGravity = gravity }
     }
 
     final class Surface: UIView {

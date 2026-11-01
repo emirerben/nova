@@ -1762,6 +1762,11 @@
             "title": "Slide Post Stickers",
             "type": "boolean"
           },
+          "slide_post_tilt": {
+            "default": false,
+            "title": "Slide Post Tilt",
+            "type": "boolean"
+          },
           "song_filming_range": {
             "default": false,
             "title": "Song Filming Range",
@@ -9827,6 +9832,11 @@
             "nullable": true,
             "title": "Texts",
             "type": "array"
+          },
+          "tilt": {
+            "$ref": "#/components/schemas/SlideTilt",
+            "default": null,
+            "nullable": true
           }
         },
         "title": "SlideEdits",
@@ -10771,6 +10781,51 @@
           "text"
         ],
         "title": "SlideTextElement",
+        "type": "object"
+      },
+      "SlideTilt": {
+        "additionalProperties": false,
+        "description": "A slide's media turned to any angle about the canvas centre (KRI-1138).\n\n``rotation_deg`` is clockwise-positive in -180..180 (the clip tilt, sticker and text\nconvention). Only the PHOTO or VIDEO turns: text, ink, stickers and the watermark stay\nupright on top. What the turn uncovers shows ``backdrop`` (default blank = black). Frozen\nby ``tests/fixtures/slide-tilt-parity/v1.json``.",
+        "properties": {
+          "backdrop": {
+            "$ref": "#/components/schemas/SlideTiltBackdrop"
+          },
+          "rotation_deg": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Rotation Deg",
+            "type": "number"
+          }
+        },
+        "required": [
+          "rotation_deg"
+        ],
+        "title": "SlideTilt",
+        "type": "object"
+      },
+      "SlideTiltBackdrop": {
+        "additionalProperties": false,
+        "description": "What shows behind a tilted slide where the media no longer covers the canvas (KRI-1138).\n\nThe slide twin of ``app.kria.recipes.ClipBackdrop`` and ``KriaMediaEngine.ClipBackdrop``:\n``blank`` is black, ``color`` carries a ``#RRGGBB``, ``blur`` is a blurred cover-fit copy of\nthe same photo or video frame (the Fit \"blur\" bars' strength, ``FIT_BLUR_SIGMA_PX``).",
+        "properties": {
+          "color": {
+            "default": null,
+            "nullable": true,
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Color",
+            "type": "string"
+          },
+          "kind": {
+            "default": "blank",
+            "enum": [
+              "blank",
+              "color",
+              "blur"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "title": "SlideTiltBackdrop",
         "type": "object"
       },
       "SmoothRevealContent": {

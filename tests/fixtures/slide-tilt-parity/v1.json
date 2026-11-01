@@ -1,0 +1,563 @@
+{
+  "contract": "KRI-1138 slide tilt v1. Canvas = the slide OUTPUT canvas in px (origin top-left, y down). The MEDIA is the photo's (cropped) region scaled the way the slide frames it, cover scale (max) for Fill and whole-photo scale (min) for Fit, centred on the canvas; for Fill it is larger than the canvas on one axis. rotation_deg is clockwise-positive about the CANVAS centre (y down: x' = cx + dx*cos - dy*sin, y' = cy + dx*sin + dy*cos), in -180..180; 0 is upright and stored as no tilt. expected.corners are the media's top-left, top-right, bottom-right, bottom-left after the turn; rotated_bounds is the axis-aligned box of the turned media (ffmpeg rotw/roth); covers_canvas is true when the turned media still covers every canvas pixel (no backdrop shows). Only the media turns: text, ink, stickers and the watermark stay upright above it. Tolerance 1e-6. 'validation' lists tilt values with the expected verdict; for invalid cases 'reason' is a keyword the server error message contains. backdrop kinds: blank (black), color (#RRGGBB, required for color and refused for the others), blur (blurred cover-fit copy of the same media, sigma FIT_BLUR_SIGMA_PX = 80 at full resolution).",
+  "version": 1,
+  "caps": {
+    "rotation_deg_min": -180,
+    "rotation_deg_max": 180,
+    "blur_sigma_px": 80
+  },
+  "cases": [
+    {
+      "name": "fill_square_photo_upright",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 400,
+        "h": 400
+      },
+      "crop": null,
+      "fit": false,
+      "rotation_deg": 0,
+      "expected": {
+        "media": {
+          "w": 1920.0,
+          "h": 1920.0
+        },
+        "rotated_bounds": {
+          "w": 1920.0,
+          "h": 1920.0
+        },
+        "corners": [
+          [
+            -420.0,
+            0.0
+          ],
+          [
+            1500.0,
+            0.0
+          ],
+          [
+            1500.0,
+            1920.0
+          ],
+          [
+            -420.0,
+            1920.0
+          ]
+        ],
+        "covers_canvas": true
+      }
+    },
+    {
+      "name": "fill_landscape_photo_30_clockwise",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 4000,
+        "h": 3000
+      },
+      "crop": null,
+      "fit": false,
+      "rotation_deg": 30,
+      "expected": {
+        "media": {
+          "w": 2560.0,
+          "h": 1920.0
+        },
+        "rotated_bounds": {
+          "w": 3177.025034,
+          "h": 2942.768775
+        },
+        "corners": [
+          [
+            -88.512517,
+            -511.384388
+          ],
+          [
+            2128.512517,
+            768.615612
+          ],
+          [
+            1168.512517,
+            2431.384388
+          ],
+          [
+            -1048.512517,
+            1151.384388
+          ]
+        ],
+        "covers_canvas": false
+      }
+    },
+    {
+      "name": "fill_landscape_photo_minus_12",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 4000,
+        "h": 3000
+      },
+      "crop": null,
+      "fit": false,
+      "rotation_deg": -12,
+      "expected": {
+        "media": {
+          "w": 2560.0,
+          "h": 1920.0
+        },
+        "rotated_bounds": {
+          "w": 2903.248304,
+          "h": 2410.297322
+        },
+        "corners": [
+          [
+            -911.624152,
+            287.105268
+          ],
+          [
+            1592.433706,
+            -245.148661
+          ],
+          [
+            1991.624152,
+            1632.894732
+          ],
+          [
+            -512.433706,
+            2165.148661
+          ]
+        ],
+        "covers_canvas": false
+      }
+    },
+    {
+      "name": "fit_landscape_photo_20_shows_backdrop",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 4000,
+        "h": 3000
+      },
+      "crop": null,
+      "fit": true,
+      "rotation_deg": 20,
+      "expected": {
+        "media": {
+          "w": 1080.0,
+          "h": 810.0
+        },
+        "rotated_bounds": {
+          "w": 1291.904347,
+          "h": 1130.532778
+        },
+        "corners": [
+          [
+            171.084143,
+            394.733611
+          ],
+          [
+            1185.952173,
+            764.115366
+          ],
+          [
+            908.915857,
+            1525.266389
+          ],
+          [
+            -105.952173,
+            1155.884634
+          ]
+        ],
+        "covers_canvas": false
+      }
+    },
+    {
+      "name": "fill_cropped_region_15",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 4000,
+        "h": 3000
+      },
+      "crop": {
+        "x": 0.25,
+        "y": 0.0,
+        "width": 0.5,
+        "height": 1.0
+      },
+      "fit": false,
+      "rotation_deg": 15,
+      "expected": {
+        "media": {
+          "w": 1280.0,
+          "h": 1920.0
+        },
+        "rotated_bounds": {
+          "w": 1733.317624,
+          "h": 2185.865964
+        },
+        "corners": [
+          [
+            170.273754,
+            -132.932982
+          ],
+          [
+            1406.658812,
+            198.355396
+          ],
+          [
+            909.726246,
+            2052.932982
+          ],
+          [
+            -326.658812,
+            1721.644604
+          ]
+        ],
+        "covers_canvas": false
+      }
+    },
+    {
+      "name": "fit_cropped_region_45_on_4x5",
+      "canvas": {
+        "w": 1080,
+        "h": 1350
+      },
+      "image": {
+        "w": 3000,
+        "h": 4000
+      },
+      "crop": {
+        "x": 0.1,
+        "y": 0.2,
+        "width": 0.6,
+        "height": 0.5
+      },
+      "fit": true,
+      "rotation_deg": 45,
+      "expected": {
+        "media": {
+          "w": 1080.0,
+          "h": 1200.0
+        },
+        "rotated_bounds": {
+          "w": 1612.203461,
+          "h": 1612.203461
+        },
+        "corners": [
+          [
+            582.426407,
+            -131.101731
+          ],
+          [
+            1346.101731,
+            632.573593
+          ],
+          [
+            497.573593,
+            1481.101731
+          ],
+          [
+            -266.101731,
+            717.426407
+          ]
+        ],
+        "covers_canvas": false
+      }
+    },
+    {
+      "name": "fill_quarter_turn_90",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 600,
+        "h": 400
+      },
+      "crop": null,
+      "fit": false,
+      "rotation_deg": 90,
+      "expected": {
+        "media": {
+          "w": 2880.0,
+          "h": 1920.0
+        },
+        "rotated_bounds": {
+          "w": 1920.0,
+          "h": 2880.0
+        },
+        "corners": [
+          [
+            1500.0,
+            -480.0
+          ],
+          [
+            1500.0,
+            2400.0
+          ],
+          [
+            -420.0,
+            2400.0
+          ],
+          [
+            -420.0,
+            -480.0
+          ]
+        ],
+        "covers_canvas": true
+      }
+    },
+    {
+      "name": "fill_half_turn_180",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 600,
+        "h": 400
+      },
+      "crop": null,
+      "fit": false,
+      "rotation_deg": 180,
+      "expected": {
+        "media": {
+          "w": 2880.0,
+          "h": 1920.0
+        },
+        "rotated_bounds": {
+          "w": 2880.0,
+          "h": 1920.0
+        },
+        "corners": [
+          [
+            1980.0,
+            1920.0
+          ],
+          [
+            -900.0,
+            1920.0
+          ],
+          [
+            -900.0,
+            0.0
+          ],
+          [
+            1980.0,
+            -0.0
+          ]
+        ],
+        "covers_canvas": true
+      }
+    },
+    {
+      "name": "fill_minus_45_on_4x5",
+      "canvas": {
+        "w": 1080,
+        "h": 1350
+      },
+      "image": {
+        "w": 3000,
+        "h": 4000
+      },
+      "crop": null,
+      "fit": false,
+      "rotation_deg": -45,
+      "expected": {
+        "media": {
+          "w": 1080.0,
+          "h": 1440.0
+        },
+        "rotated_bounds": {
+          "w": 1781.909089,
+          "h": 1781.909089
+        },
+        "corners": [
+          [
+            -350.954544,
+            547.720779
+          ],
+          [
+            412.720779,
+            -215.954544
+          ],
+          [
+            1430.954544,
+            802.279221
+          ],
+          [
+            667.279221,
+            1565.954544
+          ]
+        ],
+        "covers_canvas": false
+      }
+    },
+    {
+      "name": "landscape_canvas_fit_minus_90",
+      "canvas": {
+        "w": 1920,
+        "h": 1080
+      },
+      "image": {
+        "w": 3000,
+        "h": 4000
+      },
+      "crop": null,
+      "fit": true,
+      "rotation_deg": -90,
+      "expected": {
+        "media": {
+          "w": 810.0,
+          "h": 1080.0
+        },
+        "rotated_bounds": {
+          "w": 1080.0,
+          "h": 810.0
+        },
+        "corners": [
+          [
+            420.0,
+            945.0
+          ],
+          [
+            420.0,
+            135.0
+          ],
+          [
+            1500.0,
+            135.0
+          ],
+          [
+            1500.0,
+            945.0
+          ]
+        ],
+        "covers_canvas": false
+      }
+    }
+  ],
+  "validation": [
+    {
+      "name": "blank_default",
+      "tilt": {
+        "rotation_deg": 10
+      },
+      "valid": true
+    },
+    {
+      "name": "colour",
+      "tilt": {
+        "rotation_deg": -30,
+        "backdrop": {
+          "kind": "color",
+          "color": "#336699"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "blur",
+      "tilt": {
+        "rotation_deg": 180,
+        "backdrop": {
+          "kind": "blur"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "minus_180",
+      "tilt": {
+        "rotation_deg": -180
+      },
+      "valid": true
+    },
+    {
+      "name": "too_far",
+      "tilt": {
+        "rotation_deg": 181
+      },
+      "valid": false,
+      "reason": "bounds"
+    },
+    {
+      "name": "colour_without_a_colour",
+      "tilt": {
+        "rotation_deg": 10,
+        "backdrop": {
+          "kind": "color"
+        }
+      },
+      "valid": false,
+      "reason": "color"
+    },
+    {
+      "name": "blur_with_a_colour",
+      "tilt": {
+        "rotation_deg": 10,
+        "backdrop": {
+          "kind": "blur",
+          "color": "#336699"
+        }
+      },
+      "valid": false,
+      "reason": "color"
+    },
+    {
+      "name": "bad_hex",
+      "tilt": {
+        "rotation_deg": 10,
+        "backdrop": {
+          "kind": "color",
+          "color": "blue"
+        }
+      },
+      "valid": false,
+      "reason": "bounds"
+    },
+    {
+      "name": "unknown_kind",
+      "tilt": {
+        "rotation_deg": 10,
+        "backdrop": {
+          "kind": "media"
+        }
+      },
+      "valid": false,
+      "reason": "bounds"
+    },
+    {
+      "name": "unknown_key",
+      "tilt": {
+        "rotation_deg": 10,
+        "skew": 1
+      },
+      "valid": false,
+      "reason": "extra"
+    }
+  ],
+  "normalization": [
+    {
+      "name": "upright_is_no_tilt",
+      "tilt": {
+        "rotation_deg": 0,
+        "backdrop": {
+          "kind": "blur"
+        }
+      },
+      "stored": null
+    }
+  ]
+}

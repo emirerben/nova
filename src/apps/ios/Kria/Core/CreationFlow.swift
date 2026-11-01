@@ -30,6 +30,8 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostDrawing: Bool? = nil
     /// KRI-460: pasted pictures placed on a slide. The server advertises it only to a build that speaks protocol 8. Missing = off (no sticker paste, no `stickers` authored).
     var slidePostStickers: Bool? = nil
+    /// KRI-1138: tilt a slide's photo or video. The server advertises it only to a build that speaks protocol 28. Missing = off (no Tilt tool, no `tilt` authored).
+    var slidePostTilt: Bool? = nil
     /// KRI-646: text Bend (curved text). The server advertises it only to a build that speaks protocol 9. Missing = off (no Bend slider).
     var textBend: Bool? = nil
     /// KRI-1119: Talk-to-camera green screen. The camera offers a live background picker only when the server advertises
@@ -90,6 +92,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostSizesEnabled: Bool { slidePostSizes == true }
     var slidePostDrawingEnabled: Bool { slidePostDrawing == true }
     var slidePostStickersEnabled: Bool { slidePostStickers == true }
+    var slidePostTiltEnabled: Bool { slidePostTilt == true }
     var textBendEnabled: Bool { textBend == true }
     var speakerBackgroundEnabled: Bool { speakerBackground == true }
     var voiceDictationEnabled: Bool { voiceDictation == true }
@@ -130,6 +133,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case slidePostSizes = "slide_post_sizes"
         case slidePostDrawing = "slide_post_drawing"
         case slidePostStickers = "slide_post_stickers"
+        case slidePostTilt = "slide_post_tilt"
         case textBend = "text_bend"
         case speakerBackground = "speaker_background"
         case voiceDictation = "voice_dictation"
@@ -176,6 +180,7 @@ extension CreationCapabilities {
         slidePostSizes = try container.decodeIfPresent(Bool.self, forKey: .slidePostSizes)
         slidePostDrawing = try container.decodeIfPresent(Bool.self, forKey: .slidePostDrawing)
         slidePostStickers = try container.decodeIfPresent(Bool.self, forKey: .slidePostStickers)
+        slidePostTilt = try container.decodeIfPresent(Bool.self, forKey: .slidePostTilt)
         textBend = try container.decodeIfPresent(Bool.self, forKey: .textBend)
         speakerBackground = try container.decodeIfPresent(Bool.self, forKey: .speakerBackground)
         voiceDictation = try container.decodeIfPresent(Bool.self, forKey: .voiceDictation)
