@@ -10,6 +10,7 @@ from pydantic import SecretStr
 
 from app.services.apns import (
     Accepted,
+    ALERT_COPY,
     ActivityNotification,
     APNsTarget,
     APNsTransport,
@@ -19,7 +20,7 @@ from app.services.apns import (
 
 TOKEN = "ab" * 32
 BEARER = "fakeheader.fakeclaims.fakesignature"
-NOTICE = ActivityNotification(UUID(int=1), UUID(int=2))
+NOTICE = ActivityNotification(UUID(int=1), UUID(int=2), "video_ready")
 
 
 def target(environment="sandbox"):
@@ -63,7 +64,9 @@ async def test_exact_private_request_and_stable_identifiers(environment, host):
             "content-length": str(len(request.content)),
         }
         assert json.loads(request.content) == {
-            "aps": {"alert": "Open Kria to see an update."},
+            "aps": {
+                "alert": {"title": "Your video is ready", "body": "Open it to watch and share."}
+            },
             "activity_id": str(NOTICE.activity_id),
         }
         assert request.extensions["timeout"] == dict(connect=5.0, read=5.0, write=5.0, pool=5.0)
@@ -117,11 +120,55 @@ async def test_invalid_bearer_has_zero_calls(bearer):
 def test_only_uuid_notification_fields_and_secret_repr():
     assert TOKEN not in repr(target())
     with pytest.raises(TypeError):
-        ActivityNotification(UUID(int=1), UUID(int=2), title="Private title")
+        ActivityNotification(UUID(int=1), UUID(int=2), "video_ready", title="Private title")
     with pytest.raises(ValueError, match="Invalid activity notification"):
-        ActivityNotification("private-title", UUID(int=2))
+        ActivityNotification("private-title", UUID(int=2), "video_ready")
     with pytest.raises(ValueError, match="Invalid APNs target"):
         APNsTarget("sandbox", "com.example.kria", TOKEN)
+
+
+@pytest.mark.parametrize(
+    "kind,title,body",
+    [
+        ("video_ready", "Your video is ready", "Open it to watch and share."),
+        ("action_required", "Your video needs a look", "Open Kria to see what to do next."),
+    ],
+)
+async def test_each_kind_sends_exactly_its_own_generic_copy(kind, title, body):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return response(200)
+
+    notice = ActivityNotification(UUID(int=1), UUID(int=2), kind)
+    async with APNsTransport(
+        lambda: SecretStr(BEARER), transport=httpx.MockTransport(handler)
+    ) as apns:
+        assert await apns.send(target(), notice) == Accepted()
+    payload = json.loads(requests[0].content)
+    assert payload == {
+        "aps": {"alert": {"title": title, "body": body}},
+        "activity_id": str(notice.activity_id),
+    }
+    assert len(requests[0].content) < 1024
+    assert requests[0].headers["apns-collapse-id"] == str(notice.notification_id)
+    assert requests[0].headers["apns-priority"] == "10"
+
+
+@pytest.mark.parametrize(
+    "kind", [None, "", "video", "VIDEO_READY", "private title", 1, ["video_ready"]]
+)
+def test_unknown_or_missing_kind_is_refused(kind):
+    with pytest.raises(ValueError, match="Invalid activity notification"):
+        ActivityNotification(UUID(int=1), UUID(int=2), kind)
+
+
+def test_copy_table_is_closed_and_generic():
+    assert set(ALERT_COPY) == {"video_ready", "action_required"}
+    assert ALERT_COPY["video_ready"] != ALERT_COPY["action_required"]
+    with pytest.raises(TypeError):
+        ALERT_COPY["other"] = ("x", "y")
 
 
 @pytest.mark.parametrize(

@@ -26,7 +26,7 @@ from app.services.apns import (
 from app.services.notification_delivery import notification_policy
 from app.tasks.notification_delivery import notification_sender
 
-NOTICE = ActivityNotification(UUID(int=1), UUID(int=2))
+NOTICE = ActivityNotification(UUID(int=1), UUID(int=2), "video_ready")
 
 
 @pytest.fixture
