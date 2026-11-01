@@ -760,6 +760,15 @@
       ]
     },
     {
+      "id": "kri-1123-story-order-pins-seated",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1123_story_order_pins.py tests/kria/test_kri1067_filming_order_end_picker.py tests/kria/test_order_basis_pins.py tests/services/test_request_following_kri522.py",
+      "paths": [
+        "src/apps/api/tests/kria/test_kri1123_story_order_pins.py",
+        "src/apps/api/tests/fixtures/kri1123_m4_story_order.json"
+      ]
+    },
+    {
       "id": "kri-993-subject-scope",
       "needs_native": false,
       "api_tests": "tests/kria/test_kri993_subject_scope.py tests/kria/test_kri993_subject_scope_pick.py",

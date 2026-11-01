@@ -33,10 +33,12 @@ from app.kria.reply_language import say
 from app.kria.route_disclosure import UNIFIED_MONTAGE, ask_declines
 from app.kria.strategy_policy import RefusedStrategy, check_strategy_for_runtime_v2
 from app.models import ContentPlan, Persona
+from app.services.clip_order_sequence import stated_anchors
 from app.services.creator_render_contract import (
     ADAPTER_DECLARATIONS,
     CREATOR_LIST_ORDER_BASIS,
     FIELD_MATRIX,
+    _pin_not_found,
     build_render_contract,
     field_matrix_for_strategy,
 )
@@ -845,15 +847,40 @@ def readiness_matches(saved: object, current: dict[str, Any]) -> bool:
 
 
 def readiness_reply(brief: CreativeBrief | None, report: dict[str, Any]) -> str:
-    """Display identified blocked requirements; never derive execution from prose."""
+    """Display identified blocked requirements; never derive execution from prose.
+
+    A ``policy_problem`` blocks the whole draft and is every requirement's reason (KRI-1123:
+    Leverkusen M4 showed one unplaced first clip as the reason under "Make it 20 seconds",
+    "Skip the dark photo" and every label). It is said once, ahead of the list; a requirement
+    whose reason is that problem is named without repeating it, and one with a reason of its
+    own keeps it. A refused first / last clip says what to do next: name the clip.
+    """
     by_id = {r.id: r for r in brief.live()} if brief else {}
     lines = [say(en="I can't make this yet:", tr="Bunu henüz yapamıyorum:")]
+    policy = report.get("policy_problem")
+    if policy:
+        lines.append(f"{policy} {_pin_next_step(brief, str(policy))}".rstrip())
     for row in report["requirements"]:
-        if row["disposition"] not in APPROVABLE:
-            lines.append(f"- {by_id[row['requirement_id']].text()}: {row['reason']}")
-    if len(lines) == 1 and report.get("policy_problem"):
-        lines.append(str(report["policy_problem"]))
+        if row["disposition"] in APPROVABLE:
+            continue
+        name = by_id[row["requirement_id"]].text()
+        lines.append(
+            f"- {name}" if policy and row["reason"] == policy else f"- {name}: {row['reason']}"
+        )
     return "\n".join(lines)
+
+
+def _pin_next_step(brief: CreativeBrief | None, problem: str) -> str:
+    """What to do about a stated first / last clip the contract could not place, else nothing.
+
+    Compares the problem with the contract's own sentence for each clip the brief states, so
+    it reads no words and any other problem gets no next step."""
+    if any(problem == _pin_not_found(words) for words in stated_anchors(brief).values()):
+        return say(
+            en="Tell me which clip you mean, and I'll make a new draft.",
+            tr="Hangi klibi kastettiğini söyle, yeni bir taslak hazırlayayım.",
+        )
+    return ""
 
 
 class ApprovalReadinessError(ValueError):
