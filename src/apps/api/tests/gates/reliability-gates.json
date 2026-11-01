@@ -4098,6 +4098,190 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-1109-order-pin-beats-group",
+      "tickets": [
+        "KRI-1109",
+        "KRI-764"
+      ],
+      "symptom": "Leverkusen M3 run 1 (thread 83f2dcaa, 13:24 + 13:35, 2026-10-31): \"in the order I filmed them, ending on IMG_1043\" was held with \"You asked for the same clip in two places: ... (IMG_1043) (last). I kept the first place you named.\" The clip-intent planner wrote the filming order as a positionless order group over all five videos, listed before a last pin on IMG_1043; the sequence rule gave each clip to the first row naming it, so the group seated IMG_1043 at 'then' and the pin read as a conflict (listed the other way round, no conflict). The approved 13:41 job (one row per file + the same pin) came back code=conflict while its cut ended on IMG_1043, and 'filming order, but end on <another clip>' ignored the ending.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1109",
+      "paths": [
+        "src/apps/api/app/services/clip_order_sequence.py",
+        "src/apps/api/app/pipeline/unified_montage.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_m3_kri1109_repro.py",
+        "tests/services/test_kri1109_pin_beats_group.py",
+        "tests/services/test_order_pin_repeats.py"
+      ],
+      "harness": "real_contract",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The run's recorded briefs v3/v4 (prod DB), both turns' recorded clip-intent planner output and resolver output (proposal trace) and the media snapshot approval pinned for job 3c415e0e (media digest a496e95d..., the 13:35 turn's) through the real answered_brief, brief_order_fields, plan_facts_from_strategy, assess_readiness and render contract; the replayed briefs have the turns' recorded brief_digest. Red on main (13:35, 13:24, listed-order dependence); green after. The caf\u00e9 world (12 dated clips) drives the real planner, contract, phone recipe verifier and receipts for the group + pin shapes.",
+        "live_model": "Not run; no paid calls. No prompt or model change.",
+        "native_output": "unknown; no iPhone re-send yet. The planner order equals the contract order_ids and verify_phone_recipe passes offline.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "group over every clip + last pin on the last clip filmed: no conflict, filming order, receipt met",
+        "group over every clip + last pin on another clip: that clip plays last, contract agrees, group and pin both landed",
+        "the two intents listed either way round: same cut, contract and verdict",
+        "one positionless row per file + an agreeing last pin (the 13:41 job): emptied row contained, pin landed",
+        "one clip asked first AND last: still 'two places', the earlier pin keeps it, wherever a group listing it sits",
+        "a last pin restated by file name after a group: repeat"
+      ],
+      "neighbours_gap": [
+        "A pin that contradicts an explicitly listed one-clip order (\"A, B, C, D in this order\" + \"end on B\") now seats B last without a word, as it always did when the pin was listed first.",
+        "generative_build._narrated_creator_clip_labels and content_plan_build.order_paths_by_resolved_intents keep their own first-row-wins copies of the seating rule (narrated pins and the native pre-order the montage planner re-seats); not changed here."
+      ],
+      "follow_ups": [],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1108-unfound-order-pin",
+      "tickets": [
+        "KRI-1108"
+      ],
+      "symptom": "Leverkusen M3 run 1 (thread 83f2dcaa, 2026-10-31): \"End on the trophy celebration.\" was seated on IMG_1043 (the N\u00fcrnberg players thanking their fans) at 13:21 (resolver confidence 0.8) and 13:24 (0.9). No clip record mentions a trophy; that clip's record misreads the safety net as \"confetti falls from stands\". Order membership kept any match at 0.6, so the ask resolved silently and the creator had to say \"There is no trophy in my footage\".",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1108",
+      "paths": [
+        "src/apps/api/app/services/clip_intent_resolution.py",
+        "src/apps/api/app/schemas/clip_intents.py",
+        "src/apps/api/tests/kria/m3_kri1108_resolver.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_m3_kri1108_repro.py",
+        "tests/kria/test_kri991_picker_suggestions.py",
+        "tests/kria/test_leverkusen_m2_missing_shot.py",
+        "tests/kria/test_kri1067_filming_order_end_picker.py",
+        "tests/kria/test_kri802_question_batch.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The recorded clip_request_resolver input (6 clip records, intents, creator request) and raw output of the 13:21, 13:24 and 13:35 turns (proposal trace) through the real resolve_clip_intents_for_turn; the replayed prompt is checked against the recorded input. On main the trophy pin resolves on IMG_1043 in both turns (4 tests red); with the fix it asks with the clip picker, nothing ticked, \"I couldn't find ...\", None allowed, while \"my ticket\", the real ending on IMG_1043 and a Turkish first-clip ask still resolve.",
+        "live_model": "Not run; no paid calls. No prompt changed.",
+        "native_output": "n/a: server-only resolution change; the iPhone shows the existing picker card with no pre-tick (KRI-991) and the KRI-1025 None answer.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "trophy ending, both recorded turns",
+        "real ending said in other words (players thanking their fans, IMG_1043)",
+        "my ticket on the ticket photo",
+        "Turkish first-clip ask against English records (KRI-845 golden)",
+        "one matched clip says it, the other does not (Taha celebrating in both goal clips)",
+        "word endings: friend smiling vs a record that says smiles (KRI-991)",
+        "an ask no record says any word of stays the resolver's (the final whistle, KRI-1067 F10/F11; the red cap, KRI-802)",
+        "text-only question when the picker is off"
+      ],
+      "neighbours_gap": [
+        "Base rate over 159 recorded resolver assignments (32 runs, 17 first/last): catches 2/2 invented first/last matches, asks about 0/15 real ones.",
+        "An ask no record says any word of is never held: \"End on the trophy\" (one word, in no record) would still resolve silently. A vision yes/no check is the tool for that class.",
+        "A Turkish ask is never judged by its words (records are English).",
+        "Only first/last order pins are held; an include/group/caption match to a subject no record shows is unchanged.",
+        "A matched clip that says one ask word vouches for the whole ask (\"the trophy celebration\" on a goal-celebration clip would still resolve)."
+      ],
+      "follow_ups": [
+        "iPhone re-send of Leverkusen M3 after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1112-resolver-cited-file-names",
+      "tickets": [
+        "KRI-1112"
+      ],
+      "symptom": "Leverkusen M3 run 1 (thread 83f2dcaa, 13:49:15): the clip-request resolver, never sent a file name, matched \"the match from kick-off to the end\" to m001..m005 in alias order at confidence 1.0 with evidence \"explicitly selected by creator in the order 'IMG_10xx'\" quoting the creator's file-name list. Three of five cited another clip (IMG_1039 as 'IMG_1028', IMG_1028 as 'IMG_1036', IMG_1036 as 'IMG_1039') and all five were kept.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1112",
+      "paths": [
+        "src/apps/api/app/services/clip_intent_resolution.py",
+        "src/apps/api/tests/kria/m3_kri1112_cited_names.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_m3_kri1112_cited_names.py",
+        "tests/kria/test_kri614_file_name_clips.py",
+        "tests/kria/test_kri763_file_name_pins.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The recorded 13:49 resolver row (clip records, creator request, intent, raw output) and each upload's staged file name through the real clip-intent planner parse and resolve_clip_intents_for_turn. On main all five are kept, three citing another clip's name (2 tests red); with the fix the three are dropped and the ask is asked with only the two correctly cited clips ticked, and the same answer citing each clip's own name (typed variants included) still resolves with no question.",
+        "live_model": "Not run; no paid calls. No prompt changed.",
+        "native_output": "n/a: server-only resolution change; the iPhone shows the existing picker card.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "evidence citing another clip's name (incident)",
+        "evidence citing its own name: exact, lower case with extension, iOS upload-prefixed name",
+        "file-name step (KRI-614/763) unchanged"
+      ],
+      "neighbours_gap": [
+        "Base rate: of 159 recorded resolver assignments, only the 5 of this 13:49 turn quote a file name (3 cite another clip); the guard does not touch any other recorded assignment.",
+        "A name two clips share names neither, so a miscitation between duplicates is not caught.",
+        "The planner re-introducing a replaced order (\"the match from kick-off to the end\" at 13:49) is KRI-1112 part 3 / KRI-1111; the pre-render credit for a complete listed order is part 1."
+      ],
+      "follow_ups": [
+        "iPhone re-send of Leverkusen M3 after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "leverkusen-m2-run3-moment-window",
+      "tickets": [
+        "Leverkusen M2 run 3",
+        "KRI-1106",
+        "KRI-1107"
+      ],
+      "symptom": "Leverkusen M2 run 3 (thread d1ac7437, job ad2587a7, 2026-10-31, prod 355a33dae): \"Order: our selfie, the 0:0 scoreboard, the \\\"TOR\\\" on the big screen, then only the moments where Taha is celebrating in both goal clips\" (clip 2 tapped for the TOR) and \"put Taha's scream at the end of clip 2 in slow motion\". Clip 2 played its first 5.6 s (analysis_fallback: its record had no moments), no TOR, no scream; the review said \"Done: Order\". The slow motion was not_grounded (\"which clip?\") although clip 2 was named, and with approval readiness on the card said \"have a look\"; only the finished video said \"Couldn't\".",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "Leverkusen M2 run 3",
+      "journey": "leverkusen-m2-run3-moment-window",
+      "paths": [
+        "src/apps/api/app/services/named_moments.py",
+        "src/apps/api/app/kria/speed_ask.py",
+        "src/apps/api/tests/kria/leverkusen_m2_run3.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_leverkusen_m2_run3_moment_window.py",
+        "tests/kria/test_kri689_clip_speed_ask.py",
+        "tests/kria/test_kri775_phone_montage_preflight.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Prod's approved brief v3, strategy and media snapshot (clip records + length plan) through the real planner length step, approval readiness and the worker's own phone montage plan (preflight_montage_plan); no model call. Red on the base commit (r1 met, r3 not_grounded 'which clip?', readiness r3 unverified), green after: r1 partial naming the TOR in clip 2, r3 'couldn't find that moment in clip 2' held back before the card under readiness and without it. Right-content cases put the kit answer key's times into clip 2's record: the TOR seats the window and the order is met; the same times described as a pan stay partial (wrong-content control); the scream slows only a cut that shows it.",
+        "live_model": "Not run; no paid calls. No prompt or model change.",
+        "native_output": "unknown; no device export (receipt/plan change; the recipe for a placed speed is KRI-689's).",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "photo rows (selfie, scoreboard) stay met",
+        "a row the resolver matched from the clip record keeps its clip-level verdict",
+        "a clip that plays whole shows any moment in it",
+        "two moments of one clip under reuse once: never both met",
+        "\"put clip 2 in slow motion\" lands on clip 2's cut; readiness unchanged there (approval re-check digest equal)",
+        "no verified variableSpeed stays a readiness note, not a hold-back",
+        "Turkish receipts and notice; \"2. klip\", \"klip 2\"; \"2 clips\" / \"2 klip\" / \"2x\" / seconds never read as clip 2"
+      ],
+      "neighbours_gap": [
+        "No model localizes a moment the clip record omits (IMG_1039 had best_moments: []); the creator cannot point at a moment inside one of several clips (KRI-723's card is one-take only).",
+        "A slowed moment window is not budgeted in the length plan: 0.5x on an approved window grows the output.",
+        "KRI-775 order/length blockers still skip approval readiness; only speed asks are folded in."
+      ],
+      "follow_ups": [
+        "KRI-1106",
+        "KRI-1107"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-1111-withdrawn-asks-come-back",
       "tickets": [
         "KRI-1111",

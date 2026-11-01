@@ -255,12 +255,14 @@ class _Recorded(ModelClient):
         search_delay_s: float = 0.0,
         search_failures: int = 0,
         copy_unmet: list[str] | None = None,
+        review_demands_style: bool = False,
     ) -> None:
         self.calls = calls
         self.grounding = grounding
         self.search_delay_s = search_delay_s
         self.search_failures = search_failures
         self.copy_unmet = copy_unmet or []
+        self.review_demands_style = review_demands_style
 
     def invoke(self, *, model: str, prompt: str, **_: object) -> ModelInvocation:  # noqa: ARG002
         if prompt.startswith("Research this public topic"):
@@ -309,6 +311,23 @@ class _Recorded(ModelClient):
             )
         if prompt.startswith("Review proposed on-screen captions"):
             self.calls["review"] += 1
+            context = json.loads(prompt.split("Data:\n", 1)[1])["context"]
+            if (
+                self.review_demands_style
+                and "animation" in context["request"].lower()
+                and "animation" not in context.get("handled_elsewhere", [])
+            ):
+                # Prod 2026-11-01 07:05: the reviewer held the request's animation ask against
+                # research the moment the data did not say another step applies it.
+                return ModelInvocation(
+                    raw_text=json.dumps(
+                        {
+                            "approved": False,
+                            "reason": "The request explicitly asked to include animations, "
+                            "but there are no animations requested or provided in the output.",
+                        }
+                    )
+                )
             return ModelInvocation(
                 raw_text=json.dumps({"approved": True, "reason": "Each claim is cited."})
             )
@@ -432,10 +451,29 @@ def _reworded(planned, run: int):  # noqa: ANN001, ANN202
     return replace(planned, plan=plan)
 
 
-async def _turn(monkeypatch, *, reword_each_run: bool = False):  # noqa: ANN001, ANN202
+async def _turn(  # noqa: ANN202
+    monkeypatch,  # noqa: ANN001
+    *,
+    reword_each_run: bool = False,
+    animated: bool = False,
+):
     render = _render()
     user_id, thread_id = _seed(render)
-    stamped = apply_updates(None, UPDATES, source_turn_id=None, creator_text=MESSAGE)
+    updates = UPDATES
+    message = MESSAGE
+    if animated:
+        # "... With animations.": the brief carries an animation fact (the animation_ask lane).
+        message = MESSAGE + " With animations."
+        updates = (
+            *UPDATES,
+            BriefUpdate(
+                kind="text",
+                scope="global",
+                description="animated on-screen text",
+                facts={"animation": "any"},
+            ),
+        )
+    stamped = apply_updates(None, updates, source_turn_id=None, creator_text=message)
     brief = CreativeBrief(version=len(stamped.requirements), requirements=stamped.requirements)
     gated = await run_gate(monkeypatch, render, brief=brief)
     runs: list[int] = []
@@ -444,7 +482,7 @@ async def _turn(monkeypatch, *, reword_each_run: bool = False):  # noqa: ANN001,
         runs.append(len(runs) + 1)
         planned = replace(
             gated,
-            brief_updates=UPDATES,
+            brief_updates=updates,
             brief_route="replan",
             brief_clip_ids=tuple(
                 row["media_id"] for row in render["media_snapshot"]["clip_assignments"]
@@ -453,7 +491,7 @@ async def _turn(monkeypatch, *, reword_each_run: bool = False):  # noqa: ANN001,
         return _reworded(planned, len(runs)) if reword_each_run else planned
 
     monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planned)
-    accepted = await _submit(user_id, thread_id, MESSAGE, 2)
+    accepted = await _submit(user_id, thread_id, message, 2)
     result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
     return result, accepted, thread_id
 
@@ -663,6 +701,25 @@ async def test_an_ask_the_writer_cannot_source_never_holds_back_a_sourced_draft(
     assert binding is not None and binding.prepared_research is not None
     assert binding.prepared_research["status"] == "ready"
     assert len(binding.prepared_research["texts"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_reviewer_is_told_which_asks_another_step_applies(monkeypatch) -> None:
+    """Prod 2026-11-01 07:05, the same Assos prompt after the unmet-list fix: the claim reviewer
+    rejected the sourced captions with "The request explicitly asked to include animations".
+    The research agents read the whole request, so they must be told the animation ask is
+    applied elsewhere, as data, not left to the model's reading of the prompt."""
+    calls = _record(monkeypatch, INSTITUTIONAL, review_demands_style=True)
+    result, accepted, thread_id = await _turn(monkeypatch, animated=True)
+
+    assert result["status"] == "awaiting_approval", result
+    assert (calls["search"], calls["copy"], calls["review"]) == (1, 1, 1)
+    approvals, binding = _approved_binding(accepted.turn_id)
+    assert len(approvals) == 1
+    content = str(_reply(thread_id).content)
+    assert "Sources could not be confirmed" not in content
+    assert binding is not None and binding.prepared_research is not None
+    assert binding.prepared_research["status"] == "ready"
 
 
 @pytest.mark.asyncio

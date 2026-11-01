@@ -14,6 +14,7 @@ from app.agents._schemas.edit_format import (
     coerce_edit_format,
     guided_edit_applicable,
 )
+from app.schemas.creation_formats import SONG_SYNC_DEFAULT_BY_FORMAT
 from app.schemas.edit_proposal import (
     MontageAudioPlan,
     binds_mixed_media_timing,
@@ -312,6 +313,10 @@ USER_SONG_CONTRACT_NOTICE = (
     "A lip-sync edit follows your song, so I'm not timing it to a recorded voiceover."
 )
 USER_SONG_BACKGROUND_NOTICE = "I'll use your song as the background music for this edit."
+USER_SONG_LIPSYNC_CARD_NOTICE = (
+    "You picked Lip-sync, so I'll sync your takes to your song, placing each one where it "
+    "fits the music."
+)
 USER_SONG_LIPSYNC_SHAPE_NOTICE = (
     "A lip-sync edit follows your song, so I'm not using a day-vlog or single-hero shape."
 )
@@ -999,7 +1004,9 @@ def repair_creator_user_song(
       untouched, so every existing strategy compiles byte-identically.
     * ``user_song`` the manifest cannot carry: ``UserSongUnavailableError``
       (``user_song_phone_only`` / ``user_song_missing``).
-    * ``song_sync`` unset: repaired to ``background`` with a notice.
+    * ``song_sync`` unset: repaired to ``background`` with a notice, or to the picker card's
+      default (``manifest.chosen_format``, Lip-sync => ``lipsync``). A ``song_sync`` the model
+      DID set is never overridden: the creator's words win over the card (KRI-129).
     * ``lipsync``: clears the story shape (the song is the master clock) and the
       source-audio plan (camera audio is muted), and refuses the
       ``guided_voiceover_v1`` execution contract (cleared with a notice).
@@ -1021,9 +1028,12 @@ def repair_creator_user_song(
     update: dict[str, Any] = {}
     sync = strategy.song_sync
     if sync is None:
-        sync = "background"
+        card_default = SONG_SYNC_DEFAULT_BY_FORMAT.get(manifest.chosen_format or "")
+        sync = card_default or "background"
         update["song_sync"] = sync
-        notices.append(USER_SONG_BACKGROUND_NOTICE)
+        notices.append(
+            USER_SONG_LIPSYNC_CARD_NOTICE if card_default else USER_SONG_BACKGROUND_NOTICE
+        )
     if sync == "lipsync":
         if strategy.execution_contract is not None:
             # Repair, never reject for taste (KRI-129): the song is the master clock, so

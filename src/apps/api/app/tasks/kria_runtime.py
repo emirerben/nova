@@ -2248,6 +2248,9 @@ def _complete_draft_turn(
                 readiness_reply,
             )
             from app.kria.brief_binding import snapshot_media as _readiness_media  # noqa: PLC0415
+            from app.services.phone_montage_preflight import (  # noqa: PLC0415
+                readiness_plan_blockers,
+            )
 
             if brief is None:
                 brief = load_latest_brief_sync(db, thread.id)
@@ -2274,6 +2277,23 @@ def _complete_draft_turn(
                 draft_research.prepared.model_dump(mode="json")
                 if draft_research is not None
                 else None
+            )
+            # Leverkusen M2 run 3: a speed ask the phone montage plan can't place is said
+            # before the card here too (readiness skipped the KRI-775 plan above).
+            _readiness_blockers = (
+                readiness_plan_blockers(
+                    db,
+                    creator_id=thread.creator_id,
+                    item=item,
+                    brief=brief,
+                    strategy=document.strategy,
+                    media_snapshot=planned.media_snapshot
+                    if planned.media_snapshot is not None
+                    else _readiness_media(item),
+                    client_protocol=client_protocol,
+                )
+                if document.editor_payload is None
+                else []
             )
             readiness_report = assess_readiness(
                 brief,
@@ -2304,6 +2324,7 @@ def _complete_draft_turn(
                 order_source_context=_order_source_context_sync(
                     db, brief=brief, item_id=item.id, creator_id=thread.creator_id
                 ),
+                plan_blockers=_readiness_blockers,
             )
             policy_reasons = _policy_text_reasons(brief, planned.policy_omitted_texts)
             readiness_report["requirements"] = [
@@ -2528,6 +2549,7 @@ def _complete_draft_turn(
                     order_source_context=_order_source_context_sync(
                         db, brief=brief, item_id=item.id, creator_id=thread.creator_id
                     ),
+                    plan_blockers=_readiness_blockers,
                 )
             requirement_receipts = [
                 {**receipt, "brief_version": brief.version} for receipt in requirement_receipts

@@ -60,6 +60,7 @@ from app.agents._schemas.edit_format import (
     render_program_for_intent,
 )
 from app.config import settings
+from app.schemas.creation_formats import SONG_SYNC_DEFAULT_BY_FORMAT
 from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS
 from app.services.creator_errors import CreatorCapabilityError, CreatorStrategyError
 from app.services.phone_destination import phone_drawable_visual_kinds
@@ -279,6 +280,7 @@ def resolve_creator_manifest(
     phone_visuals_only: bool = False,
     user_song_item: object | None = None,
     runs_guided_voiceover: bool = True,
+    chosen_format: str | None = None,
     speaker_background_pick: str | None = None,
 ) -> ResolvedCreatorManifest:
     """Resolve a descriptive v1 manifest from server state and policy.
@@ -301,6 +303,10 @@ def resolve_creator_manifest(
     ``render_program_for_intent`` and ``guided_edit_applicable`` are the same
     policy used by the existing plan-item/generative routes.  In particular,
     audio-led formats and voiceover items cannot be advertised as guided edits.
+
+    ``chosen_format`` is the picker card the thread was started from. Only a card with a
+    song default (``SONG_SYNC_DEFAULT_BY_FORMAT``) is kept, and only on a montage-family
+    edit; anything else is dropped so the manifest stays byte-identical.
     """
 
     resolved_media = _as_media_refs(media)
@@ -973,6 +979,13 @@ def resolve_creator_manifest(
     if user_song_facts is not None:
         context_payload["has_user_song"] = True
         context_payload["user_song"] = user_song_facts.model_dump(mode="json")
+    song_default_format = (
+        chosen_format
+        if chosen_format in SONG_SYNC_DEFAULT_BY_FORMAT and normalized_format in GUIDED_EDIT_FORMATS
+        else None
+    )
+    if song_default_format is not None:
+        context_payload["chosen_format"] = song_default_format
     if background_pick is not None:
         context_payload["speaker_background_pick"] = background_pick
     context_hash = canonical_context_hash(context_payload)
@@ -983,6 +996,7 @@ def resolve_creator_manifest(
         has_voiceover=has_voiceover,
         has_user_song=user_song_facts is not None,
         user_song=user_song_facts,
+        chosen_format=song_default_format,
         speaker_background_pick=background_pick,
         narration=resolved_narration,
         current_edit=resolved_edit,

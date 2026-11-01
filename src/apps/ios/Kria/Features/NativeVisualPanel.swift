@@ -12,6 +12,7 @@ struct NativeVisualPanel: View {
     let projectID: UUID
     @ObservedObject var panelDrafts: NativeEditorPanelDrafts
     let onDone: () -> Void
+    @State private var showsGenerator = false
     @State private var showsImporter = false
     @State private var phase = "entrance"
     @FocusState private var editingText: Bool
@@ -106,7 +107,12 @@ struct NativeVisualPanel: View {
                         .accessibilityIdentifier("native-editor-visual-style-unavailable")
                 }
                 if selected == nil {
-                    browse
+                    if showsGenerator {
+                        NativeOverlayGenerationPanel(session: session, onBack: { showsGenerator = false }, onReference: { showsImporter = true }, onAdded: { row in
+                            showsGenerator = false
+                            session.select(.init(kind: row.kind == .text ? .text : .visualBlock, id: row.id))
+                        })
+                    } else { browse }
                 } else {
                     switch panelDrafts.visualTab {
                     case .edit: placement
@@ -196,6 +202,16 @@ struct NativeVisualPanel: View {
 
     private var mediaLibrary: some View {
         VStack(spacing: 12) {
+            Button { showsGenerator = true } label: {
+                Label("Generate media", systemImage: "sparkles").frame(maxWidth: .infinity, minHeight: 44)
+            }.buttonStyle(.plain)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(KriaColor.line, lineWidth: 1))
+                .disabled(!session.canGenerateOverlayPlan)
+                .accessibilityIdentifier("native-editor-generate-media")
+            if !session.rendersOnDevice {
+                Text("Generate media is available for videos rendered on this iPhone.")
+                    .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+            }
             Button { showsImporter = true } label: {
                 Label("Add photo or video", systemImage: "plus").frame(maxWidth: .infinity, minHeight: 44)
             }.buttonStyle(.plain)

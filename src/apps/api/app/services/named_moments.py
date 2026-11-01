@@ -395,6 +395,126 @@ def ground(words: str, analysis: Mapping[str, Any], duration_s: float) -> Ground
     return Grounding("ambiguous", suggestions=tuple(top))
 
 
+# Words that say WHERE or HOW MUCH, never WHAT happens: inside one clip they name no moment.
+_PLACE_WORDS = frozenset(
+    {"moment", "moments", "clip", "clips", "video", "videos", "shot", "shots", "take", "takes"}
+    | {"part", "parts", "bit", "bits", "scene", "scenes", "footage", "where", "when", "both"}
+    | {"each", "every", "only", "end", "ending", "start", "beginning", "middle", "first", "last"}
+    | {"second", "third"}
+    | {"klip", "klibi", "klibin", "klipte", "klipler", "video", "videoda", "videonun", "sahne"}
+    | {"kisim", "kismi", "bolum", "son", "sonu", "sonunda", "bas", "basi", "basinda", "ikinci"}
+)
+
+
+def moment_terms(words: str) -> set[str]:
+    """The words that could name what happens ("taha", "scream"), never where ("end", "clip")."""
+    return {word for word in _terms(words) if word not in _PLACE_WORDS}
+
+
+def locate_in_clip(words: str, analysis: Mapping[str, Any], duration_s: float) -> Grounding:
+    """Leverkusen M2 run 3: where a moment the creator named lies inside ONE clip they confirmed.
+
+    "Then the TOR on the big screen" (the creator tapped clip 2 for it), "put Taha's scream at
+    the end of clip 2 in slow motion": the creator already said which clip, so the search is
+    that clip's own stored moments only (``_evidence``: analysed + notable moments, never
+    prose) and one shared content word places it. Words that only say where or how much ("the
+    end of", "moments", "both goal clips") never count. One best interval is ``grounded``; two
+    equal best are ``ambiguous``; none (or a record with no moments at all, IMG_1039's
+    ``best_moments: []``) is ``unlocated``, and the caller says so instead of guessing.
+    """
+    target = moment_terms(words)
+    if not target or not isinstance(analysis, Mapping) or duration_s <= 0:
+        return Grounding("unlocated")
+    scored: list[tuple[int, Interval]] = []
+    for interval in _evidence(analysis, duration_s):
+        described = _terms(interval.description)
+        score = sum(1 for word in target if any(same_word(word, other) for other in described))
+        if score:
+            scored.append((score, interval))
+    if not scored:
+        return Grounding("unlocated")
+    best = max(score for score, _i in scored)
+    top = sorted((i for score, i in scored if score == best), key=lambda i: (i.start_s, i.end_s))
+    if len(top) == 1:
+        return Grounding("grounded", found=top[0])
+    return Grounding("ambiguous", suggestions=tuple(top))
+
+
+def shows(start_s: float, end_s: float, found: Interval) -> bool:
+    """Does a cut playing ``start_s``..``end_s`` show the located moment? Half of the shorter
+    of the two must overlap (KRI-723's ``_MOMENT_COVER``)."""
+    shown = min(end_s, found.end_s) - max(start_s, found.start_s)
+    return shown + 1e-6 >= 0.5 * min(end_s - start_s, found.end_s - found.start_s)
+
+
+# A cut this close to its clip's full length plays the whole clip, so it shows whatever the
+# clip holds (a frame or two of proxy slack, KRI-217's tiny-clip rule).
+WHOLE_CLIP_SLACK_S = 0.25
+
+
+@dataclass(frozen=True)
+class ClipMoment:
+    """A moment the creator named in their stated order, inside one video of a multi-clip
+    edit (Leverkusen M2 run 3: "then the TOR on the big screen", clip 2 tapped for it).
+
+    ``tapped`` says the creator's own tap in the clip picker put this clip under the words:
+    nothing in the clip record matched them, so only a located moment shows the cut has it.
+    """
+
+    words: str
+    media_id: str
+    tapped: bool
+    grounding: Grounding
+
+
+def clip_moments(
+    strategy: Mapping[str, Any], media_snapshot: Mapping[str, Any] | None
+) -> list[ClipMoment]:
+    """Every (named moment, video) pair of the creator's stated sequence, located from the
+    clip records alone, in the order the creator listed them. Empty where KRI-723's one-take
+    moments apply (``named_moments``), and for words that name no moment ("then clip 2")."""
+    from app.schemas.clip_intents import CREATOR_SELECTED_EVIDENCE  # noqa: PLC0415
+
+    if not isinstance(media_snapshot, Mapping) or named_moments(strategy, media_snapshot):
+        return []
+    videos = {
+        str(row.get("media_id")): row
+        for row in media_snapshot.get("clip_assignments") or []
+        if isinstance(row, Mapping) and row.get("kind", "video") == "video" and row.get("media_id")
+    }
+    out: list[ClipMoment] = []
+    for intent in strategy.get("resolved_clip_intents") or []:
+        if (
+            not isinstance(intent, Mapping)
+            or intent.get("op") != "order"
+            or intent.get("order_by")
+            or intent.get("placeholder")
+            or intent.get("position") not in (None, "first", "last")
+            or str(intent.get("status") or "resolved") != "resolved"
+        ):
+            continue
+        words = str(intent.get("attribute") or "").strip()
+        if not moment_terms(words):
+            continue
+        for assignment in intent.get("assignments") or []:
+            if not isinstance(assignment, Mapping):
+                continue
+            row = videos.get(str(assignment.get("media_id") or ""))
+            duration = _number(row.get("duration_s")) if row is not None else None
+            if row is None or duration is None or duration <= 0:
+                continue
+            analysis = row.get("analysis") if isinstance(row.get("analysis"), Mapping) else {}
+            out.append(
+                ClipMoment(
+                    words=words,
+                    media_id=str(row["media_id"]),
+                    tapped=assignment.get("evidence") == CREATOR_SELECTED_EVIDENCE,
+                    grounding=locate_in_clip(words, analysis, duration),
+                )
+            )
+    return out
+
+
 def ground_all(moment_set: MomentSet) -> dict[str, Grounding]:
     """Every named moment's grounding. Two moments that land on the same interval are both
     ambiguous: one interval cannot be two different actions."""
