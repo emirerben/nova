@@ -106,6 +106,13 @@ import XCTest
         app.buttons["teleprompter-open-camera"].tap()
         XCTAssertTrue(app.staticTexts["teleprompter-camera-error"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["teleprompter-record"].isEnabled)
+        // KRI-1160: where Cinematic cannot record (the simulator has no such camera), the switch is off, disabled,
+        // and says the take stays standard.
+        let cinematic = app.switches["teleprompter-cinematic"]
+        XCTAssertTrue(cinematic.waitForExistence(timeout: 5))
+        XCTAssertFalse(cinematic.isEnabled)
+        XCTAssertEqual(cinematic.value as? String, "0")
+        XCTAssertTrue(app.staticTexts["teleprompter-cinematic-note"].label.localizedCaseInsensitiveContains("standard mode"))
         capture(app, "Camera unavailable preserves script")
         app.buttons["teleprompter-edit-script"].tap()
         XCTAssertTrue(field.waitForExistence(timeout: 5))

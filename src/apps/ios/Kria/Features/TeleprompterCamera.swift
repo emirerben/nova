@@ -34,6 +34,16 @@ import UIKit
     /// KRI-1119: the live-frame output is attached, so a live background preview has frames to draw. False means the
     /// plain camera preview layer is the right view (no background, or the output could not be added).
     @Published private(set) var liveFramesAttached = false
+    /// KRI-1160: the creator asked for Cinematic. Off by default; the graph is the standard one while off.
+    @Published private(set) var cinematicRequested = false
+    /// The running graph really records Cinematic (the camera can drop the mode when the graph changes).
+    @Published private(set) var cinematicActive = false
+    /// Cinematic was asked for but this camera session is recording in standard mode.
+    @Published private(set) var cinematicNote: String?
+    /// The Cinematic look is being baked into the take that just stopped.
+    @Published private(set) var applyingCinematic = false
+    /// What happened to Cinematic for the take handed to `onFinalized` (nil when Cinematic was off).
+    @Published private(set) var finalizedCinematic: CinematicTakeOutcome?
 
     /// Read by `TeleprompterCameraPreview`; configuration always happens on `captureQueue`.
     nonisolated(unsafe) let session = AVCaptureSession()
@@ -49,6 +59,12 @@ import UIKit
     private let frameRelay = LiveFrameRelay()
     private nonisolated(unsafe) var liveOutput: AVCaptureVideoDataOutput?
     private nonisolated(unsafe) var movieOutput: AVCaptureMovieFileOutput?
+    private nonisolated(unsafe) var videoInput: AVCaptureDeviceInput?
+    private nonisolated(unsafe) var wantsCinematic = false
+    /// What the current graph was built for; a different `wantsCinematic` rebuilds it.
+    private nonisolated(unsafe) var configuredCinematic = false
+    /// Whether the take in flight was started with Cinematic asked for.
+    private var takeWantsCinematic = false
     private nonisolated(unsafe) var isConfigured = false
     private nonisolated(unsafe) var recordingRequested = false
     private nonisolated(unsafe) var stopRequested = false
@@ -94,6 +110,28 @@ import UIKit
         let attached = LiveFrameOutputGraph.reconcile(session: session, existing: &liveOutput, wanted: frameRelay.hasConsumer,
                                                       relay: frameRelay, queue: frameQueue)
         publishLiveFrames(attached)
+        // Adding or removing an output can make the camera drop Cinematic: say so before the next take.
+        if configuredCinematic { publishCinematicState() }
+    }
+
+    /// KRI-1160: applied by the next `prepare()`, which rebuilds the graph. Never reconfigures a running take.
+    func setCinematicRequested(_ requested: Bool) {
+        guard requested != cinematicRequested else { return }
+        cinematicRequested = requested
+        if !requested { cinematicNote = nil }
+        captureQueue.async { [weak self] in self?.wantsCinematic = requested }
+    }
+
+    /// Reads whether the graph really records Cinematic, after it was built or changed.
+    private nonisolated func publishCinematicState() {
+        var active = false
+        if #available(iOS 26.0, *), let videoInput { active = videoInput.isCinematicVideoCaptureEnabled }
+        let fellBack = configuredCinematic && !active
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.cinematicActive = active
+            self.cinematicNote = fellBack ? "Cinematic couldn’t start on this camera, so you’re recording in standard mode." : nil
+        }
     }
 
     private nonisolated func publishLiveFrames(_ attached: Bool) {
@@ -145,6 +183,8 @@ import UIKit
         error = nil
         finalizedURL = nil
         stopReason = nil
+        finalizedCinematic = nil
+        takeWantsCinematic = cinematicRequested
         startRequested = true
         note("start_requested")
         NotificationCenter.default.post(name: .kriaAudioCaptureWillStart, object: nil)
@@ -263,7 +303,7 @@ import UIKit
                     if self.isConfigured {
                         let micGone = self.session.inputs.compactMap { $0 as? AVCaptureDeviceInput }
                             .contains { $0.device.hasMediaType(.audio) && !$0.device.isConnected }
-                        if !self.needsRebuild, !micGone {
+                        if !self.needsRebuild, !micGone, self.configuredCinematic == self.wantsCinematic {
                             if !self.session.isRunning { self.session.startRunning() }
                             continuation.resume()
                             return
@@ -273,10 +313,15 @@ import UIKit
                         self.session.stopRunning()
                         self.movieOutput = nil
                         self.liveOutput = nil
+                        self.videoInput = nil
                         self.isConfigured = false
                     }
                     self.needsRebuild = false
-                    guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) else {
+                    // KRI-1160: Cinematic needs a front camera and format that support it; nil keeps the standard graph.
+                    let wantsCinematic = self.wantsCinematic
+                    var cinematicCamera: (device: AVCaptureDevice, format: AVCaptureDevice.Format)?
+                    if wantsCinematic, #available(iOS 26.0, *) { cinematicCamera = TeleprompterCinematic.frontCinematicCamera() }
+                    guard let camera = cinematicCamera?.device ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) else {
                         throw CameraError.frontCameraUnavailable
                     }
                     guard let microphone = AVCaptureDevice.default(for: .audio) else {
@@ -300,7 +345,7 @@ import UIKit
                     self.session.addInput(videoInput)
                     self.session.addInput(audioInput)
                     self.session.addOutput(output)
-                    self.configure1080p30IfSupported(camera)
+                    if cinematicCamera == nil { self.configure1080p30IfSupported(camera) }
                     // KRI-1119: only when a background was picked; otherwise this graph is unchanged.
                     var liveAttached = false
                     if self.frameRelay.hasConsumer {
@@ -319,6 +364,15 @@ import UIKit
                     // open. Commit exactly once before starting hardware on the capture queue.
                     self.session.commitConfiguration()
                     committed = true
+                    // Cinematic is switched on in the committed graph, before it starts running (a lengthy
+                    // reconfiguration otherwise). If the camera refuses, the take records in standard mode.
+                    if let cinematicCamera, #available(iOS 26.0, *),
+                       !TeleprompterCinematic.enable(on: videoInput, format: cinematicCamera.format) {
+                        self.configure1080p30IfSupported(camera)
+                    }
+                    self.videoInput = videoInput
+                    self.configuredCinematic = wantsCinematic
+                    self.publishCinematicState()
                     self.movieOutput = output
                     self.isConfigured = true
                     self.publishLiveFrames(liveAttached)
@@ -337,6 +391,7 @@ import UIKit
                     AudioSessionArbiter.shared.deactivate(requester: "teleprompter.configure-failed")
                     self.movieOutput = nil
                     self.liveOutput = nil
+                    self.videoInput = nil
                     self.publishLiveFrames(false)
                     self.isConfigured = false
                     continuation.resume(throwing: error)
@@ -534,6 +589,7 @@ import UIKit
             guard let self else { return }
             self.session.stopRunning()
             self.movieOutput = nil
+            self.videoInput = nil
             // Matting stops with the session (S25). The consumer stays, so the next prepare() attaches again.
             self.liveOutput = nil
             self.publishLiveFrames(false)
@@ -546,6 +602,8 @@ import UIKit
         }
         recordingStartedAt = nil
         startRequested = false
+        cinematicActive = false
+        cinematicNote = nil
         restoreIdleTimer()
         phase = .idle
     }
@@ -611,6 +669,18 @@ private extension TeleprompterCamera {
         let wasInterrupted = interrupted
         let startedAt = recordingStartedAt
         let validation = await Self.validateMovie(at: url)
+        // KRI-1160: bake the Cinematic look in before anything measures, saves or plays the take.
+        var cinematic: CinematicTakeOutcome?
+        if case .valid = validation, takeWantsCinematic {
+            applyingCinematic = true
+            note("cinematic_bake")
+            let outcome = await CinematicTakeFinisher.finish(movieAt: url) ?? .standard
+            applyingCinematic = false
+            note("cinematic_\(outcome.rawValue)")
+            cinematic = outcome
+        }
+        finalizedCinematic = cinematic
+        takeWantsCinematic = false
         // KRI-653: "has an audio track" is not "has sound". Measure the level of what was written.
         var audioCheck: TakeAudioCheck?
         if case .valid = validation { audioCheck = await TakeAudioMeasurement.measure(url: url) }
