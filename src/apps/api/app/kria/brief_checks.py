@@ -708,6 +708,9 @@ class PlanFacts:
     # "clip_sound_toggles"]`, re-judged by the render-ready review). None = nothing claimed.
     phone_montage: bool = False
     clip_sound_toggles: Mapping[str, Any] | None = None
+    # KRI-1150: the clips a finished phone Talking render played as muted cutaways over the
+    # speaker, by phone media id (its placed cutaways). None = not a finished Talking render.
+    talking_footage_ids: tuple[str, ...] | None = None
     # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED): whether the edit can draw one
     # at all (None = not checked), and the cards as approval keeps them (a draft, repaired
     # against the manifest) or as the phone render placed them (`phone_timed_card_receipt`).
@@ -2260,12 +2263,32 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     rendered = _rendered_clip_durations(variant)
     if rendered is not None:
         changes["clip_output_durations"] = rendered
+    footage = _talking_footage_ids(variant)
+    if footage is not None:
+        changes["talking_footage_ids"] = footage  # KRI-1150
     if changes.get("edit_format") == "subtitled":
         changes["phone_talking"] = True  # KRI-705
         # KRI-841: a finished Talking render says whether it really ended on the video.
         changes["ending_clip_known"] = True
         changes["ending_clip"] = _ending_clip_receipt_fact(variant.get("phone_ending_clip"))
     return dataclasses.replace(base, **changes) if changes else base
+
+
+def _talking_footage_ids(variant: Mapping[str, Any]) -> tuple[str, ...] | None:
+    """The clips a finished phone Talking render played muted over the speaker, by phone
+    media id: the placed cutaways of the multi-clip writer, else those of the one-speaker head.
+    A footage clip the writer left out never played, so it is not listed."""
+    for key in ("phone_talking_multi_clip", "phone_talking_head"):
+        receipt = variant.get(key)
+        if isinstance(receipt, Mapping) and isinstance(receipt.get("cutaways"), list):
+            return tuple(
+                dict.fromkeys(
+                    str(row["media_id"])
+                    for row in receipt["cutaways"]
+                    if isinstance(row, Mapping) and row.get("media_id")
+                )
+            )
+    return None
 
 
 # KRI-541: the speech-spined archetypes a phone render records, as the brief's edit format.
@@ -6435,6 +6458,10 @@ def _check_sound_toggle(
         return _receipt(
             req, "partial" if status == "partial" else "not_possible", _toggle_missed(ask, row)
         )
+    if facts.phone_talking and not (facts.voiceover_edit or facts.phone_narrated):
+        muted = _talking_muted_cutaway_receipt(req, ask, facts)
+        if muted is not None:
+            return muted
     if facts.voiceover_edit or facts.phone_narrated or facts.phone_talking:
         return _receipt(req, "not_possible", _sound_toggle_needs_phone_montage())
     if facts.editor or facts.rendered_output or facts.rendered_variant:
@@ -6444,6 +6471,61 @@ def _check_sound_toggle(
     if facts.audio_strategy == "voiceover" or facts.edit_format in _SPEECH_FORMATS:
         return _receipt(req, "not_possible", _sound_toggle_needs_phone_montage())
     return _receipt(req, "partial", _NO_CHECKER)
+
+
+def _talking_footage_clips(facts: PlanFacts) -> tuple[str, ...]:
+    """The clips a phone Talking edit plays as muted cutaways over the speaker's voice.
+
+    A finished render names them (its roles receipt). A draft knows only the clips no speaker
+    candidate can be (`protected_targets.speaker_candidates`: a clip that has no sound or
+    whose analysis heard no speech); a clip that might speak is never promised muted.
+    """
+    if facts.talking_footage_ids is not None:
+        return facts.talking_footage_ids
+    from app.kria.protected_targets import speaker_candidates  # noqa: PLC0415
+
+    snapshot = facts.media_snapshot if isinstance(facts.media_snapshot, Mapping) else {}
+    rows = [
+        row
+        for row in snapshot.get("clip_assignments") or ()
+        if isinstance(row, Mapping) and row.get("kind", "video") == "video"
+    ]
+    candidates = set(speaker_candidates(rows))
+    ids = list(dict.fromkeys(str(row["media_id"]) for row in rows if row.get("media_id")))
+    return tuple(m for m in ids if m not in candidates) if len(ids) > 1 else ()
+
+
+def _talking_muted_cutaway_receipt(
+    req: BriefRequirement, ask: SoundToggleAsk, facts: PlanFacts
+) -> RequirementReceipt | None:
+    """ "Keep my audio while the stadium is shown" on a Talking edit (KRI-1150).
+
+    A footage clip plays muted over the speaker, so an "off" ask that names exactly such a
+    clip is what the edit already does. Everything else (clip sound on, the whole video, a
+    clip that speaks, a position or a named line) returns None and keeps its plain decline.
+    """
+    from app.pipeline.clip_sound_toggle import _media_match  # noqa: PLC0415
+
+    target = ask.target
+    if (
+        ask.state != "off"
+        or ask.exceptions
+        or target.media_ref is None
+        or target.clip_position is not None
+        or target.lines
+    ):
+        return None
+    footage = _talking_footage_clips(facts)
+    if _media_match(target.media_ref, footage) is None:
+        return None
+    return _receipt(
+        req,
+        "met",
+        say(
+            en="That clip plays without its own sound, so your voice keeps playing over it",
+            tr="O klip kendi sesi olmadan oynuyor, sesin üzerinde çalmaya devam ediyor",
+        ),
+    )
 
 
 def _draft_sound_toggle(
