@@ -38,6 +38,8 @@
     "talking_range_captions_missing",
     "talking_range_cut_mismatch",
     "talking_range_multi_clip",
+    "talking_range_muted",
+    "talking_range_order",
     "talking_range_overlap",
     "talking_range_processed_audio",
     "talking_range_structure_changed",

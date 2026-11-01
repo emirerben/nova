@@ -18,7 +18,11 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.pipeline.speech_cut_state import reproject_authored_speech_records
-from app.schemas.editor_window import below_editor_minimum, snap_to_editor_minimum
+from app.schemas.editor_window import (
+    EDITOR_MIN_CLIP_S,
+    below_editor_minimum,
+    snap_to_editor_minimum,
+)
 
 # The server and the app share these codes; the app owns the plain-words copy.
 REASON_MULTI_CLIP = "talking_range_multi_clip"
@@ -27,6 +31,8 @@ REASON_PROCESSED_AUDIO = "talking_range_processed_audio"
 REASON_CUT_MISMATCH = "talking_range_cut_mismatch"
 CODE_STRUCTURE_CHANGED = "talking_range_structure_changed"
 CODE_OVERLAP = "talking_range_overlap"
+CODE_ORDER = "talking_range_order"
+CODE_MUTED = "talking_range_muted"
 CODE_CAPTIONS_MISSING = "talking_range_captions_missing"
 
 TALKING_SLOT_PREFIX = "native-phone-talking-source"
@@ -35,14 +41,20 @@ TALKING_SLOT_PREFIX = "native-phone-talking-source"
 _EDGE_TOLERANCE_S = 0.001
 # The phone clamps its own windows with this slack (KriaSourceWindowGeometry.boundsTolerance).
 _SOURCE_BOUNDS_TOLERANCE_S = 0.05
+# A segment the Save leaves as it was keeps its (cleanup-made) length down to this floor; a
+# window the creator changed obeys the app's own minimum (`EDITOR_MIN_CLIP_S`).
 _MIN_SPEECH_SEGMENT_S = 0.001
 
 
 def is_phone_talking_range_variant(variant: dict) -> bool:
-    """A device-rendered `subtitled` (Talking) variant, whatever the rollout says."""
+    """A device-rendered `subtitled` (Talking) variant, whatever the rollout says.
+
+    An authored one (a clip was deleted, KRI-852) is not: it edits through the open timeline
+    and its own authored recipe, which this module's pinned-cut checks do not describe."""
     return (
         variant.get("resolved_archetype") == "subtitled"
         and variant.get("render_destination") == "device"
+        and variant.get("editor_timeline_mode") != "authored"
     )
 
 
@@ -57,7 +69,9 @@ def talking_range_reason(job: Any, variant: dict) -> str | None:
     if variant.get("phone_talking_multi_clip"):
         return REASON_MULTI_CLIP
     rows = editor_deletion_timeline(job, variant)
-    if not rows or not all(str(r.get("slot_id", "")).startswith(TALKING_SLOT_PREFIX) for r in rows):
+    if not rows:
+        return REASON_CUT_MISMATCH
+    if not all(str(r.get("slot_id", "")).startswith(TALKING_SLOT_PREFIX) for r in rows):
         return REASON_MULTI_CLIP
     cuts = variant.get("explicit_speech_cuts")
     if isinstance(cuts, list) and any(
@@ -72,7 +86,7 @@ def talking_range_reason(job: Any, variant: dict) -> str | None:
         return REASON_CUT_MISMATCH
     if any(track.id == "processed-source-audio" for track in recipe.tracks):
         return REASON_PROCESSED_AUDIO
-    pinned = _pinned_windows(recipe)
+    pinned = _pinned_windows(recipe, _speaker_asset_id(job))
     if pinned is None or len(pinned) != len(rows):
         return REASON_CUT_MISMATCH
     for (start, end), row in zip(pinned, rows, strict=True):
@@ -95,11 +109,30 @@ def _pinned_recipe(job: Any, variant: dict) -> Any | None:
     return recipe if isinstance(recipe, EditRecipeV2) else None
 
 
-def _pinned_windows(recipe: Any) -> list[tuple[float, float]] | None:
-    track = next((t for t in recipe.tracks if t.id == "subtitled"), None)
-    if track is None:
+def _speaker_asset_id(job: Any) -> str | None:
+    """The asset the speaker's own clips play (the main track also carries a muted ending clip
+    over a different asset). Range is single-clip, so this is the one source binding."""
+    from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding  # noqa: PLC0415
+
+    rows = (getattr(job, "assembly_plan", None) or {}).get(PHONE_SOURCES_FIELD) or []
+    if len(rows) != 1:
         return None
-    clips = sorted(track.clips, key=lambda c: c.timeline_start)
+    try:
+        return PhoneSourceBinding.model_validate(rows[0]).render_asset().id
+    except Exception:  # noqa: BLE001 - an unreadable binding -> the cut cannot be matched
+        return None
+
+
+def _pinned_windows(recipe: Any, speaker_asset_id: str | None) -> list[tuple[float, float]] | None:
+    """The speaker's windows on the pinned main track, in play order. The same selection
+    `phone_editor._previous_keep_segments` compiles from, so Save and capability agree."""
+    track = next((t for t in recipe.tracks if t.id == "subtitled"), None)
+    if track is None or speaker_asset_id is None:
+        return None
+    clips = sorted(
+        (c for c in track.clips if c.source_asset_id == speaker_asset_id),
+        key=lambda c: c.timeline_start,
+    )
     return [(c.source_start, c.source_start + c.source_duration) for c in clips] or None
 
 
@@ -131,6 +164,8 @@ def resolve_phone_talking_range_slots(job: Any, variant: dict, slots: list[Any])
         raise _refuse(CODE_STRUCTURE_CHANGED)
     resolved: list[dict] = []
     for order, (slot, row) in enumerate(zip(slots, canonical, strict=True)):
+        if slot.muted:
+            raise _refuse(CODE_MUTED, slot_id=row["slot_id"])
         if (
             slot.clip_index != 0
             or slot.transition_after != "cut"
@@ -150,16 +185,21 @@ def resolve_phone_talking_range_slots(job: Any, variant: dict, slots: list[Any])
         start = float(slot.in_s)
         if not all(math.isfinite(v) for v in (start, duration)) or start < 0:
             raise _refuse("TIMELINE_INVALID_WINDOW")
-        if below_editor_minimum(duration, _MIN_SPEECH_SEGMENT_S):
+        changed = (
+            abs(start - float(row["in_s"])) > _EDGE_TOLERANCE_S
+            or abs(duration - float(row["duration_s"])) > _EDGE_TOLERANCE_S
+        )
+        minimum = EDITOR_MIN_CLIP_S if changed else _MIN_SPEECH_SEGMENT_S
+        if below_editor_minimum(duration, minimum):
             raise _refuse("TIMELINE_INVALID_WINDOW")
-        duration = snap_to_editor_minimum(duration, _MIN_SPEECH_SEGMENT_S)
+        duration = snap_to_editor_minimum(duration, minimum)
         duration = _fit_window_to_source(
             slot,
             order=order,
             duration=duration,
             rate=1.0,
             bound=row.get("source_duration_s"),
-            minimum_duration=_MIN_SPEECH_SEGMENT_S,
+            minimum_duration=minimum,
         )
         resolved.append(
             {
@@ -172,6 +212,8 @@ def resolve_phone_talking_range_slots(job: Any, variant: dict, slots: list[Any])
             }
         )
     for left, right in zip(resolved, resolved[1:], strict=False):
+        if right["in_s"] < left["in_s"] - _EDGE_TOLERANCE_S:
+            raise _refuse(CODE_ORDER, slot_id=left["slot_id"])
         if left["in_s"] + left["duration_s"] > right["in_s"] + _EDGE_TOLERANCE_S:
             raise _refuse(CODE_OVERLAP, slot_id=left["slot_id"])
     return resolved

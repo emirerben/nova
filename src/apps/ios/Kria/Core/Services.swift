@@ -2134,6 +2134,8 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "talking_range_cut_mismatch": EditorSaveError.talkingRangeSaveCopy("talking_range_cut_mismatch"),
             "talking_range_structure_changed": "Only the range of each part can change in this video. Undo your last change and save again. Your edits are still here.",
             "talking_range_overlap": "A part now reaches into the part next to it. Shorten it and save again. Your edits are still here.",
+            "talking_range_order": "The parts of this video have to stay in their order. Put them back in order and save again. Your edits are still here.",
+            "talking_range_muted": "Range can’t mute a part of this video. Turn the sound back on for it and save again. Your edits are still here.",
             "talking_range_captions_missing": "Part of your range has no captions yet. Add captions for it, turn captions off, or put the range back, then save again. Your edits are still here.",
         ]
     }()
