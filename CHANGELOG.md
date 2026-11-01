@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.47.0] - 2026-11-01
+
+### Changed
+- fix(kria): judge a dictated shot text on its own clips before render (KRI-1110) (#1996) <!-- release-pr: 1996 -->
+
 ## [0.83.46.0] - 2026-11-01
 
 ### Changed
