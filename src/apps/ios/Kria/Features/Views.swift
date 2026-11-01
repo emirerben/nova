@@ -389,6 +389,10 @@ struct AccountView: View {
                     .font(KriaFont.display(30))
                     .padding(.top, 14)
                     .accessibilityAddTraits(.isHeader)
+                NavigationLink(destination: WhatsNewView(api: model.api)) { WhatsNewEntryLabel() }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("account-whats-new")
+                    .padding(.top, 20)
                 identityBlock
                     .padding(.top, 24)
                     .padding(.bottom, 20)
@@ -464,6 +468,7 @@ struct AccountView: View {
             .frame(maxWidth: .infinity)
         }
         .background(KriaColor.paper)
+        .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         .task { await auth.refreshProfile() }
