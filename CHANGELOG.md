@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.85.0] - 2026-11-01
+
+### Changed
+- fix(ios): a teleprompter take ends only when the creator stops it (KRI-1149) (#2028) <!-- release-pr: 2028 -->
+
 ## [0.83.84.0] - 2026-11-01
 
 ### Changed
