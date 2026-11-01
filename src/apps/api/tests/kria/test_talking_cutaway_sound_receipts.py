@@ -68,9 +68,7 @@ def _rendered(*, speakers: list[str], cutaways: list[str], unplaced: list[str] =
                 {"media_id": m, "start_s": 2.0 + i, "end_s": 4.0 + i}
                 for i, m in enumerate(cutaways)
             ],
-            "unplaced": [
-                {"media_id": m, "position": 3, "reason": "no_room"} for m in unplaced
-            ],
+            "unplaced": [{"media_id": m, "position": 3, "reason": "no_room"} for m in unplaced],
             "clips": [{"clip_id": ingest[m], "role": "speaker"} for m in speakers]
             + [{"clip_id": ingest[m], "role": "footage"} for m in [*cutaways, *unplaced]],
         },
