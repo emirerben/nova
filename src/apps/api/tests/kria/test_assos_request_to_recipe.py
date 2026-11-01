@@ -9,6 +9,8 @@ Checks 1-9 started as the development baseline: RED on the unchanged code on pur
 removed (the ratchet). All nine are green now and carry no marker.
 Check 10 is report-only by owner rule (the product never fails a user for these gaps): it must
 run and list its gaps, never fail. Check 11 (no catalog music on the phone) is already green.
+Check 13 (no catalog song frozen for the creator job at plan time, KRI-1097 catalog lane) was
+red on the foundation and is green with `CREATOR_JOBS_NO_CATALOG_SONG_FREEZE_ENABLED`.
 """
 
 from __future__ import annotations
@@ -99,6 +101,7 @@ def test_unchanged_code_reproduces_prod(report) -> None:
         8,
         9,
         11,
+        13,
     ],
 )
 def test_prompt_fidelity_check(report, check_id) -> None:
