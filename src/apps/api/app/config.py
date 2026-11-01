@@ -1096,6 +1096,23 @@ class Settings(BaseSettings):
     # Default TRUE; false + restart (api + worker) = byte-identical to before
     # (`app.kria.route_disclosure`, agents/DECISIONS.md "Route disclosure").
     kria_route_disclosure_enabled: bool = True
+    # KRI-1097 wave 2 (prompt fidelity on every route). ROUTE_REGISTRY_ENABLED: each render
+    # route reads its own capability table (`app.kria.route_capabilities`), so voiceover,
+    # Talking, Narrated, creator-song, spoken-excerpt and slide drafts get their own honest
+    # card lines, and the lines and route declines show for every account (not only approval
+    # readiness ones). The per-lane switches below each gate one route's follow-the-prompt
+    # change. Every default TRUE; false + restart (api + worker) = byte-identical to before
+    # that change (agents/DECISIONS.md "Prompt fidelity wave 2").
+    route_registry_enabled: bool = True
+    voiceover_route_follows_prompt_enabled: bool = True
+    talking_head_route_follows_prompt_enabled: bool = True
+    narrated_route_follows_prompt_enabled: bool = True
+    lipsync_route_follows_prompt_enabled: bool = True
+    speech_excerpt_route_follows_prompt_enabled: bool = True
+    slide_route_follows_prompt_enabled: bool = True
+    planner_boundary_honest_enabled: bool = True
+    copilot_direction_follows_request_enabled: bool = True
+    creator_jobs_no_catalog_song_freeze_enabled: bool = True
     # KRI-721: enroll new approval writers only after API/worker readers deploy.
     # Existing stamped assessments remain mandatory when enrollment is disabled.
     kria_approval_readiness_enabled: bool = False

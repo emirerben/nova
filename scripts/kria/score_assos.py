@@ -30,19 +30,23 @@ Checks:
 8.  the look chip names the font the text is burned in.
 9.  a provider failure on a follow-up is not reported as an unreadable request.
 10. consumer gate (REPORT ONLY, owner rule: the product never fails a user for these gaps):
-    lists every CreativeStrategy field the route does not read and the card does not disclose.
-    It never fails the wrapper, CI or exit status; a new unconsumed field shows up in the list.
+    reads the unified montage's registry table (`app.kria.route_capabilities.unified_montage`,
+    shared gate in `score_route.py`): lists every CreativeStrategy field the route does not read
+    and the card does not disclose, and every field the table marks applied that no reader in
+    the route's code touches. It never fails the wrapper, CI or exit status.
 11. song rule: no catalog music is mixed on the phone route for this job (green control).
 
 Negative controls (mandatory): checks 1 and 2 each get a synthetic output that ignores the ask
 (the check must FAIL) and one that honours it (the check must PASS); check 10 gets a synthetic
-new field (must be flagged). A failed control makes the whole scorecard INVALID.
+new field and a synthetic applied claim with no reader (both must be flagged). A failed control
+makes the whole scorecard INVALID.
+
+``--fixture-dir`` replays another capture of the same shape (default: the assos fixture).
 """
 
 from __future__ import annotations
 
 import argparse
-import ast
 import asyncio
 import contextlib
 import copy
@@ -81,6 +85,18 @@ _result = _BASE._result
 _guarded = _BASE._guarded
 
 
+def _load_route_grader():  # noqa: ANN202
+    """The generic route scorecard: card words and the registry consumer gate."""
+    spec = importlib.util.spec_from_file_location("score_route", HERE / "score_route.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_ROUTE = _load_route_grader()
+
+
 def _prod_flags():  # noqa: ANN202
     """The shared prod flags plus the device capability the story directions draw with.
 
@@ -104,13 +120,12 @@ def _prod_flags():  # noqa: ANN202
 _cassette = _BASE._cassette
 
 
-def load_fixture() -> dict[str, Any]:
-    fx = json.loads((FIXTURE_DIR / "fixture.json").read_text(encoding="utf-8"))
-    return fx
+def load_fixture(fixture_dir: Path = FIXTURE_DIR) -> dict[str, Any]:
+    return json.loads((fixture_dir / "fixture.json").read_text(encoding="utf-8"))
 
 
-def load_research() -> dict[str, Any]:
-    return json.loads((FIXTURE_DIR / "research.json").read_text(encoding="utf-8"))
+def load_research(fixture_dir: Path = FIXTURE_DIR) -> dict[str, Any]:
+    return json.loads((fixture_dir / "research.json").read_text(encoding="utf-8"))
 
 
 # ------------------------------------------------------------------------------- the job
@@ -518,34 +533,14 @@ def approval_card(fx: dict, job: SimpleNamespace) -> dict[str, Any]:
 
 
 _LENGTH = re.compile(r"(\d+(?:\.\d+)?)\s*(?:s\b|sec\b|secs\b|seconds?\b)", re.I)
-_NOT_APPLIED = re.compile(
-    r"not\s+(?:be\s+)?(?:applied|used|shown|rendered|supported)|won't|will not|can't|cannot|"
-    r"couldn't|isn't|aren't|ignored|left out|skipp?ed|not possible|unavailable",
-    re.I,
-)
+_NOT_APPLIED = _ROUTE._NOT_APPLIED
 _RESEARCH_WORDS = re.compile(
     r"research|web\s*search|search(?:es|ed|ing)?\s+the\s+web|look(?:s|ed|ing)?\s+up|"
     r"fact[- ]check|sources?\b|google",
     re.I,
 )
-FIELD_WORDS: dict[str, tuple[str, ...]] = {
-    "direction": ("direction", "style of video", "video style"),
-    "pacing": ("pacing", "pace", "tempo"),
-    "story_structure": ("story structure", "story order", "structure", "storyline"),
-    "intro_hook": ("hook", "opening line", "intro"),
-    "caption_style": ("caption style", "captions"),
-    "optional_treatments": ("treatment", "effects"),
-    "title_animation": ("animation", "animated", "animate"),
-}
-
-
-def discloses_not_applied(card_text: str, field: str) -> bool:
-    """A card line that names ``field`` and says it is not applied."""
-    words = FIELD_WORDS.get(field, (field.replace("_", " "),))
-    for line in re.split(r"[\n.;]", card_text):
-        if any(w.lower() in line.lower() for w in words) and _NOT_APPLIED.search(line):
-            return True
-    return False
+FIELD_WORDS = _ROUTE.FIELD_WORDS
+discloses_not_applied = _ROUTE.discloses_not_applied
 
 
 # ------------------------------------------------------------------------- recipe readers
@@ -869,11 +864,7 @@ def check_8_look_chip(fx: dict, base: dict) -> dict:
         patch.object(gb, "current_phone_text_policy", lambda: {"active": True}),
     ):
         early = plan_blocks.blocks_from_guided_plan(base["execution"], **gb._early_look_font())
-    looks = [
-        b
-        for b in [*early, *base["live_blocks"]]
-        if b.get("section_id") == "look"
-    ]
+    looks = [b for b in [*early, *base["live_blocks"]] if b.get("section_id") == "look"]
     look = looks[-1]
     chips = (look.get("payload") or {}).get("chips") or []
     chip_fonts = [
@@ -1018,120 +1009,15 @@ def check_9_provider_failure(fx: dict) -> dict:
     )
 
 
-ROUTE_FILES = (
-    "pipeline/unified_montage.py",
-    "pipeline/best_parts.py",
-    "pipeline/story_direction.py",
-    "services/length_policy.py",
-    "services/length_planning.py",
-    "kria/duplicate_uploads.py",
-    "services/phone_montage_preflight.py",
-    "pipeline/phone_plan_repair.py",
-)
-ROUTE_FUNCTIONS = (
-    "_plan_phone_unified_montage",
-    "_run_phone_unified_montage_job",
-    "_creator_selected_clip_paths",
-)
-# Consumed through a carrier the read scan cannot see (justified one by one).
-INDIRECT_CONSUMERS = {
-    "edit_format": "dispatch picks the writer from it",
-    "render_program": "dispatch picks the guided program from it",
-    "audio_strategy": "read through the contract and the montage audio resolver",
-    "media_scope": "selected_visual_ids / normalize_creator_strategy_media",
-    "selected_media_ids": "selected_visual_ids / the contract order",
-    "target_duration_s": "gated by creator proof in length_policy, partial by design",
-    "font_family": "phone text style policy (requested_style)",
-    "text_color": "phone text style policy (requested_style)",
-    "opening_title": "brief_view / contract",
-    "opening_title_duration_s": "brief_view / contract",
-    "closing_title": "brief_view / contract",
-    "shot_labels": "brief_view / contract",
-    "video_reuse_policy": "length_planning window planner",
-    "montage_audio": "montage audio resolver",
-    "execution_contract": "creator_render_contract",
-}
-EXEMPT_FIELDS = {"rationale": "explanatory prose shown to the creator, nothing to apply"}
-_NOT_A_READ = re.compile(r"^\s*(#|\"\"\"|snapshot_kwargs\[|style\[)")
-
-
-def _read_pattern(field: str) -> re.Pattern:
-    return re.compile(
-        rf"""(\[["']{field}["']\]|get\(["']{field}["']|\.{field}\b|["']{field}["']\s*:)"""
+def consumer_gate(
+    card_text: str,
+    extra_fields: tuple[str, ...] = (),
+    extra_handling: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The unified montage's registry table against its code and the card (`score_route`)."""
+    return _ROUTE.consumer_gate(
+        "unified_montage", card_text, extra_fields=extra_fields, extra_handling=extra_handling
     )
-
-
-def strategy_fields() -> tuple[list[str], set[str]]:
-    tree = ast.parse((APP / "agents" / "_schemas" / "creator_agent.py").read_text())
-    for node in tree.body:
-        if isinstance(node, ast.ClassDef) and node.name == "CreativeStrategy":
-            anns = [
-                n
-                for n in node.body
-                if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name)
-            ]
-            names = [a.target.id for a in anns]
-            hidden = {a.target.id for a in anns if "SkipJsonSchema" in ast.unparse(a.annotation)}
-            return names, hidden
-    raise RuntimeError("CreativeStrategy not found")
-
-
-def route_reads(fields: list[str]) -> dict[str, list[str]]:
-    """Read-shaped references to each field inside the unified-montage phone route."""
-    sources = {rel: (APP / rel).read_text().splitlines() for rel in ROUTE_FILES}
-    gb_path = APP / "tasks" / "generative_build.py"
-    gb_text = gb_path.read_text()
-    gb_lines = gb_text.splitlines()
-    ranges = [
-        (n.lineno, n.end_lineno)
-        for n in ast.walk(ast.parse(gb_text))
-        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name in ROUTE_FUNCTIONS
-    ]
-    reads: dict[str, list[str]] = {}
-    for field in fields:
-        pattern = _read_pattern(field)
-        hits = []
-        for rel, lines in sources.items():
-            hits += [
-                f"{rel}:{i + 1}"
-                for i, t in enumerate(lines)
-                if pattern.search(t) and not _NOT_A_READ.match(t)
-            ]
-        for lo, hi in ranges:
-            for i in range(lo - 1, hi):
-                if pattern.search(gb_lines[i]) and not _NOT_A_READ.match(gb_lines[i]):
-                    hits.append(f"tasks/generative_build.py:{i + 1}")
-        reads[field] = hits
-    return reads
-
-
-def consumer_gate(card_text: str, extra_fields: tuple[str, ...] = ()) -> dict[str, Any]:
-    names, hidden = strategy_fields()
-    settable = [n for n in names if n not in hidden] + list(extra_fields)
-    reads = route_reads(settable)
-    unconsumed = [
-        f
-        for f in settable
-        if not reads[f] and f not in INDIRECT_CONSUMERS and f not in EXEMPT_FIELDS
-    ]
-    undisclosed = [f for f in unconsumed if not discloses_not_applied(card_text, f)]
-    from app.kria.route_disclosure import UNREAD_STRATEGY_FIELDS
-
-    # Report only: the card's registry of unread fields against what the scan above finds.
-    drift = {
-        "listed_but_read": sorted(f for f in UNREAD_STRATEGY_FIELDS if f in settable and reads[f]),
-        "unread_but_unlisted": sorted(f for f in unconsumed if f not in UNREAD_STRATEGY_FIELDS),
-    }
-    return {
-        "registry_drift": drift,
-        "pass": not undisclosed,
-        "settable_fields": len(settable),
-        "unconsumed": unconsumed,
-        "undisclosed": undisclosed,
-        "disclosed": [f for f in unconsumed if f not in undisclosed],
-        "exempt": EXEMPT_FIELDS,
-        "indirect_consumers": sorted(INDIRECT_CONSUMERS),
-    }
 
 
 def check_10_consumer_gate(base: dict) -> dict:
@@ -1143,8 +1029,22 @@ def check_10_consumer_gate(base: dict) -> dict:
         []
         if gate["pass"]
         else [
-            f"the unified-montage route reads none of {gate['undisclosed']} "
-            "and the approval card does not say they are not applied"
+            *(
+                [
+                    f"the unified-montage table marks {gate['claimed_applied_unread']} applied, "
+                    "but no reader in the route's code touches them"
+                ]
+                if gate["claimed_applied_unread"]
+                else []
+            ),
+            *(
+                [
+                    f"the unified-montage route reads none of {gate['undisclosed']} "
+                    "and the approval card does not say they are not applied"
+                ]
+                if gate["undisclosed"]
+                else []
+            ),
         ],
         gate,
     )
@@ -1265,6 +1165,21 @@ def negative_controls() -> list[dict]:
             False,
             "zz_new_unconsumed_field" not in gate["undisclosed"],
             gate["undisclosed"][-1:],
+        )
+    )
+    from app.kria.route_capabilities import Applied
+
+    gate = consumer_gate(
+        card,
+        extra_fields=("zz_claimed_field",),
+        extra_handling={"zz_claimed_field": Applied()},
+    )
+    controls.append(
+        row(
+            "10 an applied claim with no reader must be flagged",
+            False,
+            "zz_claimed_field" not in gate["claimed_applied_unread"],
+            gate["claimed_applied_unread"],
         )
     )
     return controls
@@ -1474,8 +1389,8 @@ def reproduction(fx: dict, base: dict) -> list[dict]:
 # ----------------------------------------------------------------------------------- report
 
 
-def run_offline() -> dict:
-    fx, rs = load_fixture(), load_research()
+def run_offline(fixture_dir: Path = FIXTURE_DIR) -> dict:
+    fx, rs = load_fixture(fixture_dir), load_research(fixture_dir)
     with _prod_flags():
         base_holder: dict[str, Any] = {}
 
@@ -1574,9 +1489,12 @@ def main(argv: list[str] | None = None) -> int:
         "--json", action="store_true", help="print the full JSON instead of the summary"
     )
     parser.add_argument("--strict", action="store_true", help="exit 1 unless every check passes")
+    parser.add_argument(
+        "--fixture-dir", type=Path, default=FIXTURE_DIR, help="a capture of the same shape"
+    )
     args = parser.parse_args(argv)
     _BASE._bootstrap()
-    report = run_offline()
+    report = run_offline(args.fixture_dir)
     out = args.out or REPO / "test-results" / "assos-replay" / "report.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(

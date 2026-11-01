@@ -1435,6 +1435,7 @@
       "paths": [
         "src/apps/api/app/kria/approval_readiness.py",
         "src/apps/api/app/kria/route_disclosure.py",
+        "src/apps/api/app/kria/route_capabilities/",
         "src/apps/api/app/kria/animation_ask.py",
         "src/apps/api/app/pipeline/story_direction.py",
         "src/apps/api/tests/fixtures/kria_replay/assos/README.md",

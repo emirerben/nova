@@ -100,6 +100,8 @@ from app.kria.route_disclosure import (
     UNIFIED_MONTAGE,
     card_disclosures,
     card_text,
+    decoupled_from_readiness,
+    draft_route,
     planned_card_length,
     with_route_declines,
 )
@@ -1999,14 +2001,14 @@ def _complete_draft_turn(
                             creator_id=thread.creator_id,
                         ),
                     )
+                    # The pinned length plan the card reads (its length, a story's holds).
+                    _card_media = (
+                        planned.media_snapshot
+                        if planned.media_snapshot is not None
+                        else _draft_media(item)
+                    )
                     if facts.phone_montage and settings.kria_route_disclosure_enabled:
-                        route_name = UNIFIED_MONTAGE
                         # The length on the draft is the length the plan renders.
-                        _card_media = (
-                            planned.media_snapshot
-                            if planned.media_snapshot is not None
-                            else _draft_media(item)
-                        )
                         # Research prepared for the planner's strategy is pinned to its digest
                         # (`research_preview.basis_digest`), so that strategy stays as planned.
                         # A length the creator stated (message, brief, answer) is theirs.
@@ -2021,7 +2023,7 @@ def _complete_draft_turn(
                             None
                             if planned.prepared_research is not None or _stated is not None
                             else planned_card_length(
-                                document.strategy or {}, _card_media, route=route_name
+                                document.strategy or {}, _card_media, route=UNIFIED_MONTAGE
                             )
                         )
                         if _card_length is not None:
@@ -2034,6 +2036,16 @@ def _complete_draft_turn(
                                 }
                             )
                             snapshot, snapshot_hash = canonical_snapshot(document)
+                    # The route this draft renders through, so the card reads that route's
+                    # table (`route_capabilities`); registry off: the unified montage only.
+                    route_name = draft_route(
+                        creator_id=thread.creator_id,
+                        edit_format=(document.strategy or {}).get("edit_format")
+                        or item.edit_format,
+                        strategy=document.strategy,
+                        clip_paths=item.clip_gcs_paths or (),
+                        phone_montage=facts.phone_montage,
+                    )
                     checked = brief.live()
                     # KRI-190: the unified montage planner writes the per-clip text,
                     # order and title at render time and reports on them then. Judging
@@ -2160,7 +2172,11 @@ def _complete_draft_turn(
                         else receipt
                         for receipt in receipts
                     ]
-                    if route_name is not None and readiness_required and not editor_turn:
+                    if (
+                        route_name is not None
+                        and (readiness_required or decoupled_from_readiness())
+                        and not editor_turn
+                    ):
                         # An ask the render route does not read is answered plainly now.
                         receipts = with_route_declines(
                             receipts, checked, document.strategy, route=route_name
@@ -2223,7 +2239,11 @@ def _complete_draft_turn(
             from app.kria import research_preview  # noqa: PLC0415
 
             reply_text = f"{reply_text}\n{research_preview.preview_lines(draft_research.prepared)}"
-        if route_name is not None and brief is not None and readiness_required:
+        if (
+            route_name is not None
+            and brief is not None
+            and (readiness_required or decoupled_from_readiness())
+        ):
             route_disclosures = card_disclosures(
                 brief.live(),
                 document.strategy,
