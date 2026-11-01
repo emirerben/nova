@@ -86,6 +86,32 @@ import XCTest
         await sessions.stopAll()
     }
 
+    /// With nothing bound in memory, a Stop targets the earlier Stop's acknowledgement before its observation
+    /// before its source. The order is spelled out in `cancel`; this pins it.
+    func testStopTargetPrefersTheStoredAcknowledgementOverObservationAndSource() async throws {
+        let directory = scratch(), job = UUID()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = request(job: job, revision: 1), second = request(job: job, revision: 2), third = request(job: job, revision: 3)
+        let store = DeviceRenderIntentStore(root: directory.appendingPathComponent("intents"))
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        let storageKey = DeviceRenderIntentKey(owner: owner, projectID: key.projectID, jobID: job, variantID: "first")
+        var earlier = DeviceRenderIntent(sourceIdentity: first.identity, baseGeneration: "g1", state: .stopped)
+        earlier.acknowledgement = second.identity
+        earlier.observedIdentity = third.identity
+        try store.save(earlier, for: storageKey)
+        let sessions = DeviceRenderSessions(fetch: { _, _ in throw URLError(.notConnectedToInternet) }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: directory, exporter: CountingExport(), sources: NoSources(), publisher: AlwaysPublisher())
+        }, intentStore: store, environment: .init(thermalState: { .nominal }, freeStorageBytes: { Int64.max }))
+
+        await sessions.cancel(key)
+        let stopped = try XCTUnwrap(try store.load(storageKey))
+        XCTAssertEqual(stopped.state, .stopped)
+        XCTAssertEqual(stopped.sourceIdentity, second.identity, "The stored acknowledgement is the Stop's target")
+        XCTAssertEqual(stopped.acknowledgement, second.identity)
+        XCTAssertEqual(stopped.observedIdentity, third.identity, "The later observation is carried, never dropped")
+        await sessions.stopAll()
+    }
+
     func testRepeatedStopKeepsTheAcknowledgedRevisionFloor() async throws {
         let directory = scratch(), job = UUID()
         defer { try? FileManager.default.removeItem(at: directory) }
