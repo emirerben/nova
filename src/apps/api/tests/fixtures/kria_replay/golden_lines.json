@@ -524,10 +524,22 @@
               "code": "not_applied_on_route",
               "subject": "target_duration_s",
               "text": "I can't make this video the length you asked for yet: its length follows your speech"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "title_animation",
+              "text": "I can't animate the title (fade) on this video yet, so it shows without motion"
             }
           ],
-          "declines": [],
-          "card": "Heads-up for this video:\n- The balanced pacing isn't applied on this video yet: the video follows your speech\n- The native direction isn't applied on this video yet: the video follows your speech\n- I can't turn captions off on this kind of edit yet, so the video will have captions\n- I can't make this video the length you asked for yet: its length follows your speech"
+          "declines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "text_animation",
+              "text": "I can't animate on-screen text on this video yet, so the text shows without motion",
+              "requirement_id": "g1"
+            }
+          ],
+          "card": "Heads-up for this video:\n- The balanced pacing isn't applied on this video yet: the video follows your speech\n- The native direction isn't applied on this video yet: the video follows your speech\n- I can't turn captions off on this kind of edit yet, so the video will have captions\n- I can't make this video the length you asked for yet: its length follows your speech\n- I can't animate the title (fade) on this video yet, so it shows without motion"
         }
       },
       "tr": {
@@ -608,10 +620,22 @@
               "code": "not_applied_on_route",
               "subject": "target_duration_s",
               "text": "Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu konuşmanı takip ediyor"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "title_animation",
+              "text": "Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
             }
           ],
-          "declines": [],
-          "card": "Bu video için not:\n- balanced tempo bu videoda henüz uygulanmıyor: video konuşmanı izliyor\n- native yönü bu videoda henüz uygulanmıyor: video konuşmanı izliyor\n- Bu tür bir düzenlemede altyazıları henüz kapatamıyorum, o yüzden videoda altyazı olacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu konuşmanı takip ediyor"
+          "declines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "text_animation",
+              "text": "Bu videoda ekrandaki yazıyı henüz canlandıramıyorum, o yüzden yazı hareketsiz görünecek",
+              "requirement_id": "g1"
+            }
+          ],
+          "card": "Bu video için not:\n- balanced tempo bu videoda henüz uygulanmıyor: video konuşmanı izliyor\n- native yönü bu videoda henüz uygulanmıyor: video konuşmanı izliyor\n- Bu tür bir düzenlemede altyazıları henüz kapatamıyorum, o yüzden videoda altyazı olacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu konuşmanı takip ediyor\n- Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
         }
       }
     },

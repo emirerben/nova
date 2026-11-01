@@ -5,28 +5,69 @@ the item's style toggle (``kria.runtime`` maps clean/editorial to sentences, kin
 word by word); it draws the confirmed title and closing title and the Visuals display. Its title
 rows (the title, text on a spoken word, the closing tag) enter with the planned title animation
 and the whole-video or title animation asks (`phone_subtitled_title.talking_title_entrances`,
-``TALKING_HEAD_ROUTE_FOLLOWS_PROMPT_ENABLED``).
+``TALKING_HEAD_ROUTE_FOLLOWS_PROMPT_ENABLED``); the card keeps the title animation line and the
+animation decline whenever no such row will play it.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
-from app.config import settings
 from app.kria.brief import BriefRequirement
 from app.kria.route_capabilities import _lines as lines
 from app.kria.route_capabilities._types import (
     Applied,
     AskDecline,
+    GivenAsks,
     Handling,
     NotApplied,
-    Notice,
     RenderEntry,
     RouteReaders,
+    WithAsks,
 )
 
-_COMPILE = "pipeline/phone_subtitled_plan.py:compile_phone_subtitled_plan"
+
+def _rows_animate(strategy: Mapping[str, Any], requirements: Sequence[BriefRequirement]) -> bool:
+    """A title row the writer draws for this plan and these asks plays the planned or asked
+    entrance (`phone_subtitled_title.talking_title_rows_animate`). When that cannot be read the
+    card keeps its line and its decline."""
+    from app.pipeline.phone_subtitled_title import talking_title_rows_animate  # noqa: PLC0415
+
+    try:
+        return talking_title_rows_animate(strategy, requirements)
+    except Exception:  # noqa: BLE001 - a disclosure must never fail a draft
+        return False
+
+
+def _title_animation(
+    value: Any, strategy: Mapping[str, Any], requirements: Sequence[BriefRequirement]
+) -> str | None:
+    """No line when a title row the writer draws enters with the planned animation (or a named
+    one the creator asked for); else the line from before the lane: the switch off, a phone that
+    plays no text entrance, or no title, closing text or text on a spoken word to animate."""
+    if value and _rows_animate(strategy, requirements):
+        return None
+    return lines.title_animation(value, strategy)
+
+
+def _animation_not_played(
+    req: BriefRequirement, strategy: Mapping[str, Any], requirements: Sequence[BriefRequirement]
+) -> bool:
+    """A typed text animation ask no title row plays: a per-clip or one-clip ask (this route
+    draws no clip labels), or no title row to play it on (`_rows_animate`)."""
+    if not lines.asks_text_animation(req):
+        return False
+    from app.kria.animation_ask import animation_ask  # noqa: PLC0415
+
+    ask = animation_ask(req, styles=True)
+    return (
+        ask is None
+        or ask.scope == "per_clip"
+        or ask.scope.startswith("clip:")
+        or not _rows_animate(strategy, requirements)
+    )
+
 
 FIELD_HANDLING: dict[str, Handling] = {
     "intro_hook": NotApplied(lines.hook),
@@ -45,7 +86,7 @@ FIELD_HANDLING: dict[str, Handling] = {
     "target_duration_s": NotApplied(
         lines.stated_length("its length follows your speech", "uzunluğu konuşmanı takip ediyor")
     ),
-    "title_animation": Applied(via=_COMPILE),
+    "title_animation": NotApplied(WithAsks(_title_animation)),
     "label_position": NotApplied(lines.label_position),
     "optional_treatments": NotApplied(lines.treatments),
     "archetype": NotApplied(lines.archetype),
@@ -75,51 +116,13 @@ READERS = RouteReaders(
 )
 
 RENDER_ENTRY = RenderEntry(
-    _COMPILE,
+    "pipeline/phone_subtitled_plan.py:compile_phone_subtitled_plan",
     {
         "title_animation": "text_layers[id^=text-].animation_phases.entrance",
         "length_s": "duration",
     },
 )
 
-
-def _entrances_drawn() -> bool:
-    """The title rows play an asked entrance: the lane switch is on and the phone plays one."""
-    from app.kria.animation_ask import text_entrance_form  # noqa: PLC0415
-
-    return bool(settings.talking_head_route_follows_prompt_enabled) and (
-        text_entrance_form() is not None
-    )
-
-
-def _title_animation_not_drawn(strategy: Mapping[str, Any]) -> str | None:
-    """With the lane switch off, or on a phone that plays no text entrance, the title rows
-    show without the planned animation: the card says so, as before the lane."""
-    if _entrances_drawn():
-        return None
-    return lines.title_animation(strategy.get("title_animation"), strategy)
-
-
-def _ask_drawn(req: BriefRequirement) -> bool:
-    """A whole-video or title animation ask the title rows play; this route draws no per-clip
-    labels, so a per-clip or clip ask stays declined."""
-    from app.kria.animation_ask import animation_ask  # noqa: PLC0415
-
-    ask = animation_ask(req, styles=True)
-    return (
-        ask is not None
-        and ask.scope != "per_clip"
-        and not ask.scope.startswith("clip:")
-        and _entrances_drawn()
-    )
-
-
-NOTICES: dict[str, Notice] = {"title_animation": _title_animation_not_drawn}
-
 ASK_DECLINES: tuple[AskDecline, ...] = (
-    AskDecline(
-        "text_animation",
-        lambda req, _s: lines.asks_text_animation(req) and not _ask_drawn(req),
-        lines.animation_decline,
-    ),
+    AskDecline("text_animation", GivenAsks(_animation_not_played), lines.animation_decline),
 )

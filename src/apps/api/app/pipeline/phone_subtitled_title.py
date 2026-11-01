@@ -48,7 +48,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import structlog
 
@@ -63,6 +63,9 @@ from app.pipeline.render_geometry import (
     _union_box,
     sample_face_regions,
 )
+
+if TYPE_CHECKING:
+    from app.kria.animation_ask import EntranceForm
 
 log = structlog.get_logger(__name__)
 
@@ -193,11 +196,53 @@ def _row_source(row: Mapping[str, Any]) -> str | None:
     return source if isinstance(source, str) else None
 
 
-def _first_entrance(*asks: Any) -> str | None:
-    """The first named edge among ``asks``, else the plain default when any is an ask."""
-    present = [ask for ask in asks if ask is not None]
-    named = next((ask.edge for ask in present if ask.named), None)
-    return named or (present[0].resolved_edge() if present else None)
+def _entrance(nearest: Any, other: Any, planned: str | None) -> str | None:
+    """A named ask (the one nearest the row, then the other) over the plan's
+    ``title_animation``, over an unnamed ask's plain fade: the creator's own words first
+    (KRI-129)."""
+    asks = [ask for ask in (nearest, other) if ask is not None]
+    named = next((ask.edge for ask in asks if ask.named), None)
+    return named or planned or (asks[0].resolved_edge() if asks else None)
+
+
+def talking_title_entrance_form() -> EntranceForm | None:
+    """How the phone plays the title rows' asked entrance, else None: the lane switch
+    (``TALKING_HEAD_ROUTE_FOLLOWS_PROMPT_ENABLED``) is off or the phone plays no text entrance
+    (`text_entrance_form`)."""
+    from app.config import settings  # noqa: PLC0415
+    from app.kria.animation_ask import text_entrance_form  # noqa: PLC0415
+
+    if not settings.talking_head_route_follows_prompt_enabled:
+        return None
+    return text_entrance_form()
+
+
+def talking_title_rows_planned(strategy: Mapping[str, Any], requirements: Iterable[Any]) -> bool:
+    """The writer draws a title row for this plan and these asks: the confirmed title, the
+    closing text or a text on a spoken word, each only while its rollout is on (the reads
+    `_run_phone_subtitled_job` makes before it places them)."""
+    from app.kria.spoken_text_ask import spoken_text_asks  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_subtitled_closing_title_supported,
+        phone_subtitled_spoken_text_supported,
+        phone_subtitled_title_supported,
+    )
+
+    title = strategy.get("opening_title")
+    if isinstance(title, str) and title.split() and phone_subtitled_title_supported():
+        return True
+    closing = strategy.get("closing_title")
+    if isinstance(closing, str) and closing.strip() and phone_subtitled_closing_title_supported():
+        return True
+    return phone_subtitled_spoken_text_supported() and bool(spoken_text_asks(requirements))
+
+
+def talking_title_rows_animate(strategy: Mapping[str, Any], requirements: Iterable[Any]) -> bool:
+    """The approval card's view of `talking_title_entrances`: a title row this plan and these
+    asks draw plays the planned or asked entrance."""
+    return talking_title_entrance_form() is not None and talking_title_rows_planned(
+        strategy, requirements
+    )
 
 
 def talking_title_entrances(
@@ -208,40 +253,35 @@ def talking_title_entrances(
 ) -> Sequence[Mapping[str, Any]]:
     """The writer's title rows entering the way the creator asked (KRI-1097 wave 2).
 
-    The opening title takes a title-scope animation ask, else the plan's ``title_animation``,
-    else a whole-video ask ("animate the big text in": `animation_ask(req, styles=True)`). The
-    text on a spoken word and the closing tag, drawn in the title's look, take a whole-video
-    ask, and the title's ask and the plan's too when the edit has no opening title (that text
-    is then the title it shows). A named entrance wins over an unnamed one, which plays the
-    plain fade. Captions and any other row keep their own look.
+    The opening title takes a named title-scope animation ask, else a named whole-video ask
+    ("animate the big text in": `animation_ask(req, styles=True)`), else the plan's
+    ``title_animation``, else the plain fade of an ask that names none. The text on a spoken
+    word and the closing tag, drawn in the title's look, take a whole-video ask; when the edit
+    has no opening title they are the title it shows, so they take the title's ask and the
+    plan's too, a named whole-video ask still first. Captions and any other row keep their own
+    look.
 
     ``rows`` comes back as it was with ``TALKING_HEAD_ROUTE_FOLLOWS_PROMPT_ENABLED`` off, with
-    nothing asked, or on a phone that plays no text entrance (`text_entrance_form`); a phone
-    that only plays the legacy effects gets the closest one (`entrance_patch`).
+    nothing asked, or on a phone that plays no text entrance (`talking_title_entrance_form`); a
+    phone that only plays the legacy effects gets the closest one (`entrance_patch`).
     """
-    from app.config import settings  # noqa: PLC0415
-    from app.kria.animation_ask import (  # noqa: PLC0415
-        AnimationAsk,
-        animation_targets,
-        entrance_patch,
-        text_entrance_form,
-    )
+    from app.kria.animation_ask import animation_targets, entrance_patch  # noqa: PLC0415
     from app.pipeline.phone_spoken_text import SPOKEN_TEXT_SOURCE  # noqa: PLC0415
     from app.schemas.text_style_intent import normalize_title_animation  # noqa: PLC0415
 
-    if not settings.talking_head_route_follows_prompt_enabled:
-        return rows
-    form = text_entrance_form()
+    form = talking_title_entrance_form()
     if form is None:
         return rows
     asks = dict(animation_targets(requirements, styles=True))
-    planned = normalize_title_animation(title_animation)
-    plan_ask = AnimationAsk(planned) if planned is not None else None
     title_ask, whole_ask = asks.get("title"), asks.get("all")
+    planned = normalize_title_animation(title_animation)
     has_title = any(_row_source(row) == TALKING_TITLE_SOURCE for row in rows)
-    other = _first_entrance(whole_ask, *(() if has_title else (title_ask, plan_ask)))
+    title = _entrance(title_ask, whole_ask, planned)
+    other = (
+        _entrance(whole_ask, None, None) if has_title else _entrance(whole_ask, title_ask, planned)
+    )
     edges = {
-        TALKING_TITLE_SOURCE: _first_entrance(title_ask, plan_ask, whole_ask),
+        TALKING_TITLE_SOURCE: title,
         SPOKEN_TEXT_SOURCE: other,
         TALKING_CLOSING_SOURCE: other,
     }

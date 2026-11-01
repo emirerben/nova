@@ -18,7 +18,7 @@
       "phone source bindings: synthetic proxy paths (score_route.media_rows)",
       "capability manifest (score_route.manifest)",
       "strategy.title_animation = \"pop\" and brief r6 (style, global, facts.animation = \"pop\", \"animate the big text in\") are NOT in the recording. They give the fixture an animation ask, the render target of the Talking lane (L2); the recorded request asked for a big \"1810\" without naming motion.",
-      "replay_inputs.text_elements (lane talking): the spoken-text row the recorded render drew (prod_outcome.render.text_elements: \"1810\" 18.975-20.975 s, fade-in), rebuilt with phone_spoken_text.spoken_text_element at the title's default spot (the prod placement was not recorded). The fixture builder does not write it: keep it when rebuilding."
+      "replay_inputs.text_elements (lane talking): one spoken-text row in the window the recorded render drew its spoken-text row (prod_outcome.render.text_elements: 18.975-20.975 s, fade-in), shaped like phone_spoken_text.spoken_text_element at the title's default spot (the prod placement was not recorded). It carries no plan or ask value: placeholder text \"TEXT\" and no requirement id. The fixture builder does not write it: keep it when rebuilding."
     ],
     "redacted": [
       "user, thread, item, job, turn and draft ids",
@@ -37,8 +37,8 @@
   "replay_inputs": {
     "text_elements": [
       {
-        "id": "spoken-text-r3",
-        "text": "1810",
+        "id": "spoken-text-replay",
+        "text": "TEXT",
         "start_s": 18.975,
         "end_s": 20.975,
         "role": "generative_intro",
@@ -51,8 +51,7 @@
         "alignment": "center",
         "effect": "fade-in",
         "source_params": {
-          "source": "spoken_text",
-          "requirement_id": "r3"
+          "source": "spoken_text"
         },
         "removed": false,
         "behind_subject": false
