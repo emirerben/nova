@@ -3512,6 +3512,52 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-1125-pick-collision",
+      "tickets": [
+        "KRI-1125",
+        "KRI-1121"
+      ],
+      "symptom": "Leverkusen M4 run 1 (thread eeac2d3b, 2026-10-31): the creator tapped the team-bus photo for \"the warm-up\" in the clip picker by mistake, then corrected it in words (\"the warm-up is the photo of the players on the pitch, not the team bus\"). Picker taps settle a beat before the resolver and no typed message replaces one, so the warm-up stayed on the bus; the bus photo sat on two ordered beats with nothing saying so (the second row is contained) and the real warm-up photo played 9th.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1125",
+      "paths": [
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/services/clip_pick_collisions.py",
+        "src/apps/api/app/services/clip_selection.py",
+        "src/apps/api/tests/fixtures/kri1125_m4_warmup_pick.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri1125_pick_collision_replay.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The real M4 thread (picker question, the creator's tap, every typed message up to the correction) and the 11 intents the t5 resolver was sent, through the real _plan_turn_clip_intents, thread fold, selection match, collision check and picker builder; only the clip-intent planner and resolver answers are replayed. Red on base d7ee70f5f: R1/R1b/R2/R2b/R4/R5 fail (the bus photo stays on the warm-up and the bus beat, no question, a typed correction never replaces the tap); R3/R6/R7 controls pass. Green with the fix; six deliberate breaks each turn at least one test red.",
+        "live_model": "Not run; no paid calls. A typed correction inside a collision costs one extra planner and resolver pass.",
+        "native_output": "n/a: server-only planner change; the iPhone shows the same clip picker card.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "the picked beat is asked again with the contested photo left out of its candidates",
+        "a typed line newer than the tap that names the beat drops the tap and the resolver re-reads it",
+        "the resolver still answers the same photo or finds nothing: the picker asks again, never the stale tap",
+        "a tap nobody contradicts sticks across typed messages, even one that names the beat",
+        "a typed line that does not name the beat is no correction",
+        "two taps on one photo: the older tap is asked again, the newer answer stands",
+        "a video on two beats and a multi-clip group that contains the photo are not clashes"
+      ],
+      "neighbours_gap": [
+        "Two beats only the resolver matched onto one photo are still left to the sequence rule (KRI-1109 / PR #1995).",
+        "A clash asked in a picker the resolver already built pre-ticks nothing for the tapped beat: the resolver never read it.",
+        "The planner's own t5 answer is redacted in the trace; its inventory is rebuilt from the resolver's input and the t3 picker rows."
+      ],
+      "follow_ups": [
+        "Leverkusen M4 iPhone re-send after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-1067-filming-order-end-picker",
       "tickets": [
         "KRI-1067",

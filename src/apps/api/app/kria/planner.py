@@ -191,6 +191,7 @@ from app.services.clip_intent_planning import (
 )
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_order_sequence import stated_anchors
+from app.services.clip_pick_collisions import plan_without_pick_collisions
 from app.services.clip_selection import answered_rows, fold_clip_selections
 from app.services.clip_understanding import understanding_incomplete
 from app.services.creative_copy_decisions import (
@@ -1595,6 +1596,8 @@ _OTHER_ANSWER_KEYS = frozenset(
         SONG_RANGE_ANSWER_KEY,
     }
 )
+# KRI-1125: every payload key that makes a creator event a tap or card answer, not a typed line.
+_TAP_ANSWER_KEYS = frozenset({"clip_selection", *_OTHER_ANSWER_KEYS})
 
 
 def _picker_answer_turn_id(events: Sequence[tuple[str, Any]]) -> str | None:
@@ -3538,7 +3541,12 @@ async def _plan_turn_clip_intents(
     # KRI-1067: a filming-order brief's first / last clip the inventory may leave out.
     brief_anchors = stated_anchors(effective_brief) if wants_capture_order else {}
     await _kick_clip_understanding(item_id, intent_clips)
-    planned = await plan_and_resolve_clip_intents(
+    # KRI-1125: one photo is never silently the answer for two ordered beats, and a typed
+    # correction newer than the tap that caused it sends the beat back to the resolver.
+    planned = await plan_without_pick_collisions(
+        plan_and_resolve_clip_intents,
+        thread_events=thread_events,
+        answer_keys=_TAP_ANSWER_KEYS,
         # KRI-522: the creator's own words (verified quote source), never
         # only the brief paraphrase; the brief rides along as recall aid.
         creator_request=inputs.raw_creator_request or creator_request or user_message,

@@ -1859,6 +1859,17 @@
       ]
     },
     {
+      "id": "kri-1125-pick-collision",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1125_pick_collision_replay.py tests/services/test_clip_selection.py tests/services/test_kri947_kri951_m2_picker_rows.py tests/kria/test_kri950_tap_keeps_checked_list.py tests/kria/test_kri950_tap_keeps_checked_list_postgres.py tests/kria/test_clip_selection_turns_postgres.py tests/kria/test_kri761_look_alike_exclusions.py tests/kria/test_kri1025_none_answer_pin.py tests/kria/test_lev_m2_found_clip_picker.py tests/kria/test_kri962_voiceover_tie_question.py",
+      "paths": [
+        "src/apps/api/app/services/clip_pick_collisions.py",
+        "src/apps/api/app/services/clip_selection.py",
+        "src/apps/api/tests/kria/test_kri1125_pick_collision_replay.py",
+        "src/apps/api/tests/fixtures/kri1125_m4_warmup_pick.json"
+      ]
+    },
+    {
       "id": "market-research-reference-banks",
       "needs_native": false,
       "api_tests": "tests/agents/test_market_research_banks.py tests/agents/test_overlay_examples_slop_guard.py tests/agents/test_persona_generator.py tests/agents/test_content_plan_generator.py tests/agents/test_intro_writer.py tests/agents/test_overlay_format_matcher.py tests/evals/test_persona_generator_evals.py tests/evals/test_content_plan_generator_evals.py tests/evals/test_intro_writer_evals.py tests/evals/test_overlay_format_matcher_evals.py",
