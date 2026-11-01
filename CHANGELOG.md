@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.52.0] - 2026-11-01
+
+### Changed
+- fix(kria): pin and credit a complete order the creator listed clip by clip (Leverkusen M3) (#2003) <!-- release-pr: 2003 -->
+
 ## [0.83.51.0] - 2026-11-01
 
 ### Fixed
