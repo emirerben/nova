@@ -1,0 +1,60 @@
+{
+  "about": "KRI-1097 wave 2: the render entry each route table names (RENDER_ENTRY) and its recipe paths, pinned beside the production job runner that renders from it. Grader-owned: scripts/kria/score_route.py (gate 10.pin) and tests/kria/test_render_entry_pins.py fail unless the table's entry and recipe equal the pin, the runner imports the entry from its module (or defines it in its own file), calls it and uses what it returns, and the worker module (tasks/generative_build.py) calls the runner. A lane that moves its entry or a recipe path edits this file in the same commit, by hand: the diff is what review reads.",
+  "routes": {
+    "unified_montage": {
+      "runner": "tasks/generative_build.py:_plan_phone_unified_montage",
+      "entry": "pipeline/unified_montage.py:plan_unified_montage",
+      "recipe": {
+        "title_animation": "snapshot.title_animation",
+        "pace": "snapshot.pace",
+        "length_s": "duration_s"
+      }
+    },
+    "voiceover_montage": {
+      "runner": "tasks/generative_build.py:_run_phone_voiceover_montage_job",
+      "entry": "pipeline/phone_voiceover_montage_plan.py:compile_phone_voiceover_montage_plan",
+      "recipe": {
+        "title_animation": "text_layers[id^=intro-].animation_phases.entrance",
+        "pace": "tracks[kind=video].clips[].source_duration",
+        "length_s": "duration"
+      }
+    },
+    "talking_head": {
+      "runner": "tasks/generative_build.py:_run_phone_subtitled_job",
+      "entry": "pipeline/phone_subtitled_plan.py:compile_phone_subtitled_plan",
+      "recipe": {
+        "title_animation": "text_layers[id^=text-].animation_phases.entrance",
+        "length_s": "duration"
+      }
+    },
+    "narrated": {
+      "runner": "tasks/generative_build.py:_run_phone_narrated_job",
+      "entry": "pipeline/phone_narrated_plan.py:compile_phone_narrated_plan",
+      "recipe": {
+        "title_animation": "text_layers[id^=title-].animation_phases.entrance",
+        "length_s": "duration"
+      }
+    },
+    "lipsync_song": {
+      "runner": "tasks/generative_build.py:_plan_phone_user_song_core",
+      "entry": "pipeline/lipsync_montage.py:plan_lipsync_montage",
+      "recipe": {
+        "title_animation": "snapshot.title_animation",
+        "pace": "snapshot.pace",
+        "length_s": "duration_s"
+      }
+    },
+    "speech_excerpt": {
+      "runner": "services/phone_speech_montage_job.py:run_phone_speech_montage_job",
+      "entry": "pipeline/phone_speech_montage_plan.py:compile_phone_speech_montage_plan",
+      "recipe": {
+        "length_s": "0.duration"
+      }
+    },
+    "slide_post": {
+      "runner": "tasks/generative_build.py:_run_slide_post_job",
+      "entry": "tasks/generative_build.py:_build_slide_post_result",
+      "recipe": {}
+    }
+  }
+}

@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any
 
+from app.kria.animation_ask import animates_text_kind
 from app.kria.brief import BriefRequirement
 from app.kria.reply_language import say
 from app.kria.route_capabilities._types import Builder, WithAsks
@@ -297,10 +298,10 @@ def slide_audio(value: Any, _s: Mapping[str, Any]) -> str | None:
 
 
 def asks_text_animation(req: BriefRequirement) -> bool:
-    """A typed ``animation`` on a text or style ask (an edge id, or "any")."""
-    if req.kind not in {"text", "style"}:
-        return False
-    return bool(req.facts.get("animation"))
+    """A typed ``animation`` on a text or style ask (an edge id, or "any"): the kinds
+    `animation_ask(req, styles=True)` reads, so a lane that applies it covers what this
+    declines."""
+    return animates_text_kind(req) and bool(req.facts.get("animation"))
 
 
 def asks_captions_on(req: BriefRequirement) -> bool:

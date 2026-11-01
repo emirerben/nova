@@ -63,6 +63,11 @@ nothing else counts), ``gate`` or ``route`` / ``report``.
           the golden is re-recorded with it.
 10.entry  gate: the table's ``RENDER_ENTRY`` is a function of the route's own ``READERS`` that
           another function of the route's code calls, with a parseable recipe path per key.
+10.pin    gate: the table's entry and recipe paths equal the route's pin in
+          ``tests/fixtures/kria_replay/render_entries.json`` (grader-owned, so moving either
+          is a reviewer-visible diff, like the golden lines); the pin's job runner imports the
+          entry from its module (or defines it in its own file), calls it and uses what it
+          returns, and a function of ``tasks/generative_build.py`` calls that runner.
 10.       consumer gate (REPORT ONLY): fields the route ignores that the card does not disclose.
 
 Replay contract (render evidence for checks 2, 3, 4, 5). Each route table names its render
@@ -76,19 +81,23 @@ with ``fx["strategy"]`` and ``fx["requirements"]`` (or ``fx["brief"]``) as they 
 any other input from ``fx["clips"]`` / ``fx["inputs"]`` (the fixture's ``replay_inputs``). Its
 return value is ignored: the grader takes the value at each path the moment the entry returns.
 The lane keeps the entry the single source by passing the plan into it, never by patching the
-recipe after it returns: a patch after the entry earns nothing here, and 10.entry checks the
-route's code calls the entry.
+recipe after it returns: a patch after the entry earns nothing here, 10.entry checks the
+route's code calls the entry and 10.pin that the entry and paths are the pinned ones, rendered
+from by the pinned job runner.
 
 Every run executes a fresh copy of the module in a fresh interpreter (one per lane-switch
 value, the switch set before the module first runs), in an order shuffled the same way for the
-same fixture. The plan and the asks reach the module as recording proxies: any access whose
-nearest owning frame is the module's file (getattr, item, ``.get``, iteration, ``dict()``,
-copy, ``==``, hash, ``repr``, ``.value``...) is noted, and so is the module reading the lane
-switch or the whole settings object, or handing the plan, the asks or a function of its own
-to any route function but the entry (a helper that reads the plan for it). A static pass
-refuses a module that imports beyond ``app`` (never ``app.config``) and plain stdlib, names the
-settings, introspects (``getattr``, ``type``, ``vars``, dunders, frames) or changes state that
-outlives a run. A claimed key must:
+same fixture. The plan and the asks reach the module as recording proxies with the surface the
+job runner hands the entry: the plan a dict; each ask read as an item (``req["facts"]``) or as
+the real ``BriefRequirement`` validated from it (``req.facts``, ``req.kind``, ``req.live``,
+``req.text()``...); the brief the same over a real ``CreativeBrief`` whose ``requirements`` and
+``live()`` give the recorded asks. Any access whose nearest owning frame is the module's file
+(getattr, item, ``.get``, iteration, ``dict()``, copy, ``==``, hash, ``repr``, ``.value``,
+``.live()``...) is noted, and so is the module reading the lane switch or the whole settings
+object, or handing the plan, the asks or a function of its own to any route function but the
+entry (a helper that reads the plan for it). A static pass refuses a module that imports beyond
+``app`` (never ``app.config``) and plain stdlib, names the settings, introspects (``getattr``,
+``type``, ``vars``, dunders, frames) or changes state that outlives a run. A claimed key must:
 
 * track every other value (every title animation, every pace, a length ladder or
   ``checks.perturb.length_s``, every caption style), clip holds growing fast to relaxed;
@@ -114,19 +123,30 @@ red or a missing target exits 1.
 Negative controls (mandatory, INVALID rule as in ``score_29_ekim.py``): each check's predicate
 and the check functions themselves get a synthetic card that ignores the ask (must FAIL) and one
 that honours it (must PASS); the gates get unread fields, claims with no reader, bad carriers,
-a shared reader file and a reworded line (all must be flagged). A control that cannot run
-because the registry fails to import is INVALID too; only code that predates the registry (no
-package) shows them n/a. A failed control makes the scorecard INVALID (exit 2).
+a shared reader file, a reworded line, an unpinned entry or recipe path and a runner that
+drops, only names or shadows the entry (all must be flagged). A control that cannot run because
+the registry fails to import is INVALID too; only code that predates the registry (no package)
+shows them n/a. A failed control makes the scorecard INVALID (exit 2).
 
 What a lane reviewer must still check by hand:
 
 * the job runner renders from the entry's return and does not override the claimed recipe
-  field afterwards (10.entry only shows it calls the entry);
+  field afterwards (10.pin only shows the pinned runner passes the value of one entry call on,
+  into its return, a call, an attribute or a branch; not that the recipe it renders is that
+  value, nor that the call runs on the path the job takes);
+* a diff of ``render_entries.json``: that the new entry is the function the route renders
+  from, and that the pinned runner is the one the dispatch runs for the route (10.pin only
+  shows some function of ``generative_build.py`` calls it);
 * the entry's recipe path is the field the phone actually draws (the title rows, not a copy),
   and the entry takes no override parameter the module could feed the asked value through;
+* a route that branches on ``isinstance(req, BriefRequirement)`` or ``CreativeBrief``: the
+  replay's asks are mappings that read like those types, not instances of them;
 * ``replay_inputs`` and the clips carry no plan or ask values;
 * the replay module, for Python-level escapes the static pass and the proxies do not see
   (state hidden in imported objects, C-level reads, threads);
+* a lane that reads a ``style`` animation ask through `animation_ask` passes ``styles=True``
+  behind its own switch (the default reads ``text`` asks only, as the unified montage does),
+  so it covers every ask the card's ``asks_text_animation`` declines;
 * an ``Applied()`` field without ``via`` (a file-wide read scan, not a data flow), and a
   ``via`` carrier whose value reaches a call or attribute the render never uses;
 * that a not-applied line's sentence is true for the route, beyond containing a negation;
@@ -166,6 +186,7 @@ APP = API / "app"
 FIXTURES = API / "tests" / "fixtures" / "kria_replay"
 LANE_TARGETS = FIXTURES / "lane_targets.json"
 GOLDEN_LINES = FIXTURES / "golden_lines.json"
+RENDER_ENTRIES = FIXTURES / "render_entries.json"
 REPLAYS = HERE / "route_replays"
 REGISTRY_PACKAGE = APP / "kria" / "route_capabilities" / "__init__.py"
 BUILDER = "tasks/generative_build.py"
@@ -1311,9 +1332,13 @@ class _Recorder:
         return reads, settings
 
 
-def _recorded_mapping(data: dict, recorder: _Recorder, label: str) -> Any:
-    """``data`` behind a mapping that notes every access, its values held in this closure."""
+def _recorded_mapping(data: dict, recorder: _Recorder, label: str, typed: Any = None) -> Any:
+    """``data`` behind a mapping that notes every access, its values held in this closure.
+    An attribute the mapping lacks reads off ``typed``, the real object the job runner hands
+    over (a ``BriefRequirement``, the ``CreativeBrief``), else off the plain dict."""
     from collections.abc import MutableMapping
+
+    real = data if typed is None else typed
 
     def note(what: str) -> None:
         recorder.read(f"{label}{what}", sys._getframe(2))
@@ -1326,7 +1351,9 @@ def _recorded_mapping(data: dict, recorder: _Recorder, label: str) -> Any:
             return object.__getattribute__(self, name)
 
         def __getattr__(self, name: str) -> Any:
-            raise AttributeError(name)
+            if name.startswith("__"):
+                raise AttributeError(name)
+            return getattr(real, name)
 
         def __getitem__(self, key: Any) -> Any:
             note(f"[{key!r}]")
@@ -1378,11 +1405,13 @@ def _recorded_mapping(data: dict, recorder: _Recorder, label: str) -> Any:
 
         def __copy__(self) -> Any:
             note(" copy")
-            return _recorded_mapping(dict(data), recorder, label)
+            return _recorded_mapping(dict(data), recorder, label, copy.copy(typed))
 
         def __deepcopy__(self, memo: dict) -> Any:
             note(" deepcopy")
-            return _recorded_mapping(copy.deepcopy(data, memo), recorder, label)
+            return _recorded_mapping(
+                copy.deepcopy(data, memo), recorder, label, copy.deepcopy(typed, memo)
+            )
 
         def __reduce_ex__(self, protocol: Any) -> Any:
             note(" pickle")
@@ -1408,7 +1437,8 @@ def _recorded_mapping(data: dict, recorder: _Recorder, label: str) -> Any:
 
 
 def _recorded_sequence(items: list, recorder: _Recorder, label: str) -> Any:
-    """``items`` behind a sequence that notes every access."""
+    """``items`` behind a sequence that notes every access; an attribute it lacks reads off
+    the list itself (the job runner hands over ``brief.live()``, a list)."""
     from collections.abc import Sequence
 
     def note(what: str) -> None:
@@ -1422,7 +1452,9 @@ def _recorded_sequence(items: list, recorder: _Recorder, label: str) -> Any:
             return object.__getattribute__(self, name)
 
         def __getattr__(self, name: str) -> Any:
-            raise AttributeError(name)
+            if name.startswith("__"):
+                raise AttributeError(name)
+            return getattr(items, name)
 
         def __getitem__(self, index: Any) -> Any:
             note(f"[{index!r}]")
@@ -1590,17 +1622,31 @@ def _replay_run(
         result["error"] = f"the replay module does not load: {type(exc).__name__}: {exc}"
         return result
     recipe = module.__dict__.get("recipe")
+    from app.kria.brief import CreativeBrief
+
+    raw = [dict(r) for r in run["brief"].get("requirements") or []]
+    version = run["brief"].get("version")
+    try:
+        typed = CreativeBrief.model_validate(
+            {"requirements": raw, **({} if version is None else {"version": version})}
+        )
+    except Exception as exc:  # noqa: BLE001 - reported
+        result["error"] = f"the run's brief is no CreativeBrief: {exc}"
+        return result
     strategy = _recorded_mapping(dict(run["strategy"]), recorder, "strategy")
     requirements = _recorded_sequence(
         [
-            _recorded_mapping(dict(r), recorder, f"requirements[{i}]")
-            for i, r in enumerate(run["brief"].get("requirements") or [])
+            _recorded_mapping(r, recorder, f"requirements[{i}]", req)
+            for i, (r, req) in enumerate(zip(raw, typed.requirements, strict=True))
         ],
         recorder,
         "requirements",
     )
     brief = _recorded_mapping(
-        {"version": run["brief"].get("version"), "requirements": requirements}, recorder, "brief"
+        {"version": version, "requirements": requirements},
+        recorder,
+        "brief",
+        CreativeBrief.model_construct(version=typed.version, requirements=requirements),
     )
     fx = {
         "route": run["route"],
@@ -2851,6 +2897,119 @@ def entry_result(route: str) -> dict:
     return _kind(_result("10.entry", name, not problems, problems, evidence), "gate")
 
 
+# ------------------------------------------------------------------- render entry pins
+
+
+def render_entry_pins() -> dict[str, Any]:
+    """``route -> {"runner", "entry", "recipe"}`` from ``RENDER_ENTRIES`` (empty without it)."""
+    if not RENDER_ENTRIES.is_file():
+        return {}
+    return json.loads(RENDER_ENTRIES.read_text(encoding="utf-8"))["routes"]
+
+
+def calls_entry(
+    caller: str, target: str, *, used: bool, texts: Mapping[str, str] | None = None
+) -> bool:
+    """A function of ``caller`` (``"<path>:<function>"``, or ``"<path>"`` for any function of
+    that file but the target) calls ``target`` (``"<path>:<function>"``) by a name bound to it:
+    imported from the target's module (in the function or at the top of its file) or defined
+    at the top of that same file. ``used``: the call's value must reach what the function
+    returns, a call it makes, an attribute it sets or a branch (`_flows`); a value thrown away
+    or parked on a local nothing reads does not count. ``texts`` (controls only) stands in for
+    files under ``app/``."""
+    path, _, function = caller.partition(":")
+    target_path, _, symbol = target.partition(":")
+    name = symbol.rsplit(".", 1)[-1]
+    module = "app." + target_path.removesuffix(".py").replace("/", ".")
+    if texts is not None and path in texts:
+        tree = ast.parse(texts[path])
+    elif (APP / path).is_file():
+        tree = _parsed(path)
+    else:
+        return False
+
+    def imported(nodes: Any) -> set[str]:
+        return {
+            alias.asname or alias.name
+            for node in nodes
+            if isinstance(node, ast.ImportFrom) and node.module == module
+            for alias in node.names
+            if alias.name == name
+        }
+
+    functions = [n for n in tree.body if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]
+    top = imported(tree.body)
+    if path == target_path and any(fn.name == name for fn in functions):
+        top.add(name)
+    callers = [fn for fn in functions if (fn.name == function if function else fn.name != name)]
+    for fn in callers:
+        nodes = list(ast.walk(fn))
+        local = imported(nodes)
+        calls = [
+            n
+            for n in nodes
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id in (top | local)
+        ]
+        if not calls:
+            continue
+        names = (top - _bound_names(fn)) | local
+        bound = [n for n in calls if n.func.id in names]
+        if bound and (not used or _flows(fn, bound)):
+            return True
+    return False
+
+
+def pin_problems(
+    route: str,
+    entry: Any = None,
+    pins: Mapping[str, Any] | None = None,
+    texts: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Why the route's ``RENDER_ENTRY`` is not its pin in ``RENDER_ENTRIES`` (empty when it
+    is): the same entry and recipe paths, a pinned runner that imports the entry, calls it and
+    uses its value (`calls_entry`), and a worker module (``BUILDER``) that calls the runner.
+    ``entry`` / ``pins`` / ``texts`` (controls only) stand in for the table's, the file's and
+    the code's."""
+    registry = _registry()
+    table = registry.tables.table_for(route) if registry is not None else None
+    if table is None:
+        return [f"no registry table for {route!r}"]
+    entry = entry if entry is not None else getattr(table, "RENDER_ENTRY", None)
+    pin = (render_entry_pins() if pins is None else pins).get(route)
+    if pin is None:
+        return [f"{_shown_path(RENDER_ENTRIES)} pins no render entry for {route}"]
+    problems = []
+    named = getattr(entry, "entry", None)
+    if named != pin["entry"]:
+        problems.append(f"the table's entry {named!r} is not the pinned {pin['entry']!r}")
+    recipe = dict(getattr(entry, "recipe", None) or {})
+    if recipe != dict(pin["recipe"]):
+        problems.append(f"the table's recipe paths {recipe} are not the pinned {pin['recipe']}")
+    if not calls_entry(pin["runner"], pin["entry"], used=True, texts=texts):
+        problems.append(
+            f"the pinned runner {pin['runner']} does not import {pin['entry']}, call it and "
+            "use what it returns"
+        )
+    if not calls_entry(BUILDER, pin["runner"], used=False, texts=texts):
+        problems.append(f"no function of {BUILDER} calls the pinned runner {pin['runner']}")
+    return problems
+
+
+def pin_result(route: str) -> dict:
+    """Scored: the route's render entry is its pin, and the pinned runner renders from it."""
+    name = (
+        "render entry pin: the table's entry and recipe paths are the pinned ones, and the "
+        "production job runner renders from that entry"
+    )
+    if _registry() is None:
+        return _kind(_no_registry("10.pin", name), "gate")
+    problems = pin_problems(route)
+    evidence = {"pins": _shown_path(RENDER_ENTRIES), "pin": render_entry_pins().get(route)}
+    return _kind(_result("10.pin", name, not problems, problems, evidence), "gate")
+
+
 # ------------------------------------------------------------------- golden lines
 
 # Fixed plans every route's table builds its card lines for (`golden_lines`).
@@ -3617,6 +3776,52 @@ def decides_a_refusal(strategy):
 class Plan:
     target_duration_s: float = 0.0
 """
+# Job runners and worker modules for the 10.pin call rule (`calls_entry`).
+_RUNNERS = {
+    "tasks/synthetic_runner.py": """
+from app.pipeline.synthetic_plan import compile_plan
+
+
+def renders(job):
+    recipe = compile_plan(job)
+    return recipe
+
+
+def drops_it(job):
+    compile_plan(job)
+    return {"duration": 30.0}
+
+
+def parks_it(job):
+    echo = compile_plan(job)
+    del echo
+    return {"duration": 30.0}
+
+
+def names_only(job):
+    return {"entry": compile_plan}
+
+
+def same_name_elsewhere(job):
+    from app.pipeline.echo_plan import compile_plan
+
+    return compile_plan(job)
+""",
+    "tasks/synthetic_worker.py": """
+from app.tasks.synthetic_runner import renders
+
+
+def dispatch(job):
+    renders(job)
+""",
+    "tasks/synthetic_idle.py": """
+from app.tasks.synthetic_runner import renders
+
+
+def dispatch(job):
+    return renders
+""",
+}
 
 
 def gate_controls(route: str | None) -> list[dict]:
@@ -3701,6 +3906,34 @@ def gate_controls(route: str | None) -> list[dict]:
             carrier("drops_it"),
         ),
         _row("10 deleting the field is not a read must FAIL", False, carrier("deletes_it")),
+    ]
+    entry_at = "pipeline/synthetic_plan.py:compile_plan"
+    runs = {
+        "renders": ("imports, calls and uses the entry must PASS", True),
+        "drops_it": ("throws the entry's value away must FAIL", False),
+        "parks_it": ("keeps the entry's value on a local nothing reads must FAIL", False),
+        "names_only": ("only names the entry must FAIL", False),
+        "same_name_elsewhere": ("calls a same-named function of another module must FAIL", False),
+    }
+    rows += [
+        _row(
+            f"10.pin a runner that {what}",
+            want,
+            calls_entry(f"tasks/synthetic_runner.py:{fn}", entry_at, used=True, texts=_RUNNERS),
+        )
+        for fn, (what, want) in runs.items()
+    ]
+    rows += [
+        _row(
+            f"10.pin a worker module that {'calls' if want else 'never calls'} the runner must "
+            f"{'PASS' if want else 'FAIL'}",
+            want,
+            calls_entry(worker, "tasks/synthetic_runner.py:renders", used=False, texts=_RUNNERS),
+        )
+        for worker, want in (
+            ("tasks/synthetic_worker.py", True),
+            ("tasks/synthetic_idle.py", False),
+        )
     ]
     registry = _registry()
     if registry is None or route is None or registry.tables.table_for(route) is None:
@@ -3807,6 +4040,18 @@ def gate_controls(route: str | None) -> list[dict]:
             _row(f"10.entry {what} must be flagged", False, not entry_problems(route, bad))
             for what, bad in bad_entries.items()
         ]
+        unpinned = {
+            "an entry its pin does not name": RenderEntry(
+                f"{entry.entry.partition(':')[0]}:_echo_{route}", entry.recipe
+            ),
+            "a recipe path its pin does not name": RenderEntry(
+                entry.entry, {**entry.recipe, "length_s": "echo.length_s"}
+            ),
+        }
+        rows += [
+            _row(f"10.pin {what} must be flagged", False, not pin_problems(route, bad))
+            for what, bad in unpinned.items()
+        ]
     affirmative = {
         "en": "It is applied exactly as planned, the pace you chose",
         "tr": "Tam planlandığı gibi uygulanıyor, seçtiğin tempo",
@@ -3873,8 +4118,8 @@ from app.schemas.text_style_intent import normalize_title_animation
 
 
 def _fact(requirements, name):
-    for req in requirements:
-        facts = req.get("facts") or {}
+    for req in REQ_ITER:
+        facts = REQ_FACTS or {}
         if name in facts:
             return facts[name]
     return None
@@ -3923,9 +4168,12 @@ _ROUTE_PARTS = {
     "PACE_KEPT": "True",
     "ROW_ENTRANCE": "entrance",
     "ENTRANCE_HANDED": "False",
+    "REQ_ITER": "requirements",
+    "REQ_FACTS": 'req.get("facts")',
 }
 _ROUTE_VARIANTS = {
     "honest": {},
+    "typed": {"REQ_ITER": "requirements.live()", "REQ_FACTS": "req.facts"},
     "noswitch": {"SWITCH_READ": "True"},
     "two": {"ENTRANCE_KEPT": 'entrance in ("pop", "fade")'},
     "field": {"ASK_ANIMATION": "None", "ASK_LENGTH": "None"},
@@ -3942,6 +4190,19 @@ _SYNTHETIC_CASES: dict[str, tuple[str, str, bool, bool]] = {
         f"def recipe(fx):\n    return {_CALL}\n",
         True,
         True,
+    ),
+    "an honest module over an entry that reads the brief as typed objects must PASS": (
+        "typed",
+        'def recipe(fx):\n    return plan(fx["strategy"], fx["brief"], fx["clips"])\n',
+        True,
+        True,
+    ),
+    "a module that reads the typed brief itself (brief.live()) must FAIL": (
+        "typed",
+        "def recipe(fx):\n    fx['brief'].live()\n"
+        '    return plan(fx["strategy"], fx["brief"], fx["clips"])\n',
+        True,
+        False,
     ),
     "a constant recipe that never calls the entry must FAIL": (
         "honest",
@@ -4252,6 +4513,7 @@ def run_offline(fixture_dir: Path, route: str | None = None) -> dict:
         )
         checks.append(_guarded("10.lines", "card lines", lambda: lines_result(fx["route"])))
         checks.append(_guarded("10.entry", "render entry", lambda: entry_result(fx["route"])))
+        checks.append(_guarded("10.pin", "render entry pin", lambda: pin_result(fx["route"])))
         gate = _guarded(10, "consumer gate", lambda: gate_result(10, fx["route"], cards()["en"]))
         checks.append({**gate, "report_only": True, "kind": "report"})
         try:
@@ -4266,7 +4528,7 @@ def run_offline(fixture_dir: Path, route: str | None = None) -> dict:
             shown = {"error": f"{type(exc).__name__}: {exc}"}
     for c in checks:  # a guarded check that raised carries no kind of its own
         c.setdefault("kind", _KIND_OF_ID.get(str(c["id"]).split(".")[0], "disclosed_ok"))
-        if str(c["id"]) in {"10.claims", "10.lines", "10.entry"}:
+        if str(c["id"]) in {"10.claims", "10.lines", "10.entry", "10.pin"}:
             c["kind"] = "gate"
     scored = [c for c in checks if not c.get("report_only")]
     targets = lane_targets(fx["fixture_id"])
