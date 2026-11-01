@@ -1248,7 +1248,8 @@
         "KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload",
         "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference",
         "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory",
-        "KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss"
+        "KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss",
+        "KriaUITests/WhatsNewUITests/testGuideOpensFromSettingsShowsNewestFirstAndTryItReachesTextPreferences"
       ],
       "api_tests": "tests/pipeline/test_phone_text_style.py tests/pipeline/test_phone_text_fit_never_fails.py tests/evals/test_phone_typography_evals.py tests/integration/test_finished_style_learning.py tests/kria/test_kri1024_flag_emoji_title.py tests/kria/test_kri1024_phone_text_glyphs_postgres.py",
       "paths": [
@@ -1301,7 +1302,12 @@
         "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/RenderAssets.swift",
         "src/apps/ios/Tests/KriaUITests/AccountPrivacyUITests.swift",
         "src/apps/api/app/services/finished_style_learning.py",
-        "src/apps/api/app/migrations/versions/0120_finished_style_learning.py"
+        "src/apps/api/app/migrations/versions/0120_finished_style_learning.py",
+        "src/apps/ios/Kria/Core/WhatsNew.swift",
+        "src/apps/ios/Kria/Core/WhatsNewReleases.swift",
+        "src/apps/ios/Kria/Features/WhatsNewView.swift",
+        "src/apps/ios/Tests/KriaTests/WhatsNewTests.swift",
+        "src/apps/ios/Tests/KriaUITests/WhatsNewUITests.swift"
       ]
     },
     {
