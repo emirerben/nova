@@ -1,0 +1,602 @@
+{
+  "fixture": "narrated",
+  "route": "narrated",
+  "mode": "offline",
+  "source": {
+    "kind": "recorded",
+    "what": "Prod Kria thread, approved draft and its render (origin/main ff5f2adbe).",
+    "captured": "2026-11-01 via read-only admin GETs (saved copies, no network now)",
+    "recorded": [
+      "creator messages up to the approved draft (thread events)",
+      "the planner's post-parse strategy and summary (turns plan intents[].arguments)",
+      "the Creative Brief bound to the job (assembly_plan.creator_brief_binding)",
+      "clip analyses, durations, audio (media_snapshot.clip_assignments)",
+      "the draft card prod showed and what the render did (prod_outcome)"
+    ],
+    "reconstructed": [
+      "the approval card is assembled offline from the real pure functions the draft turn calls (scripts/kria/score_route.py approval_card); the DB-bound turn body is not run",
+      "phone source bindings: synthetic proxy paths (score_route.media_rows)",
+      "capability manifest (score_route.manifest)",
+      "strategy.title_animation = \"typewriter\" and brief r3 (style, global, facts.animation = \"typewriter\", \"make the hook type in\") are NOT in the recording. They give the fixture an animation ask, the render target of the Narrated lane (L3)."
+    ],
+    "redacted": [
+      "user, thread, item, job, turn and draft ids",
+      "storage paths and signed URLs",
+      "library asset ids (now asset-synthetic-NN)",
+      "file names and content hashes",
+      "media ids (now analysis-proxy-narrated-NN)"
+    ],
+    "see": "tests/fixtures/kria_replay/narrated/README.md"
+  },
+  "network_attempts_blocked": 0,
+  "registry": true,
+  "passed": 5,
+  "failed": 5,
+  "all_green": false,
+  "by_kind": {
+    "route": {
+      "passed": 1,
+      "failed": 0
+    },
+    "disclosed_ok": {
+      "passed": 4,
+      "failed": 3
+    },
+    "honored": {
+      "passed": 0,
+      "failed": 2
+    }
+  },
+  "inconclusive": [],
+  "lane_targets": {
+    "2.pacing": {
+      "lane": "L3",
+      "kind": "disclosed_ok",
+      "why": "disclosure gap: as on Talking, a default balanced pace on the card chip is treated as silence while the cuts follow the voiceover"
+    },
+    "2.story_structure": {
+      "lane": "L3",
+      "kind": "disclosed_ok",
+      "why": "disclosure gap: the narrated table has no story_structure entry and the writer does not read it (consumer gate lists it), so the planned story order is dropped silently"
+    },
+    "3.r1": {
+      "lane": "L3",
+      "kind": "disclosed_ok",
+      "why": "disclosure gap: the creator's 'at most 120 s' ask has an unchecked receipt (left out of a first draft) and lines.stated_length reads only the strategy's provenance (creator_duration_s, target_duration_requested), which this plan lacks; prod rendered 134.5 s under a log_only length policy"
+    },
+    "4.title_animation": {
+      "lane": "L3",
+      "kind": "honored",
+      "why": "the planned title animation reaches the narrated title"
+    },
+    "5.r3": {
+      "lane": "L3",
+      "kind": "honored",
+      "why": "make the hook type in: the animation ask reaches the narrated title"
+    }
+  },
+  "expected_red": [
+    "2.pacing",
+    "2.story_structure",
+    "3.r1",
+    "4.title_animation",
+    "5.r3"
+  ],
+  "unexpected_red": [],
+  "unexpected_green": [],
+  "not_graded": {
+    "opening_title": "Applied in the narrated table (narrated_title.py reads it); the consumer gate (check 10) holds that claim. The recorded render's title element was edited in the editor afterwards (Montserrat, typewriter, custom position, not the writer's Playfair preset), so it is evidence of neither",
+    "target_duration_s": "graded through r1, the creator's length ask: the strategy carries 120 s without the server's length provenance (creator_duration_s, target_duration_requested)",
+    "caption_style": "auto, the schema default: the planner chose no caption style"
+  },
+  "report_only": [
+    10
+  ],
+  "controls_ok": true,
+  "negative_controls": [
+    {
+      "name": "2 the card names the pace without saying it is dropped must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 the card says the pace is not applied must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 render evidence applies the field must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 an undecided receipt must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a typed decline before approval must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a checked met receipt must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 an unchecked hedge on the card is not a disclosure must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 a typed decline that names the field must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 a line about subtitles does not name the title must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 another field's line that names the word does not disclose this field must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 a line past the card's budget is not read must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a length ask with no receipt and a card line that keeps the length must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a length ask with the card line saying the length is not applied must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 no render evidence for a lane target must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 render evidence that applies the lane target must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a new unconsumed field must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "zz_new_unconsumed_field"
+      ]
+    },
+    {
+      "name": "10 an Applied claim with no reader must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "zz_claimed_field"
+      ]
+    }
+  ],
+  "replay": {
+    "fields": {},
+    "asks": {},
+    "source": null
+  },
+  "card": {
+    "route": "narrated",
+    "lines_shown": true,
+    "reply": "Not everything you asked for made it in:\n- Done: a hook that matches the video (\"Fenerbahçe matchday\")\n- Couldn't: make the hook type in (I can't animate on-screen text on this video yet, so the text shows without motion)\nHeads-up for this video:\n- The native direction isn't applied on this video yet: the video follows your voiceover\n- I can't animate the title (typewriter) on this video yet, so it shows without motion",
+    "changes": [
+      "Balanced pacing",
+      "Narrated Planned format"
+    ],
+    "receipts": [
+      {
+        "requirement_id": "r2",
+        "brief_version": null,
+        "generation_id": null,
+        "status": "met",
+        "verification": "checked",
+        "stage": "checked",
+        "target_media_ids": [],
+        "reason": null,
+        "inferred": [],
+        "inferred_labels": []
+      },
+      {
+        "requirement_id": "r3",
+        "brief_version": null,
+        "generation_id": null,
+        "status": "not_possible",
+        "verification": "checked",
+        "stage": "checked",
+        "target_media_ids": [],
+        "reason": "I can't animate on-screen text on this video yet, so the text shows without motion",
+        "inferred": [],
+        "inferred_labels": []
+      }
+    ],
+    "not_applied": [
+      {
+        "code": "not_applied_on_route",
+        "subject": "direction",
+        "text": "The native direction isn't applied on this video yet: the video follows your voiceover",
+        "on_card": true
+      },
+      {
+        "code": "not_applied_on_route",
+        "subject": "title_animation",
+        "text": "I can't animate the title (typewriter) on this video yet, so it shows without motion",
+        "on_card": true
+      }
+    ],
+    "text": "Not everything you asked for made it in:\n- Done: a hook that matches the video (\"Fenerbahçe matchday\")\n- Couldn't: make the hook type in (I can't animate on-screen text on this video yet, so the text shows without motion)\nHeads-up for this video:\n- The native direction isn't applied on this video yet: the video follows your voiceover\n- I can't animate the title (typewriter) on this video yet, so it shows without motion\n\nI can't animate on-screen text on this video yet, so the text shows without motion",
+    "disclosure_text": "The native direction isn't applied on this video yet: the video follows your voiceover\nI can't animate the title (typewriter) on this video yet, so it shows without motion\nI can't animate on-screen text on this video yet, so the text shows without motion"
+  },
+  "checks": [
+    {
+      "id": 1,
+      "name": "route: the draft resolves to the route that renders it",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "fixture_route": "narrated",
+        "card_route": "narrated",
+        "lines_shown": true
+      },
+      "kind": "route"
+    },
+    {
+      "id": "2.direction",
+      "name": "direction: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "value": "native",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.pacing",
+      "name": "pacing: honored in the render or disclosed before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose pacing='balanced'; no render evidence applies it and the card does not say it is not applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied": false,
+        "disclosed_on_card": false,
+        "value": "balanced",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.story_structure",
+      "name": "story_structure: honored in the render or disclosed before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose story_structure=['Fenerbahçe fans marching and chanting in the streets', 'Arrival at the stadium with pyrotechnics', 'Exciting match moments and crowd reactions']; no render evidence applies it and the card does not say it is not applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied": false,
+        "disclosed_on_card": false,
+        "value": [
+          "Fenerbahçe fans marching and chanting in the streets",
+          "Arrival at the stadium with pyrotechnics",
+          "Exciting match moments and crowd reactions"
+        ],
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.title_animation",
+      "name": "title_animation: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "value": "typewriter",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "3.r1",
+      "name": "r1: the ask is honored or declined before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "'use a shorter voiceover / limit duration' has receipt {'status': None, 'verification': None, 'reason': None}: neither met nor a typed decline, and the card has no target_duration_s line"
+      ],
+      "evidence": {
+        "pass": false,
+        "met": false,
+        "declined_before_approval": false,
+        "disclosed_on_card": false,
+        "honored_at_render": false,
+        "receipt": {
+          "status": null,
+          "verification": null,
+          "reason": null
+        },
+        "requirement": {
+          "id": "r1",
+          "kind": "timing",
+          "facts": {
+            "duration_s": 120,
+            "duration_bound": "at_most"
+          },
+          "scope": "global",
+          "status": "open",
+          "literal": null,
+          "description": "use a shorter voiceover / limit duration",
+          "source_turn_id": "synthetic-turn"
+        },
+        "card_line": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "3.r2",
+      "name": "r2: the ask is honored or declined before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "met": true,
+        "declined_before_approval": false,
+        "disclosed_on_card": false,
+        "honored_at_render": false,
+        "receipt": {
+          "status": "met",
+          "verification": "checked",
+          "reason": null
+        },
+        "requirement": {
+          "id": "r2",
+          "kind": "text",
+          "facts": {
+            "approved_copy": {
+              "text": "Fenerbahçe matchday",
+              "target": "opening_title"
+            }
+          },
+          "scope": "title",
+          "status": "open",
+          "literal": "Fenerbahçe matchday",
+          "description": "a hook that matches the video",
+          "source_turn_id": "synthetic-turn"
+        },
+        "card_line": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "3.r3",
+      "name": "r3: the ask is honored or declined before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "met": false,
+        "declined_before_approval": true,
+        "disclosed_on_card": false,
+        "honored_at_render": false,
+        "receipt": {
+          "status": "not_possible",
+          "verification": "checked",
+          "reason": "I can't animate on-screen text on this video yet, so the text shows without motion"
+        },
+        "requirement": {
+          "id": "r3",
+          "kind": "style",
+          "scope": "global",
+          "literal": null,
+          "description": "make the hook type in",
+          "facts": {
+            "animation": "typewriter"
+          },
+          "source_turn_id": "synthetic-turn",
+          "status": "open"
+        },
+        "card_line": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "4.title_animation",
+      "name": "title_animation: applied in the render (lane target)",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose title_animation='typewriter'; no render replay for this route (scripts/kria/route_replays/narrated.py): only the render can show it applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied_at_render": false,
+        "value": "typewriter",
+        "render_evidence": null
+      },
+      "kind": "honored"
+    },
+    {
+      "id": "5.r3",
+      "name": "r3: honored in the render (lane target)",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "'make the hook type in': no render replay for this route (scripts/kria/route_replays/narrated.py): only the render can show it applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied_at_render": false,
+        "requirement": {
+          "id": "r3",
+          "kind": "style",
+          "scope": "global",
+          "literal": null,
+          "description": "make the hook type in",
+          "facts": {
+            "animation": "typewriter"
+          },
+          "source_turn_id": "synthetic-turn",
+          "status": "open"
+        },
+        "render_evidence": null
+      },
+      "kind": "honored"
+    },
+    {
+      "id": 10,
+      "name": "consumer gate (REPORT ONLY): fields the route ignores and the card does not disclose",
+      "pass": false,
+      "verdict": "REPORT (gaps)",
+      "why_it_fails": [
+        "the narrated route reads none of ['archetype', 'hero_media_id', 'execution_contract', 'story_structure', 'editorial_plan', 'caption_style', 'opening_title_duration_s', 'shot_labels', 'closing_title', 'label_position', 'image_layout', 'pacing', 'target_duration_s', 'render_program', 'optional_treatments', 'overlay_display', 'licensed_sfx', 'mixed_media_timing', 'video_reuse_policy', 'montage_cadence'] and the approval card does not say they are not applied"
+      ],
+      "evidence": {
+        "registry_drift": {
+          "listed_but_read": [],
+          "unread_but_unlisted": [
+            "closing_title",
+            "editorial_plan",
+            "execution_contract",
+            "image_layout",
+            "mixed_media_timing",
+            "montage_cadence",
+            "opening_title_duration_s",
+            "render_program",
+            "shot_labels",
+            "story_structure",
+            "video_reuse_policy"
+          ]
+        },
+        "pass": false,
+        "settable_fields": 32,
+        "claimed_applied_unread": [],
+        "unconsumed": [
+          "direction",
+          "archetype",
+          "hero_media_id",
+          "execution_contract",
+          "story_structure",
+          "editorial_plan",
+          "caption_style",
+          "intro_hook",
+          "opening_title_duration_s",
+          "shot_labels",
+          "closing_title",
+          "title_animation",
+          "label_position",
+          "image_layout",
+          "pacing",
+          "target_duration_s",
+          "render_program",
+          "optional_treatments",
+          "overlay_display",
+          "licensed_sfx",
+          "mixed_media_timing",
+          "video_reuse_policy",
+          "montage_cadence"
+        ],
+        "undisclosed": [
+          "archetype",
+          "hero_media_id",
+          "execution_contract",
+          "story_structure",
+          "editorial_plan",
+          "caption_style",
+          "opening_title_duration_s",
+          "shot_labels",
+          "closing_title",
+          "label_position",
+          "image_layout",
+          "pacing",
+          "target_duration_s",
+          "render_program",
+          "optional_treatments",
+          "overlay_display",
+          "licensed_sfx",
+          "mixed_media_timing",
+          "video_reuse_policy",
+          "montage_cadence"
+        ],
+        "disclosed": [
+          "direction",
+          "intro_hook",
+          "title_animation"
+        ],
+        "exempt": {
+          "rationale": "explanatory prose shown to the creator, nothing to apply"
+        },
+        "indirect_consumers": [
+          "audio_strategy",
+          "font_family",
+          "media_scope",
+          "selected_media_ids",
+          "text_color"
+        ]
+      },
+      "report_only": true,
+      "kind": "report"
+    }
+  ]
+}

@@ -1,0 +1,172 @@
+{
+  "fixture_id": "voiceover_montage",
+  "route": "voiceover_montage",
+  "schema_version": 1,
+  "source": {
+    "kind": "synthetic",
+    "what": "Synthetic montage under a recorded voiceover (phone voiceover montage writer). The scout read the 19 newest variants_ready prod jobs (2026-10-27 to 2026-10-31): none had a recorded voiceover.",
+    "captured": "hand-written 2026-11-01 (no prod thread found by the KRI-1097 fixture scout)",
+    "recorded": [],
+    "reconstructed": [
+      "everything: creator message, Creative Brief, planner strategy and summary, clips",
+      "the planner's choices are written as the planner returns them for this request (post-parse strategy, with the server's provenance flags where the creator states a pace or a length); no model is replayed",
+      "the approval card is assembled offline from the real pure functions the draft turn calls (scripts/kria/score_route.py approval_card); the DB-bound turn body is not run",
+      "phone source bindings: synthetic proxy paths (score_route.media_rows)",
+      "the recorded voiceover itself (the card does not read it; media_snapshot carries no voiceover in this fixture)"
+    ],
+    "redacted": [],
+    "see": "tests/fixtures/kria_replay/voiceover_montage/README.md"
+  },
+  "message": "Cut my Kas weekend clips under the voiceover I recorded. Tell it as a story: the drive in, the old town, the beach, then the sunset. Balanced pace, about 30 seconds, kinetic captions, and animate the text.",
+  "messages": [
+    "Cut my Kas weekend clips under the voiceover I recorded. Tell it as a story: the drive in, the old town, the beach, then the sunset. Balanced pace, about 30 seconds, kinetic captions, and animate the text."
+  ],
+  "client_protocol": 25,
+  "planner_summary": "I'll cut your Kas weekend as a story under your voiceover: the drive in, the old town, the beach and the sunset, at a balanced pace for about 30 seconds.",
+  "brief": {
+    "version": 1,
+    "requirements": [
+      {
+        "id": "r1",
+        "kind": "timing",
+        "scope": "global",
+        "literal": null,
+        "description": "about 30 seconds",
+        "facts": {
+          "duration_s": 30
+        },
+        "source_turn_id": "synthetic-turn",
+        "status": "open"
+      },
+      {
+        "id": "r2",
+        "kind": "style",
+        "scope": "global",
+        "literal": null,
+        "description": "animate the text",
+        "facts": {
+          "animation": "any"
+        },
+        "source_turn_id": "synthetic-turn",
+        "status": "open"
+      },
+      {
+        "id": "r3",
+        "kind": "style",
+        "scope": "global",
+        "literal": null,
+        "description": "kinetic captions",
+        "facts": {
+          "captions": "word_by_word"
+        },
+        "source_turn_id": "synthetic-turn",
+        "status": "open"
+      }
+    ]
+  },
+  "strategy": {
+    "edit_format": "montage",
+    "render_program": "guided",
+    "audio_strategy": "voiceover",
+    "direction": "guided_story",
+    "pacing": "balanced",
+    "pacing_requested": true,
+    "intro_hook": "We almost skipped Kas",
+    "story_structure": [
+      "The drive in",
+      "The old town",
+      "The beach",
+      "The sunset"
+    ],
+    "caption_style": "kinetic",
+    "title_animation": "pop",
+    "target_duration_s": 30,
+    "target_duration_requested": true,
+    "creator_duration_s": 30,
+    "media_scope": "all",
+    "selected_media_ids": [],
+    "video_reuse_policy": "once",
+    "optional_treatments": [],
+    "rationale": "A story order under the creator's voice, at the pace and length asked for."
+  },
+  "clips": [
+    {
+      "id": "analysis-proxy-voiceover_montage-01",
+      "kind": "video",
+      "duration_s": 9.0,
+      "has_audio": true,
+      "source_filename": "clip-01.mp4",
+      "analysis": {}
+    },
+    {
+      "id": "analysis-proxy-voiceover_montage-02",
+      "kind": "video",
+      "duration_s": 7.5,
+      "has_audio": true,
+      "source_filename": "clip-02.mp4",
+      "analysis": {}
+    },
+    {
+      "id": "analysis-proxy-voiceover_montage-03",
+      "kind": "video",
+      "duration_s": 11.2,
+      "has_audio": true,
+      "source_filename": "clip-03.mp4",
+      "analysis": {}
+    },
+    {
+      "id": "analysis-proxy-voiceover_montage-04",
+      "kind": "video",
+      "duration_s": 6.4,
+      "has_audio": true,
+      "source_filename": "clip-04.mp4",
+      "analysis": {}
+    },
+    {
+      "id": "analysis-proxy-voiceover_montage-05",
+      "kind": "video",
+      "duration_s": 8.8,
+      "has_audio": true,
+      "source_filename": "clip-05.mp4",
+      "analysis": {}
+    },
+    {
+      "id": "analysis-proxy-voiceover_montage-06",
+      "kind": "video",
+      "duration_s": 12.0,
+      "has_audio": true,
+      "source_filename": "clip-06.mp4",
+      "analysis": {}
+    }
+  ],
+  "checks": {
+    "fields": [
+      "direction",
+      "pacing",
+      "intro_hook",
+      "story_structure",
+      "caption_style",
+      "title_animation",
+      "target_duration_s"
+    ],
+    "asks": [
+      "r1",
+      "r2",
+      "r3"
+    ],
+    "honored": {
+      "fields": [
+        "pacing",
+        "target_duration_s",
+        "title_animation"
+      ],
+      "asks": [
+        "r1",
+        "r2"
+      ]
+    },
+    "not_graded": {
+      "no_text": "a skipped opening title (omitted_copy_targets) is not in this fixture: its intro text conflicts with the animation ask; the voiceover lane adds its own fixture if it honors it"
+    }
+  }
+}

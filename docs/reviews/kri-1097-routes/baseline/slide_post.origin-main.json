@@ -1,0 +1,513 @@
+{
+  "fixture": "slide_post",
+  "route": "slide_post",
+  "mode": "offline",
+  "source": {
+    "kind": "synthetic",
+    "what": "Synthetic slide post drafted by the planner. The 7 prod slide jobs the scout found (2026-09-30 to 2026-10-06) were manual Plan-page posts with no planner turn, so there was no planner strategy to replay.",
+    "captured": "hand-written 2026-11-01 (no prod thread found by the KRI-1097 fixture scout)",
+    "recorded": [],
+    "reconstructed": [
+      "everything: creator message, Creative Brief, planner strategy and summary, clips",
+      "the planner's choices are written as the planner returns them for this request (post-parse strategy, with the server's provenance flags where the creator states a pace or a length); no model is replayed",
+      "the approval card is assembled offline from the real pure functions the draft turn calls (scripts/kria/score_route.py approval_card); the DB-bound turn body is not run",
+      "phone source bindings: synthetic proxy paths (score_route.media_rows)"
+    ],
+    "redacted": [],
+    "see": "tests/fixtures/kria_replay/slide_post/README.md"
+  },
+  "network_attempts_blocked": 0,
+  "registry": false,
+  "passed": 0,
+  "failed": 13,
+  "all_green": false,
+  "by_kind": {
+    "route": {
+      "passed": 0,
+      "failed": 1
+    },
+    "disclosed_ok": {
+      "passed": 0,
+      "failed": 12
+    },
+    "honored": {
+      "passed": 0,
+      "failed": 0
+    }
+  },
+  "inconclusive": [
+    "10"
+  ],
+  "lane_targets": {
+    "2.opening_title": {
+      "lane": "L6",
+      "kind": "disclosed_ok",
+      "why": "disclosure gap: the table's opening-title line falls past the card's 640-character budget, so the creator never reads it"
+    },
+    "2.target_duration_s": {
+      "lane": "L6",
+      "kind": "disclosed_ok",
+      "why": "disclosure gap: the table's length line falls past the card's 640-character budget, so the creator never reads it"
+    },
+    "3.r2": {
+      "lane": "L6",
+      "kind": "disclosed_ok",
+      "why": "disclosure gap: keep it 20 seconds has no receipt on a first draft (unchecked) and its card length line is past the budget"
+    }
+  },
+  "expected_red": [
+    "2.opening_title",
+    "2.target_duration_s",
+    "3.r2"
+  ],
+  "unexpected_red": [
+    "1",
+    "2.direction",
+    "2.pacing",
+    "2.intro_hook",
+    "2.story_structure",
+    "2.caption_style",
+    "2.title_animation",
+    "2.audio_strategy",
+    "3.r1",
+    "3.r3"
+  ],
+  "unexpected_green": [],
+  "not_graded": {
+    "honored": "no render target: the slide lane (L6) discloses every video-only field and changes the planner prompt, which an offline replay of a written strategy cannot show"
+  },
+  "report_only": [
+    10
+  ],
+  "controls_ok": true,
+  "negative_controls": [
+    {
+      "name": "2 the card names the pace without saying it is dropped must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 the card says the pace is not applied must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 render evidence applies the field must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 an undecided receipt must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a typed decline before approval must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a checked met receipt must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 an unchecked hedge on the card is not a disclosure must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 a typed decline that names the field must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 a line about subtitles does not name the title must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 another field's line that names the word does not disclose this field must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 a line past the card's budget is not read must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a length ask with no receipt and a card line that keeps the length must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a length ask with the card line saying the length is not applied must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 no render evidence for a lane target must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 render evidence that applies the lane target must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a new unconsumed field must be flagged",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no registry table on this code"
+    },
+    {
+      "name": "10 an Applied claim with no reader must be flagged",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no registry table on this code"
+    }
+  ],
+  "replay": {
+    "fields": {},
+    "asks": {},
+    "source": null
+  },
+  "card": {
+    "route": null,
+    "lines_shown": false,
+    "reply": "I'll make a fast slide post of Kas: arrival, old town, sunset, with your title popping in and music, about 20 seconds.",
+    "changes": [
+      "Fast pacing",
+      "Slides format"
+    ],
+    "receipts": [],
+    "not_applied": [],
+    "text": "I'll make a fast slide post of Kas: arrival, old town, sunset, with your title popping in and music, about 20 seconds.",
+    "disclosure_text": ""
+  },
+  "checks": [
+    {
+      "id": 1,
+      "name": "route: the draft resolves to the route that renders it",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the draft card reads the None table, but 'slide_post' renders it"
+      ],
+      "evidence": {
+        "fixture_route": "slide_post",
+        "card_route": null,
+        "lines_shown": false
+      },
+      "kind": "route"
+    },
+    {
+      "id": "2.direction",
+      "name": "direction: honored in the render or disclosed before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose direction='guided_story'; no render evidence applies it and the card does not say it is not applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied": false,
+        "disclosed_on_card": false,
+        "value": "guided_story",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.pacing",
+      "name": "pacing: honored in the render or disclosed before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose pacing='fast'; no render evidence applies it and the card does not say it is not applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied": false,
+        "disclosed_on_card": false,
+        "value": "fast",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.intro_hook",
+      "name": "intro_hook: honored in the render or disclosed before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose intro_hook='Three days, zero plans'; no render evidence applies it and the card does not say it is not applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied": false,
+        "disclosed_on_card": false,
+        "value": "Three days, zero plans",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.story_structure",
+      "name": "story_structure: honored in the render or disclosed before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose story_structure=['Arrival', 'The old town', 'Sunset']; no render evidence applies it and the card does not say it is not applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied": false,
+        "disclosed_on_card": false,
+        "value": [
+          "Arrival",
+          "The old town",
+          "Sunset"
+        ],
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.caption_style",
+      "name": "caption_style: honored in the render or disclosed before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose caption_style='kinetic'; no render evidence applies it and the card does not say it is not applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied": false,
+        "disclosed_on_card": false,
+        "value": "kinetic",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.opening_title",
+      "name": "opening_title: honored in the render or disclosed before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose opening_title='Three days in Kas'; no render evidence applies it and the card does not say it is not applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied": false,
+        "disclosed_on_card": false,
+        "value": "Three days in Kas",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.title_animation",
+      "name": "title_animation: honored in the render or disclosed before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose title_animation='pop'; no render evidence applies it and the card does not say it is not applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied": false,
+        "disclosed_on_card": false,
+        "value": "pop",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.target_duration_s",
+      "name": "target_duration_s: honored in the render or disclosed before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose target_duration_s=20; no render evidence applies it and the card does not say it is not applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied": false,
+        "disclosed_on_card": false,
+        "value": 20,
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.audio_strategy",
+      "name": "audio_strategy: honored in the render or disclosed before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose audio_strategy='licensed_music'; no render evidence applies it and the card does not say it is not applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied": false,
+        "disclosed_on_card": false,
+        "value": "licensed_music",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "3.r1",
+      "name": "r1: the ask is honored or declined before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "'animate the title in' has receipt {'status': None, 'verification': None, 'reason': None}: neither met nor a typed decline"
+      ],
+      "evidence": {
+        "pass": false,
+        "met": false,
+        "declined_before_approval": false,
+        "disclosed_on_card": false,
+        "honored_at_render": false,
+        "receipt": {
+          "status": null,
+          "verification": null,
+          "reason": null
+        },
+        "requirement": {
+          "id": "r1",
+          "kind": "style",
+          "scope": "global",
+          "literal": null,
+          "description": "animate the title in",
+          "facts": {
+            "animation": "pop"
+          },
+          "source_turn_id": "synthetic-turn",
+          "status": "open"
+        },
+        "card_line": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "3.r2",
+      "name": "r2: the ask is honored or declined before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "'keep it 20 seconds' has receipt {'status': None, 'verification': None, 'reason': None}: neither met nor a typed decline, and the card has no target_duration_s line"
+      ],
+      "evidence": {
+        "pass": false,
+        "met": false,
+        "declined_before_approval": false,
+        "disclosed_on_card": false,
+        "honored_at_render": false,
+        "receipt": {
+          "status": null,
+          "verification": null,
+          "reason": null
+        },
+        "requirement": {
+          "id": "r2",
+          "kind": "timing",
+          "scope": "global",
+          "literal": null,
+          "description": "keep it 20 seconds",
+          "facts": {
+            "duration_s": 20
+          },
+          "source_turn_id": "synthetic-turn",
+          "status": "open"
+        },
+        "card_line": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "3.r3",
+      "name": "r3: the ask is honored or declined before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "'kinetic captions' has receipt {'status': None, 'verification': None, 'reason': None}: neither met nor a typed decline"
+      ],
+      "evidence": {
+        "pass": false,
+        "met": false,
+        "declined_before_approval": false,
+        "disclosed_on_card": false,
+        "honored_at_render": false,
+        "receipt": {
+          "status": null,
+          "verification": null,
+          "reason": null
+        },
+        "requirement": {
+          "id": "r3",
+          "kind": "style",
+          "scope": "global",
+          "literal": null,
+          "description": "kinetic captions",
+          "facts": {
+            "captions": "on"
+          },
+          "source_turn_id": "synthetic-turn",
+          "status": "open"
+        },
+        "card_line": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": 10,
+      "name": "consumer gate (REPORT ONLY): needs the route's registry table",
+      "pass": false,
+      "verdict": "INCONCLUSIVE",
+      "why_it_fails": [
+        "no route registry on this code: the gate reads the route's table"
+      ],
+      "evidence": {},
+      "report_only": true,
+      "kind": "report"
+    }
+  ]
+}

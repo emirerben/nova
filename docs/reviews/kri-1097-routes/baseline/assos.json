@@ -1,0 +1,566 @@
+{
+  "fixture": "assos",
+  "mode": "offline",
+  "source": {
+    "code_under_audit": "origin/main 9c5a453b0",
+    "recorded": [
+      "creator message and Creative Brief v1 (exact, except r1 facts.animation: see reconstructed)",
+      "post-parse strategy of the planner (turns plan intents[0].arguments.strategy), including the frozen song section",
+      "16 clip analyses (job assembly_plan.creator_brief_binding.media_snapshot)",
+      "approval card text, requirement receipts, plan-block look chips, render_shape",
+      "the recipe prod produced (cut lengths, text effects, fonts, length owners)",
+      "turn 2 chip text, assistant reply, brief_coverage and the copilot run outcome"
+    ],
+    "reconstructed": [
+      "Creative Brief v1 r1 facts.animation = \"any\": prod ran planner prompt v105 and recorded facts={}; planner prompt v106 (prompt fidelity, animation) records an unnamed animation ask there. The model leg is not replayed offline; the structured round trip is pinned by tests/kria/test_text_animation_ask.py",
+      "nova.creator.main raw_text: prod redacts model I/O; the parsed strategy is recorded exactly, but the raw model JSON is not replayed through MainCreatorAgent.parse",
+      "phone source bindings: synthetic proxy paths, synthetic content hashes, and sizes from the recorded upload contract",
+      "capability manifest and the approval request body (render_shape echo vs pick is inferred from the iOS code, not recorded)",
+      "the approval card is assembled from the real pure functions (_strategy_changes, reply_from_receipts); the DB-bound turn body is not run"
+    ]
+  },
+  "network_attempts_blocked": 0,
+  "passed": 10,
+  "failed": 0,
+  "all_green": true,
+  "report_only": [
+    10
+  ],
+  "controls_ok": true,
+  "negative_controls": [
+    {
+      "name": "1 ignores the ask (static text, undecided receipt) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "1 honours the ask (animated text) must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "1 honours the ask (typed decline before approval) must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 ignores the strategy (constant cuts, fast_montage) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 honours the strategy must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a new unconsumed field must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "zz_new_unconsumed_field"
+      ]
+    },
+    {
+      "name": "10 an applied claim with no reader must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "zz_claimed_field"
+      ]
+    },
+    {
+      "name": "hold: a quoted text missing from the draft stays held",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": "evidence_missing"
+    },
+    {
+      "name": "hold: an order ask with no proof stays held",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": "evidence_missing"
+    },
+    {
+      "name": "hold: a length ask with no length evidence stays held",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": "evidence_missing"
+    },
+    {
+      "name": "hold: a vague ask nothing can check is approvable with a look-after line",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": "unverified"
+    }
+  ],
+  "reproduction": [
+    {
+      "name": "recipe cut lengths",
+      "reproduced": false,
+      "replay": [
+        7.2,
+        6.833,
+        7.2,
+        "..."
+      ],
+      "prod": [
+        1.1,
+        1.127,
+        1.127,
+        "..."
+      ]
+    },
+    {
+      "name": "recipe duration",
+      "reproduced": false,
+      "replay": 28.44,
+      "prod": 18.005
+    },
+    {
+      "name": "direction and pace constants",
+      "reproduced": false,
+      "replay": [
+        "text_explainer",
+        "balanced"
+      ],
+      "prod": [
+        "fast_montage",
+        "fast"
+      ]
+    },
+    {
+      "name": "researched caption texts",
+      "reproduced": false,
+      "replay": [
+        "Assos: Settled since the Bronze Age",
+        "Assos: Home to Aristotle's school",
+        "Assos: Perched on a volcanic hill"
+      ],
+      "prod": [
+        "Assos: Settled since the Bronze Age",
+        "Assos: Home to Aristotle's school",
+        "Assos: Perched on a volcanic hill",
+        "Assos: Anatolia's only Doric temple"
+      ]
+    },
+    {
+      "name": "text effects",
+      "reproduced": false,
+      "replay": [
+        "fade-in"
+      ],
+      "prod": [
+        "static"
+      ]
+    },
+    {
+      "name": "burned font",
+      "reproduced": true,
+      "replay": [
+        "Montserrat"
+      ],
+      "prod": "Montserrat"
+    },
+    {
+      "name": "typography font in plan",
+      "reproduced": true,
+      "replay": "Alte Haas Grotesk",
+      "prod": "Alte Haas Grotesk"
+    },
+    {
+      "name": "approval card text",
+      "reproduced": false,
+      "replay": "Have a look at these in the video:\n- animated on-screen text explaining why people should visit Assos, Turkey (the text will animate in as it appears; I'll check it in the finished video)\nHeads-up for this video:\n- To write that text I may research facts on the web after you approve\n- I can't use the opening hook idea (\"Why you need to visit Assos\") on this video yet, so it won't be shown as text\n- The planned story structure (Introduce Assos and its beautiful coast…, Showcase the ancient ruins and history, End on the stunning Aegean views and pe…) sets the chapters (which clips are grouped together), but it won't reorder your clips: they stay in the order you gave",
+      "prod": "Have a look at these in the video:\n- animated on-screen text explaining why people should visit Assos, Turkey"
+    },
+    {
+      "name": "approval card changes",
+      "reproduced": true,
+      "replay": [
+        "Balanced pacing",
+        "Montage format"
+      ],
+      "prod": [
+        "Balanced pacing",
+        "Montage format"
+      ]
+    },
+    {
+      "name": "approval consequence summary",
+      "reproduced": false,
+      "replay": "Render this draft: Have a look at these in the video:\n- anim",
+      "prod": "Render this draft: Have a look at these in the video:\n- anim"
+    },
+    {
+      "name": "r1 receipt",
+      "reproduced": false,
+      "replay": [
+        [
+          "met",
+          "unchecked"
+        ]
+      ],
+      "prod": [
+        [
+          "partial",
+          "unchecked"
+        ]
+      ]
+    },
+    {
+      "name": "server default render shape",
+      "reproduced": true,
+      "replay": {
+        "output_orientation": "landscape",
+        "landscape_fit": "fill"
+      },
+      "prod": {
+        "output_orientation": "landscape",
+        "landscape_fit": "fill"
+      }
+    },
+    {
+      "name": "orientation reason stamp",
+      "reproduced": false,
+      "replay": "Set automatically: no output format was picked.",
+      "prod": "The creator selected this output format."
+    },
+    {
+      "name": "no music on the phone",
+      "reproduced": true,
+      "replay": [
+        null,
+        "reference_only"
+      ],
+      "prod": [
+        null,
+        "reference_only"
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "id": 1,
+      "name": "animation: applied to the rendered text or declined before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": true,
+        "declined_before_approval": false,
+        "animated_recipe_text_layers": 3,
+        "animated_text_elements": 3,
+        "text_layers": 3,
+        "effects_seen": [
+          "fade-in"
+        ],
+        "r1_receipt": [
+          {
+            "status": "met",
+            "verification": "unchecked",
+            "reason": "the text will animate in as it appears; I'll check it in the finished video"
+          }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "name": "pace and direction come from the strategy, not constants",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "relaxed_cuts_longer_than_fast": true,
+        "snapshot_pace_follows_strategy": true,
+        "snapshot_direction_follows_strategy": true,
+        "mean_cut_s": {
+          "relaxed": 9.59,
+          "fast": 7.11,
+          "balanced": 7.11
+        },
+        "snapshot": {
+          "relaxed": {
+            "direction": "text_explainer",
+            "pace": "relaxed",
+            "cuts": 4
+          },
+          "fast": {
+            "direction": "text_explainer",
+            "pace": "fast",
+            "cuts": 4
+          },
+          "recorded": {
+            "direction": "text_explainer",
+            "pace": "balanced",
+            "cuts": 4
+          }
+        },
+        "strategy": {
+          "direction": "text_explainer",
+          "pacing": "balanced"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "name": "hook: intro_hook rendered or declined with a reason before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "intro_hook": "Why you need to visit Assos",
+        "best_overlap": 0.33,
+        "rendered": false,
+        "declined_on_card": true,
+        "rendered_texts": [
+          "Assos: Settled since the Bronze Age",
+          "Assos: Home to Aristotle's school",
+          "Assos: Perched on a volcanic hill",
+          "Assos: Settled since the Bronze Age"
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "name": "story order: story_structure applied or declined/disclosed",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "story_structure": [
+          "Introduce Assos and its beautiful coastal setting",
+          "Showcase the ancient ruins and history",
+          "End on the stunning Aegean views and peaceful vibe"
+        ],
+        "order_changes_with_structure": false,
+        "declined_on_card": true,
+        "order_head": [
+          "analysis-proxy-assos-01",
+          "analysis-proxy-assos-02",
+          "analysis-proxy-assos-03"
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "name": "length: every length shown before approval equals the recipe length",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "recipe_length_s": 28.44,
+        "lengths_shown": [
+          [
+            "draft_strategy.target_duration_s",
+            28.44
+          ]
+        ],
+        "length_owner_in_prod": {
+          "planner_target_duration_s": 20,
+          "first_generation": {
+            "owner": "song",
+            "requested_duration_s": null
+          },
+          "after_editor_save": {
+            "owner": "creator",
+            "requested_duration_s": 17.0
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "name": "\"creator selected\" is stamped only for an explicit pick, not an echoed default",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "server_default_shape": {
+          "output_orientation": "landscape",
+          "landscape_fit": "fill"
+        },
+        "echoed_default_reason": "Set automatically: no output format was picked.",
+        "explicit_portrait_pick_reason": "The creator selected this output format.",
+        "recorded_prod_reason": "The creator selected this output format.",
+        "note": "the worker tells an echo from a pick by the origin stamp inside the stored shape (written at approval); a shape without it reads as an echoed default, and an explicit pick must still be labelled as the creator's"
+      }
+    },
+    {
+      "id": 7,
+      "name": "research that runs after approval is disclosed on the approval card",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "searches_after_approval": [
+          "reasons to visit Assos, Turkey"
+        ],
+        "card_discloses_research": true,
+        "card_text": "Have a look at these in the video:\n- animated on-screen text explaining why people should visit Assos, Turkey (the text will animate in as it appears; I'll check it in the finished video)\nHeads-up for this video:\n- To write that text I may research facts on the web after you approve\n- I can't use the opening hook idea (\"Why you need to visit Assos\") on this video yet, so it won't be shown as text\n- The planned story structure (Introduce Assos and its beautiful coast…, Showcase the ancient ruins and history, End on the stunning Aegean views and pe…) sets the chapters (which clips are grouped together), but it won't reorder your clips: they stay in the order you gave\nRender this draft: Have a look at these in the video:\n- animated on-screen text explaining why people should visit Assos, Turkey (the text will animate in as it appears; I'll check it in the finished video)\nHeads-up for this video:\n- To write that text I may research facts on the web after you approve\n- I can't use the opening hook idea (\"Why you need to visit Assos\") on this video yet, so it won't be shown as text\n- The planned story structure (Introduce Assos and its beautiful coast…, Showcase the ancient ruins and history, End on the stunning Aegean views and pe…) sets the chapters (which clips are grouped together), but it won't reorder your clips: they stay in the order you gave\nBalanced pacing\nMontage format\nthe text will animate in as it appears; I'll check it in the finished video"
+      }
+    },
+    {
+      "id": 8,
+      "name": "look chip font equals the burned font",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "look_chips": [
+          "Guided story v2",
+          "Montserrat titles"
+        ],
+        "chip_fonts": [
+          "montserrat"
+        ],
+        "burned_fonts": [
+          "montserrat"
+        ],
+        "recorded_prod_chips": [
+          "Guided story v2",
+          "Alte haas grotesk titles"
+        ]
+      }
+    },
+    {
+      "id": 9,
+      "name": "a provider failure on a follow-up is not reported as an unreadable request",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "response": "I couldn't prepare those edits this time. Your complete request is saved and your draft is unchanged. Try again, or tell me the most important change first.",
+        "mode": "respond",
+        "reason": "request_extraction_provider_failed",
+        "cause": {
+          "stage": "followup_extraction",
+          "error_type": "RuntimeError",
+          "cause_type": "TerminalError"
+        },
+        "recorded_prod": {
+          "reply": "I couldn't reliably read every requested change. Your complete request is saved and your draft is unchanged. Which clip or part of the edit should I work on first?",
+          "brief_coverage": {
+            "cause": {
+              "stage": "followup_extraction",
+              "cause_type": "TerminalError",
+              "error_type": "RuntimeError"
+            },
+            "stage": "planning",
+            "reason": "request_extraction_failed",
+            "enforced_ids": [],
+            "retrieved_ids": [],
+            "applicable_ids": [
+              "r1"
+            ],
+            "unresolved_ids": [
+              "r1"
+            ]
+          },
+          "copilot_outcome": "terminal_transient"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "name": "consumer gate (REPORT ONLY): fields the route ignores and the card does not disclose",
+      "pass": false,
+      "verdict": "REPORT (gaps)",
+      "why_it_fails": [
+        "the unified-montage route reads none of ['archetype', 'hero_media_id', 'caption_style', 'optional_treatments', 'overlay_display', 'licensed_sfx'] and the approval card does not say they are not applied"
+      ],
+      "evidence": {
+        "registry_drift": {
+          "listed_but_read": [
+            "direction",
+            "pacing",
+            "story_structure"
+          ],
+          "unread_but_unlisted": []
+        },
+        "pass": false,
+        "settable_fields": 32,
+        "claimed_applied_unread": [],
+        "unconsumed": [
+          "archetype",
+          "hero_media_id",
+          "caption_style",
+          "intro_hook",
+          "optional_treatments",
+          "overlay_display",
+          "licensed_sfx"
+        ],
+        "undisclosed": [
+          "archetype",
+          "hero_media_id",
+          "caption_style",
+          "optional_treatments",
+          "overlay_display",
+          "licensed_sfx"
+        ],
+        "disclosed": [
+          "intro_hook"
+        ],
+        "exempt": {
+          "rationale": "explanatory prose shown to the creator, nothing to apply"
+        },
+        "indirect_consumers": [
+          "audio_strategy",
+          "closing_title",
+          "edit_format",
+          "execution_contract",
+          "font_family",
+          "media_scope",
+          "montage_audio",
+          "opening_title",
+          "opening_title_duration_s",
+          "render_program",
+          "selected_media_ids",
+          "shot_labels",
+          "target_duration_s",
+          "text_color",
+          "video_reuse_policy"
+        ]
+      },
+      "report_only": true
+    },
+    {
+      "id": 11,
+      "name": "song rule: no catalog music is mixed on the phone route (control)",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "creator_uploaded_song": false,
+        "recipe_music_asset_id": null,
+        "audio_tracks": [],
+        "variant_music_track_id": null,
+        "variant_music_playback_mode": "reference_only",
+        "execution_plan_music": null,
+        "asset_kinds": [
+          "library",
+          "original"
+        ],
+        "frozen_catalog_section_in_strategy": true
+      }
+    }
+  ]
+}

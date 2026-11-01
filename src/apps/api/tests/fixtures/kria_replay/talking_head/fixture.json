@@ -1,0 +1,419 @@
+{
+  "fixture_id": "talking_head",
+  "route": "talking_head",
+  "schema_version": 1,
+  "source": {
+    "kind": "recorded",
+    "what": "Prod Kria thread, approved draft and its render (origin/main ff5f2adbe).",
+    "captured": "2026-11-01 via read-only admin GETs (saved copies, no network now)",
+    "recorded": [
+      "creator messages up to the approved draft (thread events)",
+      "the planner's post-parse strategy and summary (turns plan intents[].arguments)",
+      "the Creative Brief bound to the job (assembly_plan.creator_brief_binding)",
+      "clip analyses, durations, audio (media_snapshot.clip_assignments)",
+      "the draft card prod showed and what the render did (prod_outcome)"
+    ],
+    "reconstructed": [
+      "the approval card is assembled offline from the real pure functions the draft turn calls (scripts/kria/score_route.py approval_card); the DB-bound turn body is not run",
+      "phone source bindings: synthetic proxy paths (score_route.media_rows)",
+      "capability manifest (score_route.manifest)",
+      "strategy.title_animation = \"pop\" and brief r6 (style, global, facts.animation = \"pop\", \"animate the big text in\") are NOT in the recording. They give the fixture an animation ask, the render target of the Talking lane (L2); the recorded request asked for a big \"1810\" without naming motion."
+    ],
+    "redacted": [
+      "user, thread, item, job, turn and draft ids",
+      "storage paths and signed URLs",
+      "library asset ids (now asset-synthetic-NN)",
+      "file names and content hashes",
+      "media ids (now analysis-proxy-talking_head-NN)"
+    ],
+    "see": "tests/fixtures/kria_replay/talking_head/README.md"
+  },
+  "message": "Talking video, filmed horizontally: make it vertical and keep his face in frame. Maximo explains in English and I translate to Turkish in the middle, then we both say \"1810\". Keep every language as it was spoken: English captions for the English, Turkish captions for my Turkish, nothing translated. When he first says \"1810\", put a big \"1810\" on screen for a moment. When he says \"on the other side of the square\", show my Casa Rosada photo full screen for about two seconds with his voice still playing, then come back to him. Start at \"Okay, I'll translate it to Turkish\" and end after \"the government of the whole country\".",
+  "messages": [
+    "Talking video, filmed horizontally: make it vertical and keep his face in frame. Maximo explains in English and I translate to Turkish in the middle, then we both say \"1810\". Keep every language as it was spoken: English captions for the English, Turkish captions for my Turkish, nothing translated. When he first says \"1810\", put a big \"1810\" on screen for a moment. When he says \"on the other side of the square\", show my Casa Rosada photo full screen for about two seconds with his voice still playing, then come back to him. Start at \"Okay, I'll translate it to Turkish\" and end after \"the government of the whole country\"."
+  ],
+  "client_protocol": 22,
+  "planner_summary": "I'll trim the video to your exact start and end lines. The subtitles will stay in English and Turkish as spoken. I've set the Casa Rosada photo to take over the screen exactly when he says the phrase, and '1810' will pop up right when he says it!",
+  "brief": {
+    "version": 1,
+    "requirements": [
+      {
+        "id": "r1",
+        "kind": "timing",
+        "facts": {
+          "end_line": "the government of the whole country",
+          "start_line": "Okay, I'll translate it to Turkish"
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Start and end at specific spoken lines",
+        "source_turn_id": "synthetic-turn"
+      },
+      {
+        "id": "r2",
+        "kind": "style",
+        "facts": {
+          "captions": "on"
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Keep every language as it was spoken with no translation",
+        "source_turn_id": "synthetic-turn"
+      },
+      {
+        "id": "r3",
+        "kind": "text",
+        "facts": {
+          "triggers": [
+            "1810"
+          ]
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": "1810",
+        "description": "Big text on screen for a moment when he first says 1810",
+        "source_turn_id": "synthetic-turn"
+      },
+      {
+        "id": "r4",
+        "kind": "style",
+        "facts": {
+          "hold_s": 2.0,
+          "triggers": [
+            "on the other side of the square"
+          ],
+          "display_mode": "fullscreen"
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Show the Casa Rosada photo full screen for about two seconds when he mentions the other side of the square",
+        "source_turn_id": "synthetic-turn"
+      },
+      {
+        "id": "r5",
+        "kind": "style",
+        "facts": {
+          "framing": "vertical",
+          "keep_face_in_frame": true
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Make the horizontal video vertical and keep his face in frame",
+        "source_turn_id": "synthetic-turn"
+      },
+      {
+        "id": "r6",
+        "kind": "style",
+        "scope": "global",
+        "literal": null,
+        "description": "animate the big text in",
+        "facts": {
+          "animation": "pop"
+        },
+        "source_turn_id": "synthetic-turn",
+        "status": "open"
+      }
+    ]
+  },
+  "strategy": {
+    "pacing": "balanced",
+    "direction": "native",
+    "rationale": "Keeps the original audio, uses the native vertical crop with face tracking, and syncs the exact requested full-screen photo and text graphics to the spoken moments.",
+    "edit_format": "subtitled",
+    "caption_style": "auto",
+    "audio_strategy": "original_audio",
+    "reaction_beats": [
+      {
+        "hold_s": 2.0,
+        "beat_id": "casa-rosada",
+        "trigger": "on the other side of the square",
+        "visual_id": "asset-synthetic-01",
+        "occurrence": "first",
+        "visual_role": "photo",
+        "display_mode": "fullscreen"
+      }
+    ],
+    "render_program": "native",
+    "story_structure": [
+      "Start on the requested spoken line",
+      "Show '1810' text when spoken",
+      "Pop the Casa Rosada photo full-screen when triggered",
+      "End after the requested final line"
+    ],
+    "target_duration_s": 40,
+    "selected_media_ids": [
+      "analysis-proxy-talking_head-01"
+    ],
+    "video_reuse_policy": "once",
+    "optional_treatments": [],
+    "title_animation": "pop"
+  },
+  "clips": [
+    {
+      "id": "analysis-proxy-talking_head-01",
+      "kind": "video",
+      "duration_s": 48.0,
+      "has_audio": true,
+      "source_filename": "clip-01.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "man speaking in front of historical building",
+        "exposure": {
+          "frames": 24,
+          "version": 1,
+          "mean_luma": 119.5,
+          "near_black_share": 0.0
+        },
+        "duration_s": 48.0,
+        "transcript": "building. Okay, I'll translate it to Turkish. Yeah. So, what was your name again, sorry? Maximo. Maximo. Uh, Argentina'nın bağımsızlığını bu binada eee kazanıldığını ilan ediyor. Neden peki? Why, why Maximo? Why and when? Why and when what? Uh, you gained independence. 1810. 1810. The year 1810. means Yes. 215 years ago. 250 sene önce 1810, 1810. Um, and why specifically at this building? Because this place was the the city government building of Buenos Aires. The on the other side of the square you have the the real government. The government of the whole",
+        "description": "man points to building and speaks man asks 'why and when' about independence man states 1810 independence year man explains building's historical role",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 3.7,
+            "energy": 6.0,
+            "start_s": 0.0,
+            "description": "man points to building and speaks"
+          },
+          {
+            "end_s": 15.3,
+            "energy": 7.0,
+            "start_s": 8.7,
+            "description": "man asks 'why and when' about independence"
+          },
+          {
+            "end_s": 31.9,
+            "energy": 6.5,
+            "start_s": 25.1,
+            "description": "man states 1810 independence year"
+          },
+          {
+            "end_s": 47.0,
+            "energy": 7.5,
+            "start_s": 39.7,
+            "description": "man explains building's historical role"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "white historical building",
+            "Argentina flag on a tall pole"
+          ],
+          "brands": [],
+          "people": {
+            "note": "a man speaking to camera, one woman walking in the background, a person on a bicycle",
+            "count": 3,
+            "speaks_to_camera": true
+          },
+          "speech": {
+            "language": "en",
+            "segments": [
+              {
+                "text": "building okay i'll translate it to turkish yeah so what was your name again sorry maximo",
+                "end_s": 5.76,
+                "start_s": 0.0
+              },
+              {
+                "text": "maximo maximo uh he declares that he won the independence of argentia in this building why why maximo why and when why and why and when what uh you gained independence 1810.",
+                "end_s": 21.86,
+                "start_s": 7.08
+              },
+              {
+                "text": "the year 1810.",
+                "end_s": 23.46,
+                "start_s": 22.44
+              },
+              {
+                "text": "yes 215 years ago",
+                "end_s": 26.94,
+                "start_s": 24.16
+              },
+              {
+                "text": "um and why specifically at this building",
+                "end_s": 34.36,
+                "start_s": 31.82
+              },
+              {
+                "text": "because this place was the the city government building of buenos aires the on the other side of the square you had the the real government the government of the whole",
+                "end_s": 47.8,
+                "start_s": 35.24
+              }
+            ],
+            "to_camera": true,
+            "has_speech": true,
+            "transcript": "building. Okay, I'll translate it to Turkish. Yeah. So, what was your name again, sorry? Maximo. Maximo. Uh, Argentina'nın bağımsızlığını bu binada eee kazanıldığını ilan ediyor. Neden peki? Why, why Maximo? Why and when? Why and when what? Uh, you gained independence. 1810. 1810. The year 1810. means Yes. 215 years ago. 250 sene önce 1810, 1810. Um, and why specifically at this building? Because this place was the the city government building of Buenos Aires. The on the other side of the square you have the the real government. The government of the whole"
+          },
+          "actions": [
+            "man gestures towards building",
+            "man talks to camera",
+            "camera pans across square"
+          ],
+          "setting": "city square in front of a historical building",
+          "subject": "man speaking in front of historical building",
+          "summary": "A man stands in a city square in front of a historic building, explaining in Turkish and English that Argentina declared its independence in this building in 1810. He also points out the current government building across the square.",
+          "activity": "explaining historical facts",
+          "audio_type": "dialogue",
+          "content_type": "talking_head",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 3.7,
+              "start_s": 0.0,
+              "description": "man points to building and speaks"
+            },
+            {
+              "end_s": 15.3,
+              "start_s": 8.7,
+              "description": "man asks 'why and when' about independence"
+            },
+            {
+              "end_s": 31.9,
+              "start_s": 25.1,
+              "description": "man states 1810 independence year"
+            },
+            {
+              "end_s": 47.0,
+              "start_s": 39.7,
+              "description": "man explains building's historical role"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "building. Okay, I'll translate it to Turkish. Yeah. So, what was your name again, sorry? Maximo. Maximo. Uh, Argentina'nın bağımsızlığını bu binada eee kazanıldığını ilan ediyor. Neden peki? Why, why Maximo? Why and when? Why and when what? Uh, you gained independence. 1810. 1810. The year 1810. means Yes. 215 years ago. 250 sene önce 1810, 1810. Um, and why specifically at this building? Because ",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    }
+  ],
+  "prod_outcome": {
+    "recorded_from": "job assembly_plan.variants[0] and route fields, thread events",
+    "creator_route": "subtitled",
+    "approval_card": {
+      "draft_applied_content": "- Partly: Start and end at specific spoken lines (I'll keep your take from “Okay, I'll translate it to Turkish” (0:01) to right after “the government of the whole country” (0:48), if I find those lines)\n- Partly: Big text on screen for a moment when he first says 1810 (\"1810\") (I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear)\n- Done: Show the Casa Rosada photo full screen for about two seconds when he mentions the other side of the square\nHave a look at these in the video:\n- Keep every language as it was spoken with no translation\n- Make the horizontal video vertical and keep his face in frame (I'll check the framing on the finished video)",
+      "changes": [
+        "Balanced pacing",
+        "Subtitled format"
+      ],
+      "requirement_receipts": [
+        {
+          "requirement_id": "r1",
+          "status": "partial",
+          "verification": "checked",
+          "reason": "I'll keep your take from “Okay, I'll translate it to Turkish” (0:01) to right after “the government of the whole country” (0:48), if I find those lines"
+        },
+        {
+          "requirement_id": "r2",
+          "status": "partial",
+          "verification": "unchecked",
+          "reason": "I can't check the captions on this draft yet."
+        },
+        {
+          "requirement_id": "r3",
+          "status": "partial",
+          "verification": "checked",
+          "reason": "I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear"
+        },
+        {
+          "requirement_id": "r4",
+          "status": "met",
+          "verification": "checked",
+          "reason": null
+        },
+        {
+          "requirement_id": "r5",
+          "status": "partial",
+          "verification": "unchecked",
+          "reason": "I'll check the framing on the finished video."
+        }
+      ]
+    },
+    "render": {
+      "resolved_archetype": "subtitled",
+      "duration_s": 40.83499559402466,
+      "caption_language": "tr",
+      "caption_cue_count": 12,
+      "opening_cut": {
+        "status": "applied",
+        "reason": null
+      },
+      "end_cut": {
+        "status": "not_applied",
+        "reason": "not_found"
+      },
+      "speaker_framing": {
+        "mode": "letterbox",
+        "eligible": false,
+        "reason": "no_face"
+      },
+      "beats_unplaced": [
+        {
+          "beat_id": "casa-rosada",
+          "trigger": "on the other side of the square",
+          "reason": "never_heard"
+        }
+      ],
+      "overlay_matcher": "agent",
+      "overlays_placed": [
+        {
+          "kind": "image",
+          "start_s": 39.3,
+          "end_s": 44.3,
+          "reason": "You say \"Buenos Aires'in\" which directly references the location shown in this photograph of Plaza de Mayo in Buenos Aires."
+        }
+      ],
+      "text_elements": [
+        {
+          "text": "1810",
+          "start_s": 18.975,
+          "end_s": 20.975,
+          "effect": "fade-in"
+        }
+      ],
+      "creator_length_policy": {
+        "owner": "take",
+        "check_mode": "log_only",
+        "requested_duration_s": null
+      }
+    }
+  },
+  "checks": {
+    "fields": [
+      "direction",
+      "pacing",
+      "story_structure",
+      "title_animation"
+    ],
+    "asks": [
+      "r6"
+    ],
+    "honored": {
+      "fields": [
+        "title_animation"
+      ],
+      "asks": [
+        "r6"
+      ]
+    },
+    "not_graded": {
+      "r1": "start/end at spoken lines: judged by the Talking writer's cut receipts at render (prod: end_cut not_found, the take ran to the end); not a strategy field the route table owns",
+      "r2": "keep every language as spoken: judged by the render's caption-language receipt (prod captioned the English in Turkish); outside the route registry",
+      "r3": "big 1810 text at the spoken word: a spoken-text cue the Talking writer places at render (prod placed it at 18.975 s)",
+      "r4": "Casa Rosada photo full screen at a spoken phrase: offline the reconstructed manifest has no reaction_beats capability or library photo, so the draft check declines it ('pop-ins aren't available'); prod showed Done and the render dropped it (never_heard). A replay artifact either way, and not a route-table field",
+      "r5": "vertical with his face in frame: judged by the render's speaker framing (prod letterboxed, no_face); outside the route registry",
+      "caption_style": "auto, the schema default: the planner chose no caption style",
+      "target_duration_s": "40 s is the planner's own target; the creator stated no length"
+    }
+  }
+}

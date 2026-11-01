@@ -8,11 +8,13 @@ is a recorded or reconstructed draft under ``tests/fixtures/kria_replay/<name>/f
     {"fixture_id", "route": "<RouteId>", "message", "planner_summary", "brief", "strategy",
      "clips": [{"id", "kind", "duration_s", "has_audio"?, "analysis"?}],
      "client_protocol"?, "source": {"recorded": [...], "reconstructed": [...]},
-     "checks"?: {"fields": [...], "asks": ["r1", ...]}}
+     "checks"?: {"fields": [...], "asks": ["r1", ...],
+                 "honored"?: {"fields": [...], "asks": [...]}, "not_graded"?: {item: why}}}
 
 ``checks`` defaults are read from the plan, never from the code: every creator-visible field
 the planner set away from the schema default (the pace always, since the card shows it; a length
-only when the creator stated one) and every live requirement.
+only when the creator stated one) and every live requirement. The route fixtures list theirs
+(`build_route_fixture.py` for the recorded ones).
 
     cd src/apps/api && .venv/bin/python ../../../scripts/kria/score_route.py --fixture NAME
     make kria-replay FIXTURE=NAME          # a fixture with no score_<name>.py of its own
@@ -23,18 +25,31 @@ route declines, the route's card lines. On code that predates the route registry
 to what that code did (unified montage only, lines only for approval-readiness accounts), so the
 same fixture shows the drops as NOT VERIFIED there.
 
-Checks (VERIFIED / NOT VERIFIED; INCONCLUSIVE when a check could not run):
+Checks (VERIFIED / NOT VERIFIED; INCONCLUSIVE when a check could not run). Each carries a
+``kind``: ``disclosed_ok`` (applied or said before approval), ``honored`` (applied in the render,
+nothing else counts) or ``route`` / ``report``.
 
 1.        route: the draft resolves to the fixture's route (the card reads that route's table).
-2.<field> honored or disclosed: a render replay shows the field applied, or the card says it
-          is not applied. Render evidence comes only from a route replay module
+2.<field> disclosed_ok: a render replay shows the field applied, or a card line says it is not
+          applied. Render evidence comes only from a route replay module
           (``scripts/kria/route_replays/<route>.py``: ``honored(fx) -> {"fields": {...},
-          "asks": {...}}``); without one only the card can pass.
-3.<id>    ask honored or declined: the receipt is met (checked), or a typed decline before
-          approval (``not_possible``, checked, with a reason).
+          "asks": {...}}``); without one only the card can pass. Only the card's own lines and
+          its typed declines count, never a hedge ("I can't check the captions on this draft
+          yet" is not a disclosure).
+3.<id>    disclosed_ok: the receipt is met (checked), or a typed decline before approval
+          (``not_possible``, checked, with a reason), or for a length ask the card's length line
+          (the route table's ``target_duration_s`` disclosure).
+4.<field> honored: render evidence applies the field (``checks.honored.fields``).
+5.<id>    honored: render evidence honors the ask (``checks.honored.asks``).
 10.       consumer gate (REPORT ONLY): reads the route's registry table. A field marked
           ``Applied`` that no reader in the route's code touches is flagged, as is a field the
           route ignores that the card does not disclose.
+
+Lane targets: ``tests/fixtures/kria_replay/lane_targets.json`` lists, per fixture, the checks
+expected NOT VERIFIED today and the lane that turns each green. The report splits failures into
+``expected_red`` (listed) and ``unexpected_red`` (not listed), and lists ``unexpected_green``
+targets (a lane landed: remove the entry). ``checks.not_graded`` names asks or fields a fixture
+deliberately leaves out, with the reason; the report echoes them.
 
 Negative controls (mandatory, INVALID rule as in ``score_29_ekim.py``): each check's predicate
 gets a synthetic output that ignores the ask (must FAIL) and one that honours it (must PASS);
@@ -64,6 +79,7 @@ REPO = HERE.parents[1]
 API = REPO / "src" / "apps" / "api"
 APP = API / "app"
 FIXTURES = API / "tests" / "fixtures" / "kria_replay"
+LANE_TARGETS = FIXTURES / "lane_targets.json"
 REPLAYS = HERE / "route_replays"
 CREATOR_ID = uuid.UUID("00000000-0000-4000-8000-000000001097")
 
@@ -127,10 +143,13 @@ FIELD_WORDS: dict[str, tuple[str, ...]] = {
 
 
 def discloses_not_applied(card_text: str, field: str) -> bool:
-    """A card line that names ``field`` and says it is not applied."""
+    """A card line that names ``field`` and says it is not applied.
+
+    A word counts from a word start only: "subtitles" does not name the title."""
     words = FIELD_WORDS.get(field, (field.replace("_", " "),))
+    names = re.compile("|".join(rf"\b{re.escape(w)}" for w in words), re.I)
     for line in re.split(r"[\n.;]", card_text):
-        if any(w.lower() in line.lower() for w in words) and _NOT_APPLIED.search(line):
+        if names.search(line) and _NOT_APPLIED.search(line):
             return True
     return False
 
@@ -240,6 +259,20 @@ def planned_asks(fx: dict) -> list[str]:
     if listed is not None:
         return list(listed)
     return [r["id"] for r in fx["brief"]["requirements"] if r.get("status") != "superseded"]
+
+
+def honored_targets(fx: dict) -> tuple[list[str], list[str]]:
+    """The fields and asks a lane will honor in the render (``checks.honored``)."""
+    honored = (fx.get("checks") or {}).get("honored") or {}
+    return list(honored.get("fields") or []), list(honored.get("asks") or [])
+
+
+def lane_targets(fixture_id: str) -> dict[str, dict]:
+    """Checks expected NOT VERIFIED on today's code for this fixture, with their lane."""
+    if not LANE_TARGETS.is_file():
+        return {}
+    data = json.loads(LANE_TARGETS.read_text(encoding="utf-8"))
+    return dict((data.get("targets") or {}).get(fixture_id) or {})
 
 
 # --------------------------------------------------------------------- route and card
@@ -372,15 +405,36 @@ def approval_card(fx: dict) -> dict[str, Any]:
         summary=str(fx.get("planner_summary") or ""),
     )
     changes = [c for c in _strategy_changes(arguments) if c != arguments.summary]
-    return {
+    card = {
         "route": route,
         "lines_shown": shown,
         "reply": reply,
         "changes": changes,
         "receipts": [r.model_dump(mode="json") for r in receipts],
-        "not_applied": [d.as_record() for d in disclosures],
+        # ``on_card``: the line fits the card's character budget (`card_text`), so the creator
+        # reads it; a line past the budget is recorded but discloses nothing.
+        "not_applied": [{**d.as_record(), "on_card": d.text in reply} for d in disclosures],
         "text": "\n".join([reply, *[str(r.reason or "") for r in receipts]]),
     }
+    card["disclosure_text"] = disclosure_text(card)
+    return card
+
+
+def disclosure_text(card: dict, field: str | None = None) -> str:
+    """What the card says is not applied: its route lines and its typed declines, never an
+    unchecked hedge or a summary that merely names a field. With ``field``, only that field's
+    own lines (another field's line that happens to say "length" discloses nothing here)."""
+    declines = [
+        str(r.get("reason") or "")
+        for r in card.get("receipts") or []
+        if r.get("status") == "not_possible" and r.get("verification") == "checked"
+    ]
+    lines = [
+        str(d.get("text") or "")
+        for d in card.get("not_applied") or []
+        if d.get("on_card", True) and (field is None or d.get("subject") == field)
+    ]
+    return "\n".join([*lines, *declines])
 
 
 def route_replay(fx: dict, route: str) -> dict[str, Any]:
@@ -411,7 +465,11 @@ def field_verdict(field: str, card_text: str, honored: dict[str, bool]) -> dict[
     return {"pass": applied or disclosed, "applied": applied, "disclosed_on_card": disclosed}
 
 
-def ask_verdict(receipt: dict | None, honored: bool = False) -> dict[str, Any]:
+def ask_verdict(
+    receipt: dict | None, honored: bool = False, card_line: str | None = None
+) -> dict[str, Any]:
+    """``card_line``: the card's own line for the field this ask maps to (a length ask and the
+    route's ``target_duration_s`` line), when one says it is not applied."""
     receipt = receipt or {}
     checked = receipt.get("verification") == "checked"
     met = checked and receipt.get("status") == "met"
@@ -420,13 +478,27 @@ def ask_verdict(receipt: dict | None, honored: bool = False) -> dict[str, Any]:
         and receipt.get("status") == "not_possible"
         and bool(str(receipt.get("reason") or "").strip())
     )
+    on_card = bool(card_line and _NOT_APPLIED.search(card_line))
     return {
-        "pass": bool(honored or met or declined),
+        "pass": bool(honored or met or declined or on_card),
         "met": met,
         "declined_before_approval": declined,
+        "disclosed_on_card": on_card,
         "honored_at_render": honored,
         "receipt": {k: receipt.get(k) for k in ("status", "verification", "reason")},
     }
+
+
+def ask_field(req: dict) -> str | None:
+    """The strategy field whose card line answers this ask (typed facts only, KRI-667)."""
+    facts = req.get("facts") or {}
+    if req.get("kind") == "timing" and facts.get("duration_s") is not None:
+        return "target_duration_s"
+    return None
+
+
+def honored_verdict(key: str, evidence: dict[str, bool]) -> dict[str, Any]:
+    return {"pass": bool(evidence.get(key)), "applied_at_render": bool(evidence.get(key))}
 
 
 # ------------------------------------------------------------------- consumer gate
@@ -534,6 +606,16 @@ def consumer_gate(
 
 
 def gate_result(check_id: int | str, route: str, card_text: str) -> dict:
+    if _registry() is None:
+        return {
+            "id": check_id,
+            "name": "consumer gate (REPORT ONLY): needs the route's registry table",
+            "pass": False,
+            "verdict": "INCONCLUSIVE",
+            "why_it_fails": ["no route registry on this code: the gate reads the route's table"],
+            "evidence": {},
+            "report_only": True,
+        }
     gate = consumer_gate(route, card_text)
     why = []
     if gate["claimed_applied_unread"]:
@@ -561,52 +643,127 @@ def gate_result(check_id: int | str, route: str, card_text: str) -> dict:
 # ------------------------------------------------------------------------ the checks
 
 
+def _kind(result: dict, kind: str) -> dict:
+    return {**result, "kind": kind}
+
+
 def check_route(fx: dict, card: dict) -> dict:
     wanted = fx["route"]
     ok = card["route"] == wanted
-    return _result(
-        1,
-        "route: the draft resolves to the route that renders it",
-        ok,
-        []
-        if ok
-        else [f"the draft card reads the {card['route']!r} table, but {wanted!r} renders it"],
-        {"fixture_route": wanted, "card_route": card["route"], "lines_shown": card["lines_shown"]},
+    return _kind(
+        _result(
+            1,
+            "route: the draft resolves to the route that renders it",
+            ok,
+            []
+            if ok
+            else [f"the draft card reads the {card['route']!r} table, but {wanted!r} renders it"],
+            {
+                "fixture_route": wanted,
+                "card_route": card["route"],
+                "lines_shown": card["lines_shown"],
+            },
+        ),
+        "route",
     )
 
 
 def check_field(fx: dict, card: dict, replay: dict, field: str) -> dict:
-    verdict = field_verdict(field, card["text"], replay["fields"])
+    verdict = field_verdict(field, disclosure_text(card, field), replay["fields"])
     value = fx["strategy"].get(field)
-    return _result(
-        f"2.{field}",
-        f"{field}: honored in the render or disclosed before approval",
-        verdict["pass"],
-        []
-        if verdict["pass"]
-        else [
-            f"the plan chose {field}={value!r}; no render evidence applies it and the card "
-            "does not say it is not applied"
-        ],
-        {**verdict, "value": value, "render_evidence": replay["source"]},
+    return _kind(
+        _result(
+            f"2.{field}",
+            f"{field}: honored in the render or disclosed before approval",
+            verdict["pass"],
+            []
+            if verdict["pass"]
+            else [
+                f"the plan chose {field}={value!r}; no render evidence applies it and the card "
+                "does not say it is not applied"
+            ],
+            {**verdict, "value": value, "render_evidence": replay["source"]},
+        ),
+        "disclosed_ok",
     )
+
+
+def _requirement(fx: dict, req_id: str) -> dict:
+    return next((r for r in fx["brief"]["requirements"] if r["id"] == req_id), {})
 
 
 def check_ask(fx: dict, card: dict, replay: dict, req_id: str) -> dict:
     receipt = next((r for r in card["receipts"] if r.get("requirement_id") == req_id), None)
-    verdict = ask_verdict(receipt, bool(replay["asks"].get(req_id)))
-    req = next((r for r in fx["brief"]["requirements"] if r["id"] == req_id), {})
-    return _result(
-        f"3.{req_id}",
-        f"{req_id}: the ask is honored or declined before approval",
-        verdict["pass"],
-        []
-        if verdict["pass"]
-        else [
-            f"{req.get('description') or req.get('literal')!r} has receipt "
-            f"{verdict['receipt']}: neither met nor a typed decline"
-        ],
-        {**verdict, "requirement": req},
+    req = _requirement(fx, req_id)
+    field = ask_field(req)
+    line = next(
+        (
+            d.get("text")
+            for d in card["not_applied"]
+            if field and d.get("subject") == field and d.get("on_card", True)
+        ),
+        None,
+    )
+    verdict = ask_verdict(receipt, bool(replay["asks"].get(req_id)), line)
+    return _kind(
+        _result(
+            f"3.{req_id}",
+            f"{req_id}: the ask is honored or declined before approval",
+            verdict["pass"],
+            []
+            if verdict["pass"]
+            else [
+                f"{req.get('description') or req.get('literal')!r} has receipt "
+                f"{verdict['receipt']}: neither met nor a typed decline"
+                + (f", and the card has no {field} line" if field else "")
+            ],
+            {**verdict, "requirement": req, "card_line": line},
+        ),
+        "disclosed_ok",
+    )
+
+
+def _no_render_evidence(fx: dict, replay: dict) -> str:
+    if replay.get("error"):
+        return f"the route replay raised: {replay['error'].get('why_it_fails')}"
+    if replay["source"] is None:
+        return (
+            f"no render replay for this route (scripts/kria/route_replays/{fx['route']}.py): "
+            "only the render can show it applied"
+        )
+    return f"{replay['source']} does not show it applied"
+
+
+def check_honored_field(fx: dict, replay: dict, field: str) -> dict:
+    verdict = honored_verdict(field, replay["fields"])
+    value = fx["strategy"].get(field)
+    return _kind(
+        _result(
+            f"4.{field}",
+            f"{field}: applied in the render (lane target)",
+            verdict["pass"],
+            [f"the plan chose {field}={value!r}; {_no_render_evidence(fx, replay)}"],
+            {**verdict, "value": value, "render_evidence": replay["source"]},
+        ),
+        "honored",
+    )
+
+
+def check_honored_ask(fx: dict, replay: dict, req_id: str) -> dict:
+    verdict = honored_verdict(req_id, replay["asks"])
+    req = _requirement(fx, req_id)
+    return _kind(
+        _result(
+            f"5.{req_id}",
+            f"{req_id}: honored in the render (lane target)",
+            verdict["pass"],
+            [
+                f"{req.get('description') or req.get('literal')!r}: "
+                f"{_no_render_evidence(fx, replay)}"
+            ],
+            {**verdict, "requirement": req, "render_evidence": replay["source"]},
+        ),
+        "honored",
     )
 
 
@@ -659,6 +816,117 @@ def negative_controls(route: str | None) -> list[dict]:
             "3 a checked met receipt must PASS",
             True,
             ask_verdict({"status": "met", "verification": "checked", "reason": None})["pass"],
+        ),
+        _row(
+            "2 an unchecked hedge on the card is not a disclosure must FAIL",
+            False,
+            field_verdict(
+                "caption_style",
+                disclosure_text(
+                    {
+                        "not_applied": [],
+                        "receipts": [
+                            {
+                                "status": "partial",
+                                "verification": "unchecked",
+                                "reason": "I can't check the captions on this draft yet.",
+                            }
+                        ],
+                    }
+                ),
+                {},
+            )["pass"],
+        ),
+        _row(
+            "2 a typed decline that names the field must PASS",
+            True,
+            field_verdict(
+                "caption_style",
+                disclosure_text(
+                    {
+                        "not_applied": [],
+                        "receipts": [
+                            {
+                                "status": "not_possible",
+                                "verification": "checked",
+                                "reason": "I can't add the kinetic captions to this video yet",
+                            }
+                        ],
+                    }
+                ),
+                {},
+            )["pass"],
+        ),
+        _row(
+            "2 a line about subtitles does not name the title must FAIL",
+            False,
+            field_verdict(
+                "opening_title", "I can't add subtitles of the speech to this video yet", {}
+            )["pass"],
+        ),
+        _row(
+            "2 another field's line that names the word does not disclose this field must FAIL",
+            False,
+            field_verdict(
+                "target_duration_s",
+                disclosure_text(
+                    {
+                        "not_applied": [
+                            {
+                                "subject": "pacing",
+                                "text": "The balanced pacing isn't applied on this video yet: "
+                                "the cuts keep their usual length",
+                                "on_card": True,
+                            }
+                        ],
+                        "receipts": [],
+                    },
+                    "target_duration_s",
+                ),
+                {},
+            )["pass"],
+        ),
+        _row(
+            "2 a line past the card's budget is not read must FAIL",
+            False,
+            field_verdict(
+                "opening_title",
+                disclosure_text(
+                    {
+                        "not_applied": [
+                            {
+                                "subject": "opening_title",
+                                "text": "I can't add the opening title on this video yet",
+                                "on_card": False,
+                            }
+                        ],
+                        "receipts": [],
+                    }
+                ),
+                {},
+            )["pass"],
+        ),
+        _row(
+            "3 a length ask with no receipt and a card line that keeps the length must FAIL",
+            False,
+            ask_verdict(None, card_line="It will be about 30 seconds long")["pass"],
+        ),
+        _row(
+            "3 a length ask with the card line saying the length is not applied must PASS",
+            True,
+            ask_verdict(None, card_line="I can't make this video the length you asked for yet")[
+                "pass"
+            ],
+        ),
+        _row(
+            "4 no render evidence for a lane target must FAIL",
+            False,
+            honored_verdict("pacing", {})["pass"],
+        ),
+        _row(
+            "4 render evidence that applies the lane target must PASS",
+            True,
+            honored_verdict("pacing", {"pacing": True})["pass"],
         ),
     ]
     if route is None or _registry() is None:
@@ -723,14 +991,34 @@ def run_offline(fixture_dir: Path, route: str | None = None) -> dict:
             _guarded(f"3.{r}", r, lambda r=r: check_ask(fx, card(), replay, r))
             for r in planned_asks(fx)
         ]
+        honored_fields, honored_asks = honored_targets(fx)
+        checks += [
+            _guarded(f"4.{f}", f, lambda f=f: check_honored_field(fx, replay, f))
+            for f in honored_fields
+        ]
+        checks += [
+            _guarded(f"5.{r}", r, lambda r=r: check_honored_ask(fx, replay, r))
+            for r in honored_asks
+        ]
         gate = _guarded(10, "consumer gate", lambda: gate_result(10, fx["route"], card()["text"]))
-        checks.append({**gate, "report_only": True})
+        checks.append({**gate, "report_only": True, "kind": "report"})
         controls = negative_controls(fx["route"])
         try:
             shown = card()
         except Exception as exc:  # noqa: BLE001 - reported, never green
             shown = {"error": f"{type(exc).__name__}: {exc}"}
+    for c in checks:  # a guarded check that raised carries no kind of its own
+        c.setdefault("kind", _KIND_OF_ID.get(str(c["id"]).split(".")[0], "disclosed_ok"))
     scored = [c for c in checks if not c.get("report_only")]
+    targets = lane_targets(fx["fixture_id"])
+    red = [str(c["id"]) for c in scored if not c["pass"]]
+    by_kind = {
+        kind: {
+            "passed": sum(1 for c in scored if c["kind"] == kind and c["pass"]),
+            "failed": sum(1 for c in scored if c["kind"] == kind and not c["pass"]),
+        }
+        for kind in ("route", "disclosed_ok", "honored")
+    }
     return {
         "fixture": fx["fixture_id"],
         "route": fx["route"],
@@ -741,6 +1029,13 @@ def run_offline(fixture_dir: Path, route: str | None = None) -> dict:
         "passed": sum(1 for c in scored if c["pass"]),
         "failed": sum(1 for c in scored if not c["pass"]),
         "all_green": all(c["pass"] for c in scored),
+        "by_kind": by_kind,
+        "inconclusive": [str(c["id"]) for c in checks if c["verdict"] == "INCONCLUSIVE"],
+        "lane_targets": targets,
+        "expected_red": [i for i in red if i in targets],
+        "unexpected_red": [i for i in red if i not in targets],
+        "unexpected_green": sorted(set(targets) - set(red)),
+        "not_graded": (fx.get("checks") or {}).get("not_graded") or {},
         "report_only": [c["id"] for c in checks if c.get("report_only")],
         "controls_ok": all(c["ok"] is not False for c in controls),
         "negative_controls": controls,
@@ -750,22 +1045,43 @@ def run_offline(fixture_dir: Path, route: str | None = None) -> dict:
     }
 
 
+_KIND_OF_ID = {
+    "1": "route",
+    "2": "disclosed_ok",
+    "3": "disclosed_ok",
+    "4": "honored",
+    "5": "honored",
+}
+
+
 def summary(report: dict) -> str:
     out = [
         f"{report['fixture']} route scorecard ({report['route']}, offline, "
         f"{report['network_attempts_blocked']} network attempts blocked)",
         f"route registry on this code: {'yes' if report['registry'] else 'no'}",
         "",
-        f"{'#':<22} {'verdict':<13} check",
+        f"{'#':<22} {'kind':<13} {'verdict':<13} check",
     ]
     for c in report["checks"]:
-        out.append(f"{str(c['id']):<22} {c['verdict']:<13} {c['name']}")
+        target = report["lane_targets"].get(str(c["id"]))
+        lane = f"  [lane target {target.get('lane')}]" if target and not c["pass"] else ""
+        out.append(f"{str(c['id']):<22} {c['kind']:<13} {c['verdict']:<13} {c['name']}{lane}")
         for line in c["why_it_fails"]:
             out.append(f"      - {line}")
+    kinds = ", ".join(
+        f"{kind} {v['passed']}/{v['passed'] + v['failed']}" for kind, v in report["by_kind"].items()
+    )
     out += [
         "",
-        f"{report['passed']} verified, {report['failed']} not verified "
-        f"(check(s) {report['report_only']} are report-only and never fail anything)",
+        f"{report['passed']} verified, {report['failed']} not verified ({kinds}; "
+        f"check(s) {report['report_only']} are report-only and never fail anything)",
+        f"expected red (lane targets): {report['expected_red'] or 'none'}",
+        f"unexpected red: {report['unexpected_red'] or 'none'}",
+        f"unexpected green (remove from lane_targets.json): {report['unexpected_green'] or 'none'}",
+    ]
+    for item, why in report["not_graded"].items():
+        out.append(f"not graded {item}: {why}")
+    out += [
         "",
         "negative controls (each must behave as stated):",
     ]

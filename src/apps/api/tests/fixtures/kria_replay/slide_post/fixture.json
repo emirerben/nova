@@ -1,0 +1,173 @@
+{
+  "fixture_id": "slide_post",
+  "route": "slide_post",
+  "schema_version": 1,
+  "source": {
+    "kind": "synthetic",
+    "what": "Synthetic slide post drafted by the planner. The 7 prod slide jobs the scout found (2026-09-30 to 2026-10-06) were manual Plan-page posts with no planner turn, so there was no planner strategy to replay.",
+    "captured": "hand-written 2026-11-01 (no prod thread found by the KRI-1097 fixture scout)",
+    "recorded": [],
+    "reconstructed": [
+      "everything: creator message, Creative Brief, planner strategy and summary, clips",
+      "the planner's choices are written as the planner returns them for this request (post-parse strategy, with the server's provenance flags where the creator states a pace or a length); no model is replayed",
+      "the approval card is assembled offline from the real pure functions the draft turn calls (scripts/kria/score_route.py approval_card); the DB-bound turn body is not run",
+      "phone source bindings: synthetic proxy paths (score_route.media_rows)"
+    ],
+    "redacted": [],
+    "see": "tests/fixtures/kria_replay/slide_post/README.md"
+  },
+  "message": "Make a slide post of my Kas photos. Fast and punchy, start with the hook 'Three days, zero plans', go arrival, old town, sunset, title 'Three days in Kas' animated in, kinetic captions, keep it 20 seconds, and add music.",
+  "messages": [
+    "Make a slide post of my Kas photos. Fast and punchy, start with the hook 'Three days, zero plans', go arrival, old town, sunset, title 'Three days in Kas' animated in, kinetic captions, keep it 20 seconds, and add music."
+  ],
+  "client_protocol": 25,
+  "planner_summary": "I'll make a fast slide post of Kas: arrival, old town, sunset, with your title popping in and music, about 20 seconds.",
+  "brief": {
+    "version": 1,
+    "requirements": [
+      {
+        "id": "r1",
+        "kind": "style",
+        "scope": "global",
+        "literal": null,
+        "description": "animate the title in",
+        "facts": {
+          "animation": "pop"
+        },
+        "source_turn_id": "synthetic-turn",
+        "status": "open"
+      },
+      {
+        "id": "r2",
+        "kind": "timing",
+        "scope": "global",
+        "literal": null,
+        "description": "keep it 20 seconds",
+        "facts": {
+          "duration_s": 20
+        },
+        "source_turn_id": "synthetic-turn",
+        "status": "open"
+      },
+      {
+        "id": "r3",
+        "kind": "style",
+        "scope": "global",
+        "literal": null,
+        "description": "kinetic captions",
+        "facts": {
+          "captions": "on"
+        },
+        "source_turn_id": "synthetic-turn",
+        "status": "open"
+      }
+    ]
+  },
+  "strategy": {
+    "edit_format": "slides",
+    "render_program": "guided",
+    "audio_strategy": "licensed_music",
+    "direction": "guided_story",
+    "pacing": "fast",
+    "pacing_requested": true,
+    "intro_hook": "Three days, zero plans",
+    "story_structure": [
+      "Arrival",
+      "The old town",
+      "Sunset"
+    ],
+    "caption_style": "kinetic",
+    "opening_title": "Three days in Kas",
+    "title_animation": "pop",
+    "target_duration_s": 20,
+    "target_duration_requested": true,
+    "creator_duration_s": 20,
+    "media_scope": "all",
+    "selected_media_ids": [],
+    "optional_treatments": [],
+    "rationale": "Arrival to sunset, quick and with music."
+  },
+  "clips": [
+    {
+      "id": "analysis-proxy-slide_post-01",
+      "kind": "image",
+      "duration_s": 3.0,
+      "has_audio": false,
+      "source_filename": "clip-01.jpg",
+      "analysis": {}
+    },
+    {
+      "id": "analysis-proxy-slide_post-02",
+      "kind": "image",
+      "duration_s": 3.0,
+      "has_audio": false,
+      "source_filename": "clip-02.jpg",
+      "analysis": {}
+    },
+    {
+      "id": "analysis-proxy-slide_post-03",
+      "kind": "image",
+      "duration_s": 3.0,
+      "has_audio": false,
+      "source_filename": "clip-03.jpg",
+      "analysis": {}
+    },
+    {
+      "id": "analysis-proxy-slide_post-04",
+      "kind": "image",
+      "duration_s": 3.0,
+      "has_audio": false,
+      "source_filename": "clip-04.jpg",
+      "analysis": {}
+    },
+    {
+      "id": "analysis-proxy-slide_post-05",
+      "kind": "image",
+      "duration_s": 3.0,
+      "has_audio": false,
+      "source_filename": "clip-05.jpg",
+      "analysis": {}
+    },
+    {
+      "id": "analysis-proxy-slide_post-06",
+      "kind": "image",
+      "duration_s": 3.0,
+      "has_audio": false,
+      "source_filename": "clip-06.jpg",
+      "analysis": {}
+    },
+    {
+      "id": "analysis-proxy-slide_post-07",
+      "kind": "image",
+      "duration_s": 3.0,
+      "has_audio": false,
+      "source_filename": "clip-07.jpg",
+      "analysis": {}
+    }
+  ],
+  "checks": {
+    "fields": [
+      "direction",
+      "pacing",
+      "intro_hook",
+      "story_structure",
+      "caption_style",
+      "opening_title",
+      "title_animation",
+      "target_duration_s",
+      "audio_strategy"
+    ],
+    "asks": [
+      "r1",
+      "r2",
+      "r3"
+    ],
+    "honored": {
+      "fields": [],
+      "asks": []
+    },
+    "not_graded": {
+      "honored": "no render target: the slide lane (L6) discloses every video-only field and changes the planner prompt, which an offline replay of a written strategy cannot show"
+    }
+  }
+}

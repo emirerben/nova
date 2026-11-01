@@ -1,0 +1,710 @@
+{
+  "fixture": "voiceover_montage",
+  "route": "voiceover_montage",
+  "mode": "offline",
+  "source": {
+    "kind": "synthetic",
+    "what": "Synthetic montage under a recorded voiceover (phone voiceover montage writer). The scout read the 19 newest variants_ready prod jobs (2026-10-27 to 2026-10-31): none had a recorded voiceover.",
+    "captured": "hand-written 2026-11-01 (no prod thread found by the KRI-1097 fixture scout)",
+    "recorded": [],
+    "reconstructed": [
+      "everything: creator message, Creative Brief, planner strategy and summary, clips",
+      "the planner's choices are written as the planner returns them for this request (post-parse strategy, with the server's provenance flags where the creator states a pace or a length); no model is replayed",
+      "the approval card is assembled offline from the real pure functions the draft turn calls (scripts/kria/score_route.py approval_card); the DB-bound turn body is not run",
+      "phone source bindings: synthetic proxy paths (score_route.media_rows)",
+      "the recorded voiceover itself (the card does not read it; media_snapshot carries no voiceover in this fixture)"
+    ],
+    "redacted": [],
+    "see": "tests/fixtures/kria_replay/voiceover_montage/README.md"
+  },
+  "network_attempts_blocked": 0,
+  "registry": true,
+  "passed": 11,
+  "failed": 5,
+  "all_green": false,
+  "by_kind": {
+    "route": {
+      "passed": 1,
+      "failed": 0
+    },
+    "disclosed_ok": {
+      "passed": 10,
+      "failed": 0
+    },
+    "honored": {
+      "passed": 0,
+      "failed": 5
+    }
+  },
+  "inconclusive": [],
+  "lane_targets": {
+    "4.pacing": {
+      "lane": "L1",
+      "kind": "honored",
+      "why": "the balanced pace the creator said reaches the slot lengths (length_policy.effective_pace counts a requested balanced; pace_hold_bounds sizes the slots); today creator_pacing keeps only fast and relaxed"
+    },
+    "4.target_duration_s": {
+      "lane": "L1",
+      "kind": "honored",
+      "why": "the stated length is passed to the voiceover plan; today the length follows the voiceover"
+    },
+    "4.title_animation": {
+      "lane": "L1",
+      "kind": "honored",
+      "why": "the planned title animation reaches the intro text; today it is drawn with cluster_style None"
+    },
+    "5.r1": {
+      "lane": "L1",
+      "kind": "honored",
+      "why": "about 30 seconds: the render meets the stated length"
+    },
+    "5.r2": {
+      "lane": "L1",
+      "kind": "honored",
+      "why": "animate the text: animation_ask reaches the intro"
+    }
+  },
+  "expected_red": [
+    "4.pacing",
+    "4.target_duration_s",
+    "4.title_animation",
+    "5.r1",
+    "5.r2"
+  ],
+  "unexpected_red": [],
+  "unexpected_green": [],
+  "not_graded": {
+    "no_text": "a skipped opening title (omitted_copy_targets) is not in this fixture: its intro text conflicts with the animation ask; the voiceover lane adds its own fixture if it honors it"
+  },
+  "report_only": [
+    10
+  ],
+  "controls_ok": true,
+  "negative_controls": [
+    {
+      "name": "2 the card names the pace without saying it is dropped must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 the card says the pace is not applied must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 render evidence applies the field must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 an undecided receipt must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a typed decline before approval must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a checked met receipt must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 an unchecked hedge on the card is not a disclosure must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 a typed decline that names the field must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 a line about subtitles does not name the title must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 another field's line that names the word does not disclose this field must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 a line past the card's budget is not read must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a length ask with no receipt and a card line that keeps the length must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a length ask with the card line saying the length is not applied must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 no render evidence for a lane target must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 render evidence that applies the lane target must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a new unconsumed field must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "zz_new_unconsumed_field"
+      ]
+    },
+    {
+      "name": "10 an Applied claim with no reader must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "zz_claimed_field"
+      ]
+    }
+  ],
+  "replay": {
+    "fields": {},
+    "asks": {},
+    "source": null
+  },
+  "card": {
+    "route": "voiceover_montage",
+    "lines_shown": true,
+    "reply": "Not everything you asked for made it in:\n- Couldn't: animate the text (I can't animate on-screen text on this video yet, so the text shows without motion)\n- Couldn't: kinetic captions (I can't add subtitles of the speech to this video yet, so it has none)\nHeads-up for this video:\n- I can't use the opening hook idea (\"We almost skipped Kas\") on this video yet, so it won't be shown as text\n- I can't follow the planned story structure (The drive in, The old town, The beach, The sunset) on this video yet, so it won't change the order of the clips\n- The balanced pacing isn't applied on this video yet: the cuts keep their usual length\n- The guided story direction isn't applied on this video yet: it is cut as a montage under your voiceover\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- I can't make this video the length you asked for yet: its length follows your voiceover",
+    "changes": [
+      "Balanced pacing",
+      "Montage format"
+    ],
+    "receipts": [
+      {
+        "requirement_id": "r2",
+        "brief_version": null,
+        "generation_id": null,
+        "status": "not_possible",
+        "verification": "checked",
+        "stage": "checked",
+        "target_media_ids": [],
+        "reason": "I can't animate on-screen text on this video yet, so the text shows without motion",
+        "inferred": [],
+        "inferred_labels": []
+      },
+      {
+        "requirement_id": "r3",
+        "brief_version": null,
+        "generation_id": null,
+        "status": "not_possible",
+        "verification": "checked",
+        "stage": "checked",
+        "target_media_ids": [],
+        "reason": "I can't add subtitles of the speech to this video yet, so it has none",
+        "inferred": [],
+        "inferred_labels": []
+      }
+    ],
+    "not_applied": [
+      {
+        "code": "not_applied_on_route",
+        "subject": "intro_hook",
+        "text": "I can't use the opening hook idea (\"We almost skipped Kas\") on this video yet, so it won't be shown as text",
+        "on_card": true
+      },
+      {
+        "code": "not_applied_on_route",
+        "subject": "story_structure",
+        "text": "I can't follow the planned story structure (The drive in, The old town, The beach, The sunset) on this video yet, so it won't change the order of the clips",
+        "on_card": true
+      },
+      {
+        "code": "not_applied_on_route",
+        "subject": "pacing",
+        "text": "The balanced pacing isn't applied on this video yet: the cuts keep their usual length",
+        "on_card": true
+      },
+      {
+        "code": "not_applied_on_route",
+        "subject": "direction",
+        "text": "The guided story direction isn't applied on this video yet: it is cut as a montage under your voiceover",
+        "on_card": true
+      },
+      {
+        "code": "not_applied_on_route",
+        "subject": "caption_style",
+        "text": "I can't apply the kinetic caption style on this video yet, so it won't be used",
+        "on_card": true
+      },
+      {
+        "code": "not_applied_on_route",
+        "subject": "target_duration_s",
+        "text": "I can't make this video the length you asked for yet: its length follows your voiceover",
+        "on_card": true
+      },
+      {
+        "code": "not_applied_on_route",
+        "subject": "title_animation",
+        "text": "I can't animate the title (pop) on this video yet, so it shows without motion",
+        "on_card": false
+      }
+    ],
+    "text": "Not everything you asked for made it in:\n- Couldn't: animate the text (I can't animate on-screen text on this video yet, so the text shows without motion)\n- Couldn't: kinetic captions (I can't add subtitles of the speech to this video yet, so it has none)\nHeads-up for this video:\n- I can't use the opening hook idea (\"We almost skipped Kas\") on this video yet, so it won't be shown as text\n- I can't follow the planned story structure (The drive in, The old town, The beach, The sunset) on this video yet, so it won't change the order of the clips\n- The balanced pacing isn't applied on this video yet: the cuts keep their usual length\n- The guided story direction isn't applied on this video yet: it is cut as a montage under your voiceover\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- I can't make this video the length you asked for yet: its length follows your voiceover\nI can't animate on-screen text on this video yet, so the text shows without motion\nI can't add subtitles of the speech to this video yet, so it has none",
+    "disclosure_text": "I can't use the opening hook idea (\"We almost skipped Kas\") on this video yet, so it won't be shown as text\nI can't follow the planned story structure (The drive in, The old town, The beach, The sunset) on this video yet, so it won't change the order of the clips\nThe balanced pacing isn't applied on this video yet: the cuts keep their usual length\nThe guided story direction isn't applied on this video yet: it is cut as a montage under your voiceover\nI can't apply the kinetic caption style on this video yet, so it won't be used\nI can't make this video the length you asked for yet: its length follows your voiceover\nI can't animate on-screen text on this video yet, so the text shows without motion\nI can't add subtitles of the speech to this video yet, so it has none"
+  },
+  "checks": [
+    {
+      "id": 1,
+      "name": "route: the draft resolves to the route that renders it",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "fixture_route": "voiceover_montage",
+        "card_route": "voiceover_montage",
+        "lines_shown": true
+      },
+      "kind": "route"
+    },
+    {
+      "id": "2.direction",
+      "name": "direction: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "value": "guided_story",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.pacing",
+      "name": "pacing: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "value": "balanced",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.intro_hook",
+      "name": "intro_hook: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "value": "We almost skipped Kas",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.story_structure",
+      "name": "story_structure: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "value": [
+          "The drive in",
+          "The old town",
+          "The beach",
+          "The sunset"
+        ],
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.caption_style",
+      "name": "caption_style: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "value": "kinetic",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.title_animation",
+      "name": "title_animation: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "value": "pop",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.target_duration_s",
+      "name": "target_duration_s: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "value": 30,
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "3.r1",
+      "name": "r1: the ask is honored or declined before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "met": false,
+        "declined_before_approval": false,
+        "disclosed_on_card": true,
+        "honored_at_render": false,
+        "receipt": {
+          "status": null,
+          "verification": null,
+          "reason": null
+        },
+        "requirement": {
+          "id": "r1",
+          "kind": "timing",
+          "scope": "global",
+          "literal": null,
+          "description": "about 30 seconds",
+          "facts": {
+            "duration_s": 30
+          },
+          "source_turn_id": "synthetic-turn",
+          "status": "open"
+        },
+        "card_line": "I can't make this video the length you asked for yet: its length follows your voiceover"
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "3.r2",
+      "name": "r2: the ask is honored or declined before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "met": false,
+        "declined_before_approval": true,
+        "disclosed_on_card": false,
+        "honored_at_render": false,
+        "receipt": {
+          "status": "not_possible",
+          "verification": "checked",
+          "reason": "I can't animate on-screen text on this video yet, so the text shows without motion"
+        },
+        "requirement": {
+          "id": "r2",
+          "kind": "style",
+          "scope": "global",
+          "literal": null,
+          "description": "animate the text",
+          "facts": {
+            "animation": "any"
+          },
+          "source_turn_id": "synthetic-turn",
+          "status": "open"
+        },
+        "card_line": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "3.r3",
+      "name": "r3: the ask is honored or declined before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "met": false,
+        "declined_before_approval": true,
+        "disclosed_on_card": false,
+        "honored_at_render": false,
+        "receipt": {
+          "status": "not_possible",
+          "verification": "checked",
+          "reason": "I can't add subtitles of the speech to this video yet, so it has none"
+        },
+        "requirement": {
+          "id": "r3",
+          "kind": "style",
+          "scope": "global",
+          "literal": null,
+          "description": "kinetic captions",
+          "facts": {
+            "captions": "word_by_word"
+          },
+          "source_turn_id": "synthetic-turn",
+          "status": "open"
+        },
+        "card_line": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "4.pacing",
+      "name": "pacing: applied in the render (lane target)",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose pacing='balanced'; no render replay for this route (scripts/kria/route_replays/voiceover_montage.py): only the render can show it applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied_at_render": false,
+        "value": "balanced",
+        "render_evidence": null
+      },
+      "kind": "honored"
+    },
+    {
+      "id": "4.target_duration_s",
+      "name": "target_duration_s: applied in the render (lane target)",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose target_duration_s=30; no render replay for this route (scripts/kria/route_replays/voiceover_montage.py): only the render can show it applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied_at_render": false,
+        "value": 30,
+        "render_evidence": null
+      },
+      "kind": "honored"
+    },
+    {
+      "id": "4.title_animation",
+      "name": "title_animation: applied in the render (lane target)",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose title_animation='pop'; no render replay for this route (scripts/kria/route_replays/voiceover_montage.py): only the render can show it applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied_at_render": false,
+        "value": "pop",
+        "render_evidence": null
+      },
+      "kind": "honored"
+    },
+    {
+      "id": "5.r1",
+      "name": "r1: honored in the render (lane target)",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "'about 30 seconds': no render replay for this route (scripts/kria/route_replays/voiceover_montage.py): only the render can show it applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied_at_render": false,
+        "requirement": {
+          "id": "r1",
+          "kind": "timing",
+          "scope": "global",
+          "literal": null,
+          "description": "about 30 seconds",
+          "facts": {
+            "duration_s": 30
+          },
+          "source_turn_id": "synthetic-turn",
+          "status": "open"
+        },
+        "render_evidence": null
+      },
+      "kind": "honored"
+    },
+    {
+      "id": "5.r2",
+      "name": "r2: honored in the render (lane target)",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "'animate the text': no render replay for this route (scripts/kria/route_replays/voiceover_montage.py): only the render can show it applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied_at_render": false,
+        "requirement": {
+          "id": "r2",
+          "kind": "style",
+          "scope": "global",
+          "literal": null,
+          "description": "animate the text",
+          "facts": {
+            "animation": "any"
+          },
+          "source_turn_id": "synthetic-turn",
+          "status": "open"
+        },
+        "render_evidence": null
+      },
+      "kind": "honored"
+    },
+    {
+      "id": 10,
+      "name": "consumer gate (REPORT ONLY): fields the route ignores and the card does not disclose",
+      "pass": false,
+      "verdict": "REPORT (gaps)",
+      "why_it_fails": [
+        "the voiceover_montage route reads none of ['archetype', 'hero_media_id', 'execution_contract', 'editorial_plan', 'opening_title_duration_s', 'shot_labels', 'closing_title', 'label_position', 'image_layout', 'render_program', 'optional_treatments', 'overlay_display', 'licensed_sfx', 'mixed_media_timing', 'montage_audio', 'montage_cadence'] and the approval card does not say they are not applied"
+      ],
+      "evidence": {
+        "registry_drift": {
+          "listed_but_read": [
+            "pacing",
+            "target_duration_s"
+          ],
+          "unread_but_unlisted": [
+            "closing_title",
+            "editorial_plan",
+            "execution_contract",
+            "image_layout",
+            "mixed_media_timing",
+            "montage_audio",
+            "montage_cadence",
+            "opening_title_duration_s",
+            "render_program",
+            "shot_labels"
+          ]
+        },
+        "pass": false,
+        "settable_fields": 32,
+        "claimed_applied_unread": [],
+        "unconsumed": [
+          "direction",
+          "archetype",
+          "hero_media_id",
+          "execution_contract",
+          "story_structure",
+          "editorial_plan",
+          "caption_style",
+          "intro_hook",
+          "opening_title_duration_s",
+          "shot_labels",
+          "closing_title",
+          "title_animation",
+          "label_position",
+          "image_layout",
+          "render_program",
+          "optional_treatments",
+          "overlay_display",
+          "licensed_sfx",
+          "mixed_media_timing",
+          "montage_audio",
+          "montage_cadence"
+        ],
+        "undisclosed": [
+          "archetype",
+          "hero_media_id",
+          "execution_contract",
+          "editorial_plan",
+          "opening_title_duration_s",
+          "shot_labels",
+          "closing_title",
+          "label_position",
+          "image_layout",
+          "render_program",
+          "optional_treatments",
+          "overlay_display",
+          "licensed_sfx",
+          "mixed_media_timing",
+          "montage_audio",
+          "montage_cadence"
+        ],
+        "disclosed": [
+          "direction",
+          "story_structure",
+          "caption_style",
+          "intro_hook",
+          "title_animation"
+        ],
+        "exempt": {
+          "rationale": "explanatory prose shown to the creator, nothing to apply"
+        },
+        "indirect_consumers": [
+          "audio_strategy",
+          "media_scope",
+          "selected_media_ids"
+        ]
+      },
+      "report_only": true,
+      "kind": "report"
+    }
+  ]
+}

@@ -1,0 +1,3437 @@
+{
+  "fixture_id": "narrated",
+  "route": "narrated",
+  "schema_version": 1,
+  "source": {
+    "kind": "recorded",
+    "what": "Prod Kria thread, approved draft and its render (origin/main ff5f2adbe).",
+    "captured": "2026-11-01 via read-only admin GETs (saved copies, no network now)",
+    "recorded": [
+      "creator messages up to the approved draft (thread events)",
+      "the planner's post-parse strategy and summary (turns plan intents[].arguments)",
+      "the Creative Brief bound to the job (assembly_plan.creator_brief_binding)",
+      "clip analyses, durations, audio (media_snapshot.clip_assignments)",
+      "the draft card prod showed and what the render did (prod_outcome)"
+    ],
+    "reconstructed": [
+      "the approval card is assembled offline from the real pure functions the draft turn calls (scripts/kria/score_route.py approval_card); the DB-bound turn body is not run",
+      "phone source bindings: synthetic proxy paths (score_route.media_rows)",
+      "capability manifest (score_route.manifest)",
+      "strategy.title_animation = \"typewriter\" and brief r3 (style, global, facts.animation = \"typewriter\", \"make the hook type in\") are NOT in the recording. They give the fixture an animation ask, the render target of the Narrated lane (L3)."
+    ],
+    "redacted": [
+      "user, thread, item, job, turn and draft ids",
+      "storage paths and signed URLs",
+      "library asset ids (now asset-synthetic-NN)",
+      "file names and content hashes",
+      "media ids (now analysis-proxy-narrated-NN)"
+    ],
+    "see": "tests/fixtures/kria_replay/narrated/README.md"
+  },
+  "message": "Suggest an edit.\nSuggest an edit.\nTry again\nUse a shorter voiceover\nAdd a hook that matches the video\nUse this wording",
+  "messages": [
+    "Suggest an edit.",
+    "Suggest an edit.",
+    "Try again",
+    "Use a shorter voiceover",
+    "Add a hook that matches the video",
+    "Use this wording"
+  ],
+  "client_protocol": 22,
+  "planner_summary": "Added 'Fenerbahçe matchday' as the opening hook. The video will remain under 120 seconds to fit your requirement.",
+  "brief": {
+    "version": 4,
+    "requirements": [
+      {
+        "id": "r1",
+        "kind": "timing",
+        "facts": {
+          "duration_s": 120,
+          "duration_bound": "at_most"
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "use a shorter voiceover / limit duration",
+        "source_turn_id": "synthetic-turn"
+      },
+      {
+        "id": "r2",
+        "kind": "text",
+        "facts": {
+          "approved_copy": {
+            "text": "Fenerbahçe matchday",
+            "target": "opening_title"
+          }
+        },
+        "scope": "title",
+        "status": "open",
+        "literal": "Fenerbahçe matchday",
+        "description": "a hook that matches the video",
+        "source_turn_id": "synthetic-turn"
+      },
+      {
+        "id": "r3",
+        "kind": "style",
+        "scope": "global",
+        "literal": null,
+        "description": "make the hook type in",
+        "facts": {
+          "animation": "typewriter"
+        },
+        "source_turn_id": "synthetic-turn",
+        "status": "open"
+      }
+    ]
+  },
+  "strategy": {
+    "pacing": "balanced",
+    "direction": "native",
+    "rationale": "I've applied your approved hook 'Fenerbahçe matchday' as the opening title. The edit is kept to your 120-second limit, using the best pre-game buildup and stadium highlights to visually support your voiceover.",
+    "edit_format": "narrated_planned",
+    "caption_style": "auto",
+    "opening_title": "Fenerbahçe matchday",
+    "audio_strategy": "voiceover",
+    "render_program": "native",
+    "story_structure": [
+      "Fenerbahçe fans marching and chanting in the streets",
+      "Arrival at the stadium with pyrotechnics",
+      "Exciting match moments and crowd reactions"
+    ],
+    "target_duration_s": 120,
+    "selected_media_ids": [
+      "analysis-proxy-narrated-02",
+      "analysis-proxy-narrated-04",
+      "analysis-proxy-narrated-03",
+      "analysis-proxy-narrated-08",
+      "analysis-proxy-narrated-07",
+      "analysis-proxy-narrated-16",
+      "analysis-proxy-narrated-18",
+      "analysis-proxy-narrated-20",
+      "analysis-proxy-narrated-17",
+      "analysis-proxy-narrated-33",
+      "analysis-proxy-narrated-34",
+      "analysis-proxy-narrated-35"
+    ],
+    "video_reuse_policy": "once",
+    "optional_treatments": [],
+    "title_animation": "typewriter"
+  },
+  "clips": [
+    {
+      "id": "analysis-proxy-narrated-01",
+      "kind": "video",
+      "duration_s": 2.366667,
+      "has_audio": true,
+      "source_filename": "clip-01.mp4",
+      "analysis": {
+        "width": 320,
+        "aspect": 0.5634,
+        "brands": [],
+        "height": 568,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "large crowd of people",
+        "exposure": {
+          "frames": 5,
+          "version": 1,
+          "mean_luma": 110.5,
+          "near_black_share": 0.0
+        },
+        "duration_s": 2.366667,
+        "transcript": "geliyor geliyor geliyor geliyor geliyor. Yapabiliriz.",
+        "description": "crowd walking on street",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 1.0,
+            "energy": 5.0,
+            "start_s": 0.0,
+            "description": "crowd walking on street"
+          }
+        ],
+        "display_width": 320,
+        "understanding": {
+          "kind": "video",
+          "brands": [],
+          "people": {
+            "note": "a large group of mostly men walking",
+            "count": 99,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "geliyor geliyor geliyor geliyor geliyor. Yapabiliriz."
+          },
+          "actions": [
+            "people walk forward"
+          ],
+          "setting": "city street",
+          "subject": "large crowd of people",
+          "summary": "A large crowd of people, possibly sports fans, are walking closely together on a street, with trees and buildings in the background. Someone can be heard speaking in Turkish.",
+          "activity": "walking in a large crowd",
+          "audio_type": "mixed",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "shaky handheld",
+          "notable_moments": [
+            {
+              "end_s": 1.0,
+              "start_s": 0.0,
+              "description": "crowd walking on street"
+            }
+          ]
+        },
+        "display_height": 568,
+        "on_screen_text": "geliyor geliyor geliyor geliyor geliyor. Yapabiliriz.",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-02",
+      "kind": "video",
+      "duration_s": 6.333333,
+      "has_audio": true,
+      "source_filename": "clip-02.mp4",
+      "analysis": {
+        "width": 320,
+        "aspect": 0.5634,
+        "brands": [],
+        "height": 568,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "sports fans",
+        "exposure": {
+          "frames": 13,
+          "version": 1,
+          "mean_luma": 143.4,
+          "near_black_share": 0.0
+        },
+        "duration_s": 6.333333,
+        "transcript": "Fenerbahçe! Fenerbahçe! Canım feda olsun sana!",
+        "description": "crowd chanting loudly yellow-green smoke billowing",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 3.0,
+            "energy": 7.0,
+            "start_s": 0.0,
+            "description": "crowd chanting loudly"
+          },
+          {
+            "end_s": 6.5,
+            "energy": 8.0,
+            "start_s": 3.0,
+            "description": "yellow-green smoke billowing"
+          }
+        ],
+        "display_width": 320,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "yellow-green smoke",
+            "mobile phones"
+          ],
+          "brands": [
+            "Fenerbahçe"
+          ],
+          "people": {
+            "note": "large crowd of sports fans, mostly men",
+            "count": 50,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "language": "tr",
+            "segments": [
+              {
+                "text": "Sen çok yaşa, gönlüm bela olsun sana.",
+                "end_s": 5.76,
+                "start_s": 0.0
+              }
+            ],
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "Fenerbahçe! Fenerbahçe! Canım feda olsun sana!"
+          },
+          "actions": [
+            "crowd chants",
+            "smoke fills air",
+            "people record with phones"
+          ],
+          "setting": "outdoor street or alleyway",
+          "subject": "sports fans",
+          "summary": "A large crowd of Fenerbahçe fans are gathered outdoors, cheering and chanting while yellow-green smoke fills the air. Many people are holding up their phones to record the event.",
+          "activity": "chanting and cheering, celebrating a sports team, recording with phones",
+          "audio_type": "dialogue",
+          "content_type": "action",
+          "on_screen_text": "",
+          "visual_quality": "shaky handheld, stays sharp",
+          "notable_moments": [
+            {
+              "end_s": 3.0,
+              "start_s": 0.0,
+              "description": "crowd chanting loudly"
+            },
+            {
+              "end_s": 6.5,
+              "start_s": 3.0,
+              "description": "yellow-green smoke billowing"
+            }
+          ]
+        },
+        "display_height": 568,
+        "on_screen_text": "Fenerbahçe! Fenerbahçe! Canım feda olsun sana!",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-03",
+      "kind": "video",
+      "duration_s": 6.333333,
+      "has_audio": true,
+      "source_filename": "clip-03.mp4",
+      "analysis": {
+        "width": 320,
+        "aspect": 0.5634,
+        "brands": [],
+        "height": 568,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "large crowd at event",
+        "exposure": {
+          "frames": 13,
+          "version": 1,
+          "mean_luma": 85.2,
+          "near_black_share": 0.0
+        },
+        "duration_s": 6.333333,
+        "transcript": "",
+        "description": "crowd chanting with red flares red light illuminates crowd",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 3.0,
+            "energy": 8.0,
+            "start_s": 0.0,
+            "description": "crowd chanting with red flares"
+          },
+          {
+            "end_s": 6.88,
+            "energy": 7.0,
+            "start_s": 3.0,
+            "description": "red light illuminates crowd"
+          }
+        ],
+        "display_width": 320,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "mobile phones",
+            "red flares"
+          ],
+          "brands": [],
+          "people": {
+            "note": "large crowd of adults, mostly men",
+            "count": 99,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "actions": [
+            "crowd chants loudly",
+            "people hold up mobile phones",
+            "red light flares brightly"
+          ],
+          "setting": "under a brick bridge or viaduct, outdoors in an urban area",
+          "subject": "large crowd at event",
+          "summary": "A large crowd of people is gathered under a brick bridge structure, holding up their phones to record. The area beneath the bridge is illuminated by a strong red light, and the crowd is chanting.",
+          "activity": "attending an event, chanting, recording with phones",
+          "audio_type": "ambient",
+          "content_type": "action",
+          "on_screen_text": "",
+          "visual_quality": "shaky handheld, stays sharp",
+          "notable_moments": [
+            {
+              "end_s": 3.0,
+              "start_s": 0.0,
+              "description": "crowd chanting with red flares"
+            },
+            {
+              "end_s": 6.88,
+              "start_s": 3.0,
+              "description": "red light illuminates crowd"
+            }
+          ]
+        },
+        "display_height": 568,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-04",
+      "kind": "video",
+      "duration_s": 10.4,
+      "has_audio": true,
+      "source_filename": "clip-04.mp4",
+      "analysis": {
+        "width": 320,
+        "aspect": 0.5634,
+        "brands": [],
+        "height": 568,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "large crowd of people",
+        "exposure": {
+          "frames": 11,
+          "version": 1,
+          "mean_luma": 122.2,
+          "near_black_share": 0.0
+        },
+        "duration_s": 10.4,
+        "transcript": "",
+        "description": "crowd chanting loudly blue smoke flare activating in crowd",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 4.0,
+            "energy": 7.0,
+            "start_s": 0.0,
+            "description": "crowd chanting loudly"
+          },
+          {
+            "end_s": 9.0,
+            "energy": 8.0,
+            "start_s": 5.0,
+            "description": "blue smoke flare activating in crowd"
+          }
+        ],
+        "display_width": 320,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "pink hatchback car",
+            "white SUV",
+            "blue smoke flares",
+            "yellow and black scarves",
+            "yellow and black flags"
+          ],
+          "brands": [],
+          "people": {
+            "note": "a large crowd of football fans, mostly men, many wearing yellow and black clothing or scarves",
+            "count": 99,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "actions": [
+            "crowd marches down street",
+            "crowd chants and claps",
+            "blue smoke flare activates"
+          ],
+          "setting": "urban street with buildings",
+          "subject": "large crowd of people",
+          "summary": "A large crowd of football fans, many wearing yellow and black, march down an urban street, chanting and setting off blue smoke flares. Cars are visible among the crowd.",
+          "activity": "marching in a crowd, chanting, waving flags, setting off smoke flares",
+          "audio_type": "music",
+          "content_type": "action",
+          "on_screen_text": "",
+          "visual_quality": "shaky handheld, stays sharp",
+          "notable_moments": [
+            {
+              "end_s": 4.0,
+              "start_s": 0.0,
+              "description": "crowd chanting loudly"
+            },
+            {
+              "end_s": 9.0,
+              "start_s": 5.0,
+              "description": "blue smoke flare activating in crowd"
+            }
+          ]
+        },
+        "display_height": 568,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-05",
+      "kind": "video",
+      "duration_s": 8.166667,
+      "has_audio": true,
+      "source_filename": "clip-05.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "pedestrians",
+        "exposure": {
+          "frames": 9,
+          "version": 1,
+          "mean_luma": 66.7,
+          "near_black_share": 0.0
+        },
+        "duration_s": 8.166667,
+        "transcript": "",
+        "description": "",
+        "video_codec": "h264",
+        "best_moments": [],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "yellow and green scarf",
+            "WELCOME TO CHINATOWN sign",
+            "Southside Birmingham heart logo"
+          ],
+          "brands": [
+            "Southside Birmingham"
+          ],
+          "people": {
+            "note": "several pedestrians, one man in a scarf",
+            "count": 8,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "actions": [
+            "pedestrians walk along street",
+            "man walks and turns to camera",
+            "man makes peace signs"
+          ],
+          "setting": "city street at dusk/night",
+          "subject": "pedestrians",
+          "summary": "Pedestrians walk past illuminated buildings on a city street at dusk. One man wearing a scarf turns towards the camera and makes peace signs.",
+          "activity": "walking on a street; man making peace signs to camera",
+          "audio_type": "ambient",
+          "content_type": "broll",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": []
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-06",
+      "kind": "video",
+      "duration_s": 20.166667,
+      "has_audio": true,
+      "source_filename": "clip-06.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "man in a green jacket",
+        "exposure": {
+          "frames": 22,
+          "version": 1,
+          "mean_luma": 109.0,
+          "near_black_share": 0.0
+        },
+        "duration_s": 20.166667,
+        "transcript": "",
+        "description": "",
+        "video_codec": "h264",
+        "best_moments": [],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "brands": [],
+          "people": {
+            "note": "several men walking on a street",
+            "count": 6,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "actions": [
+            "man looks at camera and points",
+            "man walks away from camera",
+            "camera follows man walking down street"
+          ],
+          "setting": "city street at dusk",
+          "subject": "man in a green jacket",
+          "summary": "A man in a green jacket looks at the camera and points, then walks away. The camera follows him and shows other people walking on a city street at dusk.",
+          "activity": "walking on a street, pointing at camera",
+          "audio_type": "ambient",
+          "content_type": "broll",
+          "on_screen_text": "",
+          "visual_quality": "shaky handheld, stays sharp",
+          "notable_moments": []
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-07",
+      "kind": "video",
+      "duration_s": 13.933333,
+      "has_audio": true,
+      "source_filename": "clip-07.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "group of men walking",
+        "exposure": {
+          "frames": 15,
+          "version": 1,
+          "mean_luma": 63.1,
+          "near_black_share": 0.0
+        },
+        "duration_s": 13.933333,
+        "transcript": "Sen lisansını burada yaptın. Ben şimdi buraya yaptım. Lisansında her şeyi burada mı yaptın? Lisansını her şeyini burada mı yaptın? Yok. Abi dönsenler çalışıyorlar mı?",
+        "description": "group walks along building man in scarf turns to talk group continues walking",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 3.0,
+            "energy": 4.0,
+            "start_s": 0.0,
+            "description": "group walks along building"
+          },
+          {
+            "end_s": 7.0,
+            "energy": 5.0,
+            "start_s": 4.0,
+            "description": "man in scarf turns to talk"
+          },
+          {
+            "end_s": 12.0,
+            "energy": 4.0,
+            "start_s": 9.0,
+            "description": "group continues walking"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "lime green electric scooter"
+          ],
+          "brands": [
+            "Lime"
+          ],
+          "people": {
+            "note": "a group of young men",
+            "count": 7,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "language": "tr",
+            "segments": [
+              {
+                "text": "Ben kaç senedir buradayım?",
+                "end_s": 4.06,
+                "start_s": 2.7
+              },
+              {
+                "text": "2 senedir.",
+                "end_s": 4.82,
+                "start_s": 4.64
+              },
+              {
+                "text": "Sen lisansını da mı burada yaptın?",
+                "end_s": 6.72,
+                "start_s": 5.5
+              },
+              {
+                "text": "Her şeyi burada mı yaptın?",
+                "end_s": 7.38,
+                "start_s": 7.0
+              },
+              {
+                "text": "Yeter.",
+                "end_s": 9.02,
+                "start_s": 8.7
+              },
+              {
+                "text": "Lisansı her şeyini burada yaptın.",
+                "end_s": 11.24,
+                "start_s": 9.92
+              },
+              {
+                "text": "Yok.",
+                "end_s": 11.52,
+                "start_s": 11.4
+              },
+              {
+                "text": "Abi 4 senedir çalışıyorum ben.",
+                "end_s": 13.0,
+                "start_s": 11.78
+              }
+            ],
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "Sen lisansını burada yaptın. Ben şimdi buraya yaptım. Lisansında her şeyi burada mı yaptın? Lisansını her şeyini burada mı yaptın? Yok. Abi dönsenler çalışıyorlar mı?"
+          },
+          "actions": [
+            "group of men walks forward",
+            "man in blue and maroon scarf talks"
+          ],
+          "setting": "city street at dusk",
+          "subject": "group of men walking",
+          "summary": "A group of men walks down a street at dusk. One man asks another about his university degree.",
+          "activity": "group of men walking and conversing",
+          "audio_type": "dialogue",
+          "content_type": "broll",
+          "on_screen_text": "",
+          "visual_quality": "shaky handheld",
+          "notable_moments": [
+            {
+              "end_s": 3.0,
+              "start_s": 0.0,
+              "description": "group walks along building"
+            },
+            {
+              "end_s": 7.0,
+              "start_s": 4.0,
+              "description": "man in scarf turns to talk"
+            },
+            {
+              "end_s": 12.0,
+              "start_s": 9.0,
+              "description": "group continues walking"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "Sen lisansını burada yaptın. Ben şimdi buraya yaptım. Lisansında her şeyi burada mı yaptın? Lisansını her şeyini burada mı yaptın? Yok. Abi dönsenler çalışıyorlar mı?",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-08",
+      "kind": "video",
+      "duration_s": 6.238345,
+      "has_audio": true,
+      "source_filename": "clip-08.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "group of men walking",
+        "exposure": {
+          "frames": 12,
+          "version": 1,
+          "mean_luma": 69.9,
+          "near_black_share": 0.0
+        },
+        "duration_s": 6.238345,
+        "transcript": "Bizim tren New Street'ten önümüz. Güzelmiş. Gayet iyi. Aynen.",
+        "description": "man in scarf talks to companion men continue walking and conversing",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 3.7,
+            "energy": 6.0,
+            "start_s": 2.3,
+            "description": "man in scarf talks to companion"
+          },
+          {
+            "end_s": 6.0,
+            "energy": 5.0,
+            "start_s": 4.7,
+            "description": "men continue walking and conversing"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "yellow and white Fenerbahçe scarf",
+            "black smartphone"
+          ],
+          "brands": [
+            "Fenerbahçe"
+          ],
+          "people": {
+            "note": "six men, one wearing a soccer scarf",
+            "count": 6,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "language": "tr",
+            "segments": [
+              {
+                "text": "Bizim tren düğün sürecinden 13.30 geçer.",
+                "end_s": 2.62,
+                "start_s": 0.0
+              },
+              {
+                "text": "Güzelmiş, deniyor musun?",
+                "end_s": 3.18,
+                "start_s": 2.64
+              },
+              {
+                "text": "Hoşça gidiyorum.",
+                "end_s": 4.12,
+                "start_s": 3.68
+              },
+              {
+                "text": "Gayet iyi ya.",
+                "end_s": 5.3,
+                "start_s": 4.62
+              },
+              {
+                "text": "Maaş da iyi.",
+                "end_s": 5.94,
+                "start_s": 5.5
+              }
+            ],
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "Bizim tren New Street'ten önümüz. Güzelmiş. Gayet iyi. Aynen."
+          },
+          "actions": [
+            "man in scarf walks towards the camera",
+            "man in scarf talks to another man",
+            "men walk down the street"
+          ],
+          "setting": "city street at dusk",
+          "subject": "group of men walking",
+          "summary": "A group of men is walking down a street at dusk. One man in a black jacket and a Fenerbahçe scarf is talking to another man.",
+          "activity": "walking and conversing",
+          "audio_type": "dialogue",
+          "content_type": "broll",
+          "on_screen_text": "",
+          "visual_quality": "shaky handheld, stays sharp",
+          "notable_moments": [
+            {
+              "end_s": 3.7,
+              "start_s": 2.3,
+              "description": "man in scarf talks to companion"
+            },
+            {
+              "end_s": 6.0,
+              "start_s": 4.7,
+              "description": "men continue walking and conversing"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "Bizim tren New Street'ten önümüz. Güzelmiş. Gayet iyi. Aynen.",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-09",
+      "kind": "video",
+      "duration_s": 20.166667,
+      "has_audio": true,
+      "source_filename": "clip-09.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "group of people walking",
+        "exposure": {
+          "frames": 21,
+          "version": 1,
+          "mean_luma": 54.8,
+          "near_black_share": 0.0
+        },
+        "duration_s": 20.166667,
+        "transcript": "Ulan bu benim. Ne?",
+        "description": "group walks through narrow alley group emerges from alley into street people move onto busy street",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 4.0,
+            "energy": 5.0,
+            "start_s": 0.0,
+            "description": "group walks through narrow alley"
+          },
+          {
+            "end_s": 12.0,
+            "energy": 6.0,
+            "start_s": 8.0,
+            "description": "group emerges from alley into street"
+          },
+          {
+            "end_s": 18.0,
+            "energy": 7.0,
+            "start_s": 14.0,
+            "description": "people move onto busy street"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "green metal fence",
+            "orange road cone"
+          ],
+          "brands": [],
+          "people": {
+            "note": "large group of mostly men walking, some in hoodies",
+            "count": 50,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "Ulan bu benim. Ne?"
+          },
+          "actions": [
+            "group walks through an alleyway",
+            "people walk onto a street",
+            "man turns and gestures"
+          ],
+          "setting": "outdoor alleyway and street at night",
+          "subject": "group of people walking",
+          "summary": "A group of people walk through a narrow, graffiti-covered alleyway at night, emerging onto a street where more people are gathered and cars pass by.",
+          "activity": "walking in a group, congregating on a street",
+          "audio_type": "dialogue",
+          "content_type": "action",
+          "on_screen_text": "",
+          "visual_quality": "shaky handheld, stays sharp",
+          "notable_moments": [
+            {
+              "end_s": 4.0,
+              "start_s": 0.0,
+              "description": "group walks through narrow alley"
+            },
+            {
+              "end_s": 12.0,
+              "start_s": 8.0,
+              "description": "group emerges from alley into street"
+            },
+            {
+              "end_s": 18.0,
+              "start_s": 14.0,
+              "description": "people move onto busy street"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "Ulan bu benim. Ne?",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-10",
+      "kind": "video",
+      "duration_s": 9.133333,
+      "has_audio": true,
+      "source_filename": "clip-10.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "two young men talking",
+        "exposure": {
+          "frames": 10,
+          "version": 1,
+          "mean_luma": 53.8,
+          "near_black_share": 0.0
+        },
+        "duration_s": 9.133333,
+        "transcript": "Ne oldu ne diyorsun? Merhaba, say merhaba. Merhaba. There we go. Merhaba abi. Kazanacağız bu akşam. Ya inşallah. İnşallah abi.",
+        "description": "Kazanacağız bu akşam. Ya inşallah.",
+        "video_codec": "h264",
+        "best_moments": [],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "orange road cone"
+          ],
+          "brands": [],
+          "people": {
+            "note": "two young men, one with medium-length brown hair, one with short brown hair",
+            "count": 3,
+            "speaks_to_camera": true
+          },
+          "speech": {
+            "language": "tr",
+            "segments": [
+              {
+                "text": "Merhaba Merhaba Merhaba abi Kazancaz bu akşam İnşallah",
+                "end_s": 6.34,
+                "start_s": 0.0
+              }
+            ],
+            "to_camera": true,
+            "has_speech": true,
+            "transcript": "Ne oldu ne diyorsun? Merhaba, say merhaba. Merhaba. There we go. Merhaba abi. Kazanacağız bu akşam. Ya inşallah. İnşallah abi."
+          },
+          "actions": [
+            "first man walks towards camera and smiles",
+            "second man walks past camera and talks",
+            "third man walks past camera"
+          ],
+          "setting": "city street at night",
+          "subject": "two young men talking",
+          "summary": "Two young men in an urban outdoor setting at night greet each other and express hope for a win in a game, presumably football.",
+          "activity": "talking and walking",
+          "audio_type": "dialogue",
+          "content_type": "talking_head",
+          "on_screen_text": "",
+          "visual_quality": "shaky handheld",
+          "notable_moments": []
+        },
+        "display_height": 320,
+        "on_screen_text": "Ne oldu ne diyorsun? Merhaba, say merhaba. Merhaba. There we go. Merhaba abi. Kazanacağız bu akşam. Ya inşallah. İnşallah abi.",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-11",
+      "kind": "video",
+      "duration_s": 4.0,
+      "has_audio": true,
+      "source_filename": "clip-11.mp4",
+      "analysis": {
+        "width": 320,
+        "aspect": 0.5634,
+        "brands": [],
+        "height": 568,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "person walking on path",
+        "exposure": {
+          "frames": 8,
+          "version": 1,
+          "mean_luma": 34.0,
+          "near_black_share": 0.0
+        },
+        "duration_s": 4.0,
+        "transcript": "",
+        "description": "person walks down dark path",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 4.0,
+            "energy": 3.0,
+            "start_s": 0.0,
+            "description": "person walks down dark path"
+          }
+        ],
+        "display_width": 320,
+        "understanding": {
+          "kind": "video",
+          "brands": [],
+          "people": {
+            "note": "a person in a hoodie and light pants",
+            "count": 1,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "actions": [
+            "person walks away from camera"
+          ],
+          "setting": "outdoor path at night",
+          "subject": "person walking on path",
+          "summary": "A person walks away from the camera down a dimly lit path at night, surrounded by trees and a fence.",
+          "activity": "walking",
+          "audio_type": "ambient",
+          "content_type": "broll",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 4.0,
+              "start_s": 0.0,
+              "description": "person walks down dark path"
+            }
+          ]
+        },
+        "display_height": 568,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-12",
+      "kind": "video",
+      "duration_s": 4.8,
+      "has_audio": true,
+      "source_filename": "clip-12.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "man walking through crowd",
+        "exposure": {
+          "frames": 10,
+          "version": 1,
+          "mean_luma": 60.9,
+          "near_black_share": 0.0
+        },
+        "duration_s": 4.8,
+        "transcript": "Ah, din. Çalışıyor, olmadı.",
+        "description": "man walks past camera man walks towards camera",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 1.7,
+            "energy": 5.0,
+            "start_s": 0.0,
+            "description": "man walks past camera"
+          },
+          {
+            "end_s": 5.9,
+            "energy": 6.0,
+            "start_s": 3.0,
+            "description": "man walks towards camera"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "black metal fence",
+            "stadium building",
+            "orange road cone"
+          ],
+          "brands": [],
+          "people": {
+            "note": "a man with long hair tied back, and a crowd of people",
+            "count": 20,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "language": "tr",
+            "segments": [
+              {
+                "text": "Ah!",
+                "end_s": 0.38,
+                "start_s": 0.0
+              },
+              {
+                "text": "Gidemiş.",
+                "end_s": 1.0,
+                "start_s": 0.68
+              },
+              {
+                "text": "Çalışıyor mu bu?",
+                "end_s": 3.0,
+                "start_s": 2.08
+              }
+            ],
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "Ah, din. Çalışıyor, olmadı."
+          },
+          "actions": [
+            "man walks forward",
+            "camera pans to show man's face"
+          ],
+          "setting": "city street at night, outside a stadium",
+          "subject": "man walking through crowd",
+          "summary": "A person walks through a bustling street at night, passing a stadium entrance. They are filmed from behind and then from the front, amidst a crowd of people.",
+          "activity": "walking, exiting a venue",
+          "audio_type": "dialogue",
+          "content_type": "broll",
+          "on_screen_text": "",
+          "visual_quality": "shaky handheld, stays sharp",
+          "notable_moments": [
+            {
+              "end_s": 1.7,
+              "start_s": 0.0,
+              "description": "man walks past camera"
+            },
+            {
+              "end_s": 5.9,
+              "start_s": 3.0,
+              "description": "man walks towards camera"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "Ah, din. Çalışıyor, olmadı.",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-13",
+      "kind": "video",
+      "duration_s": 4.8,
+      "has_audio": true,
+      "source_filename": "clip-13.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "man in foreground",
+        "exposure": {
+          "frames": 10,
+          "version": 1,
+          "mean_luma": 92.3,
+          "near_black_share": 0.0
+        },
+        "duration_s": 4.8,
+        "transcript": "Maybe you need your own.",
+        "description": "man walks past stadium man looking right with stadium in background",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 2.0,
+            "energy": 4.0,
+            "start_s": 0.0,
+            "description": "man walks past stadium"
+          },
+          {
+            "end_s": 4.0,
+            "energy": 4.0,
+            "start_s": 2.0,
+            "description": "man looking right with stadium in background"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "dark green jacket",
+            "Aston Villa signpost"
+          ],
+          "brands": [
+            "Aston Villa"
+          ],
+          "people": {
+            "note": "a man with a bun and many other people walking in the background",
+            "count": 20,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "Maybe you need your own."
+          },
+          "actions": [
+            "man walks on sidewalk",
+            "man turns head to the right"
+          ],
+          "setting": "outside a stadium at night",
+          "subject": "man in foreground",
+          "summary": "A man with a bun hairstyle walks along a sidewalk at night with a stadium building and other people in the background.",
+          "activity": "walking on a sidewalk after an event",
+          "audio_type": "dialogue",
+          "content_type": "broll",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 2.0,
+              "start_s": 0.0,
+              "description": "man walks past stadium"
+            },
+            {
+              "end_s": 4.0,
+              "start_s": 2.0,
+              "description": "man looking right with stadium in background"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "Maybe you need your own.",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-14",
+      "kind": "video",
+      "duration_s": 6.733333,
+      "has_audio": true,
+      "source_filename": "clip-14.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "man in scarf",
+        "exposure": {
+          "frames": 13,
+          "version": 1,
+          "mean_luma": 75.4,
+          "near_black_share": 0.0
+        },
+        "duration_s": 6.733333,
+        "transcript": "Oğlum ben bileti aldım. Ne bileyim yani. Abi niye söylemedin ya?",
+        "description": "man talks holding phone man questions off-camera",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 2.5,
+            "energy": 4.0,
+            "start_s": 0.0,
+            "description": "man talks holding phone"
+          },
+          {
+            "end_s": 5.0,
+            "energy": 7.0,
+            "start_s": 3.0,
+            "description": "man questions off-camera"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "dark smartphone",
+            "maroon, blue, and yellow scarf"
+          ],
+          "brands": [],
+          "people": {
+            "note": "a man in a scarf and jacket, other people in background",
+            "count": 8,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "language": "tr",
+            "segments": [
+              {
+                "text": "Oğlum ben bileti aldım ne bileyim yani.",
+                "end_s": 1.9,
+                "start_s": 0.0
+              },
+              {
+                "text": "Abi niye söylemedin ya?",
+                "end_s": 4.56,
+                "start_s": 2.76
+              }
+            ],
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "Oğlum ben bileti aldım. Ne bileyim yani. Abi niye söylemedin ya?"
+          },
+          "actions": [
+            "man holds dark smartphone",
+            "man looks at smartphone",
+            "man talks off-camera"
+          ],
+          "setting": "outdoor stadium entrance at night",
+          "subject": "man in scarf",
+          "summary": "A man wearing a scarf stands outside a stadium at night, looking at his phone and speaking to someone off-camera, expressing frustration about not being told something.",
+          "activity": "man talking while looking at phone",
+          "audio_type": "dialogue",
+          "content_type": "broll",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 2.5,
+              "start_s": 0.0,
+              "description": "man talks holding phone"
+            },
+            {
+              "end_s": 5.0,
+              "start_s": 3.0,
+              "description": "man questions off-camera"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "Oğlum ben bileti aldım. Ne bileyim yani. Abi niye söylemedin ya?",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-15",
+      "kind": "video",
+      "duration_s": 2.4,
+      "has_audio": true,
+      "source_filename": "clip-15.mp4",
+      "analysis": {
+        "width": 320,
+        "aspect": 0.5634,
+        "brands": [],
+        "height": 568,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "group of people walking",
+        "exposure": {
+          "frames": 5,
+          "version": 1,
+          "mean_luma": 7.9,
+          "near_black_share": 0.0
+        },
+        "duration_s": 2.4,
+        "transcript": "I don't know what. I don't know what. I don't know what. Oh, hello, hello, hello.",
+        "description": "people walk down dark alley",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 4.0,
+            "energy": 4.0,
+            "start_s": 0.0,
+            "description": "people walk down dark alley"
+          }
+        ],
+        "display_width": 320,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "dark brick wall with graffiti",
+            "wire fence"
+          ],
+          "brands": [],
+          "people": {
+            "note": "a group of people walking away from the camera",
+            "count": 6,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "language": "en",
+            "segments": [
+              {
+                "text": "I don't know what happened.",
+                "end_s": 1.02,
+                "start_s": 0.0
+              }
+            ],
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "I don't know what. I don't know what. I don't know what. Oh, hello, hello, hello."
+          },
+          "actions": [
+            "people walk down a dark alley"
+          ],
+          "setting": "dark outdoor alley at night",
+          "subject": "group of people walking",
+          "summary": "A group of people walk down a narrow, dark alley at night, illuminated by a distant street light.",
+          "activity": "walking",
+          "audio_type": "dialogue",
+          "content_type": "broll",
+          "on_screen_text": "",
+          "visual_quality": "shaky handheld, stays sharp",
+          "notable_moments": [
+            {
+              "end_s": 4.0,
+              "start_s": 0.0,
+              "description": "people walk down dark alley"
+            }
+          ]
+        },
+        "display_height": 568,
+        "on_screen_text": "I don't know what. I don't know what. I don't know what. Oh, hello, hello, hello.",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-16",
+      "kind": "video",
+      "duration_s": 3.4,
+      "has_audio": true,
+      "source_filename": "clip-16.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "stadium crowd",
+        "exposure": {
+          "frames": 7,
+          "version": 1,
+          "mean_luma": 54.7,
+          "near_black_share": 0.0
+        },
+        "duration_s": 3.4,
+        "transcript": "Başka bir",
+        "description": "crowd walking past stadium people continuing to walk",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 3.0,
+            "energy": 5.0,
+            "start_s": 0.0,
+            "description": "crowd walking past stadium"
+          },
+          {
+            "end_s": 5.0,
+            "energy": 4.0,
+            "start_s": 3.0,
+            "description": "people continuing to walk"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "Villa Park stadium banner",
+            "Aston Villa FC banner"
+          ],
+          "brands": [
+            "Aston Villa FC"
+          ],
+          "people": {
+            "note": "large crowd of people of various ages and genders",
+            "count": 99,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "Başka bir"
+          },
+          "actions": [
+            "people walk along a street"
+          ],
+          "setting": "street outside a stadium at night",
+          "subject": "stadium crowd",
+          "summary": "A large crowd of people walks on a street outside a brightly lit stadium at night, with banners indicating a sports venue.",
+          "activity": "people walking towards a stadium",
+          "audio_type": "ambient",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 3.0,
+              "start_s": 0.0,
+              "description": "crowd walking past stadium"
+            },
+            {
+              "end_s": 5.0,
+              "start_s": 3.0,
+              "description": "people continuing to walk"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "Başka bir",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-17",
+      "kind": "video",
+      "duration_s": 2.9,
+      "has_audio": true,
+      "source_filename": "clip-17.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "football stadium with players and crowd",
+        "exposure": {
+          "frames": 6,
+          "version": 1,
+          "mean_luma": 95.9,
+          "near_black_share": 0.0
+        },
+        "duration_s": 2.9,
+        "transcript": "",
+        "description": "flame bursts on field",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 2.29,
+            "energy": 8.0,
+            "start_s": 1.25,
+            "description": "flame bursts on field"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "white corner flag",
+            "white ground markings",
+            "stadium floodlights",
+            "Heineken logo",
+            "Michelob Ultra logo"
+          ],
+          "brands": [
+            "Heineken",
+            "Michelob Ultra"
+          ],
+          "people": {
+            "note": "football players and a large stadium crowd",
+            "count": 99,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "actions": [
+            "football players walk onto the pitch",
+            "flame bursts from a device on the field"
+          ],
+          "setting": "football stadium pitch at night",
+          "subject": "football stadium with players and crowd",
+          "summary": "Football players walk onto a brightly lit stadium pitch at night, cheered by a visible crowd, while a large flame bursts from a prop on the field.",
+          "activity": "football players entering the pitch, crowd watching, fire effect deploying",
+          "audio_type": "ambient",
+          "content_type": "action",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 2.29,
+              "start_s": 1.25,
+              "description": "flame bursts on field"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-18",
+      "kind": "video",
+      "duration_s": 4.333333,
+      "has_audio": true,
+      "source_filename": "clip-18.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "stadium crowd and pyrotechnics",
+        "exposure": {
+          "frames": 9,
+          "version": 1,
+          "mean_luma": 80.0,
+          "near_black_share": 0.0
+        },
+        "duration_s": 4.333333,
+        "transcript": "",
+        "description": "crowd cheers loudly crowd waves flags enthusiastically",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 1.0,
+            "energy": 7.0,
+            "start_s": 0.0,
+            "description": "crowd cheers loudly"
+          },
+          {
+            "end_s": 5.0,
+            "energy": 8.0,
+            "start_s": 3.5,
+            "description": "crowd waves flags enthusiastically"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "blue flags",
+            "red flags",
+            "pyrotechnic flame jets"
+          ],
+          "brands": [
+            "Mastercard",
+            "UEFA"
+          ],
+          "people": {
+            "note": "thousands of football fans",
+            "count": null,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "actions": [
+            "pyrotechnic flames erupt",
+            "crowd waves flags",
+            "crowd cheers"
+          ],
+          "setting": "outdoor football stadium at night",
+          "subject": "stadium crowd and pyrotechnics",
+          "summary": "A large stadium crowd cheers and waves flags while pyrotechnics erupt on the field, creating a vibrant atmosphere at night.",
+          "activity": "fans cheering and waving flags, pyrotechnics firing",
+          "audio_type": "mixed",
+          "content_type": "action",
+          "on_screen_text": "",
+          "visual_quality": "shaky handheld, stays sharp",
+          "notable_moments": [
+            {
+              "end_s": 1.0,
+              "start_s": 0.0,
+              "description": "crowd cheers loudly"
+            },
+            {
+              "end_s": 5.0,
+              "start_s": 3.5,
+              "description": "crowd waves flags enthusiastically"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-19",
+      "kind": "video",
+      "duration_s": 2.9,
+      "has_audio": true,
+      "source_filename": "clip-19.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "stadium crowd",
+        "exposure": {
+          "frames": 6,
+          "version": 1,
+          "mean_luma": 81.9,
+          "near_black_share": 0.0
+        },
+        "duration_s": 2.9,
+        "transcript": "",
+        "description": "crowd cheers loudly",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 1.0,
+            "energy": 6.0,
+            "start_s": 0.0,
+            "description": "crowd cheers loudly"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "red flags",
+            "blue flags",
+            "UEFA Champions League banner",
+            "FedEx banner"
+          ],
+          "brands": [
+            "UEFA Champions League",
+            "FedEx"
+          ],
+          "people": {
+            "note": "large crowd of diverse adults",
+            "count": 99,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "actions": [
+            "crowd waves red flags",
+            "crowd waves blue flags"
+          ],
+          "setting": "indoor stadium",
+          "subject": "stadium crowd",
+          "summary": "A large crowd in a stadium is cheering and waving red and blue flags. A large screen displays \"UEFA CHAMPIONS LEAGUE\".",
+          "activity": "cheering and waving flags during a sporting event",
+          "audio_type": "music",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 1.0,
+              "start_s": 0.0,
+              "description": "crowd cheers loudly"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-20",
+      "kind": "video",
+      "duration_s": 10.566667,
+      "has_audio": true,
+      "source_filename": "clip-20.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "stadium crowd and flags",
+        "exposure": {
+          "frames": 11,
+          "version": 1,
+          "mean_luma": 83.6,
+          "near_black_share": 0.0
+        },
+        "duration_s": 10.566667,
+        "transcript": "Fucking hell. Yeah. Say anything, yeah. Say anything, yeah.",
+        "description": "magenta flags waving with stadium in background hands holding flags waving in stadium",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 5.0,
+            "energy": 6.0,
+            "start_s": 0.0,
+            "description": "magenta flags waving with stadium in background"
+          },
+          {
+            "end_s": 10.0,
+            "energy": 7.0,
+            "start_s": 7.0,
+            "description": "hands holding flags waving in stadium"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "magenta flags"
+          ],
+          "brands": [
+            "QATAR AIRWAYS",
+            "Crypto.com"
+          ],
+          "people": {
+            "note": "crowd in the stands, players on the field",
+            "count": null,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "Fucking hell. Yeah. Say anything, yeah. Say anything, yeah."
+          },
+          "actions": [
+            "magenta flags waving"
+          ],
+          "setting": "outdoor soccer stadium at night",
+          "subject": "stadium crowd and flags",
+          "summary": "The clip shows a night-time view of a soccer stadium with a crowd in the stands, seen through several magenta flags waving in the foreground. Players are visible on the field.",
+          "activity": "waving magenta flags during a sports event",
+          "audio_type": "mixed",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "shaky handheld, stays sharp",
+          "notable_moments": [
+            {
+              "end_s": 5.0,
+              "start_s": 0.0,
+              "description": "magenta flags waving with stadium in background"
+            },
+            {
+              "end_s": 10.0,
+              "start_s": 7.0,
+              "description": "hands holding flags waving in stadium"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "Fucking hell. Yeah. Say anything, yeah. Say anything, yeah.",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-21",
+      "kind": "video",
+      "duration_s": 9.6,
+      "has_audio": true,
+      "source_filename": "clip-21.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "stadium crowd waving flags",
+        "exposure": {
+          "frames": 10,
+          "version": 1,
+          "mean_luma": 67.5,
+          "near_black_share": 0.0
+        },
+        "duration_s": 9.6,
+        "transcript": "We need to get our name, yes. Oh, oh yeah, it's a… We hear it, you can hear it.",
+        "description": "crowd waves flags with stadium lights flashing pyrotechnic flares burst on field crowd cheers as pink flags fill frame",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 3.0,
+            "energy": 7.0,
+            "start_s": 0.0,
+            "description": "crowd waves flags with stadium lights flashing"
+          },
+          {
+            "end_s": 8.0,
+            "energy": 8.5,
+            "start_s": 5.5,
+            "description": "pyrotechnic flares burst on field"
+          },
+          {
+            "end_s": 11.5,
+            "energy": 7.5,
+            "start_s": 9.5,
+            "description": "crowd cheers as pink flags fill frame"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "large pink flags",
+            "stadium lights",
+            "pyrotechnic flares"
+          ],
+          "brands": [],
+          "people": {
+            "note": "large crowd of spectators",
+            "count": null,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "We need to get our name, yes. Oh, oh yeah, it's a… We hear it, you can hear it."
+          },
+          "actions": [
+            "crowd waves pink flags",
+            "flares erupt on field"
+          ],
+          "setting": "indoor stadium at night",
+          "subject": "stadium crowd waving flags",
+          "summary": "A stadium crowd waves large pink flags while standing in the stands. Fire and pyrotechnics erupt on the field below as the crowd cheers.",
+          "activity": "waving flags and cheering at a sports event",
+          "audio_type": "mixed",
+          "content_type": "action",
+          "on_screen_text": "",
+          "visual_quality": "shaky handheld, stays sharp",
+          "notable_moments": [
+            {
+              "end_s": 3.0,
+              "start_s": 0.0,
+              "description": "crowd waves flags with stadium lights flashing"
+            },
+            {
+              "end_s": 8.0,
+              "start_s": 5.5,
+              "description": "pyrotechnic flares burst on field"
+            },
+            {
+              "end_s": 11.5,
+              "start_s": 9.5,
+              "description": "crowd cheers as pink flags fill frame"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "We need to get our name, yes. Oh, oh yeah, it's a… We hear it, you can hear it.",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-22",
+      "kind": "video",
+      "duration_s": 6.733333,
+      "has_audio": true,
+      "source_filename": "clip-22.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "stadium crowd",
+        "exposure": {
+          "frames": 13,
+          "version": 1,
+          "mean_luma": 58.8,
+          "near_black_share": 0.0
+        },
+        "duration_s": 6.733333,
+        "transcript": "",
+        "description": "crowd waves magenta and blue flags flags wave in unison with crowd movement",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 4.0,
+            "energy": 7.0,
+            "start_s": 0.0,
+            "description": "crowd waves magenta and blue flags"
+          },
+          {
+            "end_s": 7.0,
+            "energy": 6.5,
+            "start_s": 4.1,
+            "description": "flags wave in unison with crowd movement"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "magenta flags",
+            "blue flags"
+          ],
+          "brands": [],
+          "people": {
+            "note": "a large crowd of spectators",
+            "count": 99,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "actions": [
+            "crowd waves magenta flags",
+            "crowd waves blue flags"
+          ],
+          "setting": "outdoor sports stadium at night",
+          "subject": "stadium crowd",
+          "summary": "A large crowd in a stadium waves magenta and blue flags in synchronization, creating a vibrant visual display under stadium lights.",
+          "activity": "waving flags during a performance or event",
+          "audio_type": "music",
+          "content_type": "action",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady, with some camera movement",
+          "notable_moments": [
+            {
+              "end_s": 4.0,
+              "start_s": 0.0,
+              "description": "crowd waves magenta and blue flags"
+            },
+            {
+              "end_s": 7.0,
+              "start_s": 4.1,
+              "description": "flags wave in unison with crowd movement"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-23",
+      "kind": "video",
+      "duration_s": 5.3,
+      "has_audio": true,
+      "source_filename": "clip-23.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "football stadium pitch",
+        "exposure": {
+          "frames": 11,
+          "version": 1,
+          "mean_luma": 100.0,
+          "near_black_share": 0.0
+        },
+        "duration_s": 5.3,
+        "transcript": "35 and a half plus. We're not going to turn to 35, and a half. So, I don't know. 35 and a half plus.",
+        "description": "stadium pitch illuminated with smoke people arrange banner on pitch staff walk on pitch with banner crowd in background with lights",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 3.0,
+            "energy": 6.0,
+            "start_s": 0.0,
+            "description": "stadium pitch illuminated with smoke"
+          },
+          {
+            "end_s": 6.0,
+            "energy": 7.0,
+            "start_s": 3.0,
+            "description": "people arrange banner on pitch"
+          },
+          {
+            "end_s": 10.0,
+            "energy": 6.0,
+            "start_s": 7.0,
+            "description": "staff walk on pitch with banner"
+          },
+          {
+            "end_s": 14.0,
+            "energy": 5.0,
+            "start_s": 11.0,
+            "description": "crowd in background with lights"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "large white banner",
+            "red flag"
+          ],
+          "brands": [
+            "Mastercard"
+          ],
+          "people": {
+            "note": "stadium staff and possibly some players on the pitch",
+            "count": 20,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "35 and a half plus. We're not going to turn to 35, and a half. So, I don't know. 35 and a half plus."
+          },
+          "actions": [
+            "people arrange white banner on pitch",
+            "people walk along sideline",
+            "red flag waves in foreground"
+          ],
+          "setting": "outdoor football stadium at night",
+          "subject": "football stadium pitch",
+          "summary": "The clip shows a football stadium pitch at night, illuminated by bright lights, with smoke or mist covering parts of the field. People are on the pitch, some arranging what appears to be a large banner or cloth, while others walk along the sidelines. A flag in the foreground waves.",
+          "activity": "stadium staff preparing the pitch, possibly for a pre-match ceremony",
+          "audio_type": "mixed",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "shaky handheld, stays sharp",
+          "notable_moments": [
+            {
+              "end_s": 3.0,
+              "start_s": 0.0,
+              "description": "stadium pitch illuminated with smoke"
+            },
+            {
+              "end_s": 6.0,
+              "start_s": 3.0,
+              "description": "people arrange banner on pitch"
+            },
+            {
+              "end_s": 10.0,
+              "start_s": 7.0,
+              "description": "staff walk on pitch with banner"
+            },
+            {
+              "end_s": 14.0,
+              "start_s": 11.0,
+              "description": "crowd in background with lights"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "35 and a half plus. We're not going to turn to 35, and a half. So, I don't know. 35 and a half plus.",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-24",
+      "kind": "video",
+      "duration_s": 51.366667,
+      "has_audio": true,
+      "source_filename": "clip-24.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "football stadium",
+        "exposure": {
+          "frames": 24,
+          "version": 1,
+          "mean_luma": 112.6,
+          "near_black_share": 0.0
+        },
+        "duration_s": 51.366667,
+        "transcript": "",
+        "description": "confetti falling over the pitch staff walking on pitch with banner staff moving large banner on field staff sweeping pitch with brooms staff continuing pitch preparation",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 3.0,
+            "energy": 7.0,
+            "start_s": 0.0,
+            "description": "confetti falling over the pitch"
+          },
+          {
+            "end_s": 10.0,
+            "energy": 6.0,
+            "start_s": 5.0,
+            "description": "staff walking on pitch with banner"
+          },
+          {
+            "end_s": 20.0,
+            "energy": 5.0,
+            "start_s": 13.0,
+            "description": "staff moving large banner on field"
+          },
+          {
+            "end_s": 32.0,
+            "energy": 7.0,
+            "start_s": 25.0,
+            "description": "staff sweeping pitch with brooms"
+          },
+          {
+            "end_s": 45.0,
+            "energy": 6.0,
+            "start_s": 37.0,
+            "description": "staff continuing pitch preparation"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "red flags",
+            "smartphone",
+            "large banner",
+            "brooms"
+          ],
+          "brands": [
+            "UEFA"
+          ],
+          "people": {
+            "note": "stadium staff on the pitch, large crowd in the stands",
+            "count": 99,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "actions": [
+            "people waving red flags",
+            "person filming with smartphone",
+            "staff walking on the pitch",
+            "staff carrying brooms",
+            "staff unfolding large banner"
+          ],
+          "setting": "outdoor football stadium at night",
+          "subject": "football stadium",
+          "summary": "The video shows a football stadium at night with stadium staff on the pitch during what appears to be a pre-game or half-time show. A large banner is being spread out on the field, while confetti falls and bright lights illuminate the scene.",
+          "activity": "stadium staff preparing for a ceremony on the football pitch",
+          "audio_type": "mixed",
+          "content_type": "action",
+          "on_screen_text": "",
+          "visual_quality": "shaky handheld, stays sharp",
+          "notable_moments": [
+            {
+              "end_s": 3.0,
+              "start_s": 0.0,
+              "description": "confetti falling over the pitch"
+            },
+            {
+              "end_s": 10.0,
+              "start_s": 5.0,
+              "description": "staff walking on pitch with banner"
+            },
+            {
+              "end_s": 20.0,
+              "start_s": 13.0,
+              "description": "staff moving large banner on field"
+            },
+            {
+              "end_s": 32.0,
+              "start_s": 25.0,
+              "description": "staff sweeping pitch with brooms"
+            },
+            {
+              "end_s": 45.0,
+              "start_s": 37.0,
+              "description": "staff continuing pitch preparation"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-25",
+      "kind": "video",
+      "duration_s": 9.6,
+      "has_audio": true,
+      "source_filename": "clip-25.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "football match",
+        "exposure": {
+          "frames": 10,
+          "version": 1,
+          "mean_luma": 116.4,
+          "near_black_share": 0.0
+        },
+        "duration_s": 9.6,
+        "transcript": "",
+        "description": "player prepares for free kick free kick shot on goal follow-up shot towards goal",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 2.0,
+            "energy": 6.0,
+            "start_s": 0.0,
+            "description": "player prepares for free kick"
+          },
+          {
+            "end_s": 5.0,
+            "energy": 8.0,
+            "start_s": 2.7,
+            "description": "free kick shot on goal"
+          },
+          {
+            "end_s": 9.5,
+            "energy": 7.0,
+            "start_s": 5.9,
+            "description": "follow-up shot towards goal"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "white football goal",
+            "white corner flag",
+            "green football pitch"
+          ],
+          "brands": [
+            "PlayStation",
+            "Pepsi",
+            "Bet365",
+            "UEFA Champions League"
+          ],
+          "people": {
+            "note": "football players on the pitch, large crowd in the stands",
+            "count": null,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "actions": [
+            "player prepares for a free kick",
+            "player kicks the football towards the goal",
+            "football hits the defensive wall",
+            "another player takes a shot"
+          ],
+          "setting": "outdoor football stadium at night",
+          "subject": "football match",
+          "summary": "A free kick is taken during a football match, with players forming a wall in front of the goal. The ball is kicked, hits the wall, and another player takes a follow-up shot towards the goal.",
+          "activity": "watching a football match, free kick attempt",
+          "audio_type": "ambient",
+          "content_type": "action",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 2.0,
+              "start_s": 0.0,
+              "description": "player prepares for free kick"
+            },
+            {
+              "end_s": 5.0,
+              "start_s": 2.7,
+              "description": "free kick shot on goal"
+            },
+            {
+              "end_s": 9.5,
+              "start_s": 5.9,
+              "description": "follow-up shot towards goal"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-26",
+      "kind": "video",
+      "duration_s": 5.766667,
+      "has_audio": true,
+      "source_filename": "clip-26.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "football match in stadium",
+        "exposure": {
+          "frames": 12,
+          "version": 1,
+          "mean_luma": 117.7,
+          "near_black_share": 0.0
+        },
+        "duration_s": 5.766667,
+        "transcript": "I need to get some more pictures on this.",
+        "description": "players advance ball midfield ball possession",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 2.0,
+            "energy": 5.0,
+            "start_s": 0.0,
+            "description": "players advance ball"
+          },
+          {
+            "end_s": 4.5,
+            "energy": 6.0,
+            "start_s": 2.5,
+            "description": "midfield ball possession"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "white corner flag",
+            "white football goal",
+            "green football pitch"
+          ],
+          "brands": [
+            "Bet365",
+            "Heineken",
+            "FedEx",
+            "crypto.com"
+          ],
+          "people": {
+            "note": "football players on pitch, spectators in stands",
+            "count": null,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "language": "en",
+            "segments": [
+              {
+                "text": "I ate both of them and I can bring one home.",
+                "end_s": 1.84,
+                "start_s": 0.0
+              },
+              {
+                "text": "For sure.",
+                "end_s": 4.14,
+                "start_s": 3.34
+              }
+            ],
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "I need to get some more pictures on this."
+          },
+          "actions": [
+            "players run on pitch",
+            "players pass ball"
+          ],
+          "setting": "outdoor football stadium at night",
+          "subject": "football match in stadium",
+          "summary": "A wide shot of a football match being played at night in a brightly lit stadium, with players on the green pitch and spectators in the stands.",
+          "activity": "playing football",
+          "audio_type": "ambient",
+          "content_type": "action",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 2.0,
+              "start_s": 0.0,
+              "description": "players advance ball"
+            },
+            {
+              "end_s": 4.5,
+              "start_s": 2.5,
+              "description": "midfield ball possession"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "I need to get some more pictures on this.",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-27",
+      "kind": "video",
+      "duration_s": 6.238345,
+      "has_audio": true,
+      "source_filename": "clip-27.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "stadium crowd and football match",
+        "exposure": {
+          "frames": 12,
+          "version": 1,
+          "mean_luma": 87.9,
+          "near_black_share": 0.0
+        },
+        "duration_s": 6.238345,
+        "transcript": "Come on, boys!",
+        "description": "crowd cheers loudly crowd continues clapping and cheering stadium lights illuminate the stands",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 3.0,
+            "energy": 7.0,
+            "start_s": 0.0,
+            "description": "crowd cheers loudly"
+          },
+          {
+            "end_s": 7.5,
+            "energy": 6.0,
+            "start_s": 3.5,
+            "description": "crowd continues clapping and cheering"
+          },
+          {
+            "end_s": 10.0,
+            "energy": 5.0,
+            "start_s": 8.0,
+            "description": "stadium lights illuminate the stands"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "green football pitch",
+            "stadium floodlights",
+            "blue advertising boards",
+            "stadium seating tiers"
+          ],
+          "brands": [
+            "UEFA Champions League",
+            "FedEx"
+          ],
+          "people": {
+            "note": "large crowd of diverse adults",
+            "count": 99,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "Come on, boys!"
+          },
+          "actions": [
+            "crowd cheers",
+            "crowd claps hands"
+          ],
+          "setting": "outdoor football stadium at night",
+          "subject": "stadium crowd and football match",
+          "summary": "A large crowd in a football stadium cheers during a night match, with the camera panning slightly to show more of the stands.",
+          "activity": "watching a football match and cheering",
+          "audio_type": "ambient",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady, slight handheld pan",
+          "notable_moments": [
+            {
+              "end_s": 3.0,
+              "start_s": 0.0,
+              "description": "crowd cheers loudly"
+            },
+            {
+              "end_s": 7.5,
+              "start_s": 3.5,
+              "description": "crowd continues clapping and cheering"
+            },
+            {
+              "end_s": 10.0,
+              "start_s": 8.0,
+              "description": "stadium lights illuminate the stands"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "Come on, boys!",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-28",
+      "kind": "video",
+      "duration_s": 4.8,
+      "has_audio": true,
+      "source_filename": "clip-28.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "stadium crowd",
+        "exposure": {
+          "frames": 10,
+          "version": 1,
+          "mean_luma": 95.8,
+          "near_black_share": 0.0
+        },
+        "duration_s": 4.8,
+        "transcript": "",
+        "description": "wide shot of cheering crowd",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 5.4,
+            "energy": 5.0,
+            "start_s": 0.0,
+            "description": "wide shot of cheering crowd"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "brands": [],
+          "people": {
+            "note": "a large audience of diverse people",
+            "count": null,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "setting": "sports stadium interior at night",
+          "subject": "stadium crowd",
+          "summary": "The clip shows a vast crowd of spectators inside a large stadium at night, with many standing and some seated, watching an event.",
+          "activity": "watching a live event",
+          "audio_type": "ambient",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 5.4,
+              "start_s": 0.0,
+              "description": "wide shot of cheering crowd"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-29",
+      "kind": "video",
+      "duration_s": 19.2,
+      "has_audio": true,
+      "source_filename": "clip-29.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "football players on a pitch",
+        "exposure": {
+          "frames": 20,
+          "version": 1,
+          "mean_luma": 89.1,
+          "near_black_share": 0.0
+        },
+        "duration_s": 19.2,
+        "transcript": "We're winding up. Oh! Oh! Away from us. Come on, come on! Oh! Oh! Oh! Away from us! Oh!",
+        "description": "player prepares for shot player takes penalty shot player shoots ball wide of goal ball rolls out of play",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 2.2,
+            "energy": 6.0,
+            "start_s": 0.0,
+            "description": "player prepares for shot"
+          },
+          {
+            "end_s": 3.7,
+            "energy": 8.0,
+            "start_s": 2.2,
+            "description": "player takes penalty shot"
+          },
+          {
+            "end_s": 12.0,
+            "energy": 6.5,
+            "start_s": 9.4,
+            "description": "player shoots ball wide of goal"
+          },
+          {
+            "end_s": 15.0,
+            "energy": 5.0,
+            "start_s": 12.0,
+            "description": "ball rolls out of play"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "white football goal",
+            "white corner flag"
+          ],
+          "brands": [
+            "QATAR AIRWAYS",
+            "PS5",
+            "GATORADE",
+            "adidas"
+          ],
+          "people": {
+            "note": "football players and a large crowd of spectators",
+            "count": 99,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "We're winding up. Oh! Oh! Away from us. Come on, come on! Oh! Oh! Oh! Away from us! Oh!"
+          },
+          "actions": [
+            "player kicks ball towards goal",
+            "goalkeeper saves ball",
+            "player shoots ball wide"
+          ],
+          "setting": "outdoor football stadium at night",
+          "subject": "football players on a pitch",
+          "summary": "During a night football match in a large stadium, players on the pitch attempt to score while fans cheer and react to the gameplay. A penalty shot is taken but missed.",
+          "activity": "playing football, taking a penalty shot",
+          "audio_type": "mixed",
+          "content_type": "action",
+          "on_screen_text": "",
+          "visual_quality": "shaky handheld, stays sharp",
+          "notable_moments": [
+            {
+              "end_s": 2.2,
+              "start_s": 0.0,
+              "description": "player prepares for shot"
+            },
+            {
+              "end_s": 3.7,
+              "start_s": 2.2,
+              "description": "player takes penalty shot"
+            },
+            {
+              "end_s": 12.0,
+              "start_s": 9.4,
+              "description": "player shoots ball wide of goal"
+            },
+            {
+              "end_s": 15.0,
+              "start_s": 12.0,
+              "description": "ball rolls out of play"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "We're winding up. Oh! Oh! Away from us. Come on, come on! Oh! Oh! Oh! Away from us! Oh!",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-30",
+      "kind": "video",
+      "duration_s": 3.838345,
+      "has_audio": true,
+      "source_filename": "clip-30.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "stadium crowd and police",
+        "exposure": {
+          "frames": 8,
+          "version": 1,
+          "mean_luma": 74.3,
+          "near_black_share": 0.0
+        },
+        "duration_s": 3.838345,
+        "transcript": "",
+        "description": "police officer interacting with crowd crowd observes event with stadium background",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 1.5,
+            "energy": 5.0,
+            "start_s": 0.0,
+            "description": "police officer interacting with crowd"
+          },
+          {
+            "end_s": 3.0,
+            "energy": 6.0,
+            "start_s": 2.0,
+            "description": "crowd observes event with stadium background"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "yellow high-visibility vest",
+            "black police uniform"
+          ],
+          "brands": [
+            "UEFA Foundation for Children"
+          ],
+          "people": {
+            "note": "large crowd of spectators, police officers, and stewards",
+            "count": 50,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "actions": [
+            "crowd watches an event",
+            "police officers monitor crowd",
+            "stewards observe crowd"
+          ],
+          "setting": "indoor sports stadium at night",
+          "subject": "stadium crowd and police",
+          "summary": "The clip shows a large crowd of spectators in a sports stadium at night, with police officers and stewards maintaining order.",
+          "activity": "watching a sporting event, with security personnel present",
+          "audio_type": "music",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 1.5,
+              "start_s": 0.0,
+              "description": "police officer interacting with crowd"
+            },
+            {
+              "end_s": 3.0,
+              "start_s": 2.0,
+              "description": "crowd observes event with stadium background"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-31",
+      "kind": "video",
+      "duration_s": 2.9,
+      "has_audio": true,
+      "source_filename": "clip-31.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "football match in a stadium",
+        "exposure": {
+          "frames": 6,
+          "version": 1,
+          "mean_luma": 83.2,
+          "near_black_share": 0.0
+        },
+        "duration_s": 2.9,
+        "transcript": "",
+        "description": "wide shot of players on pitch spectators watching the game players moving on the field",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 3.0,
+            "energy": 5.0,
+            "start_s": 0.0,
+            "description": "wide shot of players on pitch"
+          },
+          {
+            "end_s": 6.0,
+            "energy": 4.0,
+            "start_s": 4.5,
+            "description": "spectators watching the game"
+          },
+          {
+            "end_s": 9.0,
+            "energy": 5.0,
+            "start_s": 7.5,
+            "description": "players moving on the field"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "green football pitch",
+            "white goalposts",
+            "stadium floodlights"
+          ],
+          "brands": [],
+          "people": {
+            "note": "spectators in the stands and football players on the pitch",
+            "count": 99,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "actions": [
+            "spectators watch the game",
+            "football players move on the pitch"
+          ],
+          "setting": "outdoor football stadium at night",
+          "subject": "football match in a stadium",
+          "summary": "The video shows a wide shot of a football stadium at night, with a match in progress. Spectators are visible in the foreground and stands, and players are on the illuminated green pitch.",
+          "activity": "watching a football match",
+          "audio_type": "ambient",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady, wide shot",
+          "notable_moments": [
+            {
+              "end_s": 3.0,
+              "start_s": 0.0,
+              "description": "wide shot of players on pitch"
+            },
+            {
+              "end_s": 6.0,
+              "start_s": 4.5,
+              "description": "spectators watching the game"
+            },
+            {
+              "end_s": 9.0,
+              "start_s": 7.5,
+              "description": "players moving on the field"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-32",
+      "kind": "video",
+      "duration_s": 6.238345,
+      "has_audio": true,
+      "source_filename": "clip-32.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "soccer stadium",
+        "exposure": {
+          "frames": 12,
+          "version": 1,
+          "mean_luma": 98.0,
+          "near_black_share": 0.0
+        },
+        "duration_s": 6.238345,
+        "transcript": "",
+        "description": "soccer players on field at kick-off wide view of stadium with players and crowd",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 2.0,
+            "energy": 5.0,
+            "start_s": 0.0,
+            "description": "soccer players on field at kick-off"
+          },
+          {
+            "end_s": 5.5,
+            "energy": 5.5,
+            "start_s": 2.5,
+            "description": "wide view of stadium with players and crowd"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "green soccer pitch",
+            "stadium floodlights"
+          ],
+          "brands": [
+            "UEFA"
+          ],
+          "people": {
+            "note": "soccer players on the field and a large crowd in the stands",
+            "count": 99,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "setting": "outdoor soccer stadium at night",
+          "subject": "soccer stadium",
+          "summary": "The video shows a wide shot of a brightly lit soccer stadium at night, with a match in progress on the green pitch and a large crowd in the stands.",
+          "activity": "watching a soccer match",
+          "audio_type": "ambient",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 2.0,
+              "start_s": 0.0,
+              "description": "soccer players on field at kick-off"
+            },
+            {
+              "end_s": 5.5,
+              "start_s": 2.5,
+              "description": "wide view of stadium with players and crowd"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-33",
+      "kind": "video",
+      "duration_s": 31.7,
+      "has_audio": true,
+      "source_filename": "clip-33.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "football match",
+        "exposure": {
+          "frames": 24,
+          "version": 1,
+          "mean_luma": 99.1,
+          "near_black_share": 0.0
+        },
+        "duration_s": 31.7,
+        "transcript": "Boş mu burası yoksa değil mi?",
+        "description": "Boş mu burası yoksa değil mi?",
+        "video_codec": "h264",
+        "best_moments": [],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "green football pitch",
+            "white football goals",
+            "stadium floodlights",
+            "player uniforms (yellow and maroon)",
+            "white scoreboards",
+            "UEFA Europa League banners"
+          ],
+          "brands": [
+            "UEFA"
+          ],
+          "people": {
+            "note": "large crowd of spectators, a few individuals in the foreground",
+            "count": 99,
+            "speaks_to_camera": true
+          },
+          "speech": {
+            "language": "tr",
+            "segments": [
+              {
+                "text": "Navy okuyor",
+                "end_s": 2.0,
+                "start_s": 0.0
+              },
+              {
+                "text": "Boş mu boğaz?",
+                "end_s": 24.9,
+                "start_s": 23.72
+              },
+              {
+                "text": "Yok, serin mi?",
+                "end_s": 25.48,
+                "start_s": 24.92
+              }
+            ],
+            "to_camera": true,
+            "has_speech": true,
+            "transcript": "Boş mu burası yoksa değil mi?"
+          },
+          "actions": [
+            "camera pans across the football pitch",
+            "spectators watch the match",
+            "player stands on the pitch",
+            "man looks and speaks to the camera"
+          ],
+          "setting": "outdoor football stadium at night",
+          "subject": "football match",
+          "summary": "The video shows a football match from the stands at night, with players on the field and crowds in the stadium. The camera pans across the field and then focuses on some spectators, one of whom speaks to the camera.",
+          "activity": "watching a football match",
+          "audio_type": "mixed",
+          "content_type": "broll",
+          "on_screen_text": "",
+          "visual_quality": "shaky handheld, stays sharp",
+          "notable_moments": []
+        },
+        "display_height": 320,
+        "on_screen_text": "Boş mu burası yoksa değil mi?",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-34",
+      "kind": "video",
+      "duration_s": 5.766667,
+      "has_audio": true,
+      "source_filename": "clip-34.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "football match free kick",
+        "exposure": {
+          "frames": 12,
+          "version": 1,
+          "mean_luma": 90.3,
+          "near_black_share": 0.0
+        },
+        "duration_s": 5.766667,
+        "transcript": "Goal Goal Goal Goal Goal",
+        "description": "crowd cheers for a goal player takes a free kick",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 1.7,
+            "energy": 6.0,
+            "start_s": 0.0,
+            "description": "crowd cheers for a goal"
+          },
+          {
+            "end_s": 5.4,
+            "energy": 7.0,
+            "start_s": 2.9,
+            "description": "player takes a free kick"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "green football pitch",
+            "white football goal",
+            "football",
+            "stadium floodlights"
+          ],
+          "brands": [
+            "FedEx",
+            "UEFA Champions League"
+          ],
+          "people": {
+            "note": "football players in uniforms and a large crowd in the stands",
+            "count": 99,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "Goal Goal Goal Goal Goal"
+          },
+          "actions": [
+            "player kicks football",
+            "football flies towards goal",
+            "players in wall react",
+            "crowd cheers"
+          ],
+          "setting": "outdoor football stadium at night",
+          "subject": "football match free kick",
+          "summary": "The video shows a free kick being taken during a football match at night in a large stadium. A group of players is lined up in front of the goal, and another player kicks the ball towards them. The crowd cheers.",
+          "activity": "watching a football match, taking a free kick",
+          "audio_type": "ambient",
+          "content_type": "action",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 1.7,
+              "start_s": 0.0,
+              "description": "crowd cheers for a goal"
+            },
+            {
+              "end_s": 5.4,
+              "start_s": 2.9,
+              "description": "player takes a free kick"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "Goal Goal Goal Goal Goal",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-narrated-35",
+      "kind": "video",
+      "duration_s": 17.766667,
+      "has_audio": true,
+      "source_filename": "clip-35.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "football match in stadium",
+        "exposure": {
+          "frames": 19,
+          "version": 1,
+          "mean_luma": 87.8,
+          "near_black_share": 0.0
+        },
+        "duration_s": 17.766667,
+        "transcript": "",
+        "description": "",
+        "video_codec": "h264",
+        "best_moments": [],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "white goalposts",
+            "green grass pitch"
+          ],
+          "brands": [
+            "HYUNDAI",
+            "FedEx"
+          ],
+          "people": {
+            "note": "large crowd in stadium stands, football players on the pitch",
+            "count": 99,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "actions": [
+            "players on pitch run",
+            "crowd watches match",
+            "crowd cheers"
+          ],
+          "setting": "football stadium at night",
+          "subject": "football match in stadium",
+          "summary": "The video shows a football match at night from the stands, with players on the pitch and a large crowd. The crowd is actively cheering and singing. The camera captures a wide view of the pitch and then briefly focuses on a person's face in the crowd.",
+          "activity": "watching a football match, cheering for a team",
+          "audio_type": "ambient",
+          "content_type": "action",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady with a slight pan",
+          "notable_moments": []
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    }
+  ],
+  "prod_outcome": {
+    "recorded_from": "job assembly_plan.variants[0] and route fields, thread events",
+    "creator_route": "narrated",
+    "approval_card": {
+      "draft_applied_content": "- Done: a hook that matches the video (\"Fenerbahçe matchday\")\nHave a look at these in the video:\n- use a shorter voiceover / limit duration",
+      "changes": [
+        "Balanced pacing",
+        "Narrated Planned format"
+      ],
+      "requirement_receipts": [
+        {
+          "requirement_id": "r1",
+          "status": "partial",
+          "verification": "unchecked",
+          "reason": "I can't confirm this draft's length yet."
+        },
+        {
+          "requirement_id": "r2",
+          "status": "met",
+          "verification": "checked",
+          "reason": null
+        }
+      ]
+    },
+    "render": {
+      "resolved_archetype": "narrated",
+      "duration_s": 134.5035,
+      "edit_duration_s": 132.9035,
+      "brand_tail_s": 1.6,
+      "captions_enabled": true,
+      "voiceover_caption_style": "sentence",
+      "title_elements": [
+        {
+          "text": "Come with us to a Fenerbahçe away day at Aston Villa ",
+          "role": "generative_intro",
+          "source_params": {
+            "narrated_storyboard": "intro"
+          },
+          "animation_phases": {
+            "exit": "none",
+            "loop": "none",
+            "speed": 1.0,
+            "entrance": "typewriter"
+          }
+        }
+      ],
+      "editor_draft_present": true,
+      "creator_length_policy": {
+        "owner": "creator",
+        "natural_owner": "voiceover",
+        "check_mode": "log_only",
+        "requested_duration_s": 120.0
+      },
+      "render_requirements_duration_s": 120.0
+    }
+  },
+  "checks": {
+    "fields": [
+      "direction",
+      "pacing",
+      "story_structure",
+      "title_animation"
+    ],
+    "asks": [
+      "r1",
+      "r2",
+      "r3"
+    ],
+    "honored": {
+      "fields": [
+        "title_animation"
+      ],
+      "asks": [
+        "r3"
+      ]
+    },
+    "not_graded": {
+      "opening_title": "Applied in the narrated table (narrated_title.py reads it); the consumer gate (check 10) holds that claim. The recorded render's title element was edited in the editor afterwards (Montserrat, typewriter, custom position, not the writer's Playfair preset), so it is evidence of neither",
+      "target_duration_s": "graded through r1, the creator's length ask: the strategy carries 120 s without the server's length provenance (creator_duration_s, target_duration_requested)",
+      "caption_style": "auto, the schema default: the planner chose no caption style"
+    }
+  }
+}

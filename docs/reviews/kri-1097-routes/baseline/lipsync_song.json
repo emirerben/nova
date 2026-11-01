@@ -1,0 +1,577 @@
+{
+  "fixture": "lipsync_song",
+  "route": "lipsync_song",
+  "mode": "offline",
+  "source": {
+    "kind": "recorded",
+    "what": "Prod Kria thread, approved draft and its render (origin/main ff5f2adbe).",
+    "captured": "2026-11-01 via read-only admin GETs (saved copies, no network now)",
+    "recorded": [
+      "creator messages up to the approved draft (thread events)",
+      "the planner's post-parse strategy and summary (turns plan intents[].arguments)",
+      "the Creative Brief bound to the job (assembly_plan.creator_brief_binding)",
+      "clip analyses, durations, audio (media_snapshot.clip_assignments)",
+      "the draft card prod showed and what the render did (prod_outcome)"
+    ],
+    "reconstructed": [
+      "the approval card is assembled offline from the real pure functions the draft turn calls (scripts/kria/score_route.py approval_card); the DB-bound turn body is not run",
+      "phone source bindings: synthetic proxy paths (score_route.media_rows)",
+      "capability manifest (score_route.manifest)",
+      "strategy.caption_style = \"karaoke\", strategy.title_animation = \"pop\", a stated 30 s length (target_duration_s 30 with target_duration_requested and creator_duration_s, as the server records a length the creator said) and brief r2 (timing, facts.duration_s = 30, \"keep it 30 seconds\") and r3 (style, facts.animation = \"pop\", \"animate the title in\") are NOT in the recording. The recorded plan chose none of them; they make the fixture carry a caption style, a stated length and an animation ask the lip-sync route drops."
+    ],
+    "redacted": [
+      "user, thread, item, job, turn and draft ids",
+      "storage paths and signed URLs",
+      "library asset ids (now asset-synthetic-NN)",
+      "file names and content hashes",
+      "media ids (now analysis-proxy-lipsync_song-NN)"
+    ],
+    "see": "tests/fixtures/kria_replay/lipsync_song/README.md"
+  },
+  "network_attempts_blocked": 0,
+  "registry": true,
+  "passed": 9,
+  "failed": 2,
+  "all_green": false,
+  "by_kind": {
+    "route": {
+      "passed": 1,
+      "failed": 0
+    },
+    "disclosed_ok": {
+      "passed": 8,
+      "failed": 0
+    },
+    "honored": {
+      "passed": 0,
+      "failed": 2
+    }
+  },
+  "inconclusive": [],
+  "lane_targets": {
+    "4.title_animation": {
+      "lane": "L4",
+      "kind": "honored",
+      "why": "the planned title animation reaches the lip-sync titles"
+    },
+    "5.r3": {
+      "lane": "L4",
+      "kind": "honored",
+      "why": "animate the title in: the animation ask reaches the lip-sync titles"
+    }
+  },
+  "expected_red": [
+    "4.title_animation",
+    "5.r3"
+  ],
+  "unexpected_red": [],
+  "unexpected_green": [],
+  "not_graded": {
+    "r1": "lip sync to the uploaded song is the route itself: check 1 verifies the draft resolves to lipsync_song",
+    "song_section": "the recorded song range (0:00 to 4:31) is the filming range the aligner searched, and the takes were placed inside it (62.9 to 123.8 s). No typed song-section ask exists in the brief or the strategy for a creator song, so a section the route ignores cannot be graded offline yet"
+  },
+  "report_only": [
+    10
+  ],
+  "controls_ok": true,
+  "negative_controls": [
+    {
+      "name": "2 the card names the pace without saying it is dropped must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 the card says the pace is not applied must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 render evidence applies the field must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 an undecided receipt must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a typed decline before approval must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a checked met receipt must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 an unchecked hedge on the card is not a disclosure must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 a typed decline that names the field must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 a line about subtitles does not name the title must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 another field's line that names the word does not disclose this field must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 a line past the card's budget is not read must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a length ask with no receipt and a card line that keeps the length must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a length ask with the card line saying the length is not applied must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 no render evidence for a lane target must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 render evidence that applies the lane target must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a new unconsumed field must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "zz_new_unconsumed_field"
+      ]
+    },
+    {
+      "name": "10 an Applied claim with no reader must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "zz_claimed_field"
+      ]
+    }
+  ],
+  "replay": {
+    "fields": {},
+    "asks": {},
+    "source": null
+  },
+  "card": {
+    "route": "lipsync_song",
+    "lines_shown": true,
+    "reply": "Not everything you asked for made it in:\n- Couldn't: animate the title in (I can't animate on-screen text on this video yet, so the text shows without motion)\nHeads-up for this video:\n- I can't follow the planned story structure (Establish the singer looking into the c…, Cut between takes to match the energy o…) on this video yet, so it won't change the order of the clips\n- The balanced pacing isn't applied on this video yet: your song sets where the cuts fall\n- The native direction isn't applied on this video yet: it is cut to your song\n- I can't apply the karaoke caption style on this video yet, so it won't be used\n- I can't make this video the length you asked for yet: its length follows your song\n- I can't animate the title (pop) on this video yet, so it shows without motion",
+    "changes": [
+      "Balanced pacing",
+      "Montage format"
+    ],
+    "receipts": [
+      {
+        "requirement_id": "r3",
+        "brief_version": null,
+        "generation_id": null,
+        "status": "not_possible",
+        "verification": "checked",
+        "stage": "checked",
+        "target_media_ids": [],
+        "reason": "I can't animate on-screen text on this video yet, so the text shows without motion",
+        "inferred": [],
+        "inferred_labels": []
+      }
+    ],
+    "not_applied": [
+      {
+        "code": "not_applied_on_route",
+        "subject": "story_structure",
+        "text": "I can't follow the planned story structure (Establish the singer looking into the c…, Cut between takes to match the energy o…) on this video yet, so it won't change the order of the clips",
+        "on_card": true
+      },
+      {
+        "code": "not_applied_on_route",
+        "subject": "pacing",
+        "text": "The balanced pacing isn't applied on this video yet: your song sets where the cuts fall",
+        "on_card": true
+      },
+      {
+        "code": "not_applied_on_route",
+        "subject": "direction",
+        "text": "The native direction isn't applied on this video yet: it is cut to your song",
+        "on_card": true
+      },
+      {
+        "code": "not_applied_on_route",
+        "subject": "caption_style",
+        "text": "I can't apply the karaoke caption style on this video yet, so it won't be used",
+        "on_card": true
+      },
+      {
+        "code": "not_applied_on_route",
+        "subject": "target_duration_s",
+        "text": "I can't make this video the length you asked for yet: its length follows your song",
+        "on_card": true
+      },
+      {
+        "code": "not_applied_on_route",
+        "subject": "title_animation",
+        "text": "I can't animate the title (pop) on this video yet, so it shows without motion",
+        "on_card": true
+      }
+    ],
+    "text": "Not everything you asked for made it in:\n- Couldn't: animate the title in (I can't animate on-screen text on this video yet, so the text shows without motion)\nHeads-up for this video:\n- I can't follow the planned story structure (Establish the singer looking into the c…, Cut between takes to match the energy o…) on this video yet, so it won't change the order of the clips\n- The balanced pacing isn't applied on this video yet: your song sets where the cuts fall\n- The native direction isn't applied on this video yet: it is cut to your song\n- I can't apply the karaoke caption style on this video yet, so it won't be used\n- I can't make this video the length you asked for yet: its length follows your song\n- I can't animate the title (pop) on this video yet, so it shows without motion\nI can't animate on-screen text on this video yet, so the text shows without motion",
+    "disclosure_text": "I can't follow the planned story structure (Establish the singer looking into the c…, Cut between takes to match the energy o…) on this video yet, so it won't change the order of the clips\nThe balanced pacing isn't applied on this video yet: your song sets where the cuts fall\nThe native direction isn't applied on this video yet: it is cut to your song\nI can't apply the karaoke caption style on this video yet, so it won't be used\nI can't make this video the length you asked for yet: its length follows your song\nI can't animate the title (pop) on this video yet, so it shows without motion\nI can't animate on-screen text on this video yet, so the text shows without motion"
+  },
+  "checks": [
+    {
+      "id": 1,
+      "name": "route: the draft resolves to the route that renders it",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "fixture_route": "lipsync_song",
+        "card_route": "lipsync_song",
+        "lines_shown": true
+      },
+      "kind": "route"
+    },
+    {
+      "id": "2.direction",
+      "name": "direction: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "value": "native",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.pacing",
+      "name": "pacing: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "value": "balanced",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.story_structure",
+      "name": "story_structure: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "value": [
+          "Establish the singer looking into the camera",
+          "Cut between takes to match the energy of the song"
+        ],
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.caption_style",
+      "name": "caption_style: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "value": "karaoke",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.target_duration_s",
+      "name": "target_duration_s: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "value": 30,
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.title_animation",
+      "name": "title_animation: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "value": "pop",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "3.r2",
+      "name": "r2: the ask is honored or declined before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "met": false,
+        "declined_before_approval": false,
+        "disclosed_on_card": true,
+        "honored_at_render": false,
+        "receipt": {
+          "status": null,
+          "verification": null,
+          "reason": null
+        },
+        "requirement": {
+          "id": "r2",
+          "kind": "timing",
+          "scope": "global",
+          "literal": null,
+          "description": "keep it 30 seconds",
+          "facts": {
+            "duration_s": 30
+          },
+          "source_turn_id": "synthetic-turn",
+          "status": "open"
+        },
+        "card_line": "I can't make this video the length you asked for yet: its length follows your song"
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "3.r3",
+      "name": "r3: the ask is honored or declined before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "met": false,
+        "declined_before_approval": true,
+        "disclosed_on_card": false,
+        "honored_at_render": false,
+        "receipt": {
+          "status": "not_possible",
+          "verification": "checked",
+          "reason": "I can't animate on-screen text on this video yet, so the text shows without motion"
+        },
+        "requirement": {
+          "id": "r3",
+          "kind": "style",
+          "scope": "global",
+          "literal": null,
+          "description": "animate the title in",
+          "facts": {
+            "animation": "pop"
+          },
+          "source_turn_id": "synthetic-turn",
+          "status": "open"
+        },
+        "card_line": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "4.title_animation",
+      "name": "title_animation: applied in the render (lane target)",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose title_animation='pop'; no render replay for this route (scripts/kria/route_replays/lipsync_song.py): only the render can show it applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied_at_render": false,
+        "value": "pop",
+        "render_evidence": null
+      },
+      "kind": "honored"
+    },
+    {
+      "id": "5.r3",
+      "name": "r3: honored in the render (lane target)",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "'animate the title in': no render replay for this route (scripts/kria/route_replays/lipsync_song.py): only the render can show it applied"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied_at_render": false,
+        "requirement": {
+          "id": "r3",
+          "kind": "style",
+          "scope": "global",
+          "literal": null,
+          "description": "animate the title in",
+          "facts": {
+            "animation": "pop"
+          },
+          "source_turn_id": "synthetic-turn",
+          "status": "open"
+        },
+        "render_evidence": null
+      },
+      "kind": "honored"
+    },
+    {
+      "id": 10,
+      "name": "consumer gate (REPORT ONLY): fields the route ignores and the card does not disclose",
+      "pass": false,
+      "verdict": "REPORT (gaps)",
+      "why_it_fails": [
+        "the lipsync_song route reads none of ['archetype', 'hero_media_id', 'execution_contract', 'editorial_plan', 'intro_hook', 'shot_labels', 'label_position', 'image_layout', 'render_program', 'optional_treatments', 'overlay_display', 'licensed_sfx', 'mixed_media_timing', 'montage_audio', 'video_reuse_policy', 'montage_cadence'] and the approval card does not say they are not applied"
+      ],
+      "evidence": {
+        "registry_drift": {
+          "listed_but_read": [],
+          "unread_but_unlisted": [
+            "editorial_plan",
+            "execution_contract",
+            "image_layout",
+            "mixed_media_timing",
+            "montage_audio",
+            "montage_cadence",
+            "render_program",
+            "shot_labels",
+            "video_reuse_policy"
+          ]
+        },
+        "pass": false,
+        "settable_fields": 32,
+        "claimed_applied_unread": [],
+        "unconsumed": [
+          "direction",
+          "archetype",
+          "hero_media_id",
+          "execution_contract",
+          "story_structure",
+          "editorial_plan",
+          "caption_style",
+          "intro_hook",
+          "shot_labels",
+          "title_animation",
+          "label_position",
+          "image_layout",
+          "pacing",
+          "target_duration_s",
+          "render_program",
+          "optional_treatments",
+          "overlay_display",
+          "licensed_sfx",
+          "mixed_media_timing",
+          "montage_audio",
+          "video_reuse_policy",
+          "montage_cadence"
+        ],
+        "undisclosed": [
+          "archetype",
+          "hero_media_id",
+          "execution_contract",
+          "editorial_plan",
+          "intro_hook",
+          "shot_labels",
+          "label_position",
+          "image_layout",
+          "render_program",
+          "optional_treatments",
+          "overlay_display",
+          "licensed_sfx",
+          "mixed_media_timing",
+          "montage_audio",
+          "video_reuse_policy",
+          "montage_cadence"
+        ],
+        "disclosed": [
+          "direction",
+          "story_structure",
+          "caption_style",
+          "title_animation",
+          "pacing",
+          "target_duration_s"
+        ],
+        "exempt": {
+          "rationale": "explanatory prose shown to the creator, nothing to apply"
+        },
+        "indirect_consumers": [
+          "audio_strategy",
+          "edit_format",
+          "media_scope",
+          "opening_title",
+          "selected_media_ids"
+        ]
+      },
+      "report_only": true,
+      "kind": "report"
+    }
+  ]
+}
