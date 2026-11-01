@@ -20,7 +20,11 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from pydantic import ValidationError
+
 from app.agents.editor_ops_v2 import OpSpec
+from app.kria.clip_tilt import ClipTilt, wrap_degrees
+from app.kria.recipes import ClipBackdrop
 from app.kria.reply_language import say
 
 # Mirrors src/apps/ios/Kria/Core/NativeEditorDocument.swift NativeEditorWireContract.
@@ -49,9 +53,12 @@ _PATCH_KEYS = frozenset(
         "transition_after",
         "transition_duration_s",
         "source_crop",
+        "tilt",
         "removed",
     }
 )
+_TILT_KEYS = frozenset({"rotation_deg", "rotation_delta_deg", "backdrop"})
+_TILT_MAX_TURN_DEG = 360.0
 _STRATEGIES = ("proportional", "uniform", "trim_tail")
 _FAMILY = frozenset({"clip", "clips", "timeline"})
 
@@ -133,6 +140,60 @@ def _clean_crop(value: object) -> dict[str, float] | None:
     return {"x": x, "y": y, "width": w, "height": h}
 
 
+def _clean_tilt(value: object, state: Any) -> tuple[bool, dict[str, Any] | None]:
+    """(valid, tilt). ``None`` is "straighten"; otherwise an angle and/or a backdrop.
+
+    ``rotation_deg`` replaces the clip's angle and ``rotation_delta_deg`` adds to it. Either
+    may be up to a full turn either way: an absolute angle is wrapped here, a relative one is
+    wrapped against each clip's own angle when it is applied.
+    """
+    if value is None:
+        return True, None
+    if not isinstance(value, dict) or not value or not set(value) <= _TILT_KEYS:
+        state.invalid_value(_tilt_shape_note())
+        return False, None
+    if "rotation_deg" in value and "rotation_delta_deg" in value:
+        state.invalid_value(_tilt_shape_note())
+        return False, None
+    clean: dict[str, Any] = {}
+    for key in ("rotation_deg", "rotation_delta_deg"):
+        if key not in value:
+            continue
+        angle = _num(value[key], -_TILT_MAX_TURN_DEG, _TILT_MAX_TURN_DEG)
+        if angle is None:
+            state.invalid_value(
+                say(
+                    en="A tilt needs an angle in degrees, up to a full turn to the left or right.",
+                    tr="Eğim için en fazla tam bir tur sola veya sağa olacak şekilde derece "
+                    "cinsinden bir açı gerekiyor.",
+                )
+            )
+            return False, None
+        clean[key] = wrap_degrees(angle) if key == "rotation_deg" else angle
+    if "backdrop" in value:
+        try:
+            backdrop = ClipBackdrop.model_validate(value["backdrop"])
+        except ValidationError:
+            state.invalid_value(
+                say(
+                    en="Behind a tilted clip I can show a plain background, a blurred copy of the "
+                    "clip, or one colour (like #112233).",
+                    tr="Eğik klibin arkasında düz bir arka plan, klibin bulanık bir kopyası veya "
+                    "tek bir renk (örneğin #112233) gösterebilirim.",
+                )
+            )
+            return False, None
+        clean["backdrop"] = backdrop.model_dump(mode="json")
+    return True, clean
+
+
+def _tilt_shape_note() -> str:
+    return say(
+        en="A tilt is an angle, a background, or both. I can't read that one.",
+        tr="Eğim bir açı, bir arka plan ya da ikisi birden olabilir. Bunu anlayamadım.",
+    )
+
+
 def _coerce_patch_slots(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
     from app.agents import edit_copilot as ec  # noqa: PLC0415
 
@@ -160,6 +221,13 @@ def _coerce_patch_slots(name: str, payload: dict, snapshot: dict, state: Any) ->
             cleaned = value if value in TRANSITIONS else None
         elif key == "removed":
             cleaned = value if isinstance(value, bool) else None
+        elif key == "tilt":
+            # None is a valid value here ("straighten"), so it cannot ride the check below.
+            valid, tilt = _clean_tilt(value, state)
+            if not valid:
+                return None
+            clean[key] = tilt
+            continue
         else:  # source_crop
             cleaned = _clean_crop(value)
         if cleaned is None:
@@ -167,6 +235,16 @@ def _coerce_patch_slots(name: str, payload: dict, snapshot: dict, state: Any) ->
             return None
         clean[key] = cleaned
     capabilities = snapshot.get("timeline_patch_capabilities")
+    if "tilt" in clean and not (
+        isinstance(capabilities, dict) and capabilities.get("tilt") is True
+    ):
+        unavailable = say(
+            en="I can't tilt clips on this edit.",
+            tr="Bu videoda klipleri eğemiyorum.",
+        )
+        state.reject(op=name, reason="capability_unavailable", detail=unavailable)
+        state.reply_notes.append(unavailable)
+        return None
     if isinstance(capabilities, dict):
         unavailable = [key for key in clean if capabilities.get(key) is False]
         if unavailable:
@@ -506,6 +584,32 @@ def _fit_window(
     return max(floor, source - duration * rate), duration
 
 
+def _tilted(row: dict[str, Any], patch: dict[str, Any], *, clip_number: int) -> dict | None:
+    """The ``tilt`` row value ``row`` ends with: its current tilt, changed by ``patch["tilt"]``.
+
+    A turn and a backdrop are independent: an angle keeps the backdrop, a backdrop keeps the
+    angle, and a relative angle adds to this clip's own. ``None`` means upright on a plain
+    background. A clip with a look cannot be tilted (the engine refuses a look on a
+    non-identity transform), so a look is refused here instead of vanishing at render time.
+    """
+    change = patch["tilt"]
+    if change is None:
+        return None
+    look = patch["look_preset"] if "look_preset" in patch else row.get("look_preset")
+    if look not in (None, "none"):
+        raise _err(f"Clip {clip_number} has a look, so it can't be tilted. Remove the look first")
+    if "backdrop" in change and row.get("layout") == "supporting_card":
+        raise _err("A photo shown as a card can turn, but its background can't be changed")
+    current = ClipTilt.from_row(row.get("tilt"))
+    rotation = current.rotation_deg
+    if "rotation_deg" in change:
+        rotation = change["rotation_deg"]
+    elif "rotation_delta_deg" in change:
+        rotation = wrap_degrees(rotation + change["rotation_delta_deg"])
+    backdrop = change["backdrop"] if "backdrop" in change else current.backdrop
+    return ClipTilt.model_validate({"rotation_deg": rotation, "backdrop": backdrop}).row()
+
+
 def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
     ops = _ops()
     patch = dict(op.get("patch") or {})
@@ -522,6 +626,8 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
         raise _err("Speed changes are not available for this edit")
     if "source_crop" in patch and not _clip_capability(state, "source_crop", default=False):
         raise _err("Cropping is not available for this edit")
+    if "tilt" in patch and not _clip_capability(state, "tilt", default=False):
+        raise _err("Tilting clips isn't available for this edit")
     if ("transition_after" in patch or "transition_duration_s" in patch) and (
         not _clip_capability(state, "transitions")
     ):
@@ -532,6 +638,7 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
     active = [i for i, row in enumerate(rows) if not row.get("removed")]
     last_active = active[-1] if active else -1
     applied = 0
+    tilt_unchanged = False
     duration_only_on_cut = False
     for index in indexes:
         row = rows[index]
@@ -607,6 +714,13 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
                 raise _err("A photo shown as a card can't be cropped")
             row["source_crop"] = patch["source_crop"]
             applied += 1
+        if "tilt" in patch:
+            tilted = _tilted(row, patch, clip_number=active.index(index) + 1)
+            if tilted == ClipTilt.from_row(row.get("tilt")).row():
+                tilt_unchanged = True
+            else:
+                row["tilt"] = tilted
+                applied += 1
         if ("transition_after" in patch or "transition_duration_s" in patch) and (
             index != last_active
         ):
@@ -626,6 +740,12 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
                 row["transition_duration_s"] = float(seconds or 0.3)
             applied += 1
     if not applied:
+        if tilt_unchanged:
+            raise _err(
+                "Those clips are already upright"
+                if patch["tilt"] is None
+                else "Those clips are already tilted that way"
+            )
         if last_active in indexes and (
             "transition_after" in patch or "transition_duration_s" in patch
         ):

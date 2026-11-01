@@ -237,6 +237,14 @@ def copilot_schema():
             return obj({"find": string, "with": string}, ("find", "with"))
         if name == "patch":
             return patch
+        if name == "tilt":
+            return obj(
+                {
+                    "rotation_deg": number,
+                    "rotation_delta_deg": number,
+                    "backdrop": obj({"kind": enum("blank", "color", "blur"), "color": string}),
+                }
+            )
         if name in map_fields:
             # Dynamic preset/animation metadata remains locally validated; it is
             # structurally typed JSON, not an untyped substitute for an op.
@@ -331,11 +339,16 @@ def copilot_schema():
             "transition_after",
             "transition_duration_s",
             "playback_rate",
+            "tilt",
         }
     )
     patch = obj(
         {
-            k: ({"anyOf": [field(k), {"type": "null"}]} if k == "background_color" else field(k))
+            k: (
+                {"anyOf": [field(k), {"type": "null"}]}
+                if k in {"background_color", "tilt"}
+                else field(k)
+            )
             for k in sorted(patch_names)
         }
     )
