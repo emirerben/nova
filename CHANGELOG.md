@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.70.0] - 2026-11-01
+
+### Changed
+- fix(kria): a researched ask with "with animations" is approvable once its sources are shown (#2015) <!-- release-pr: 2015 -->
+
 ## [0.83.69.0] - 2026-11-01
 
 ### Changed
