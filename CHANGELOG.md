@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.84.0] - 2026-11-01
+
+### Changed
+- feat(ios): notifications only, no Activity inbox; opt-in moves to Account (KRI-1087) (#2023) <!-- release-pr: 2023 -->
+
 ## [0.83.83.0] - 2026-11-01
 
 ### Changed
