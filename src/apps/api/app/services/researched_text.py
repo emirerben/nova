@@ -459,7 +459,12 @@ def _opening_end(snapshot: dict, slots: list[dict]) -> float:
             default=0.0,
         )
     first_end = _window(slots[0])[1]
-    return first_end if any(float(bar.get("start_s", 0)) < first_end for bar in bars) else 0.0
+    # A story beat's placeholder caption (`story_direction`) is not an opening to preserve.
+    return (
+        first_end
+        if any(float(bar.get("start_s", 0)) < first_end for bar in bars if not _is_story_seed(bar))
+        else 0.0
+    )
 
 
 def _speech_windows(snapshot: dict, slots: list[dict], opener_end: float) -> list[tuple]:
@@ -573,6 +578,16 @@ def research_windows(snapshot: dict) -> list[dict]:
     return result
 
 
+def _is_story_seed(bar: dict) -> bool:
+    """A story beat's placeholder caption (`story_direction.STORY_SEED_PREFIX`), not copy."""
+    from app.config import settings  # noqa: PLC0415
+    from app.pipeline.story_direction import STORY_SEED_PREFIX  # noqa: PLC0415
+
+    return settings.story_directions_on_montage_enabled and str(bar.get("id") or "").startswith(
+        STORY_SEED_PREFIX
+    )
+
+
 def _place_research_text(
     snapshot: dict,
     *,
@@ -583,6 +598,7 @@ def _place_research_text(
     windows: list[tuple[float, float]],
     remove_indexes: set[int],
     metadata: dict,
+    look: dict | None = None,
 ) -> dict:
     """One sourced explanation as an ``add_text`` op, after the placement checks.
 
@@ -600,6 +616,7 @@ def _place_research_text(
     if start < opening and any(
         float(bar.get("start_s", 0)) < end and float(bar.get("end_s", 0)) > start
         for bar in snapshot.get("text_bars") or []
+        if not _is_story_seed(bar)
     ):
         raise ResearchUnavailable("Research preserves the existing opening")
     if end - start < 2 or len(text) > 180 or len(text) / (end - start) > 15:
@@ -610,11 +627,13 @@ def _place_research_text(
     for index, bar in enumerate(snapshot.get("text_bars") or []):
         a, b = float(bar.get("start_s", 0)), float(bar.get("end_s", 0))
         if start < b and end > a:
+            # A story beat's placeholder caption (`story_direction`) is replaceable wherever
+            # the explanation lands, even partly over it: it only holds the beat's place.
+            placeholder = _is_story_seed(bar)
             if (
                 speech  # a Talking edit's text in a pause is the creator's own
                 or bar.get("id") in (snapshot.get("copy_constraints") or {})
-                or a < start
-                or b > end
+                or ((a < start or b > end) and not placeholder)
                 or (
                     bar.get("caption_cue")
                     or str(bar.get("role", "")).startswith(("caption", "lyric"))
@@ -653,11 +672,19 @@ def _place_research_text(
         "end_s": end,
         **metadata,
     }
-    return {"op": "add_text", "text": text, "start_s": start, "end_s": end, "research": research}
+    op = {"op": "add_text", "text": text, "start_s": start, "end_s": end, "research": research}
+    if look:
+        # The creator's text-look ask (an entrance) rides on the added row itself.
+        op["patch"] = dict(look)
+    return op
 
 
 def research_operations(
-    captions: list, evidence: ResearchEvidence, snapshot: dict, request: str
+    captions: list,
+    evidence: ResearchEvidence,
+    snapshot: dict,
+    request: str,
+    look: dict | None = None,
 ) -> list[dict]:
     slots = snapshot.get("slots") or []
     facts = {fact.id: fact for fact in evidence.facts}
@@ -735,6 +762,7 @@ def research_operations(
                     "retrieved_at": evidence.retrieved_at,
                     "search_entry_html": evidence.search_entry_html,
                 },
+                look=look,
             )
         )
     if not additions:
@@ -749,9 +777,17 @@ def _with_removals(additions: list[dict], remove_indexes: set[int]) -> list[dict
 
 
 def run_researched_revision(
-    request: ResearchRequest, *, utterance: str, snapshot: dict, ctx: RunContext | None = None
+    request: ResearchRequest,
+    *,
+    utterance: str,
+    snapshot: dict,
+    ctx: RunContext | None = None,
+    look: dict | None = None,
 ):
-    """Called by both creation composition and follow-up chat, under the turn deadline."""
+    """Called by both creation composition and follow-up chat, under the turn deadline.
+
+    ``look`` is the creator's text-style patch (an entrance) the explanations are added with;
+    None keeps the ops exactly as before."""
     from app.agents.edit_copilot import EditCopilotOutput
 
     request.authorize(utterance)
@@ -788,7 +824,7 @@ def run_researched_revision(
     bound["research_windows"] = windows
     copy_input = ResearchCopyInput(request=utterance, snapshot=bound, evidence=evidence)
     result = ResearchCopyAgent(default_client()).run(copy_input, ctx=research_ctx)
-    ops = research_operations(result.captions, evidence, snapshot, utterance)
+    ops = research_operations(result.captions, evidence, snapshot, utterance, look=look)
     review = ResearchReviewAgent(default_client()).run(
         ResearchReviewInput(context=copy_input, proposed=result), ctx=research_ctx
     )

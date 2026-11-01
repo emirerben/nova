@@ -197,6 +197,16 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "setCarouselPosition setCarouselMomentPosition removeCarouselMoment",
         ("set_carousel_moment",),
     ),
+    # The Talk-to-camera background (KRI-1117). The scanner counts only `func` declarations, so the
+    # session's read helpers (`canEditSpeakerBackground`, `speakerBackground`,
+    # `speakerBackgroundChoices` are computed properties; `backgroundChoices(from:)` is `static`)
+    # need no row. The agent reaches the same Save section through set_background/remove_background
+    # (`speaker_background` in the editor commit), only while the editor capability is open.
+    "speaker_background": _g(
+        "agent_ops",
+        "setSpeakerBackground removeSpeakerBackground",
+        ("set_background", "remove_background"),
+    ),
     "video_shape": _g(
         "agent_unsupported",
         "setVideoShape",

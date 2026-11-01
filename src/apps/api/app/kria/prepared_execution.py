@@ -478,6 +478,13 @@ def build_decisions(
     for key, field in (("shape", "render_shape"), ("speech_cleanup", "speech_cleanup")):
         if isinstance(result.get(field), Mapping):
             decisions[key] = Decision(digest=digest(result[field]), origin="creator_answer")
+    from app.services.render_shape import shape_is_creator_pick  # noqa: PLC0415
+
+    shape = result.get("render_shape")
+    if isinstance(shape, Mapping) and not shape_is_creator_pick(shape):
+        # The app echoes the preselected shape back untouched: that is the server's
+        # default, not an answer the creator gave.
+        decisions["shape"] = Decision(digest=digest(shape), origin="model_default")
     return decisions
 
 

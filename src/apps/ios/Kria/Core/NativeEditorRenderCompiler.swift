@@ -88,6 +88,7 @@ enum NativeEditorRenderError: Error, Equatable {
         }
         for (name, populated) in [
             ("carousel", document.carouselMoment != nil),
+            ("speaker background", document.unreadableSpeakerBackground),
         ] where populated { throw NativeEditorRenderError.unsupportedLane(name) }
         guard document.opaqueRecords.values.allSatisfy(\.isEmpty) else {
             #if DEBUG
@@ -903,12 +904,24 @@ enum NativeEditorRenderError: Error, Equatable {
             let under = video.filter { $0.volume > 0 && $0.timelineStart < window.end && $0.timelineStart + $0.duration > window.start }.map(\.id)
             if !under.isEmpty, muteWindows.count < 100 { muteWindows.append(AudioMuteWindow(start: window.start, end: window.end, clipIDs: under)) }
         }
+        // KRI-1118: the Talk-to-camera background is one engine layer plus a pinned pool-visual asset.
+        var speakerBackground: SpeakerBackgroundLayer?
+        if let background = document.speakerBackground {
+            let layer = background.layer
+            guard let source = mediaSources[EditorSpeakerBackground.sourceKey(forMediaID: background.mediaID)],
+                  let fingerprint = source.asset.fingerprint else { throw MediaEngineError.missingAsset(layer.assetID) }
+            assets[layer.assetID] = MediaAsset(id: layer.assetID, relativePath: layer.assetID, fingerprint: fingerprint)
+            references[layer.assetID] = RenderAssetReference(id: layer.assetID, fingerprint: try RenderFingerprint(fingerprint),
+                source: .visual(visualID: background.mediaID, generation: source.visualGeneration ?? "0", mediaKind: background.kind))
+            urls[layer.assetID] = source.url
+            speakerBackground = layer
+        }
         // Past the cap `recipe.validate()` would throw a bare `invalidTimeline`, which reads as a transient failure.
         guard text.count <= Self.maxTextLayers else { throw NativeEditorRenderError.tooManyTextLayers }
         var recipe = KriaMediaEngine.EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: canvas,
             assets: assets.values.sorted { $0.id < $1.id }, tracks: [TimelineTrack(id: "video", kind: .video, clips: video)] + (overlays.isEmpty ? [] : [TimelineTrack(id: "overlays", kind: .overlay, clips: overlays)]) + audioTracks,
             audio: AudioMixRecipe(originalVolume: originalGain, muteWindows: muteWindows),
-            assetManifest: RenderAssetManifest(assets: references.values.sorted { $0.id < $1.id }), textLayers: text, cameraPulses: cameraPulses, motionScenes: motionProgram, visualFills: visualFills)
+            assetManifest: RenderAssetManifest(assets: references.values.sorted { $0.id < $1.id }), textLayers: text, cameraPulses: cameraPulses, motionScenes: motionProgram, visualFills: visualFills, speakerBackground: speakerBackground)
         // KRI-589: drawings follow the timeline the cuts left them (the projected window), then take the
         // same clamp the server's `compile_drawing_layers` applies; both are pinned by compile_v1.json.
         recipe.drawingLayers = NativeDrawingCompile.layers(document.drawings.map { drawing in

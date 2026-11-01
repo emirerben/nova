@@ -7,11 +7,13 @@ Execution remains the responsibility of a separately authenticated route.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 from app.agents._schemas.creator_agent import (
     FULLSCREEN_OVERLAY_DISPLAYS,
+    BackgroundMedia,
     CapabilityAvailability,
     CreativeStrategy,
     CreatorCatalogRef,
@@ -79,6 +81,7 @@ from app.services.phone_rollout import (
     phone_timed_video_cards_supported,
     phone_user_song_supported,
     phone_voiceover_reaction_beats_supported,
+    speaker_background_supported,
 )
 
 CAPABILITY_SET_ITEM_INTENT = "set_item_intent"
@@ -112,6 +115,27 @@ CAPABILITY_TIMED_CARDS = "timed_cards"
 TIMED_CARDS_UNAVAILABLE_NOTICE = (
     "Small cards at an exact time aren't available for this edit yet; left them out."
 )
+# KRI-1117: a photo or looping video behind the speaker of a phone Talking edit. Present in
+# `capabilities` ONLY while the gate (`speaker_background_supported()`, the phone media lanes)
+# is open on a phone `subtitled` manifest, so every other manifest and hash stays byte-identical.
+CAPABILITY_SPEAKER_BACKGROUND = "speaker_background"
+# The reason a background (the creator's pick in the camera, or the agent's
+# `background_media`) is not kept. The creator reads it before approving; the Turkish twins
+# live in `app.kria.strategy_policy._KNOWN_TR`.
+SPEAKER_BACKGROUND_NOTICES: dict[str, str] = {
+    "unavailable": (
+        "Couldn't put that behind you: a photo or video background only works on a "
+        "talking-to-camera edit rendered on your iPhone, and it isn't available here right now."
+    ),
+    "not_found": (
+        "Couldn't find the photo or video you named for the background; kept your own background."
+    ),
+    "pick_not_found": (
+        "Couldn't use the background you picked in the camera: it is no longer in this "
+        "edit's photos and videos; kept your own background."
+    ),
+    "kind_off": ("Couldn't use that as the background: this iPhone can't draw it behind you yet."),
+}
 TALKING_CLIP_INTENTS_DROPPED_NOTICE = (
     "Talking edits caption what you say, so I didn't add separate labels or captions "
     "to individual clips."
@@ -257,6 +281,7 @@ def resolve_creator_manifest(
     user_song_item: object | None = None,
     runs_guided_voiceover: bool = True,
     chosen_format: str | None = None,
+    speaker_background_pick: str | None = None,
 ) -> ResolvedCreatorManifest:
     """Resolve a descriptive v1 manifest from server state and policy.
 
@@ -269,6 +294,11 @@ def resolve_creator_manifest(
     ``song_*`` attributes) read through ``getattr`` only: ``song_gcs_path``,
     ``song_duration_s`` and ``song_analysis``. ``None`` or no attached song adds
     nothing to the manifest, so it stays byte-identical to before the feature.
+
+    ``speaker_background_pick`` (KRI-1117) is the creator's explicit background chosen in the
+    camera (``thread.state["speaker_background"]["media_id"]``). It is kept on the manifest
+    only while the ``speaker_background`` capability is advertised, so every other manifest
+    stays byte-identical.
 
     ``render_program_for_intent`` and ``guided_edit_applicable`` are the same
     policy used by the existing plan-item/generative routes.  In particular,
@@ -883,6 +913,13 @@ def resolve_creator_manifest(
             )
         else:
             capabilities[CAPABILITY_TIMED_CARDS] = _available()
+    background_pick: str | None = None
+    if is_phone_subtitled and not has_voiceover:
+        # Advertised only when open (like `timed_cards`): a closed gate leaves the dict, both
+        # hashes and the creator prompt exactly as they were before this lane existed.
+        if settings.phone_subtitled_media_lanes_enabled and speaker_background_supported():
+            capabilities[CAPABILITY_SPEAKER_BACKGROUND] = _available()
+            background_pick = speaker_background_pick or None
     if has_voiceover and not runs_guided_voiceover:
         # KRI-598: runtime v2 downgraded every guided_voiceover_v1 strategy to the native
         # edit, losing what the contract carried (prod thread f77a5c16 lost a photo beat).
@@ -949,6 +986,8 @@ def resolve_creator_manifest(
     )
     if song_default_format is not None:
         context_payload["chosen_format"] = song_default_format
+    if background_pick is not None:
+        context_payload["speaker_background_pick"] = background_pick
     context_hash = canonical_context_hash(context_payload)
     manifest = ResolvedCreatorManifest(
         item_id=item_id,
@@ -958,6 +997,7 @@ def resolve_creator_manifest(
         has_user_song=user_song_facts is not None,
         user_song=user_song_facts,
         chosen_format=song_default_format,
+        speaker_background_pick=background_pick,
         narration=resolved_narration,
         current_edit=resolved_edit,
         media=resolved_media,
@@ -1470,6 +1510,138 @@ def _repair_creator_ending_clip(
     return strategy.model_copy(update=update), notices
 
 
+SPEAKER_BACKGROUND_STATE_KEY = "speaker_background"
+
+
+def canonical_pool_media_id(value: object) -> str | None:
+    """A Visuals-pool row id in the manifest's ``asset-<uuid>`` spelling, else None.
+
+    Accepts the bare row id a client knows or the manifest's own spelling; anything that is
+    not a UUID (a filename, another id scheme) names no pool row.
+    """
+
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    bare = raw[len("asset-") :] if raw.casefold().startswith("asset-") else raw
+    try:
+        return f"asset-{uuid.UUID(bare)}"
+    except ValueError:
+        return None
+
+
+def speaker_background_pick_from_state(state: object) -> str | None:
+    """The background the creator picked in the camera, from a thread's ``state``, else None."""
+
+    pick = state.get(SPEAKER_BACKGROUND_STATE_KEY) if isinstance(state, Mapping) else None
+    media_id = pick.get("media_id") if isinstance(pick, Mapping) else None
+    return canonical_pool_media_id(media_id)
+
+
+SPEAKER_BACKGROUND_NOT_ALSO_A_POP_IN_NOTICE = (
+    "The photo or video behind you is only the background, not also a pop-in on a spoken word."
+)
+
+
+def speaker_background_open(manifest: ResolvedCreatorManifest) -> bool:
+    """True when the manifest advertises the background lane (nothing to teach or keep else)."""
+
+    capability = manifest.capabilities.get(CAPABILITY_SPEAKER_BACKGROUND)
+    return capability is not None and capability.available
+
+
+def _speaker_background_media(
+    manifest: ResolvedCreatorManifest, requested: str | None
+) -> CreatorMediaRef | None:
+    """The Visuals-pool photo or video a background names, else None.
+
+    Only ``asset-*`` entries count (the item's own pool, never the speaker's clips); a bare
+    pool row id is read as ``asset-<id>`` so a client that knows the row id still resolves.
+    """
+
+    pool = [
+        item
+        for item in manifest.media
+        if item.media_id.startswith("asset-") and item.kind in {"image", "video"}
+    ]
+    needle = str(requested or "").strip()
+    found = _match_owned_media_ref(pool, needle)
+    if found is None and needle and not needle.startswith("asset-"):
+        found = _match_owned_media_ref(pool, f"asset-{needle}")
+    return found
+
+
+def _repair_creator_speaker_background(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+) -> tuple[CreativeStrategy, list[str]]:
+    """KRI-1117: keep a Talking background only where the phone can composite it, honestly.
+
+    Repair (never reject), like the ending-clip repair. The creator's explicit pick in the
+    camera (``manifest.speaker_background_pick``) fills in a strategy the agent left without
+    a ``background_media`` (KRI-129: the creator's own pick wins over silence). An id outside
+    THIS item's pool, a closed capability or a kind the phone cannot draw is dropped with a
+    plain notice (S18, S19), never silently. A kept background is also taken out of every
+    reaction beat and the closing shot: it is the backdrop, never also a pop-in.
+    """
+
+    wanted = strategy.background_media
+    pick = manifest.speaker_background_pick
+    if wanted is None and pick is None:
+        return strategy, []
+    if not speaker_background_open(manifest):
+        return (
+            strategy.model_copy(update={"background_media": None}),
+            [SPEAKER_BACKGROUND_NOTICES["unavailable"]],
+        )
+    notices: list[str] = []
+    media: CreatorMediaRef | None = None
+    start = 0.0
+    if wanted is not None:
+        media = _speaker_background_media(manifest, wanted.media_id)
+        start = wanted.source_start_s
+        if media is None:
+            notices.append(SPEAKER_BACKGROUND_NOTICES["not_found"])
+    if media is None and pick is not None:
+        media, start = _speaker_background_media(manifest, pick), 0.0
+        if media is None:
+            notices.append(SPEAKER_BACKGROUND_NOTICES["pick_not_found"])
+    if media is not None and media.kind not in phone_drawable_visual_kinds():
+        notices.append(SPEAKER_BACKGROUND_NOTICES["kind_off"])
+        media = None
+    if media is None:
+        return strategy.model_copy(update={"background_media": None}), notices
+    update: dict[str, Any] = {
+        "background_media": BackgroundMedia(
+            media_id=media.media_id, source_start_s=start if media.kind == "video" else 0.0
+        )
+    }
+    popped = False
+    beats = []
+    for beat in strategy.reaction_beats or ():
+        if beat.visual_id is None or _speaker_background_media(manifest, beat.visual_id) != media:
+            beats.append(beat)
+            continue
+        popped = True
+        if beat.sound is not None:
+            beats.append(beat.model_copy(update={"visual_id": None}))
+    if popped:
+        update["reaction_beats"] = beats or None
+    closing = strategy.closing_media
+    if closing is not None:
+        if _speaker_background_media(manifest, closing.visual_id) == media:
+            update["closing_media"] = None
+            popped = True
+        elif (
+            closing.badge_visual_id is not None
+            and _speaker_background_media(manifest, closing.badge_visual_id) == media
+        ):
+            update["closing_media"] = closing.model_copy(update={"badge_visual_id": None})
+            popped = True
+    if popped:
+        notices.append(SPEAKER_BACKGROUND_NOT_ALSO_A_POP_IN_NOTICE)
+    return strategy.model_copy(update=update), notices
+
+
 def _drop_talking_clip_intents(strategy: CreativeStrategy) -> tuple[CreativeStrategy, list[str]]:
     """Strip footage clip intents from a Talking edit, saying so once.
 
@@ -1525,6 +1697,10 @@ def compile_strategy_to_plan(
     # the dispatched strategy is the repaired one.
     strategy, ending_notices = _repair_creator_ending_clip(manifest, strategy)
     shape_notices = [*shape_notices, *ending_notices]
+    # KRI-1117: the photo / looping video behind the speaker (the creator's camera pick fills in
+    # an agent that left it out); same entry so receipts judge exactly what the worker resolves.
+    strategy, background_notices = _repair_creator_speaker_background(manifest, strategy)
+    shape_notices = [*shape_notices, *background_notices]
     # Exact-timed small cards: the same entry, so the dispatched strategy is the repaired one
     # and the receipts judge exactly what the worker will ground.
     strategy, timed_notices = _repair_creator_timed_cards(manifest, strategy)
@@ -1918,6 +2094,7 @@ build_creator_manifest = resolve_creator_manifest
 repair_creator_reaction_beats = _repair_creator_reaction_beats
 # ... and the ending clip (KRI-841), judged by the same checks.
 repair_creator_ending_clip = _repair_creator_ending_clip
+repair_creator_speaker_background = _repair_creator_speaker_background
 # ... and the exact-timed small cards, judged by the same checks.
 repair_creator_timed_cards = _repair_creator_timed_cards
 
@@ -1949,6 +2126,11 @@ __all__ = [
     "normalize_creator_strategy_media",
     "phone_talking_title_lane_open",
     "repair_creator_ending_clip",
+    "repair_creator_speaker_background",
+    "speaker_background_open",
+    "speaker_background_pick_from_state",
+    "canonical_pool_media_id",
+    "SPEAKER_BACKGROUND_STATE_KEY",
     "repair_creator_reaction_beats",
     "resolve_creator_image_media_ref",
     "resolve_creator_visual_video_media_ref",

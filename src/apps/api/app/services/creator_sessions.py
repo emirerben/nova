@@ -48,7 +48,11 @@ from app.services.clip_facts import assignment_facts, facts_for_prompt
 from app.services.clip_file_names import clip_display_name
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_understanding import clip_record
-from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS, resolve_creator_manifest
+from app.services.creator_capabilities import (
+    CAPABILITY_REACTION_BEATS,
+    resolve_creator_manifest,
+    speaker_background_pick_from_state,
+)
 from app.services.edit_proposal_limits import (
     CREATOR_EXECUTION_RECEIPT_LEASE_S,
     EDIT_PROPOSAL_TASK_HARD_TIME_LIMIT_S,
@@ -430,6 +434,32 @@ async def resolve_item_creator_context(
     chosen_format = await _chosen_song_default_format(db, item, persona.user_id)
     if phone_visuals_only:
         phone_source_media_ids = []
+    # KRI-1117: the background the creator picked in the camera lives on the thread. No query
+    # while the kill switch is off, so a flag-off turn reads exactly what it always read.
+    speaker_background_pick: str | None = None
+    if settings.speaker_background_enabled:
+        pick_states = (
+            (
+                await db.execute(
+                    select(CreationThread.state)
+                    .where(
+                        CreationThread.creator_id == persona.user_id,
+                        CreationThread.active_plan_item_id == item.id,
+                    )
+                    .order_by(CreationThread.updated_at.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        speaker_background_pick = next(
+            (
+                pick
+                for state in pick_states
+                if (pick := speaker_background_pick_from_state(state)) is not None
+            ),
+            None,
+        )
     # KRI-189: when/where facts (capture time, place, best-guess landmark, each
     # with provenance) are shown to the chat agent only when the flag is on.
     facts_on = settings.clip_facts_for(persona.user_id)
@@ -668,6 +698,7 @@ async def resolve_item_creator_context(
         ),
         runs_guided_voiceover=runs_guided_voiceover,
         chosen_format=chosen_format,
+        speaker_background_pick=speaker_background_pick,
     )
     return manifest, media_context
 

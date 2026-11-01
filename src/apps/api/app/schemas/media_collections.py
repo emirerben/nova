@@ -8,6 +8,10 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 
 from app.schemas.research import StoryResearch
 
+# A structural bound on how many moments one idea may cut together, not an editorial one: the
+# 60-second total and what the story needs decide the count, so this only stops a runaway list.
+MAX_STORY_MOMENTS = 60
+
 
 class CollectionMember(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -249,7 +253,7 @@ class StoryContentPlan(BaseModel):
     caption: Annotated[str, StringConstraints(strip_whitespace=False)] = Field(
         default="", max_length=300
     )
-    beat_reasons: list[str] = Field(min_length=1, max_length=8)
+    beat_reasons: list[str] = Field(min_length=1, max_length=MAX_STORY_MOMENTS)
     open_questions: list[StoryOpenQuestion] = Field(
         default_factory=list, max_length=3, exclude_if=lambda value: not value
     )
@@ -324,10 +328,12 @@ class StoryReviewBody(BaseModel):
 
 
 class StoryCorrectionBody(StoryReviewBody):
-    replace_index: int | None = Field(default=None, ge=0, le=7)
+    replace_index: int | None = Field(default=None, ge=0, le=MAX_STORY_MOMENTS - 1)
     moment_id: UUID | None = None
     audio_policy: Literal["preserve_source_audio", "muted"] | None = None
-    moment_order: list[UUID] | None = Field(default=None, min_length=1, max_length=8)
+    moment_order: list[UUID] | None = Field(
+        default=None, min_length=1, max_length=MAX_STORY_MOMENTS
+    )
     content_plan: StoryContentPlan | None = None
 
     @model_validator(mode="after")

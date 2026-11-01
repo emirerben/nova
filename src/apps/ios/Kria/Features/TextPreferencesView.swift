@@ -53,8 +53,11 @@ struct TextPreferenceMemory: Decodable, Sendable {
     let active: [Item]
     let suggestions: [Item]
     let recentUndo: TextPreferenceOperation?
+    private let lenientDefaults: LenientDecodable<TextStyleDefaults>?
+    var textStyleDefaults: TextStyleDefaults? { lenientDefaults?.value }
     enum CodingKeys: String, CodingKey {
         case featureAvailable = "feature_available", enabled, revision, active, suggestions
+        case lenientDefaults = "text_style_defaults"
         case textPreferencesAvailable = "text_preferences_available"
         case recentUndo = "recent_undo", editLearning = "edit_learning"
     }
@@ -151,8 +154,17 @@ struct TextPreferencesView: View {
     @State private var role = "all_text"
     @State private var rule = TextPreferenceRule()
     @State private var drafts: [String: TextPreferenceRule] = [:]
-    private let roles = ["all_text", "title", "label", "pinned", "caption", "lyric"]
+    @State private var enlarged = false
     init(api: any KriaAPIClient) { _model = StateObject(wrappedValue: TextPreferencesModel(api: api)) }
+
+    private var isAllText: Bool { role == "all_text" }
+    private var server: TextStyleDefaults? { model.memory?.textStyleDefaults }
+    private var defaults: TextRoleDefaults { TextRoleSpec.defaults(for: role, server: server) }
+    private var allTextDefaults: TextRoleDefaults { TextRoleSpec.defaults(for: "all_text", server: server) }
+    /// What a type inherits: the All text rule as the creator is editing it, else as saved.
+    private var allTextRule: TextPreferenceRule {
+        isAllText ? rule : drafts["all_text"] ?? model.memory?.rule(role: "all_text") ?? TextPreferenceRule()
+    }
 
     var body: some View {
         Form {
@@ -161,21 +173,14 @@ struct TextPreferencesView: View {
                     Toggle("Use saved preferences", isOn: Binding(get: { memory.enabled }, set: { enabled in Task { await model.setEnabled(enabled) } }))
                         .accessibilityIdentifier("text-preferences-enabled")
                     if !memory.enabled { Text("Paused. Turn this on to use your choices in new videos.").foregroundStyle(KriaColor.mutedInk) }
-                    Picker("Apply to", selection: $role) {
-                        ForEach(roles, id: \.self) { Text(label($0)).tag($0) }
-                    }.accessibilityIdentifier("text-preference-role")
                 } footer: {
                     Text("For future videos. Instructions for one video take priority.")
                 }
                 fontSection
-                Section {
-                    TextPreferencePreview(rule: rule)
-                        .listRowBackground(KriaColor.softZinc)
-                }
                 placementSection
                 effectsSection
                 Section {
-                    Button("Reset \(label(role).lowercased()) preferences") {
+                    Button("Reset \(TextRoleSpec.spec(role).label.lowercased()) preferences") {
                         let resetRole = role
                         Task {
                             await model.reset(role: resetRole)
@@ -229,6 +234,7 @@ struct TextPreferencesView: View {
         .tint(KriaColor.ink)
         .scrollContentBackground(.hidden).background(KriaColor.paper)
         .navigationTitle("Text preferences").navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .top, spacing: 0) { if model.memory?.textStylingAvailable == true { header } }
         .safeAreaInset(edge: .bottom) { saveBar }
         .task {
             guard model.memory == nil else { return }
@@ -240,6 +246,99 @@ struct TextPreferencesView: View {
             model.saved = false
         }
         .onChange(of: rule) { _, _ in model.saved = false }
+    }
+
+    /// Pinned above the scrolling settings so the frame stays in view while a setting changes.
+    private var header: some View {
+        let spec = TextRoleSpec.spec(role)
+        return VStack(spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(TextRoleSpec.all) { chip($0) }
+                }
+                .padding(.horizontal, 20)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("text-preference-role")
+            }
+            preview(width: 140)
+                .overlay {
+                    Button { enlarged = true } label: { Color.clear.contentShape(Rectangle()) }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Enlarge preview")
+                        .accessibilityIdentifier("text-preferences-preview-enlarge")
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    // Sits just outside the frame so it never covers the sample text drawn on it.
+                    Button { enlarged = true } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 12, weight: .semibold)).foregroundStyle(KriaColor.ink)
+                            .frame(width: 28, height: 28).background(KriaColor.fill, in: Circle())
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .offset(x: 44, y: 8)
+                    .accessibilityHidden(true)
+                }
+            Text(spec.blurb).font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                .multilineTextAlignment(.center).lineLimit(2)
+                .padding(.horizontal, 20)
+                .accessibilityIdentifier("text-preference-role-description")
+        }
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .background(KriaColor.paper)
+        .shadow(color: .black.opacity(0.06), radius: 6, y: 4)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("text-preferences-header")
+        .sheet(isPresented: $enlarged) { enlargedPreview }
+    }
+
+    private func preview(width: CGFloat, identifier: String = "text-preferences-preview") -> TextRolePreview {
+        TextRolePreview(selected: role, rules: previewRules, allTextPosition: allTextRule.position, server: server,
+                        width: width, identifier: identifier)
+    }
+
+    private var enlargedPreview: some View {
+        let spec = TextRoleSpec.spec(role)
+        return ScrollView {
+            VStack(spacing: 14) {
+                Text(spec.label).font(KriaFont.body(20).weight(.semibold)).foregroundStyle(KriaColor.ink)
+                Text(spec.blurb).font(KriaFont.body(15)).foregroundStyle(KriaColor.mutedInk).multilineTextAlignment(.center)
+                    .accessibilityIdentifier("text-preference-sheet-description")
+                preview(width: 300, identifier: "text-preferences-preview-large")
+                Button { enlarged = false } label: { Text("Done").frame(maxWidth: .infinity) }
+                    .buttonStyle(KriaPrimaryButtonStyle())
+                    .frame(width: 300)
+                    .accessibilityIdentifier("text-preferences-preview-done")
+            }
+            .padding(20).frame(maxWidth: .infinity)
+        }
+        .background(KriaColor.paper)
+        .presentationDetents([.large])
+    }
+
+    private func chip(_ spec: TextRoleSpec) -> some View {
+        let selected = role == spec.role
+        return Button { role = spec.role } label: {
+            Text(spec.label)
+                .font(KriaFont.body(14).weight(.semibold))
+                .foregroundStyle(KriaColor.ink)
+                .padding(.horizontal, 16).frame(minHeight: 44)
+                .background(selected ? KriaColor.butter : KriaColor.fill, in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("text-preference-role-" + spec.role)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private var previewRules: [String: TextPreferenceRule] {
+        var rules: [String: TextPreferenceRule] = [:]
+        for spec in TextRoleSpec.drawn {
+            let own = spec.role == role ? rule : drafts[spec.role] ?? model.memory?.rule(role: spec.role) ?? TextPreferenceRule()
+            rules[spec.role] = own.inheriting(from: allTextRule)
+        }
+        return rules
     }
 
     private var fontSection: some View {
@@ -256,55 +355,157 @@ struct TextPreferencesView: View {
             }
             .accessibilityLabel("Excluded fonts, " + fontSummary(rule.excludedFonts))
             .accessibilityIdentifier("text-preference-excluded-fonts")
-            Picker("Font", selection: Binding(get: { rule.fontFamily ?? (rule.automaticFont == true ? "automatic" : "defaults") }, set: {
-                rule.fontFamily = ["automatic", "defaults"].contains($0) ? nil : $0
-                rule.automaticFont = $0 == "defaults" ? nil : $0 == "automatic"
-                if let font = rule.fontFamily { rule.excludedFonts.removeAll { $0 == font } }
+            Picker("Font", selection: Binding(get: {
+                rule.fontFamily ?? (rule.automaticFont == true || isAllText ? "auto" : "same")
+            }, set: {
+                switch $0 {
+                case "same": rule.fontFamily = nil; rule.automaticFont = nil
+                case "auto": rule.fontFamily = nil; rule.automaticFont = isAllText ? nil : true
+                default:
+                    rule.fontFamily = $0; rule.automaticFont = false
+                    rule.excludedFonts.removeAll { $0 == rule.fontFamily }
+                }
             })) {
-                Text("Use defaults").tag("defaults")
-                Text("Automatic").tag("automatic")
+                if !isAllText { Text("Same as All text (\(allTextRule.fontFamily ?? defaults.font))").tag("same") }
+                Text(defaults.font == "Kria picks" ? "Kria picks" : defaults.font).tag("auto")
                 ForEach(NativeFontCatalog.shared.pickerFonts, id: \.self) { Text($0).tag($0) }
             }.accessibilityIdentifier("text-preference-font")
+            if let hint = defaults.fontHint, rule.fontFamily == nil {
+                Text("Kria starts with \(hint) for \(TextRoleSpec.spec(role).label.lowercased()).")
+                    .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+            }
         }
     }
+
+    private var inheritedPlacement: String {
+        allTextRule.position.map(TextRoleSpec.positionName) ?? defaults.shortPlacement
+    }
+
+    private var inheritedColor: String { allTextRule.color.map(colorName) ?? allTextDefaults.color }
 
     private var placementSection: some View {
         Section("Placement and color") {
             Picker("Placement", selection: Binding(get: { rule.position ?? "" }, set: { rule.position = $0.isEmpty ? nil : $0 })) {
-                Text("Use defaults").tag("")
-                ForEach(["top_left", "top", "top_right", "middle", "bottom_left", "bottom", "bottom_right"], id: \.self) { Text(label($0)).tag($0) }
+                Text(isAllText ? defaults.placement : "Same as All text (\(inheritedPlacement))").tag("")
+                ForEach(TextRoleSpec.positions, id: \.self) { Text(TextRoleSpec.positionName($0)).tag($0) }
             }.accessibilityIdentifier("text-preference-placement")
-            HStack {
-                Text("Color")
-                Spacer()
-                ForEach(["#FFFFFF", "#000000", "#FFFF00", "#FF0000", "#0000FF"], id: \.self) { hex in
-                    Button { rule.color = rule.color == hex ? nil : hex } label: {
-                        Circle().fill(nativeEditorColor(hex))
-                            .overlay(Circle().strokeBorder(KriaColor.line, lineWidth: 1))
-                            .overlay { if rule.color == hex { Image(systemName: "checkmark").font(.caption.bold()).foregroundStyle(hex == "#000000" || hex == "#0000FF" ? Color.white : Color.black) } }
-                            .frame(width: 28, height: 28).frame(minWidth: 44, minHeight: 44)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(colorName(hex))
-                    .accessibilityAddTraits(rule.color == hex ? .isSelected : [])
-                }
+            Button { rule.color = nil } label: {
+                HStack {
+                    Text("Color")
+                    Spacer()
+                    Text(rule.color.map(colorName) ?? (isAllText ? defaults.color : "Same as All text (\(inheritedColor))"))
+                        .foregroundStyle(KriaColor.mutedInk)
+                    Image(systemName: "checkmark").font(.caption.bold()).opacity(rule.color == nil ? 1 : 0)
+                }.frame(minHeight: 44).contentShape(Rectangle())
             }
-            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 8))
-            TextField("Custom color, e.g. #FFFFFF", text: Binding(get: { rule.color ?? "" }, set: { rule.color = $0.isEmpty ? nil : $0 }))
-                .textInputAutocapitalization(.characters).autocorrectionDisabled()
-                .accessibilityLabel("Text color hex")
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("text-preference-color-default")
+            .accessibilityHint(rule.color == nil ? "" : "Clears the color")
+            .accessibilityAddTraits(rule.color == nil ? .isSelected : [])
+            if rule.color == nil && (isAllText || inheritedColor == allTextDefaults.color) {
+                Text(defaults.colorHint).font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+            }
+            colorSwatches
+                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
         }
     }
 
+    private static let presetColors = ["#FFFFFF", "#000000", "#FFFF00", "#FF0000", "#0000FF"]
+
+    private var colorSwatches: some View {
+        let current = rule.color?.uppercased()
+        let customHex = current.flatMap { SlidePostTextElement.isHex($0) && !Self.presetColors.contains($0) ? $0 : nil }
+        return HStack(spacing: 0) {
+            Button { rule.color = nil } label: {
+                Text(isAllText ? "Auto" : "Same")
+                    .font(KriaFont.body(12).weight(.semibold)).foregroundStyle(KriaColor.ink)
+                    .frame(width: 40, height: 40)
+                    .background(rule.color == nil ? KriaColor.butter : KriaColor.fill, in: Circle())
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isAllText ? "Auto" : "Same as All text")
+            .accessibilityAddTraits(rule.color == nil ? .isSelected : [])
+            .accessibilityIdentifier("text-preference-color-auto")
+            ForEach(Self.presetColors, id: \.self) { hex in
+                Button { rule.color = current == hex ? nil : hex } label: {
+                    ZStack {
+                        Circle().fill(KriaColor.fill).frame(width: 40, height: 40)
+                        Circle().fill(nativeEditorColor(hex)).frame(width: 28, height: 28)
+                        if current == hex {
+                            Image(systemName: "checkmark").font(.caption.bold())
+                                .foregroundStyle(hex == "#000000" || hex == "#0000FF" ? Color.white : Color.black)
+                        }
+                    }.frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(colorName(hex))
+                .accessibilityAddTraits(current == hex ? .isSelected : [])
+            }
+            customSwatch(customHex)
+        }
+    }
+
+    /// The system picker sits invisibly under our own circle so the swatch matches the presets; the circle never takes the tap.
+    private func customSwatch(_ customHex: String?) -> some View {
+        ZStack {
+            ColorPicker("Custom color", selection: Binding(
+                get: { nativeEditorColor(rule.color ?? "#FFFFFF") },
+                set: { rule.color = nativeEditorHex($0) }
+            ), supportsOpacity: false)
+                .labelsHidden().opacity(0.02)
+                .frame(width: 44, height: 44)
+                .accessibilityValue(customHex ?? "")
+                .accessibilityAddTraits(customHex != nil ? .isSelected : [])
+                .accessibilityIdentifier("text-preference-color-custom")
+            ZStack {
+                Circle().fill(KriaColor.fill).frame(width: 40, height: 40)
+                if let customHex {
+                    Circle().fill(nativeEditorColor(customHex)).frame(width: 28, height: 28)
+                    Image(systemName: "checkmark").font(.caption.bold())
+                        .foregroundStyle(Self.isLight(customHex) ? Color.black : Color.white)
+                } else {
+                    Image(systemName: "paintpalette").font(.system(size: 16, weight: .semibold)).foregroundStyle(KriaColor.ink)
+                }
+            }
+            .allowsHitTesting(false).accessibilityHidden(true)
+        }
+        .frame(maxWidth: .infinity, minHeight: 44)
+    }
+
+    private static func isLight(_ hex: String) -> Bool {
+        let value = UInt32(hex.dropFirst(), radix: 16) ?? 0
+        let luma = 0.299 * Double((value >> 16) & 255) + 0.587 * Double((value >> 8) & 255) + 0.114 * Double(value & 255)
+        return luma > 150
+    }
+
     private var effectsSection: some View {
-        Section {
-            Picker("Outline", selection: Binding(get: { rule.strokeWidth.map { $0 == 0 ? "off" : "on" } ?? "default" }, set: { rule.strokeWidth = $0 == "default" ? nil : ($0 == "off" ? 0 : 2) })) {
-                Text("Use defaults").tag("default"); Text("Off").tag("off"); Text("On").tag("on")
-            }.accessibilityIdentifier("text-preference-outline")
-            Picker("Shadow", selection: Binding(get: { rule.shadowEnabled.map { $0 ? "on" : "off" } ?? "default" }, set: { rule.shadowEnabled = $0 == "default" ? nil : $0 == "on" })) {
-                Text("Use defaults").tag("default"); Text("Off").tag("off"); Text("On").tag("on")
-            }.accessibilityIdentifier("text-preference-shadow")
-        } header: { Text("Effects") } footer: { Text("Outlines and shadows are off by default.") }
+        Section("Effects") {
+            effectRow("Outline", id: "text-preference-outline",
+                      value: Binding(get: { rule.strokeWidth.map { $0 == 0 ? "off" : "on" } ?? (isAllText ? "off" : "same") },
+                                     set: { rule.strokeWidth = $0 == "same" ? nil : ($0 == "off" ? 0 : 2) }),
+                      inherited: allTextRule.strokeWidth.map { $0 == 0 ? "Off" : "On" } ?? defaults.outline)
+            effectRow("Shadow", id: "text-preference-shadow",
+                      value: Binding(get: { rule.shadowEnabled.map { $0 ? "on" : "off" } ?? (isAllText ? "off" : "same") },
+                                     set: { rule.shadowEnabled = $0 == "same" ? nil : $0 == "on" }),
+                      inherited: allTextRule.shadowEnabled.map { $0 ? "On" : "Off" } ?? defaults.shadow)
+        }
+    }
+
+    private func effectRow(_ title: String, id: String, value: Binding<String>, inherited: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+            Picker(title, selection: value) {
+                if !isAllText { Text("Same").tag("same") }
+                Text("Off").tag("off")
+                Text("On").tag("on")
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier(id)
+            if !isAllText {
+                Text("Same as All text (\(inherited))").font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+            }
+        }.padding(.vertical, 4)
     }
 
     private var saveBar: some View {
@@ -344,7 +545,6 @@ struct TextPreferencesView: View {
     }
 
     private func reloadRule() { rule = drafts[role] ?? model.memory?.rule(role: role) ?? TextPreferenceRule() }
-    private func label(_ value: String) -> String { value == "pinned" ? "Corner text" : value.replacingOccurrences(of: "_", with: " ").capitalized }
     private func fontSummary(_ fonts: [String]) -> String {
         if fonts.isEmpty { return "Choose fonts" }
         let names = fonts.prefix(2).joined(separator: ", ")
@@ -360,42 +560,7 @@ struct TextPreferencesView: View {
         }.padding(.vertical, 4)
     }
     private func colorName(_ hex: String) -> String {
-        ["#FFFFFF": "White", "#000000": "Black", "#FFFF00": "Yellow", "#FF0000": "Red", "#0000FF": "Blue"][hex] ?? hex
-    }
-}
-
-private struct TextPreferencePreview: View {
-    let rule: TextPreferenceRule
-    private var font: String? {
-        rule.fontFamily ?? rule.favoriteFonts.first ?? ["Inter", "Hanken Grotesk", "Poppins Bold"].first { !rule.excludedFonts.contains($0) }
-    }
-    private var backgroundColor: Color {
-        let rgb = UInt32((rule.color ?? "#30352C").replacingOccurrences(of: "#", with: ""), radix: 16) ?? 0x30352C
-        let brightness = Double((rgb >> 16) & 255) * 0.299 + Double((rgb >> 8) & 255) * 0.587 + Double(rgb & 255) * 0.114
-        return brightness > 128 ? KriaColor.ink : KriaColor.sage
-    }
-    private var alignment: Alignment {
-        switch rule.position {
-        case "top_left": .topLeading
-        case "top": .top
-        case "top_right": .topTrailing
-        case "bottom_left": .bottomLeading
-        case "bottom": .bottom
-        case "bottom_right": .bottomTrailing
-        default: .center
-        }
-    }
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Font preview").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
-            Text("A little moment.")
-                .font(NativeFontCatalog.shared.previewFont(font, size: 27))
-                .foregroundStyle(rule.color.map { nativeEditorColor($0) } ?? KriaColor.ink)
-                .shadow(color: rule.shadowEnabled == true ? .black.opacity(0.4) : .clear, radius: 2, y: 2)
-                .padding(18).frame(maxWidth: .infinity, minHeight: 100, alignment: alignment)
-                .background(backgroundColor).clipShape(RoundedRectangle(cornerRadius: 16))
-                .accessibilityIdentifier("text-preferences-preview")
-        }.padding(.vertical, 6)
+        ["#FFFFFF": "White", "#000000": "Black", "#FFFF00": "Yellow", "#FF0000": "Red", "#0000FF": "Blue"][hex.uppercased()] ?? hex
     }
 }
 

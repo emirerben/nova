@@ -340,8 +340,9 @@ final class CreationChatFixture: @unchecked Sendable {
                 capabilities["slide_post_sizes"] = true
             }
             // KRIA_CHAT_CLIP_QUESTION: "1" = server advertises clip_selection_questions; "legacy" = it still
-            // sends the clip_question payload but does not advertise the capability (old-server fallback).
-            if ["1", "history", "photo"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"]) { capabilities["clip_selection_questions"] = true }
+            // sends the clip_question payload but does not advertise the capability (old-server fallback);
+            // "later-suggested" = "1" with the suggestion on the second group instead of the first.
+            if ["1", "history", "photo", "later-suggested"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"]) { capabilities["clip_selection_questions"] = true }
             // KRIA_CHAT_SONG_ORDER: "1" = server advertises media.song, song_order_questions and
             // song_order_placements (the song timeline, KRI-561); "list" = media.song and song_order_questions only
             // (the vertical order list, an older server); "legacy" = it still sends the song_order_question payload
@@ -1054,6 +1055,9 @@ final class CreationChatFixture: @unchecked Sendable {
                     let none = (selection["none_keys"] as? [String] ?? []).joined(separator: "+")
                     append("assistant_response", text: "Got it. answers[\(answers.joined(separator: ";"))] none[\(none)] skipped[\(selection["skipped"] as? Bool ?? false)]")
                 } else {
+                    // "later-suggested" (Leverkusen M2): the first group has no suggestion and the second one has a
+                    // partial one, so a pre-ticked group is one the creator has not looked at yet.
+                    let laterSuggested = ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] == "later-suggested"
                     append("assistant_response", text: "I couldn't verify any clips for dodgeball. Could you clarify?", payload: [
                         "turn_id": turnID, "turn_value": "question",
                         "clip_question": [
@@ -1061,9 +1065,10 @@ final class CreationChatFixture: @unchecked Sendable {
                             "categories": [
                                 ["key": "dodgeball", "label": "Dodgeball", "op": "group",
                                  "candidate_media_ids": ["fixture-clip", "fixture-clip-2", "fixture-clip-3"],
-                                 "suggested_media_ids": ["fixture-clip-2"]],
+                                 "suggested_media_ids": laterSuggested ? [] : ["fixture-clip-2"]],
                                 ["key": "football", "label": "Football", "op": "group",
-                                 "candidate_media_ids": ["fixture-clip-3", "fixture-clip-4"], "suggested_media_ids": []],
+                                 "candidate_media_ids": ["fixture-clip-3", "fixture-clip-4"],
+                                 "suggested_media_ids": laterSuggested ? ["fixture-clip-4"] : []],
                             ],
                         ] as [String: Any],
                     ])

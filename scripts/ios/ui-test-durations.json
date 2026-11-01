@@ -15,6 +15,7 @@
   "KriaUITests/CreationUITests/testClipPickerSelectsClipsAndSendsStructuredAnswerWithMissingThumbnailFallback": 27.5,
   "KriaUITests/CreationUITests/testClipPickerSlideAcrossTilesSelectsDeselectsAndKeepsCircleAndTapToWatch": 27.4,
   "KriaUITests/CreationUITests/testTwoQuestionPickerNextShowsTheSecondQuestionAndDoneSendsBoth": 30.0,
+  "KriaUITests/CreationUITests/testPreTickedSecondQuestionIsShownBeforeDoneAndCanBeCorrected": 30.0,
   "KriaUITests/CreationUITests/testTappingAClipOpensItPlayingAndUseThisClipPicksIt": 34.0,
   "KriaUITests/CreationUITests/testClipPickerSlideNearBottomEdgeAutoScrollsAndVerticalDragStillScrolls": 32.0,
   "KriaUITests/CreationUITests/testClipsOnlySubmissionUsesSuggestAnEdit": 15.5,

@@ -1297,6 +1297,38 @@ def mixed_media_hold_bounds(
     return MIXED_MEDIA_IMAGE_HOLD if kind == "image" else MIXED_MEDIA_VIDEO_HOLD
 
 
+# The planner's pace as a hold per clip (pace unit). ONE rule: approval-time length planning
+# (``services.length_planning``) and the render (``pipeline.unified_montage``) both read it,
+# so a pre-approval plan and the worker's plan cannot drift. Slower = longer holds, faster =
+# shorter; "balanced" sits between. ``maximum_s`` is a ceiling only where a pace asks for
+# shorter holds and the total is free (see ``pace_selection_limits``).
+PACE_HOLD_BOUNDS: dict[str, MixedMediaHoldBounds] = {
+    "fast": MixedMediaHoldBounds(0.8, 1.2, 1.5),
+    "balanced": MixedMediaHoldBounds(1.2, 1.8, 3.0),
+    "relaxed": MixedMediaHoldBounds(1.4, 2.5, 6.0),
+}
+
+
+def pace_hold_bounds(pace: str) -> MixedMediaHoldBounds:
+    """The hold per clip a pace asks for (unknown pace: the balanced middle)."""
+
+    return PACE_HOLD_BOUNDS.get(pace, PACE_HOLD_BOUNDS["balanced"])
+
+
+def pace_selection_limits(pace: str, *, total_free: bool) -> tuple[float | None, float | None]:
+    """``(floor_s, ceiling_s)`` a pace puts on each video clip's hold.
+
+    Relaxed and balanced raise the shortest hold; fast and balanced cap the longest, but only
+    when the total is free: a total somebody already owns (a creator's length, a song section)
+    is shared out, never shortened by pace.
+    """
+
+    bounds = pace_hold_bounds(pace)
+    floor = bounds.minimum_s if pace in ("relaxed", "balanced") else None
+    ceiling = bounds.maximum_s if pace in ("fast", "balanced") and total_free else None
+    return floor, ceiling
+
+
 def exact_photo_hold_s(profile: MixedMediaTimingProfile | None) -> float | None:
     """The length the creator stated for the photos as a group, else None (KRI-825).
 

@@ -241,6 +241,9 @@ struct AttachmentSheet: View {
                         admissionMessage: teleprompterAdmission,
                         intake: useCameraTake,
                         intakeState: cameraTakeState,
+                        speakerBackgroundEnabled: speakerBackgroundAvailable,
+                        backgroundIntake: useCameraBackground,
+                        backgroundStatement: stateSpeakerBackground,
                         reportDiagnostic: { report in Task { try? await model.api.reportRecorderDiagnostic(report) } })
                         .environment(\.dynamicTypeSize, dynamicTypeSize)
                 }
@@ -405,6 +408,45 @@ struct AttachmentSheet: View {
             consentGiven: true, purpose: .analysisProxy, role: .clip, itemID: itemID,
             limit: capabilities?.media?["clips"], recordID: take.intakeID)
         return accepted ? .queued : .failed(model.uploads.failures.first(where: { $0.id == take.intakeID })?.message ?? "Couldn’t add this take. Your recording is saved; try again.")
+    }
+
+    /// The live background picker needs the server to offer it. UI tests force it on (the simulator has no server flag).
+    private var speakerBackgroundAvailable: Bool {
+        if capabilities?.speakerBackgroundEnabled == true { return true }
+        let process = ProcessInfo.processInfo
+        return process.arguments.contains("-ui-testing-chat") && process.arguments.contains("-ui-testing-speaker-background")
+    }
+
+    /// Uploads the background the creator filmed in front of, as a visual, after the take itself was handed to intake.
+    /// The recording stays raw; the server decides what the picture is for. A failure never un-attaches the take.
+    private func useCameraBackground(_ take: TeleprompterTakeManifest, _ reference: SpeakerBackgroundReference, _ url: URL) async -> BackgroundIntakeResult {
+        guard let itemID else { return .failed("This edit isn’t ready for a background yet.") }
+        let selection = CameraBackgroundSelection(projectID: projectID, itemID: itemID, recordID: reference.id,
+                                                  kind: reference.kind, fileName: reference.fileName)
+        if model.uploads.containsIntake(recordID: reference.id) {
+            if let failure = model.uploads.failures.first(where: { $0.id == reference.id }) { return .failed(failure.message) }
+            return .queued(selection)
+        }
+        model.uploads.dismissFailure(id: reference.id)
+        let accepted = await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true,
+            purpose: uploadDestination(for: .visual) == .phone ? .analysisProxy : .cloudRenderSource,
+            role: .visual, itemID: itemID, limit: capabilities?.media?["visuals"], recordID: reference.id)
+        guard accepted else {
+            return .failed(model.uploads.failures.first(where: { $0.id == reference.id })?.message ?? "Add it again from your media.")
+        }
+        return .queued(selection)
+    }
+
+    /// Names (or clears) the background on the server with `PUT creation-threads/{id}/speaker-background`, then shows the
+    /// updated thread. Called at enqueue time: the reserved upload row may still be preparing, which the server accepts.
+    private func stateSpeakerBackground(_ intent: SpeakerBackgroundIntent) async -> SpeakerBackgroundOutcome {
+        switch await SpeakerBackgroundSubmission.submit(client: model.api, threadID: projectID, intent: intent) {
+        case .saved(let updated):
+            model.uploads.publishUpdatedThread(updated, projectID: projectID)
+            return .saved
+        case .unavailable: return .unavailable
+        case .failed: return .failed
+        }
     }
 
     private func cameraTakeState(_ take: TeleprompterTakeManifest) async -> TeleprompterIntakeResult? {

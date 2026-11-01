@@ -1174,6 +1174,21 @@ class EditorCommitMusicWindow(BaseModel):
         return value
 
 
+class EditorCommitSpeakerBackground(BaseModel):
+    """Editor Save section for the Talk-to-camera background (KRI-1117).
+
+    The wire is the same ``{media_id, kind, source_start_s}`` the editor document carries:
+    the media id names a visual in this item's pool, never a path (the server pins the
+    exact bytes). Sent as an object to set it, as an explicit ``null`` to clear it.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    media_id: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    kind: Literal["image", "video"]
+    source_start_s: float = Field(default=0.0, ge=0.0, le=1800.0, allow_inf_nan=False)
+
+
 class EditorCommitUserSong(BaseModel):
     """Editor Save section for the creator's own song (KRI-428), phone guided variants.
 
@@ -1311,6 +1326,9 @@ class EditorCommitRequest(BaseModel):
     # variants only; validated by `validate_drawings` and compiled into the pinned recipe's
     # `drawing_layers` on every phone Save.
     drawings: list[dict] | None = Field(default=None, max_length=12)
+    # KRI-1117: the Talk-to-camera background. TRI-STATE like `carousel_moment`: absent from
+    # `model_fields_set` = leave unchanged; explicit `null` = clear; an object = set.
+    speaker_background: EditorCommitSpeakerBackground | None = None
     # Carousel-moment edit (Blossom carousel), staged as a batched-Save section —
     # reuses `CarouselMomentEditRequest` verbatim (do not fork). Tri-state at
     # THIS level, mirroring `EditVariantRequest.carousel_moment` /
@@ -1621,6 +1639,7 @@ class EditorCommitSections(BaseModel):
     motion_scenes: bool = False
     camera_effects: bool = False
     drawings: bool = False
+    speaker_background: bool = False
     carousel_moment: bool = False
     title: bool
 
@@ -2233,6 +2252,8 @@ def _augment_variant_with_phone_subtitled_editor_sections(job: Job, v: dict) -> 
     if not projected:
         return v
     patch = {}
+    if "speaker_background" not in v and projected.get("speaker_background") is not None:
+        patch["speaker_background"] = projected["speaker_background"]
     if "sound_effects" not in v and projected.get("sound_effects") is not None:
         patch["sound_effects"] = projected["sound_effects"]
     if "media_overlays" not in v and projected.get("media_overlays") is not None:
@@ -7030,7 +7051,7 @@ def _with_phone_narrated_title(
 
 
 # The editor sections a phone Talking Save persists onto the variant.
-_PHONE_SUBTITLED_EDITOR_LANE_KEYS = ("sound_effects", "media_overlays")
+_PHONE_SUBTITLED_EDITOR_LANE_KEYS = ("sound_effects", "media_overlays", "speaker_background")
 
 
 def _phone_subtitled_editor_lanes_open(job: Job, variant: dict) -> bool:
@@ -7045,7 +7066,11 @@ def _phone_subtitled_editor_lanes_open(job: Job, variant: dict) -> bool:
     if not _phone_editor_lanes_available(job, variant):
         return False
     capabilities = _editor_capabilities(job, variant)
-    return capabilities.get("sfx") is True or capabilities.get("overlays") is True
+    return (
+        capabilities.get("sfx") is True
+        or capabilities.get("overlays") is True
+        or capabilities.get("speaker_background") is True
+    )
 
 
 def _clamp_phone_editor_capabilities(
@@ -7502,6 +7527,10 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     # Bend (recorded editor snapshots and replays), and the app reads a missing key as off.
     if _text_bend_capability(variant):
         capabilities["text_bend"] = True
+    # KRI-1117: present only when ON (same reason as `text_bend`): recorded editor snapshots
+    # and every cloud / closed-gate payload keep their exact shape.
+    if _speaker_background_capability(job, variant):
+        capabilities["speaker_background"] = True
     if _caption_animation_capability(variant, capabilities):
         capabilities["caption_animation"] = True
     from app.services.client_protocol import CAPTION_STYLE_SCOPE_PROTOCOL, current_client_protocol
@@ -10748,6 +10777,7 @@ def require_guided_story_editor_commit(
         and payload.motion_scenes is None
         and payload.camera_effects is None
         and payload.drawings is None
+        and "speaker_background" not in payload.model_fields_set
         and payload.title is None
         and not payload.remove_music
         and "carousel_moment" not in payload.model_fields_set
@@ -11013,6 +11043,131 @@ def _validate_drawings_section(
     return validated
 
 
+def _speaker_background_shape_ok(job: Job, variant: dict) -> bool:
+    """Can this variant carry a background at all (the shape half of the capability)?
+
+    A device-rendered Talk-to-camera edit whose lanes the editor recompiles. Cloud variants,
+    other archetypes, empty drafts and authored timelines (whose compiler has no such lane)
+    are all closed.
+    """
+    return bool(
+        variant.get("editor_state") != "empty"
+        and variant.get("editor_timeline_mode") != "authored"
+        and _phone_subtitled_editor_lanes_available(job, variant)
+    )
+
+
+def _speaker_background_capability(job: Job, variant: dict) -> bool:
+    """KRI-1117: may the app author a background on this variant
+    (``editor_capabilities.speaker_background``)?
+
+    Only a device-rendered Talk-to-camera edit, and only while `speaker_background_supported`
+    holds for this app build (kill switch, ``speakerBackground`` verified, protocol >=
+    ``speaker_background_min_client_protocol``). Cloud variants never advertise it.
+    """
+    from app.services.phone_rollout import speaker_background_supported  # noqa: PLC0415
+
+    return bool(
+        variant.get("render_destination") == "device"
+        and _speaker_background_shape_ok(job, variant)
+        and speaker_background_supported(require_client=True)
+    )
+
+
+def _validate_speaker_background_section(
+    job: Job, variant: dict, payload: EditorCommitRequest
+) -> tuple[bool, dict | None]:
+    """Save-time twin of the ``speaker_background`` capability (KRI-1117).
+
+    Returns ``(touched, document)``: ``touched`` False when the Save leaves the lane alone
+    (absent, or an echo of what is stored); otherwise ``document`` is the validated
+    ``{media_id, kind, source_start_s}``, or ``None`` to clear.
+
+    Clearing is always allowed on a variant that can carry a background, even with the
+    kill switch off, so creators can take it off. Setting needs the gate (426 for an
+    app build below the minimum protocol, 422 otherwise) and a visual this job pinned from
+    THIS item's pool (S19): the route pins a new pool visual before it gets here, and any
+    other id (another item's, another user's, a made-up one) is refused.
+    """
+    from app.pipeline.phone_subtitled_lanes import SubtitledBackground  # noqa: PLC0415
+    from app.services.phone_rollout import speaker_background_unavailable_reason  # noqa: PLC0415
+    from app.services.phone_subtitled_editor import (  # noqa: PLC0415
+        pinned_visual,
+        speaker_background_document,
+        variant_carries_speaker_background,
+    )
+
+    if "speaker_background" not in payload.model_fields_set:
+        return False, None
+    requested = payload.speaker_background
+    assembly = job.assembly_plan or {}
+    carries = variant_carries_speaker_background(assembly, variant)
+    shape_ok = _speaker_background_shape_ok(job, variant)
+    if requested is None:
+        if not carries:
+            return False, None
+        if not shape_ok:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_unsupported"},
+            )
+        return True, None
+    if not shape_ok:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "speaker_background_unsupported"},
+        )
+    document = requested.model_dump(mode="json")
+    stored = variant.get("speaker_background")
+    if isinstance(stored, dict) and stored == document:
+        return False, None
+    reason = speaker_background_unavailable_reason()
+    if reason == "client_protocol_below_min":
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_background",
+                "minimum_client_protocol": settings.speaker_background_min_client_protocol,
+            },
+        )
+    if reason is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "speaker_background_disabled", "reason": reason},
+        )
+    binding = pinned_visual(assembly, requested.media_id)
+    if binding is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "speaker_background_media_not_in_pool"},
+        )
+    if binding.kind != requested.kind:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "speaker_background_kind_mismatch"},
+        )
+    if binding.kind == "image" and requested.source_start_s != 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "speaker_background_start_out_of_range"},
+        )
+    if binding.kind == "video" and requested.source_start_s >= (binding.duration_s or 0.0):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "speaker_background_start_out_of_range"},
+        )
+    return True, speaker_background_document(
+        SubtitledBackground(
+            media_id=binding.media_id,
+            gcs_path=binding.gcs_path,
+            generation=binding.generation,
+            kind=binding.kind,
+            source_start_s=requested.source_start_s,
+        )
+    )
+
+
 def _validate_landscape_fit_section(job: Job, variant: dict, value: str) -> str:
     """The Save-time twin of the `landscape_fit` capability (KRI-306).
 
@@ -11222,6 +11377,7 @@ def _prepare_editor_commit(
         and payload.motion_scenes is None
         and payload.camera_effects is None
         and payload.drawings is None
+        and "speaker_background" not in payload.model_fields_set
         and payload.guided_revision is None
         and payload.title is None
         and not payload.remove_music
@@ -12059,6 +12215,10 @@ def _prepare_editor_commit(
             job, variant, payload, duration_s=drawing_duration_s
         )
 
+    speaker_background_touched, validated_speaker_background = _validate_speaker_background_section(
+        job, variant, payload
+    )
+
     # Older clients may commit only the overlay section. Enforce the bundle
     # invariant server-side so linked generated effects cannot be orphaned.
     # Explicit group IDs are the sole linkage; legacy timing is never guessed.
@@ -12169,6 +12329,7 @@ def _prepare_editor_commit(
         or validated_motion_scenes is not None
         or validated_camera_effects is not None
         or validated_drawings is not None
+        or speaker_background_touched
         or carousel_moment_touched
         or guided_timeline_commit
         or payload._lyric_line_suppressions is not None
@@ -12324,6 +12485,12 @@ def _prepare_editor_commit(
             updated["camera_effects"] = validated_camera_effects or None
         if validated_drawings is not None:
             updated["drawings"] = validated_drawings or None
+        if speaker_background_touched:
+            # The phone Save recompiles the lanes and rewrites this row from them.
+            if validated_speaker_background is None:
+                updated.pop("speaker_background", None)
+            else:
+                updated["speaker_background"] = validated_speaker_background
         if carousel_moment_touched:
             updated["carousel_moment"] = merged_carousel_moment
             # Same idiom as visual_blocks_cache_stale/motion_cache_stale above:
@@ -12451,6 +12618,8 @@ def _prepare_editor_commit(
         "motion_scenes_override": validated_motion_scenes,
         "camera_effects_override": validated_camera_effects,
         "drawings_override": validated_drawings,
+        "speaker_background_touched": speaker_background_touched,
+        "speaker_background_override": validated_speaker_background,
         "pending_overlay_camera_rebuild": pending_overlay_camera_rebuild,
         "orientation_override": validated_orientation,
         "landscape_fit_override": validated_landscape_fit,
@@ -12492,6 +12661,7 @@ def _prepare_editor_commit(
             "motion_scenes": validated_motion_scenes is not None,
             "camera_effects": validated_camera_effects is not None,
             "drawings": validated_drawings is not None,
+            "speaker_background": speaker_background_touched,
             "carousel_moment": carousel_moment_touched,
         },
     }

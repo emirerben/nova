@@ -38,6 +38,63 @@ struct CameraRollDots: View {
     }
 }
 
+// MARK: - Direction
+
+/// What the creator wants from the next ideas, sent with every request for this event: the first
+/// "Find ideas" and each "Another idea". The chips are shortcuts for asks the idea AI acts on.
+struct CameraRollDirectionField: View {
+    @Bindable var model: CameraRollSurfaceModel
+    let group: String
+
+    static let shortcuts: [(title: String, phrase: String)] = [
+        ("More clips", "Use more clips"),
+        ("Vlog", "Make it a vlog"),
+        ("Short and punchy", "Short and punchy"),
+    ]
+
+    var body: some View {
+        let query = model.draft(for: group).query
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Any direction? e.g. the food, the boat day", text: Binding(
+                get: { model.draft(for: group).query }, set: { setQuery($0) }))
+                .font(KriaFont.body(15).weight(.medium)).submitLabel(.done)
+                .padding(.horizontal, 16).frame(height: 48).background(Color.white, in: Capsule())
+                .accessibilityIdentifier("camera-roll-direction-\(group)")
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(Self.shortcuts, id: \.phrase) { shortcut in
+                        let selected = Self.parts(query).contains { $0.caseInsensitiveCompare(shortcut.phrase) == .orderedSame }
+                        Button { toggle(shortcut.phrase, selected: selected) } label: {
+                            Text(shortcut.title).font(KriaFont.body(13).weight(.semibold)).lineLimit(1)
+                                .foregroundStyle(selected ? Color.white : KriaColor.ink).padding(.horizontal, 14).frame(height: 36)
+                                .background(selected ? KriaColor.ink : Color.white, in: Capsule())
+                                .frame(minHeight: 44).contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
+                        .accessibilityIdentifier("camera-roll-direction-chip-\(shortcut.title)")
+                    }
+                }
+            }
+        }
+    }
+
+    private static func parts(_ query: String) -> [String] {
+        query.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    private func toggle(_ phrase: String, selected: Bool) {
+        var parts = Self.parts(model.draft(for: group).query)
+        if selected { parts.removeAll { $0.caseInsensitiveCompare(phrase) == .orderedSame } } else { parts.append(phrase) }
+        setQuery(parts.joined(separator: ", "))
+    }
+
+    private func setQuery(_ text: String) {
+        var next = model.draft(for: group)
+        next.query = String(text.prefix(500))
+        model.setDraft(next, for: group)
+    }
+}
+
 // MARK: - Find ideas panel (Paper A3)
 
 struct CameraRollFinderPanel: View {
@@ -51,11 +108,7 @@ struct CameraRollFinderPanel: View {
         let draft = model.draft(for: event.id)
         VStack(alignment: .leading, spacing: 14) {
             Text("Ideas for this event").font(KriaFont.body(17).weight(.bold)).foregroundStyle(KriaColor.ink)
-            TextField("Any direction? e.g. the food, the boat day", text: Binding(
-                get: { draft.query }, set: { var next = model.draft(for: event.id); next.query = String($0.prefix(500)); model.setDraft(next, for: event.id) }))
-                .font(KriaFont.body(15).weight(.medium)).submitLabel(.done)
-                .padding(.horizontal, 16).frame(height: 48).background(Color.white, in: Capsule())
-                .accessibilityIdentifier("camera-roll-direction-\(event.id)")
+            CameraRollDirectionField(model: model, group: event.id)
             HStack(spacing: 8) {
                 if model.tasteAvailable {
                     chip("Use my taste", selected: model.taste?.enabled == true && model.taste?.memoryPaused == false, identifier: "camera-roll-chip-taste", action: openTaste)

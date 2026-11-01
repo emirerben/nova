@@ -72,7 +72,11 @@ from app.schemas.edit_proposal import (
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
 )
-from app.schemas.text_style_intent import LABEL_ANCHORS, TITLE_ANIMATION_SPEED
+from app.schemas.text_style_intent import (
+    LABEL_ANCHORS,
+    LABEL_DEFAULT_POSITION,
+    TITLE_ANIMATION_SPEED,
+)
 from app.schemas.user_song import MIN_PLAYABLE_SONG_S, UserSongPlan
 
 log = structlog.get_logger()
@@ -1759,7 +1763,7 @@ def _base_text_elements(
         label_x, label_y, label_alignment = (
             LABEL_ANCHORS[snapshot.label_position]
             if snapshot.label_position is not None
-            else (0.5, 0.78, "center")
+            else LABEL_ANCHORS[LABEL_DEFAULT_POSITION]
         )
         if snapshot.opening_title:
             title_elements.append(
@@ -2026,6 +2030,19 @@ def _base_text_elements(
             )
         return [*elements, *_caption_lane_elements(snapshot, pin_windows)]
 
+    # The creator's named title entrance (KRI-522) also plays on a story direction's title
+    # (text-explainer unit). Unset, or STORY_DIRECTIONS_ON_MONTAGE_ENABLED off, keeps the
+    # direction's own fade byte-for-byte.
+    story_title_phases = (
+        TextAnimationPhases(
+            entrance=snapshot.title_animation,
+            speed=TITLE_ANIMATION_SPEED[snapshot.title_animation],
+        )
+        if snapshot.title_animation is not None
+        and snapshot.direction != "fast_montage"
+        and settings.story_directions_on_montage_enabled
+        else None
+    )
     # A labeled edit shows only confirmed creator copy (see show_title).
     elements = (
         [
@@ -2047,11 +2064,16 @@ def _base_text_elements(
                 stroke_width=0,
                 shadow_enabled=True,
                 shadow_style="standard",
-                effect=policy["text_effect"],
+                effect="static" if story_title_phases is not None else policy["text_effect"],
                 alignment="center",
                 letter_spacing=-0.025,
                 line_spacing=1.0,
                 max_width_frac=0.8,
+                **(
+                    {"animation_phases": story_title_phases}
+                    if story_title_phases is not None
+                    else {}
+                ),
             ).model_dump(mode="json", exclude_none=True)
         ]
         if show_title

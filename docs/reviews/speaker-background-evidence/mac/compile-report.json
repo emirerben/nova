@@ -1,0 +1,163 @@
+{
+  "cases": {
+    "on_photo": {
+      "speaker_background": {
+        "asset_id": "visual-bg-photo",
+        "media_kind": "image",
+        "source_start": 0.0,
+        "loop": true,
+        "subject_track_id": "subtitled"
+      },
+      "capabilities": [
+        "basicComposition",
+        "local1080Export",
+        "speakerBackground",
+        "stillImages"
+      ],
+      "digest": "c0f57283c47fe99f3d28cdb99e273c0aaee4f1afbf6175544f7d21f861c8cfa0",
+      "trace": []
+    },
+    "on_video": {
+      "speaker_background": {
+        "asset_id": "visual-bg-video",
+        "media_kind": "video",
+        "source_start": 0.0,
+        "loop": true,
+        "subject_track_id": "subtitled"
+      },
+      "capabilities": [
+        "basicComposition",
+        "local1080Export",
+        "speakerBackground",
+        "visualVideos"
+      ],
+      "digest": "bd120af4f4bce0ccfcfbc8e602ccac4371bed37cf26c6b03414b2b2000cdd183",
+      "trace": []
+    },
+    "on_photo_60": {
+      "speaker_background": {
+        "asset_id": "visual-bg-photo",
+        "media_kind": "image",
+        "source_start": 0.0,
+        "loop": true,
+        "subject_track_id": "subtitled"
+      },
+      "capabilities": [
+        "basicComposition",
+        "local1080Export",
+        "speakerBackground",
+        "stillImages"
+      ],
+      "digest": "c66dd06ab27a9f653260387ce0dcb483ec53ab6f1c8838ea5aa3d84280dd118d",
+      "trace": []
+    },
+    "on_video_60": {
+      "speaker_background": {
+        "asset_id": "visual-bg-video",
+        "media_kind": "video",
+        "source_start": 0.0,
+        "loop": true,
+        "subject_track_id": "subtitled"
+      },
+      "capabilities": [
+        "basicComposition",
+        "local1080Export",
+        "speakerBackground",
+        "visualVideos"
+      ],
+      "digest": "8e253bd48d9b1bb0f3425195688afeee3a2e9fc010f21453c4d0225be4c6a0cd",
+      "trace": []
+    },
+    "off_asked": {
+      "speaker_background": null,
+      "capabilities": [
+        "basicComposition",
+        "local1080Export"
+      ],
+      "digest": "0fb052f8b2c5061524e5ff22b4200f96eb6541d807f5598517862af8fc725d7c",
+      "trace": [
+        [
+          "phone",
+          "speaker_background_phone_fallback",
+          {
+            "media_id": "bg-photo",
+            "reason": "disabled"
+          }
+        ]
+      ]
+    },
+    "never_asked": {
+      "speaker_background": null,
+      "capabilities": [
+        "basicComposition",
+        "local1080Export"
+      ],
+      "digest": "0fb052f8b2c5061524e5ff22b4200f96eb6541d807f5598517862af8fc725d7c",
+      "trace": []
+    },
+    "never_asked_flag_on": {
+      "speaker_background": null,
+      "capabilities": [
+        "basicComposition",
+        "local1080Export"
+      ],
+      "digest": "0fb052f8b2c5061524e5ff22b4200f96eb6541d807f5598517862af8fc725d7c",
+      "trace": []
+    },
+    "p26_asked": {
+      "speaker_background": null,
+      "capabilities": [
+        "basicComposition",
+        "local1080Export"
+      ],
+      "digest": "0fb052f8b2c5061524e5ff22b4200f96eb6541d807f5598517862af8fc725d7c",
+      "trace": [
+        [
+          "phone",
+          "speaker_background_phone_fallback",
+          {
+            "media_id": "bg-photo",
+            "reason": "client_protocol_below_min"
+          }
+        ]
+      ]
+    },
+    "never_asked_p26": {
+      "speaker_background": null,
+      "capabilities": [
+        "basicComposition",
+        "local1080Export"
+      ],
+      "digest": "0fb052f8b2c5061524e5ff22b4200f96eb6541d807f5598517862af8fc725d7c",
+      "trace": []
+    }
+  },
+  "checks": {
+    "flag_off_asked_equals_never_asked_bytes": true,
+    "flag_off_asked_equals_never_asked_digest": true,
+    "p26_asked_equals_never_asked_p26_bytes": true,
+    "p26_strip_trace": [
+      [
+        "phone",
+        "speaker_background_phone_fallback",
+        {
+          "media_id": "bg-photo",
+          "reason": "client_protocol_below_min"
+        }
+      ]
+    ],
+    "flag_off_trace": [
+      [
+        "phone",
+        "speaker_background_phone_fallback",
+        {
+          "media_id": "bg-photo",
+          "reason": "disabled"
+        }
+      ]
+    ],
+    "on_photo_has_lane": true,
+    "on_photo_differs_from_never_asked": true,
+    "validate_phone_pilot_recipe_on_cases": "ok"
+  }
+}

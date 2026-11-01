@@ -28,6 +28,9 @@ CURATED_PHONE_FONTS = (
     "Unbounded",
     "Inter Medium",
 )
+CAPTION_PREFERRED_FONT = "TikTok Sans Bold"
+DEFAULT_STROKE_WIDTH = 0
+DEFAULT_SHADOW_ENABLED = False
 
 
 class TextStyleRule(BaseModel):

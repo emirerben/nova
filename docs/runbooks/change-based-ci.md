@@ -65,15 +65,29 @@ release lane is never cancelled. Nightly/manual regressions have separate concur
 API tests run as two deterministic round-robin shards over the
 complete non-quality test-file set; both shards feed the same stable `test-api`
 gate, so sharding changes wall-clock scheduling without reducing coverage.
-On PRs, a Linux mobile-contract job runs alongside the `iPhone validation`
-matrix: a `unit` leg (build, unit tests, selected UI subset, named-unit gate)
-plus `creation` and `screens` legs that compile from the same cache and split
-the fixture-driven journeys by measured duration. The selector's `native_legs`
-output starts only the legs whose journeys were selected (`LEG_JOURNEYS` in
-`scripts/ci/select-tests.py`; `test_ci_throughput.py` keeps that map and the
-workflow's step conditions in agreement). One serial Mac took 40-55 min per PR
-(2026-10-23); each leg targets about 20 min at roughly a third more Mac
-minutes. The stable `build-and-test` gate requires every leg and the contract
+The `iPhone validation` matrix has a `unit` leg (build, unit tests, selected UI
+subset, named-unit gate) plus `creation` and `screens` legs that compile from
+the same cache and split the fixture-driven journeys by measured duration. The
+selector's `native_legs` output starts only the legs whose journeys were
+selected (`LEG_JOURNEYS` in `scripts/ci/select-tests.py`; `test_ci_throughput.py`
+keeps that map and the workflow's step conditions in agreement). One serial
+Mac took 40-55 min per PR (2026-10-23); each leg targets about 20 min.
+On PRs the selector starts only the `unit` leg, alongside a Linux
+mobile-contract job: three Macs per iOS PR saturated the account's five
+concurrent macOS runners (2026-10-27..30: median Mac wait 10-19 min, median PR
+67-87 min). The fixture-driven journeys still replay offline on Linux for every
+PR; their iPhone renders run nightly and on manual CI dispatch, which is how a
+PR gets native render evidence. The `unit` leg also skips the export/OCR unit
+proofs listed in `scripts/ios/render_evidence.py` (real MP4 exports read back
+with Vision) unless the PR touches the render, export or text code in that
+file's trigger list, or a selected journey names them (`journey-gate.py
+native-units` needs every named test in the unit results): after they landed on 2026-10-30 the leg's unit execution
+went from a median of ~12 to ~22 min. `ios.yml` runs the whole unit suite on
+every main push and nightly, so they still gate each merge's follow-up. The legs start as soon as selection finishes and compile while
+`journey-offline` runs; `scripts/ci/wait-for-jobs.py` blocks only before the
+fixture bundle is downloaded and fails the leg unless `journey-offline` (and
+`journey-library`, when selected) succeeded, so the Linux journeys are no
+longer in front of the Mac queue. The stable `build-and-test` gate requires every leg and the contract
 job to pass when iOS is selected. Main uses one iOS build/unit/smoke lane and dispatches TestFlight after those checks
 pass. Full iOS regression runs at 03:23 UTC nightly or on manual dispatch; full
 native journeys run at 02:23 UTC nightly or on manual CI dispatch. Neither

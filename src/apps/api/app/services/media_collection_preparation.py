@@ -16,7 +16,7 @@ from app.schemas.edit_proposal import (
     MontageAudioPlan,
     StoryBeat,
 )
-from app.schemas.media_collections import StoryContentPlan
+from app.schemas.media_collections import MAX_STORY_MOMENTS, StoryContentPlan
 from app.schemas.research import StoryResearch
 from app.services import media_collections
 from app.services.media_collection_stories import candidate_evidence, story_out
@@ -105,10 +105,10 @@ class PreparedCollectionStory(BaseModel):
     )
     research: StoryResearch | None = Field(default=None, exclude_if=lambda value: value is None)
     source_window_adjustments: list[PreparedSourceWindowAdjustment] = Field(
-        default_factory=list, max_length=8, exclude_if=lambda value: not value
+        default_factory=list, max_length=MAX_STORY_MOMENTS, exclude_if=lambda value: not value
     )
     source_contexts: list[PreparedSourceContext] = Field(
-        default_factory=list, max_length=8, exclude_if=lambda value: not value
+        default_factory=list, max_length=MAX_STORY_MOMENTS, exclude_if=lambda value: not value
     )
 
 

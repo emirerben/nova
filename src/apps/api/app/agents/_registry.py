@@ -141,6 +141,11 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
         "ClipRequestResolverAgent",
     ),
     ("nova.video.clip_question", "app.agents.clip_question", "ClipQuestionAgent"),
+    (
+        "nova.video.source_moment_location",
+        "app.agents.source_moment_location",
+        "SourceMomentLocationAgent",
+    ),
     # KRI-282: choose spoken excerpts + lay out speech/montage sections
     # (behind SPEECH_EXCERPT_MONTAGE_ENABLED).
     (
