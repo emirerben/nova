@@ -3333,6 +3333,21 @@ final class NativeEditorSessionTests: XCTestCase {
         player.pause()
     }
 
+    /// KRI-1087: AVPlayer reports `timeControlStatus == .playing` for a beat after `pause()` already
+    /// zeroed `rate`, and the KVO hop reads that stale status on a later main-actor turn. An explicit
+    /// pause (export, scrub) must not be flipped back to playing by that late observation.
+    func testStaleTimeControlPlayingAfterExplicitPauseDoesNotRestartPlayback() async throws {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        await session.prepareFixtureSourcePreview(url: url)
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying)
+        session.pausePlayback()
+        XCTAssertEqual(session.player?.rate, 0)
+        session.reconcilePlaybackState(.playing)
+        XCTAssertFalse(session.isPlaying, "A late .playing observation with rate 0 must not undo an explicit pause")
+    }
+
     func testStalledPausedSeekRecoversNewestTargetAndIgnoresLateCompletion() async {
         let session = NativeEditorSession()
         session.duration = 60
