@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.62.0] - 2026-11-01
+
+### Changed
+- feat(ios): generate editable overlays inside Visuals (KRI-1064) (#1956) <!-- release-pr: 1956 -->
+
 ## [0.83.61.0] - 2026-11-01
 
 ### Changed
