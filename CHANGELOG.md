@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.81.0] - 2026-11-01
+
+### Fixed
+- fix(overlays): narrated edit length excludes the brand tail (KRI-1142) (#2030) <!-- release-pr: 2030 -->
+
 ## [0.83.80.0] - 2026-11-01
 
 ### Changed
