@@ -4189,6 +4189,97 @@
         "iPhone re-send of Leverkusen M3 after deploy"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1112-resolver-cited-file-names",
+      "tickets": [
+        "KRI-1112"
+      ],
+      "symptom": "Leverkusen M3 run 1 (thread 83f2dcaa, 13:49:15): the clip-request resolver, never sent a file name, matched \"the match from kick-off to the end\" to m001..m005 in alias order at confidence 1.0 with evidence \"explicitly selected by creator in the order 'IMG_10xx'\" quoting the creator's file-name list. Three of five cited another clip (IMG_1039 as 'IMG_1028', IMG_1028 as 'IMG_1036', IMG_1036 as 'IMG_1039') and all five were kept.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1112",
+      "paths": [
+        "src/apps/api/app/services/clip_intent_resolution.py",
+        "src/apps/api/tests/kria/m3_kri1112_cited_names.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_m3_kri1112_cited_names.py",
+        "tests/kria/test_kri614_file_name_clips.py",
+        "tests/kria/test_kri763_file_name_pins.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The recorded 13:49 resolver row (clip records, creator request, intent, raw output) and each upload's staged file name through the real clip-intent planner parse and resolve_clip_intents_for_turn. On main all five are kept, three citing another clip's name (2 tests red); with the fix the three are dropped and the ask is asked with only the two correctly cited clips ticked, and the same answer citing each clip's own name (typed variants included) still resolves with no question.",
+        "live_model": "Not run; no paid calls. No prompt changed.",
+        "native_output": "n/a: server-only resolution change; the iPhone shows the existing picker card.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "evidence citing another clip's name (incident)",
+        "evidence citing its own name: exact, lower case with extension, iOS upload-prefixed name",
+        "file-name step (KRI-614/763) unchanged"
+      ],
+      "neighbours_gap": [
+        "Base rate: of 159 recorded resolver assignments, only the 5 of this 13:49 turn quote a file name (3 cite another clip); the guard does not touch any other recorded assignment.",
+        "A name two clips share names neither, so a miscitation between duplicates is not caught.",
+        "The planner re-introducing a replaced order (\"the match from kick-off to the end\" at 13:49) is KRI-1112 part 3 / KRI-1111; the pre-render credit for a complete listed order is part 1."
+      ],
+      "follow_ups": [
+        "iPhone re-send of Leverkusen M3 after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "leverkusen-m2-run3-moment-window",
+      "tickets": [
+        "Leverkusen M2 run 3",
+        "KRI-1106",
+        "KRI-1107"
+      ],
+      "symptom": "Leverkusen M2 run 3 (thread d1ac7437, job ad2587a7, 2026-10-31, prod 355a33dae): \"Order: our selfie, the 0:0 scoreboard, the \\\"TOR\\\" on the big screen, then only the moments where Taha is celebrating in both goal clips\" (clip 2 tapped for the TOR) and \"put Taha's scream at the end of clip 2 in slow motion\". Clip 2 played its first 5.6 s (analysis_fallback: its record had no moments), no TOR, no scream; the review said \"Done: Order\". The slow motion was not_grounded (\"which clip?\") although clip 2 was named, and with approval readiness on the card said \"have a look\"; only the finished video said \"Couldn't\".",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "Leverkusen M2 run 3",
+      "journey": "leverkusen-m2-run3-moment-window",
+      "paths": [
+        "src/apps/api/app/services/named_moments.py",
+        "src/apps/api/app/kria/speed_ask.py",
+        "src/apps/api/tests/kria/leverkusen_m2_run3.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_leverkusen_m2_run3_moment_window.py",
+        "tests/kria/test_kri689_clip_speed_ask.py",
+        "tests/kria/test_kri775_phone_montage_preflight.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Prod's approved brief v3, strategy and media snapshot (clip records + length plan) through the real planner length step, approval readiness and the worker's own phone montage plan (preflight_montage_plan); no model call. Red on the base commit (r1 met, r3 not_grounded 'which clip?', readiness r3 unverified), green after: r1 partial naming the TOR in clip 2, r3 'couldn't find that moment in clip 2' held back before the card under readiness and without it. Right-content cases put the kit answer key's times into clip 2's record: the TOR seats the window and the order is met; the same times described as a pan stay partial (wrong-content control); the scream slows only a cut that shows it.",
+        "live_model": "Not run; no paid calls. No prompt or model change.",
+        "native_output": "unknown; no device export (receipt/plan change; the recipe for a placed speed is KRI-689's).",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "photo rows (selfie, scoreboard) stay met",
+        "a row the resolver matched from the clip record keeps its clip-level verdict",
+        "a clip that plays whole shows any moment in it",
+        "two moments of one clip under reuse once: never both met",
+        "\"put clip 2 in slow motion\" lands on clip 2's cut; readiness unchanged there (approval re-check digest equal)",
+        "no verified variableSpeed stays a readiness note, not a hold-back",
+        "Turkish receipts and notice; \"2. klip\", \"klip 2\"; \"2 clips\" / \"2 klip\" / \"2x\" / seconds never read as clip 2"
+      ],
+      "neighbours_gap": [
+        "No model localizes a moment the clip record omits (IMG_1039 had best_moments: []); the creator cannot point at a moment inside one of several clips (KRI-723's card is one-take only).",
+        "A slowed moment window is not budgeted in the length plan: 0.5x on an approved window grows the output.",
+        "KRI-775 order/length blockers still skip approval readiness; only speed asks are folded in."
+      ],
+      "follow_ups": [
+        "KRI-1106",
+        "KRI-1107"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

@@ -503,3 +503,35 @@ def test_edit_reuses_only_verified_owned_library_original(generated, monkeypatch
             transport=transport,
         )
     assert client.images.edit.call_count == 1
+
+
+def test_legacy_opaque_request_replays_after_transparency_field_is_added(generated):
+    import hashlib
+    import json
+
+    db, owner, item, client, transport, ctx = generated
+    request = GeneratedMediaRequest(
+        client_event_id=uuid.uuid4(), capability="image", prompt="Watercolor"
+    )
+    first = execute_generated_media(
+        db, owner_id=owner.id, item_id=item.id, body=request, ctx=ctx, transport=transport
+    )
+    legacy = request.model_dump(mode="json")
+    legacy.pop("transparent_background")
+    first.request_digest = hashlib.sha256(json.dumps(legacy, sort_keys=True).encode()).hexdigest()
+    db.commit()
+    again = execute_generated_media(
+        db, owner_id=owner.id, item_id=item.id, body=request, ctx=ctx, transport=transport
+    )
+    assert again.id == first.id
+    assert client.images.generate.call_count == 1
+    with pytest.raises(ValueError, match="Idempotency key reused"):
+        execute_generated_media(
+            db,
+            owner_id=owner.id,
+            item_id=item.id,
+            body=request.model_copy(update={"transparent_background": True}),
+            ctx=ctx,
+            transport=transport,
+        )
+    assert client.images.generate.call_count == 1

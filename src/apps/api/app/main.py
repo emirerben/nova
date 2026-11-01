@@ -60,6 +60,7 @@ from app.routes import (
     music_jobs,
     native_activity,
     notification_installations,
+    overlay_generation,
     personas,
     plan_items,
     presigned,
@@ -435,6 +436,7 @@ app.include_router(kria_runtime.router, prefix="/creation-threads", tags=["kria-
 app.include_router(plan_items.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(editor_sources.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(generated_media.router, prefix="/plan-items", tags=["generated-media"])
+app.include_router(overlay_generation.router, prefix="/plan-items", tags=["generated-media"])
 app.include_router(creator_agent.router, prefix="/plan-items", tags=["creator-agent"])
 app.include_router(creator_workspace.router, prefix="/content-plans", tags=["creator-workspace"])
 app.include_router(manual_drafts.router, prefix="/plan-items", tags=["plan-items"])

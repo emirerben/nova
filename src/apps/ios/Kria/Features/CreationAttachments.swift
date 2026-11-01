@@ -81,9 +81,10 @@ struct AttachmentSheet: View {
         // A script is for a recording: never on a Visuals-only (slide) project.
         let script = format?.usesVisualPool == true ? nil : voiceoverScript
         self.voiceoverScript = script
-        let initialRole: CreationMediaRole = script != nil ? .voiceover : (format?.usesVisualPool == true ? .visual : .clip)
+        let songFirst = format == .lipsync && capabilities?.songUploadEnabled == true
+        let initialRole: CreationMediaRole = script != nil ? .voiceover : (format?.usesVisualPool == true ? .visual : (songFirst ? .song : .clip))
         _role = State(initialValue: initialRole)
-        _step = State(initialValue: script != nil ? .voiceover : (initialRole == .visual ? .overlays : .footage))
+        _step = State(initialValue: script != nil ? .voiceover : (initialRole == .visual ? .overlays : (songFirst ? .song : .footage)))
     }
 
     /// Slides may only use the existing PlanItemAsset Visuals pool. Keeping
@@ -94,16 +95,19 @@ struct AttachmentSheet: View {
     private var hasVoiceoverStep: Bool { narrated || voiceoverScript != nil || media.contains(where: \.isVoiceover) }
     /// "Add your song" appears only when the server advertises `media.song` (feature on for this account and
     /// protocol), and only for montage-style projects: a song replaces the soundtrack of cut footage.
+    private var resolvedFormat: CreationFormat? { format ?? thread.flatMap { CreationFormat(thread: $0) } }
     private var hasSongStep: Bool {
         guard capabilities?.songUploadEnabled == true, !usesVisualPoolOnly else { return false }
-        let resolved = format ?? thread.map { CreationFormat(thread: $0) }
-        return resolved == nil || resolved == .montage
+        guard let resolved = resolvedFormat else { return thread == nil }
+        return resolved.runsAsMontage
     }
+    /// A lip-sync starts from the song, so its song step leads the sheet.
+    private var songLeads: Bool { hasSongStep && resolvedFormat == .lipsync }
     private var hasOverlaysStep: Bool { usesVisualPoolOnly || (capabilities?.visualsEnabled == true && itemID != nil) }
     private var steps: [AttachmentStep] {
-        var result: [AttachmentStep] = usesVisualPoolOnly ? [.overlays] : [.footage]
+        var result: [AttachmentStep] = usesVisualPoolOnly ? [.overlays] : (songLeads ? [.song, .footage] : [.footage])
         if hasVoiceoverStep { result.append(.voiceover) }
-        if hasSongStep { result.append(.song) }
+        if hasSongStep && !songLeads { result.append(.song) }
         if hasOverlaysStep && !usesVisualPoolOnly { result.append(.overlays) }
         return result
     }
@@ -528,6 +532,7 @@ struct AttachmentSheet: View {
         VStack(alignment: .leading, spacing: 20) {
             AttachmentHeading(title: songPreview.hasRecording ? "Review your song" : "Add your song",
                               subtitle: songPreview.hasRecording ? "Listen before adding this song to your video."
+                                  : resolvedFormat == .lipsync ? "Add the song you’re lip-syncing to."
                                   : "Cut your clips to a song, or lip-sync to it. Tell Kria which in your message.")
             if songPreview.hasRecording {
                 SongReviewView(player: songPreview)

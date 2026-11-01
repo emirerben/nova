@@ -9,7 +9,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from types import SimpleNamespace
 from typing import Any
 
@@ -27,6 +27,7 @@ from app.kria.brief_checks import (
     plan_facts_from_editor_payload,
     plan_facts_from_strategy,
 )
+from app.kria.contracts import RequirementReceipt
 from app.kria.order_replacement_receipts import with_verified_order_execution
 from app.kria.order_replacement_sources import OrderReplacementSourceContext
 from app.kria.reply_language import say
@@ -353,8 +354,15 @@ def assess_readiness(
     prepared_research: Mapping[str, Any] | None = None,
     order_execution: Mapping[str, Any] | None = None,
     order_source_context: OrderReplacementSourceContext | None = None,
+    plan_blockers: Sequence[RequirementReceipt] = (),
 ) -> dict[str, Any]:
     """Account for every live ID using existing policy, checkers and contract.
+
+    ``plan_blockers`` (Leverkusen M2 run 3) are checked receipts the phone montage plan the
+    worker will build falls short on (``phone_montage_preflight.readiness_plan_blockers``): a
+    speed ask that plan can't place. Each one replaces the draft check's verdict, so the
+    creator hears it before the card. They only ever hold a draft back, never make one ready,
+    so an approval re-check that does not run the plan can never disagree with a ready draft.
 
     KRI-901: ``protected_marks`` says this draft renders on the phone Talking writer for an
     app that shows the mark card (`protected_targets.marks_route`); only then do
@@ -489,6 +497,13 @@ def assess_readiness(
             strict_order=True,
         )
     }
+    for blocker in plan_blockers:
+        if (
+            blocker.requirement_id in receipts
+            and blocker.verification == "checked"
+            and blocker.status != "met"
+        ):
+            receipts[blocker.requirement_id] = blocker
     delegated = {
         str(req_id)
         for answer in strategy.get("choice_answers") or []

@@ -463,13 +463,7 @@ private struct FormatVideoCard: View {
     @State private var paused = false
     @State private var playing = false
 
-    private var edit: FeaturedEdit? {
-        switch format {
-        case .montage: .bosphorus
-        case .talkingToCamera: .talking
-        default: nil
-        }
-    }
+    private var edit: FeaturedEdit? { format.previewEdit }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {

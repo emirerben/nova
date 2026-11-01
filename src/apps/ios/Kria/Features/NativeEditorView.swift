@@ -943,6 +943,10 @@ struct NativeEditorView: View {
     private func loadEditor() async {
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-ui-testing-editor-overlays") {
+            await session.prepareGamedayFixture(url: Bundle.main.url(forResource: "montage", withExtension: "mp4")!, overlays: true)
+            return
+        }
         if arguments.contains("-ui-testing-editor-gameday-add") {
             await session.prepareGamedayFixture(url: Bundle.main.url(forResource: "montage", withExtension: "mp4")!)
             return

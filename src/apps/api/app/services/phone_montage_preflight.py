@@ -110,6 +110,49 @@ def phone_montage_blockers(
     return blockers
 
 
+def readiness_plan_blockers(
+    db: Any,
+    *,
+    creator_id: object,
+    item: Any,
+    brief: CreativeBrief | None,
+    strategy: Mapping[str, Any] | None,
+    media_snapshot: Mapping[str, Any] | None,
+    client_protocol: int | None = None,
+) -> list[RequirementReceipt]:
+    """The speed asks this draft's phone montage plan falls short on, for approval readiness.
+
+    Leverkusen M2 run 3 (prod 355a33dae, thread d1ac7437): the creator's account has approval
+    readiness on, and the runtime ran the KRI-775 plan only without it, so readiness rated
+    "Put Taha's scream at the end of clip 2 in slow motion" as "I'll point it out after", the
+    card said "have a look", and only the finished video said "Couldn't". The same plan,
+    run here, says it before the card. Only checked, unmet, creator-fixable receipts of
+    clip-speed asks come back (a renderer limit stays the after-render note it was); order and
+    length keep readiness's own checks. Fails open like ``phone_montage_blockers``.
+    """
+    from app.kria.brief_checks import needs_creator_choice  # noqa: PLC0415
+    from app.kria.speed_ask import asks_clip_speed  # noqa: PLC0415
+
+    if brief is None:
+        return []
+    speed_ids = {req.id for req in brief.live() if asks_clip_speed(req)}
+    if not speed_ids:
+        return []
+    return [
+        receipt
+        for receipt in phone_montage_blockers(
+            db,
+            creator_id=creator_id,
+            item=item,
+            brief=brief,
+            strategy=strategy,
+            media_snapshot=media_snapshot,
+            client_protocol=client_protocol,
+        )
+        if receipt.requirement_id in speed_ids and needs_creator_choice(receipt)
+    ]
+
+
 def montage_blockers(
     *,
     creator_id: object,
@@ -332,6 +375,7 @@ def preflight_montage_plan(
             creator_duration_proven=creator_duration_s(brief=brief) is not None,
             approved_length_plan=envelope,
             contract=contract,
+            assignments=rows,
         )
     return plan, aliases
 

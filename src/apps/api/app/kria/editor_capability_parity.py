@@ -215,6 +215,18 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     ),
     # --------------------------------------------------------------- history
     "history": _g("agent_ops", "undo redo", ("undo_last_edit", "repeat_last_edit")),
+    "generated_overlay_approval": _g(
+        "agent_unsupported",
+        "applyOverlayProposal",
+        reason="Generated overlays require explicit native preview approval; chat cannot "
+        "spend on or accept a generated asset through this flow.",
+    ),
+    "overlay_planning_and_queries": _g(
+        "not_an_edit",
+        "requestOverlayPlan containsOverlayProposal overlayBaseTime overlayOutputTime "
+        "overlayDocumentFingerprint",
+        reason="Read-only proposal planning, identity checks and editor clock conversion.",
+    ),
     # ----------------------------------------------------------- not an edit
     "lifecycle_and_sync": _g(
         "not_an_edit",
