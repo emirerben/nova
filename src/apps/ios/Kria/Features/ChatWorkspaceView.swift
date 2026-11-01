@@ -629,7 +629,7 @@ private struct CreationWorkspaceView: View {
             capabilities: capabilities?.phoneRendering, creationMode: capabilities?.creationMode, capabilitiesLoaded: capabilitiesAreAuthoritative,
             sourcePurposes: [], role: .visual
         )
-        return selectedFormat == .montage && destination.visualKinds != nil ? fullThread?.deviceReadyVisualCount ?? 0 : 0
+        return selectedFormat?.runsAsMontage == true && destination.visualKinds != nil ? fullThread?.deviceReadyVisualCount ?? 0 : 0
     }
 
     private var activeProposalEvent: ThreadEvent? {
@@ -2493,7 +2493,7 @@ private struct CreationWorkspaceView: View {
                 return format
             }
             // The service advertises capability, not presentation order. Keep
-            // the post as the final card even if a rollout reorders its list.
+            // Lip-sync as the final card (Slider just before it) even if a rollout reorders its list.
             availableFormats = formats.sorted { $0.carouselOrder < $1.carouselOrder }
             capabilities = response
             capabilitiesReadAt = Date()
@@ -3323,6 +3323,7 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
 
 enum CreationFormat: String, CaseIterable, Identifiable {
     case montage
+    case lipsync
     case narrated
     case talkingToCamera
     case slides
@@ -3331,6 +3332,7 @@ enum CreationFormat: String, CaseIterable, Identifiable {
     var serverValue: String {
         switch self {
         case .montage: "montage"
+        case .lipsync: "lipsync"
         case .narrated: "narrated"
         case .talkingToCamera: "talking_to_camera"
         case .slides: "slides"
@@ -3339,6 +3341,7 @@ enum CreationFormat: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .montage: "Montage"
+        case .lipsync: "Lip-sync"
         case .narrated: "Voiceover"
         case .talkingToCamera: "Talk to camera"
         case .slides: "Slider"
@@ -3347,6 +3350,7 @@ enum CreationFormat: String, CaseIterable, Identifiable {
     var choiceSentence: String {
         switch self {
         case .montage: "Let’s make a montage"
+        case .lipsync: "Let’s make a lip-sync video"
         case .narrated: "Let’s make a voiceover video"
         case .talkingToCamera: "Let’s make a talk to camera video"
         case .slides: "Let’s make a slider"
@@ -3355,6 +3359,7 @@ enum CreationFormat: String, CaseIterable, Identifiable {
     var imageName: String {
         switch self {
         case .montage: "montage"
+        case .lipsync: "featured-lipsync"
         case .narrated: "voiceover"
         case .talkingToCamera: "talking"
         case .slides: "trulli-street"
@@ -3405,6 +3410,7 @@ enum CreationFormat: String, CaseIterable, Identifiable {
     init?(serverValue: String) {
         switch serverValue {
         case "montage": self = .montage
+        case "lipsync": self = .lipsync
         case "narrated": self = .narrated
         case "talking_to_camera": self = .talkingToCamera
         case "slides": self = .slides
@@ -3425,12 +3431,16 @@ enum CreationFormat: String, CaseIterable, Identifiable {
 
 extension CreationFormat {
     var usesVisualPool: Bool { self == .slides }
+    /// Lip-sync is a montage on the server (`edit_format: "montage"`); chat still decides
+    /// lip-sync vs background. Anywhere montage logic applies, lip-sync shares it.
+    var runsAsMontage: Bool { self == .montage || self == .lipsync }
     var carouselOrder: Int {
         switch self {
         case .montage: 0
         case .narrated: 1
         case .talkingToCamera: 2
         case .slides: 3
+        case .lipsync: 4
         }
     }
 }

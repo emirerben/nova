@@ -175,7 +175,10 @@ log = structlog.get_logger()
 # keeps its id. One fact for both: the disclosure unit's interim `animated: true` fact is gone.
 # v107 (KRI-1117): `background_media` (a photo / looping video behind the Talking speaker), taught
 # only where the manifest advertises `speaker_background`; every other prompt is byte-identical.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-31-v107"
+# v108 (KRI-1093): the Lip-sync picker card (`manifest.chosen_format`) defaults an attached song
+# to `lipsync`; the song section gains one paragraph only on that manifest, so every other
+# render is byte-identical.
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-01-v108"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -474,6 +477,17 @@ instead only if the creator explicitly asks for it. `summary` MUST say in plain 
 mode you chose (for example "I'll use your song as the background music and cut to its beat."
 or "I'll lip-sync your takes to your song, placing each one where it fits the music."). Never
 invent or quote lyrics, and never promise cuts matched to lyrics.
+""".strip("\n")
+
+
+# KRI-1093: appended to the song section ONLY when the thread was started from the Lip-sync
+# picker card (`manifest.chosen_format == "lipsync"`) and a song is usable; nothing otherwise.
+_USER_SONG_LIPSYNC_CARD_SECTION = """
+The creator picked the Lip-sync video type, which counts as asking to lip sync: choose
+"lipsync" even when their words never say so. Choose "background" only when their words
+clearly ask for the song as music behind the edit (for example "just use it as background
+music", "keep it as the music bed"): their words win over the card. Always set `song_sync`
+explicitly.
 """.strip("\n")
 
 
@@ -1028,7 +1042,15 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             brief_section=("\n" + _BRIEF_PROMPT_SECTION if input.brief_enabled else ""),
             # KRI-374: "" (no usable song) adds no bytes; same line-suffix trick.
             user_song_section=(
-                "\n" + _USER_SONG_PROMPT_SECTION if input.capability_manifest.has_user_song else ""
+                "\n"
+                + _USER_SONG_PROMPT_SECTION
+                + (
+                    "\n" + _USER_SONG_LIPSYNC_CARD_SECTION
+                    if input.capability_manifest.chosen_format == "lipsync"
+                    else ""
+                )
+                if input.capability_manifest.has_user_song
+                else ""
             ),
             # KRI-479: "" (no `phone_source_audio`) adds no bytes; same line-suffix trick.
             voice_mode_section=_camera_audio_mode_section(input.capability_manifest),
