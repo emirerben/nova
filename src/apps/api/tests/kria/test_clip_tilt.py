@@ -40,8 +40,37 @@ def _request_context():
     clear_request_context()
 
 
-def tilted_document(*, rotation=0.0, backdrop=None, card=False, **transform):
+POOL_VISUAL_ID = "5b2f9d1e-8c3a-4f6b-9e21-7a0d4c3b2a10"
+
+
+def with_pool_visual(document, kind="image", visual_id=POOL_VISUAL_ID):
+    """``document`` plus a pinned Visuals-pool photo or video its media backdrop can name."""
+    asset_id = f"visual-{visual_id}"
+    fingerprint = {"sha256": "b" * 64, "byte_count": 50}
+    document["assets"].append(
+        {
+            "id": asset_id,
+            "relative_path": asset_id,
+            "fingerprint": {"algorithm": "sha256", "hex": "b" * 64, "byte_count": 50},
+        }
+    )
+    manifest = {
+        "kind": "visual",
+        "id": asset_id,
+        "visual_id": visual_id,
+        "generation": "888",
+        "fingerprint": fingerprint,
+    }
+    if kind == "video":
+        manifest["media_kind"] = "video"
+    document["asset_manifest"]["assets"].append(manifest)
+    return document
+
+
+def tilted_document(*, rotation=0.0, backdrop=None, card=False, pool_media_kind=None, **transform):
     document = json.loads(FIXTURE.read_text())
+    if pool_media_kind is not None:
+        with_pool_visual(document, pool_media_kind)
     clip = document["tracks"][0]["clips"][0]
     clip["transform"] |= {"rotation_degrees": rotation} | transform
     if backdrop is not None:
@@ -75,10 +104,17 @@ def test_shared_fixture_invalid_backdrops_are_rejected(case):
 @pytest.mark.parametrize("case", PARITY["capability"], ids=lambda case: case["name"])
 def test_shared_fixture_capability_inference(case):
     recipe = EditRecipeV2.model_validate(
-        tilted_document(rotation=case["rotation_degrees"], backdrop=case["backdrop"])
+        tilted_document(
+            rotation=case["rotation_degrees"],
+            backdrop=case["backdrop"],
+            pool_media_kind=case.get("pool_media_kind"),
+        )
     )
     assert ("clipTilt" in recipe.required_capabilities) is case["clip_tilt"]
     assert recipe_has_clip_tilt(recipe) is case["clip_tilt"]
+    assert ("clipBackdropMedia" in recipe.required_capabilities) is case.get(
+        "clip_backdrop_media", False
+    )
 
 
 def test_an_untilted_recipe_keeps_its_wire_and_digest():

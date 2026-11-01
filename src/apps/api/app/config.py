@@ -866,6 +866,13 @@ class Settings(BaseSettings):
     # turn: a 28/29 build knows the token and would draw the card upright. So a pinned recipe
     # that carries a tilted card answers 426 `client_update_required` (`card_tilt`) below this.
     media_card_tilt_min_client_protocol: int = 30
+    # KRI-1139: a Visuals-pool photo or video as a clip's tilt backdrop (`backdrop.kind =
+    # "media"`, capability `clipBackdropMedia`). Not a second master flag: it is offered only
+    # while `media_tilt_enabled` is on, and also needs `clipBackdropMedia` in
+    # PHONE_RENDER_VERIFIED_FEATURES and a build that declares protocol >= this value (31: the
+    # first build that decodes a media backdrop). A pinned recipe that already carries one
+    # answers 426 `client_update_required` (`clip_backdrop_media`) to an older build.
+    media_backdrop_min_client_protocol: int = 31
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,

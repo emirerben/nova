@@ -175,6 +175,7 @@ from app.pipeline.phone_recipe_shared import (
     TIMING_ROUNDING_TOLERANCE_S,
     PhoneNarrationBed,
     audio_fade,
+    backdrop_asset_ids,
     snap_text_overshoot,
     timeline_end_s,
 )
@@ -1121,7 +1122,9 @@ def replace_editor_media(
         raise UnsupportedPhonePlan("pinned voiceover recipe has no video track")
 
     kept_tracks = [track for track in recipe.tracks if track.id != EDITOR_MEDIA_TRACK_ID]
-    still_used = {clip.source_asset_id for track in kept_tracks for clip in track.clips}
+    still_used = {clip.source_asset_id for track in kept_tracks for clip in track.clips} | (
+        backdrop_asset_ids(clip for track in kept_tracks for clip in track.clips)
+    )
     media_only = {
         clip.source_asset_id
         for track in recipe.tracks
@@ -1206,7 +1209,9 @@ def replace_editor_lanes(
         raise UnsupportedPhonePlan("an ending clip isn't supported on phone Voiceover edits")
 
     kept_tracks = [track for track in recipe.tracks if track.id not in _EDITOR_LANE_TRACK_IDS]
-    still_used = {clip.source_asset_id for track in kept_tracks for clip in track.clips}
+    still_used = {clip.source_asset_id for track in kept_tracks for clip in track.clips} | (
+        backdrop_asset_ids(clip for track in kept_tracks for clip in track.clips)
+    )
     lane_only = {
         clip.source_asset_id
         for track in recipe.tracks

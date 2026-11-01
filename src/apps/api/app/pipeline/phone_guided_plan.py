@@ -37,6 +37,7 @@ from app.pipeline.phone_recipe_shared import (
     display_dims,
     face_fill_transform,
     fit_transform,
+    register_backdrop_visuals,
     snap_text_overshoot,
     timeline_end_s,
 )
@@ -712,6 +713,7 @@ def compile_phone_guided_plan(
         raise ValueError("phone timeline duration differs from approved plan")
     if len({clip.id for clip in clips}) != len(clips):
         raise ValueError("phone moments must have unique identities")
+    register_backdrop_visuals(clips, visuals=visuals, assets=assets, manifest=manifest)
     # Composition.swift throws invalidTimeline unless the outgoing clip still
     # plays through each incoming fade. The per-moment refit above routinely
     # saturates a clip to the device file's own measured length minus

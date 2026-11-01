@@ -79,7 +79,10 @@ log = structlog.get_logger()
 # positive), taught only where the snapshot's overlays open `tilt`; a gate-closed edit still refuses
 # the angle in a sentence, and every other prompt is byte-identical. (v100 is the media-backdrop
 # tilt in another branch.)
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v101"
+# v102 (KRI-1139): a media backdrop ({"kind":"media","asset_id"}) in the tilt, taught in
+# clip_tilt_media.txt and the BACKDROP POOL section only where `tilt_backdrop_media` is open;
+# every other prompt, including a tilt-open one without it, is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v102"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1296,7 +1299,12 @@ def _format_slot_tilt(raw: object) -> str:
     if tilt.row() is None:
         return ""
     backdrop = tilt.backdrop
-    behind = "" if backdrop is None else f", backdrop={backdrop.color or backdrop.kind}"
+    if backdrop is None:
+        behind = ""
+    elif backdrop.kind == "media":
+        behind = f", backdrop=media({backdrop.asset_id})"
+    else:
+        behind = f", backdrop={backdrop.color or backdrop.kind}"
     return f" tilt=(rotation_deg={_fmt_num(tilt.rotation_deg)}{behind})"
 
 
@@ -2009,6 +2017,23 @@ def _format_snapshot(snapshot: dict) -> str:
                     )
             else:
                 lines.append("(none)")
+
+    if isinstance(snapshot.get("tilt_backdrop_pool"), list):
+        lines.append(
+            "\nBACKDROP POOL (photos and videos a tilted clip may show behind it; "
+            "use asset_id exactly as shown):"
+        )
+        pool_rows = [row for row in snapshot["tilt_backdrop_pool"] if isinstance(row, dict)]
+        for asset in _component_rows(pool_rows, 12, component_context_enabled):
+            lines.append(
+                f"- id={_field(asset.get('id'), max_chars=80)!r} "
+                f"kind={_field(asset.get('kind'), max_chars=20)!r} "
+                f"label={_field(asset.get('label'), max_chars=60)!r} "
+                f"duration={_fmt_round3(_first_number(asset, ('duration_s',)))}s "
+                f"context={_field(asset.get('context'), max_chars=80)!r}"
+            )
+        if not pool_rows:
+            lines.append("(none)")
 
     if isinstance(snapshot.get("captions"), dict):
         captions = snapshot["captions"]

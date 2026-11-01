@@ -30,6 +30,9 @@ struct RecipeVideoLayer: @unchecked Sendable {
     var overlayDissolve: NativeDissolveRenderer? = nil
     var sourceCrop: NormalizedSourceRect? = nil
     var backdrop: ClipBackdrop? = nil
+    /// Set only on a layer that exists to be a clip's `.media` backdrop: the pool visual id it draws. Such a layer
+    /// is never composed onto the canvas itself; `composeVideoLayer` reads it under the clips that name it.
+    var backdropAssetID: String? = nil
     /// Set only for an overlay clip with `overlayFadeIn`/`overlayFadeOut`.
     /// It scales opacity alone; positioning keeps using `transform`.
     var overlayFade: OverlayFadeWindow? = nil
@@ -237,8 +240,9 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
     /// (cutaways, fullscreen and overlay cards, fills) exactly as without a background, so nothing above the
     /// speaker is ever matted (S8). The background shows only under an active speaker clip, so an ending
     /// clip on the same track is untouched.
-    private func composeBelowText(_ layers: [RecipeVideoLayer], onto canvas: CIImage, instruction: RecipeVideoInstruction,
+    private func composeBelowText(_ candidates: [RecipeVideoLayer], onto canvas: CIImage, instruction: RecipeVideoInstruction,
                                   request: AVAsynchronousVideoCompositionRequest, time: Double) throws -> CIImage {
+        let layers = candidates.filter { $0.backdropAssetID == nil }
         var frame = canvas
         func compose(_ layer: RecipeVideoLayer) throws { frame = try composeVideoLayer(layer, onto: frame, instruction: instruction, request: request, time: time) }
         guard let matte = instruction.speakerMatte, let background = layers.first(where: { $0.speakerRole == .background }),
@@ -265,11 +269,8 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         return frame
     }
 
-    private func composeVideoLayer(_ layer: RecipeVideoLayer, onto background: CIImage,
-                                   instruction: RecipeVideoInstruction, request: AVAsynchronousVideoCompositionRequest,
-                                   time: Double) throws -> CIImage {
-        var frame = background
-        let source: CIImage
+    /// The layer's own picture for this request: its track's frame (graded when it carries a look) or its image.
+    private func sourceImage(of layer: RecipeVideoLayer, request: AVAsynchronousVideoCompositionRequest) throws -> CIImage? {
         if let trackID = layer.trackID {
             guard let buffer = request.sourceFrame(byTrackID: trackID) else {
                 throw MediaEngineError.missingAsset(String(trackID))
@@ -279,21 +280,37 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             // otherwise Core Image converts the Rec.709 transfer curve
             // again and visibly brightens the source before any effect.
             // The buffer's YCbCr matrix still controls YUV decoding.
-            do {
-                let graded = layer.look == .goldenHour ? try GoldenHourGrade.apply(to: buffer) : buffer
-                source = CIImage(cvPixelBuffer: graded, options: [.colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
-            } catch {
-                throw error
-            }
-        } else if let image = layer.image {
-            source = image
-        } else { return frame }
+            let graded = layer.look == .goldenHour ? try GoldenHourGrade.apply(to: buffer) : buffer
+            return CIImage(cvPixelBuffer: graded, options: [.colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
+        }
+        return layer.image
+    }
+
+    /// The canvas-sized pool photo or video a clip's `.media` backdrop shows, cover-fit like a fullscreen cutaway.
+    /// nil (nothing drawn) when no backdrop layer carries `poolID`, which a built composition never lacks.
+    private func mediaBackdropImage(_ poolID: String, instruction: RecipeVideoInstruction,
+                                    request: AVAsynchronousVideoCompositionRequest, time: Double) throws -> CIImage? {
+        guard let backdropLayer = instruction.layers.first(where: { $0.backdropAssetID == poolID }),
+              let source = try sourceImage(of: backdropLayer, request: request) else { return nil }
+        return Self.positionedSource(source, layer: backdropLayer, canvas: instruction.canvas, time: time).cropped(to: instruction.canvas)
+    }
+
+    private func composeVideoLayer(_ layer: RecipeVideoLayer, onto background: CIImage,
+                                   instruction: RecipeVideoInstruction, request: AVAsynchronousVideoCompositionRequest,
+                                   time: Double) throws -> CIImage {
+        var frame = background
+        guard let source = try sourceImage(of: layer, request: request) else { return frame }
         var alpha = layer.visualPlacement?.alpha(at: time) ?? (layer.fadeIn > 0 ? min(1, max(0, (time - layer.start) / layer.fadeIn)) : 1)
         if layer.visualPlacement == nil, let fade = layer.overlayFade { alpha *= fade.alpha(at: time) }
         var positioned = Self.positionedSource(source, layer: layer, canvas: instruction.canvas, time: time)
-        if let backdrop = layer.backdrop,
-           let under = Self.backdropImage(backdrop, source: source, layer: layer, canvas: instruction.canvas, time: time) {
-            positioned = positioned.composited(over: under).cropped(to: instruction.canvas)
+        if let backdrop = layer.backdrop {
+            let under: CIImage?
+            if case .media(let poolID) = backdrop {
+                under = try mediaBackdropImage(poolID, instruction: instruction, request: request, time: time)
+            } else {
+                under = Self.backdropImage(backdrop, source: source, layer: layer, canvas: instruction.canvas, time: time)
+            }
+            if let under { positioned = positioned.composited(over: under).cropped(to: instruction.canvas) }
         }
         if layer.overlayPopIn {
             let scale = 0.82 + 0.18 * min(1, max(0, (time - layer.start) / 0.18))

@@ -6,8 +6,10 @@ Row shape (``clips[i]["tilt"]``), the same as ``TimelineClip.transform.rotation_
     {"rotation_deg": 10.0, "backdrop": {"kind": "blur"}}
 
 ``rotation_deg`` is clockwise on screen, -180..180, 0 upright. ``backdrop`` is a
-``ClipBackdrop`` (blank | color | blur) and is absent when blank. A row with neither a turn
-nor a backdrop carries no tilt at all, so untouched rows stay byte-identical.
+``ClipBackdrop`` (blank | color | blur | media) and is absent when blank. A ``media`` backdrop
+is ``{"kind": "media", "asset_id": "<Visuals-pool visual id>"}``: the same value on the row and
+in the recipe (the recipe's manifest declares the pool visual that id names). A row with neither a
+turn nor a backdrop carries no tilt at all, so untouched rows stay byte-identical.
 """
 
 from __future__ import annotations

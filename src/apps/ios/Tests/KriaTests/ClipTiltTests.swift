@@ -82,9 +82,9 @@ final class ClipTiltTests: XCTestCase {
 
     // MARK: Editor session
 
-    private static let tiltOpen: JSONValue = .object(["editable": .bool(true), "reason": .null])
+    static let tiltOpen: JSONValue = .object(["editable": .bool(true), "reason": .null])
 
-    private static func session(tilt capability: JSONValue? = tiltOpen, slots extras: [[String: JSONValue]] = [[:]]) async -> (NativeEditorSession, EditorCommitSpy) {
+    static func session(tilt capability: JSONValue? = tiltOpen, backdropMedia: JSONValue? = nil, slots extras: [[String: JSONValue]] = [[:]]) async -> (NativeEditorSession, EditorCommitSpy) {
         let threadID = UUID()
         var authoritative: [String: JSONValue] = [
             "variant_id": .string("initial"), "render_generation_id": .string("generation-1"), "render_status": .string("ready"),
@@ -94,6 +94,7 @@ final class ClipTiltTests: XCTestCase {
         ]
         var clips: [String: JSONValue] = ["looks": .object(["editable": .bool(false)])]
         if let capability { clips["tilt"] = capability }
+        if let backdropMedia { clips["tilt_backdrop_media"] = backdropMedia }
         authoritative["editor_capabilities"] = .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false), "clips": .object(clips)])
         let slots = extras.enumerated().map { index, extra -> JSONValue in
             var slot: [String: JSONValue] = ["slot_id": .string("slot-\(index)"), "clip_index": .number(Double(index)), "in_s": .number(0),
@@ -111,11 +112,11 @@ final class ClipTiltTests: XCTestCase {
         return (session, fake)
     }
 
-    private func selection(_ session: NativeEditorSession, _ index: Int = 0) throws -> EditorSelection {
+    func selection(_ session: NativeEditorSession, _ index: Int = 0) throws -> EditorSelection {
         EditorSelection(kind: .clip, id: session.timelineClips[index].id.uuidString)
     }
 
-    private static let blur = ClipTilt(rotationDeg: 15, backdrop: .blur)
+    static let blur = ClipTilt(rotationDeg: 15, backdrop: .blur)
 
     func testSettingATiltStoresTheRowAndResetRestoresAByteIdenticalRow() async throws {
         let (session, _) = await Self.session()

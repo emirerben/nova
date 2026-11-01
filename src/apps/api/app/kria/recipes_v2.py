@@ -106,6 +106,14 @@ class EditRecipeV2(EditRecipeV1):
                     isinstance(source, VisualRenderAsset) and source.media_kind == "image"
                 ):
                     raise ValueError("a still card requires a Visuals photo")
+                if clip.backdrop is not None and clip.backdrop.kind == "media":
+                    pool_ids = {
+                        asset.visual_id
+                        for asset in manifest.values()
+                        if isinstance(asset, VisualRenderAsset)
+                    }
+                    if clip.backdrop.asset_id not in pool_ids:
+                        raise ValueError("a media backdrop requires a matching Visuals asset")
         if self.motion_scenes is not None:
             program = self.motion_scenes
             program.validated_instances(int(self.duration * self.frame_rate))

@@ -1485,6 +1485,10 @@ struct NativeEditorTemporaryVideo: Sendable {
                 document.clips[0].raw["tilt"] = saved
             }
             document.capabilities["clips.tilt"] = EditorCapability(editable: true)
+            // KRI-1139: the media backdrop is a separate capability; its pool is the Background fixture's (`refreshVisualLibrary`).
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-tilt-media") {
+                document.capabilities["clips.tilt_backdrop_media"] = EditorCapability(editable: true)
+            }
             cleanDocument = document
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background") {
@@ -3405,6 +3409,16 @@ struct NativeEditorTemporaryVideo: Sendable {
                 resolvedMedia[key] = resolved
             }
         }
+        // KRI-1139: the pool photo or video behind a tilted clip. One that cannot be read leaves the preview without it
+        // (the compiler drops it) instead of failing the whole preview; the tilt sheet says it is unavailable.
+        for poolID in Self.tiltMediaBackdropPoolIDs(in: document) {
+            let key = NativeEditorRenderCompiler.tiltBackdropSourceKey(forPoolID: poolID)
+            if resolvedMedia[key] != nil || authoredVisualSources[key] != nil { continue }
+            sourcePreviewState = .preparing
+            let resolved = try? await resolveTiltBackdropSource(poolID: poolID, resolver: resolver)
+            guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
+            if let resolved { resolvedMedia[key] = resolved }
+        }
         return resolvedMedia.merging(authoredVisualSources) { _, authored in authored }
     }
 
@@ -4651,7 +4665,8 @@ struct NativeEditorTemporaryVideo: Sendable {
             return true
         }
         // KRI-1118: the Background fixture's canned pool.
-        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background") {
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background")
+            || ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-tilt-media") {
             visualLibrary = NativeEditorUITestFixtures.speakerBackgroundVisuals
             return true
         }
@@ -5332,6 +5347,32 @@ struct NativeEditorTemporaryVideo: Sendable {
         var resolved = try await resolver.resolveMedia(id: asset.id, url: url, generation: asset.sourceGeneration ?? document.revision.baseGeneration)
         resolved.visualGeneration = asset.sourceGeneration ?? "0"
         return resolved
+    }
+
+    /// Bytes for a clip's media tilt backdrop (`visual-<pool id>`). Like the speaker background, the library is the
+    /// source of truth for the original URL, storage generation and photo-or-video kind; it is refreshed once when
+    /// the pool visual is not in it yet.
+    private func resolveTiltBackdropSource(poolID: String, resolver: NativeEditorSourceResolver) async throws -> ResolvedEditorSource {
+        func match() -> CreationVisual? {
+            visualLibrary.first { $0.id == poolID && $0.status == "ready" && VisualMediaKind(rawValue: $0.kind) != nil }
+        }
+        if match() == nil { await refreshVisualLibrary() }
+        guard let asset = match(), let url = asset.originalMediaURL, let kind = VisualMediaKind(rawValue: asset.kind) else {
+            throw MediaEngineError.missingAsset(EditorSpeakerBackground.assetID(forMediaID: poolID))
+        }
+        var resolved = try await resolver.resolveMedia(id: asset.id, url: url, generation: asset.sourceGeneration ?? document.revision.baseGeneration)
+        resolved.visualGeneration = asset.sourceGeneration ?? "0"
+        resolved.visualKind = kind
+        return resolved
+    }
+
+    /// The distinct pool visual ids the document's clips draw behind themselves.
+    static func tiltMediaBackdropPoolIDs(in document: EditorDocument) -> [String] {
+        var ids = Set<String>()
+        for slot in document.clips where !slot.removed {
+            if case .media(let id)? = (try? ClipTilt(row: slot.raw["tilt"]))?.backdrop { ids.insert(id) }
+        }
+        return ids.sorted()
     }
 
     // MARK: Drawings (KRI-589)
