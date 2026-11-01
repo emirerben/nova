@@ -29,6 +29,11 @@ Offline and free: socket guard, no model, JSON only, no media.
   (L2) render target.
 - the approval card is assembled offline from the real pure functions the draft turn calls; the
   capability manifest and phone proxy paths are synthetic (`score_route.manifest`, `media_rows`)
+- `replay_inputs.text_elements` (lane talking): the spoken-text row the recorded render drew
+  (`prod_outcome.render.text_elements`: "1810", 18.975 to 20.975 s, fade-in), rebuilt with
+  `phone_spoken_text.spoken_text_element` at the title's default spot (the prod placement was not
+  recorded). The route replay hands it to the render entry as the writer's text rows. The fixture
+  builder does not write it: keep it when rebuilding.
 
 ## Scrubbed
 
@@ -43,9 +48,9 @@ User, thread, item, job, turn and draft ids; storage paths; signed URLs; the lib
 | 2.direction (`native`) | disclosed_ok | VERIFIED (card line) | |
 | 2.pacing (`balanced`) | disclosed_ok | VERIFIED (card line: the card chip shows every pace, so the table names a default balanced too) | |
 | 2.story_structure | disclosed_ok | VERIFIED (card line) | |
-| 2.title_animation | disclosed_ok | VERIFIED (card line + r6 decline) | |
-| 3.r6 animation ask | disclosed_ok | VERIFIED (route decline) | |
-| 4.title_animation, 5.r6 | honored | NOT VERIFIED (no render replay yet) | L2 |
+| 2.title_animation | disclosed_ok | VERIFIED (card line + r6 decline) | VERIFIED (applied in the render) |
+| 3.r6 animation ask | disclosed_ok | VERIFIED (route decline) | VERIFIED (honored in the render) |
+| 4.title_animation, 5.r6 | honored | NOT VERIFIED (no render replay yet) | VERIFIED (L2: the "1810" row enters with `pop`, and every other animation asked, through `compile_phone_subtitled_plan`) |
 | 10.claims registry claims (every `Applied` field has a reader or a real carrier) | gate | VERIFIED | |
 | 10 consumer gate | report | REPORT (gaps) | |
 

@@ -2,20 +2,31 @@
 
 Covers ``subtitled`` and self-narrated Voiceover items (one clip or several). Captions follow
 the item's style toggle (``kria.runtime`` maps clean/editorial to sentences, kinetic/karaoke to
-word by word); it draws the confirmed title and closing title and the Visuals display.
+word by word); it draws the confirmed title and closing title and the Visuals display. Its title
+rows (the title, text on a spoken word, the closing tag) enter with the planned title animation
+and the whole-video or title animation asks (`phone_subtitled_title.talking_title_entrances`,
+``TALKING_HEAD_ROUTE_FOLLOWS_PROMPT_ENABLED``).
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
+from app.config import settings
+from app.kria.brief import BriefRequirement
 from app.kria.route_capabilities import _lines as lines
 from app.kria.route_capabilities._types import (
     Applied,
     AskDecline,
     Handling,
     NotApplied,
+    Notice,
     RenderEntry,
     RouteReaders,
 )
+
+_COMPILE = "pipeline/phone_subtitled_plan.py:compile_phone_subtitled_plan"
 
 FIELD_HANDLING: dict[str, Handling] = {
     "intro_hook": NotApplied(lines.hook),
@@ -34,7 +45,7 @@ FIELD_HANDLING: dict[str, Handling] = {
     "target_duration_s": NotApplied(
         lines.stated_length("its length follows your speech", "uzunluğu konuşmanı takip ediyor")
     ),
-    "title_animation": NotApplied(lines.title_animation),
+    "title_animation": Applied(via=_COMPILE),
     "label_position": NotApplied(lines.label_position),
     "optional_treatments": NotApplied(lines.treatments),
     "archetype": NotApplied(lines.archetype),
@@ -64,17 +75,51 @@ READERS = RouteReaders(
 )
 
 RENDER_ENTRY = RenderEntry(
-    "pipeline/phone_subtitled_plan.py:compile_phone_subtitled_plan",
+    _COMPILE,
     {
         "title_animation": "text_layers[id^=text-].animation_phases.entrance",
         "length_s": "duration",
     },
 )
 
+
+def _entrances_drawn() -> bool:
+    """The title rows play an asked entrance: the lane switch is on and the phone plays one."""
+    from app.kria.animation_ask import text_entrance_form  # noqa: PLC0415
+
+    return bool(settings.talking_head_route_follows_prompt_enabled) and (
+        text_entrance_form() is not None
+    )
+
+
+def _title_animation_not_drawn(strategy: Mapping[str, Any]) -> str | None:
+    """With the lane switch off, or on a phone that plays no text entrance, the title rows
+    show without the planned animation: the card says so, as before the lane."""
+    if _entrances_drawn():
+        return None
+    return lines.title_animation(strategy.get("title_animation"), strategy)
+
+
+def _ask_drawn(req: BriefRequirement) -> bool:
+    """A whole-video or title animation ask the title rows play; this route draws no per-clip
+    labels, so a per-clip or clip ask stays declined."""
+    from app.kria.animation_ask import animation_ask  # noqa: PLC0415
+
+    ask = animation_ask(req, styles=True)
+    return (
+        ask is not None
+        and ask.scope != "per_clip"
+        and not ask.scope.startswith("clip:")
+        and _entrances_drawn()
+    )
+
+
+NOTICES: dict[str, Notice] = {"title_animation": _title_animation_not_drawn}
+
 ASK_DECLINES: tuple[AskDecline, ...] = (
     AskDecline(
         "text_animation",
-        lambda req, _s: lines.asks_text_animation(req),
+        lambda req, _s: lines.asks_text_animation(req) and not _ask_drawn(req),
         lines.animation_decline,
     ),
 )

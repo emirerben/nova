@@ -38,11 +38,15 @@ photo appears (else the last 3 s) to the end. With a closing photo it sits on
 the photo's lower edge like a sticker badge (`place_closing_on_photo`; the
 photo is already off the face); without one it takes the title's top spot and
 face check (`place_talking_title`).
+
+Entrance (KRI-1097 wave 2): every title row the writer draws (the title, the text on a spoken
+word, the closing tag) fades in unless the creator asked for another entrance;
+`talking_title_entrances` applies the planned ``title_animation`` and the animation asks.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -181,6 +185,72 @@ def talking_title_element(
         source_params={"source": TALKING_TITLE_SOURCE},
     )
     return element.model_dump(mode="json", exclude_none=True)
+
+
+def _row_source(row: Mapping[str, Any]) -> str | None:
+    params = row.get("source_params")
+    source = params.get("source") if isinstance(params, Mapping) else None
+    return source if isinstance(source, str) else None
+
+
+def _first_entrance(*asks: Any) -> str | None:
+    """The first named edge among ``asks``, else the plain default when any is an ask."""
+    present = [ask for ask in asks if ask is not None]
+    named = next((ask.edge for ask in present if ask.named), None)
+    return named or (present[0].resolved_edge() if present else None)
+
+
+def talking_title_entrances(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    title_animation: object,
+    requirements: Iterable[Any] = (),
+) -> Sequence[Mapping[str, Any]]:
+    """The writer's title rows entering the way the creator asked (KRI-1097 wave 2).
+
+    The opening title takes a title-scope animation ask, else the plan's ``title_animation``,
+    else a whole-video ask ("animate the big text in": `animation_ask(req, styles=True)`). The
+    text on a spoken word and the closing tag, drawn in the title's look, take a whole-video
+    ask, and the title's ask and the plan's too when the edit has no opening title (that text
+    is then the title it shows). A named entrance wins over an unnamed one, which plays the
+    plain fade. Captions and any other row keep their own look.
+
+    ``rows`` comes back as it was with ``TALKING_HEAD_ROUTE_FOLLOWS_PROMPT_ENABLED`` off, with
+    nothing asked, or on a phone that plays no text entrance (`text_entrance_form`); a phone
+    that only plays the legacy effects gets the closest one (`entrance_patch`).
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.kria.animation_ask import (  # noqa: PLC0415
+        AnimationAsk,
+        animation_targets,
+        entrance_patch,
+        text_entrance_form,
+    )
+    from app.pipeline.phone_spoken_text import SPOKEN_TEXT_SOURCE  # noqa: PLC0415
+    from app.schemas.text_style_intent import normalize_title_animation  # noqa: PLC0415
+
+    if not settings.talking_head_route_follows_prompt_enabled:
+        return rows
+    form = text_entrance_form()
+    if form is None:
+        return rows
+    asks = dict(animation_targets(requirements, styles=True))
+    planned = normalize_title_animation(title_animation)
+    plan_ask = AnimationAsk(planned) if planned is not None else None
+    title_ask, whole_ask = asks.get("title"), asks.get("all")
+    has_title = any(_row_source(row) == TALKING_TITLE_SOURCE for row in rows)
+    other = _first_entrance(whole_ask, *(() if has_title else (title_ask, plan_ask)))
+    edges = {
+        TALKING_TITLE_SOURCE: _first_entrance(title_ask, plan_ask, whole_ask),
+        SPOKEN_TEXT_SOURCE: other,
+        TALKING_CLOSING_SOURCE: other,
+    }
+    if not any(edges.values()):
+        return rows
+    return [
+        {**row, **entrance_patch(edge, form)} if (edge := edges.get(_row_source(row))) else row
+        for row in rows
+    ]
 
 
 def _output_to_source_s(at_s: float, keep_segments: Sequence[tuple[float, float]]) -> float | None:
