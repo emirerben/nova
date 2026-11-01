@@ -4004,12 +4004,18 @@ speech cleanup already ships. Builds that predate this ignore the new capability
 **Contract.** `editor_capabilities.clips.source_window = {editable, reason}` appears only while the flag
 is on (`timeline` stays `false`). `reason` is one of `talking_range_multi_clip`, `talking_range_word_cuts`
 (explicit spoken-word cuts applied), `talking_range_processed_audio` (noise reduction applied),
-`talking_range_cut_mismatch` (the stored rows no longer match the pinned recipe, e.g. after a
-regenerate). One predicate, `phone_talking_range.talking_range_reason`, drives both the capability and
+`talking_range_cut_mismatch` (the stored rows, or an empty editor state, no longer match the speaker's
+clips on the pinned recipe). The speaker's clips are the main-track clips over the speaker's own asset;
+a muted ending clip on the same track is not part of the cut and never closes Range. A Talking edit that
+became authored (a clip delete, KRI-852) gets no `source_window` leaf at all: it edits through the open
+`timeline` capability. One predicate, `phone_talking_range.talking_range_reason`, drives both the capability and
 Save. A Save carries `timeline_slots`: the SAME `native-phone-talking-source[-n]` ids, order and count
 the server derived (`editor_deletion_timeline`), with new `in_s` / `duration_s`. Anything else is
-`422 talking_range_structure_changed`; a window reaching into the next segment's footage is
-`422 talking_range_overlap`; past the source is `TIMELINE_OUT_OF_BOUNDS`; widening into footage with no
+`422 talking_range_structure_changed` (a `muted` row is `422 talking_range_muted`); segments that no
+longer run in cut order are `422 talking_range_order`; a window reaching into the next segment's footage
+is `422 talking_range_overlap`; a window the Save changed shorter than the editor minimum (0.1 s, with
+the KRI-770 float tolerance) is `TIMELINE_INVALID_WINDOW`, while an untouched short cleanup segment keeps
+its length; past the source is `TIMELINE_OUT_OF_BOUNDS`; widening into footage with no
 caption timing while captions are on is `422 talking_range_captions_missing` (no silent caption gap).
 
 **Compile.** The rows become `keep_segments` for `compile_phone_subtitled_plan`
@@ -4017,9 +4023,15 @@ caption timing while captions are on is `422 talking_range_captions_missing` (no
 (`speech_cut_state.reproject_authored_speech_records`; the KRI-852 basis sync was factored into
 `authored_editor.sync_talking_source_lanes` and is shared, not copied). A lane the Save carries is
 already on the new clock and is never moved twice. The variant never enters authored mode, so
-cutaways, speaker background, ending clip and framing keep compiling through the Talking compiler.
-The rows persist as `variant.user_timeline.slots`; the pinned recipe stays the source of truth and a
-later regenerate that re-cuts the take closes the capability (`talking_range_cut_mismatch`).
+cutaways, speaker background, ending clip and framing keep compiling through the Talking compiler. A
+lane under the ending clip shifts with the cut (the ending is a tail pseudo-slot of its length).
+The rows persist as `variant.user_timeline.slots`; the pinned recipe stays the source of truth. A
+regenerate builds a fresh variant entry without `user_timeline`, so it reopens Range with rows that
+match its new pinned cut.
+
+**App.** The app reads the leaf only while its own `timeline` capability is closed. A closed Range is not
+a banner: the Range button stays tappable and the sheet names the reason when the creator asks for it.
+The app also refuses a staged window that overlaps a neighbour or jumps out of the cut's order.
 
 **Not in this slice (follow-ups).** Delete / split / reorder of speech segments, several-clip Talking
 (per-speaker windows and cutaway re-projection), a cutaway's own source start, variants with spoken-word

@@ -356,16 +356,6 @@ struct NativeEditorView: View {
                         .padding(.vertical, 8)
                         .accessibilityIdentifier("native-editor-cloud-read-only")
                 }
-                if let notice = session.talkingRangeNotice {
-                    Label(notice, systemImage: "arrow.left.and.right.square")
-                        .font(KriaFont.body(13))
-                        .foregroundStyle(KriaColor.zinc)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .accessibilityLabel(notice)
-                        .accessibilityIdentifier("native-editor-range-unavailable")
-                }
                 if let presentation = session.editorSongReferencePresentation {
                     NativeSongReferenceCard(presentation: presentation)
                         .padding(.horizontal, 16)

@@ -7195,14 +7195,24 @@ struct NativeEditorTemporaryVideo: Sendable {
         return (slot, clip)
     }
 
-    /// The `clips.source_window` leaf a phone Talking edit opens Range through. Nil: not offered.
-    private var talkingRangeLeaf: EditorCapability? { document.capabilities[NativePhoneTalkingSource.rangeCapabilityKey] }
+    /// The `clips.source_window` leaf a phone Talking edit opens Range through. Nil: not offered, or the
+    /// timeline is open (an authored Talking edit), in which case the ordinary timeline gate decides and a
+    /// leaf an older server still sent must not close it.
+    private var talkingRangeLeaf: EditorCapability? {
+        canEditTimeline ? nil : document.capabilities[NativePhoneTalkingSource.rangeCapabilityKey]
+    }
+
+    /// A closed Talking Range answers a tap with its reason instead of a greyed-out dead end.
+    func sourceWindowExplainsOnTap(for selection: EditorSelection?) -> Bool {
+        guard talkingRangeLeaf?.editable == false, let found = sourceWindowSlot(for: selection) else { return false }
+        return NativePhoneTalkingSource.isSourceSlot(found.slot)
+    }
 
     /// Why Range cannot be used on a Talking edit right now, in plain words, or nil when it is open or the
-    /// server does not offer it. It also covers the case with no clip to select: while the finished MP4 plays
-    /// (applied word cuts or sound cleanup, a receipt that no longer matches) nothing is hydrated, and an open
-    /// leaf with nothing to edit must not read as a silent dead end either.
-    var talkingRangeNotice: String? {
+    /// server does not offer it. It covers the case with no clip to select: while the finished MP4 plays
+    /// (applied word cuts or sound cleanup, a receipt that no longer matches) nothing is hydrated. Shown only
+    /// where the creator asks for Range (the button, the sheet, the Range row), never as a standing banner.
+    private var talkingRangeUnavailableCopy: String? {
         guard let leaf = talkingRangeLeaf else { return nil }
         if !leaf.editable { return NativePhoneTalkingSource.rangeClosedCopy(reason: leaf.reason) }
         guard !document.clips.contains(where: NativePhoneTalkingSource.isSourceSlot) else { return nil }
@@ -7214,7 +7224,7 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     /// Why Range is greyed out for the selected clip, or nil when it is available.
     func sourceWindowBlockedReason(for selection: EditorSelection?) -> String? {
-        guard let found = sourceWindowSlot(for: selection) else { return talkingRangeNotice ?? "Select a clip to choose its range." }
+        guard let found = sourceWindowSlot(for: selection) else { return talkingRangeUnavailableCopy ?? "Select a clip to choose its range." }
         if let leaf = talkingRangeLeaf, NativePhoneTalkingSource.isSourceSlot(found.slot) {
             // The timeline is closed for Talking; the leaf alone decides a window change on its own segments.
             if !leaf.editable { return NativePhoneTalkingSource.rangeClosedCopy(reason: leaf.reason) }
@@ -7262,7 +7272,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             && KriaSourceWindowGeometry.sourceEnd(window, rate: rate) <= KriaSourceWindowGeometry.sourceEnd(current, rate: rate) + 1e-9
         guard KriaSourceWindowGeometry.isWithinBounds(window, rate: rate, sourceDuration: sourceDuration) || shrinks else { return false }
         let talking = talkingRangeLeaf != nil && NativePhoneTalkingSource.isSourceSlot(found.slot)
-        if talking, overlapsAnotherTalkingSegment(window, rate: rate, of: found.slot) { return false }
+        if talking, breaksTalkingCut(window, rate: rate, of: found.slot) { return false }
         let moved = abs(window.start - current.start) > 1e-6, resized = abs(window.length - current.length) > 1e-6
         guard moved || resized else { return true }
         // A pure slide writes `in_s` alone, so a beat-bound slot keeps `duration_beats`; a new length is a fixed length.
@@ -7279,16 +7289,20 @@ struct NativeEditorTemporaryVideo: Sendable {
         return true
     }
 
-    /// A Talking segment may grow into the pause beside it, never into a neighbouring segment's source: the
-    /// server answers `talking_range_overlap` and the take would play the same words twice.
-    private func overlapsAnotherTalkingSegment(_ window: KriaSourceWindowGeometry.Window, rate: Double, of slot: EditorTimelineSlot) -> Bool {
+    /// A Talking segment may grow into the pause beside it, never into a neighbouring segment's source and never
+    /// out of the cut's order: the server answers `talking_range_overlap` / `talking_range_order`, and the take
+    /// would play the same words twice or out of order.
+    private func breaksTalkingCut(_ window: KriaSourceWindowGeometry.Window, rate: Double, of slot: EditorTimelineSlot) -> Bool {
         let end = KriaSourceWindowGeometry.sourceEnd(window, rate: rate)
         let slack = 1e-6
-        return document.clips.contains { other in
-            guard other.id != slot.id, NativePhoneTalkingSource.isSourceSlot(other), other.clipIndex == slot.clipIndex else { return false }
+        var reachedSelf = false
+        for other in document.clips where NativePhoneTalkingSource.isSourceSlot(other) && other.clipIndex == slot.clipIndex {
+            if other.id == slot.id { reachedSelf = true; continue }
             let otherEnd = other.inS + (other.durationS ?? 0) * (other.raw["playback_rate"]?.numberValue ?? 1)
-            return window.start < otherEnd - slack && end > other.inS + slack
+            if window.start < otherEnd - slack && end > other.inS + slack { return true }
+            if reachedSelf ? window.start > other.inS + slack : window.start < other.inS - slack { return true }
         }
+        return false
     }
 
     func operationCapability(_ key: String) -> EditorCapability? { document.capabilities[key] }

@@ -191,7 +191,6 @@ enum NativePhoneTalkingSource {
         case "talking_range_word_cuts": "Range isn’t available after removing words from this video yet."
         case "talking_range_processed_audio": "Range isn’t available after cleaning up this video’s sound yet."
         case "talking_range_cut_mismatch": "This video’s cut changed. Make the video again to choose a range."
-        case "client_update_required": "Update Kria to choose which part of your take plays."
         default: "Range isn’t available for this video yet."
         }
     }

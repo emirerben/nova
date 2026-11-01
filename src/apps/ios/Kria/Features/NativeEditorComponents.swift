@@ -431,7 +431,7 @@ struct NativeEditorContextStrip: View {
                         .padding(.horizontal, 16)
                 }
                 .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
-                .disabled(rangeBlocked != nil)
+                .disabled(rangeBlocked != nil && !session.sourceWindowExplainsOnTap(for: session.selection))
                 .accessibilityIdentifier("native-editor-clip-range")
                 .accessibilityHint(rangeBlocked ?? "Choose which part of the original clip plays")
 
