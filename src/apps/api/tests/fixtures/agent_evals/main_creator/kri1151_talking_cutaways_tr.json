@@ -1,6 +1,6 @@
 {
   "agent": "nova.creator.main",
-  "prompt_version": "2026-11-02-v109",
+  "prompt_version": "2026-11-02-v110",
   "input": {
     "user_message": "Konuştuğum yerde ilgili konuşma kliplerini araya tam ekran koy ve kendi sesiyle çalsın. Stadyum klibini de konuşurken tam ekran koy ama benim sesim kalsın",
     "creator_request": "Konuştuğum yerde ilgili konuşma kliplerini araya tam ekran koy ve kendi sesiyle çalsın. Stadyum klibini de konuşurken tam ekran koy ama benim sesim kalsın",
@@ -299,11 +299,16 @@
       "talking_multi_clip_enabled": true,
       "phone_talking_mention_cutaways_enabled": true,
       "phone_talking_cutaway_sound_enabled": true,
-      "phone_clip_sound_windows_enabled": true
+      "phone_clip_sound_windows_enabled": true,
+      "phone_talking_insert_clips_enabled": false
     },
     "prompt_contains": [
       "CLIPS SHOWN FULL SCREEN OVER THE TALK",
       "konuştuğum yerde tam ekran göster"
+    ],
+    "prompt_excludes": [
+      "A CLIP PLAYED IN THE MIDDLE OF THE TALK",
+      "insert_clips"
     ]
   }
 }

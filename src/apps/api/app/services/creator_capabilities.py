@@ -60,6 +60,7 @@ from app.agents._schemas.edit_format import (
     guided_edit_applicable,
     render_program_for_intent,
 )
+from app.agents._schemas.reaction_beats import MAX_INSERT_CLIPS
 from app.config import settings
 from app.schemas.creation_formats import SONG_SYNC_DEFAULT_BY_FORMAT
 from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS
@@ -78,6 +79,7 @@ from app.services.phone_rollout import (
     phone_subtitled_video_overlays_supported,
     phone_talking_cutaway_sound_supported,
     phone_talking_head_supported,
+    phone_talking_insert_clips_supported,
     phone_talking_mention_cutaways_supported,
     phone_talking_multi_clip_supported,
     phone_timed_cards_supported,
@@ -1549,6 +1551,147 @@ def _repair_creator_ending_clip(
     return strategy.model_copy(update=update), notices
 
 
+# Parent KRI-1151: why an `insert_clips` row (one of the creator's own clips played while his take
+# is paused) cannot be kept. The creator reads the notice before approving; the brief receipt
+# words the same code in `app.kria.brief_checks`.
+INSERT_CLIP_NOTICES: dict[str, str] = {
+    "not_talking": (
+        "Couldn't pause your talk for that clip: only a talking-to-camera edit on your iPhone "
+        "can do that."
+    ),
+    "insert_clips_off": (
+        "Couldn't pause your talk for that clip: playing a clip in the middle of your talk "
+        "isn't available yet."
+    ),
+    "not_found": "Couldn't find the clip you named to play in the middle of your talk.",
+    "not_video": "Couldn't play that in the middle of your talk: it's a photo, not a video clip.",
+    "visual_unsupported": (
+        "Couldn't play that in the middle of your talk: only one of your own clips can pause "
+        "the talk, not a video from Visuals yet."
+    ),
+    "only_clip": (
+        "Couldn't play that clip in the middle of your talk: it is the only clip in this edit."
+    ),
+    "not_selected": (
+        "Couldn't play that clip in the middle of your talk: you asked to leave it out of this "
+        "edit."
+    ),
+    "is_ending": (
+        "That clip is already the one the video ends on, so it can't also pause your talk."
+    ),
+    "duplicate_clip": "That clip was asked for twice; it plays once.",
+    "too_many": (
+        "Couldn't play that clip in the middle of your talk: a talk can pause for at most "
+        "three clips."
+    ),
+}
+
+
+def _insert_clip_resolution(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy, media_id: str
+) -> tuple[CreatorMediaRef | None, str | None]:
+    """(the clip an ``insert_clips`` row names, None) when the phone can pause the take for it,
+    else (None, why). Only one of the item's OWN footage clips, in a several-clip Talking edit."""
+
+    phone = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    if (
+        strategy.edit_format != "subtitled"
+        or phone is None
+        or not phone.available
+        or manifest.has_voiceover
+    ):
+        return None, "not_talking"
+    if not phone_talking_insert_clips_supported():
+        return None, "insert_clips_off"
+    videos = [item for item in manifest.media if item.kind == "video"]
+    media = _match_owned_media_ref(videos, media_id)
+    if media is None:
+        if resolve_creator_image_media_ref(manifest, media_id) is not None:
+            return None, "not_video"
+        return None, "not_found"
+    if media.media_id.startswith("asset-"):
+        return None, "visual_unsupported"
+    if sum(1 for item in videos if not item.media_id.startswith("asset-")) < 2:
+        return None, "only_clip"
+    if _creator_left_out(strategy, media.media_id):
+        return None, "not_selected"
+    ending = strategy.ending_clip
+    if ending is not None and _match_owned_media_ref(videos, ending.media_id) == media:
+        return None, "is_ending"
+    return media, None
+
+
+def insert_clips_problems(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+) -> list[str | None]:
+    """One entry per ``strategy.insert_clips`` row: the code the repair drops it by, else None."""
+
+    problems: list[str | None] = []
+    seen: set[str] = set()
+    for row in strategy.insert_clips or ():
+        media, problem = _insert_clip_resolution(manifest, strategy, row.media_id)
+        if media is not None and media.media_id in seen:
+            problem = "duplicate_clip"
+        if media is not None and problem is None and len(seen) >= MAX_INSERT_CLIPS:
+            problem = "too_many"
+        if media is not None and problem is None:
+            seen.add(media.media_id)
+        problems.append(problem)
+    return problems
+
+
+def insert_clip_candidates(manifest: ResolvedCreatorManifest) -> list[CreatorMediaRef]:
+    """The clips a phone Talking edit could pause the take for right now (empty = nothing to
+    teach or keep): the item's own footage clips, with the insert rollout open."""
+
+    phone = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    if manifest.edit_format != "subtitled" or manifest.has_voiceover:
+        return []
+    if phone is None or not phone.available or not phone_talking_insert_clips_supported():
+        return []
+    own = [
+        item
+        for item in manifest.media
+        if item.kind == "video" and not item.media_id.startswith("asset-")
+    ]
+    return own if len(own) >= 2 else []
+
+
+def _repair_creator_insert_clips(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+) -> tuple[CreativeStrategy, list[str]]:
+    """Parent KRI-1151: keep an ``insert_clips`` row only where the phone can pause the take for
+    it, honestly. Repair (never reject): a row the edit cannot render is dropped with a plain
+    notice so the brief receipt can say "Couldn't" before approval; a kept one carries the
+    manifest's canonical id, and its clip is kept in ``selected_media_ids`` (the worker binds
+    only the selected clips)."""
+
+    rows = strategy.insert_clips
+    if not rows:
+        return strategy, []
+    problems = insert_clips_problems(manifest, strategy)
+    kept = []
+    notices: list[str] = []
+    selected = list(strategy.selected_media_ids)
+    videos = [item for item in manifest.media if item.kind == "video"]
+    for row, problem in zip(rows, problems, strict=True):
+        if problem is not None:
+            notices.append(INSERT_CLIP_NOTICES[problem])
+            continue
+        media = _match_owned_media_ref(videos, row.media_id)
+        kept.append(row.model_copy(update={"media_id": media.media_id}))
+        if (
+            selected
+            and strategy.media_scope != "all"
+            and media.media_id.casefold() not in {m.casefold() for m in selected}
+        ):
+            selected.append(media.media_id)
+    update: dict[str, Any] = {"insert_clips": kept or None}
+    if selected != list(strategy.selected_media_ids):
+        update["selected_media_ids"] = selected
+    return strategy.model_copy(update=update), notices
+
+
 SPEAKER_BACKGROUND_STATE_KEY = "speaker_background"
 
 
@@ -1736,6 +1879,10 @@ def compile_strategy_to_plan(
     # the dispatched strategy is the repaired one.
     strategy, ending_notices = _repair_creator_ending_clip(manifest, strategy)
     shape_notices = [*shape_notices, *ending_notices]
+    # Parent KRI-1151: clips played while the take is paused; judged after the ending so a clip
+    # that is the ending is not also an insert.
+    strategy, insert_notices = _repair_creator_insert_clips(manifest, strategy)
+    shape_notices = [*shape_notices, *insert_notices]
     # KRI-1117: the photo / looping video behind the speaker (the creator's camera pick fills in
     # an agent that left it out); same entry so receipts judge exactly what the worker resolves.
     strategy, background_notices = _repair_creator_speaker_background(manifest, strategy)
@@ -2133,6 +2280,7 @@ build_creator_manifest = resolve_creator_manifest
 repair_creator_reaction_beats = _repair_creator_reaction_beats
 # ... and the ending clip (KRI-841), judged by the same checks.
 repair_creator_ending_clip = _repair_creator_ending_clip
+repair_creator_insert_clips = _repair_creator_insert_clips
 repair_creator_speaker_background = _repair_creator_speaker_background
 # ... and the exact-timed small cards, judged by the same checks.
 repair_creator_timed_cards = _repair_creator_timed_cards
@@ -2162,6 +2310,10 @@ __all__ = [
     "effective_render_program",
     "ending_clip_candidates",
     "ending_clip_problem",
+    "INSERT_CLIP_NOTICES",
+    "insert_clip_candidates",
+    "insert_clips_problems",
+    "repair_creator_insert_clips",
     "normalize_creator_strategy_media",
     "phone_talking_title_lane_open",
     "repair_creator_ending_clip",

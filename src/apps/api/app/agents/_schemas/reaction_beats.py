@@ -145,6 +145,59 @@ class EndingClip(BaseModel):
     keep_audio: bool = True
 
 
+MAX_INSERT_CLIPS = 3
+# Rows kept when parsing, so the repair can name each one past the cap (`too_many`) instead of
+# the parse cutting it unseen.
+MAX_INSERT_CLIP_ROWS = 8
+
+
+class InsertClip(BaseModel):
+    """A clip of the creator's own footage that plays while his take is PAUSED (parent KRI-1151).
+
+    "After I say 'congress', show the congress clip with its sound": the picture switches to the
+    clip and its audio plays, then the take resumes where it stopped, so the video grows by the
+    clip's length. Unlike ``EndingClip`` (after the whole talk) and a cutaway (the take keeps
+    running under it), nothing the creator said is lost. ``media_id`` is an opaque manifest
+    media id of one of the item's own footage clips; the server repair
+    (``app.services.creator_capabilities.repair_creator_insert_clips``) keeps it only where the
+    phone can render it and canonicalizes the id. Exactly one of ``at_phrase`` (words the
+    creator says; the clip plays at the next natural pause after them) or ``at_s`` (a second of
+    the take) names the moment; the worker records what it really placed
+    (``variant["phone_insert_clips"]``). Carries no resolved timestamp.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    media_id: str = Field(min_length=1, max_length=200)
+    at_phrase: str | None = Field(default=None, max_length=120)
+    at_s: float | None = Field(default=None, ge=0.0, le=1800.0, allow_inf_nan=False)
+    # False only when the creator asked for the clip silent.
+    keep_audio: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_phrase(cls, data: object) -> object:
+        if not isinstance(data, dict) or "at_phrase" not in data:
+            return data
+        cleaned = dict(data)
+        cleaned["at_phrase"] = _clean(cleaned["at_phrase"])
+        return cleaned
+
+    @model_validator(mode="after")
+    def _one_position(self) -> InsertClip:
+        if (self.at_phrase is None) == (self.at_s is None):
+            raise ValueError("an insert clip needs exactly one of at_phrase or at_s")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_position(self, handler):  # noqa: ANN001, ANN202
+        data = handler(self)
+        for key in ("at_phrase", "at_s"):
+            if data.get(key) is None:
+                data.pop(key, None)
+        return data
+
+
 class BackgroundMedia(BaseModel):
     """The photo or looping video shown BEHIND the speaker for the whole edit (KRI-1117).
 

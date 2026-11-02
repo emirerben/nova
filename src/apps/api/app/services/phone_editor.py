@@ -65,6 +65,7 @@ from app.pipeline.phone_subtitled_plan import (
     sfx_duck_receipt,
     speaker_binding_from_recipe,
 )
+from app.pipeline.phone_talking_inserts import inserts_from_recipe
 from app.pipeline.phone_timed_cards import TIMED_CARDS_FIELD, timed_cards_from_rows
 from app.pipeline.phone_voiceover_cut import replace_voiceover_cut
 from app.services.creator_render_contract import (
@@ -1329,12 +1330,16 @@ def _compile_subtitled_editor_commit(
     speaker = bindings[0]
     cutaways: tuple = ()
     additional_speakers: tuple = ()
+    inserts: tuple = ()
     if isinstance(previous.recipe, EditRecipeV2):
         speaker = speaker_binding_from_recipe(previous.recipe, bindings)
         cutaways = cutaways_from_recipe(previous.recipe, bindings)
         if not phone_talking_cutaway_sound_supported():
             cutaways = tuple(c.model_copy(update={"sound": False}) for c in cutaways)
         additional_speakers = additional_speakers_from_recipe(previous.recipe, bindings)
+        # Parent KRI-1151: a clip the take was paused for comes back where it was, whatever the
+        # insert flag says now; the rows below are already on the final timeline.
+        inserts = inserts_from_recipe(previous.recipe, bindings)
     elif len(bindings) != 1:
         raise ValueError("multi-clip phone Talking edits need a pinned recipe")
     keep_segments = (
@@ -1391,6 +1396,7 @@ def _compile_subtitled_editor_commit(
         caption_look=caption_look,
         cutaways=cutaways,
         additional_speakers=additional_speakers,
+        **({"inserts": inserts} if inserts else {}),
         landscape_fit=landscape_fit,
         # KRI-467: the staged row's text (already this Save's, when it carries
         # a text section), in the cut-timeline seconds the cues use.
@@ -1479,7 +1485,7 @@ def _compile_subtitled_editor_commit(
         _restale_protected_text(
             row,
             speaker=speaker,
-            keep_segments=keep_segments,
+            keep_segments=_without_insert_splits(keep_segments),
             landscape_fit=landscape_fit,
             speaker_position_x=speaker_position_x,
             canvas_changed=canvas_changed,
@@ -2030,6 +2036,24 @@ def _previous_clip_tilts(recipe: Any) -> dict[str, dict]:
                 if (tilt := row_tilt_from_clip(clip)) is not None:
                     tilts[clip.id] = tilt
     return tilts
+
+
+def _without_insert_splits(
+    keep_segments: list[tuple[float, float]] | None,
+) -> list[tuple[float, float]] | None:
+    """The take's keep segments as the cleanup cut made them. A clip inserted into the take
+    (parent KRI-1151) splits one segment in two at the point, back to back in the source; the
+    receipts measured the unsplit take, so compare on that. A real cut leaves a gap, so it is
+    never merged."""
+    if not keep_segments:
+        return keep_segments
+    merged = [keep_segments[0]]
+    for start, end in keep_segments[1:]:
+        if abs(start - merged[-1][1]) <= 1e-4:
+            merged[-1] = (merged[-1][0], end)
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def _previous_keep_segments(
