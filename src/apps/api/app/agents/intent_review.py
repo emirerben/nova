@@ -3,8 +3,8 @@
 Production never sends this agent through `Agent.run`. `run_intent_review` renders the prompt
 and parses the reply here but sends it through `OpenAIVisionClient` under an explicit cost
 reservation, because the dispatcher rejects media on purpose. The agent class exists for the
-prompt contract, the replay evals and the admin catalog; run through a text-only client it can
-only fail closed.
+prompt contract, the replay evals and the admin catalog. It declares that it needs frames, so a
+call through the dispatcher is refused instead of letting a model judge a video it never saw.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from app.kria.intent_review_catalog import ReviewCatalog
 from app.pipeline.prompt_loader import load_prompt
 
 PROMPT_VERSION = "intent_review_v1"
+FRAMES_REQUIRED = "frames://intent-review"
 MAX_REQUEST_CHARS = 2_000
 
 
@@ -92,6 +93,12 @@ class IntentReviewAgent(Agent[IntentReviewInput, IntentReviewOutput]):
     Input = IntentReviewInput
     Output = IntentReviewOutput
     max_output_tokens: ClassVar[int | None] = 2_500
+
+    def media_uri(self, input: IntentReviewInput) -> str | None:  # noqa: A002
+        return FRAMES_REQUIRED
+
+    def media_mime(self, input: IntentReviewInput) -> str:  # noqa: A002
+        return "image/jpeg"
 
     def render_prompt(self, input: IntentReviewInput) -> str:  # noqa: A002
         return render_review_prompt(input)

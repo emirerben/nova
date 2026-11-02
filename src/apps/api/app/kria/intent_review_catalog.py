@@ -19,7 +19,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents._schemas.intent_review import ISSUABLE_KINDS, MAX_FINDINGS, DefectKind
-from app.kria.brief import BriefRequirement
+from app.kria.brief import SUPERSEDED_BY_FACT, BriefRequirement
 from app.kria.brief_binding import BriefBinding
 from app.kria.drafts import KriaDraftDocument
 from app.services.creator_render_contract import CreatorRenderContract
@@ -149,7 +149,7 @@ def _issue(
     eligible: list[BriefRequirement] = []
     for requirement in brief.requirements if brief else []:
         if requirement.status == "superseded":
-            removed = requirement.facts.get("superseded_by") is not None
+            removed = requirement.facts.get(SUPERSEDED_BY_FACT) is not None
             withheld.append(
                 WithheldRequirement(
                     brief_id=requirement.id, reason="removed" if removed else "superseded"

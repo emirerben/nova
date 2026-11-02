@@ -546,6 +546,9 @@ def _judge(row, review: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
         )
     except InvalidReviewOutput as exc:
         return "unavailable", "invalid_output", {"invalid_output": exc.reason}
+    except Exception:
+        log.warning("intent_review_judgment_failed", review_id=str(row.id), exc_info=True)
+        return "unavailable", "disposition_unavailable", {}
     patch: dict[str, Any] = {"findings": [f.model_dump(mode="json") for f in evaluation.findings]}
     if evaluation.disposition is not None:
         patch["disposition"] = evaluation.disposition.model_dump(mode="json")
