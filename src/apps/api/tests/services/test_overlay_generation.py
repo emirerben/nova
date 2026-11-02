@@ -1094,3 +1094,45 @@ def test_nudge_keeps_a_usable_duration():
             prompt="",
             existing_overlays=[dict(start_s=0.0, end_s=1.3)],
         )
+
+
+def _versus(first, second):
+    base = proposal().overlays[0].model_dump()
+    one = {**base, "start_s": 1.0, "end_s": 3.0, **first}
+    two = {
+        **base,
+        "start_s": 1.0,
+        "end_s": 3.0,
+        "evidence": [dict(kind="speech", reference_id="speech-1", quote="kahve")],
+        **second,
+    }
+    facts = evidence() + [
+        dict(kind="speech", reference_id="speech-1", quote="kahve", start_s=1.5, end_s=1.9)
+    ]
+    notices: list[str] = []
+    rows = materialize_overlays(
+        OverlayPlanOutput(overlays=[one, two]), facts, [], duration_s=8, prompt="", notices=notices
+    )
+    return rows, notices
+
+
+def test_two_pictures_side_by_side_can_share_a_moment():
+    rows, notices = _versus(dict(x_frac=0.25), dict(x_frac=0.75))
+    assert len(rows) == 2 and notices == []
+
+
+def test_two_pictures_in_the_same_place_still_cannot_share_a_moment():
+    from app.services.overlay_generation import OVERLAP_NOTICE
+
+    rows, notices = _versus(dict(x_frac=0.5), dict(x_frac=0.55))
+    assert len(rows) == 1 and notices == [OVERLAP_NOTICE]
+
+
+def test_pictures_that_nearly_touch_are_treated_as_overlapping():
+    rows, _ = _versus(dict(x_frac=0.3), dict(x_frac=0.66))
+    assert len(rows) == 1
+
+
+def test_a_picture_never_shares_a_moment_with_text_whose_size_is_unknown():
+    rows, notices = _versus(dict(x_frac=0.25), dict(x_frac=0.75, kind="text", text="10", prompt=""))
+    assert len(rows) == 1 and notices

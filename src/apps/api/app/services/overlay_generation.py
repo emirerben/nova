@@ -305,6 +305,36 @@ def _after_leading_overlap(start: float, end: float, occupied: list[tuple[float,
     return shifted if end - shifted >= NUDGE_MIN_REMAINING_S else start
 
 
+CANVAS_HEIGHT_PER_WIDTH = 1920 / 1080
+IMAGE_HEIGHT_PER_WIDTH = 1.5
+SIDE_BY_SIDE_MARGIN = 0.02
+
+
+def _image_rect(row) -> tuple[float, float, float, float] | None:
+    """Where a picture lands on the canvas, in canvas fractions, or None when unknown (text).
+
+    Generated pictures are 2:3 portrait and `scale` is the width fraction, so the box is
+    deliberately tall; a library asset of another shape is covered by the same box."""
+    if row.kind not in ("image", "library_asset"):
+        return None
+    half_w = row.scale / 2
+    half_h = row.scale * IMAGE_HEIGHT_PER_WIDTH / CANVAS_HEIGHT_PER_WIDTH / 2
+    return (row.x_frac - half_w, row.y_frac - half_h, row.x_frac + half_w, row.y_frac + half_h)
+
+
+def _rects_collide(a, b) -> bool:
+    return (
+        a is None
+        or b is None
+        or (
+            a[0] < b[2] + SIDE_BY_SIDE_MARGIN
+            and b[0] < a[2] + SIDE_BY_SIDE_MARGIN
+            and a[1] < b[3] + SIDE_BY_SIDE_MARGIN
+            and b[1] < a[3] + SIDE_BY_SIDE_MARGIN
+        )
+    )
+
+
 def materialize_overlays(
     raw: OverlayPlanOutput,
     evidence: list[dict],
@@ -319,7 +349,9 @@ def materialize_overlays(
     by_ref = {(row["kind"], row["reference_id"]): row for row in evidence}
     by_asset = {row["asset_id"]: row for row in assets}
     result = []
-    occupied = [(row["start_s"], row["end_s"]) for row in existing_overlays or []]
+    occupied: list[tuple[float, float, tuple[float, float, float, float] | None]] = [
+        (row["start_s"], row["end_s"], None) for row in existing_overlays or []
+    ]
 
     def plan_row(row) -> PlannedOverlay | None:
         if all(ref.kind == "visual" for ref in row.evidence) and re.search(
@@ -359,14 +391,19 @@ def materialize_overlays(
                 "That overlay would stretch across the Carousel. "
                 "Choose a footage interval on one side."
             )
-        start = _after_leading_overlap(start, row.end_s, occupied)
-        if any(start < end and row.end_s > begin for begin, end in occupied):
+        rect = _image_rect(row)
+        start = _after_leading_overlap(
+            start, row.end_s, [(b, e) for b, e, other in occupied if _rects_collide(rect, other)]
+        )
+        if any(
+            start < end and row.end_s > begin and _rects_collide(rect, other)
+            for begin, end, other in occupied
+        ):
             if notices is None:
                 raise ValueError(OVERLAP_NOTICE)
             if OVERLAP_NOTICE not in notices:
                 notices.append(OVERLAP_NOTICE)
             return None
-        occupied.append((start, row.end_s))
         if row.kind == "library_asset":
             if row.asset_id not in by_asset:
                 raise ValueError("Choose an available visual from this video's library.")
@@ -383,6 +420,7 @@ def materialize_overlays(
         planned = row.model_dump(exclude={"depicts"})
         if row.kind != "library_asset":
             planned["asset_id"] = None
+        occupied.append((start, row.end_s, rect))
         return PlannedOverlay(**{**planned, "start_s": start})
 
     for row in raw.overlays:
