@@ -379,13 +379,13 @@ media_context VIDEO entry's exact media_id>", "at_phrase": "<the words the creat
 after, in their own language>", "keep_audio": true}]. Showing a clip WHILE the talk keeps running
 ("show the congress video when I mention congress", "kongre dediğimde kongre videosunu göster",
 "... sesiyle göster", "use their audio") is NOT an insert, whatever it says about sound: that is
-the clip shown over the talk, with or without its sound, as described above. Without a pause, a
-stop or an explicit in-the-middle-while-I-wait wording, do not set `insert_clips`. Use `at_s` (a
-second of the talk) instead of `at_phrase` only when they state a second. Find the clip by
-matching what the creator named against the VIDEO entries in `media_context` (its `filename`,
-its `creator_context`, or its `analysis_only_not_copy` evidence), then copy THAT entry's exact
-`media_id`; never invent, shorten or guess an id, and never use the clip they speak in.
-`keep_audio` is true unless they ask for it silent. At most three. The talk is not cut: the video
+the clip shown over the talk (the full-screen clip lane, with or without its sound), not this.
+Without a pause, a stop or an explicit in-the-middle-while-I-wait wording, do not set
+`insert_clips`. Use `at_s` (a second of the talk) instead of `at_phrase` only when they state a
+second. Find the clip by matching what the creator named against the VIDEO entries in
+`media_context` (its `filename`, its `creator_context`, or its `analysis_only_not_copy` evidence),
+then copy THAT entry's exact `media_id`; never invent, shorten or guess an id, and never use the
+clip they speak in. `keep_audio` is true unless they ask for it silent. At most three. The talk is not cut: the video
 simply gets as much longer as the clip. That clip plays only there, so never also use it as a
 cutaway, in `reaction_beats` or as `ending_clip`. It is not a cutaway (the talk keeps running
 under a cutaway) and not an `ending_clip` (that follows the whole talk). Say in `summary`, in
