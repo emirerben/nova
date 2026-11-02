@@ -32,9 +32,10 @@ not replace the original-output and device acceptance gates in
 
 ## Gates and sequence
 
-Deploy migration, API, web, Beat, and the dedicated `speech_analysis` Fly process
-with preflight `off/0` and mixed-gap `off/0`. Verify the process consumes only
-`speech-analysis`. Then collect a 100% internal shadow window for both preflight and
+Deploy migration, API, web, Beat, and the `worker` Fly process (the dedicated
+`speech_analysis` group was retired on 2026-11-02; `worker` consumes
+`speech-analysis` alongside the render queues) with preflight `off/0` and
+mixed-gap `off/0`. Verify the worker advertises `speech-analysis`. Then collect a 100% internal shadow window for both preflight and
 mixed-gap before the first enforcement cohort.
 
 Advance one adjacent stage at a time:

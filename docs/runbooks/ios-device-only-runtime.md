@@ -349,6 +349,28 @@ pressure returns to a larger VM before considering separate always-on workers.
 
 ## 5. Release 2 topology reduction (after Plan 025 is DONE)
 
+**Status (2026-11-02).** The `autoplace` and `speech_analysis` Machines were
+destroyed and the checked-in `fly.toml` plus the Fly Deploy and poster-backfill
+verifiers now describe exactly `api`, `worker`, and `light`. Two traps behind
+that change:
+
+- `fly deploy` launches a Machine for every process group that is declared in
+  `fly.toml` and has none (`No machines in group X, launching a new machine`,
+  flyctl `resolveProcessGroupChanges`, skipped only by `--update-only`, which
+  the workflow does not pass). Leaving a retired group declared would silently
+  re-create its Machine, so the group, its `[[services]]` and its `[[vm]]` block
+  must all be removed, not merely scaled to zero.
+- The deploy guard used to require an `autoplace` Machine, so it refused every
+  deploy after the Machines were destroyed ("missing a required api, worker,
+  light, or autoplace process group"). The required set is now `api`, `worker`,
+  `light`.
+
+The `worker` Machine is the sole consumer of `autoplace-jobs`,
+`visuals-analysis`, and `speech-analysis`, at concurrency 1. The retired
+`autoplace` Machine ran two concurrent analysis tasks, so analysis now queues
+behind a running render (up to the 1800 s render limit). Memory is not the
+constraint; watch queue age on the analysis queues if it matters.
+
 The final `worker` `-Q` list must keep `visuals-analysis` next to
 `autoplace-jobs`: once `VISUALS_ANALYSIS_QUEUE=visuals-analysis` is set,
 creator-facing Visuals analysis is published there

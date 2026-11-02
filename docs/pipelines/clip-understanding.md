@@ -601,8 +601,9 @@ item's clips together and paid Gemini vision + Whisper twice.
   `analyze_pool_asset` dispatches (upload/register, reanalyze, the stale-asset
   reaper, creator-preparation recovery) use `settings.pool_asset_visuals_queue`:
   `VISUALS_ANALYSIS_QUEUE` when set, otherwise `POOL_ASSET_ANALYSIS_QUEUE`.
-  - Every fly.toml process that consumes `autoplace-jobs` (`autoplace`, and the
-    unified `worker`) also consumes `visuals-analysis`.
+  - Every fly.toml process that consumes `autoplace-jobs` (only the unified
+    `worker`, since the `autoplace` group was retired on 2026-11-02) also
+    consumes `visuals-analysis`.
   - Kombu's Redis transport rotates between a worker's queues after each pick, so a
     photo waits for the next free slot, not behind the footage backlog.
   - The stale-analysis refresh backfill stays on `POOL_ASSET_ANALYSIS_QUEUE`, so a

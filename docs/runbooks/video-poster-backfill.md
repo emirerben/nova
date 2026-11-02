@@ -46,9 +46,12 @@ on-demand repair that heals the long tail as users browse is documented under
 1. Confirm the **Fly Deploy** workflow for the merged `main` SHA is green. Its
    verification requires one managed image digest, the matching OCI revision
    label, and a healthy `/health` response. The process proof requires at least
-   one started API Machine, started `light` and `autoplace` Machines, and a
-   render worker that is either started or has a non-OOM, non-restarting
-   requested-stop receipt from the app-managed idle lifecycle. An additional
+   one started API Machine, a started `light` Machine, and a render `worker`
+   that is either started or has a non-OOM, non-restarting requested-stop
+   receipt from the app-managed idle lifecycle. Production runs exactly three
+   process groups (`api`, `worker`, `light`); `autoplace` and `speech_analysis`
+   were retired on 2026-11-02 and are neither required nor declared in
+   `fly.toml`. A fleet missing `api`, `worker`, or `light` is refused. An additional
    stopped API Machine is accepted only when its service config proves Fly
    autostop. Normal `starting`/`stopping` transitions are bounded-waited for
    380 seconds before the workflow fails closed; any other stable stopped
@@ -195,7 +198,8 @@ ffmpeg. That is the workload that OOM'd the 1GB `light`/Beat machine on
 `celery` queue where it would head-of-line-block the concurrency=1 render
 worker. Production `fly.toml` sets `POSTER_REPAIR_QUEUE=autoplace-jobs`;
 the code default remains `celery` for local development. Verify the effective
-setting and an active `autoplace-jobs` consumer before flipping the flag.
+setting and an active `autoplace-jobs` consumer (the `worker` group, since the
+dedicated `autoplace` group was retired) before flipping the flag.
 Deploy the repair implementation to the whole fleet first. A flag-enabled API
 must not send work to an old flag-disabled consumer: that consumer drains the
 task without repair, while the API's ten-minute dedupe marker stays fresh.

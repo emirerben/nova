@@ -22,10 +22,10 @@ kill_timeout = 300
   # Poster extraction downloads MP4s; route it to the media-capable worker.
   # Enable POSTER_ONDEMAND_REPAIR_ENABLED only after all workers are upgraded.
   POSTER_REPAIR_QUEUE = "autoplace-jobs"
-  # Deploy the dedicated worker before switching POOL_ASSET_ANALYSIS_QUEUE via
-  # a Fly secret. Initial routing deliberately remains the code default: celery.
-  # Same for VISUALS_ANALYSIS_QUEUE: deploy the autoplace process that consumes
-  # visuals-analysis first, then set the secret (unset it to roll back).
+  # POOL_ASSET_ANALYSIS_QUEUE and VISUALS_ANALYSIS_QUEUE are Fly secrets, not env
+  # here (code default: celery / unset). The `worker` group consumes both
+  # autoplace-jobs and visuals-analysis, so any value other than a queue in the
+  # worker -Q list below strands analysis work.
 
 [build]
   dockerfile = "Dockerfile"
@@ -56,10 +56,13 @@ kill_timeout = 300
   # they can never run simultaneously and OOM the worker (sized in [[vm]]
   # below; plan T3). creator-guided-jobs fences expanded mixed-media cuts and
   # creator-render-v2 fences chat Creator jobs from rolling legacy workers.
-  # During the device-only admission release, the worker also subscribes to
-  # the analysis queues (visuals-analysis included) while their dedicated
-  # groups remain defined for a safe drain/canary window. One worker slot still
-  # means one task at a time.
+  # The worker is the only consumer of the analysis queues (autoplace-jobs,
+  # visuals-analysis, speech-analysis): the dedicated `autoplace` and
+  # `speech_analysis` process groups were retired on 2026-11-02. Do NOT declare
+  # them again while they have no Machines: `fly deploy` launches a Machine for
+  # every declared process group that has none (flyctl "No machines in group X,
+  # launching a new machine"), which would silently undo the cost cut. One
+  # worker slot still means one task at a time.
   # This -Q list is CI-pinned against app/services/queue_state.py's
   # RENDER_WORKER_QUEUES by tests/test_worker_prewarm_gate.py.
   worker = "celery -A app.worker worker --loglevel=info --concurrency=1 -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs,creator-render-v2,creator-fidelity-v1,autoplace-jobs,speech-analysis,visuals-analysis"
@@ -79,18 +82,6 @@ kill_timeout = 300
   # backstop. Beat does NOT de-duplicate across replicas, so `light` MUST
   # stay at exactly one machine (`fly scale count light=1`).
   light = "celery -A app.worker worker --loglevel=info --concurrency=2 -Q maintenance,agent-control -B"
-  # Image/video metadata analysis is network-bound but downloads media, so it
-  # must not share the 1GB maintenance VM or wait behind long render jobs.
-  # visuals-analysis: creator-facing analyze_pool_asset runs (Visuals photos and
-  # videos) once VISUALS_ANALYSIS_QUEUE=visuals-analysis is set. Kombu's Redis
-  # transport rotates between the two queues, so a photo waits for the next free
-  # slot, never FIFO behind a footage backlog on autoplace-jobs. The unified
-  # worker consumes it too, exactly like autoplace-jobs, so dropping this process
-  # in the device-only topology release never strands Visuals analysis.
-  autoplace = "celery -A app.worker worker --loglevel=info --concurrency=2 -Q autoplace-jobs,visuals-analysis"
-  # Speech preflight has independent latency/SLOs and may run bounded FFmpeg +
-  # transcription work. Keep it off both the render and maintenance queues.
-  speech_analysis = "celery -A app.worker worker --loglevel=info --concurrency=1 -Q speech-analysis"
 
 # ---------------------------------------------------------------------------
 # HTTP service (api process only)
@@ -162,16 +153,6 @@ kill_timeout = 300
   auto_stop_machines = false
   auto_start_machines = true
 
-[[services]]
-  processes = ["autoplace"]
-  auto_stop_machines = false
-  auto_start_machines = true
-
-[[services]]
-  processes = ["speech_analysis"]
-  auto_stop_machines = false
-  auto_start_machines = true
-
 # ---------------------------------------------------------------------------
 # VM sizing per process group
 # ---------------------------------------------------------------------------
@@ -214,23 +195,6 @@ kill_timeout = 300
   cpu_kind = "shared"
   cpus = 1
   memory_mb = 1024
-
-# Dedicated pool-analysis worker. Two shared CPUs let two Gemini/metadata jobs
-# overlap without competing with FFmpeg renders; 2GB covers app imports plus
-# two bounded media downloads/probes.
-[[vm]]
-  processes = ["autoplace"]
-  cpu_kind = "shared"
-  cpus = 2
-  memory_mb = 2048
-
-# Dedicated chat speech-preflight worker. One task at a time keeps local
-# Whisper/FFmpeg memory bounded while avoiding render head-of-line blocking.
-[[vm]]
-  processes = ["speech_analysis"]
-  cpu_kind = "shared"
-  cpus = 2
-  memory_mb = 2048
 
 [[vm]]
   processes = ["worker"]
