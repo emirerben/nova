@@ -44,6 +44,11 @@ FIXTURE = json.loads(
         Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "slide-tilt-parity" / "v1.json"
     ).read_text()
 )
+FIXTURE_V2 = json.loads(
+    (
+        Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "slide-tilt-parity" / "v2.json"
+    ).read_text()
+)
 RED, GREEN, BLUE, YELLOW = (230, 20, 20), (20, 200, 20), (20, 20, 230), (240, 230, 20)
 QUADRANTS = ((RED, GREEN), (BLUE, YELLOW))
 
@@ -176,13 +181,13 @@ def _near(pixel, expected, tol: int = 60) -> bool:
     return all(abs(int(a) - int(b)) <= tol for a, b in zip(pixel[:3], expected, strict=True))
 
 
-def _expected_colour(point, *, canvas, image, crop, fit, rotation_deg):
+def _expected_colour(point, *, canvas, image, crop, fit, rotation_deg, zoom=1.0):
     """What a canvas pixel should show for a quadrant photo, from the shared geometry alone.
 
     Returns a quadrant colour, ``"backdrop"``, or None when the point is too close to an edge
     or a quadrant seam to be judged against anti-aliasing.
     """
-    mw, mh = tilt_math.media_size(image, crop, canvas, fit=fit)
+    mw, mh = tilt_math.media_size(image, crop, canvas, fit=fit, zoom=zoom)
     rad = math.radians(rotation_deg)
     dx, dy = point[0] - canvas[0] / 2, point[1] - canvas[1] / 2
     mx, my = dx * math.cos(rad) + dy * math.sin(rad), -dx * math.sin(rad) + dy * math.cos(rad)
@@ -212,12 +217,20 @@ def _grid(canvas, columns=9, rows=15):
     ]
 
 
-def _check_against_geometry(path, *, canvas, image, crop, fit, rotation_deg, backdrop_rgb):
+def _check_against_geometry(
+    path, *, canvas, image, crop, fit, rotation_deg, backdrop_rgb, zoom=1.0
+):
     px = _pixels(path)
     judged = wrong = backdrop_seen = 0
     for point in _grid(canvas):
         want = _expected_colour(
-            point, canvas=canvas, image=image, crop=crop, fit=fit, rotation_deg=rotation_deg
+            point,
+            canvas=canvas,
+            image=image,
+            crop=crop,
+            fit=fit,
+            rotation_deg=rotation_deg,
+            zoom=zoom,
         )
         if want is None:
             continue
@@ -511,3 +524,319 @@ class TestVideoRender:
         assert probe_dimensions(str(out)) == (1080, 1350)
         px = _frame(out, "0.5", tmp_path / "f.png")
         assert px[10, 10].max() > 80
+
+
+# ── KRI-1170: zoom ───────────────────────────────────────────────────────────
+#
+# Failure modes (written before the code):
+#  Z1  zoom scales about the wrong point, or after the turn instead of before it
+#  Z2  cloud and phone disagree on the zoomed media (shared fixture v2 + a real render)
+#  Z3  zoom 1 re-hashes / re-serializes a slide that was stored before zoom existed
+#  Z4  a zoom-only slide (0 degrees) is collapsed to "no tilt", or an explicit zoom 1 is stored
+#  Z5  a video slide ignores zoom
+#  Z6  text, ink or stickers zoom with the photo
+#  Z7  Fit / crop / 4:5 / landscape break under zoom
+
+
+class TestZoomFixtureContract:
+    @pytest.mark.parametrize("case", FIXTURE_V2["cases"], ids=lambda c: c["name"])
+    def test_server_geometry_matches_the_fixture(self, case):
+        canvas = (case["canvas"]["w"], case["canvas"]["h"])
+        media = tilt_math.media_size(
+            (case["image"]["w"], case["image"]["h"]),
+            case["crop"],
+            canvas,
+            fit=case["fit"],
+            zoom=case["zoom"],
+        )
+        expected = case["expected"]
+        assert media[0] == pytest.approx(expected["media"]["w"], abs=1e-6)
+        assert media[1] == pytest.approx(expected["media"]["h"], abs=1e-6)
+        bounds = tilt_math.rotated_bounds(*media, case["rotation_deg"])
+        assert bounds[0] == pytest.approx(expected["rotated_bounds"]["w"], abs=1e-6)
+        assert bounds[1] == pytest.approx(expected["rotated_bounds"]["h"], abs=1e-6)
+        corners = tilt_math.rotated_corners(*media, case["rotation_deg"], canvas)
+        for got, want in zip(corners, expected["corners"], strict=True):
+            assert got == pytest.approx(tuple(want), abs=1e-6)
+        assert (
+            tilt_math.covers_canvas(*media, case["rotation_deg"], canvas)
+            is expected["covers_canvas"]
+        )
+
+    def test_zoom_scales_the_media_about_the_canvas_centre_before_the_turn(self):
+        # Z1: the zoomed corners are the unzoomed ones pushed away from the CANVAS centre, which
+        # is the same set of points whichever of "zoom" and "turn" runs first.
+        canvas = (1080, 1920)
+        flat = tilt_math.media_size((800, 600), None, canvas, fit=False)
+        zoomed = tilt_math.media_size((800, 600), None, canvas, fit=False, zoom=1.5)
+        assert zoomed == pytest.approx((flat[0] * 1.5, flat[1] * 1.5))
+        for plain, bigger in zip(
+            tilt_math.rotated_corners(*flat, 30, canvas),
+            tilt_math.rotated_corners(*zoomed, 30, canvas),
+            strict=True,
+        ):
+            assert bigger[0] - 540 == pytest.approx((plain[0] - 540) * 1.5)
+            assert bigger[1] - 960 == pytest.approx((plain[1] - 960) * 1.5)
+
+    @pytest.mark.parametrize("case", FIXTURE_V2["validation"], ids=lambda c: c["name"])
+    def test_validation_verdicts_match_the_fixture(self, case):
+        if case["valid"]:
+            edits = SlideEdits.model_validate({"tilt": case["tilt"]})
+            again = SlideEdits.model_validate(edits.model_dump(mode="json"))
+            assert again.model_dump(mode="json") == edits.model_dump(mode="json")
+            return
+        with pytest.raises(ValidationError) as exc:
+            SlideEdits.model_validate({"tilt": case["tilt"]})
+        if case["reason"] == "bounds":
+            kinds = {e["type"] for e in exc.value.errors()}
+            assert kinds & {"greater_than_equal", "less_than_equal"}, kinds
+        else:
+            assert case["reason"] in str(exc.value), str(exc.value)
+
+    @pytest.mark.parametrize("case", FIXTURE_V2["normalization"], ids=lambda c: c["name"])
+    def test_normalization_matches_the_fixture(self, case):
+        edits = SlideEdits.model_validate({"tilt": case["tilt"]})
+        stored = edits.model_dump(mode="json").get("tilt")
+        assert stored == case["stored"]
+
+    def test_caps_match_the_fixture(self):
+        from app.schemas.slide_post import MAX_SLIDE_TILT_ZOOM, MIN_SLIDE_TILT_ZOOM
+        from app.services.client_protocol import TILT_ZOOM_PROTOCOL
+
+        assert FIXTURE_V2["caps"]["zoom_min"] == MIN_SLIDE_TILT_ZOOM
+        assert FIXTURE_V2["caps"]["zoom_max"] == MAX_SLIDE_TILT_ZOOM
+        assert FIXTURE_V2["caps"]["protocol"] == TILT_ZOOM_PROTOCOL == 32
+
+
+class TestZoomDefaultsAreUnchanged:
+    def test_tilts_stored_before_zoom_keep_their_digests(self):
+        # Z3: pinned on the commit before zoom existed.
+        assert edits_cache_digest(SlideEdits(tilt={"rotation_deg": 10})) == "bd757daa63d95e47"
+        assert (
+            edits_cache_digest(
+                SlideEdits(
+                    tilt={"rotation_deg": -40, "backdrop": {"kind": "color", "color": "#336699"}}
+                )
+            )
+            == "47a5519f8b0cf3ac"
+        )
+        assert (
+            edits_cache_digest(SlideEdits(tilt={"rotation_deg": 25, "backdrop": {"kind": "blur"}}))
+            == "4e20db570310d964"
+        )
+
+    def test_an_explicit_unit_zoom_is_the_same_tilt(self):
+        plain = SlideEdits(tilt={"rotation_deg": 10})
+        explicit = SlideEdits(tilt={"rotation_deg": 10, "zoom": 1})
+        assert edits_cache_digest(plain) == edits_cache_digest(explicit)
+        assert "zoom" not in explicit.model_dump(mode="json")["tilt"]
+        assert "zoom" not in json.loads(explicit.model_dump_json())["tilt"]
+
+    def test_a_zoom_moves_the_digest_and_survives_a_round_trip(self):
+        # Z4: zoom alone (0 degrees) is still a tilt and still marks the key.
+        zoomed = SlideEdits(tilt={"rotation_deg": 0, "zoom": 1.5})
+        assert zoomed.tilt is not None and zoomed.tilt.zoom == 1.5
+        assert tilt_key_suffix(zoomed) == f"_tl{SLIDE_TILT_COMPOSITOR_VERSION}"
+        assert edits_cache_digest(zoomed) != edits_cache_digest(SlideEdits())
+        assert edits_cache_digest(zoomed) != edits_cache_digest(
+            SlideEdits(tilt={"rotation_deg": 0, "zoom": 1.6})
+        )
+        again = SlideEdits.model_validate(json.loads(zoomed.model_dump_json()))
+        assert again.tilt is not None and again.tilt.zoom == 1.5
+        assert SlideEdits(tilt={"rotation_deg": 0, "zoom": 1.0}).tilt is None
+
+
+@pytest.mark.skipif(not _HAS_FFMPEG, reason="ffmpeg not installed")
+class TestZoomImageRender:
+    @pytest.mark.parametrize(
+        ("name", "canvas", "fit", "rotation_deg", "zoom"),
+        [
+            ("zoom_in_upright", (1080, 1920), None, 0, 1.5),
+            ("zoom_out_uncovers_the_backdrop", (1080, 1920), None, 0, 0.5),
+            ("zoom_out_turned", (1080, 1920), None, 20, 0.7),
+            ("zoom_in_turned_counter_clockwise", (1080, 1920), None, -35, 1.5),
+            ("zoom_3_turned_60", (1080, 1920), None, 60, 3.0),
+            ("fit_zoom_out_turned", (1080, 1920), "black", 30, 0.6),
+            ("fit_zoom_in_covers", (1080, 1920), "white", 0, 2.5),
+            ("four_by_five_zoom_in_turned", (1080, 1350), None, -40, 2.0),
+            ("square_fit_zoom_out_half_turn", (1080, 1080), "white", 180, 0.6),
+            ("landscape_slide_zoom_in", (1920, 1080), None, 20, 1.2),
+        ],
+    )
+    def test_cloud_render_matches_the_shared_geometry(
+        self, tmp_path, name, canvas, fit, rotation_deg, zoom
+    ):
+        src = tmp_path / "quad.png"
+        _quadrant_image(src)
+        out = tmp_path / "out.jpg"
+        edits = SlideEdits(
+            tilt={"rotation_deg": rotation_deg, "zoom": zoom},
+            fit=fit,
+            framing=SlideFraming(orientation="landscape") if canvas == (1920, 1080) else None,
+        )
+        normalize_image_slide(str(src), str(out), canvas=canvas, edits=edits)
+        assert probe_dimensions(str(out)) == canvas
+        judged, wrong, _ = _check_against_geometry(
+            out,
+            canvas=canvas,
+            image=(800, 600),
+            crop=None,
+            fit=fit is not None,
+            rotation_deg=rotation_deg,
+            backdrop_rgb=(0, 0, 0),
+            zoom=zoom,
+        )
+        assert judged >= 40, judged
+        assert wrong <= max(1, judged // 40), (wrong, judged)
+
+    def test_a_cropped_photo_zooms_its_region_not_the_whole_photo(self, tmp_path):
+        src = tmp_path / "quad.png"
+        _quadrant_image(src)
+        out = tmp_path / "out.jpg"
+        crop = {"x": 0.0, "y": 0.0, "width": 0.5, "height": 0.5}  # only the red quadrant
+        edits = SlideEdits(
+            tilt={"rotation_deg": 15, "zoom": 2.0}, framing=SlideFraming(source_crop=crop)
+        )
+        normalize_image_slide(str(src), str(out), canvas=(1080, 1920), edits=edits)
+        px = _pixels(out)
+        assert _near(px[960, 540], RED)
+        assert not any(
+            _near(px[y, x], c, 40)
+            for y in (700, 1200)
+            for x in (300, 800)
+            for c in (GREEN, BLUE, YELLOW)
+        )
+
+    def test_zoom_enlarges_the_photo_about_the_canvas_centre(self, tmp_path):
+        # Z1: the red/green seam of the photo sits at the canvas centre line; doubling the zoom
+        # leaves it there and pushes the photo's own detail twice as far from the centre.
+        src = tmp_path / "bars.png"
+        img = Image.new("RGB", (900, 900), (0, 0, 0))
+        img.paste((255, 255, 255), (300, 0, 600, 900))  # the middle third is white
+        img.save(src)
+        flat = tmp_path / "flat.jpg"
+        zoomed = tmp_path / "zoomed.jpg"
+        normalize_image_slide(
+            str(src), str(flat), canvas=(1080, 1920), edits=SlideEdits(fit="black")
+        )
+        normalize_image_slide(
+            str(src),
+            str(zoomed),
+            canvas=(1080, 1920),
+            edits=SlideEdits(fit="black", tilt={"rotation_deg": 0, "zoom": 2.0}),
+        )
+        # Whole photo (Fit): 1080 wide, the white third spans x 360..720 at zoom 1.
+        flat_row, zoomed_row = _pixels(flat)[960], _pixels(zoomed)[960]
+        assert flat_row[350].max() < 40 and flat_row[370].min() > 215
+        assert flat_row[710].min() > 215 and flat_row[730].max() < 40
+        # At 2x it spans 180..900 around the same centre.
+        assert zoomed_row[170].max() < 40 and zoomed_row[190].min() > 215
+        assert zoomed_row[890].min() > 215 and zoomed_row[910].max() < 40
+
+    def test_text_ink_and_stickers_do_not_zoom_with_the_photo(self, tmp_path):
+        # Z6: a sticker keeps its size and place under a 2.5x photo.
+        src = tmp_path / "quad.png"
+        _quadrant_image(src)
+        sticker = tmp_path / "s.png"
+        Image.new("RGBA", (100, 100), (255, 0, 0, 255)).save(sticker)
+        edits = SlideEdits(
+            tilt={
+                "rotation_deg": 0,
+                "zoom": 2.5,
+                "backdrop": {"kind": "color", "color": "#0000FF"},
+            },
+            fit="black",
+            stickers=[
+                {"id": "s1", "asset_id": "a", "x_frac": 0.5, "y_frac": 0.5, "width_frac": 0.2}
+            ],
+        )
+        out = tmp_path / "out.jpg"
+        normalize_image_slide(
+            str(src),
+            str(out),
+            canvas=(1080, 1920),
+            edits=edits,
+            sticker_sources={"s1": str(sticker)},
+        )
+        px = _pixels(out)
+        half = int(0.2 * 1080 / 2)
+        assert px[960, 540 + half - 8][0] > 200 and px[960, 540 + half - 8][2] < 60
+        assert not (px[960, 540 + half + 12][0] > 200 and px[960, 540 + half + 12][1] < 60)
+        assert not (px[960 - half - 12, 540][0] > 200 and px[960 - half - 12, 540][1] < 60)
+
+
+def _make_stripes_video(path: Path, *, duration_s: float = 1.0) -> None:
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-f", "lavfi", "-i", f"color=c=0xE61414:s=80x240:r=30:d={duration_s}",
+            "-f", "lavfi", "-i", f"color=c=0x14C814:s=80x240:r=30:d={duration_s}",
+            "-f", "lavfi", "-i", f"color=c=0x1414E6:s=80x240:r=30:d={duration_s}",
+            "-filter_complex", "[0:v][1:v][2:v]hstack=inputs=3,format=yuv420p[v]",
+            "-map", "[v]", "-c:v", "libx264", "-preset", "ultrafast", str(path),
+        ],
+        check=True,
+        capture_output=True,
+    )  # fmt: skip
+
+
+@pytest.mark.skipif(not _HAS_FFMPEG, reason="ffmpeg not installed")
+class TestZoomVideoRender:
+    def test_a_zoomed_in_video_enlarges_about_the_canvas_centre_on_every_frame(self, tmp_path):
+        # Z5. Three equal stripes, 240x240. Cover-fit to 1080x1920 the media is 1920 square and
+        # the red stripe ends at canvas x = 640 - 420 = 220. At 2x it ends at -100: green fills
+        # the canvas width.
+        src = tmp_path / "stripes.mp4"
+        _make_stripes_video(src)
+        flat = tmp_path / "flat.mp4"
+        zoomed = tmp_path / "zoomed.mp4"
+        normalize_video_slide(
+            str(src), str(flat), canvas=(1080, 1920), edits=SlideEdits(tilt={"rotation_deg": 3})
+        )
+        normalize_video_slide(
+            str(src),
+            str(zoomed),
+            canvas=(1080, 1920),
+            edits=SlideEdits(tilt={"rotation_deg": 0, "zoom": 2.0}),
+        )
+        assert probe_dimensions(str(zoomed)) == (1080, 1920)
+        for at in ("0.05", "0.5", "0.9"):
+            assert _near(_frame(flat, at, tmp_path / f"a{at}.png")[960, 100], RED, 70), at
+            px = _frame(zoomed, at, tmp_path / f"b{at}.png")
+            assert _near(px[960, 100], GREEN, 70), at
+            assert _near(px[960, 980], GREEN, 70), at
+
+    def test_a_zoomed_out_video_keeps_its_backdrop_on_every_frame(self, tmp_path):
+        src = tmp_path / "src.mp4"
+        out = tmp_path / "out.mp4"
+        _make_video(src)
+        normalize_video_slide(
+            str(src),
+            str(out),
+            canvas=(1080, 1920),
+            edits=SlideEdits(
+                tilt={
+                    "rotation_deg": 0,
+                    "zoom": 0.5,
+                    "backdrop": {"kind": "color", "color": "#33CC66"},
+                }
+            ),
+        )
+        for at in ("0.05", "0.5", "0.9"):
+            px = _frame(out, at, tmp_path / f"f{at}.png")
+            assert _near(px[40, 40], (0x33, 0xCC, 0x66), 24), at
+            assert _near(px[1880, 1040], (0x33, 0xCC, 0x66), 24), at
+            assert not _near(px[960, 400], (0x33, 0xCC, 0x66), 40), at
+
+    def test_a_zoomed_video_turns_too(self, tmp_path):
+        src = tmp_path / "src.mp4"
+        out = tmp_path / "out.mp4"
+        _make_video(src)
+        normalize_video_slide(
+            str(src),
+            str(out),
+            canvas=(1080, 1920),
+            edits=SlideEdits(tilt={"rotation_deg": 90, "zoom": 1.5}),
+        )
+        px = _frame(out, "0.5", tmp_path / "f.png")
+        assert _near(px[300, 540], RED, 50) and _near(px[1500, 540], BLUE, 50)

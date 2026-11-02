@@ -1,0 +1,577 @@
+{
+  "contract": "KRI-1170 slide tilt zoom, extends slide-tilt-parity v1. zoom (0.5..3, 1 = as framed, the default) scales the MEDIA about the CANVAS centre BEFORE it turns: media = (cropped photo region scaled cover for Fill / whole for Fit) x zoom, then every v1 rule applies to that size (rotated_bounds, corners, covers_canvas). A tilt at 0 degrees and zoom 1 is stored as no tilt; zoom 1 is left out of the stored tilt, so a tilt stored before zoom existed is byte-identical. zoom is a number in [zoom_min, zoom_max]. Only the media zooms: text, ink, stickers and the watermark stay put above it. Tolerance 1e-6.",
+  "version": 2,
+  "caps": {
+    "zoom_min": 0.5,
+    "zoom_max": 3.0,
+    "protocol": 32
+  },
+  "cases": [
+    {
+      "name": "fill_photo_zoom_in_upright",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 800,
+        "h": 600
+      },
+      "crop": null,
+      "fit": false,
+      "rotation_deg": 0,
+      "zoom": 1.5,
+      "expected": {
+        "media": {
+          "w": 3840.0,
+          "h": 2880.0
+        },
+        "rotated_bounds": {
+          "w": 3840.0,
+          "h": 2880.0
+        },
+        "corners": [
+          [
+            -1380.0,
+            -480.0
+          ],
+          [
+            2460.0,
+            -480.0
+          ],
+          [
+            2460.0,
+            2400.0
+          ],
+          [
+            -1380.0,
+            2400.0
+          ]
+        ],
+        "covers_canvas": true
+      }
+    },
+    {
+      "name": "fill_photo_zoom_out_uncovers_backdrop",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 800,
+        "h": 600
+      },
+      "crop": null,
+      "fit": false,
+      "rotation_deg": 0,
+      "zoom": 0.5,
+      "expected": {
+        "media": {
+          "w": 1280.0,
+          "h": 960.0
+        },
+        "rotated_bounds": {
+          "w": 1280.0,
+          "h": 960.0
+        },
+        "corners": [
+          [
+            -100.0,
+            480.0
+          ],
+          [
+            1180.0,
+            480.0
+          ],
+          [
+            1180.0,
+            1440.0
+          ],
+          [
+            -100.0,
+            1440.0
+          ]
+        ],
+        "covers_canvas": false
+      }
+    },
+    {
+      "name": "fit_photo_zoom_out_20",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 4000,
+        "h": 3000
+      },
+      "crop": null,
+      "fit": true,
+      "rotation_deg": 20,
+      "zoom": 0.5,
+      "expected": {
+        "media": {
+          "w": 540.0,
+          "h": 405.0
+        },
+        "rotated_bounds": {
+          "w": 645.952173,
+          "h": 565.266389
+        },
+        "corners": [
+          [
+            355.542071,
+            677.366806
+          ],
+          [
+            862.976087,
+            862.057683
+          ],
+          [
+            724.457929,
+            1242.633194
+          ],
+          [
+            217.023913,
+            1057.942317
+          ]
+        ],
+        "covers_canvas": false
+      }
+    },
+    {
+      "name": "fit_photo_zoom_2_5_covers_the_canvas",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 4000,
+        "h": 3000
+      },
+      "crop": null,
+      "fit": true,
+      "rotation_deg": 0,
+      "zoom": 2.5,
+      "expected": {
+        "media": {
+          "w": 2700.0,
+          "h": 2025.0
+        },
+        "rotated_bounds": {
+          "w": 2700.0,
+          "h": 2025.0
+        },
+        "corners": [
+          [
+            -810.0,
+            -52.5
+          ],
+          [
+            1890.0,
+            -52.5
+          ],
+          [
+            1890.0,
+            1972.5
+          ],
+          [
+            -810.0,
+            1972.5
+          ]
+        ],
+        "covers_canvas": true
+      }
+    },
+    {
+      "name": "fill_square_zoom_2_turned_30",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 400,
+        "h": 400
+      },
+      "crop": null,
+      "fit": false,
+      "rotation_deg": 30,
+      "zoom": 2.0,
+      "expected": {
+        "media": {
+          "w": 3840.0,
+          "h": 3840.0
+        },
+        "rotated_bounds": {
+          "w": 5245.537551,
+          "h": 5245.537551
+        },
+        "corners": [
+          [
+            -162.768775,
+            -1662.768775
+          ],
+          [
+            3162.768775,
+            257.231225
+          ],
+          [
+            1242.768775,
+            3582.768775
+          ],
+          [
+            -2082.768775,
+            1662.768775
+          ]
+        ],
+        "covers_canvas": true
+      }
+    },
+    {
+      "name": "fill_photo_zoom_0_7_turned_20",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 800,
+        "h": 600
+      },
+      "crop": null,
+      "fit": false,
+      "rotation_deg": 20,
+      "zoom": 0.7,
+      "expected": {
+        "media": {
+          "w": 1792.0,
+          "h": 1344.0
+        },
+        "rotated_bounds": {
+          "w": 2143.604249,
+          "h": 1875.846979
+        },
+        "corners": [
+          [
+            -72.127052,
+            22.07651
+          ],
+          [
+            1611.802125,
+            634.976607
+          ],
+          [
+            1152.127052,
+            1897.92349
+          ],
+          [
+            -531.802125,
+            1285.023393
+          ]
+        ],
+        "covers_canvas": false
+      }
+    },
+    {
+      "name": "fill_photo_zoom_1_5_turned_minus_35",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 800,
+        "h": 600
+      },
+      "crop": null,
+      "fit": false,
+      "rotation_deg": -35,
+      "zoom": 1.5,
+      "expected": {
+        "media": {
+          "w": 3840.0,
+          "h": 2880.0
+        },
+        "rotated_bounds": {
+          "w": 4797.443987,
+          "h": 4561.691403
+        },
+        "corners": [
+          [
+            -1858.721993,
+            881.687814
+          ],
+          [
+            1286.821857,
+            -1320.845702
+          ],
+          [
+            2938.721993,
+            1038.312186
+          ],
+          [
+            -206.821857,
+            3240.845702
+          ]
+        ],
+        "covers_canvas": true
+      }
+    },
+    {
+      "name": "cropped_fit_zoom_3_quarter_turn",
+      "canvas": {
+        "w": 1080,
+        "h": 1350
+      },
+      "image": {
+        "w": 4000,
+        "h": 3000
+      },
+      "crop": {
+        "x": 0.25,
+        "y": 0.1,
+        "width": 0.5,
+        "height": 0.6
+      },
+      "fit": true,
+      "rotation_deg": 90,
+      "zoom": 3.0,
+      "expected": {
+        "media": {
+          "w": 3240.0,
+          "h": 2916.0
+        },
+        "rotated_bounds": {
+          "w": 2916.0,
+          "h": 3240.0
+        },
+        "corners": [
+          [
+            1998.0,
+            -945.0
+          ],
+          [
+            1998.0,
+            2295.0
+          ],
+          [
+            -918.0,
+            2295.0
+          ],
+          [
+            -918.0,
+            -945.0
+          ]
+        ],
+        "covers_canvas": true
+      }
+    },
+    {
+      "name": "landscape_canvas_zoom_1_2_turned_minus_15",
+      "canvas": {
+        "w": 1920,
+        "h": 1080
+      },
+      "image": {
+        "w": 3000,
+        "h": 4000
+      },
+      "crop": null,
+      "fit": false,
+      "rotation_deg": -15,
+      "zoom": 1.2,
+      "expected": {
+        "media": {
+          "w": 2304.0,
+          "h": 3072.0
+        },
+        "rotated_bounds": {
+          "w": 3020.58521,
+          "h": 3563.643218
+        },
+        "corners": [
+          [
+            -550.292605,
+            -645.502529
+          ],
+          [
+            1675.200499,
+            -1241.821609
+          ],
+          [
+            2470.292605,
+            1725.502529
+          ],
+          [
+            244.799501,
+            2321.821609
+          ]
+        ],
+        "covers_canvas": true
+      }
+    },
+    {
+      "name": "square_canvas_zoom_0_6_half_turn",
+      "canvas": {
+        "w": 1080,
+        "h": 1080
+      },
+      "image": {
+        "w": 800,
+        "h": 600
+      },
+      "crop": null,
+      "fit": true,
+      "rotation_deg": 180,
+      "zoom": 0.6,
+      "expected": {
+        "media": {
+          "w": 648.0,
+          "h": 486.0
+        },
+        "rotated_bounds": {
+          "w": 648.0,
+          "h": 486.0
+        },
+        "corners": [
+          [
+            864.0,
+            783.0
+          ],
+          [
+            216.0,
+            783.0
+          ],
+          [
+            216.0,
+            297.0
+          ],
+          [
+            864.0,
+            297.0
+          ]
+        ],
+        "covers_canvas": false
+      }
+    }
+  ],
+  "validation": [
+    {
+      "name": "zoom_in",
+      "tilt": {
+        "rotation_deg": 10,
+        "zoom": 1.5
+      },
+      "valid": true
+    },
+    {
+      "name": "zoom_out_at_floor",
+      "tilt": {
+        "rotation_deg": 0,
+        "zoom": 0.5
+      },
+      "valid": true
+    },
+    {
+      "name": "zoom_at_ceiling",
+      "tilt": {
+        "rotation_deg": -90,
+        "zoom": 3
+      },
+      "valid": true
+    },
+    {
+      "name": "below_floor",
+      "tilt": {
+        "rotation_deg": 10,
+        "zoom": 0.49
+      },
+      "valid": false,
+      "reason": "bounds"
+    },
+    {
+      "name": "above_ceiling",
+      "tilt": {
+        "rotation_deg": 10,
+        "zoom": 3.01
+      },
+      "valid": false,
+      "reason": "bounds"
+    },
+    {
+      "name": "zero_zoom",
+      "tilt": {
+        "rotation_deg": 10,
+        "zoom": 0
+      },
+      "valid": false,
+      "reason": "bounds"
+    },
+    {
+      "name": "zoom_is_a_number",
+      "tilt": {
+        "rotation_deg": 10,
+        "zoom": "big"
+      },
+      "valid": false,
+      "reason": "zoom"
+    }
+  ],
+  "normalization": [
+    {
+      "name": "unit_zoom_upright_is_no_tilt",
+      "tilt": {
+        "rotation_deg": 0,
+        "zoom": 1,
+        "backdrop": {
+          "kind": "blur"
+        }
+      },
+      "stored": null
+    },
+    {
+      "name": "unit_zoom_is_left_out",
+      "tilt": {
+        "rotation_deg": 12,
+        "zoom": 1
+      },
+      "stored": {
+        "rotation_deg": 12.0,
+        "backdrop": {
+          "kind": "blank"
+        }
+      }
+    },
+    {
+      "name": "zoom_alone_is_a_tilt",
+      "tilt": {
+        "rotation_deg": 0,
+        "zoom": 1.25
+      },
+      "stored": {
+        "rotation_deg": 0.0,
+        "backdrop": {
+          "kind": "blank"
+        },
+        "zoom": 1.25
+      }
+    },
+    {
+      "name": "zoomed_colour_tilt_keeps_its_backdrop",
+      "tilt": {
+        "rotation_deg": -8,
+        "zoom": 0.75,
+        "backdrop": {
+          "kind": "color",
+          "color": "#336699"
+        }
+      },
+      "stored": {
+        "rotation_deg": -8.0,
+        "backdrop": {
+          "kind": "color",
+          "color": "#336699"
+        },
+        "zoom": 0.75
+      }
+    }
+  ]
+}
