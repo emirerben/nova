@@ -1,0 +1,1066 @@
+{
+  "lane_c": {
+    "turn_budget_s": 180.0,
+    "assumed_latency_s": {
+      "medium": 40.0,
+      "low": 12.0
+    },
+    "recorded_high_success_s": [
+      23.9,
+      41.3,
+      52.3,
+      77.6
+    ],
+    "scenarios": {
+      "A_high_deadline_then_medium_ok": {
+        "calls": [
+          {
+            "model": "gemini-3.1-pro-preview",
+            "thinking_level": "high",
+            "timeout_s": 105.0,
+            "outcome": "deadline",
+            "t_start_s": 0.0
+          },
+          {
+            "model": "gemini-3.1-pro-preview",
+            "thinking_level": "medium",
+            "timeout_s": 50.0,
+            "outcome": "ok",
+            "t_start_s": 105.0
+          }
+        ],
+        "outcome": "ok",
+        "elapsed_s": 145.0,
+        "within_turn_budget": true,
+        "path": [
+          "gemini-3.1-pro-preview@high:deadline",
+          "gemini-3.1-pro-preview@medium:ok"
+        ]
+      },
+      "B_high_and_medium_deadline_then_flash_ok": {
+        "calls": [
+          {
+            "model": "gemini-3.1-pro-preview",
+            "thinking_level": "high",
+            "timeout_s": 105.0,
+            "outcome": "deadline",
+            "t_start_s": 0.0
+          },
+          {
+            "model": "gemini-3.1-pro-preview",
+            "thinking_level": "medium",
+            "timeout_s": 50.0,
+            "outcome": "deadline",
+            "t_start_s": 105.0
+          },
+          {
+            "model": "gemini-3.6-flash",
+            "thinking_level": "low",
+            "timeout_s": 25.0,
+            "outcome": "ok",
+            "t_start_s": 155.0
+          }
+        ],
+        "outcome": "ok",
+        "elapsed_s": 167.0,
+        "within_turn_budget": true,
+        "path": [
+          "gemini-3.1-pro-preview@high:deadline",
+          "gemini-3.1-pro-preview@medium:deadline",
+          "gemini-3.6-flash@low:ok"
+        ]
+      },
+      "C_try_again_starts_degraded": {
+        "calls": [
+          {
+            "model": "gemini-3.1-pro-preview",
+            "thinking_level": "medium",
+            "timeout_s": 50.0,
+            "outcome": "ok",
+            "t_start_s": 0.0
+          }
+        ],
+        "outcome": "ok",
+        "elapsed_s": 40.0,
+        "within_turn_budget": true,
+        "path": [
+          "gemini-3.1-pro-preview@medium:ok"
+        ]
+      },
+      "D_every_rung_deadline_stays_in_budget": {
+        "calls": [
+          {
+            "model": "gemini-3.1-pro-preview",
+            "thinking_level": "high",
+            "timeout_s": 105.0,
+            "outcome": "deadline",
+            "t_start_s": 0.0
+          },
+          {
+            "model": "gemini-3.1-pro-preview",
+            "thinking_level": "medium",
+            "timeout_s": 50.0,
+            "outcome": "deadline",
+            "t_start_s": 105.0
+          },
+          {
+            "model": "gemini-3.6-flash",
+            "thinking_level": "low",
+            "timeout_s": 25.0,
+            "outcome": "deadline",
+            "t_start_s": 155.0
+          }
+        ],
+        "outcome": "ProviderDeadlineExceededError",
+        "elapsed_s": 180.0,
+        "within_turn_budget": true,
+        "path": [
+          "gemini-3.1-pro-preview@high:deadline",
+          "gemini-3.1-pro-preview@medium:deadline",
+          "gemini-3.6-flash@low:deadline"
+        ]
+      },
+      "E_ladder_off_is_the_legacy_single_call": {
+        "calls": [
+          {
+            "model": "gemini-3.1-pro-preview",
+            "thinking_level": "high",
+            "timeout_s": 130.0,
+            "outcome": "deadline",
+            "t_start_s": 0.0
+          }
+        ],
+        "outcome": "ProviderDeadlineExceededError",
+        "elapsed_s": 130.0,
+        "within_turn_budget": true,
+        "path": [
+          "gemini-3.1-pro-preview@high:deadline"
+        ]
+      }
+    },
+    "checks": {
+      "A: finishes ok on the medium rung": true,
+      "B: finishes ok on the fallback model at low": true,
+      "C: Try again opens on medium, never repeats high": true,
+      "D: when everything times out the turn still ends inside its budget": true,
+      "E: ladder off ends after the single heavy call (legacy)": true
+    },
+    "all_pass": true,
+    "note": "recorded T5/T6 were a 180 s dead end (attempts: 2 and 3, 2k output tokens); lighter-rung latencies are assumed, rung order, timeouts and budget are production code"
+  },
+  "fixture": "29-ekim",
+  "mode": "offline",
+  "source": {
+    "prod_main_sha": "4e06062dc",
+    "thread_id": "729b3686-291b-4a8a-9593-218e36c7e57b",
+    "model_outputs": "nova.creator.main outputs are stored by prod as key names only; T4 (recorded strategy) is exact, T1 to T3 are reconstructed from the persisted ledger and replies, T5 and T6 never returned (provider deadline)."
+  },
+  "network_attempts_blocked": 0,
+  "passed": 8,
+  "failed": 1,
+  "all_green": false,
+  "checks": [
+    {
+      "id": 1,
+      "name": "T1 clip order is a seeded permutation of all 27 clips",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "route": "replan",
+        "order_questions_asked": [],
+        "ordering_basis": "random",
+        "clip_count": 27,
+        "is_permutation": true,
+        "differs_from_attachment": true,
+        "stable_on_rerun": true,
+        "r1_receipt": {
+          "status": "met",
+          "reason": null
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "no captions/voiceover filing; quoted sentence stored verbatim as on-screen text",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "basis": "recorded old-prompt replies replayed through the real extractor parse + apply_updates; golden eval fixtures through the replay runner; offers judged by whether their captions premise survives (model-authored reply text is not regenerated offline; live proof needs the paid ledger)",
+        "captions_filings": [],
+        "voiceover_offers": [
+          {
+            "turn": "T2",
+            "option": "I'll record it",
+            "captions_premise_remains": false
+          }
+        ],
+        "t1_text_sequence": [
+          {
+            "literal": "Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun",
+            "facts": {
+              "unit": "word",
+              "mode": "agent_choice"
+            }
+          }
+        ],
+        "sentence_verbatim_in_contract": true,
+        "prompt_teaches_text_sequence": true,
+        "golden_cases": [
+          {
+            "case": "decoy_kri1038_en_highlight_when_i_say",
+            "ok": true,
+            "captions_filings": 1,
+            "text_sequences": []
+          },
+          {
+            "case": "decoy_kri1038_en_recorded_voiceover_words",
+            "ok": true,
+            "captions_filings": 1,
+            "text_sequences": []
+          },
+          {
+            "case": "decoy_kri1038_en_spoken_words_stale_title",
+            "ok": true,
+            "captions_filings": 1,
+            "text_sequences": []
+          },
+          {
+            "case": "decoy_kri1038_en_subtitles_quote_as_i_say",
+            "ok": true,
+            "captions_filings": 1,
+            "text_sequences": []
+          },
+          {
+            "case": "decoy_kri1038_en_word_captions_no_quote",
+            "ok": true,
+            "captions_filings": 1,
+            "text_sequences": []
+          },
+          {
+            "case": "decoy_kri1038_tr_altyazi_kelime_kelime",
+            "ok": true,
+            "captions_filings": 1,
+            "text_sequences": []
+          },
+          {
+            "case": "decoy_kri1038_tr_dedigim_yerde",
+            "ok": true,
+            "captions_filings": 1,
+            "text_sequences": []
+          },
+          {
+            "case": "kri1038_en_cumulative_build_up",
+            "ok": true,
+            "captions_filings": 0,
+            "text_sequences": [
+              {
+                "literal": "Never stop exploring new places",
+                "facts": {
+                  "unit": "word",
+                  "mode": "cumulative"
+                }
+              }
+            ]
+          },
+          {
+            "case": "kri1038_en_display_one_at_a_time",
+            "ok": true,
+            "captions_filings": 0,
+            "text_sequences": [
+              {
+                "literal": "Happy birthday to the best mom in the world",
+                "facts": {
+                  "unit": "word",
+                  "mode": "agent_choice"
+                }
+              }
+            ]
+          },
+          {
+            "case": "kri1038_en_title_replace_legacy",
+            "ok": true,
+            "captions_filings": 0,
+            "text_sequences": [
+              {
+                "literal": "See you at the summit this weekend",
+                "facts": {
+                  "unit": "word",
+                  "mode": "agent_choice"
+                }
+              }
+            ]
+          },
+          {
+            "case": "kri1038_t1_29ekim_tr_quote_legacy",
+            "ok": true,
+            "captions_filings": 0,
+            "text_sequences": [
+              {
+                "literal": "Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun",
+                "facts": {
+                  "unit": "word",
+                  "mode": "agent_choice"
+                }
+              }
+            ]
+          },
+          {
+            "case": "kri1038_t2_29ekim_followup_legacy",
+            "ok": true,
+            "captions_filings": 0,
+            "text_sequences": [
+              {
+                "literal": "Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun",
+                "facts": {
+                  "unit": "word",
+                  "mode": "agent_choice"
+                }
+              }
+            ]
+          },
+          {
+            "case": "kri1038_tr_baslik_tek_tek",
+            "ok": true,
+            "captions_filings": 0,
+            "text_sequences": [
+              {
+                "literal": "Cumhuriyet Bayramımız kutlu olsun",
+                "facts": {
+                  "unit": "word",
+                  "mode": "agent_choice"
+                }
+              }
+            ]
+          },
+          {
+            "case": "kri1038_tr_ekranda_yazsin_legacy",
+            "ok": true,
+            "captions_filings": 0,
+            "text_sequences": [
+              {
+                "literal": "İyi ki doğdun canım arkadaşım",
+                "facts": {
+                  "unit": "word",
+                  "mode": "agent_choice"
+                }
+              }
+            ]
+          },
+          {
+            "case": "kri1038_tr_kelime_kelime_goster_legacy",
+            "ok": true,
+            "captions_filings": 0,
+            "text_sequences": [
+              {
+                "literal": "Bu yaz hayatımın en güzel tatiliydi",
+                "facts": {
+                  "unit": "word",
+                  "mode": "agent_choice"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "name": "phone_text_style places the title for every candidate font",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "agent_eligible_fonts": [
+          "Inter",
+          "Montserrat"
+        ],
+        "agent_font_failures": [],
+        "outcome_by_font": {
+          "Inter": "placed size=42",
+          "Montserrat": "placed size=42",
+          "Hanken Grotesk": "placed size=42",
+          "Inter Tight": "placed size=42",
+          "Montserrat Bold": "placed size=42",
+          "Nunito ExtraBold": "placed size=42",
+          "Pacifico": "placed size=40",
+          "Poppins Bold": "placed size=42",
+          "TikTok Sans Bold": "placed size=40",
+          "Unbounded": "placed size=36",
+          "Inter Medium": "placed size=42"
+        },
+        "block_height_at_the_40px_floor_vs_0.18_cap": {},
+        "recorded_render_failure": {
+          "code": "phone_plan_unsupported",
+          "error_class": "CreatorRenderContractError",
+          "error_tail": "This text cannot fit clearly in the requested area. Choose another placement or shorter text.",
+          "field_path": "phone_text_style",
+          "decline_reason": "needs_choice"
+        },
+        "note": "prod's typography pick is stored as key names only; the recorded failure is consistent with a pick from the failing set"
+      }
+    },
+    {
+      "id": 4,
+      "name": "word-by-word follow-up becomes N one-word text elements via editor ops, 0 Main Creator",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the op does not compile to ordered one-word elements: {'elements': 27, 'words': 27, 'one_word_each': True, 'ordered_windows': True, 'covers_title_span': True, 'weighted_by_length': True, 'min_window_s': 0.08148099999999991, 'window_end_s': 2.2, 'text_conserved': True, 'op_fields': []}"
+      ],
+      "evidence": {
+        "turn_state_by_t4_outcome": {
+          "failed_render": {
+            "model_calls": [
+              "nova.creator.main"
+            ],
+            "route": null,
+            "tools": [],
+            "error": "ProviderOutcomeUnknownError: recorded provider deadline (179.7 s)",
+            "creator_main_calls": 1,
+            "editor_ops_reach_the_plan": false,
+            "scored": false
+          },
+          "ready_render": {
+            "model_calls": [
+              "nova.brief.extractor",
+              "nova.edit.copilot"
+            ],
+            "route": "editor_ops",
+            "tools": [
+              "draft.apply_editor_ops"
+            ],
+            "error": null,
+            "creator_main_calls": 0,
+            "editor_ops_reach_the_plan": true,
+            "scored": true
+          }
+        },
+        "state_the_system_is_in": "ready_render",
+        "op_compile": {
+          "elements": 27,
+          "words": 27,
+          "one_word_each": true,
+          "ordered_windows": true,
+          "covers_title_span": true,
+          "weighted_by_length": true,
+          "min_window_s": 0.08148099999999991,
+          "window_end_s": 2.2,
+          "text_conserved": true,
+          "op_fields": []
+        },
+        "readability_note": "recorded title window is 2.2 s for 27 words; the compiler lengthens it to 2.2 s so the shortest piece holds 0.081 s (floor 0.25 s)",
+        "copilot_output": "assumed: the prod copilot never ran on this thread, so the op the copilot authors is a fixture value; routing and the op compile are real code"
+      }
+    },
+    {
+      "id": "5a",
+      "name": "every follow-up turn finishes inside 60 s (replayed latency)",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "turns": [
+          {
+            "turn": "T2",
+            "recorded_wall_ms": 77960,
+            "replayed_ms": 20000,
+            "basis": "assumed copilot",
+            "under_budget": true,
+            "under_turn_budget": true,
+            "model_calls": [
+              "nova.brief.extractor",
+              "nova.edit.copilot"
+            ]
+          },
+          {
+            "turn": "T3",
+            "recorded_wall_ms": 38378,
+            "replayed_ms": null,
+            "basis": "not asked: answers a choice card the fixed router never shows",
+            "under_budget": null,
+            "under_turn_budget": null,
+            "model_calls": []
+          },
+          {
+            "turn": "T4",
+            "recorded_wall_ms": 74605,
+            "replayed_ms": null,
+            "basis": "not asked: answers a choice card the fixed router never shows",
+            "under_budget": null,
+            "under_turn_budget": null,
+            "model_calls": []
+          },
+          {
+            "turn": "T5",
+            "recorded_wall_ms": 186591,
+            "replayed_ms": 20000,
+            "basis": "assumed copilot",
+            "under_budget": true,
+            "under_turn_budget": true,
+            "model_calls": [
+              "nova.brief.extractor",
+              "nova.edit.copilot"
+            ]
+          },
+          {
+            "turn": "T6",
+            "recorded_wall_ms": 388661,
+            "replayed_ms": 20000,
+            "basis": "assumed copilot",
+            "under_budget": true,
+            "under_turn_budget": true,
+            "model_calls": [
+              "nova.brief.extractor",
+              "nova.edit.copilot"
+            ]
+          }
+        ],
+        "budget_ms": 60000,
+        "slow_turn_owner": {},
+        "not_timed": [
+          "T3",
+          "T4"
+        ],
+        "timed_on_assumed_latency": [
+          "T2",
+          "T5",
+          "T6"
+        ]
+      }
+    },
+    {
+      "id": "5b",
+      "name": "creation turn and every failure/degrade path finish inside the 180 s turn budget",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "turn_budget_s": 180.0,
+        "creation_turn": {
+          "turn": "T1",
+          "wall_s": 65.6,
+          "basis": "measured (recorded prod wall time)",
+          "within_turn_budget": true,
+          "model_calls": [
+            "nova.creator.main 52306 ms x1",
+            "nova.audio.music_matcher 4161 ms x1"
+          ],
+          "note": "a successful high-thinking call; no retry ladder shortens it (and it exceeds the 60 s follow-up bar by design)"
+        },
+        "old_numbers_without_ladder": [
+          {
+            "turn": "T5",
+            "recorded_wall_s": 186.6,
+            "within_turn_budget": true
+          },
+          {
+            "turn": "T6",
+            "recorded_wall_s": 388.7,
+            "within_turn_budget": true
+          }
+        ],
+        "t5_t6_with_ladder": {
+          "T5": {
+            "elapsed_s": 145.0,
+            "path": [
+              "gemini-3.1-pro-preview@high:deadline",
+              "gemini-3.1-pro-preview@medium:ok"
+            ],
+            "basis": "assumed lighter-rung latencies (medium 40 s, low 12 s); rung order, timeouts and budget are production code"
+          },
+          "T6": {
+            "elapsed_s": 40.0,
+            "path": [
+              "gemini-3.1-pro-preview@medium:ok"
+            ],
+            "basis": "assumed lighter-rung latencies (medium 40 s, low 12 s); rung order, timeouts and budget are production code"
+          }
+        },
+        "failure_and_degrade_paths": {
+          "A_high_deadline_then_medium_ok": {
+            "elapsed_s": 145.0,
+            "within_turn_budget": true,
+            "outcome": "ok",
+            "path": [
+              "gemini-3.1-pro-preview@high:deadline",
+              "gemini-3.1-pro-preview@medium:ok"
+            ]
+          },
+          "B_high_and_medium_deadline_then_flash_ok": {
+            "elapsed_s": 167.0,
+            "within_turn_budget": true,
+            "outcome": "ok",
+            "path": [
+              "gemini-3.1-pro-preview@high:deadline",
+              "gemini-3.1-pro-preview@medium:deadline",
+              "gemini-3.6-flash@low:ok"
+            ]
+          },
+          "C_try_again_starts_degraded": {
+            "elapsed_s": 40.0,
+            "within_turn_budget": true,
+            "outcome": "ok",
+            "path": [
+              "gemini-3.1-pro-preview@medium:ok"
+            ]
+          },
+          "D_every_rung_deadline_stays_in_budget": {
+            "elapsed_s": 180.0,
+            "within_turn_budget": true,
+            "outcome": "ProviderDeadlineExceededError",
+            "path": [
+              "gemini-3.1-pro-preview@high:deadline",
+              "gemini-3.1-pro-preview@medium:deadline",
+              "gemini-3.6-flash@low:deadline"
+            ]
+          },
+          "E_ladder_off_is_the_legacy_single_call": {
+            "elapsed_s": 130.0,
+            "within_turn_budget": true,
+            "outcome": "ProviderDeadlineExceededError",
+            "path": [
+              "gemini-3.1-pro-preview@high:deadline"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "name": "live-shape T1 passes the approval gate (no question)",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "brief_digest_ok": true,
+        "live_brief_matches_prod": true,
+        "requested_intents": [
+          {
+            "intent_id": "all_content_include",
+            "op": "include",
+            "attribute": "all content",
+            "creator_text": null,
+            "caption_attribute": null,
+            "position": null
+          }
+        ],
+        "unconfirmed_order_groups": [],
+        "duplicate_sequence_captions": [],
+        "ordering_choice": "random",
+        "random_seed": 2771031860630456741,
+        "ready": true,
+        "policy_problem": null,
+        "rows": [
+          {
+            "requirement_id": "r1",
+            "disposition": "unverified",
+            "evidence_owner": "brief_checks",
+            "reason": "I can't check this before the video is made; I'll point it out after."
+          },
+          {
+            "requirement_id": "r2",
+            "disposition": "executable",
+            "evidence_owner": "brief_checks",
+            "reason": null
+          },
+          {
+            "requirement_id": "r3",
+            "disposition": "unverified",
+            "evidence_owner": "brief_checks",
+            "reason": "I'll show these words one at a time when I prepare the video, then check."
+          }
+        ],
+        "choice_gate": null,
+        "planner_variants": {
+          "order_by_null": {
+            "passes": true,
+            "rows": [
+              [
+                "r1",
+                "unverified"
+              ],
+              [
+                "r2",
+                "executable"
+              ],
+              [
+                "r3",
+                "unverified"
+              ]
+            ],
+            "unconfirmed_order_groups": []
+          }
+        },
+        "prod_outcome": {
+          "turn_value": "question",
+          "reply": "Bunu henüz yapamıyorum:\n- Show in random order: Kaydedilmiş bu grubun iç sırası belirtilmemiş. Sırayı seç ya da grup içindeki herhangi bir sıranın uygun olduğunu onayla.\n- Show each word one after the other (\"Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun\"): Bu taslağın bunu yaptığını henüz doğrulayamıyorum.\nBu ilk taslağı şimdilik beklettim. Daha basit sürümde çıkarılacak: Show in random order; Show each word one after the other (\"Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun\"). Bunlar olmadan mı hazırlayayım, yoksa isteğini mi değiştirmek istersin?",
+          "brief_coverage_reason": "approval_requirements_not_ready",
+          "readiness_rows": [
+            {
+              "requirement_id": "r1",
+              "disposition": "unverified",
+              "evidence_owner": "brief_checks"
+            },
+            {
+              "requirement_id": "r2",
+              "disposition": "needs_choice",
+              "evidence_owner": "brief_checks"
+            },
+            {
+              "requirement_id": "r3",
+              "disposition": "evidence_missing",
+              "evidence_owner": "brief_checks"
+            }
+          ],
+          "choice_conflict": "simplification_requires_choice",
+          "omitted_requirement_ids": [
+            "r2",
+            "r3"
+          ]
+        },
+        "ledger": {
+          "test_run_id": "kri-29ekim-live-20261029",
+          "settled_usd": 0.089935,
+          "calls": [
+            {
+              "agent": "nova.creator.main",
+              "model": "gemini-3.1-pro-preview",
+              "settled_usd": 0.074278
+            },
+            {
+              "agent": "nova.plan.clip_intent_planner",
+              "model": "gemini-2.5-flash",
+              "settled_usd": 0.003579
+            },
+            {
+              "agent": "nova.plan.clip_request_resolver",
+              "model": "gemini-2.5-flash",
+              "settled_usd": 0.012078
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": 7,
+      "name": "post-approval: the text composer receives the title bar to split (no model)",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "title_source_exists": true,
+        "text_bars": [
+          {
+            "id": "guided-title",
+            "text": "Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun",
+            "start_s": 0.0,
+            "end_s": 2.2
+          }
+        ],
+        "text_requirement_ids": [
+          "r3"
+        ],
+        "total_duration_s": 102.469,
+        "words": 27,
+        "slot_order": [
+          "clip-08",
+          "clip-16",
+          "clip-17",
+          "clip-09",
+          "clip-28",
+          "clip-07",
+          "clip-25",
+          "clip-23",
+          "clip-26",
+          "clip-20",
+          "clip-14",
+          "clip-15",
+          "clip-06",
+          "clip-05",
+          "clip-24",
+          "clip-27",
+          "clip-03",
+          "clip-19",
+          "clip-11",
+          "clip-12",
+          "clip-21",
+          "clip-04",
+          "clip-10",
+          "clip-02",
+          "clip-13",
+          "clip-22",
+          "clip-01",
+          "clip-18"
+        ]
+      }
+    },
+    {
+      "id": 8,
+      "name": "post-approval: the recorded live composer splits render to the device pin (replay)",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "runs": [
+          {
+            "run": 0,
+            "language": "tr",
+            "path": "pro",
+            "prompt_version": "v16-text-sequence-title-bar",
+            "pass": true,
+            "failed_parts": [],
+            "title_span_s": [
+              0.0,
+              13.5
+            ],
+            "min_piece_s": 0.5,
+            "pieces": 27,
+            "worker_error": null,
+            "detail": {
+              "worker_error": null,
+              "pin_error": null,
+              "status": "awaiting_device",
+              "slot_order": [
+                "clip-08",
+                "clip-16",
+                "clip-17",
+                "clip-09",
+                "clip-28",
+                "clip-07",
+                "clip-25",
+                "clip-23",
+                "clip-26",
+                "clip-20",
+                "clip-14",
+                "clip-15",
+                "clip-06",
+                "clip-05",
+                "clip-24",
+                "clip-27",
+                "clip-03",
+                "clip-19",
+                "clip-11",
+                "clip-12",
+                "clip-21",
+                "clip-04",
+                "clip-10",
+                "clip-02",
+                "clip-13",
+                "clip-22",
+                "clip-01",
+                "clip-18"
+              ],
+              "seeded_order": [
+                "clip-08",
+                "clip-16",
+                "clip-17",
+                "clip-09",
+                "clip-28",
+                "clip-07",
+                "clip-25",
+                "clip-23",
+                "clip-26",
+                "clip-20",
+                "clip-14",
+                "clip-15",
+                "clip-06",
+                "clip-05",
+                "clip-24",
+                "clip-27",
+                "clip-03",
+                "clip-19",
+                "clip-11",
+                "clip-12",
+                "clip-21",
+                "clip-04",
+                "clip-10",
+                "clip-02",
+                "clip-13",
+                "clip-22",
+                "clip-01",
+                "clip-18"
+              ],
+              "pieces": 27,
+              "words": 27,
+              "title_span_s": [
+                0.0,
+                13.5
+              ],
+              "piece_durations_s": [
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5
+              ],
+              "min_piece_s": 0.5,
+              "contiguous": true,
+              "static_sentence_rows": [],
+              "unstyled_pieces": [],
+              "r3_receipt": {
+                "status": "met",
+                "reason": null
+              },
+              "device_pin": true
+            }
+          },
+          {
+            "run": 1,
+            "language": "tr",
+            "path": "pro",
+            "prompt_version": "v16-text-sequence-title-bar",
+            "pass": true,
+            "failed_parts": [],
+            "title_span_s": [
+              0.0,
+              13.5
+            ],
+            "min_piece_s": 0.5,
+            "pieces": 27,
+            "worker_error": null
+          },
+          {
+            "run": 2,
+            "language": "tr",
+            "path": "pro",
+            "prompt_version": "v16-text-sequence-title-bar",
+            "pass": true,
+            "failed_parts": [],
+            "title_span_s": [
+              0.0,
+              12.15
+            ],
+            "min_piece_s": 0.45,
+            "pieces": 27,
+            "worker_error": null
+          },
+          {
+            "run": 3,
+            "language": "tr",
+            "path": "flash_fallback",
+            "prompt_version": "v16-text-sequence-title-bar",
+            "pass": true,
+            "failed_parts": [],
+            "title_span_s": [
+              0.0,
+              12.15
+            ],
+            "min_piece_s": 0.45,
+            "pieces": 27,
+            "worker_error": null
+          },
+          {
+            "run": 4,
+            "language": "tr",
+            "path": "flash_fallback",
+            "prompt_version": "v16-text-sequence-title-bar",
+            "pass": true,
+            "failed_parts": [],
+            "title_span_s": [
+              0.0,
+              12.15
+            ],
+            "min_piece_s": 0.45,
+            "pieces": 27,
+            "worker_error": null
+          },
+          {
+            "run": 5,
+            "language": "en",
+            "path": "pro",
+            "prompt_version": "v16-text-sequence-title-bar",
+            "pass": true,
+            "failed_parts": [],
+            "title_span_s": [
+              0.0,
+              12.0
+            ],
+            "min_piece_s": 0.4615,
+            "pieces": 26,
+            "worker_error": null
+          },
+          {
+            "run": 6,
+            "language": "en",
+            "path": "flash_fallback",
+            "prompt_version": "v16-text-sequence-title-bar",
+            "pass": true,
+            "failed_parts": [],
+            "title_span_s": [
+              0.0,
+              11.7
+            ],
+            "min_piece_s": 0.45,
+            "pieces": 26,
+            "worker_error": null
+          },
+          {
+            "run": 7,
+            "language": "tr",
+            "path": "pro",
+            "prompt_version": "v15-text-sequence-brief",
+            "pass": true,
+            "failed_parts": [],
+            "title_span_s": [
+              0.0,
+              8.1
+            ],
+            "min_piece_s": 0.3,
+            "pieces": 27,
+            "worker_error": null
+          },
+          {
+            "run": 8,
+            "language": "tr",
+            "path": "flash_fallback",
+            "prompt_version": "v15-text-sequence-brief",
+            "pass": true,
+            "failed_parts": [],
+            "title_span_s": [
+              0.0,
+              12.0
+            ],
+            "min_piece_s": 0.4444,
+            "pieces": 27,
+            "worker_error": null
+          }
+        ],
+        "live_summary": {
+          "runs": 9,
+          "ai_split_correct": 9,
+          "rendered_at_capture": 8,
+          "note": "the one run that did not render at capture (v15, pro) had a correct split; the server's 0.25 s stretch declined it on a microsecond rounding of its own window edges (fixed in kria_editor_ops_text)"
+        },
+        "ledger": {
+          "test_run_id": "kri-29ekim-live2-20261029",
+          "settled_usd": 0.324453,
+          "cap_usd": 1.0
+        }
+      }
+    }
+  ]
+}

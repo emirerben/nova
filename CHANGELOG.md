@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.93.0] - 2026-11-01
+
+### Changed
+- feat(kria): every edit route names what it will not do, and replays are graded on recipe values (KRI-1097) (#2034) <!-- release-pr: 2034 -->
+
 ## [0.83.92.0] - 2026-11-01
 
 ### Changed
