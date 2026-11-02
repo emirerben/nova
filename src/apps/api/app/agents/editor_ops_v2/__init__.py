@@ -60,6 +60,9 @@ FIELD_FRAGMENTS: dict[str, str] = {
 # KRI-1141: appended only while the `overlay` family is offered AND `snapshot["overlays"]["tilt"]`
 # is true (`editor_capabilities.media_overlay_tilt`), so a closed gate leaves the prompt identical.
 OVERLAY_TILT_FRAGMENT = "overlay_tilt.txt"
+# KRI-1170: appended only on a slide post whose `post.tilt_zoom_enabled` is true (MEDIA_TILT_ENABLED
+# and a protocol-33 build), so a closed gate leaves the slide prompt identical.
+SLIDE_TILT_ZOOM_FRAGMENT = "slide_tilt_zoom.txt"
 _FRAGMENT_DIR = Path(__file__).resolve().parents[3] / "prompts" / "edit_copilot_ops"
 
 
@@ -170,6 +173,9 @@ def family_fragments(snapshot: object) -> str:
     overlays = snapshot.get("overlays") if "overlay" in allowed else None
     if isinstance(overlays, dict) and overlays.get("tilt") is True:
         names.append(OVERLAY_TILT_FRAGMENT)
+    post = snapshot.get("post") if surface_of(snapshot) == "slide_post" else None
+    if isinstance(post, dict) and post.get("tilt_zoom_enabled") is True:
+        names.append(SLIDE_TILT_ZOOM_FRAGMENT)
     parts: list[str] = []
     for name in names:
         try:

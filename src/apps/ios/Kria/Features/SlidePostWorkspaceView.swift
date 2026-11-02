@@ -294,6 +294,7 @@ struct SlidePostWorkspaceView: View {
     private var sizesOn: Bool { effectiveCapabilities?.slidePostSizesEnabled == true }
     private var drawingOn: Bool { effectiveCapabilities?.slidePostDrawingEnabled == true }
     private var tiltOn: Bool { effectiveCapabilities?.slidePostTiltEnabled == true }
+    private var tiltZoomOn: Bool { tiltOn && effectiveCapabilities?.slidePostTiltZoomEnabled == true }
     private var stickersOn: Bool { effectiveCapabilities?.slidePostStickersEnabled == true }
     /// KRI-460: what a picture paste needs. UI tests swap the storage upload for a fixture one (see `SlidePostFixtureStickerUploader`).
     private var stickerPaste: SlidePostStickerPaste? {
@@ -467,7 +468,7 @@ struct SlidePostWorkspaceView: View {
                     .frame(maxHeight: .infinity)
                     .padding(.horizontal, 12).padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
             } else if mode == .tilt, let slide {
-                SlidePostTiltPanel(session: session, slideID: slide.id, onDone: finishEditing)
+                SlidePostTiltPanel(session: session, slideID: slide.id, zoomEnabled: tiltZoomOn, onDone: finishEditing)
                     .frame(maxHeight: .infinity)
                     .padding(.horizontal, 12).padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
             } else if mode == .look, let slide {

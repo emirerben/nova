@@ -42,7 +42,7 @@ struct SlidePostCachedImage: View {
 
     var body: some View {
         let full = resolved()
-        let lookIdentity = "\(assetID)|\(lookPreset)|\(fit?.rawValue ?? "fill")|\(tilt.map { "\($0.rotationDeg)|\($0.backdrop)" } ?? "-")|\(lookCanvas.width)x\(lookCanvas.height)|\(crop.map { "\($0.x),\($0.y),\($0.width),\($0.height)" } ?? "-")|\(full.map { ObjectIdentifier($0).debugDescription } ?? "missing")"
+        let lookIdentity = "\(assetID)|\(lookPreset)|\(fit?.rawValue ?? "fill")|\(tilt.map { "\($0.rotationDeg)|\($0.zoom)|\($0.backdrop)" } ?? "-")|\(lookCanvas.width)x\(lookCanvas.height)|\(crop.map { "\($0.x),\($0.y),\($0.width),\($0.height)" } ?? "-")|\(full.map { ObjectIdentifier($0).debugDescription } ?? "missing")"
         ZStack {
             if let full {
                 if lookedIdentity == lookIdentity, let lookedImage {
@@ -85,12 +85,13 @@ struct SlidePostCachedImage: View {
         }
         .modifier(PreviewStateReport(enabled: reportsState,
                                     value: "\(assetID)|\(full != nil ? "full" : "blur")" + (lookedImage != nil && lookedIdentity == lookIdentity ? "|look:\(lookPreset)" : "")
-                                        + (tilt.map { "|tilt:\(Int($0.rotationDeg.rounded()))" } ?? ""),
+                                        + (tilt.map { "|tilt:\(Int($0.rotationDeg.rounded()))" } ?? "")
+                                        + (tilt.flatMap { $0.zoom == 1 ? nil : "|zoom:\(Int(($0.zoom * 100).rounded()))" } ?? ""),
                                     blurred: full == nil && variant == .preview && cache.cachedImage(assetID: assetID, variant: .thumb) != nil))
     }
 
     @ViewBuilder private func framed(_ image: UIImage) -> some View {
-        if let tilt, !tilt.isUpright {
+        if let tilt, !tilt.isNeutral {
             tiltedFrame(image, tilt: tilt)
         } else if crop != nil || fit != nil {
             GeometryReader { proxy in
@@ -129,6 +130,7 @@ struct SlidePostCachedImage: View {
                     .offset(x: whole.minX, y: whole.minY)
                     .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
                     .clipShape(SlidePostRegionClip(region: region, clipsToView: false))
+                    .scaleEffect(tilt.zoom)
                     .rotationEffect(.degrees(tilt.rotationDeg))
             }
             .frame(width: proxy.size.width, height: proxy.size.height)

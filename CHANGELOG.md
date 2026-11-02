@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.3.0] - 2026-11-02
+
+### Changed
+- feat(slides): a zoom slider in the slide Tilt panel, device + cloud + chat, protocol 32 (KRI-1170) (#2065) <!-- release-pr: 2065 -->
+
 ## [0.84.2.0] - 2026-11-02
 
 ### Changed

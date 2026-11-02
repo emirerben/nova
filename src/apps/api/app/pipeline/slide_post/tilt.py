@@ -1,12 +1,14 @@
 """Tilting a slide's photo or video (KRI-1138): geometry shared with the iPhone.
 
 Pure arithmetic, no ffmpeg and no DB. The contract is frozen by
-``tests/fixtures/slide-tilt-parity/v1.json`` and asserted by Python and Swift:
+``tests/fixtures/slide-tilt-parity/v1.json`` (zoom: ``v2.json``) and asserted by Python and Swift:
 
 * the canvas is the slide's OUTPUT canvas in px (origin top-left, y down);
 * the MEDIA is the photo's (cropped) region scaled the way the slide already frames it
   (cover for Fill, whole for Fit), centred on the canvas. For Fill that is larger than
   the canvas on one axis, so a turned photo keeps showing the pixels that rotate into view;
+* ``zoom`` (0.5..3, 1 = as framed) scales that media about the canvas centre BEFORE it turns,
+  so ``media_size`` already carries it and the turn, its bounds and the coverage test follow;
 * ``rotation_deg`` is clockwise-positive about the canvas centre (y down, so the standard
   rotation matrix with a positive angle turns the picture clockwise on screen);
 * only the media turns: text, ink, stickers and the watermark stay upright on top;
@@ -28,8 +30,9 @@ def media_size(
     canvas: tuple[float, float],
     *,
     fit: bool,
+    zoom: float = 1.0,
 ) -> tuple[float, float]:
-    """Size in canvas px of the (cropped) photo region as the slide frames it.
+    """Size in canvas px of the (cropped) photo region as the slide frames it, times ``zoom``.
 
     ``fit=False`` is the cover scale (``max``), ``fit=True`` the whole-photo scale (``min``),
     the same choice ``cover_placement`` / ``fit_placement`` make.
@@ -44,7 +47,7 @@ def media_size(
     region_w, region_h = iw * cwid, ih * chei
     x_scale, y_scale = cw / region_w, ch / region_h
     scale = min(x_scale, y_scale) if fit else max(x_scale, y_scale)
-    return (region_w * scale, region_h * scale)
+    return (region_w * scale * zoom, region_h * scale * zoom)
 
 
 def rotated_bounds(width: float, height: float, rotation_deg: float) -> tuple[float, float]:
