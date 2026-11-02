@@ -140,8 +140,6 @@ managed_fleet_has_required_processes() {
         ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "worker")
       and any($managed[];
         ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "light")
-      and any($managed[];
-        ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "autoplace")
   ' >/dev/null
 }
 
@@ -184,9 +182,6 @@ managed_fleet_is_operationally_stable() {
         ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "worker")
       and any($managed[];
         ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "light"
-          and .state == "started")
-      and any($managed[];
-        ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "autoplace"
           and .state == "started")
       and all($managed[];
         (.config // .incomplete_config // {}) as $config
@@ -723,7 +718,7 @@ reclaim_or_block_deploy_guard() {
   fi
   # A cancelled deploy may have left process Machines mixed or unhealthy. Keep
   # the mutex until the managed fleet is again one digest and has its required
-  # API/worker/light/autoplace topology in a proven operational state; otherwise
+  # API/worker/light topology in a proven operational state; otherwise
   # a second mutation would make an ambiguous rollout worse.
   resolve_production_image false
   echo "Reclaiming expired, exact dormant deploy guard $machine_id owned by $owner..."
@@ -811,7 +806,7 @@ resolve_production_image() {
     ' <<<"$machines_json" >/dev/null || \
       fail "Managed production Machines expose an invalid image digest; refusing mutation."
     managed_fleet_has_required_processes <<<"$machines_json" || \
-      fail "Managed production Machines are missing a required api, worker, light, or autoplace process group; refusing mutation."
+      fail "Managed production Machines are missing a required api, worker, or light process group; refusing mutation."
     if managed_fleet_is_operationally_stable <<<"$machines_json"; then
       break
     fi

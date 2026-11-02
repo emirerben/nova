@@ -94,7 +94,7 @@ def test_worker_routes_and_beat_register_exact_task_names() -> None:
     assert "app.tasks.speech_cleanup_analysis" in celery_app.conf.include
 
 
-def test_fly_processes_keep_dedicated_analysis_during_unified_worker_transition() -> None:
+def test_fly_unified_worker_owns_speech_analysis_and_light_does_not() -> None:
     fly_source = (REPO_ROOT / "fly.toml").read_text()
     process_lines = {
         line.strip().split(" = ", 1)[0]: line.strip()
@@ -102,12 +102,10 @@ def test_fly_processes_keep_dedicated_analysis_during_unified_worker_transition(
         if "celery -A app.worker worker" in line
     }
 
-    assert "-Q speech-analysis" in process_lines["speech_analysis"]
-    assert "--concurrency=1" in process_lines["speech_analysis"]
+    assert "speech_analysis" not in process_lines
     assert "speech-analysis" in process_lines["worker"]
     assert "--concurrency=1" in process_lines["worker"]
     assert "speech-analysis" not in process_lines["light"]
-    assert "maintenance" not in process_lines["speech_analysis"]
 
 
 def test_task_streams_generation_without_full_video_download_or_hash() -> None:

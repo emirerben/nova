@@ -24,7 +24,7 @@ kill_timeout = 300
   POSTER_REPAIR_QUEUE = "autoplace-jobs"
   # Deploy the dedicated worker before switching POOL_ASSET_ANALYSIS_QUEUE via
   # a Fly secret. Initial routing deliberately remains the code default: celery.
-  # Same for VISUALS_ANALYSIS_QUEUE: deploy the autoplace process that consumes
+  # Same for VISUALS_ANALYSIS_QUEUE: deploy the worker that consumes
   # visuals-analysis first, then set the secret (unset it to roll back).
 
 [build]
@@ -79,18 +79,6 @@ kill_timeout = 300
   # backstop. Beat does NOT de-duplicate across replicas, so `light` MUST
   # stay at exactly one machine (`fly scale count light=1`).
   light = "celery -A app.worker worker --loglevel=info --concurrency=2 -Q maintenance,agent-control -B"
-  # Image/video metadata analysis is network-bound but downloads media, so it
-  # must not share the 1GB maintenance VM or wait behind long render jobs.
-  # visuals-analysis: creator-facing analyze_pool_asset runs (Visuals photos and
-  # videos) once VISUALS_ANALYSIS_QUEUE=visuals-analysis is set. Kombu's Redis
-  # transport rotates between the two queues, so a photo waits for the next free
-  # slot, never FIFO behind a footage backlog on autoplace-jobs. The unified
-  # worker consumes it too, exactly like autoplace-jobs, so dropping this process
-  # in the device-only topology release never strands Visuals analysis.
-  autoplace = "celery -A app.worker worker --loglevel=info --concurrency=2 -Q autoplace-jobs,visuals-analysis"
-  # Speech preflight has independent latency/SLOs and may run bounded FFmpeg +
-  # transcription work. Keep it off both the render and maintenance queues.
-  speech_analysis = "celery -A app.worker worker --loglevel=info --concurrency=1 -Q speech-analysis"
 
 # ---------------------------------------------------------------------------
 # HTTP service (api process only)
@@ -162,16 +150,6 @@ kill_timeout = 300
   auto_stop_machines = false
   auto_start_machines = true
 
-[[services]]
-  processes = ["autoplace"]
-  auto_stop_machines = false
-  auto_start_machines = true
-
-[[services]]
-  processes = ["speech_analysis"]
-  auto_stop_machines = false
-  auto_start_machines = true
-
 # ---------------------------------------------------------------------------
 # VM sizing per process group
 # ---------------------------------------------------------------------------
@@ -215,62 +193,19 @@ kill_timeout = 300
   cpus = 1
   memory_mb = 1024
 
-# Dedicated pool-analysis worker. Two shared CPUs let two Gemini/metadata jobs
-# overlap without competing with FFmpeg renders; 2GB covers app imports plus
-# two bounded media downloads/probes.
-[[vm]]
-  processes = ["autoplace"]
-  cpu_kind = "shared"
-  cpus = 2
-  memory_mb = 2048
-
-# Dedicated chat speech-preflight worker. One task at a time keeps local
-# Whisper/FFmpeg memory bounded while avoiding render head-of-line blocking.
-[[vm]]
-  processes = ["speech_analysis"]
-  cpu_kind = "shared"
-  cpus = 2
-  memory_mb = 2048
-
 [[vm]]
   processes = ["worker"]
-  # 2026-08-02, second change same day: shared → performance (re-reverted).
-  # Earlier today this was downsized from performance-4x/8192MB to
-  # shared-cpu-4x/6144MB as a cost cut, on the reasoning that the ONLY
-  # justification for the 2026-06-13 performance upgrade was
-  # GENERATIVE_PARALLEL_VARIANTS_ENABLED (never flipped on). That reasoning
-  # missed the upgrade's OTHER stated justification — "shared cores are
-  # oversubscribed/throttled, so every FFmpeg encode + the Skia per-frame PNG
-  # render runs slower than the vCPU count suggests" — which was providing
-  # real value the whole time, independent of parallelism.
-  #
-  # Confirmed in prod within ~50 min of the downsize deploying: job
-  # 6bdb58dc-5933-4e82-b55c-ba2de00da19c (a `subtitled`-archetype render)
-  # failed when its Skia PNG-sequence overlay burn
-  # (text_overlay_skia.py:2025, subprocess timeout=600s) exceeded 600s and
-  # was killed. This was the FIRST render dispatched after the downsize
-  # deployed. Root-cause confidence is high (mechanism, timing, and the
-  # documented pre-existing claim about this exact workload all line up)
-  # but not proven with a controlled before/after rerun of the identical
-  # input — Fly's shared-vCPU throttling happens at the hypervisor level,
-  # invisible from inside the guest.
-  #
-  # Reverting immediately rather than waiting for more data: a failed
-  # render is a real user-visible cost (a lost video), and the $122/mo the
-  # downsize was saving is not worth trading for unreliable renders while
-  # more evidence accumulates. This VM class stays performance-4x until
-  # RENDER_AUTOSTOP_ENABLED is verified live in prod — at that point the
-  # worker's active hours drop enough that performance-4x costs nearly the
-  # same as shared-cpu-4x (Phase 3 of the scale-to-zero plan), so there is
-  # no future need to revisit this specific tradeoff. See agents/DECISIONS.md.
-  cpu_kind = "performance"
+  # 2026-11-02 (KRI-device-only topology, runbook Release 2): performance-4x/
+  # 8192MB -> shared-cpu-4x/4096MB. The dedicated cores were justified in
+  # August by cloud Skia/FFmpeg renders (a 600s Skia PNG-sequence burn timed
+  # out on shared cores — see agents/DECISIONS.md "Worker VM re-reverted").
+  # Both justifications are gone: CLOUD_RENDER_EXECUTION_ENABLED=false and
+  # IOS_DEVICE_ONLY_MODE=true mean renders happen on the phone, and
+  # GENERATIVE_PARALLEL_VARIANTS_ENABLED was never turned on. The worker now
+  # compiles phone recipes and runs analysis (autoplace-jobs, speech-analysis,
+  # visuals-analysis) — it absorbed the former autoplace/speech_analysis
+  # groups. Rollback if renders/analysis OOM or time out:
+  # `fly scale memory 8192 --process-group worker`, then performance-4x.
+  cpu_kind = "shared"
   cpus = 4
-  # 8192MB — the 2026-06-13 sizing this reverts back to. 4096 → 6144 history
-  # (admin-test job 022a00e4-7926-4d82-b248-16431dec543b OOM at FFmpeg
-  # anon-rss 1897MB/total-vm 3596MB on a minimal single-pass spec) still
-  # applies; 6144 → 8192 added headroom for the 2-way parallel-variant
-  # render (still unused) plus the CLIP font-matcher singleton. Keeping
-  # 8192 rather than dropping back to 6144 avoids re-litigating that
-  # headroom math while this VM class question is already being revisited
-  # under incident pressure.
-  memory_mb = 8192
+  memory_mb = 4096
