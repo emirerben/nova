@@ -285,7 +285,10 @@ OVERLAP_NOTICE = (
     "Some suggestions overlap an existing overlay or each other. "
     "Choose a free moment or remove an existing overlay."
 )
-LOGO_NOTICE = "Upload the real logo or choose it from your visual library."
+BRAND_NOTICE = (
+    "Generated logos are approximations. Review the image, or add the real logo "
+    "to your visual library for an exact match."
+)
 
 
 NUDGE_MAX_S = 0.25
@@ -383,12 +386,13 @@ def materialize_overlays(
         return PlannedOverlay(**{**planned, "start_s": start})
 
     for row in raw.overlays:
-        if row.kind == "image" and row.depicts != "generic_subject":
-            # Only this row is refused; the rest of a mixed request still gets planned.
-            # Anything the model did not explicitly call generic fails safe.
-            if notices is not None and LOGO_NOTICE not in notices:
-                notices.append(LOGO_NOTICE)
-            continue
+        if (
+            row.kind == "image"
+            and row.depicts == "brand_or_logo"
+            and notices is not None
+            and BRAND_NOTICE not in notices
+        ):
+            notices.append(BRAND_NOTICE)
         try:
             planned_row = plan_row(row)
         except ValueError as exc:

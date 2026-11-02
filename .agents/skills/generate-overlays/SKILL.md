@@ -17,7 +17,7 @@ Honor an explicit request before choosing additional overlays. For automatic mod
 
 Tie each proposal to an exact quoted word, verified timed visual moment or explicit creator time. Resolve source times into the current edit before proposing placement. Do not treat a description of an entire clip as the time of an event inside it. Multiple occurrences require the requested occurrence or clarification. Do not infer the speaker's identity or emotion from their voice.
 
-Use native editable typography for exact numbers and short labels. Use supplied or verified assets for logos. Preserve a name such as "Tanavachi" verbatim until its identity is clear. Do not substitute a similar brand or generate an imitation official logo. Ask for an upload when the exact mark is missing.
+Use native editable typography for exact numbers and short labels. Prefer a supplied or verified asset for logos. Preserve a name such as "Tanavachi" verbatim. Never substitute a different brand. When no asset matches, a generated mark is allowed: it is marked as an approximation, and the creator reviews it before it is used.
 
 ## Choose and place the asset
 

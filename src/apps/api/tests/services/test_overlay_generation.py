@@ -55,7 +55,10 @@ def _two_rows(first, second):
     )
 
 
-LOGO_NOTICE = "Upload the real logo or choose it from your visual library."
+BRAND_NOTICE = (
+    "Generated logos are approximations. Review the image, or add the real logo "
+    "to your visual library for an exact match."
+)
 
 
 def _coffee_second_row(raw):
@@ -67,7 +70,7 @@ def _coffee_second_row(raw):
 
 
 # Wording is irrelevant: the model's typed declaration decides, in any language, and a
-# phrasing with no "logo" word at all is refused just the same (no synonym list to outgrow).
+# phrasing with no "logo" word at all is treated just the same (no synonym list to outgrow).
 @pytest.mark.parametrize(
     "prompt",
     [
@@ -77,7 +80,7 @@ def _coffee_second_row(raw):
         "Acme logo",
     ],
 )
-def test_brand_marks_are_refused_without_losing_the_rest_of_a_mixed_request(prompt):
+def test_brand_marks_are_kept_for_review_with_a_caution(prompt):
     notices = []
     raw = _two_rows(
         {"prompt": prompt, "title": "Brand", "depicts": "brand_or_logo"},
@@ -86,8 +89,8 @@ def test_brand_marks_are_refused_without_losing_the_rest_of_a_mixed_request(prom
     rows = materialize_overlays(
         raw, _coffee_second_row(raw), [], duration_s=8, prompt="", notices=notices
     )
-    assert [row.prompt for row in rows] == ["A cup of coffee"]
-    assert notices == [LOGO_NOTICE]
+    assert [row.prompt for row in rows] == [prompt, "A cup of coffee"]
+    assert notices == [BRAND_NOTICE]
 
 
 @pytest.mark.parametrize(
@@ -108,21 +111,29 @@ def test_generic_pictures_are_never_refused_for_their_wording(prompt):
     assert len(rows) == 1 and notices == []
 
 
-@pytest.mark.parametrize("declaration", ["brand_or_logo", None])
-def test_unclear_or_missing_subject_fails_safe_instead_of_generating(declaration):
+def test_a_named_brand_row_is_kept_and_the_creator_is_told_it_is_an_approximation():
     notices = []
     rows = materialize_overlays(
-        proposal(depicts=declaration, prompt="Starbucks cup"),
+        proposal(depicts="brand_or_logo", prompt="Starbucks cup"),
         evidence(),
         [],
         duration_s=8,
         prompt="Show Starbucks when I say coffee",
         notices=notices,
     )
-    assert rows == [] and notices == [LOGO_NOTICE]
+    assert [row.prompt for row in rows] == ["Starbucks cup"]
+    assert notices == [BRAND_NOTICE]
 
 
-def test_a_missing_declaration_refuses_only_that_row_not_the_whole_plan():
+def test_a_row_with_no_declaration_is_kept_without_claiming_it_is_a_logo():
+    notices = []
+    rows = materialize_overlays(
+        proposal(depicts=None), evidence(), [], duration_s=8, prompt="", notices=notices
+    )
+    assert len(rows) == 1 and notices == []
+
+
+def test_a_missing_declaration_never_fails_the_plan():
     import json
 
     from app.agents.overlay_generation import OverlayGenerationAgent, OverlayPlanInput
@@ -150,12 +161,12 @@ def test_a_missing_declaration_refuses_only_that_row_not_the_whole_plan():
     ]
     notices = []
     rows = materialize_overlays(raw, facts, [], duration_s=8, prompt="", notices=notices)
-    assert [row.kind for row in rows] == ["text"]
-    assert notices == [LOGO_NOTICE]
+    assert [row.kind for row in rows] == ["image", "text"]
+    assert notices == []
 
 
 @pytest.mark.parametrize("declared", ["generic", "Generic_Subject", "other", ""])
-def test_an_unrecognised_declaration_refuses_only_that_row_without_a_paid_retry(declared):
+def test_an_unrecognised_declaration_is_kept_without_a_paid_retry(declared):
     import json
 
     from app.agents.overlay_generation import OverlayGenerationAgent, OverlayPlanInput
@@ -177,7 +188,7 @@ def test_an_unrecognised_declaration_refuses_only_that_row_without_a_paid_retry(
     )
     notices = []
     rows = materialize_overlays(raw, evidence(), [], duration_s=8, prompt="", notices=notices)
-    assert rows == [] and notices == [LOGO_NOTICE]
+    assert len(rows) == 1 and notices == []
 
 
 ODD_DECLARATIONS = [
@@ -194,8 +205,8 @@ ODD_DECLARATIONS = [
 
 
 @pytest.mark.parametrize("declared", ODD_DECLARATIONS, ids=repr)
-def test_odd_declaration_is_refused_alone_while_valid_neighbours_are_kept(declared):
-    """Length and type never fail the plan: parse() accepts, the one row is refused."""
+def test_odd_declaration_never_fails_the_plan_and_neighbours_are_kept(declared):
+    """Length and type never fail the plan: parse() accepts the row and it is kept."""
     import json
 
     from app.agents.overlay_generation import OverlayGenerationAgent, OverlayPlanInput
@@ -242,9 +253,10 @@ def test_odd_declaration_is_refused_alone_while_valid_neighbours_are_kept(declar
     rows = materialize_overlays(raw, facts, [], duration_s=8, prompt="", notices=notices)
     assert [(row.kind, row.prompt or row.text) for row in rows] == [
         ("image", "A cup of coffee"),
+        ("image", "A cup of coffee"),
         ("text", "10"),
     ]
-    assert notices == [LOGO_NOTICE]
+    assert notices == []
 
 
 def test_declaration_never_reaches_the_client():
@@ -252,12 +264,15 @@ def test_declaration_never_reaches_the_client():
     assert "depicts" not in row.model_dump_json()
 
 
-def test_refused_brand_row_does_not_reserve_its_window():
+def test_a_kept_brand_row_reserves_its_window_like_any_other_overlay():
     raw = _two_rows(
         {"prompt": "Acme logo", "depicts": "brand_or_logo"},
         {"prompt": "A cup of coffee", "start_s": 1.0, "end_s": 2.0},
     )
-    assert len(materialize_overlays(raw, evidence(), [], duration_s=8, prompt="", notices=[])) == 1
+    notices = []
+    rows = materialize_overlays(raw, evidence(), [], duration_s=8, prompt="", notices=notices)
+    assert [row.prompt for row in rows] == ["Acme logo"]
+    assert BRAND_NOTICE in notices
 
 
 def test_brand_notice_survives_a_later_grounding_error(monkeypatch):
@@ -277,6 +292,7 @@ def test_brand_notice_survives_a_later_grounding_error(monkeypatch):
         editor_snapshot={},
     )
     owner = uuid.uuid4()
+    raw_holder = []
     monkeypatch.setattr(
         generated_media, "owned_item", lambda *a: SimpleNamespace(current_job_id=body.job_id)
     )
@@ -284,7 +300,10 @@ def test_brand_notice_survives_a_later_grounding_error(monkeypatch):
         service,
         "plan_context",
         lambda *a, **k: SimpleNamespace(
-            evidence=evidence(), duration_s=8, existing_overlays=[], insertion_base=None
+            evidence=_coffee_second_row(raw_holder[0]),
+            duration_s=8,
+            existing_overlays=[],
+            insertion_base=None,
         ),
     )
     db = Mock()
@@ -298,13 +317,14 @@ def test_brand_notice_survives_a_later_grounding_error(monkeypatch):
         {"prompt": "Acme logo", "depicts": "brand_or_logo"},
         {"kind": "library_asset", "asset_id": "foreign", "prompt": ""},
     )
+    raw_holder.append(raw)
     agent = Mock()
     agent.run.return_value = raw
     reply = service.generate_overlay_plan(
         db, owner_id=owner, item_id=uuid.uuid4(), body=body, ctx=None, agent=agent
     )
-    assert reply.overlays == []
-    assert LOGO_NOTICE in reply.message and "available visual" in reply.message
+    assert len(reply.overlays) == 1
+    assert BRAND_NOTICE in reply.message and "available visual" in reply.message
 
 
 def test_silent_visual_window_cannot_escape_the_source_slot():

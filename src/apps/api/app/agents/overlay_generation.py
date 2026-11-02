@@ -71,7 +71,7 @@ class OverlayGenerationAgent(Agent[OverlayPlanInput, OverlayPlanOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.editor.overlay_generation",
         prompt_id="overlay_generation",
-        prompt_version="2026-10-30.4",
+        prompt_version="2026-11-02.1",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -112,14 +112,15 @@ class OverlayGenerationAgent(Agent[OverlayPlanInput, OverlayPlanOutput]):
             "within video bounds. "
             "Image means a generated illustration/photo without lettering. Use text for "
             "numbers, prices, "
-            "rank badges and any readable words. Never generate or reconstruct logos; select "
-            "a matching "
-            "owned library asset or ask the creator to upload it. Every image row must set "
-            "depicts: generic_subject only for a generic object, scene or icon that names no "
+            "rank badges and any readable words. For a named brand, team or organisation "
+            "mark, prefer a matching owned library asset; otherwise propose an image row that "
+            "names the entity exactly as the creator said it, never a different entity, and the "
+            "creator reviews the result before it is used. Every image row must set "
+            "depicts: generic_subject for a generic object, scene or icon that names no "
             "brand, company, product line, team or organisation; brand_or_logo for any official "
-            "mark, logo, emblem, wordmark or imitation of one, in any language, and whenever it "
-            "is unclear whether a named entity's official mark is wanted. Negation such as 'no "
-            "logo' in a description does not make the picture brand_or_logo. Prefer transparent "
+            "mark, logo, emblem, wordmark or imitation of one, in any language. Negation such as "
+            "'no logo' in a description does not make the picture brand_or_logo. Prefer "
+            "transparent "
             "supporting "
             "icons or objects, not replacement scenes. "
             "library_asset must name an ID in assets. All rows are proposals for review, not "
