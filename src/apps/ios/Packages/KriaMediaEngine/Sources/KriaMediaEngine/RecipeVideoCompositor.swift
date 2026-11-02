@@ -38,6 +38,8 @@ struct RecipeVideoLayer: @unchecked Sendable {
     var overlayFade: OverlayFadeWindow? = nil
     /// Set only when the recipe has a `speakerBackground` (KRI-1116).
     var speakerRole: SpeakerBackgroundRole? = nil
+    /// A timed speaker-background window (KRI-1162); the fill background leaves this false.
+    var speakerBackgroundWindow: Bool = false
     /// Paint the canvas the fitted source leaves uncovered with the source's own edge pixels. Only the Kria
     /// outro sets it: a flat paper card fitted to a non-9:16 canvas, whose edges ARE the paper (KRI-1154).
     var extendsEdgesToCanvas: Bool = false
@@ -159,16 +161,23 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
     let subjectMatte: NativeSubjectMatte?
     /// Talk-to-camera green screen: one per composition, present only when the recipe has a background.
     let speakerMatte: SpeakerMatte?
+    /// Where the matted speaker is drawn (KRI-1162); nil draws it full-frame, as before.
+    let speakerFrame: SpeakerFrame?
     let canvas: CGRect
     let transparentBackground: Bool
-    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, drawings: NativeDrawingStore? = nil, transparentBackground: Bool = false, subjectMatte: NativeSubjectMatte? = nil, speakerMatte: SpeakerMatte? = nil) {
+    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, drawings: NativeDrawingStore? = nil, transparentBackground: Bool = false, subjectMatte: NativeSubjectMatte? = nil, speakerMatte: SpeakerMatte? = nil, speakerFrame: SpeakerFrame? = nil) {
         self.transparentBackground = transparentBackground
         self.drawings = drawings
         self.subjectMatte = subjectMatte
         self.speakerMatte = speakerMatte
+        self.speakerFrame = speakerFrame
         self.cameraPulses = cameraPulses
         self.motionScenes = motionScenes
         self.timeRange = timeRange
+        // A window layer in this range covers all of it (the ranges are tiled on every layer boundary), so the
+        // fill shows nowhere here: leave its track out so a video fill is not decoded behind a window (S31).
+        let layers = layers.contains(where: \.speakerBackgroundWindow)
+            ? layers.filter { $0.speakerRole != .background || $0.speakerBackgroundWindow } : layers
         self.layers = layers.enumerated().sorted { a, b in a.element.visualOrder == b.element.visualOrder ? a.offset < b.offset : a.element.visualOrder < b.element.visualOrder }.map(\.element)
         self.text = text
         self.textStore = textStore
@@ -248,7 +257,10 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         let layers = candidates.filter { $0.backdropAssetID == nil }
         var frame = canvas
         func compose(_ layer: RecipeVideoLayer) throws { frame = try composeVideoLayer(layer, onto: frame, instruction: instruction, request: request, time: time) }
-        guard let matte = instruction.speakerMatte, let background = layers.first(where: { $0.speakerRole == .background }),
+        // `layers` holds only what is active at `time`: the one window covering it (windows are disjoint), else the fill (S28).
+        let backgrounds = layers.filter { $0.speakerRole == .background }
+        guard let matte = instruction.speakerMatte,
+              let background = backgrounds.first(where: \.speakerBackgroundWindow) ?? backgrounds.first,
               let first = layers.firstIndex(where: { $0.speakerRole == .speaker }) else {
             for layer in layers where layer.speakerRole != .background { try compose(layer) }
             return frame
@@ -261,15 +273,33 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         switch matte.answer(for: speaker, at: time, canvas: instruction.canvas, clipKey: key) {
         case .cutout(let mask):
             try compose(background)
-            let cut = SpeakerMatte.cutOut(speaker, mask: mask, canvas: instruction.canvas, config: matte.config) ?? speaker
+            // The mask was computed on the full-size speaker layer; only then is the cut-out moved into its frame (S27).
+            var cut = SpeakerMatte.cutOut(speaker, mask: mask, canvas: instruction.canvas, config: matte.config) ?? speaker
+            if let speakerFrame = instruction.speakerFrame { cut = Self.framed(cut, in: speakerFrame, canvas: instruction.canvas) }
             frame = cut.composited(over: frame).cropped(to: instruction.canvas)
         case .backgroundOnly:
             try compose(background)
         case .original:
-            for layer in speakers { try compose(layer) }
+            if let speakerFrame = instruction.speakerFrame {
+                // No reliable mask: the plain speaker layer sits small in its frame over the background.
+                try compose(background)
+                frame = Self.framed(speaker, in: speakerFrame, canvas: instruction.canvas).composited(over: frame).cropped(to: instruction.canvas)
+            } else {
+                for layer in speakers { try compose(layer) }
+            }
         }
         for layer in layers[first...] where layer.speakerRole == nil { try compose(layer) }
         return frame
+    }
+
+    /// `image` (a canvas-sized speaker layer) scaled uniformly so its width is `widthFraction` of the canvas
+    /// width, centred at (`xFraction`, `yFraction`). Fractions use the top-left origin of
+    /// `VisualMediaPlacement`; Core Image's origin is bottom-left, so the centre sits at `height * (1 - yFraction)`.
+    static func framed(_ image: CIImage, in frame: SpeakerFrame, canvas: CGRect) -> CIImage {
+        image.transformed(by: CGAffineTransform(translationX: -canvas.midX, y: -canvas.midY)
+            .concatenating(CGAffineTransform(scaleX: frame.widthFraction, y: frame.widthFraction))
+            .concatenating(CGAffineTransform(translationX: canvas.minX + canvas.width * frame.xFraction,
+                                             y: canvas.minY + canvas.height * (1 - frame.yFraction))))
     }
 
     /// The layer's own picture for this request: its track's frame (graded when it carries a look) or its image.

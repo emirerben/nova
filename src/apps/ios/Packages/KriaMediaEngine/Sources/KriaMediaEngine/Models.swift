@@ -110,6 +110,11 @@ public struct EditRecipe: Codable, Equatable, Sendable {
             guard assetManifest?.assets.contains(where: {
                 if case .visual(_, _, let kind) = $0.source { $0.id == background.assetID && kind == background.mediaKind } else { false }
             }) == true else { throw RecipeError.missingAssetReference }
+            for window in background.windows ?? [] {
+                guard assetManifest?.assets.contains(where: {
+                    if case .visual(_, _, let kind) = $0.source { $0.id == window.assetID && kind == window.mediaKind } else { false }
+                }) == true else { throw RecipeError.missingAssetReference }
+            }
         }
         guard textLayers.count <= Self.maxTextLayers, Set(textLayers.map(\.id)).count == textLayers.count else { throw RecipeError.invalidTimeline }
         for layer in textLayers { try layer.validate(duration: TimelineMath.totalDuration(of: self), manifest: assetManifest) }
@@ -219,6 +224,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if !cameraPulses.isEmpty { result.insert(.cameraEffects) }
         if !drawingLayers.isEmpty { result.insert(.freehandDrawing) }
         if speakerBackground != nil { result.insert(.speakerBackground) }
+        if speakerBackground?.windows != nil || speakerBackground?.speakerFrame != nil { result.insert(.speakerBackgroundWindows) }
         if textLayers.contains(where: { ($0.bend ?? 0) != 0 }) { result.insert(.textBend) }
         if textLayers.contains(where: { $0.karaoke?.singleWord == true }) { result.insert(.singleWordText) }
         if textLayers.contains(where: { $0.behindSubject == true }) { result.insert(.behindSubject) }
@@ -527,7 +533,8 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export,
          captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
          soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, singleWordText, freezeFrame,
-         behindSubject, speakerBackground, clipTilt, clipBackdropMedia
+         behindSubject, speakerBackground, clipTilt, clipBackdropMedia,
+         speakerBackgroundWindows
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }

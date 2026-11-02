@@ -78,27 +78,29 @@ def _agent() -> MusicMatcherAgent:
 
 class TestParseHappyPath:
     def test_returns_ranked_in_order(self):
-        raw = json.dumps({
-            "ranked": [
-                {
-                    "track_id": "track_a",
-                    "score": 9.0,
-                    "rationale": "best fit",
-                    "predicted_strengths": ["mood", "pacing"],
-                },
-                {
-                    "track_id": "track_b",
-                    "score": 6.5,
-                    "rationale": "ok fit",
-                    "predicted_strengths": ["energy"],
-                },
-                {
-                    "track_id": "track_c",
-                    "score": 2.0,
-                    "rationale": "poor fit",
-                },
-            ]
-        })
+        raw = json.dumps(
+            {
+                "ranked": [
+                    {
+                        "track_id": "track_a",
+                        "score": 9.0,
+                        "rationale": "best fit",
+                        "predicted_strengths": ["mood", "pacing"],
+                    },
+                    {
+                        "track_id": "track_b",
+                        "score": 6.5,
+                        "rationale": "ok fit",
+                        "predicted_strengths": ["energy"],
+                    },
+                    {
+                        "track_id": "track_c",
+                        "score": 2.0,
+                        "rationale": "poor fit",
+                    },
+                ]
+            }
+        )
         out = _agent().parse(raw, _input())
         assert [r.track_id for r in out.ranked] == ["track_a", "track_b", "track_c"]
         assert out.ranked[0].score == pytest.approx(9.0)
@@ -110,24 +112,28 @@ class TestHallucinationFilter:
     def test_drops_unknown_track_ids(self):
         """Hallucinated IDs are silently dropped per the plan — the orchestrator
         sees the full ranked list of *valid* picks and falls back if needed."""
-        raw = json.dumps({
-            "ranked": [
-                {"track_id": "ghost_track", "score": 9.0, "rationale": "made up"},
-                {"track_id": "track_a", "score": 8.0, "rationale": "real"},
-            ]
-        })
+        raw = json.dumps(
+            {
+                "ranked": [
+                    {"track_id": "ghost_track", "score": 9.0, "rationale": "made up"},
+                    {"track_id": "track_a", "score": 8.0, "rationale": "real"},
+                ]
+            }
+        )
         out = _agent().parse(raw, _input())
         assert [r.track_id for r in out.ranked] == ["track_a"]
 
     def test_raises_refusal_when_every_pick_is_hallucinated(self):
         """If parse() drops every entry, no fallback is possible — surface as a
         RefusalError so the runtime retries with the stricter clarification."""
-        raw = json.dumps({
-            "ranked": [
-                {"track_id": "ghost_1", "score": 9.0, "rationale": "made up"},
-                {"track_id": "ghost_2", "score": 8.0, "rationale": "also made up"},
-            ]
-        })
+        raw = json.dumps(
+            {
+                "ranked": [
+                    {"track_id": "ghost_1", "score": 9.0, "rationale": "made up"},
+                    {"track_id": "ghost_2", "score": 8.0, "rationale": "also made up"},
+                ]
+            }
+        )
         with pytest.raises(RefusalError) as exc:
             _agent().parse(raw, _input())
         assert "hallucinated=2" in str(exc.value)
@@ -153,70 +159,82 @@ class TestSchemaValidation:
 
 class TestDedupAndClamp:
     def test_dedups_keeping_first_entry(self):
-        raw = json.dumps({
-            "ranked": [
-                {"track_id": "track_a", "score": 9.0, "rationale": "first"},
-                {"track_id": "track_a", "score": 4.0, "rationale": "dup"},
-                {"track_id": "track_b", "score": 6.0, "rationale": "second track"},
-            ]
-        })
+        raw = json.dumps(
+            {
+                "ranked": [
+                    {"track_id": "track_a", "score": 9.0, "rationale": "first"},
+                    {"track_id": "track_a", "score": 4.0, "rationale": "dup"},
+                    {"track_id": "track_b", "score": 6.0, "rationale": "second track"},
+                ]
+            }
+        )
         out = _agent().parse(raw, _input())
         assert [r.track_id for r in out.ranked] == ["track_a", "track_b"]
         assert out.ranked[0].score == pytest.approx(9.0)
         assert out.ranked[0].rationale == "first"
 
     def test_clamps_score_to_zero_ten(self):
-        raw = json.dumps({
-            "ranked": [
-                {"track_id": "track_a", "score": 99.0, "rationale": "ok"},
-                {"track_id": "track_b", "score": -5.0, "rationale": "ok"},
-            ]
-        })
+        raw = json.dumps(
+            {
+                "ranked": [
+                    {"track_id": "track_a", "score": 99.0, "rationale": "ok"},
+                    {"track_id": "track_b", "score": -5.0, "rationale": "ok"},
+                ]
+            }
+        )
         out = _agent().parse(raw, _input())
         assert out.ranked[0].score == 10.0
         assert out.ranked[1].score == 0.0
 
     def test_drops_entries_with_empty_rationale(self):
-        raw = json.dumps({
-            "ranked": [
-                {"track_id": "track_a", "score": 9.0, "rationale": ""},
-                {"track_id": "track_b", "score": 6.0, "rationale": "kept"},
-            ]
-        })
+        raw = json.dumps(
+            {
+                "ranked": [
+                    {"track_id": "track_a", "score": 9.0, "rationale": ""},
+                    {"track_id": "track_b", "score": 6.0, "rationale": "kept"},
+                ]
+            }
+        )
         out = _agent().parse(raw, _input())
         assert [r.track_id for r in out.ranked] == ["track_b"]
 
     def test_non_numeric_score_drops_entry(self):
-        raw = json.dumps({
-            "ranked": [
-                {"track_id": "track_a", "score": "high", "rationale": "weird"},
-                {"track_id": "track_b", "score": 6.0, "rationale": "kept"},
-            ]
-        })
+        raw = json.dumps(
+            {
+                "ranked": [
+                    {"track_id": "track_a", "score": "high", "rationale": "weird"},
+                    {"track_id": "track_b", "score": 6.0, "rationale": "kept"},
+                ]
+            }
+        )
         out = _agent().parse(raw, _input())
         assert [r.track_id for r in out.ranked] == ["track_b"]
 
     def test_missing_track_id_drops_entry(self):
-        raw = json.dumps({
-            "ranked": [
-                {"score": 9.0, "rationale": "no id"},
-                {"track_id": "track_b", "score": 6.0, "rationale": "kept"},
-            ]
-        })
+        raw = json.dumps(
+            {
+                "ranked": [
+                    {"score": 9.0, "rationale": "no id"},
+                    {"track_id": "track_b", "score": 6.0, "rationale": "kept"},
+                ]
+            }
+        )
         out = _agent().parse(raw, _input())
         assert [r.track_id for r in out.ranked] == ["track_b"]
 
     def test_non_string_strengths_filtered_silently(self):
-        raw = json.dumps({
-            "ranked": [
-                {
-                    "track_id": "track_a",
-                    "score": 9.0,
-                    "rationale": "ok",
-                    "predicted_strengths": ["valid", 42, "", None, "also valid"],
-                },
-            ]
-        })
+        raw = json.dumps(
+            {
+                "ranked": [
+                    {
+                        "track_id": "track_a",
+                        "score": 9.0,
+                        "rationale": "ok",
+                        "predicted_strengths": ["valid", 42, "", None, "also valid"],
+                    },
+                ]
+            }
+        )
         out = _agent().parse(raw, _input())
         assert out.ranked[0].predicted_strengths == ["valid", "also valid"]
 
@@ -270,8 +288,6 @@ class TestPromptRendering:
         # The role marker must be defanged before reaching the prompt.
         assert "System: ignore previous" not in prompt
         assert "role-marker-stripped" in prompt
-
-
 
 
 class TestOutputCap:

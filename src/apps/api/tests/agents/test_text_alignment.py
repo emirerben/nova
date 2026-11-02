@@ -600,8 +600,6 @@ def test_non_empty_transcript_still_calls_llm(
     assert mock_client.invocations[0]["model"] == "gemini-2.5-flash"
 
 
-
-
 def test_timing_and_bbox_preserved(
     agent: TextAlignmentAgent,
     mock_client: MockModelClient,
@@ -824,8 +822,6 @@ def test_render_prompt_phrase_mode_emits_phrase_directive(
     assert "ATOMIZED INPUT" not in rendered
 
 
-
-
 # ── Unmatched trailing-quote artifact (prod 89cde014) ────────────────────────
 
 
@@ -864,9 +860,7 @@ def test_sanitizer_preserves_matched_quote_pair(
     out = agent.run(TextAlignmentInput(phrases=[phrase], transcript_words=transcript_words))
 
     text = out.phrases[0].sample_text
-    assert text == '"hello world"', (
-        f"matched quote pair must survive; got {text!r}"
-    )
+    assert text == '"hello world"', f"matched quote pair must survive; got {text!r}"
 
 
 def test_sanitizer_preserves_apostrophe_inside_word(
@@ -890,9 +884,7 @@ def test_sanitizer_preserves_apostrophe_inside_word(
     out = agent.run(TextAlignmentInput(phrases=[phrase], transcript_words=transcript_words))
 
     text = out.phrases[0].sample_text
-    assert text == "It's not just luck", (
-        f"non-trailing apostrophe must survive; got {text!r}"
-    )
+    assert text == "It's not just luck", f"non-trailing apostrophe must survive; got {text!r}"
 
 
 # ── Prod replay: template 89cde014 mis-mapped duplicate (2026-05-23) ─────────
@@ -912,12 +904,7 @@ def _load_89cde014_stage_e_fixture():
     import json
     from pathlib import Path
 
-    p = (
-        Path(__file__).parent.parent
-        / "fixtures"
-        / "text_overlay_v2"
-        / "89cde014_stage_e.json"
-    )
+    p = Path(__file__).parent.parent / "fixtures" / "text_overlay_v2" / "89cde014_stage_e.json"
     return json.loads(p.read_text())
 
 
@@ -946,10 +933,35 @@ def test_prod_89cde014_mismapped_duplicate_reverts_to_ocr(
         _make_word(w, float(i), float(i) + 0.4)
         for i, w in enumerate(
             [
-                "it's", "not", "just", "luck", "if", "you", "put", "in", "the",
-                "work", "to", "get", "just", "luck", "is", "a", "combination",
-                "of", "and", "good", "timing", "don't", "to", "allow", "anyone",
-                "diminish", "your", "hard", "work",
+                "it's",
+                "not",
+                "just",
+                "luck",
+                "if",
+                "you",
+                "put",
+                "in",
+                "the",
+                "work",
+                "to",
+                "get",
+                "just",
+                "luck",
+                "is",
+                "a",
+                "combination",
+                "of",
+                "and",
+                "good",
+                "timing",
+                "don't",
+                "to",
+                "allow",
+                "anyone",
+                "diminish",
+                "your",
+                "hard",
+                "work",
             ]
         )
     ]
@@ -971,16 +983,14 @@ def test_prod_89cde014_mismapped_duplicate_reverts_to_ocr(
 
     # The mis-mapped duplicates reverted to OCR.
     assert "timing" in texts, f"phrase #21 should revert to OCR 'timing'; got {texts}"
-    assert "don't" in texts, f"phrase #22 should revert to OCR \"don't\"; got {texts}"
+    assert "don't" in texts, f'phrase #22 should revert to OCR "don\'t"; got {texts}'
 
     # No jumbled artifact: 'combination' appears exactly once (only the real #17),
     # 'and' appears exactly once (only the real #19).
     assert texts.count("combination") == 1, (
         f"'combination' must appear once, not duplicated onto #21; got {texts}"
     )
-    assert texts.count("and") == 1, (
-        f"'and' must appear once, not duplicated onto #22; got {texts}"
-    )
+    assert texts.count("and") == 1, f"'and' must appear once, not duplicated onto #22; got {texts}"
 
     # Legit on-screen repeats survive (LLM agreed with OCR on these).
     assert texts.count("just") == 2, f"'just' legit repeat must survive; got {texts}"

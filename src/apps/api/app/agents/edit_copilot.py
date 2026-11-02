@@ -87,7 +87,11 @@ log = structlog.get_logger()
 # names what this editor cannot restage. Taught only where a guided revision offers the direction
 # family and COPILOT_DIRECTION_FOLLOWS_REQUEST_ENABLED is on; every other prompt is byte-identical.
 # (v103 is reserved by the commentary green-screen branch, PR #2045.)
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v104"
+# v103 (KRI-1162): set_background_sequence / set_speaker_frame / clear_speaker_frame and the
+# windows lines of BACKGROUND, taught only where the snapshot offers the `background_windows`
+# family; every other prompt is byte-identical.
+# v105: v103 (KRI-1162) and v104 (KRI-1097 wave 2) merged; the prompt carries both.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v105"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -2022,6 +2026,28 @@ def _format_snapshot(snapshot: dict) -> str:
                     )
             else:
                 lines.append("(none)")
+            if background.get("windows_available") is True:
+                # KRI-1162: only while the windows gate is open.
+                windows = (
+                    background.get("windows") if isinstance(background.get("windows"), list) else []
+                )
+                lines.append(
+                    f"windows_available: yes; video duration="
+                    f"{_fmt_round3(_first_number(background, ('duration_s',)))}s; "
+                    f"speaker_frame={_field(background.get('speaker_frame'), max_chars=24)!r}"
+                )
+                lines.append("WINDOWS:")
+                if windows:
+                    for window in windows[:40]:
+                        if not isinstance(window, dict):
+                            continue
+                        lines.append(
+                            f"- id={_field(window.get('media_id'), max_chars=80)!r} "
+                            f"{_fmt_round3(_first_number(window, ('start_s',)))}-"
+                            f"{_fmt_round3(_first_number(window, ('end_s',)))}s"
+                        )
+                else:
+                    lines.append("(none)")
 
     if isinstance(snapshot.get("tilt_backdrop_pool"), list):
         lines.append(

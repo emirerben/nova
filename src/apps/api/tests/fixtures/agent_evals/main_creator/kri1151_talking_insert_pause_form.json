@@ -1,6 +1,6 @@
 {
   "agent": "nova.creator.main",
-  "prompt_version": "2026-11-02-v110",
+  "prompt_version": "2026-11-02-v111",
   "input": {
     "user_message": "When I say congress, pause my talk while the congress clip plays with its own sound, then continue where I stopped.",
     "creator_request": "When I say congress, pause my talk while the congress clip plays with its own sound, then continue where I stopped.",
