@@ -276,6 +276,10 @@ def _speech_start(fact: dict, quote: str) -> float:
     return matches[0]
 
 
+OVERLAP_NOTICE = (
+    "Some suggestions overlap an existing overlay or each other. "
+    "Choose a free moment or remove an existing overlay."
+)
 LOGO_NOTICE = "Upload the real logo or choose it from your visual library."
 
 
@@ -339,10 +343,11 @@ def materialize_overlays(
                 "Choose a footage interval on one side."
             )
         if any(start < end and row.end_s > begin for begin, end in occupied):
-            raise ValueError(
-                "The suggested overlays overlap. "
-                "Choose a free moment or remove an existing overlay."
-            )
+            if notices is None:
+                raise ValueError(OVERLAP_NOTICE)
+            if OVERLAP_NOTICE not in notices:
+                notices.append(OVERLAP_NOTICE)
+            continue
         occupied.append((start, row.end_s))
         if row.kind == "library_asset":
             if row.asset_id not in by_asset:
