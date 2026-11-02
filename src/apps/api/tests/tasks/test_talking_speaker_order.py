@@ -2,7 +2,10 @@
 
 Gemini analyses finish in whatever order the network returns them. A multi-clip
 Talking edit reads its speakers in `clip_metas` order, so a racy order put the
-creator's own take (uploaded first) last and a stranger's clip first.
+creator's own take last and a stranger's clip first. The spine is the first
+speaker in dispatch order, meaning the order the paths reach `_ingest_clips`
+(strategy `selected_media_ids`, creator order requests, filming-guide order),
+which is not necessarily upload order.
 """
 
 from __future__ import annotations
@@ -67,7 +70,7 @@ def _words(count: int) -> list:
     ]
 
 
-def test_talking_spine_is_the_first_uploaded_speaker_whatever_the_analysis_order(
+def test_talking_spine_is_the_first_speaker_in_dispatch_order_whatever_the_analysis_order(
     monkeypatch, tmp_path
 ) -> None:
     paths = [f"gcs/source-{slot}.mp4" for slot in range(4)]
