@@ -73,6 +73,8 @@ def _run(
     brief: CreativeBrief | None = None,
     clips: list[dict] | None = None,
     analysis_order: tuple[int, ...] = (3, 4, 1, 2, 0),
+    strategy: dict | None = None,
+    settings_overrides: dict | None = None,
 ):
     clips = CLIPS if clips is None else clips
     bindings = {c["media_id"]: _binding(c["media_id"], duration_s=c["duration_s"]) for c in clips}
@@ -87,6 +89,7 @@ def _run(
         "clip_paths": [b.proxy_path for b in bindings.values()],
         "edit_format": "subtitled",
         "language": "tr",
+        **({"creator_strategy": strategy} if strategy is not None else {}),
     }
     job, _session = _job_and_session(
         monkeypatch, assembly_plan=snapshot, all_candidates=all_candidates
@@ -95,6 +98,8 @@ def _run(
     monkeypatch.setattr(gb.settings, "talking_multi_clip_enabled", True)
     monkeypatch.setattr(gb.settings, "phone_talking_mention_cutaways_enabled", mention)
     monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
+    for name, value in (settings_overrides or {}).items():
+        monkeypatch.setattr(gb.settings, name, value)
     monkeypatch.setattr(gb.settings, "phone_clip_sound_windows_enabled", sound)
     monkeypatch.setattr(gb.settings, "phone_talking_cutaway_sound_enabled", sound)
     # The worker saw the clips in the order their analyses finished, not the upload order.
