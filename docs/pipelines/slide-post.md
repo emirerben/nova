@@ -588,6 +588,33 @@ separate. This section is slide posts only.
   Closed, the snapshot and CURRENT POST carry no tilt and the op is refused with `capability_unavailable`.
   `compile_slide_post_ops` carries the tilt across text, look, framing and fit changes. Replay goldens:
   `tests/fixtures/agent_evals/edit_copilot/golden/slide_tilt_*.json`. Prompt version `2026-11-01-v102`.
+- **Zoom (KRI-1170, protocol 32).** `SlideTilt.zoom` (0.5..3, default 1 = as framed) scales the MEDIA about the canvas centre
+  BEFORE the turn: `tilt.media_size(..., zoom)` / `SlidePostTiltGeometry.mediaSize(..., zoom:)` multiply the cover (Fill) or
+  whole (Fit) size, and the bounds, corners and coverage test follow. Sticker, text, ink and watermark layers are
+  overlaid after the media and never zoom. Zoom 1 is left out of the serialized tilt, so a tilt stored before zoom keeps
+  its shape and digest (pinned in `test_slide_post_tilt.py`); a tilt is absent only at 0 degrees AND zoom 1, so a
+  zoom-only slide is still a tilt (a backdrop shows once it is below 1). Frozen with Swift by
+  `tests/fixtures/slide-tilt-parity/v2.json` (v1 stays as is).
+  Cloud: `_tilt_frame_filter` resamples once from the source to cover/whole x zoom (a second pass would soften a zoom-in)
+  and keeps only the disc the turn can bring onto the canvas (a square of the canvas diagonal), so a 3x photo or video
+  never rotates at full size; zoom 1 emits the exact previous graph. Device: `SlidePostOnDeviceRender.turned` scales
+  about the canvas centre and then rotates, so photos (`tiltedBase`) and each video frame (`tiltedCover`) share it.
+  Preview: `.scaleEffect(zoom)` before `.rotationEffect` in `SlidePostCachedImage.tiltedFrame` and `SlidePostVideoPicture`.
+  **Old-build safety.** `TILT_ZOOM_PROTOCOL = 32` / `media_tilt_zoom_min_client_protocol = 32`, no second master flag and
+  no verified-feature token. A PUT carrying a zoomed tilt from a build below 32 answers `426 {"feature":
+  "slide_tilt_zoom"}`, and so does a build below 32 that sends `tilt` (a value or `null`) over a slide whose STORED tilt is
+  zoomed (it re-encodes the tilt without the key and would erase the zoom); a build that leaves the key out keeps it
+  (three-state merge). Capability `slide_post_tilt_zoom` = `MEDIA_TILT_ENABLED` AND protocol >= 32; the iOS Zoom slider
+  (0.5x to 3x, 0.05 steps, a detent and light haptic at 1x, label "1.3x", Reset also resets zoom) shows only with it.
+  **Version fence.** No new number: a worker that predates zoom refuses the unknown key (`SlideTilt` is `extra="forbid"`)
+  and `parse_slide_post` fails closed, so it never renders a zoom-less export of a zoomed draft (shown on the base
+  commit); a zoomed draft is stamped and fenced by `SLIDES_TILT_RENDERER_VERSION` (6) like any tilt.
+  **AI.** `set_slide_tilt` gains `zoom` (absolute) and `zoom_delta` (the SERVER adds it to the slide's current zoom), both
+  clamped to 0.5..3 with a sentence naming the slides that stopped at a limit. They exist only while `post.tilt_zoom_enabled`
+  (flag + protocol 32): the CURRENT POST `slide N tilt:` line shows `zoom=` for a zoomed slide and the zoom rules are the
+  fragment `prompts/edit_copilot_ops/slide_tilt_zoom.txt`, appended only then, so a closed gate leaves every slide prompt
+  byte-identical. "Straighten" is `rotation_deg` 0 (keeps the zoom); `reset` removes tilt and zoom. Prompt version
+  `2026-11-02-v106`; goldens `slide_zoom_*.json`.
 - **Rollout.** Merge dark and deploy api + worker FIRST (an older worker that re-dumps a tilted draft through its older
   `SlideEdits` would drop the tilt). Then `fly secrets set MEDIA_TILT_ENABLED=true` (api + worker) + restart, with a
   protocol-28 TestFlight build out. **Rollback is the flag only**: never roll the CODE back once a tilt exists (draft
@@ -596,7 +623,8 @@ separate. This section is slide posts only.
   `tests/routes/test_slide_post_tilt_routes.py` (merge, 426, capability, freshness, backfill),
   `tests/services/test_slide_post_tilt_chat.py` (op, gate, sign, carry-through), `tests/tasks/test_slide_post_render.py`
   (stamp and key); iOS `SlidePostTiltTests` (fixture, save semantics, real render against the same geometry),
-  `SlidePostVideoRenderTests`, UI `testTiltTurnsThePhotoLiveAndSurvivesSave`.
+  `SlidePostVideoRenderTests`, UI `testTiltTurnsThePhotoLiveAndSurvivesSave`,
+  `testTiltZoomShowsOnlyWithItsCapabilityAndSurvivesSaveAndReset`.
 
 ## Known v1 gaps (tracked, not silently shipped)
 
