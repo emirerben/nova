@@ -914,6 +914,12 @@ class Settings(BaseSettings):
     # first build that decodes a media backdrop). A pinned recipe that already carries one
     # answers 426 `client_update_required` (`clip_backdrop_media`) to an older build.
     media_backdrop_min_client_protocol: int = 31
+    # KRI-1169: a clip's tilt zoom (`tilt.zoom` on the row, 0.5..3, carried in the recipe's
+    # `transform.scale`). Not a second master flag: it follows `media_tilt_enabled` and needs a
+    # build declaring protocol >= this value (33: the first build whose strict tilt row decodes
+    # `zoom`). The recipe needs no gate (older renderers already honour `transform.scale`); an
+    # older build whose Save would drop a stored zoom answers 426 `client_update_required`
+    # (`tilt_zoom`), and a new zoom while the gate is closed is a 422 `clip_tilt_zoom_unavailable`.
     # KRI-1170: a tilt's `zoom` (media scaled 0.5..3x about the canvas centre before it turns).
     # Not a second master flag: slide zoom is offered only while `media_tilt_enabled` is on and
     # to a build declaring protocol >= this value (33: the first build that decodes and

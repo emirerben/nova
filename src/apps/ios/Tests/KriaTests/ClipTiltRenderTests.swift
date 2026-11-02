@@ -151,4 +151,72 @@ final class ClipTiltRenderTests: XCTestCase {
         let plain = try await frame(of: untouched)
         XCTAssertEqual(blankBackdropUpright.bytes, plain.bytes)
     }
+
+    // MARK: Zoom (KRI-1169)
+
+    /// A zoom row renders through the device compiler's recipe: it scales the clip about the canvas centre.
+    func testAZoomRowScalesTheClipAboutTheCanvasCentreThroughTheDeviceCompiler() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let scene = try writeScene(to: directory)
+
+        let upright = try await frame(of: recipe(tilt: nil, scene: scene))
+        let scale = Double(upright.width) / Double(sourceWidth)
+        let (centreX, centreY) = (Double(upright.width) / 2, Double(upright.height) / 2)
+
+        // The marker is (+30, -100) source pixels from the centre, so a zoom z carries it to (30 z, -100 z).
+        let closer = try await frame(of: recipe(tilt: ClipTilt(zoom: 1.2), scene: scene))
+        try keep(closer, as: "zoom-1.2")
+        let near = try XCTUnwrap(closer.redCentroid())
+        XCTAssertEqual(near.x, centreX + 36 * scale, accuracy: 10, "marker x at 1.2x")
+        XCTAssertEqual(near.y, centreY - 120 * scale, accuracy: 10, "marker y at 1.2x")
+
+        let further = try await frame(of: recipe(tilt: ClipTilt(zoom: 0.5, backdrop: .color(backdropHex)), scene: scene))
+        try keep(further, as: "zoom-0.5-colour")
+        let far = try XCTUnwrap(further.redCentroid())
+        XCTAssertEqual(far.x, centreX + 15 * scale, accuracy: 10, "marker x at 0.5x")
+        XCTAssertEqual(far.y, centreY - 50 * scale, accuracy: 10, "marker y at 0.5x")
+        for (index, corner) in further.corners.enumerated() { assertClose(corner, backdropRGB, within: 2, "half zoom leaves backdrop in corner \(index)") }
+        assertClose(further.pixel(Int(centreX), Int(centreY)), sceneCentre, within: 3, "the half-size clip is centred")
+        assertClose(further.pixel(Int(centreX - 20 * scale), Int(centreY + 20 * scale)), sceneA, within: 3, "the left half is the clip")
+        assertClose(further.pixel(Int(centreX - 80 * scale), Int(centreY)), backdropRGB, within: 2, "outside the half-size clip is the backdrop")
+    }
+
+    func testTheCoverZoomHidesTheCornersATiltUncoversAndZoomOneDoesNot() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let scene = try writeScene(to: directory)
+
+        let bare = try await frame(of: recipe(tilt: ClipTilt(rotationDeg: 20, backdrop: .color(backdropHex)), scene: scene))
+        try keep(bare, as: "tilt-20-zoom-1")
+        for (index, corner) in bare.corners.enumerated() { assertClose(corner, backdropRGB, within: 2, "zoom 1.0 at 20 degrees uncovers corner \(index)") }
+
+        let radians = 20.0 * .pi / 180
+        let cover = cos(radians) + Double(bare.height) / Double(bare.width) * sin(radians)
+        let filled = try await frame(of: recipe(tilt: ClipTilt(rotationDeg: 20, zoom: (cover * 100).rounded(.up) / 100 + 0.01, backdrop: .color(backdropHex)), scene: scene))
+        try keep(filled, as: "tilt-20-zoom-cover")
+        for (index, corner) in filled.corners.enumerated() {
+            let fromBackdrop: Int = zip(corner, backdropRGB).map { abs($0 - $1) }.max() ?? 0
+            XCTAssertGreaterThan(fromBackdrop, 40, "the cover zoom still shows the backdrop in corner \(index): \(corner)")
+        }
+    }
+
+    func testAZoomOfOneIsTheSameRecipeAndTheSameFrameAsNoZoom() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let scene = try writeScene(to: directory)
+        let tilted = ClipTilt(rotationDeg: 20, backdrop: .blur)
+        XCTAssertNil(tilted.rowValue?.objectValue?["zoom"])
+        let plain = try recipe(tilt: tilted, scene: scene)
+        var one = tilted
+        one.zoom = 1
+        let explicit = try recipe(tilt: one, scene: scene)
+        XCTAssertEqual(plain.recipe, explicit.recipe)
+        let first = try await frame(of: plain)
+        let second = try await frame(of: explicit)
+        XCTAssertEqual(first.bytes, second.bytes)
+    }
 }

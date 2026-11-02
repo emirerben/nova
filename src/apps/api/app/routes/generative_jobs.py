@@ -7626,6 +7626,11 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             # KRI-1139: a pool photo or video behind the clip. Present only when ON, so the
             # payload of a build or deployment without it keeps its exact shape.
             capabilities["clips"]["tilt_backdrop_media"] = {"editable": True, "reason": None}
+        from app.services.phone_rollout import clip_tilt_zoom_supported  # noqa: PLC0415
+
+        if clip_tilt_zoom_supported():
+            # KRI-1169: the Zoom slider. Present only when ON, like `tilt_backdrop_media`.
+            capabilities["clips"]["tilt_zoom"] = {"editable": True, "reason": None}
     range_leaf = _talking_range_capability(job, variant)
     if range_leaf is not None:
         # Present only when ON: every closed-gate payload keeps its exact shape. `timeline`
@@ -11132,6 +11137,8 @@ def _require_clip_tilt_gates(job: Job, variant: dict, payload: EditorCommitReque
         clip_backdrop_media_supported,
         clip_tilt_client_supported,
         clip_tilt_supported,
+        clip_tilt_zoom_client_supported,
+        clip_tilt_zoom_supported,
     )
     from app.services.phone_subtitled_editor import pinned_visual  # noqa: PLC0415
 
@@ -11163,6 +11170,17 @@ def _require_clip_tilt_gates(job: Job, variant: dict, payload: EditorCommitReque
                 "minimum_client_protocol": settings.media_tilt_min_client_protocol,
             },
         )
+    if not clip_tilt_zoom_client_supported() and any(
+        (tilt or {}).get("zoom", 1) != 1 for tilt in stored.values()
+    ):
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "tilt_zoom",
+                "minimum_client_protocol": settings.media_tilt_zoom_min_client_protocol,
+            },
+        )
     changed = [
         slot
         for slot in slots
@@ -11176,6 +11194,11 @@ def _require_clip_tilt_gates(job: Job, variant: dict, payload: EditorCommitReque
         or not clip_tilt_supported(require_client=False)
     ):
         raise HTTPException(422, detail={"code": "clip_tilt_unavailable"})
+    if not clip_tilt_zoom_supported() and any(
+        (slot.tilt or {}).get("zoom", 1) not in (1, (stored.get(slot.slot_id) or {}).get("zoom", 1))
+        for slot in changed
+    ):
+        raise HTTPException(422, detail={"code": "clip_tilt_zoom_unavailable"})
     for slot in changed:
         media_id = _tilt_media_asset(slot.tilt)
         if media_id is None:

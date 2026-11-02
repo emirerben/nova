@@ -189,6 +189,8 @@ def compile_phone_authored_timeline(
                 cursor -= overlap
         tilt_patch, backdrop = clip_tilt_fields(row)
         card = still and row.get("layout") == "supporting_card"
+        if card:
+            tilt_patch.pop("scale", None)
         clips.append(
             TimelineClip(
                 id=row["slot_id"],

@@ -1252,6 +1252,9 @@ enum KriaClientProtocolContract {
     /// 30 is the card-tilt build (KRI-1141) and 31 the media-backdrop build (KRI-1139). The server offers timed backgrounds only to this protocol (and only with
     /// `speakerBackgroundWindows` verified) and answers 426 `client_update_required` (`speaker_background_windows`)
     /// to an older build polling or saving a recipe that already carries them.
+    /// 33 (KRI-1169): reads and keeps a clip tilt row's `zoom` (`0.5...3`, carried in the recipe's `transform.scale`).
+    /// The server offers `clips.tilt_zoom` only to this protocol and answers 426 `client_update_required`
+    /// (`tilt_zoom`) to an older build whose Save would replace a timeline holding a stored zoom.
     /// 33 (KRI-1170): decodes and round-trips a tilt's `zoom` (a slide's media scaled 0.5 to 3x before it turns). The server
     /// offers `slide_post_tilt_zoom` only to this protocol and answers 426 `client_update_required` (`slide_tilt_zoom`) to an
     /// older build that would save over a zoomed tilt, since it re-encodes the tilt without the key.
@@ -2127,6 +2130,7 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "clip_backdrop_media_not_in_pool": "That photo or video isn’t in this video’s Visuals any more. Choose another background or reset the tilt, then save again. Your edits are still here.",
             "clip_backdrop_media_unavailable": "A photo or video behind a clip isn’t available right now. Choose another background or reset the tilt, then save again. Your edits are still here.",
             "clip_tilt_unavailable": "Tilt isn’t available right now. Reset the tilt on that clip and save again. Your edits are still here.",
+            "clip_tilt_zoom_unavailable": "Zoom isn’t available right now. Set the zoom back to 1x on that clip and save again. Your edits are still here.",
             "transitions_disabled": "Transitions aren’t available right now. Set the clip to a cut and save again. Your edits are still here.",
             "song_shorter_than_video": "The song is shorter than your video. Pick a longer song or shorten the video, then save again. Your edits are still here.",
             "music_track_unavailable": "That song isn’t available any more. Pick another song and save again. Your edits are still here.",

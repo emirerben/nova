@@ -2869,7 +2869,7 @@
     {
       "id": "kri-1137-chat-tilt",
       "needs_native": false,
-      "api_tests": "tests/agents/test_clip_tilt_ai.py tests/evals/test_edit_copilot_evals.py tests/agents/test_creator_wire_contract.py tests/agents/test_editor_ops_v2.py tests/agents/test_timeline_capability_context.py tests/kria/test_editor_capability_parity.py tests/services/test_kria_ask_cli.py tests/agents/test_clip_tilt_media_ai.py",
+      "api_tests": "tests/agents/test_clip_tilt_ai.py tests/evals/test_edit_copilot_evals.py tests/agents/test_creator_wire_contract.py tests/agents/test_editor_ops_v2.py tests/agents/test_timeline_capability_context.py tests/kria/test_editor_capability_parity.py tests/services/test_kria_ask_cli.py tests/agents/test_clip_tilt_media_ai.py tests/agents/test_clip_tilt_zoom_ai.py",
       "paths": [
         "src/apps/api/app/kria/clip_tilt.py",
         "src/apps/api/prompts/edit_copilot_ops/clip_tilt.txt",
@@ -2887,7 +2887,15 @@
         "src/apps/api/prompts/edit_copilot_ops/clip_tilt_media.txt",
         "src/apps/api/tests/agents/test_clip_tilt_media_ai.py",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_media_second_photo.json",
-        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_media_not_in_pool_refusal.json"
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_media_not_in_pool_refusal.json",
+        "src/apps/api/prompts/edit_copilot_ops/clip_tilt_zoom.txt",
+        "src/apps/api/tests/agents/test_clip_tilt_zoom_ai.py",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_zoom_in_a_bit.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_zoom_fill_corners.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_zoom_absolute.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_zoom_reset.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_zoom_gate_closed.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_zoom_turkish.json"
       ]
     },
     {

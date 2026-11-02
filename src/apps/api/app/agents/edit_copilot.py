@@ -94,8 +94,12 @@ log = structlog.get_logger()
 # v107 (KRI-1170): SLIDE ZOOM: set_slide_tilt "zoom" / "zoom_delta" (0.5..3, the server adds the
 # delta and says when it stopped at a limit) in prompts/edit_copilot_ops/slide_tilt_zoom.txt, and
 # `zoom=` on a zoomed slide's `slide N tilt` line, taught only where a slide post shows
-# `tilt_zoom_enabled: true`; every other prompt is byte-identical. (v106 is the clip lane's.)
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-02-v107"
+# `tilt_zoom_enabled: true`; every other prompt is byte-identical. (v108 is the clip lane's.)
+# v108 (KRI-1169): CLIP TILT ZOOM: patch_slots tilt "zoom" (absolute, 0.5..3, 1 as framed) and
+# "zoom_delta" (added), the zoom that fills the corners a tilt leaves empty, taught in
+# clip_tilt_zoom.txt only where `tilt_zoom` is open; a clip row lists its zoom only then. Every
+# other prompt, including a tilt-open one without zoom, is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-02-v108"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1318,7 +1322,8 @@ def _format_slot_tilt(raw: object) -> str:
         behind = f", backdrop=media({backdrop.asset_id})"
     else:
         behind = f", backdrop={backdrop.color or backdrop.kind}"
-    return f" tilt=(rotation_deg={_fmt_num(tilt.rotation_deg)}{behind})"
+    zoom = f", zoom={_fmt_num(tilt.zoom)}" if tilt.zoom != 1 else ""
+    return f" tilt=(rotation_deg={_fmt_num(tilt.rotation_deg)}{zoom}{behind})"
 
 
 def _format_snapshot(snapshot: dict) -> str:

@@ -4204,6 +4204,54 @@ Rollout: after `MEDIA_TILT_ENABLED` is on, add `clipBackdropMedia` to `PHONE_REN
 worker, restart) once a physical-device preview and export check has passed, then ship the TestFlight build that
 declares protocol 31. Rollback is removing the token or `MEDIA_TILT_ENABLED=false`, never a code revert.
 
+### Tilt zoom (KRI-1169)
+
+A clip's Tilt sheet has a Zoom slider (0.5x to 3x, 1x as framed, a detent at 1x). Zoom is a scale about the CANVAS
+CENTRE applied before the turn; it works on a clip with no angle and a blank backdrop, and it is how a creator fills the
+corners a tilt uncovers (`zoom >= cos(A) + H/W * sin(A)` for a clip that fills the frame at angle A: 1.30 at 10 degrees, 1.55
+at 20, on a 9:16 canvas).
+
+| Stage | Where the zoom lives |
+|---|---|
+| Row (`clips[i].raw["tilt"]`) | `{"rotation_deg": ..., "zoom": 1.3, "backdrop": ...}`; `zoom` rounded to hundredths, omitted while 1, 0.5..3 or the Save is refused (422, not clamped). `ClipTilt.row()` / `rowValue` are `None` only for angle 0, zoom 1, blank backdrop |
+| Recipe | no new field and no new token: `transform.scale` = the clip's own framing scale (letterbox, else 1) x zoom. Older renderers already honour `transform.scale`, so the recipe needs no gate |
+| Writers | `phone_recipe_shared.clip_tilt_fields(row, fit_scale=...)` composes it for all five writers (guided, authored, voiceover cut, voiceover montage, subtitled); the Swift twin is `ClipTilt.recipeScale(framing:)` in `NativeEditorRenderCompiler` |
+| Back to a row | the scale carries two numbers, so `split_clip_scale(scale, letterbox)` splits it: a scale equal to 1 or the letterbox scale is unzoomed, else the zoom is the hundredth over one of the two framings. Used by the voiceover timeline projection, the subtitled lane Save (`_previous_clip_tilts`), `apply_landscape_fit` (keeps the zoom, changes only the letterbox part) and `landscape_fit_from_recipe` (a zoom-out is never read as a letterbox). The one unreadable case is a source whose letterbox scale times a zoom equals 1 (for example a 9:8 source at 2x): it reads as unzoomed |
+
+A supporting card photo takes the turn only (server ignores its zoom, the editor already blocks tilt there). A clip with a
+look cannot tilt, so it cannot zoom (`TIMELINE_TILT_WITH_LOOK`).
+
+Gate: no second master flag and no new verified token. `editor_capabilities.clips.tilt_zoom` is present only while the tilt
+gate is open (`MEDIA_TILT_ENABLED`, `clipTilt` verified) and the build declares protocol >= `MEDIA_TILT_ZOOM_MIN_CLIENT_PROTOCOL`
+(33, `TILT_ZOOM_PROTOCOL`). Save: a build below 33 that replaces the timeline of a variant holding a stored zoom gets
+`426 client_update_required` (`feature: "tilt_zoom"`, `minimum_client_protocol: 33`), because its strict `ClipTilt` reads the
+unknown `zoom` key as no tilt and its Save would erase the zoom; a new zoom while the capability is closed is
+`422 clip_tilt_zoom_unavailable` (in the editor-save catalog and the app's copy map). Keeping or removing a stored zoom is
+always allowed. Rollback is `MEDIA_TILT_ENABLED=false` (+ restart); raising `MEDIA_TILT_ZOOM_MIN_CLIENT_PROTOCOL` hides
+only the slider. Rollout: ship the protocol-33 build first (a build below 33 never sees the capability), then the flag is
+already the tilt flag.
+
+Editor: `NativeTiltSheet` shows the slider only where `canTiltZoom` (`clips.tilt_zoom`); a drag within 0.05 of 1x lands on 1x
+with a light haptic, Reset returns the zoom to 1x, the preview updates through the live-composition path, VoiceOver gets a
+Zoom slider with a "1.5x" value. `setClipTilt` refuses a new zoom while the capability is closed but always lets a stored one
+be kept or removed.
+
+Chat: `patch_slots.tilt.zoom` (absolute) and `zoom_delta` (added to each clip's own zoom); an absolute zoom past 0.5..3 is
+clamped with a sentence, a relative one is clamped against each clip's own zoom and the receipt names the result ("Zoomed clip
+2 to 1.3x", "Reset the zoom of clip 2"). The prompt fragment `prompts/edit_copilot_ops/clip_tilt_zoom.txt` (cover table for
+"fill the corners", `EDIT_COPILOT_PROMPT_VERSION` `2026-11-02-v108`), the snapshot's per-clip zoom and
+`timeline_patch_capabilities.tilt_zoom` exist only while `clips.tilt_zoom` is open, so a closed gate leaves every prompt and
+snapshot byte-identical. `{"tilt":null}` resets the zoom with the rest; `{"tilt":{"zoom":1}}` resets only the zoom.
+
+Failure modes and what pins each: zoom after the rotation or about the wrong pivot (`ClipTiltCompositionTests.testZoom*`,
+`ClipTiltRenderTests`, pixel reads of a red marker and the corners); double application on a letterboxed clip
+(`test_every_phone_writer_composes_the_zoom_with_the_letterbox`, five writers x fit/fill x three zooms; `testCompilerMapsAZoomOnto...`);
+one writer dropping it (same test); zoom 1.0 changing bytes (`test_a_zoom_of_one_leaves_every_writer_byte_identical`,
+`testAZoomOfOneIsTheSameRecipeAndTheSameFrameAsNoZoom`, the goldens hash); an older build erasing a stored zoom
+(`test_clip_tilt_zoom_save.py`); the capability without flag or protocol (same file); chat zoom out of range and a look clip
+(`test_clip_tilt_zoom_ai.py`); Reset leaving the zoom (`testZoomIsStoredOnTheRowResetClearsIt...`, `NativeTiltUITests`);
+Python/Swift drift (`tests/fixtures/clip-tilt-row/v1.json`, valid, invalid and compose cases read by both).
+
 ## Range on phone Talking edits
 
 The editor's Range sheet (`KriaSourceWindowEditor`, KRI-717) chooses which part of a clip plays. On a

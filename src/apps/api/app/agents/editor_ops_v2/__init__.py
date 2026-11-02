@@ -56,6 +56,8 @@ FIELD_FRAGMENTS: dict[str, str] = {
     # KRI-1139: appended after `clip_tilt.txt` only while the pool-photo backdrop is open too, so
     # a tilt-open edit without it keeps its exact prompt.
     "tilt_backdrop_media": "clip_tilt_media.txt",
+    # KRI-1169: appended last, only while the zoom is open too.
+    "tilt_zoom": "clip_tilt_zoom.txt",
 }
 # KRI-1141: appended only while the `overlay` family is offered AND `snapshot["overlays"]["tilt"]`
 # is true (`editor_capabilities.media_overlay_tilt`), so a closed gate leaves the prompt identical.

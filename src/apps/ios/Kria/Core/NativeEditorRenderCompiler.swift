@@ -277,9 +277,12 @@ enum NativeEditorRenderError: Error, Equatable {
             }
             // KRI-1136: the creator's tilt turns the clip about the canvas centre AFTER the letterbox scale, so a
             // tilted sideways clip keeps its bars. A graded clip stays upright, like the server's refusal.
+            // KRI-1169: the zoom multiplies that letterbox scale (never replaces it).
             if video[video.count - 1].look == nil, let tilt = try Self.clipTilt(authoredSlot?.raw["tilt"]) {
                 video[video.count - 1].transform.rotationDegrees = tilt.recipeRotationDegrees
                 video[video.count - 1].backdrop = tilt.recipeBackdrop
+                let framing = video[video.count - 1].transform.scale
+                video[video.count - 1].transform.scale = tilt.recipeScale(framing: framing)
             }
         }
         // The video track is the composition's clock. Without it text and

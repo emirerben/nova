@@ -934,6 +934,37 @@ def clip_tilt_supported(*, require_client: bool | None = None) -> bool:
     )
 
 
+def clip_tilt_zoom_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build read and keep a tilt row's ``zoom`` (KRI-1169)?
+
+    At least ``media_tilt_zoom_min_client_protocol`` (33). ``require_client`` as in
+    `clip_tilt_client_supported`.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.media_tilt_zoom_min_client_protocol
+
+
+def clip_tilt_zoom_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "may a tilted or untilted clip be zoomed right now".
+
+    The tilt gate (`clip_tilt_supported`) plus a build at protocol 33. No second flag and no
+    second verified token: zoom is ``transform.scale``, which every renderer already honours.
+    """
+    return bool(
+        clip_tilt_supported(require_client=require_client)
+        and clip_tilt_zoom_client_supported(require_client=require_client)
+    )
+
+
 def recipe_has_tilted_card(recipe: Any) -> bool:
     """Does any placed picture card of this recipe turn (KRI-1141)?
 

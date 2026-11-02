@@ -22,7 +22,7 @@ final class ClipTiltTests: XCTestCase {
 
     func testSharedFixtureValidTiltsNormalizeAndMapToRecipeFields() throws {
         let valid = try fixture("valid")
-        XCTAssertGreaterThanOrEqual(valid.count, 14)
+        XCTAssertGreaterThanOrEqual(valid.count, 20)
         for item in valid {
             let name = item["name"] as? String ?? ""
             let tilt = try ClipTilt(row: json(item["tilt"])) ?? .upright
@@ -33,8 +33,36 @@ final class ClipTiltTests: XCTestCase {
             let backdrop = recipe["backdrop"] is NSNull ? nil : try RecipeJSON.decoder().decode(
                 ClipBackdrop.self, from: JSONSerialization.data(withJSONObject: recipe["backdrop"] as Any))
             XCTAssertEqual(tilt.recipeBackdrop, backdrop, name)
+            XCTAssertEqual(tilt.recipeScale(framing: 1), recipe["scale"] as? Double ?? 1, accuracy: 1e-12, "\(name) recipe scale")
             XCTAssertEqual(try ClipTilt(row: tilt.rowValue) ?? .upright, tilt, "\(name) round-trips")
         }
+    }
+
+    func testSharedFixtureZoomComposesWithTheFramingScale() throws {
+        let compose = try fixture("compose")
+        XCTAssertGreaterThanOrEqual(compose.count, 5)
+        for item in compose {
+            let name = item["name"] as? String ?? ""
+            let tilt = try ClipTilt(row: json(item["tilt"])) ?? .upright
+            let letterbox = try XCTUnwrap(item["letterbox"] as? Double)
+            XCTAssertEqual(tilt.recipeScale(framing: letterbox), try XCTUnwrap(item["scale"] as? Double), accuracy: 1e-12, name)
+        }
+    }
+
+    func testZoomIsClampedRoundedAndOmittedFromTheRowWhileOne() throws {
+        XCTAssertEqual(ClipTilt(zoom: 1.2345).zoom, 1.23)
+        XCTAssertEqual(ClipTilt(zoom: 9).zoom, 3)
+        XCTAssertEqual(ClipTilt(zoom: 0.1).zoom, 0.5)
+        XCTAssertEqual(ClipTilt(zoom: .nan).zoom, 1, "a non-finite zoom can never be stored")
+        var tilt = ClipTilt(rotationDeg: 10, zoom: 2)
+        tilt.zoom = 7
+        XCTAssertEqual(tilt.zoom, 3, "assigning past the end clamps")
+        XCTAssertEqual(ClipTilt(zoom: 1.3).rowValue, .object(["rotation_deg": .number(0), "zoom": .number(1.3)]))
+        XCTAssertNil(ClipTilt(zoom: 1).rowValue, "an unzoomed upright blank clip has no row")
+        XCTAssertEqual(ClipTilt(rotationDeg: 15, zoom: 1, backdrop: .blur).rowValue, Self.blur.rowValue, "zoom 1 keeps the old bytes")
+        XCTAssertTrue(ClipTilt(zoom: 1).isIdentity)
+        XCTAssertFalse(ClipTilt(zoom: 1.01).isIdentity)
+        XCTAssertEqual(ClipTilt(rotationDeg: 80, zoom: 1.4).turnedQuarter(), ClipTilt(rotationDeg: 170, zoom: 1.4))
     }
 
     func testSharedFixtureInvalidTiltsAreRejected() throws {
@@ -84,7 +112,7 @@ final class ClipTiltTests: XCTestCase {
 
     static let tiltOpen: JSONValue = .object(["editable": .bool(true), "reason": .null])
 
-    static func session(tilt capability: JSONValue? = tiltOpen, backdropMedia: JSONValue? = nil, slots extras: [[String: JSONValue]] = [[:]]) async -> (NativeEditorSession, EditorCommitSpy) {
+    static func session(tilt capability: JSONValue? = tiltOpen, backdropMedia: JSONValue? = nil, zoom: JSONValue? = nil, slots extras: [[String: JSONValue]] = [[:]]) async -> (NativeEditorSession, EditorCommitSpy) {
         let threadID = UUID()
         var authoritative: [String: JSONValue] = [
             "variant_id": .string("initial"), "render_generation_id": .string("generation-1"), "render_status": .string("ready"),
@@ -95,6 +123,7 @@ final class ClipTiltTests: XCTestCase {
         var clips: [String: JSONValue] = ["looks": .object(["editable": .bool(false)])]
         if let capability { clips["tilt"] = capability }
         if let backdropMedia { clips["tilt_backdrop_media"] = backdropMedia }
+        if let zoom { clips["tilt_zoom"] = zoom }
         authoritative["editor_capabilities"] = .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false), "clips": .object(clips)])
         let slots = extras.enumerated().map { index, extra -> JSONValue in
             var slot: [String: JSONValue] = ["slot_id": .string("slot-\(index)"), "clip_index": .number(Double(index)), "in_s": .number(0),
@@ -149,6 +178,80 @@ final class ClipTiltTests: XCTestCase {
         XCTAssertNil(session.clipTilt(for: target))
         await session.save()
         XCTAssertEqual(try XCTUnwrap(fake.lastRequest?.timelineSlots?.first?.objectValue)["tilt"], .null)
+    }
+
+    // MARK: Zoom (KRI-1169)
+
+    static let zoomOpen: JSONValue = .object(["editable": .bool(true), "reason": .null])
+
+    func testZoomIsStoredOnTheRowResetClearsItAndAZoomAloneIsATilt() async throws {
+        let (session, _) = await Self.session(zoom: Self.zoomOpen)
+        let target = try selection(session)
+        let original = session.document.clips
+        XCTAssertTrue(session.canTiltZoom)
+
+        session.setClipTilt(ClipTilt(zoom: 1.5), for: target)
+        XCTAssertEqual(session.document.clips[0].raw["tilt"], .object(["rotation_deg": .number(0), "zoom": .number(1.5)]))
+        XCTAssertEqual(session.clipTilt(for: target)?.zoom, 1.5)
+        XCTAssertTrue(session.hasUnsavedChanges)
+
+        session.setClipTilt(ClipTilt(rotationDeg: 8, zoom: 1.24, backdrop: .blur), for: target)
+        XCTAssertEqual(session.clipTilt(for: target), ClipTilt(rotationDeg: 8, zoom: 1.24, backdrop: .blur))
+
+        session.setClipTilt(nil, for: target)
+        XCTAssertEqual(session.document.clips, original, "Reset returns the zoom to 1 and leaves no tilt key behind")
+        session.setClipTilt(ClipTilt(zoom: 1.5), for: target)
+        session.setClipTilt(ClipTilt(zoom: 1), for: target)
+        XCTAssertEqual(session.document.clips, original, "a zoom back at 1 on an upright blank clip is the same as Reset")
+    }
+
+    func testZoomIsClosedUnlessTheServerOffersItButTheAngleStillWorks() async throws {
+        let (session, _) = await Self.session()
+        let target = try selection(session)
+        XCTAssertTrue(session.canTiltClips)
+        XCTAssertFalse(session.canTiltZoom)
+        session.setClipTilt(ClipTilt(zoom: 1.5), for: target)
+        XCTAssertNil(session.document.clips[0].raw["tilt"], "no zoom without clips.tilt_zoom")
+        session.setClipTilt(ClipTilt(rotationDeg: 10, zoom: 1.5), for: target)
+        XCTAssertNil(session.document.clips[0].raw["tilt"], "a zoom smuggled in with an angle is refused too")
+        session.setClipTilt(ClipTilt(rotationDeg: 10), for: target)
+        XCTAssertEqual(session.clipTilt(for: target), ClipTilt(rotationDeg: 10))
+    }
+
+    func testAClosedGateStillKeepsAndRemovesAZoomTheClipAlreadyStores() async throws {
+        let saved: JSONValue = .object(["rotation_deg": .number(8), "zoom": .number(1.4)])
+        let (session, _) = await Self.session(slots: [["tilt": saved]])
+        let target = try selection(session)
+        XCTAssertEqual(session.clipTilt(for: target), ClipTilt(rotationDeg: 8, zoom: 1.4))
+        session.setClipTilt(ClipTilt(rotationDeg: 20, zoom: 1.4), for: target)
+        XCTAssertEqual(session.clipTilt(for: target), ClipTilt(rotationDeg: 20, zoom: 1.4), "the stored zoom survives an angle change")
+        session.setClipTilt(ClipTilt(rotationDeg: 20, zoom: 1), for: target)
+        XCTAssertEqual(session.clipTilt(for: target)?.zoom, 1, "and may be taken off")
+        session.setClipTilt(nil, for: target)
+        XCTAssertEqual(session.document.clips[0].raw["tilt"], .null, "a saved tilt is cleared with an explicit null")
+    }
+
+    func testSaveSendsTheZoomAsPartOfTheTimelineSlot() async throws {
+        let (session, fake) = await Self.session(zoom: Self.zoomOpen)
+        session.setClipTilt(ClipTilt(rotationDeg: 8, zoom: 1.24), for: try selection(session))
+        await session.save()
+        let sent = try XCTUnwrap(fake.lastRequest?.timelineSlots?.first?.objectValue)
+        XCTAssertEqual(sent["tilt"]?.objectValue?["zoom"], .number(1.24))
+        XCTAssertEqual(sent["tilt"]?.objectValue?["rotation_deg"], .number(8))
+    }
+
+    func testApplyingABackdropToAllClipsKeepsEachClipsZoom() async throws {
+        let (session, _) = await Self.session(zoom: Self.zoomOpen, slots: [[:], ["tilt": .object(["rotation_deg": .number(-20), "zoom": .number(1.8)])]])
+        _ = session.applyTiltBackdropToAllClips(.blur)
+        XCTAssertEqual(try ClipTilt(row: session.document.clips[0].raw["tilt"]), ClipTilt(backdrop: .blur))
+        XCTAssertEqual(try ClipTilt(row: session.document.clips[1].raw["tilt"]), ClipTilt(rotationDeg: -20, zoom: 1.8, backdrop: .blur))
+    }
+
+    func testAClipWithALookCannotZoom() async throws {
+        let (session, _) = await Self.session(zoom: Self.zoomOpen, slots: [["look_preset": .string("golden_hour")]])
+        let before = session.document
+        session.setClipTilt(ClipTilt(zoom: 1.5), for: try selection(session))
+        XCTAssertEqual(session.document, before)
     }
 
     func testSaveSendsTheTiltAsPartOfTheTimelineSlot() async throws {
@@ -240,11 +343,31 @@ final class ClipTiltTests: XCTestCase {
         XCTAssertEqual(clip.transform.rotationDegrees, 15)
     }
 
+    func testCompilerMapsAZoomOntoTheClipScaleAndComposesItWithTheLetterbox() throws {
+        let zoomed = ClipTilt(rotationDeg: 15, zoom: 1.5, backdrop: .blur).rowValue!
+        let cover = try compiled(raw: ["tilt": zoomed])
+        XCTAssertEqual(cover.transform.scale, 1.5, accuracy: 1e-12)
+        XCTAssertEqual(cover.transform.rotationDegrees, 15)
+        let letterboxed = try compiled(raw: ["tilt": zoomed], fit: true)
+        XCTAssertEqual(letterboxed.transform.scale, 0.31640625 * 1.5, accuracy: 1e-9, "the zoom multiplies the bars' scale, never replaces it")
+        let zoomOnly = try compiled(raw: ["tilt": ClipTilt(zoom: 0.5).rowValue!], fit: true)
+        XCTAssertEqual(zoomOnly.transform.scale, 0.31640625 * 0.5, accuracy: 1e-9)
+        XCTAssertEqual(zoomOnly.transform.rotationDegrees, 0)
+        let unzoomed = try compiled(raw: ["tilt": ClipTilt(rotationDeg: 15, backdrop: .blur).rowValue!], fit: true)
+        XCTAssertEqual(unzoomed.transform.scale, 0.31640625, "zoom 1 leaves the letterbox scale exactly as it was")
+    }
+
+    func testCompilerKeepsAGradedClipUnzoomed() throws {
+        let graded = try compiled(raw: ["tilt": ClipTilt(zoom: 2).rowValue!], look: "golden_hour", size: MediaSize(width: 1080, height: 1920))
+        XCTAssertEqual(graded.transform.scale, 1)
+    }
+
     func testCompilerKeepsAGradedClipUprightAndRejectsAMalformedRow() throws {
         let graded = try compiled(raw: ["tilt": Self.blur.rowValue!], look: "golden_hour", size: MediaSize(width: 1080, height: 1920))
         XCTAssertEqual(graded.transform.rotationDegrees, 0)
         XCTAssertNil(graded.backdrop)
         XCTAssertThrowsError(try compiled(raw: ["tilt": .object(["rotation_deg": .string("15")])]))
+        XCTAssertThrowsError(try compiled(raw: ["tilt": .object(["zoom": .number(3.5)])]))
     }
 
     func testCompilerKeepsACropAndATiltTogether() throws {

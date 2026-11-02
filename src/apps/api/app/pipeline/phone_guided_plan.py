@@ -166,6 +166,8 @@ def _still_tilt_fields(moment: Any) -> dict[str, Any]:
     """``transform`` / ``backdrop`` for a photo moment. A supporting card turns about its
     centre over its own blurred cover, so it takes the rotation only."""
     patch, backdrop = clip_tilt_fields(moment)
+    if moment.layout == "supporting_card":
+        patch.pop("scale", None)
     fields: dict[str, Any] = {}
     if patch:
         fields["transform"] = MediaTransform(**patch)
@@ -670,7 +672,7 @@ def compile_phone_guided_plan(
                 transform = face_fill_transform(
                     display_w, display_h, canvas, moment.fill_position_x
                 )
-        tilt_patch, backdrop = clip_tilt_fields(moment)
+        tilt_patch, backdrop = clip_tilt_fields(moment, fit_scale=transform.scale)
         if backdrop is not None or tilt_patch:
             if moment.look_preset == "golden_hour":
                 raise UnsupportedPhonePlan(

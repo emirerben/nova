@@ -33,6 +33,8 @@ CARD_TILT_PROTOCOL = 30
 # capability).
 CLIP_BACKDROP_MEDIA_PROTOCOL = 31
 
+# The first build that decodes a clip tilt row's `zoom` (KRI-1169). An older build reads the
+# row's unknown key as no tilt and would erase the zoom on its next Save.
 # The first build that decodes and round-trips a tilt's `zoom` (KRI-1170). Below it the key is
 # an unknown field a build drops on its next save.
 TILT_ZOOM_PROTOCOL = 33

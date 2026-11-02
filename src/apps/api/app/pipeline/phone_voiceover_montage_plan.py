@@ -309,7 +309,9 @@ def compile_phone_voiceover_montage_plan(
             is_proxy_available=True,
         )
         clip_id = f"step-{index}-{step.clip_id}"
-        tilt_patch, backdrop = clip_tilt_fields({"tilt": (clip_tilts or {}).get(clip_id)})
+        tilt_patch, backdrop = clip_tilt_fields(
+            {"tilt": (clip_tilts or {}).get(clip_id)}, fit_scale=transform.scale
+        )
         if color_grade == "golden_hour" and (tilt_patch or backdrop is not None):
             raise UnsupportedPhonePlan("a color grade cannot be combined with a tilted clip")
         clips.append(

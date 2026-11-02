@@ -258,6 +258,8 @@ def copilot_schema():
                 {
                     "rotation_deg": number,
                     "rotation_delta_deg": number,
+                    "zoom": number,
+                    "zoom_delta": number,
                     "backdrop": obj(
                         {
                             "kind": enum("blank", "color", "blur", "media"),

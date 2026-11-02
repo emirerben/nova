@@ -614,7 +614,7 @@ separate. This section is slide posts only.
   (flag + protocol 33): the CURRENT POST `slide N tilt:` line shows `zoom=` for a zoomed slide and the zoom rules are the
   fragment `prompts/edit_copilot_ops/slide_tilt_zoom.txt`, appended only then, so a closed gate leaves every slide prompt
   byte-identical. "Straighten" is `rotation_deg` 0 (keeps the zoom); `reset` removes tilt and zoom. Prompt version
-  `2026-11-02-v107`; goldens `slide_zoom_*.json`.
+  `2026-11-02-v108`; goldens `slide_zoom_*.json`.
 - **Rollout.** Merge dark and deploy api + worker FIRST (an older worker that re-dumps a tilted draft through its older
   `SlideEdits` would drop the tilt). Then `fly secrets set MEDIA_TILT_ENABLED=true` (api + worker) + restart, with a
   protocol-28 TestFlight build out. **Rollback is the flag only**: never roll the CODE back once a tilt exists (draft

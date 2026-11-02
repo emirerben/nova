@@ -23,7 +23,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.agents.editor_ops_v2 import OpSpec
-from app.kria.clip_tilt import ClipTilt, wrap_degrees
+from app.kria.clip_tilt import MAX_ZOOM, MIN_ZOOM, ClipTilt, clamp_zoom, wrap_degrees
 from app.kria.recipes import ClipBackdrop
 from app.kria.reply_language import say
 
@@ -57,8 +57,10 @@ _PATCH_KEYS = frozenset(
         "removed",
     }
 )
-_TILT_KEYS = frozenset({"rotation_deg", "rotation_delta_deg", "backdrop"})
+_TILT_KEYS = frozenset({"rotation_deg", "rotation_delta_deg", "zoom", "zoom_delta", "backdrop"})
+_TILT_ZOOM_KEYS = ("zoom", "zoom_delta")
 _TILT_MAX_TURN_DEG = 360.0
+_TILT_MAX_ZOOM_ASK = 1000.0
 _STRATEGIES = ("proportional", "uniform", "trim_tail")
 _FAMILY = frozenset({"clip", "clips", "timeline"})
 
@@ -147,7 +149,10 @@ def _clean_tilt(
 
     ``rotation_deg`` replaces the clip's angle and ``rotation_delta_deg`` adds to it. Either
     may be up to a full turn either way: an absolute angle is wrapped here, a relative one is
-    wrapped against each clip's own angle when it is applied.
+    wrapped against each clip's own angle when it is applied. ``zoom`` (absolute, 1 = as framed)
+    and ``zoom_delta`` (added to each clip's own zoom) work the same way; an absolute zoom past
+    0.5x..3x is clamped here with a sentence in the reply, a relative one is clamped against each
+    clip's own zoom when it is applied and the receipt names the result (KRI-1169).
 
     A ``media`` backdrop is accepted only while the snapshot opens ``tilt_backdrop_media`` and
     only for an ``asset_id`` in its ``tilt_backdrop_pool`` (the item's ready photos and videos):
@@ -158,7 +163,9 @@ def _clean_tilt(
     if not isinstance(value, dict) or not value or not set(value) <= _TILT_KEYS:
         state.invalid_value(_tilt_shape_note())
         return False, None
-    if "rotation_deg" in value and "rotation_delta_deg" in value:
+    if ("rotation_deg" in value and "rotation_delta_deg" in value) or (
+        "zoom" in value and "zoom_delta" in value
+    ):
         state.invalid_value(_tilt_shape_note())
         return False, None
     clean: dict[str, Any] = {}
@@ -176,6 +183,20 @@ def _clean_tilt(
             )
             return False, None
         clean[key] = wrap_degrees(angle) if key == "rotation_deg" else angle
+    if "zoom" in value:
+        zoom = _num(value["zoom"], 0.0, _TILT_MAX_ZOOM_ASK)
+        if zoom is None or zoom <= 0:
+            state.invalid_value(_zoom_value_note())
+            return False, None
+        if not MIN_ZOOM <= zoom <= MAX_ZOOM:
+            state.reply_notes.append(_zoom_limit_note())
+        clean["zoom"] = clamp_zoom(zoom)
+    if "zoom_delta" in value:
+        delta = _num(value["zoom_delta"], -_TILT_MAX_ZOOM_ASK, _TILT_MAX_ZOOM_ASK)
+        if delta is None:
+            state.invalid_value(_zoom_value_note())
+            return False, None
+        clean["zoom_delta"] = delta
     if "backdrop" in value:
         try:
             backdrop = ClipBackdrop.model_validate(value["backdrop"])
@@ -226,8 +247,23 @@ def _media_backdrop_note(snapshot: dict | None) -> str:
 
 def _tilt_shape_note() -> str:
     return say(
-        en="A tilt is an angle, a background, or both. I can't read that one.",
-        tr="Eğim bir açı, bir arka plan ya da ikisi birden olabilir. Bunu anlayamadım.",
+        en="A tilt is an angle, a zoom, a background, or any mix. I can't read that one.",
+        tr="Eğim bir açı, bir yakınlaştırma, bir arka plan ya da bunların karışımı olabilir. "
+        "Bunu anlayamadım.",
+    )
+
+
+def _zoom_value_note() -> str:
+    return say(
+        en="A zoom needs a number, like 1.3 for a little closer or 0.8 for a little further.",
+        tr="Yakınlaştırma için bir sayı gerekiyor; biraz yakın için 1,3, biraz uzak için 0,8 gibi.",
+    )
+
+
+def _zoom_limit_note() -> str:
+    return say(
+        en="A clip can zoom between 0.5x and 3x, so I kept it inside that.",
+        tr="Bir klip 0,5x ile 3x arasında yakınlaştırılabilir; bu aralığın içinde tuttum.",
     )
 
 
@@ -278,6 +314,18 @@ def _coerce_patch_slots(name: str, payload: dict, snapshot: dict, state: Any) ->
         unavailable = say(
             en="I can't tilt clips on this edit.",
             tr="Bu videoda klipleri eğemiyorum.",
+        )
+        state.reject(op=name, reason="capability_unavailable", detail=unavailable)
+        state.reply_notes.append(unavailable)
+        return None
+    if (
+        isinstance(clean.get("tilt"), dict)
+        and any(key in clean["tilt"] for key in _TILT_ZOOM_KEYS)
+        and not (isinstance(capabilities, dict) and capabilities.get("tilt_zoom") is True)
+    ):
+        unavailable = say(
+            en="I can't zoom clips on this edit.",
+            tr="Bu videoda klipleri yakınlaştıramıyorum.",
         )
         state.reject(op=name, reason="capability_unavailable", detail=unavailable)
         state.reply_notes.append(unavailable)
@@ -624,10 +672,11 @@ def _fit_window(
 def _tilted(row: dict[str, Any], patch: dict[str, Any], *, clip_number: int) -> dict | None:
     """The ``tilt`` row value ``row`` ends with: its current tilt, changed by ``patch["tilt"]``.
 
-    A turn and a backdrop are independent: an angle keeps the backdrop, a backdrop keeps the
-    angle, and a relative angle adds to this clip's own. ``None`` means upright on a plain
-    background. A clip with a look cannot be tilted (the engine refuses a look on a
-    non-identity transform), so a look is refused here instead of vanishing at render time.
+    A turn, a zoom and a backdrop are independent: an angle keeps the backdrop and the zoom,
+    a backdrop keeps the angle, and a relative angle or zoom adds to this clip's own. ``None``
+    means upright, unzoomed, on a plain background. A clip with a look cannot be tilted (the
+    engine refuses a look on a non-identity transform), so a look is refused here instead of
+    vanishing at render time.
     """
     change = patch["tilt"]
     if change is None:
@@ -637,14 +686,23 @@ def _tilted(row: dict[str, Any], patch: dict[str, Any], *, clip_number: int) -> 
         raise _err(f"Clip {clip_number} has a look, so it can't be tilted. Remove the look first")
     if "backdrop" in change and row.get("layout") == "supporting_card":
         raise _err("A photo shown as a card can turn, but its background can't be changed")
+    if any(key in change for key in _TILT_ZOOM_KEYS) and row.get("layout") == "supporting_card":
+        raise _err("A photo shown as a card can turn, but it can't be zoomed")
     current = ClipTilt.from_row(row.get("tilt"))
     rotation = current.rotation_deg
     if "rotation_deg" in change:
         rotation = change["rotation_deg"]
     elif "rotation_delta_deg" in change:
         rotation = wrap_degrees(rotation + change["rotation_delta_deg"])
+    zoom = current.zoom
+    if "zoom" in change:
+        zoom = change["zoom"]
+    elif "zoom_delta" in change:
+        zoom = clamp_zoom(zoom + change["zoom_delta"])
     backdrop = change["backdrop"] if "backdrop" in change else current.backdrop
-    return ClipTilt.model_validate({"rotation_deg": rotation, "backdrop": backdrop}).row()
+    return ClipTilt.model_validate(
+        {"rotation_deg": rotation, "zoom": zoom, "backdrop": backdrop}
+    ).row()
 
 
 def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
@@ -665,6 +723,12 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
         raise _err("Cropping is not available for this edit")
     if "tilt" in patch and not _clip_capability(state, "tilt", default=False):
         raise _err("Tilting clips isn't available for this edit")
+    if (
+        isinstance(patch.get("tilt"), dict)
+        and any(key in patch["tilt"] for key in _TILT_ZOOM_KEYS)
+        and not _clip_capability(state, "tilt_zoom", default=False)
+    ):
+        raise _err("Zooming clips isn't available for this edit")
     if ("transition_after" in patch or "transition_duration_s" in patch) and (
         not _clip_capability(state, "transitions")
     ):
