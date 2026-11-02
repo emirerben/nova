@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.109.0] - 2026-11-02
+
+### Changed
+- chore(fly): reduce topology to api/worker/light, shared-cpu worker (KRI-1167) (#2055) <!-- release-pr: 2055 -->
+
 ## [0.83.108.0] - 2026-11-02
 
 ### Fixed
