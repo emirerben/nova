@@ -336,6 +336,19 @@ class EndingClipFact:
 
 
 @dataclass(frozen=True)
+class InsertClipFact:
+    """One clip a phone Talking edit pauses the creator's take for (parent KRI-1151).
+
+    ``status`` is "planned" (a draft whose repaired strategy keeps it), "applied" (the finished
+    video plays it: read back from the worker's `phone_insert_clips` receipt, written from the
+    compiled recipe) or "dropped" (the server repair or the phone worker could not place it;
+    ``reason`` is a machine code)."""
+
+    status: str
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
 class PlanFacts:
     """What a drafted plan verifiably contains. Missing facts stay None/empty."""
 
@@ -688,6 +701,10 @@ class PlanFacts:
     # the REPAIRED strategy, the render its own `phone_ending_clip` receipt, never the strategy.
     ending_clip: EndingClipFact | None = None
     ending_clip_known: bool = False
+    # Parent KRI-1151: clips played while the take is paused, one fact per asked clip. As above,
+    # only where ``insert_clips_known`` can an empty tuple mean "none was kept".
+    insert_clips: tuple[InsertClipFact, ...] = ()
+    insert_clips_known: bool = False
     # KRI-842: a draft that renders through the phone Voiceover compiler, the only writer that
     # can play ONE clip's own sound under the voice or after it; the approved media rows its
     # clip-sound asks are grounded in; and the clip its order intents seat last (None = none
@@ -742,6 +759,7 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
     from app.services.creator_capabilities import (  # noqa: PLC0415
         CAPABILITY_REACTION_BEATS,
         ending_clip_problem,
+        insert_clips_problems,
         repair_creator_ending_clip,
         repair_creator_reaction_beats,
     )
@@ -763,6 +781,13 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
         ending = EndingClipFact("planned", keep_audio=repaired.ending_clip.keep_audio)
     elif parsed.ending_clip is not None:
         ending = EndingClipFact("dropped", reason=ending_clip_problem(manifest, parsed))
+    # Parent KRI-1151: each asked insert, kept or dropped with the repair's reason.
+    insert_facts = tuple(
+        InsertClipFact("dropped", reason=problem)
+        if problem is not None
+        else InsertClipFact("planned")
+        for problem in insert_clips_problems(manifest, repaired)
+    )
     kept = list(repaired.reaction_beats or [])
     raw_closing = parsed.closing_media
     closing = repaired.closing_media
@@ -789,6 +814,8 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
         "closing_badge_id": closing.badge_visual_id if closing is not None else None,
         "ending_clip": ending,
         "ending_clip_known": True,
+        "insert_clips": insert_facts,
+        "insert_clips_known": True,
     }
 
 
@@ -2271,7 +2298,28 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
         # KRI-841: a finished Talking render says whether it really ended on the video.
         changes["ending_clip_known"] = True
         changes["ending_clip"] = _ending_clip_receipt_fact(variant.get("phone_ending_clip"))
+        # Parent KRI-1151: and whether it really paused the take for the clips asked.
+        changes["insert_clips_known"] = True
+        changes["insert_clips"] = _insert_clip_receipt_facts(variant.get("phone_insert_clips"))
     return dataclasses.replace(base, **changes) if changes else base
+
+
+def _insert_clip_receipt_facts(receipt: object) -> tuple[InsertClipFact, ...]:
+    """The worker's ``phone_insert_clips`` receipt as facts (empty when there is none)."""
+    if not isinstance(receipt, Mapping):
+        return ()
+    applied = [
+        InsertClipFact("applied") for row in receipt.get("placed") or [] if isinstance(row, Mapping)
+    ]
+    dropped = [
+        InsertClipFact(
+            "dropped",
+            reason=row.get("reason") if isinstance(row.get("reason"), str) else None,
+        )
+        for row in receipt.get("dropped") or []
+        if isinstance(row, Mapping)
+    ]
+    return tuple([*applied, *dropped])
 
 
 def _talking_footage_ids(variant: Mapping[str, Any]) -> tuple[str, ...] | None:
@@ -4074,6 +4122,148 @@ def _ending_clip_why(code: str | None) -> str:
             tr="O videoyu iPhone'unda hazırlayamadım",
         )
     return say(en="I couldn't add it at the end", tr="Sona ekleyemedim")
+
+
+def _insert_clip_fact(req: BriefRequirement) -> bool:
+    return bool(req.facts.get("insert_clip"))
+
+
+# Why a clip could not play while the take is paused, in the creator's words. The keys are the
+# server repair's codes (`creator_capabilities.INSERT_CLIP_NOTICES`) and the phone worker's
+# receipt reasons (`app.pipeline.phone_talking_inserts`).
+def _insert_clip_why(code: str | None) -> str:
+    table = {
+        "not_talking": say(
+            en="Only a talking-to-camera edit on your iPhone can pause your talk for a clip",
+            tr="Konuşmayı bir klip için yalnızca iPhone'daki konuşmalı düzenleme durdurabilir",
+        ),
+        "insert_clips_off": say(
+            en="Playing a clip in the middle of your talk isn't available yet",
+            tr="Konuşmanın ortasında klip oynatmak henüz yok",
+        ),
+        "not_found": say(
+            en="I couldn't find that clip among your clips",
+            tr="O klibi kliplerin arasında bulamadım",
+        ),
+        "clip_not_found": say(
+            en="I couldn't find that clip among your clips",
+            tr="O klibi kliplerin arasında bulamadım",
+        ),
+        "not_video": say(
+            en="That is a photo, not a clip with sound",
+            tr="Bu bir fotoğraf, sesli bir klip değil",
+        ),
+        "not_a_video": say(
+            en="That is a photo, not a clip with sound",
+            tr="Bu bir fotoğraf, sesli bir klip değil",
+        ),
+        "visual_unsupported": say(
+            en="Only one of your own clips can pause the talk, not a video from Visuals yet",
+            tr="Konuşmayı yalnızca kendi kliplerinden biri durdurabilir, Visuals videosu değil",
+        ),
+        "only_clip": say(
+            en="It is the only clip in this edit",
+            tr="Bu düzenlemedeki tek klip bu",
+        ),
+        "talking_multi_off": say(
+            en="Playing another clip in your talk needs a Talking edit with several clips",
+            tr="Konuşmanda başka klip oynatmak için birden çok klipli düzenleme gerekiyor",
+        ),
+        "not_selected": say(
+            en="You asked to leave that clip out of the edit",
+            tr="O klibi düzenlemeden çıkarmamı istemiştin",
+        ),
+        "is_ending": say(
+            en="That clip is already the one the video ends on",
+            tr="O klip zaten videonun bittiği klip",
+        ),
+        "clip_in_use": say(
+            en="That clip already plays somewhere else in the video",
+            tr="O klip videoda zaten başka bir yerde oynuyor",
+        ),
+        "duplicate_clip": say(
+            en="That clip was asked for twice, so it plays once",
+            tr="O klip iki kez istendi, bir kez oynar",
+        ),
+        "phrase_not_found": say(
+            en="I didn't hear you say that in your talk, so I didn't guess where it goes",
+            tr="Konuşmanda bunu söylediğini duymadım, nereye gideceğini tahmin etmedim",
+        ),
+        "in_hook_window": say(
+            en="That moment is in the first seconds, which stay on you",
+            tr="O an ilk saniyelerde; o saniyeler sende kalır",
+        ),
+        "in_tail_window": say(
+            en="That moment is at the very end of your talk",
+            tr="O an konuşmanın en sonunda",
+        ),
+        "too_close_to_previous": say(
+            en="It would sit too close to the previous clip you asked to play",
+            tr="İstediğin önceki klibe çok yakın olurdu",
+        ),
+        "too_long": say(
+            en="That clip is too long to play in the middle of your talk",
+            tr="Bu klip konuşmanın ortasında oynatmak için çok uzun",
+        ),
+        "too_many": say(
+            en="That is more clips than I can play in one talk",
+            tr="Bir konuşmada oynatabileceğimden fazla klip",
+        ),
+        "speaker_background": say(
+            en="A picture behind you is on, which would also cut out the clip",
+            tr="Arkanda bir resim açık, bu klibi de keserdi",
+        ),
+    }
+    return table.get(code or "") or say(
+        en="I couldn't play it in the middle of your talk",
+        tr="Konuşmanın ortasında oynatamadım",
+    )
+
+
+def _check_insert_clip(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """Does the edit pause the creator's take for the clip(s) he asked for?
+
+    A draft judges the repaired strategy, the finished video the worker's own
+    `phone_insert_clips` receipt; "Done" is never read off the strategy once a render exists.
+    """
+    if not facts.insert_clips_known:
+        return _receipt(req, "partial", _NO_CHECKER)
+    rows = facts.insert_clips
+    rendered = facts.rendered_variant
+    ok = [row for row in rows if row.status in ("planned", "applied")]
+    dropped = [row for row in rows if row.status == "dropped"]
+    if not rows:
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en=(
+                    "The finished video doesn't play that clip in your talk"
+                    if rendered
+                    else "This draft doesn't play that clip in your talk"
+                ),
+                tr=(
+                    "Biten videoda o klip konuşmanın içinde oynamıyor"
+                    if rendered
+                    else "Bu taslakta o klip konuşmanın içinde oynamıyor"
+                ),
+            )
+            + ".",
+        )
+    if dropped and not ok:
+        return _receipt(req, "not_possible", _insert_clip_why(dropped[0].reason) + ".")
+    if dropped:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en="Some of those clips play in your talk, not all: ",
+                tr="O kliplerin bazıları konuşmanda oynuyor, hepsi değil: ",
+            )
+            + _insert_clip_why(dropped[0].reason)
+            + ".",
+        )
+    return _receipt(req, "met", None)
 
 
 # The volume under which a video that is "at the end" is still muted (the recipe holds 0.0).
@@ -10127,6 +10317,8 @@ def _has_checker(req: BriefRequirement) -> bool:
         return True
     if _ending_clip_fact(req):
         return True  # KRI-841: judged against the plan's / render's ending video
+    if _insert_clip_fact(req):
+        return True  # parent KRI-1151: judged against the plan's / render's paused-take clips
     if requirement_clip_sound(req) is not None:
         return True  # KRI-842
     if asks_if_unclear(req):
@@ -10760,6 +10952,12 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # ending video the plan (or the finished render) holds, before the order or
         # closing-photo checks can mistake it for either.
         return _check_ending_clip(req, facts)
+    if _insert_clip_fact(req):
+        # Parent KRI-1151: "after I say X, show this clip with its sound". Only a Talking edit
+        # pauses its take; every other format answers neutral rather than lend the ask elsewhere.
+        if facts.edit_format in _TALKING_FORMATS:
+            return _check_insert_clip(req, facts)
+        return _receipt(req, "partial", _NO_CHECKER)
     if _ending_clip_fact(req) and req.kind != "order":
         # An ending video exists only on a Talking edit (claimed above). `_has_checker` says
         # yes to the fact, so every other format answers neutral here instead of lending the
@@ -11597,6 +11795,7 @@ __all__ = [
     "EngineNoiseReductionFact",
     "ExplicitSpeechCutFact",
     "EndingClipFact",
+    "InsertClipFact",
     "NO_TITLE_REASON",
     "NARRATED_ALIGNMENT_RECOVERY",
     "RenderBlockRecovery",

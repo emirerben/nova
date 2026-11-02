@@ -578,6 +578,7 @@ def merge_requirements(
 # changes the words ("the hook should say ...") restates the requirement without them; the
 # creator never withdrew them, so a same-kind, same-scope change keeps them unless it sets them.
 # KRI-841: so is the video a Talking edit ends on (`ending_clip`) and whether it keeps its sound.
+# Parent KRI-1151: and the clip it pauses the take for (`insert_clip`, where it goes).
 # KRI-945: and the server's mark on a title literal it copied from an approved wording.
 # KRI-1029: and the text's shape ("curved title"), which "make the title just X" restates
 # without.
@@ -589,6 +590,9 @@ STICKY_FACTS = frozenset(
         "position",
         "placeholder",
         "ending_clip",
+        "insert_clip",
+        "insert_at_phrase",
+        "insert_at_s",
         "keep_audio",
         APPROVED_COPY_FACT,
         TEXT_SHAPE_FACT,

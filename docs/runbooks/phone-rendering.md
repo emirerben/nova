@@ -984,6 +984,57 @@ window with the speaker muted under it.
   `tests/kria/test_kri1151_talking_cutaway_sound_checks.py` (replay of thread 6fa36e51),
   `tests/tasks/test_kri1151_talking_cutaway_sound_dispatch.py`.
 
+#### A clip played while the creator's take is paused (parent KRI-1151, `PHONE_TALKING_INSERT_CLIPS_ENABLED`)
+
+"After I say congress, show the congress clip with its own sound" on a multi-clip Talking
+(`subtitled`) edit. Not a cutaway (the take keeps running under a cutaway) and not the
+`ending_clip` (that follows the whole talk): the picture switches to the clip and its audio
+plays while the take is PAUSED, then the take resumes at the second it stopped. Nothing he said
+is lost and the video grows by the clip's length.
+
+- **Strategy**: `insert_clips: [{media_id, at_phrase | at_s, keep_audio}]` (at most 3, exactly one
+  of the two positions, one of the item's OWN footage clips; a Visuals video is refused for now).
+  Model-hidden like `ending_clip`; the Main Creator prompt teaches it (v109) only where
+  `creator_capabilities.insert_clip_candidates(manifest)` is non-empty (rollout open, 2+ own
+  clips). The shared brief records the ask as a `style` requirement with `facts.insert_clip` (+
+  `insert_at_phrase` / `insert_at_s`, `keep_audio`; brief extractor v46). The server repair
+  (`repair_creator_insert_clips`) drops what the phone cannot play with a plain notice.
+- **Data shape**: one number per insert, `PhoneInsert.at_take_s`, a position on the TAKE timeline
+  (the first speaker's seconds with no insert counted). `compile_phone_subtitled_plan(inserts=)`
+  splits the take there and emits a main-track clip `insert-<n>` (volume 1, or 0 for a silent
+  ask, which declares `audioMix`). Everything the compiler is given stays on the FINAL timeline;
+  `phone_talking_inserts.warp_for_inserts` moves captions, text rows, cards, effects and cutaways
+  onto it first. A window that spans the point is split around it (a video card resumes where it
+  stopped), so nothing is drawn over the inserted clip. Recipe-only: the engine already plays a
+  different clip between two clips of one source; no capability, no protocol, no app build.
+- **Placement** (`place_inserts`, in `_run_phone_subtitled_job` after the captions are final): a
+  phrase is found in his words (`ground_excerpt`, fuzzy for Whisper drift) and the insert waits for
+  the end of that caption or the next pause of 0.25 s within 2.5 s, never inside a word. Refused,
+  with the clip left out of the video and said in the receipt: `phrase_not_found` (also a phrase
+  inside a region speech cleanup cut out; no guess), `in_hook_window` (first 2.5 s),
+  `in_tail_window` (last second), `too_close_to_previous` (< 2 s from another insert),
+  `too_long` (> 60 s), `duplicate_clip`, `clip_in_use` (the speaker or the ending), `too_many`,
+  `clip_not_found`, `not_a_video`, `speaker_background` (the matte would cut the clip out),
+  `talking_multi_off` / `only_clip` (no other clip to play). The clip is taken out of the
+  speakers and the footage cutaways before they are scheduled; cutaways keep clear of the point.
+- **Receipt**: `variants[i].phone_insert_clips = {placed: [{media_id, start_s, end_s, at_take_s,
+  keep_audio, basis: phrase|second, snap: cue_end|pause|word_end|exact}], dropped: [{media_id,
+  reason}]}` (only with the flag on and an ask). The brief check (`_check_insert_clip`) reads it:
+  met only when every asked clip plays, partial when some do, not possible with the reason.
+- **Editor**: Save reads the insert back from the pinned recipe (`inserts_from_recipe`, ids
+  `insert-<n>`) whatever the flag says now, and compiles the saved rows (already final-timeline
+  seconds) around it, so a caption or text edit neither drops nor shifts it. Range stays closed
+  (`talking_range_multi_clip`). Known gaps: the inserted clip's own speech is not captioned; the
+  editor's timeline strip does not draw the insert; clip delete / trim / silence-cut edits do not
+  know about it (they are closed on multi-clip Talking edits today).
+- **Gate / apply**: `phone_rollout.phone_talking_insert_clips_supported()` = the flag +
+  `TALKING_MULTI_CLIP_ENABLED` (with its verified features) + `audioMix` verified. Apply: `fly
+  secrets set PHONE_TALKING_INSERT_CLIPS_ENABLED=true --app nova-video` + restart api + worker (Fly
+  only, no Vercel twin). Rollback: `=false` the same way (an already-rendered insert keeps playing
+  and keeps surviving Saves). Tests: `tests/pipeline/test_phone_talking_inserts.py` (failure-mode
+  list), `tests/tasks/test_talking_insert_clip.py` (prod thread 6fa36e51 replay),
+  `tests/routes/test_phone_talking_insert_commit.py`, `tests/kria/test_insert_clip_planner.py`.
+
 #### Talks shown full screen where the creator mentions them (parent KRI-1151, `PHONE_TALKING_MENTION_CUTAWAYS_ENABLED`)
 
 "Show the talks full screen when I mention them" on a multi-clip Talking (`subtitled`) edit

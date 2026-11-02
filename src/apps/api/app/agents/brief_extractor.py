@@ -61,7 +61,8 @@ from app.pipeline.prompt_loader import load_prompt
 # ask about how sideways clips sit in a vertical video.
 # v45 (prompt fidelity, animation): the shared brief section records an unnamed animation ask
 # as a `text` requirement with `animation: "any"`.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-31-v45"
+# v46 (parent KRI-1151): the shared brief section records `insert_clip` / `insert_at_phrase`.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-02-v46"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")

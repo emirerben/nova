@@ -880,7 +880,9 @@ def _validated_inserts(
     if not inserts:
         return ()
     if len(inserts) > MAX_INSERT_CLIPS:
-        raise UnsupportedPhonePlan(f"a Talking edit can pause its take for at most {MAX_INSERT_CLIPS} clips")
+        raise UnsupportedPhonePlan(
+            f"a Talking edit can pause its take for at most {MAX_INSERT_CLIPS} clips"
+        )
     ordered = tuple(sorted(inserts, key=lambda i: i.at_take_s))
     seen = {speaker_media_id, *extra_media_ids}
     previous = 0.0

@@ -55,6 +55,7 @@ from app.services.creator_capabilities import (
     CAPABILITY_REACTION_BEATS,
     CAPABILITY_TIMED_CARDS,
     ending_clip_candidates,
+    insert_clip_candidates,
     speaker_background_open,
 )
 from app.services.length_policy import creator_duration_s
@@ -178,7 +179,10 @@ log = structlog.get_logger()
 # v108 (KRI-1093): the Lip-sync picker card (`manifest.chosen_format`) defaults an attached song
 # to `lipsync`; the song section gains one paragraph only on that manifest, so every other
 # render is byte-identical.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-01-v108"
+# v109 (parent KRI-1151): `insert_clips` (a footage clip played while the Talking take pauses),
+# taught only where `insert_clip_candidates(manifest)` is non-empty, and the shared brief records
+# it as an `insert_clip` fact (brief_extractor v46 shares the section).
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-02-v109"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -358,6 +362,29 @@ plays to its end and this video follows it, so never also use that video in `rea
 stays for a photo held over the last seconds of the talk, and a plain "end on ..." about the talk
 itself is not an `ending_clip`. Say in `summary`, in plain words, that the video is added after
 the talk with its own sound.
+""".strip("\n")
+
+# Parent KRI-1151: a clip of the creator's own footage played while his take is PAUSED, on a phone
+# `subtitled` (Talking) edit. Appended to the `$reaction_beats_section` slot ONLY when
+# `insert_clip_candidates(manifest)` names a clip the phone can pause the take for (the rollout
+# is open and the project has several clips), so every other prompt stays byte-identical. The
+# repair (`creator_capabilities.repair_creator_insert_clips`) never trusts the model's choice.
+_INSERT_CLIP_PROMPT_SECTION = """
+A CLIP PLAYED IN THE MIDDLE OF THE TALK (iPhone Talking only)
+When the creator asks to show one of the project's own clips while their talk PAUSES, then go
+back to the talk where it stopped ("After I say congress, show the congress clip with its sound",
+"kongre dediğimde kongre videosunu sesiyle göster"), set `insert_clips`: [{"media_id": "<the
+matching media_context VIDEO entry's exact media_id>", "at_phrase": "<the words the creator
+says it after, in their own language>", "keep_audio": true}]. Use `at_s` (a second of the talk)
+instead of `at_phrase` only when they state a second. Find the clip by matching what the creator
+named against the VIDEO entries in `media_context` (its `filename`, its `creator_context`, or
+its `analysis_only_not_copy` evidence), then copy THAT entry's exact `media_id`; never invent,
+shorten or guess an id, and never use the clip they speak in. `keep_audio` is true unless they
+ask for it silent. At most three. The talk is not cut: the video simply gets as much longer as
+the clip. That clip plays only there, so never also use it as a cutaway, in `reaction_beats` or
+as `ending_clip`. It is not a cutaway (the talk keeps running under a cutaway) and not an
+`ending_clip` (that follows the whole talk). Say in `summary`, in plain words, where the clip is
+shown and that the talk pauses for it.
 """.strip("\n")
 
 # KRI-1117: a photo or looping video shown BEHIND the speaker for the whole talk (a green screen
@@ -649,7 +676,13 @@ VIDEO the creator asks to ADD after the talk, at the very end, to play with its 
 very end, add the cheers video with its own sound", "en sona Atakan'ın ilk ısırık videosunu kendi
 sesiyle ekle") is not a clip order: record it as a `style` requirement with {"ending_clip": "<the
 creator's words for that video>", "keep_audio": true} (`keep_audio` false only when they want it
-silent), whatever language they write in, and never as `last_clip` or `closing`. On a montage,
+silent), whatever language they write in, and never as `last_clip` or `closing`. A clip the
+creator asks to play IN THE MIDDLE of the talk, pausing it ("after I say congress, show the
+congress clip with its sound", "kongre dediğimde kongre videosunu sesiyle göster") is a `style`
+requirement with {"insert_clip": "<the creator's words for that clip>", "insert_at_phrase": "<the
+words they say it after>"} (or `insert_at_s` for a stated second; `keep_audio` false only when
+they want it silent), whatever language they write in; it is not a cutaway, an `ending_clip` or
+a clip order. On a montage,
 adding or ending on a clip keeps `last_clip` as above. How on-screen text should look goes in the
 `facts` of its text requirement, only what the creator said: `animation` (an id from
 {{TEXT_ANIMATION_EDGES}}, never none or the name in brackets) for "animated with typewriter";
@@ -1029,6 +1062,13 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 + (
                     "\n" + _TIMED_CARDS_PROMPT_SECTION
                     if _timed_cards_available(input.capability_manifest)
+                    else ""
+                )
+                # Parent KRI-1151: a clip played while the take pauses; "" unless the rollout
+                # is open and the project has several clips.
+                + (
+                    "\n" + _INSERT_CLIP_PROMPT_SECTION
+                    if insert_clip_candidates(input.capability_manifest)
                     else ""
                 )
                 # KRI-1117: a photo / looping video behind the speaker; "" unless advertised.

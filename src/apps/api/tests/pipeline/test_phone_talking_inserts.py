@@ -29,19 +29,6 @@ Failure-mode list, written before the code (each one is a test below):
 from __future__ import annotations
 
 import pytest
-from app.pipeline.phone_talking_inserts import (
-    HOOK_FREE_S,
-    MAX_INSERT_S,
-    MAX_INSERTS,
-    MIN_GAP_S,
-    TAIL_FREE_S,
-    InsertAsk,
-    insert_blocked_windows,
-    inserts_from_recipe,
-    place_inserts,
-    shift_time,
-    warp_for_inserts,
-)
 
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_subtitled_lanes import (
@@ -55,6 +42,19 @@ from app.pipeline.phone_subtitled_plan import (
     additional_speakers_from_recipe,
     compile_phone_subtitled_plan,
     speaker_binding_from_recipe,
+)
+from app.pipeline.phone_talking_inserts import (
+    HOOK_FREE_S,
+    MAX_INSERT_S,
+    MAX_INSERTS,
+    MIN_GAP_S,
+    TAIL_FREE_S,
+    InsertAsk,
+    insert_blocked_windows,
+    inserts_from_recipe,
+    place_inserts,
+    shift_time,
+    warp_for_inserts,
 )
 from tests.pipeline.test_phone_subtitled_plan import _binding, _resolved_sfx
 

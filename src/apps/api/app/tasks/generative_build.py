@@ -8726,7 +8726,10 @@ def _run_phone_subtitled_job(
                     for ask in insert_asks:
                         row = next((b for b in bindings if b.media_id == ask.media_id), None)
                         cid = (
-                            next((c for c, path in clip_id_to_gcs.items() if path == row.proxy_path), None)
+                            next(
+                                (c for c, path in clip_id_to_gcs.items() if path == row.proxy_path),
+                                None,
+                            )
                             if row is not None
                             else None
                         )
@@ -8743,7 +8746,9 @@ def _run_phone_subtitled_job(
                     if insert_ids:
                         talking_roles = replace(
                             talking_roles,
-                            speakers=tuple(c for c in talking_roles.speakers if c not in insert_ids),
+                            speakers=tuple(
+                                c for c in talking_roles.speakers if c not in insert_ids
+                            ),
                             footage=tuple(c for c in talking_roles.footage if c not in insert_ids),
                         )
                 if phone_talking_mention_cutaways_supported():

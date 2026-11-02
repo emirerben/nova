@@ -28,11 +28,13 @@ from pydantic.json_schema import SkipJsonSchema
 
 from app.agents._schemas.edit_format import EditFormat, RenderProgram
 from app.agents._schemas.reaction_beats import (
+    MAX_INSERT_CLIPS,
     MAX_REACTION_BEATS,
     MAX_TIMED_CARDS,
     BackgroundMedia,
     ClosingMedia,
     EndingClip,
+    InsertClip,
     ReactionBeat,
     TimedCard,
 )
@@ -525,6 +527,13 @@ class CreativeStrategy(_CreatorModel):
     # tool schema stays byte-identical), omitted from serialization when None, taught in the
     # creator prompt only where the manifest can render it.
     ending_clip: SkipJsonSchema[EndingClip | None] = Field(default=None)
+    # Parent KRI-1151: clips of the creator's own footage that play while his take is paused
+    # ("after I say X, show this clip with its sound"). Same pattern as `ending_clip`: out of
+    # every derived JSON schema, omitted when None, taught in the creator prompt only where the
+    # manifest says the phone can render it.
+    insert_clips: SkipJsonSchema[list[InsertClip] | None] = Field(
+        default=None, max_length=MAX_INSERT_CLIPS
+    )
     # KRI-1117: a photo / looping video shown behind the speaker of a phone Talking edit. Same
     # pattern as `ending_clip`: out of every derived JSON schema, omitted when None, taught in
     # the creator prompt only where the manifest advertises `speaker_background`.
@@ -573,6 +582,21 @@ class CreativeStrategy(_CreatorModel):
     pinned_texts: SkipJsonSchema[list[PinnedText] | None] = Field(
         default=None, max_length=PINNED_TEXT_PARSE_MAX_LINES
     )
+
+    @field_validator("insert_clips", mode="before")
+    @classmethod
+    def _coerce_insert_clips(cls, value: object) -> object:
+        """Rows that do not parse are dropped, never a schema failure (KRI-129: repair, never
+        reject); at most MAX_INSERT_CLIPS are kept."""
+        if value is None or not isinstance(value, list):
+            return None
+        rows: list[InsertClip] = []
+        for raw in value:
+            try:
+                rows.append(raw if isinstance(raw, InsertClip) else InsertClip.model_validate(raw))
+            except ValueError:
+                continue
+        return rows[:MAX_INSERT_CLIPS] or None
 
     @field_validator("pinned_texts", mode="before")
     @classmethod
@@ -638,6 +662,7 @@ class CreativeStrategy(_CreatorModel):
             "reaction_beats",
             "closing_media",
             "ending_clip",
+            "insert_clips",
             "background_media",
             "timed_cards",
             "song_sync",

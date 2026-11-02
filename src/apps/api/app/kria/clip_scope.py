@@ -385,6 +385,7 @@ def placed_media(strategy: CreativeStrategy) -> set[str]:
             placed.add(strategy.closing_media.badge_visual_id)
     if strategy.ending_clip is not None:
         placed.add(strategy.ending_clip.media_id)  # KRI-841: the clip the edit ends on
+    placed.update(row.media_id for row in strategy.insert_clips or ())  # parent KRI-1151
     if strategy.background_media is not None:
         placed.add(strategy.background_media.media_id)  # KRI-1117: the backdrop behind the talk
     if strategy.montage_audio is not None:

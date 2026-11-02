@@ -13,7 +13,11 @@ from types import SimpleNamespace
 import pytest
 
 from app.kria.device_render import make_device_request
-from app.pipeline.phone_subtitled_plan import PhoneCutaway, PhoneInsert, compile_phone_subtitled_plan
+from app.pipeline.phone_subtitled_plan import (
+    PhoneCutaway,
+    PhoneInsert,
+    compile_phone_subtitled_plan,
+)
 from app.routes import generative_jobs as gj
 from app.services.device_render import device_status, pin_device_request
 from app.services.phone_sources import PHONE_SOURCES_FIELD
@@ -73,7 +77,10 @@ def insert_job(monkeypatch):
 
 def _main(recipe):
     track = next(t for t in recipe.tracks if t.id == "subtitled")
-    return [(c.id, c.source_asset_id, c.timeline_start, c.source_start, c.source_duration, c.volume) for c in track.clips]
+    return [
+        (c.id, c.source_asset_id, c.timeline_start, c.source_start, c.source_duration, c.volume)
+        for c in track.clips
+    ]
 
 
 def test_a_caption_save_keeps_the_insert_where_it_was_and_the_captions_unshifted(monkeypatch):
