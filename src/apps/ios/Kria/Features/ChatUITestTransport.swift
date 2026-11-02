@@ -340,6 +340,8 @@ final class CreationChatFixture: @unchecked Sendable {
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_STICKERS"] == "1" { capabilities["slide_post_stickers"] = true }
             // KRIA_SLIDE_POST_TILT (KRI-1138): the Tilt tool. The server only advertises it to protocol 28 builds.
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_TILT"] == "1" { capabilities["slide_post_tilt"] = true }
+            // KRIA_SLIDE_POST_TILT_ZOOM (KRI-1170): the Zoom slider. The server only advertises it to protocol 32 builds.
+            if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_TILT_ZOOM"] == "1" { capabilities["slide_post_tilt_zoom"] = true }
             // KRIA_TEXT_BEND (KRI-646): the Bend slider. The server only advertises it to protocol 9 builds.
             if ProcessInfo.processInfo.environment["KRIA_TEXT_BEND"] == "1" { capabilities["text_bend"] = true }
             // KRIA_VOICE_DICTATION (KRI-742): the mic button; the engine is scripted (see DictationController).

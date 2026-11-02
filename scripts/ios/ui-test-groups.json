@@ -57,6 +57,7 @@
       "KriaUITests/SlidePostUITests/testSizeSheetSquareFitAllReshapesThePreviewAndSurvivesSave",
       "KriaUITests/SlidePostUITests/testDrawOnASlideLeavesInkThatSurvivesSaveAndSlideSwitching",
       "KriaUITests/SlidePostUITests/testTiltTurnsThePhotoLiveAndSurvivesSave",
+      "KriaUITests/SlidePostUITests/testTiltZoomShowsOnlyWithItsCapabilityAndSurvivesSaveAndReset",
       "KriaUITests/SlidePostUITests/testAIButtonOpensSheetAndChatEditStagesOnThePage",
       "KriaUITests/SlidePostUITests/testLongPressDragReordersAndKeepsTheCover",
       "KriaUITests/SlidePostUITests/testDraggingToTheEdgeAutoScrollsTheStrip",

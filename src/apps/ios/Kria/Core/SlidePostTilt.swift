@@ -9,17 +9,24 @@ import KriaMediaEngine
 /// turns: text, ink, stickers and the watermark stay upright above it. What the turn uncovers shows `backdrop`,
 /// the engine's `ClipBackdrop` (blank is black, `color` a `#RRGGBB`, `blur` a blurred cover-fit copy of the same
 /// media). It is a SIBLING of `framing` in `SlidePostEdits`: a build that predates it leaves the key out and the
-/// server's "missing means keep" rule protects the stored value. Upright is stored as no tilt at all.
+/// server's "missing means keep" rule protects the stored value. Upright at zoom 1 is stored as no tilt at all.
+///
+/// `zoom` (KRI-1170, protocol 32) scales the media about the canvas centre BEFORE it turns: 1 is as framed, 0.5 half
+/// size over the backdrop, 3 three times closer. It is left out of the encoded tilt at 1, so a tilt stored before zoom
+/// existed round-trips byte for byte; a build below 32 does not know the key and the server answers it 426.
 struct SlidePostTilt: Codable, Equatable, Sendable {
     static let maxDegrees = 180.0
+    static let minZoom = 0.5
+    static let maxZoom = 3.0
 
     var rotationDeg: Double
     var backdrop: ClipBackdrop
+    var zoom: Double
 
-    enum CodingKeys: String, CodingKey { case rotationDeg = "rotation_deg"; case backdrop }
+    enum CodingKeys: String, CodingKey { case rotationDeg = "rotation_deg"; case backdrop; case zoom }
 
-    init(rotationDeg: Double, backdrop: ClipBackdrop = .blank) {
-        self.rotationDeg = Self.wrapped(rotationDeg); self.backdrop = backdrop
+    init(rotationDeg: Double, backdrop: ClipBackdrop = .blank, zoom: Double = 1) {
+        self.rotationDeg = Self.wrapped(rotationDeg); self.backdrop = backdrop; self.zoom = Self.clampedZoom(zoom)
     }
     /// Strict, like the drawing: dropping a tilt this build cannot read would make the next save send `null` and
     /// erase a turn the server still holds. The server validates it, so a failure here means a contract break.
@@ -27,7 +34,7 @@ struct SlidePostTilt: Codable, Equatable, Sendable {
         // The server's model is `extra="forbid"`: a key this build does not know is a newer contract, and decoding around it
         // would drop it on the next save.
         let every = try decoder.container(keyedBy: AnyKey.self)
-        guard every.allKeys.allSatisfy({ ["rotation_deg", "backdrop"].contains($0.stringValue) }) else {
+        guard every.allKeys.allSatisfy({ ["rotation_deg", "backdrop", "zoom"].contains($0.stringValue) }) else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unknown slide tilt field"))
         }
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -36,12 +43,24 @@ struct SlidePostTilt: Codable, Equatable, Sendable {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid slide tilt"))
         }
         rotationDeg = degrees
+        let decodedZoom = try c.decodeIfPresent(Double.self, forKey: .zoom) ?? 1
+        guard decodedZoom.isFinite, decodedZoom >= Self.minZoom, decodedZoom <= Self.maxZoom else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid slide tilt zoom"))
+        }
+        zoom = decodedZoom
         let decoded = try c.decodeIfPresent(ClipBackdrop.self, forKey: .backdrop) ?? .blank
         // A slide backdrop is blank, a colour or a blur; a pool photo or video behind a slide is not part of the contract.
         if case .media = decoded {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "A slide tilt has no media backdrop"))
         }
         backdrop = decoded
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(rotationDeg, forKey: .rotationDeg)
+        try c.encode(backdrop, forKey: .backdrop)
+        if zoom != 1 { try c.encode(zoom, forKey: .zoom) }
     }
 
     private struct AnyKey: CodingKey {
@@ -51,8 +70,14 @@ struct SlidePostTilt: Codable, Equatable, Sendable {
         init?(intValue: Int) { nil }
     }
 
-    /// A turn of 0 draws nothing, so it is stored as "no tilt" (the server does the same).
-    var isUpright: Bool { rotationDeg == 0 }
+    /// A turn of 0 at zoom 1 draws nothing, so it is stored as "no tilt" (the server does the same).
+    var isNeutral: Bool { rotationDeg == 0 && zoom == 1 }
+
+    /// A zoom held to the slider's range and rounded to the hundredth, so a drag never stores noise like 1.2999999.
+    static func clampedZoom(_ zoom: Double) -> Double {
+        guard zoom.isFinite else { return 1 }
+        return (min(max(zoom, minZoom), maxZoom) * 100).rounded() / 100
+    }
 
     /// Any angle folded into -180...180 (190 is -170).
     static func wrapped(_ degrees: Double) -> Double {
@@ -76,16 +101,17 @@ struct SlidePostTilt: Codable, Equatable, Sendable {
 ///
 /// The canvas is the slide's output canvas in px (origin top-left, y down). The MEDIA is the photo's (cropped) region
 /// scaled the way the slide frames it (cover for Fill, whole for Fit), centred on the canvas; for Fill it is larger
-/// than the canvas on one axis, so a turned photo keeps showing the pixels that rotate into view.
+/// than the canvas on one axis, so a turned photo keeps showing the pixels that rotate into view. `zoom` (1 = as framed)
+/// scales that media about the canvas centre before it turns; the turn, its bounds and the coverage test follow.
 enum SlidePostTiltGeometry {
-    static func mediaSize(imageSize: CGSize, crop: NormalizedSourceRect?, canvas: CGSize, fit: Bool) -> CGSize {
+    static func mediaSize(imageSize: CGSize, crop: NormalizedSourceRect?, canvas: CGSize, fit: Bool, zoom: Double = 1) -> CGSize {
         guard imageSize.width > 0, imageSize.height > 0, canvas.width > 0, canvas.height > 0 else { return canvas }
         let region = crop ?? NormalizedSourceRect(x: 0, y: 0, width: 1, height: 1)
         let regionW = region.width * Double(imageSize.width), regionH = region.height * Double(imageSize.height)
         guard regionW > 0, regionH > 0 else { return canvas }
         let xScale = Double(canvas.width) / regionW, yScale = Double(canvas.height) / regionH
         let scale = fit ? min(xScale, yScale) : max(xScale, yScale)
-        return CGSize(width: regionW * scale, height: regionH * scale)
+        return CGSize(width: regionW * scale * zoom, height: regionH * scale * zoom)
     }
 
     /// Axis-aligned box of a `size` rectangle turned by `degrees` (ffmpeg's `rotw` / `roth`).
@@ -135,9 +161,9 @@ enum SlidePostTiltGeometry {
 }
 
 extension SlidePostFraming {
-    /// The tilt the slide actually renders with. A turn of 0 is no tilt.
+    /// The tilt the slide actually renders with. A turn of 0 at zoom 1 is no tilt.
     static func effectiveTilt(for slide: SlidePostSlide) -> SlidePostTilt? {
-        guard let tilt = slide.edits?.tilt, !tilt.isUpright else { return nil }
+        guard let tilt = slide.edits?.tilt, !tilt.isNeutral else { return nil }
         return tilt
     }
 }

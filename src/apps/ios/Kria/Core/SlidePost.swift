@@ -1407,12 +1407,12 @@ private struct SlidePostItemResponse: Decodable {
         stageDraft(value)
         return reset
     }
-    /// KRI-1138: turns the slide's photo or video to `tilt.rotationDeg` over its backdrop; nil (or an upright turn) puts
-    /// it back. Photos and videos both turn. One undo step (a dial drag passes one `coalescing` key so its many
-    /// changes are one); a no-op change stages nothing.
+    /// KRI-1138: turns the slide's photo or video to `tilt.rotationDeg` (and zooms it to `tilt.zoom`, KRI-1170) over its
+    /// backdrop; nil (or a neutral turn: 0 degrees at zoom 1) puts it back. Photos and videos both turn. One undo step
+    /// (a dial or zoom drag passes one `coalescing` key so its many changes are one); a no-op change stages nothing.
     func setTilt(slideID: String, _ tilt: SlidePostTilt?, coalescing key: String? = nil) {
         guard var value = draft, let index = value.slides.firstIndex(where: { $0.id == slideID }) else { return }
-        let next = tilt.flatMap { $0.isUpright ? nil : $0 }
+        let next = tilt.flatMap { $0.isNeutral ? nil : $0 }
         var edits = value.slides[index].edits ?? SlidePostEdits()
         guard edits.tilt != next else { return }
         edits.tilt = next

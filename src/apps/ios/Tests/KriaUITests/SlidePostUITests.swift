@@ -458,6 +458,51 @@ import XCTest
         XCTAssertTrue(eventually { previewValue().contains(kept) }, "undo brings the turn back: \(previewValue())")
     }
 
+    /// KRI-1170: the Zoom slider is offered only with `slide_post_tilt_zoom` (a protocol-32 build), moves the photo live, is kept by a
+    /// save on that slide only, and Reset puts the zoom back along with the angle.
+    func testTiltZoomShowsOnlyWithItsCapabilityAndSurvivesSaveAndReset() throws {
+        let plain = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1", "KRIA_SLIDE_POST_TILT": "1"])
+        XCTAssertTrue(plain.buttons["slidepost-tool-tilt"].waitForExistence(timeout: 8))
+        plain.buttons["slidepost-tool-tilt"].tap()
+        XCTAssertTrue(plain.sliders["slidepost-tilt-dial"].waitForExistence(timeout: 5))
+        XCTAssertFalse(plain.sliders["slidepost-tilt-zoom"].exists, "no Zoom slider without slide_post_tilt_zoom")
+        plain.terminate()
+
+        let app = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1", "KRIA_SLIDE_POST_TILT": "1", "KRIA_SLIDE_POST_TILT_ZOOM": "1"])
+        let tilt = app.buttons["slidepost-tool-tilt"]
+        XCTAssertTrue(tilt.waitForExistence(timeout: 8))
+        let preview = app.descendants(matching: .any)["slidepost-preview-image"].firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 8))
+        func previewValue() -> String { preview.exists ? (preview.value as? String ?? "") : "" }
+        XCTAssertFalse(previewValue().contains("|zoom:"), "a fresh photo is at 1x")
+
+        tilt.tap()
+        let zoom = app.sliders["slidepost-tilt-zoom"]
+        XCTAssertTrue(zoom.waitForExistence(timeout: 5))
+        XCTAssertEqual(zoom.value as? String, "1.0x")
+        zoom.adjust(toNormalizedSliderPosition: 0.75)
+        // The drag lands near 2.4x, not exactly on it: assert what the slider reports.
+        func zoomed() -> Double? { (zoom.value as? String).flatMap { Double($0.dropLast()) } }
+        XCTAssertTrue(eventually { (zoomed() ?? 1) > 1.5 }, "zoom \(zoom.value as? String ?? "nil")")
+        let landed = Int(((zoomed() ?? 1) * 100).rounded())
+        XCTAssertTrue(eventually { previewValue().contains("|zoom:") }, "preview \(previewValue())")
+        attach(app, "Slide zoomed in")
+        app.buttons["slidepost-done"].tap()
+
+        saveDraft(app)
+        app.buttons["slidepost-tile-2"].tap()
+        XCTAssertTrue(eventually { !previewValue().contains("|zoom:") }, "slide 2 stays at 1x: \(previewValue())")
+        app.buttons["slidepost-tile-1"].tap()
+        XCTAssertTrue(eventually { previewValue().contains("|zoom:") }, "the saved zoom is back on slide 1: \(previewValue())")
+        XCTAssertGreaterThan(landed, 150)
+
+        tilt.tap()
+        XCTAssertTrue(app.buttons["slidepost-tilt-reset"].waitForExistence(timeout: 3))
+        app.buttons["slidepost-tilt-reset"].tap()
+        XCTAssertTrue(eventually { !previewValue().contains("|zoom:") }, "reset leaves no zoom behind: \(previewValue())")
+        XCTAssertEqual(app.sliders["slidepost-tilt-zoom"].value as? String, "1.0x")
+    }
+
     /// True once the preview element is square (polls; `frame` is not predicate-addressable).
     private func waitForSquare(_ element: XCUIElement, timeout: TimeInterval = 8) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
