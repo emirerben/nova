@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.99.0] - 2026-11-02
+
+### Changed
+- fix(kria): the Copilot direction op takes direction and pace from the request, or names what it can't follow (KRI-1097 wave 2, copilot) (#2041) <!-- release-pr: 2041 -->
+
 ## [0.83.98.0] - 2026-11-02
 
 ### Changed
