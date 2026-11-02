@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.2.0] - 2026-11-02
+
+### Changed
+- fix(kria): continued turns re-pay their planner calls; generated images no longer force a continuation (KRI-709) (#2072) <!-- release-pr: 2072 -->
+
 ## [0.84.1.0] - 2026-11-02
 
 ### Fixed
