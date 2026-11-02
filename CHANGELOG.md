@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.98.0] - 2026-11-02
+
+### Changed
+- feat(kria): lip-sync titles enter the way the creator asked, where they play (KRI-1097 wave 2, lipsync, partial) (#2037) <!-- release-pr: 2037 -->
+
 ## [0.83.97.0] - 2026-11-02
 
 ### Changed
