@@ -168,44 +168,62 @@ async def test_a_continued_run_reuses_the_first_runs_main_creator_answer(harness
     assert harness.answers[1] == harness.answers[0]
 
 
+def _stored(harness) -> dict[bytes, bytes]:  # noqa: ANN001
+    return redis.from_url(settings.redis_url).hgetall(f"kria:turn-checkpoint:{harness.turn_id}")
+
+
 async def test_a_changed_request_between_runs_calls_the_model_again(harness) -> None:
     await harness.run(1)
     await harness.run(2, message="Start with the beach clip instead.")
 
     assert len(harness.client.invocations) == 2
     assert len(harness.reservations) == 2
+    assert len(_stored(harness)) == 2  # both inputs are kept, each under its own digest
+    await harness.run(3, message="Start with the beach clip instead.")  # control: now it hits
+    assert len(harness.client.invocations) == 2
 
 
 async def test_the_first_run_never_reads_a_checkpoint(harness) -> None:
     await harness.run(2)  # leaves an answer behind
+    assert len(_stored(harness)) == 1  # control: the answer is there to be read
+
     await harness.run(1)
 
-    assert len(harness.client.invocations) == 2
+    assert len(harness.client.invocations) == 2  # run 1 ignored it
+    await harness.run(2)
+    assert len(harness.client.invocations) == 2  # run 2 takes it
 
 
 async def test_the_last_permitted_run_stores_nothing(harness, monkeypatch) -> None:
-    monkeypatch.setattr(settings, "kria_turn_auto_continue_max_runs", 2)
-
     await harness.run(2)
+    assert len(_stored(harness)) == 1  # control: with room left, a run stores its answer
+    redis.from_url(settings.redis_url).delete(f"kria:turn-checkpoint:{harness.turn_id}")
+    monkeypatch.setattr(settings, "kria_turn_auto_continue_max_runs", 3)
 
-    store = redis.from_url(settings.redis_url)
-    assert store.exists(f"kria:turn-checkpoint:{harness.turn_id}") == 0
+    await harness.run(3)
+
+    assert _stored(harness) == {}
 
 
 async def test_an_unreadable_checkpoint_is_a_miss_not_an_error(harness) -> None:
     await harness.run(1)
     store = redis.from_url(settings.redis_url)
     key = f"kria:turn-checkpoint:{harness.turn_id}"
+    assert len(store.hkeys(key)) == 1  # control: there is a checkpoint to corrupt
     for field in store.hkeys(key):
         store.hset(key, field, b"{not json")
 
     await harness.run(2)
+    assert len(harness.client.invocations) == 2  # the corrupt one was a miss
 
+    await harness.run(3)  # the miss stored a good answer over it
     assert len(harness.client.invocations) == 2
 
 
 async def test_a_dead_store_never_fails_the_turn(harness, monkeypatch) -> None:
     from app.services import turn_checkpoint  # noqa: PLC0415
+
+    real_redis = turn_checkpoint._redis
 
     def down():  # noqa: ANN202
         raise redis.exceptions.ConnectionError("redis is down")
@@ -216,3 +234,123 @@ async def test_a_dead_store_never_fails_the_turn(harness, monkeypatch) -> None:
     await harness.run(2)
 
     assert len(harness.client.invocations) == 2
+    monkeypatch.setattr(turn_checkpoint, "_redis", real_redis)  # control: a live store works
+    await harness.run(3)  # a third paid call, stored this time
+    await harness.run(4)
+    assert len(harness.client.invocations) == 3
+
+
+async def test_the_switch_off_pays_again_exactly_as_before(harness, monkeypatch) -> None:
+    await harness.run(1)
+    assert len(_stored(harness)) == 1  # control: on, it stores and the next run reuses it
+    await harness.run(2)
+    assert len(harness.client.invocations) == 1
+    redis.from_url(settings.redis_url).delete(f"kria:turn-checkpoint:{harness.turn_id}")
+    monkeypatch.setattr(settings, "kria_turn_checkpoint_enabled", False)
+
+    await harness.run(3)
+    await harness.run(4)
+
+    assert len(harness.client.invocations) == 3
+    assert _stored(harness) == {}
+
+
+@pytest.fixture
+def in_turn(ledger):  # noqa: ANN001, ANN201
+    """Runs ``body`` as run ``epoch`` of one turn: the context the turn task opens."""
+    from app.kria.paid_call_scope import turn_run_epoch  # noqa: PLC0415
+    from app.services.turn_checkpoint import turn_run_id  # noqa: PLC0415
+
+    turn_id = uuid.uuid4()
+    thread_id = uuid.uuid4()
+
+    async def run(epoch: int, body):  # noqa: ANN001, ANN202
+        id_token = turn_run_id.set(turn_id)
+        epoch_token = turn_run_epoch.set(epoch)
+        try:
+            return await body(thread_id)
+        finally:
+            turn_run_epoch.reset(epoch_token)
+            turn_run_id.reset(id_token)
+
+    yield SimpleNamespace(run=run, turn_id=turn_id, creator_id=ledger)
+    redis.from_url(settings.redis_url).delete(f"kria:turn-checkpoint:{turn_id}")
+
+
+async def test_a_continued_run_reuses_the_brief_extractors_answer(
+    monkeypatch: pytest.MonkeyPatch, in_turn
+) -> None:  # noqa: ANN001
+    from app.agents.brief_extractor import BriefExtractorAgent  # noqa: PLC0415
+    from tests.agents.conftest import MockModelClient  # noqa: PLC0415
+
+    client = MockModelClient()
+    monkeypatch.setattr(planner, "default_client", lambda: client)
+    client.queue(BriefExtractorAgent.spec.model, {"brief_updates": [], "request_scope": "edit"})
+    inputs = planner._CreatorInputs(
+        agent_input=_main_creator_input("Start with the cooking clip."),
+        intent_clips=[],
+        creator_request="",
+    )
+
+    async def extract(thread_id: uuid.UUID):  # noqa: ANN202
+        return await planner._call_brief_extractor(
+            inputs,
+            creator_request="Start with the cooking clip.",
+            thread_id=thread_id,
+            creator_id=in_turn.creator_id,
+            item_id=uuid.uuid4(),
+            creator_agent_session_id=None,
+        )
+
+    first = await in_turn.run(1, extract)
+    second = await in_turn.run(2, extract)
+
+    assert len(client.invocations) == 1
+    assert second == first
+
+
+async def test_a_continued_run_reuses_the_clip_intent_planners_answer(
+    monkeypatch: pytest.MonkeyPatch, in_turn
+) -> None:  # noqa: ANN001
+    from app.agents._runtime import RunContext  # noqa: PLC0415
+    from app.agents.clip_intent_planner import (  # noqa: PLC0415
+        ClipIntentPlannerAgent,
+        ClipIntentPlannerOutput,
+        PlannedClipIntent,
+    )
+    from app.services import clip_intent_planning as service  # noqa: PLC0415
+
+    ran: list[int] = []
+    intent = PlannedClipIntent(
+        intent_id="navy-bowler",
+        op="label",
+        attribute="the guy in the navy T-shirt bowling",
+        source_quote="the guy in the navy T-shirt bowling",
+    )
+
+    class CountingPlanner:
+        spec = ClipIntentPlannerAgent.spec  # the real spec keys the checkpoint
+
+        def __init__(self, _client: object) -> None: ...
+
+        def run(self, _input: object, *, ctx: object) -> ClipIntentPlannerOutput:
+            ran.append(1)
+            return ClipIntentPlannerOutput(intents=[intent])
+
+    monkeypatch.setattr(service, "default_client", lambda: None)
+    monkeypatch.setattr(service, "ClipIntentPlannerAgent", CountingPlanner)
+    monkeypatch.setattr(settings, "clip_intents_enabled", True)
+
+    async def plan(_thread_id: uuid.UUID):  # noqa: ANN202
+        return await service.plan_and_resolve_clip_intents(
+            creator_request="the guy in the navy T-shirt bowling",
+            latest_user_message=None,
+            candidate_intents=None,
+            clips=[],
+            run_context=RunContext(),
+        )
+
+    await in_turn.run(1, plan)
+    await in_turn.run(2, plan)
+
+    assert len(ran) == 1

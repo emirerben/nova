@@ -278,3 +278,40 @@ async def test_real_calls_waits_and_steps_reach_planning_runs(monkeypatch, store
     async with AsyncSessionLocal() as db:
         trace = await resolve_kria_trace(db, turn_id=uuid.UUID(accepted.turn_id))
     assert trace["turns"][0]["planning_runs"][0]["calls"] == calls
+
+
+@pytest.mark.asyncio
+async def test_the_clip_intent_vision_recheck_is_timed(monkeypatch) -> None:  # noqa: ANN001
+    from app.database import engine as async_engine  # noqa: PLC0415
+    from app.services import clip_intent_planning as service  # noqa: PLC0415
+    from app.services.clip_intent_resolution import IntentResolution  # noqa: PLC0415
+    from app.services.turn_checkpoint import TurnRunRecorder, turn_run_recorder  # noqa: PLC0415
+    from tests.kria.test_clip_understanding_wait_postgres import (  # noqa: PLC0415
+        _land_analysis,
+        _plan,
+        _project_with_phone_clips,
+        _turn_start_snapshot,
+        _wire,
+    )
+
+    _wire(monkeypatch)
+
+    async def slow_resolver(**_kwargs):  # noqa: ANN003, ANN202
+        await asyncio.sleep(0.06)
+        return IntentResolution()
+
+    monkeypatch.setattr(service, "resolve_clip_intents_for_turn", slow_resolver)
+    user_id, thread_id, item_id = _project_with_phone_clips()
+    recorder = TurnRunRecorder()
+    token = turn_run_recorder.set(recorder)
+    try:
+        async with AsyncSessionLocal() as db:
+            await asyncio.to_thread(_land_analysis, item_id, thread_id)
+            snapshot = await _turn_start_snapshot(db, item_id)
+            await _plan(db, snapshot, user_id=user_id, item_id=item_id, wait_s=5)
+    finally:
+        turn_run_recorder.reset(token)
+        await async_engine.dispose()
+
+    steps = [c for c in recorder.calls if c["name"] == "clip_intent_resolution"]
+    assert len(steps) == 1 and steps[0]["source"] == "step" and steps[0]["ms"] >= 50

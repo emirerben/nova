@@ -206,3 +206,59 @@ async def test_a_key_that_cannot_be_computed_still_runs_the_call(
     monkeypatch.setattr(turn_checkpoint, "_digest", broken)
 
     assert await _run(epoch=2, agent=_agent()) == 1
+
+
+async def test_the_script_writer_is_timed_even_when_it_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio  # noqa: PLC0415
+    import time  # noqa: PLC0415
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from app.kria import voiceover_script  # noqa: PLC0415
+
+    class SlowFailingWriter:
+        def __init__(self, _client: object) -> None: ...
+
+        def run(self, *_args: Any, **_kwargs: Any) -> None:
+            time.sleep(0.05)
+            raise RuntimeError("writer down")
+
+    monkeypatch.setattr(voiceover_script, "VoiceoverScriptWriterAgent", SlowFailingWriter)
+    monkeypatch.setattr(voiceover_script, "_writer_client", lambda: None)
+    recorder = turn_checkpoint.TurnRunRecorder()
+    token = turn_checkpoint.turn_run_recorder.set(recorder)
+    try:
+        await voiceover_script.draft_script(
+            thread_id=uuid.uuid4(),
+            item_id=uuid.uuid4(),
+            creator_id=uuid.uuid4(),
+            manifest=SimpleNamespace(media=[]),
+            clips=[],
+            creator_words=["write me a script"],
+            prior=None,
+            revision_note=None,
+            deadline_monotonic=None,
+        )
+    finally:
+        turn_checkpoint.turn_run_recorder.reset(token)
+    await asyncio.sleep(0)
+
+    assert [(c["name"], c["source"]) for c in recorder.calls] == [
+        ("voiceover_script_writer", "step")
+    ]
+    assert recorder.calls[0]["ms"] >= 40
+
+
+def test_an_unreachable_store_is_still_logged_with_its_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def down() -> None:
+        raise ConnectionError("redis is down")
+
+    monkeypatch.setattr(turn_checkpoint, "_redis", down)
+    recorded = _RecordingLog()
+    monkeypatch.setattr(turn_checkpoint, "log", recorded)
+
+    assert turn_checkpoint._load(uuid.uuid4(), "main_creator:x", _Answer) is None
+    assert "redis is down" in "\n".join(recorded.lines)
