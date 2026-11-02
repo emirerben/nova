@@ -2,6 +2,12 @@
 
 Its source of truth is the item's slide draft, not the plan: every video-only strategy field
 is left unused, and video slides keep their own sound with nothing added.
+
+No planner draft reaches this table today: `creator_capabilities._format_availability` offers
+no ``slides``, so the Main Creator's slides strategy is refused at its parse
+(``policy_edit_format_unavailable``) and slide posts are composed on the Plan page. The lines
+are the backstop for when slides become a strategy format (agents/DECISIONS.md "Prompt
+fidelity wave 2: slide").
 """
 
 from __future__ import annotations
