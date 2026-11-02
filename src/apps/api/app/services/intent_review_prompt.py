@@ -7,7 +7,7 @@ the packet does not already hold, so the catalog it stores is exactly what was a
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -47,6 +47,7 @@ def build_review(
     frames: Sequence[FrameView],
     *,
     rendered_duration_s: float | None = None,
+    restrict_to: Collection[str] | None = None,
 ) -> BuiltReview:
     catalog = build_review_catalog(
         packet,
@@ -65,6 +66,7 @@ def build_review(
             for frame in frames
         ],
         rendered_duration_s,
+        restrict_to,
     )
     if not catalog.requirements:
         raise NothingToReview
