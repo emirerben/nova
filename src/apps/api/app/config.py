@@ -2411,6 +2411,8 @@ class Settings(BaseSettings):
     token_encryption_key: str = ""
 
     native_notifications_enabled: bool = False
+    # Empty (default) = every account once `native_notifications_enabled` is on; a non-empty
+    # list restricts delivery to exactly those accounts. The enabled flag is the kill switch.
     native_notifications_allowed_owner_ids: list[UUID] = Field(default_factory=list)
     native_notifications_apns_environment: Literal["sandbox", "production"] = "sandbox"
     native_notifications_apns_topic: str | None = None

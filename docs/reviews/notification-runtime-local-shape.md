@@ -168,7 +168,7 @@ The native configuration adapter also now reads a missing-default-false build de
 | Area | Required input or action | Current state |
 | --- | --- | --- |
 | Server switch | `NATIVE_NOTIFICATIONS_ENABLED=true` only for the approved trial. Default remains false. | Not configured or activated. |
-| Account scope | `NATIVE_NOTIFICATIONS_ALLOWED_OWNER_IDS` as a nonempty JSON array of exact authenticated trial account UUIDs. | Empty by default. No owner was guessed or enrolled. |
+| Account scope | `NATIVE_NOTIFICATIONS_ALLOWED_OWNER_IDS` as a JSON array of exact authenticated trial account UUIDs; an empty array (the default) means every account. | Empty by default. No owner was guessed or enrolled. |
 | APNs binding | `NATIVE_NOTIFICATIONS_APNS_ENVIRONMENT`, `NATIVE_NOTIFICATIONS_APNS_TOPIC`, `NATIVE_NOTIFICATIONS_APNS_TEAM_ID`, `NATIVE_NOTIFICATIONS_APNS_KEY_ID`. | No values configured. Topic must match the actual signed app. Production source declares `com.emirerben.kria`; development and staging identifiers differ. |
 | Signing secret | `NATIVE_NOTIFICATIONS_APNS_PRIVATE_KEY`, the approved existing APNs P-256 `.p8` material. | No key inspected, created or stored. Creating a key would be a separate action. |
 | Token encryption | Existing valid `TOKEN_ENCRYPTION_KEY`, preserved rather than replaced. | Test-only ephemeral keys validated. No production inspection or rotation. |
