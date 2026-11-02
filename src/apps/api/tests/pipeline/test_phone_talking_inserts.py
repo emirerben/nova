@@ -107,10 +107,12 @@ def _ask(media_id="talk", *, phrase=None, at_s=None, keep_audio=True):
     return InsertAsk(media_id=media_id, at_phrase=phrase, at_s=at_s, keep_audio=keep_audio)
 
 
-def _place(asks, *, bindings=None, in_use=(), words=TAKE_WORDS, cues=TAKE_CUES, take_s=TAKE_S):
+def _place(
+    asks, *, bindings=None, in_use=(), words=TAKE_WORDS, cues=TAKE_CUES, take_s=TAKE_S, **extra
+):
     bindings = bindings if bindings is not None else {"talk": _binding("talk", duration_s=8.0)}
     return place_inserts(
-        asks, bindings=bindings, words=words, cues=cues, take_s=take_s, in_use=in_use
+        asks, bindings=bindings, words=words, cues=cues, take_s=take_s, in_use=in_use, **extra
     )
 
 
@@ -595,3 +597,86 @@ def test_random_cue_and_insert_layouts_show_each_caption_word_exactly_once():
         for chosen in (inserts, snapped):
             warped = warp_for_inserts(chosen, cues=rows).cues
             _assert_each_caption_word_once_and_clear_of_inserts(spoken, warped, chosen)
+
+
+# --- no sliver of speaker next to a cut seam (review of #2058, minor c) ---------------------
+
+_ONE_FRAME_S = 1 / 30
+
+
+def _speaker_pieces_of(recipe):
+    return [c for c in recipe.tracks[0].clips if c.source_asset_id == "take"]
+
+
+def test_an_insert_a_hair_after_a_cleanup_seam_lands_on_the_seam_not_a_sliver_after_it():
+    keep = [(0.0, 10.0), (14.0, 30.0)]
+    # Take seconds: the seam between the two segments is at 10.0.
+    for hair in (0.009, 0.021, -0.012):
+        recipe = _compile((_insert(at=10.0 + hair, dur=5.0),), keep_segments=keep)
+        pieces = _speaker_pieces_of(recipe)
+        assert all(p.source_duration >= _ONE_FRAME_S for p in pieces), hair
+        assert [(p.source_start, p.source_start + p.source_duration) for p in pieces] == keep
+
+
+def test_the_placement_snaps_to_a_nearby_cleanup_seam_without_rounding_it():
+    seam = 12.3456789
+    words = _words([("bir", 3.0, 3.4), ("iki", 3.5, seam - 0.02), ("üç", seam + 0.5, seam + 0.9)])
+    cues = [{"text": "bir iki", "start_s": 3.0, "end_s": seam - 0.02, "words": words[:2]}]
+    (placed,) = _place(
+        [_ask(phrase="bir iki")],
+        words=words,
+        cues=cues,
+        seams=[seam],
+        take_s=30.0,
+    )
+    assert placed.insert is not None
+    assert placed.insert.at_take_s == seam
+
+
+# --- a no-op Save changes nothing, to the last bit (review of #2058, minor d) ---------------
+
+
+def test_a_save_round_trip_of_awkward_numbers_is_byte_identical():
+    import random
+
+    rng = random.Random(7)
+    differing = 0
+    for _ in range(200):
+        cuts = sorted(rng.uniform(1.0, 38.0) for _ in range(rng.choice([0, 2, 4])))
+        keep, cursor = [], 0.0
+        for a, b in zip(cuts[::2], cuts[1::2], strict=False):
+            if a > cursor:
+                keep.append((cursor, a))
+            cursor = b
+        keep.append((cursor, 40.0))
+        take = sum(b - a for a, b in keep)
+        points = sorted({round(rng.uniform(2.5, take - 1.0), 3) for _ in range(rng.randint(1, 3))})
+        points = [p for k, p in enumerate(points) if all(p - q >= 2.0 for q in points[:k])]
+        inserts = tuple(
+            PhoneInsert(
+                binding=_binding(f"i{k}", duration_s=rng.choice([3.16, 5.537, 8.2501])),
+                at_take_s=p,
+            )
+            for k, p in enumerate(points)
+        )
+        first = compile_phone_subtitled_plan(
+            (_binding("take", duration_s=40.0),),
+            caption_cues=[],
+            keep_segments=keep,
+            inserts=inserts,
+        )
+        bindings = (_binding("take", duration_s=40.0), *(i.binding for i in inserts))
+        back = inserts_from_recipe(first, bindings)
+        again_keep = [
+            (c.source_start, c.source_start + c.source_duration)
+            for c in first.tracks[0].clips
+            if c.source_asset_id == "take"
+        ]
+        again = compile_phone_subtitled_plan(
+            (_binding("take", duration_s=40.0),),
+            caption_cues=[],
+            keep_segments=again_keep,
+            inserts=back,
+        )
+        differing += again.model_dump_json() != first.model_dump_json()
+    assert differing == 0
