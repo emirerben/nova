@@ -3,6 +3,7 @@
 Failure modes (written before the flow; each has a test below, matrix row in parentheses):
 
   stale generation at claim / at the start fence / after the response   (1)
+  a change only the input digest sees (dispatch settings), same three points (1)
   ownership epoch or binding changed                                     (2)
   frames from another generation, or bytes that do not match their hash  (3)
   corrupt, oversized, missing or too many frames                         (6)
@@ -14,6 +15,7 @@ Failure modes (written before the flow; each has a test below, matrix row in par
   paid flag switched off after admission                                 (13)
   internal account without a canary id                                   (15)
   two workers on one row: one provider call, one ledger row              (16)
+  ledger cannot record the start fence: release, no call, no liability   (7, 17)
   crash before the start fence: reclaim without liability, then exhaust  (17)
   crash after the start fence: unknown, never re-called                  (18)
   crash after the response is stored: settle from the stored usage       (19)
@@ -287,6 +289,17 @@ def bump_ownership(job_id):
         db.commit()
 
 
+def change_dispatch_settings(job_id):
+    """A change `_inputs` accepts without raising: only the stored input digest notices it."""
+    with sync_session() as db:
+        job = db.get(Job, job_id)
+        job.all_candidates = {
+            **(job.all_candidates or {}),
+            "creator_strategy": {"target_duration_s": 9},
+        }
+        db.commit()
+
+
 def ctx_for(row):
     return RunContext(
         creator_id=str(row.owner_id),
@@ -554,6 +567,43 @@ async def test_stale_after_the_response_keeps_the_text_and_settles_the_ledger(
     assert [entry["status"] for entry in ledger()] == ["settled"]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "moment,calls,ledger_states",
+    [("claim", 0, []), ("start", 0, ["released"]), ("response", 1, ["settled"])],
+)
+async def test_a_change_only_the_input_digest_sees_is_stale_at_every_checkpoint(
+    approved_publication, paid, monkeypatch, moment, calls, ledger_states
+):
+    _, _, job_id, _ = approved_publication
+    rid, _, _ = await ready_review(approved_publication, monkeypatch)
+    hook = None
+    if moment == "claim":
+        change_dispatch_settings(job_id)
+    elif moment == "start":
+        real = costs.reserve_paid_call
+
+        def reserve_then_change(request):
+            receipt = real(request)
+            change_dispatch_settings(job_id)
+            return receipt
+
+        monkeypatch.setattr(costs, "reserve_paid_call", reserve_then_change)
+    else:
+
+        def hook(_request):
+            change_dispatch_settings(job_id)
+
+    provider = Provider(hook=hook)
+    assert await run_async(rid, provider) == "stale"
+    row = review_row(rid)
+    assert (row.status, row.reason) == ("stale", "generation_changed")
+    assert len(provider.calls) == calls
+    assert [entry["status"] for entry in ledger()] == ledger_states
+    if moment == "response":
+        assert row.review["raw_output"] == '{"findings":[]}'
+
+
 # --- evidence integrity (rows 3, 6) -----------------------------------------------------
 
 
@@ -730,6 +780,30 @@ async def test_a_reserve_that_cannot_complete_never_reaches_the_provider(
     assert await run_async(rid, provider) == status
     assert review_row(rid).reason == reason
     assert provider.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [CostControlUnavailableError("ledger down"), ProviderOutcomeUnknownError("already started")],
+    ids=["ledger-down", "key-already-started"],
+)
+async def test_a_start_fence_the_ledger_cannot_record_releases_and_never_calls(
+    approved_publication, paid, monkeypatch, failure
+):
+    rid, _, _ = await ready_review(approved_publication, monkeypatch)
+
+    def refuse(receipt):
+        raise failure
+
+    monkeypatch.setattr(costs, "mark_paid_call_started", refuse)
+    provider = Provider()
+    assert await run_async(rid, provider) == "unavailable"
+    row = review_row(rid)
+    assert (row.status, row.reason) == ("unavailable", "ledger_unavailable")
+    assert row.review["provenance"]["provider_outcome"] == "not_sent"
+    assert provider.calls == []
+    assert [entry["status"] for entry in ledger()] == ["released"]
 
 
 # --- cost bounds (rows 10, 11, 12, 13, 43) ----------------------------------------------
