@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.118.0] - 2026-11-02
+
+### Fixed
+- feat(overlays): plan from saved transcripts and pinned narration (KRI-1142) (#2070) <!-- release-pr: 2070 -->
+
 ## [0.83.117.0] - 2026-11-02
 
 ### Fixed
