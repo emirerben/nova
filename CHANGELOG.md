@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.106.0] - 2026-11-02
+
+### Fixed
+- fix(overlays): accept a model answer without a message; refusals ask to retry (KRI-1142) (#2056) <!-- release-pr: 2056 -->
+
 ## [0.83.105.0] - 2026-11-02
 
 ### Fixed
