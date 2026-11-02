@@ -283,23 +283,55 @@ def shift_time(t: float, inserts: Sequence[PhoneInsert]) -> float:
 
 
 def _split_cue(cue: dict, point: float, length: float) -> list[dict]:
+    """A caption that spans the insert point: each of its words plays once, on its own side.
+
+    A cue holds its last words on screen until the next block starts (`build_plain_cues`), so
+    one whose words are all on one side can still span the point: only the side that has its
+    words keeps it, never a copy on both.
+    """
     words = [w for w in cue.get("words") or [] if isinstance(w, dict)]
+    if not words:
+        # No word timings to split by: it plays where most of its time is, once.
+        start, end = float(cue["start_s"]), float(cue["end_s"])
+        if point - start >= end - point:
+            return [{**cue, "end_s": point}]
+        return [_shift_cue(cue, length, start=point)]
     first = [w for w in words if (float(w["start_s"]) + float(w["end_s"])) / 2 < point]
-    second = [w for w in words if w not in first]
-    if not first or not second:
-        return [
-            {**cue, "end_s": point, "words": first or words},
-            _shift_cue(cue, length, start=point),
-        ]
-    head = {
+    second = words[len(first) :]
+    if not second:
+        return [_head_cue(cue, first, point)]
+    tail = _tail_cue(cue, second, point, length)
+    return [tail] if not first else [_head_cue(cue, first, point), tail]
+
+
+def _head_cue(cue: dict, words: list[dict], point: float) -> dict:
+    kept = [{**w, "end_s": min(float(w["end_s"]), point)} for w in words]
+    whole = len(kept) == len(cue.get("words") or [])
+    return {
         **cue,
-        "text": " ".join(_text(w) for w in first),
-        "end_s": float(first[-1]["end_s"]),
-        "words": first,
+        "text": cue.get("text", "") if whole else " ".join(_text(w) for w in kept),
+        "end_s": point if whole else float(kept[-1]["end_s"]),
+        "words": kept,
     }
-    tail = _shift_cue({**cue, "text": " ".join(_text(w) for w in second), "words": second}, length)
-    tail["start_s"] = float(second[0]["start_s"]) + length
-    return [head, tail]
+
+
+def _tail_cue(cue: dict, words: list[dict], point: float, length: float) -> dict:
+    kept = [
+        {
+            **w,
+            "start_s": max(float(w["start_s"]), point) + length,
+            "end_s": float(w["end_s"]) + length,
+        }
+        for w in words
+    ]
+    whole = len(kept) == len(cue.get("words") or [])
+    return {
+        **cue,
+        "text": cue.get("text", "") if whole else " ".join(_text(w) for w in kept),
+        "start_s": float(kept[0]["start_s"]),
+        "end_s": float(cue["end_s"]) + length,
+        "words": kept,
+    }
 
 
 def _shift_cue(cue: dict, length: float, *, start: float | None = None) -> dict:
