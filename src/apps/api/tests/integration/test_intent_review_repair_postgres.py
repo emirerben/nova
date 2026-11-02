@@ -143,7 +143,17 @@ def repair_on(paid, monkeypatch):
     monkeypatch.setattr(flow, "build_review", prompt.build_review)
     monkeypatch.setattr(settings, "kria_intent_review_repair_enabled", True)
     monkeypatch.setattr(tier, "_CODE_TIER_CEILING", "repair")
-    return paid
+    yield paid
+    # The beat sweep is global and takes the oldest 25 staged rows: one test's leftover repair
+    # must not crowd the next test's out of it.
+    with sync_session() as db:
+        db.execute(
+            text(
+                "UPDATE creator_generation_reviews SET status = 'repair_abandoned', "
+                "reason = 'test_cleanup' WHERE status = 'repair_staged'"
+            )
+        )
+        db.commit()
 
 
 @pytest.fixture
@@ -243,6 +253,7 @@ async def test_a_high_confidence_wording_drift_stages_a_pending_draft_and_render
         ("system", INTENT_REPAIR_EVENT),
         ("assistant", "draft_applied"),
         ("system", "approval_requested"),
+        ("assistant", "assistant_response"),
     ]
     applied = created[1]
     assert applied.payload["can_undo"] is True and applied.payload["draft_id"] == str(staged.id)
@@ -304,7 +315,7 @@ async def test_a_compile_that_touches_more_than_the_candidates_named_stages_noth
     assert row.repair_draft_id is None and len(drafts(thread)) == count
     assert [s["why"] for s in row.review["disposition"]["suggestions"]] == ["protected"]
     new = [e for e in events(thread) if e.id not in seen]
-    assert [e.event_type for e in new] == [INTENT_REPAIR_EVENT]
+    assert [e.event_type for e in new] == [INTENT_REPAIR_EVENT, "assistant_response"]
     with sync_session() as db:
         turn = db.scalar(
             select(CreatorAgentTurn).where(
@@ -425,16 +436,16 @@ def forbid_the_element(thread_id):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "interfere,why",
+    "interfere,why,receipts",
     [
-        (make_head_move, "head_moved"),
-        (make_thread_busy, "thread_busy"),
-        (open_an_approval, "thread_busy"),
-        (forbid_the_element, "protected"),
+        (make_head_move, "head_moved", 1),
+        (make_thread_busy, "thread_busy", 0),
+        (open_an_approval, "thread_busy", 0),
+        (forbid_the_element, "protected", 1),
     ],
 )
 async def test_a_repair_never_overrides_what_changed_since_the_render(
-    drifted, repair_on, monkeypatch, interfere, why
+    drifted, repair_on, monkeypatch, interfere, why, receipts
 ):
     _, thread, _, _ = drifted
     rid = await ready(drifted, monkeypatch)
@@ -445,7 +456,13 @@ async def test_a_repair_never_overrides_what_changed_since_the_render(
     (suggestion,) = row.review["disposition"]["suggestions"]
     assert suggestion["why"] == why and suggestion["candidate_id"]
     assert row.repair_draft_id is None and len(drafts(thread)) == before
-    assert {e.id for e in events(thread)} == seen
+    added = [e for e in events(thread) if e.id not in seen]
+    assert [(e.role, e.event_type) for e in added] == [
+        ("assistant", "assistant_response")
+    ] * receipts
+    assert all(
+        "Optional" not in r["reason"] for e in added for r in e.payload["requirement_receipts"]
+    )
 
 
 @pytest.mark.asyncio
@@ -1255,7 +1272,9 @@ async def test_a_follow_up_with_the_same_defect_never_stages_a_second_repair(
         == candidate["candidate_id"]
     )
     assert follow_up.repair_draft_id is None and len(drafts(thread)) == count
-    assert {e.id for e in events(thread)} == seen
+    (settlement,) = [e for e in events(thread) if e.id not in seen]
+    assert settlement.payload["review_id"] == str(rid)
+    assert follow_up.receipt_event_id is None
     parent = review_row(rid)
     assert parent.status == "repair_unverified" and parent.reason == "not_confirmed"
 
@@ -1277,7 +1296,10 @@ async def test_what_a_repair_adds_to_the_chat_is_only_what_old_app_builds_alread
     )
     allowed = set(re.findall(r'"([a-z_]+)"', block.group(1)))
     added = [e for e in events(thread) if e.id not in seen]
-    assert {e.event_type for e in added if e.role == "assistant"} == {"draft_applied"}
+    assert {e.event_type for e in added if e.role == "assistant"} == {
+        "draft_applied",
+        "assistant_response",
+    }
     assert {e.event_type for e in added if e.role == "assistant"} <= allowed
     assert not {e.event_type for e in added if e.role == "system"} & allowed
 
@@ -1638,7 +1660,12 @@ async def test_a_reply_the_draft_path_would_write_instead_of_a_draft_never_reach
     assert [s["why"] for s in row.review["disposition"]["suggestions"]] == ["protected"]
     assert row.repair_draft_id is None and len(drafts(thread)) == count
     created = [e for e in events(thread) if e.id not in seen]
-    assert [(e.role, e.event_type) for e in created] == [("system", INTENT_REPAIR_EVENT)]
+    assert [(e.role, e.event_type) for e in created] == [
+        ("system", INTENT_REPAIR_EVENT),
+        ("assistant", "assistant_response"),
+    ]
+    assert created[1].payload["turn_value"] == "intent_review"
+    assert "I didn't change anything" in created[1].content
     with sync_session() as db:
         turn = db.scalar(
             select(CreatorAgentTurn).where(

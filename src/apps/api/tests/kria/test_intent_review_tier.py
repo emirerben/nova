@@ -43,7 +43,7 @@ def test_shipping_ceiling_caps_every_flag_combination(flags, monkeypatch):
         assert tier.intent_review_tier(USER) == expected
 
 
-def test_shipped_ceiling_reviews_but_never_repairs_even_with_every_flag_on(monkeypatch):
+def test_shipped_ceiling_lets_every_flag_on_reach_the_repair_tier(monkeypatch):
     for name, value in dict(
         kria_intent_review_enabled=True,
         kria_intent_review_paid_enabled=True,
@@ -54,8 +54,8 @@ def test_shipped_ceiling_reviews_but_never_repairs_even_with_every_flag_on(monke
         ai_openai_monthly_budget_usd=500.0,
     ).items():
         monkeypatch.setattr(settings, name, value)
-    assert tier._CODE_TIER_CEILING == "review"
-    assert tier.intent_review_tier(USER) == "review"
+    assert tier._CODE_TIER_CEILING == "repair"
+    assert tier.intent_review_tier(USER) == "repair"
 
 
 @pytest.mark.parametrize(

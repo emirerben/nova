@@ -771,6 +771,13 @@ def _verdict_on_repair(parent: CreatorGenerationReview, child: CreatorGeneration
     return _Verdict("repair_unverified", "not_confirmed", comparison)
 
 
+def _tell_the_creator(review_id) -> None:
+    """The settlement is already durable; posting it never undoes it and the sweep retries it."""
+    from app.services.intent_review_post import post_intent_review_outcome
+
+    post_intent_review_outcome(review_id)
+
+
 def settle_parent_from_child(child_id) -> str | None:
     """Close the parent of a finished follow-up review. No-op for anything else; idempotent.
 
@@ -782,7 +789,8 @@ def settle_parent_from_child(child_id) -> str | None:
         child = db.get(CreatorGenerationReview, child_id)
         if child is None or child.parent_review_id is None or child.status not in TERMINAL:
             return None
-        parent = _lock_row(db, child.parent_review_id)
+        parent_id = child.parent_review_id
+        parent = _lock_row(db, parent_id)
         if parent is None or parent.status != "repair_staged":
             return None
         verdict = _verdict_on_repair(parent, child)
@@ -791,6 +799,7 @@ def settle_parent_from_child(child_id) -> str | None:
         parent.lease_token = parent.lease_until = None
         db.commit()
     _dispatch(verdict.successor)
+    _tell_the_creator(parent_id)
     return verdict.status
 
 
@@ -904,5 +913,8 @@ def recover_repair_staged(limit: int = 25) -> int:
             handled += _close_parent(parent_id, "repair_abandoned", reason) != "ignored"
             _dispatch(successor)
         elif unreviewed:
-            handled += _close_parent(parent_id, "repair_unverified", "no_rereview") != "ignored"
+            closed = _close_parent(parent_id, "repair_unverified", "no_rereview") != "ignored"
+            if closed:
+                _tell_the_creator(parent_id)
+            handled += closed
     return handled

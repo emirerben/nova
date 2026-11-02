@@ -15,7 +15,7 @@ from app.config import settings
 
 Tier = Literal["off", "evidence", "review", "repair"]
 _RANK: dict[str, int] = {"off": 0, "evidence": 1, "review": 2, "repair": 3}
-_CODE_TIER_CEILING: Tier = "review"
+_CODE_TIER_CEILING: Tier = "repair"
 
 
 def tier_rank(tier: str) -> int:

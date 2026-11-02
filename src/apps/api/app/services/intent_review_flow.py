@@ -600,12 +600,14 @@ def _stage_repair_if_pending(review_id, outcome: str) -> str:
     return stage_intent_repair(review_id, token=token)
 
 
-def post_intent_review_outcome(review_id) -> None:
-    """Shadow mode: the outcome is stored and traced, and the creator is shown nothing.
+def post_intent_review_outcome(review_id) -> str:
+    """Tell the creator what the review found, once and only where it is still true.
 
-    The creator-facing receipt and question arrive with the posting stage; until then the
-    deterministic post-render receipt stands, so a review can never say more than it checked.
+    Silent outcomes post nothing; the deterministic post-render receipt stands for them.
     """
+    from app.services.intent_review_post import post_intent_review_outcome as post
+
+    return post(review_id)
 
 
 def _emit_trace(review_id, outcome: str) -> None:
@@ -772,15 +774,18 @@ def recover_intent_reviews(deadline: float | None = None) -> int:
             return handled
         _recover_expired(identifier)
         handled += 1
+    from app.services.intent_review_post import post_unposted_outcomes
     from app.services.intent_review_repair_flow import recover_repair_staged
 
-    return handled + recover_repair_staged()
+    handled += recover_repair_staged()
+    return handled + post_unposted_outcomes()
 
 
 def _recover_expired(review_id) -> str:
     outcome = _stage_repair_if_pending(review_id, _resolve_expired(review_id))
     if outcome not in {"ignored", "evidence_ready"}:
         _emit_trace(review_id, outcome)
+        post_intent_review_outcome(review_id)
     return outcome
 
 
