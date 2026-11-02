@@ -3091,7 +3091,14 @@ async def _rerun_after_stale_refusal(
             replace(
                 inputs,
                 agent_input=inputs.agent_input.model_copy(
-                    update={"server_note": ask_refusals.correction_note(capability)}
+                    update={
+                        "server_note": ask_refusals.correction_note(
+                            capability,
+                            inserts_open=bool(
+                                insert_clip_candidates(inputs.agent_input.capability_manifest)
+                            ),
+                        )
+                    }
                 ),
             ),
             thread_id=thread_id,

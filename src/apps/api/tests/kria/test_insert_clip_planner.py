@@ -242,18 +242,19 @@ def _render_prompt(manifest) -> str:
 
 
 def test_the_planner_is_taught_the_field_only_while_the_rollout_is_open(monkeypatch):
-    from app.agents.main_creator import _INSERT_CLIP_PROMPT_SECTION, MAIN_CREATOR_PROMPT_VERSION
+    from app.agents.main_creator import MAIN_CREATOR_PROMPT_VERSION, _insert_clip_section
 
+    section = _insert_clip_section(cutaways_open=False)
     assert MAIN_CREATOR_PROMPT_VERSION.endswith("-v110")
     _open(monkeypatch, insert=True)
     manifest = _julio_manifest()
     open_prompt = _render_prompt(manifest)
-    assert _INSERT_CLIP_PROMPT_SECTION in open_prompt
+    assert section in open_prompt
     monkeypatch.setattr(settings, "phone_talking_insert_clips_enabled", False)
     closed = _render_prompt(manifest)
     assert "insert_clips" not in closed and "A CLIP PLAYED IN THE MIDDLE" not in closed
     # Closed, the prompt is exactly the open one minus the section (no stray blank line).
-    assert open_prompt.replace("\n" + _INSERT_CLIP_PROMPT_SECTION, "") == closed
+    assert open_prompt.replace("\n" + section, "") == closed
     montage = _manifest(
         [
             {"media_id": FOOTAGE_A, "kind": "video", "duration_s": 12.9},
@@ -495,9 +496,13 @@ def test_the_planner_tells_the_brief_extractor_whether_inserts_are_open(monkeypa
 
 
 def test_only_an_explicit_pause_is_an_insert_show_it_when_i_mention_it_is_not():
-    from app.agents.main_creator import _INSERT_CLIP_PROMPT_SECTION, brief_prompt_section
+    from app.agents.main_creator import _insert_clip_section, brief_prompt_section
 
-    for text in (brief_prompt_section(True), _INSERT_CLIP_PROMPT_SECTION):
+    for text in (
+        brief_prompt_section(True),
+        _insert_clip_section(cutaways_open=False),
+        _insert_clip_section(cutaways_open=True),
+    ):
         # The ask that keeps the talk running is served by the existing cutaway features.
         ask = "kongre dediğimde kongre videosunu"
         assert ask in text

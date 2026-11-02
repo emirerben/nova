@@ -382,15 +382,31 @@ the talk with its own sound.
 _CUTAWAY_S = f"{MAX_WINDOW_S:g} seconds"
 _CUTAWAY_SOUND_S = f"{SOUND_WINDOW_S:g} seconds"
 
-_TALKING_CUTAWAYS_HEAD = """
+_TALKING_CUTAWAYS_HEAD_OPEN = """
 CLIPS SHOWN FULL SCREEN OVER THE TALK (iPhone Talking, several clips)
 This edit has several of the creator's own clips. The clip where they talk to camera is the spine
 of the video and other clips can cover it full screen for a few seconds. This is available here:
-when the creator asks for it, never use `ask_user` to say it is unsupported, never claim the
+when the creator asks for it, """
+
+_TALKING_CUTAWAYS_HEAD_CLOSE = """never claim the
 format cannot do it, and never offer a Montage as the answer. Propose the strategy: `edit_format`
 "subtitled" with every clip in `selected_media_ids`; the server places the clips and checks the
 ask. An earlier reply in this chat that said this works only on a montage made on the iPhone, or
 not in this edit, is out of date."""
+
+_TALKING_CUTAWAYS_NO_ASK = "never use `ask_user` to say it is unsupported, "
+
+# With the insert lane also open, one clarifying question is allowed, and only for wording that
+# genuinely fits both lanes (the insert section says which wording that is).
+_TALKING_CUTAWAYS_ONE_ASK = (
+    "never use `ask_user` to say it is unsupported (the single exception is ONE short question "
+    "when the wording genuinely fits both this and a clip played while the talk pauses, see the "
+    "section on a clip played in the middle of the talk), "
+)
+
+_TALKING_CUTAWAYS_HEAD = (
+    _TALKING_CUTAWAYS_HEAD_OPEN + _TALKING_CUTAWAYS_NO_ASK + _TALKING_CUTAWAYS_HEAD_CLOSE
+)
 
 _TALKING_CUTAWAYS_MENTION = f"""
 Placement: "show the talks when I talk about them", "show the stadium full screen when I mention
@@ -445,17 +461,28 @@ spread. Cutting the speech as a requirement is not available with several clips.
 _TALKING_CUTAWAYS_LIMITS = """
 Cutting the speech as a requirement is not available with several clips."""
 
-_TALKING_CUTAWAYS_TAIL = """
-Only when the exact thing asked is impossible, say so and offer what exists. A clip that stops the
+_TALKING_CUTAWAYS_TAIL_PREFIX = """
+Only when the exact thing asked is impossible, say so and offer what exists. """
+
+_TALKING_CUTAWAYS_TAIL_NO_INSERT = """A clip that stops the
 talk and lets it continue afterwards is not available on iPhone; the nearest are the full-screen
 overlay above%s."""
 
+_TALKING_CUTAWAYS_TAIL_INSERT = """A clip that stops the
+talk and lets it continue afterwards exists only as `insert_clips` (see the section on a clip
+played in the middle of the talk), and only when the creator explicitly asks the talk to pause or
+stop; for anything else the nearest are the full-screen overlay above%s."""
+
+_TALKING_CUTAWAYS_TAIL = _TALKING_CUTAWAYS_TAIL_PREFIX + _TALKING_CUTAWAYS_TAIL_NO_INSERT
+
 
 def _talking_cutaways_section(
-    availability: TalkingCutawayAvailability, *, ending_open: bool
+    availability: TalkingCutawayAvailability, *, ending_open: bool, inserts_open: bool = False
 ) -> str:
     """The prompt section for the footage-cutaway lane; the same gates the worker reads decide
-    which paragraphs the model sees (`talking_footage_cutaways`)."""
+    which paragraphs the model sees (`talking_footage_cutaways`). `inserts_open` is the other
+    lane's own gate (`insert_clip_candidates`): closed, the section is exactly what it was
+    before the insert lane existed; open, it stops claiming a pausing clip does not exist."""
 
     ending = " or a video at the very end (`ending_clip`)" if ending_open else ""
     if availability.sound:
@@ -467,11 +494,17 @@ def _talking_cutaways_section(
     else:
         sound = _TALKING_CUTAWAYS_NO_SOUND
     parts = [
-        _TALKING_CUTAWAYS_HEAD,
+        (
+            _TALKING_CUTAWAYS_HEAD_OPEN + _TALKING_CUTAWAYS_ONE_ASK + _TALKING_CUTAWAYS_HEAD_CLOSE
+            if inserts_open
+            else _TALKING_CUTAWAYS_HEAD
+        ),
         _TALKING_CUTAWAYS_MENTION if availability.mention else _TALKING_CUTAWAYS_SPREAD,
         sound,
         _TALKING_CUTAWAYS_LIMITS_MENTION if availability.mention else _TALKING_CUTAWAYS_LIMITS,
-        _TALKING_CUTAWAYS_TAIL % ending,
+        _TALKING_CUTAWAYS_TAIL_PREFIX
+        + (_TALKING_CUTAWAYS_TAIL_INSERT if inserts_open else _TALKING_CUTAWAYS_TAIL_NO_INSERT)
+        % ending,
     ]
     return "".join(parts).strip("\n")
 
@@ -490,8 +523,7 @@ videosunu sesiyle oynat, sonra devam et"), set `insert_clips`: [{"media_id": "<t
 media_context VIDEO entry's exact media_id>", "at_phrase": "<the words the creator says it
 after, in their own language>", "keep_audio": true}]. Showing a clip WHILE the talk keeps running
 ("show the congress video when I mention congress", "kongre dediğimde kongre videosunu göster",
-"... sesiyle göster", "use their audio") is NOT an insert, whatever it says about sound: that is
-the clip shown over the talk (the full-screen clip lane, with or without its sound), not this.
+"... sesiyle göster", "use their audio") is NOT an insert, whatever it says about sound.%s
 Without a pause, a stop or an explicit in-the-middle-while-I-wait wording, do not set
 `insert_clips`. Use `at_s` (a second of the talk) instead of `at_phrase` only when they state a
 second. Find the clip by matching what the creator named against the VIDEO entries in
@@ -503,6 +535,30 @@ also use it as a cutaway, in `reaction_beats` or as `ending_clip`. It is not a c
 keeps running under a cutaway) and not an `ending_clip` (that follows the whole talk). Say in
 `summary`, in plain words, where the clip is shown and that the talk pauses for it.
 """.strip("\n")
+
+_INSERT_NOT_THIS_CLOSED = " The talk keeps running there, so leave `insert_clips` empty."
+
+# With the full-screen clip lane open too: the plain show-it asks belong to that lane, and wording
+# that genuinely fits both gets one short question instead of a guess.
+_INSERT_NOT_THIS_CUTAWAYS_OPEN = (
+    " That is the clip shown over the talk (the full-screen clip lane above, with or without"
+    " its sound), not this."
+    " If the wording genuinely fits both and says nothing about the talk stopping or waiting"
+    ' ("put the congress clip in the middle of my talk with its sound"), use `ask_user` ONCE'
+    " with one short question: should the talk pause while the clip plays and then carry on, or"
+    " should the clip cover the talk while it keeps running? Never ask when the wording is a"
+    ' plain show-it-when-I-mention-it ask, or when it says pause, stop or "while I wait".'
+)
+
+
+def _insert_clip_section(*, cutaways_open: bool) -> str:
+    """The insert section; `cutaways_open` is the full-screen clip lane's own gate
+    (`talking_footage_cutaways`), so each lane's text depends on its own gate only."""
+
+    return _INSERT_CLIP_PROMPT_SECTION % (
+        _INSERT_NOT_THIS_CUTAWAYS_OPEN if cutaways_open else _INSERT_NOT_THIS_CLOSED
+    )
+
 
 # KRI-1117: a photo or looping video shown BEHIND the speaker for the whole talk (a green screen
 # without the green). Appended to the `$reaction_beats_section` slot ONLY when the manifest
@@ -1222,6 +1278,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     + _talking_cutaways_section(
                         cutaways,
                         ending_open=bool(ending_clip_candidates(input.capability_manifest)),
+                        inserts_open=bool(insert_clip_candidates(input.capability_manifest)),
                     )
                     if (cutaways := talking_footage_cutaways(input.capability_manifest))
                     else ""
@@ -1229,7 +1286,10 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 # Parent KRI-1151: a clip played while the take pauses; "" unless the rollout
                 # is open and the project has several clips. Its own gate, not the cutaways'.
                 + (
-                    "\n" + _INSERT_CLIP_PROMPT_SECTION
+                    "\n"
+                    + _insert_clip_section(
+                        cutaways_open=bool(talking_footage_cutaways(input.capability_manifest))
+                    )
                     if insert_clip_candidates(input.capability_manifest)
                     else ""
                 )

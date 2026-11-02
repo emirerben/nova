@@ -15,8 +15,11 @@ checked when ALL hold:
   montage", or a proposal that moves the Talking edit to a Montage;
 - it is about what the gates can disprove: the code, question or options are about sound, audio,
   intercutting, cutaways or a Montage;
-- it is not about an insert or a pause (the talk stopping while a clip plays), which does not
-  exist and is answered honestly by the model;
+- it is not a refusal OF an insert or a pause (the talk stopping while a clip plays). That is
+  the other lane (`insert_clip_candidates`, its own gate): a reason code that names it is never
+  contradicted, open or closed. A question that merely names a pause is the model's honest "no
+  pause" answer while that lane is closed; while it is open, a refusal whose own code names the
+  audio / cutaway ask is stale even when its question offers a pause;
 - this multi-clip Talking edit's gates are open for it (`talking_footage_cutaways`) and the live
   brief carries the typed ask the lane builds (a full-screen display ask, or a clip-sound "on" ask).
 
@@ -32,7 +35,7 @@ from app.agents._schemas.creator_agent import AskUser, ProposeStrategy
 from app.kria.clip_sound_toggle_ask import SOUND_ON, brief_sound_toggle_asks
 from app.kria.cutaway_show_ask import brief_full_screen_show_ask
 from app.kria.reply_language import say
-from app.services.creator_capabilities import talking_footage_cutaways
+from app.services.creator_capabilities import insert_clip_candidates, talking_footage_cutaways
 
 if TYPE_CHECKING:
     from app.agents._schemas.creator_agent import ResolvedCreatorManifest
@@ -131,6 +134,24 @@ def _ask_words(action: AskUser) -> frozenset[str]:
     return tokens(" ".join([action.reason_code, action.question, *action.options]))
 
 
+def _refuses_an_insert(action: AskUser, *, inserts_open: bool) -> bool:
+    """True when the refusal is about the insert / pause lane, not the audio / cutaway ask.
+
+    The reason code is the model's own label: when it names an insert or a pause the refusal is
+    that lane's, whatever else the question says. Otherwise a question or option that names a
+    pause is read as a (correct) refusal of a pause while the insert lane is closed. While it is
+    open, a pause is something this edit does, so a code that names the audio / cutaway ask
+    keeps its refusal stale and the one corrective re-run teaches the difference.
+    """
+    code = tokens(action.reason_code)
+    if code & _PAUSE_OR_INSERT:
+        return True
+    rest = tokens(" ".join([action.question, *action.options]))
+    if not rest & _PAUSE_OR_INSERT:
+        return False
+    return not (inserts_open and code & _TOPIC)
+
+
 def stale_capability_refusal(
     action: object, manifest: ResolvedCreatorManifest, brief: CreativeBrief | None
 ) -> str | None:
@@ -139,7 +160,8 @@ def stale_capability_refusal(
     ``CAPABILITY_MENTION`` / ``CAPABILITY_SOUND`` when the answer declines the audio / intercut /
     cutaway ask (an ``AskUser``) or moves the edit to a Montage (a ``ProposeStrategy``), this
     multi-clip Talking edit's gates are open for it, and the live brief carries the typed ask the
-    lane builds. An answer about an insert or a pause is never contradicted.
+    lane builds. A refusal of an insert or a pause is never contradicted (see
+    `_refuses_an_insert`).
     """
     if brief is None:
         return None
@@ -147,7 +169,7 @@ def stale_capability_refusal(
         words = _ask_words(action)
         if not is_refusal_code(action.reason_code) or not words & _TOPIC:
             return None
-        if words & _PAUSE_OR_INSERT:
+        if _refuses_an_insert(action, inserts_open=bool(insert_clip_candidates(manifest))):
             return None
     elif isinstance(action, ProposeStrategy):
         if action.strategy.edit_format != "montage":
@@ -164,8 +186,10 @@ def stale_capability_refusal(
     return None
 
 
-def correction_note(capability: str) -> str:
-    """The server-authored note for the one corrective re-run (model-facing, never shown)."""
+def correction_note(capability: str, *, inserts_open: bool = False) -> str:
+    """The server-authored note for the one corrective re-run (model-facing, never shown).
+    `inserts_open` is the insert lane's own gate: it decides whether a pause ask is pointed at
+    `insert_clips` or answered plainly as unavailable."""
     what = (
         "show the creator's other clips full screen over the talk and play a clip's own sound "
         "with the creator's voice muted under it"
@@ -178,16 +202,23 @@ def correction_note(capability: str) -> str:
         if capability == CAPABILITY_SOUND
         else ""
     )
+    pause = (
+        "If the creator explicitly asked for the talk to pause or stop while a clip plays and "
+        "then continue, that is a different thing: use `insert_clips` for it as described "
+        "above, and do not use it for a clip that is simply shown while the talk keeps running."
+        if inserts_open
+        else "If the creator really asked for the talk to pause while a clip plays and then "
+        "continue, that is a different thing and it is not available: say so plainly and "
+        "offer the full-screen overlay (and a video at the very end when that is offered "
+        "above)."
+    )
     return (
         "Your last answer said part of the request cannot be done, or moved the video to a "
         f"Montage to get it. The server checked and this edit CAN {what} (see the rules for "
         "clips shown full screen over the talk above). Earlier replies in this chat that said "
         "this does not work in this edit are out of date. Do not decline it and do not move it "
-        f"to a Montage: propose the strategy for this edit{muted}. If the creator really asked "
-        "for the talk to pause while a clip plays and then continue, that is a different thing "
-        "and it is not available: say so plainly and offer the full-screen overlay (and a "
-        "video at the very end when that is offered above). If what you declined was something "
-        "else, ask about exactly that part and describe it in plain words."
+        f"to a Montage: propose the strategy for this edit{muted}. {pause} If what you declined "
+        "was something else, ask about exactly that part and describe it in plain words."
     )
 
 
