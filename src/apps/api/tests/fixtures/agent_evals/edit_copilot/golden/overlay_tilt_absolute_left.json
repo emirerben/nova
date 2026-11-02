@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-11-01-v103",
+  "prompt_version": "2026-11-01-v105",
   "input": {
     "utterance": "tilt the second picture 15 degrees to the left",
     "prior_turns": [],

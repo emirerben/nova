@@ -3190,6 +3190,59 @@ CLAUDE.md was 37,989/38,000 chars. Two lines were shortened; their previous text
 
 - **Pre-PR text-overlay verify (`make verify-overlays`):** before any PR touching the Skia renderer, overlay layout, or the burn dict. Renders the REAL Skia path in the prod image, asserts overlays un-clipped, writes `.overlay-verify/{montage.png,report.json}`. Library: `app/pipeline/overlay_verify.py`; CLI: `app.cli.verify_overlays`; guard: `tests/pipeline/test_overlay_verify.py`. **Agent pre-PR gate:** run it, read both files, fix any FAIL, then `/ship`.
 
+## [2026-11-01] Prompt fidelity wave 2: talking
+
+**Decision:** the phone Talking writer (`_run_phone_subtitled_job`) now plays the creator's text animation on its title rows: the opening title, the text on a spoken word (KRI-707, drawn in the title's look) and the closing tag (KRI-514). The approved plan and the live brief asks go into the render entry (`compile_phone_subtitled_plan(strategy=, requirements=)`), which applies `phone_subtitled_title.talking_title_entrances` before the text lane compiles. Rules, the creator's own words first (KRI-129): the opening title takes a named title-scope ask, else a named whole-video ask ("animate the big text in", a `style` ask read with `animation_ask(req, styles=True)`), else the plan's `title_animation`, else the plain fade of an ask that names none. The spoken-word text and the closing tag take a whole-video ask; when the edit has no opening title they are the title it shows, so a named whole-video ask, else a named title ask, else the plan, else the plain fade. The form is `text_entrance_form()`: `animation_phases` with `authoredText` verified, else the closest legacy effect, else the rows stay as they were. Captions keep their caption style; rows the editor saved are never re-animated (an editor Save passes no plan). The worker saves the rows with the same entrance (`talking_title_entrances` on the persisted `text_elements`), so the iOS editor shows it and a later Save keeps it.
+
+**Card:** `title_animation` stays `NotApplied` in its own place in the table, with a builder that reads the asks (`WithAsks`): no line when a title row the writer draws plays the planned (or a named, asked) entrance, else the foundation's sentence. A row is drawn when the switch is on, the phone plays a text entrance (`talking_title_entrance_form`) and the plan or the asks give a row whose rollout is on: the confirmed `opening_title` (KRI-467), the `closing_title` (KRI-514) or a spoken-text ask (KRI-707), the same reads `_run_phone_subtitled_job` makes (`talking_title_rows_planned`). The text-animation decline reads the same answer, and also stays for a per-clip or clip-scoped ask (this route draws no clip labels). That answer needs the brief's other asks (the spoken-text row comes from its own ask), so `AskDecline.applies` may be a `GivenAsks` test (`route_capabilities/_types.py`) that `route_disclosure.ask_declines` hands the live asks; plain tests run as before and no other table uses it. Every caller passes the whole live brief for this route (`requirements_to_check_at_draft` keeps every Talking ask; approval readiness reads `brief.live()`). The first version marked the field `Applied(via=compile_phone_subtitled_plan)` with a `NOTICES` line for the switch-off case; a reviewer found two problems: a notice sits after every field line, so the switch-off card changed (the "pop" title line folded into the compact line), and the card dropped the line and the decline on a draft with no row to animate (the recorded prod thread has no opening title). Golden lines re-recorded for `talking_head` only: the `every_field` probe has an opening title, so its title-animation line and the g1 decline leave; `voice_no_captions` has no row to animate and keeps both, as on the foundation. Not declined: a named ask another ask supersedes on the same text (a title ask over a whole-video one on the title), since the text does animate and the registry decline says it shows without motion. Unchanged and still disclosed: direction, pacing, hook, story structure, stated length, label position, treatments, archetype, hero clip, sound effects.
+
+**Replay inputs:** `replay_inputs.text_elements` is one spoken-text row in the recorded render's window (18.975 to 20.975 s) with placeholder text "TEXT" and no requirement id, so it carries no plan or ask value.
+
+**caption_style "none" (checked, unchanged):** `kria/runtime.py` stores "none" as a NULL `voiceover_caption_style`, which the writer reads as sentence captions, so the foundation's "I can't turn captions off on this kind of edit yet" line is true for this route and stays.
+
+**Cloud Talking variant:** `_render_subtitled_variant` / `_compose_subtitled_final` do not use `compile_phone_subtitled_plan`, and the registry resolves no route (no card lines) for a cloud Talking draft, so this lane leaves them as they were.
+
+**Failure modes written before the code, each checked:** (1) the decline leaves the card but the recipe never animates: scorecard 4/5 on the replay; (2) the switch off still animates: replay control "an ask that still changes the recipe with the switch off", plus a recipe dump; (3) only the field or only the ask works: field-alone / ask-alone controls; (4) a hard-coded edge: 9 moves over every `TitleAnimation`, typewriter and the designed edges included; (5) a designed edge or typewriter breaks the compile: every move ran without error; (6) a phone without `authoredText` gets phases and refuses the recipe: `text_entrance_form()` gate, legacy effect fallback; (7) an editor Save drops the entrance: persisted rows carry it; (8) a whole-video ask animates the captions: only writer rows by `source_params.source`; (9) a title ask also animates the spoken-word text when a title exists: the has-title rule; (10) the card claims an entrance no row plays: the card reads `talking_title_rows_animate`; the fixture without its spoken-text ask and with no text rows grades 2.title_animation and 3.r6 VERIFIED by the line and the decline (4/5 NOT VERIFIED there: nothing to animate), and the line and the decline come back with the KRI-467 or KRI-707 rollout off or no text feature verified, while a closing title alone keeps them off (the tag animates); (11) the switch off changes the card: byte-identical below; (12) the plan beats a named creator ask on the title: plan pop with a named whole-video fade now fades the title.
+
+**Kill switch:** `TALKING_HEAD_ROUTE_FOLLOWS_PROMPT_ENABLED` (default true), read in `phone_subtitled_title.talking_title_entrance_form` (the render and the card both go through it). `false` + restart api and worker: byte-identical to the foundation, `PYTHONHASHSEED=0`: the recipe over 3 row sets (the spoken-text row; title + spoken + closing + an editor row) x 7 plan/ask variants x 3 device feature sets (sha256 4192555...), and the approval card in English and Turkish for the fixture, the fixture plus label position, treatments and hero, without the spoken-text ask, with title and closing text, and the golden probes (sha256 0230f5c...).
+
+**Verification:** `make kria-replay FIXTURE=talking_head`: 4.title_animation and 5.r6 VERIFIED under every replay control (`scripts/kria/route_replays/talking_head.py`), lane targets removed, the other seven fixtures unchanged. Not covered: the native iPhone render and export of an animated Talking title (device check).
+
+## [2026-11-01] Prompt fidelity wave 2 (KRI-1097 follow-ups)
+
+**Decision:** what a render route does with a plan is data, one module per route under `app/kria/route_capabilities/` (`unified_montage`, `voiceover_montage`, `talking_head`, `narrated`, `lipsync_song`, `speech_excerpt`, `slide_post`). Each exports `FIELD_HANDLING` (strategy field -> `Applied` | `RecordedOnly` | `NotApplied(builder)`), `ASK_DECLINES` (typed brief asks it cannot do), `READERS` (its code, for the consumer gate) and optionally `NOTICES` / `story_verdict`. `resolve_route_id` picks the route for a draft from the dispatch's own predicates (`brief_checks.defers_*`, `render_route.resolve_route` over the facts the contract will carry). `route_disclosure` reads the table of the resolved route, so a lip-sync or spoken-excerpt draft no longer gets the unified montage's lines and voiceover / Talking / Narrated / slide drafts get their own. The unified table moved without changing its output (Assos report identical). Seeds are today's honest handling: every audited silent drop is `NotApplied`; a lane that starts honoring a field flips it to `Applied`, and the gate refuses an `Applied` claim no reader in `READERS` backs.
+
+**Card lines for every account:** route lines and route declines no longer need `approval_readiness_for`; `KRIA_ROUTE_DISCLOSURE_ENABLED` stays the kill switch. A creator song blocks story directions on the card as it does at render (`creator_song`), and the song's lyric captions count as the caption style being applied (`song_captions`).
+
+**Feature gaps disclosed, not built (unified montage):** a typed captions-on ask (no speech captions on that route outside a song's lyrics), a title-scope edge or middle position (only corners reach a title, through the phone text style pass), and a crossfade boundary in `mixed_media_timing` (that profile always cuts hard). "No text" and "bigger text" have no typed brief fact, so nothing can decline them without reading wording (KRI-667); they wait for the brief writer to record one.
+
+**caption_style "none":** disclosed on Talking and Narrated, not rendered off. The creation path has no captions-off input (the item stores "none" as NULL, which the worker reads as sentence captions; the only off switch is the editor's `caption_meta.enabled`), and `strategy_policy` already repairs "none" to "auto" with a notice for those formats; the registry line is the backstop when a "none" reaches the card.
+
+**Kill switches (all default true; false + restart api and worker = byte-identical to before that change):** `ROUTE_REGISTRY_ENABLED` (this foundation: off = unified montage only, readiness-bound), and one per follow-up lane, reserved now so lanes never edit `config.py` together: `VOICEOVER_ROUTE_FOLLOWS_PROMPT_ENABLED`, `TALKING_HEAD_ROUTE_FOLLOWS_PROMPT_ENABLED`, `NARRATED_ROUTE_FOLLOWS_PROMPT_ENABLED`, `LIPSYNC_ROUTE_FOLLOWS_PROMPT_ENABLED`, `SPEECH_EXCERPT_ROUTE_FOLLOWS_PROMPT_ENABLED`, `SLIDE_ROUTE_FOLLOWS_PROMPT_ENABLED`, `PLANNER_BOUNDARY_HONEST_ENABLED`, `COPILOT_DIRECTION_FOLLOWS_REQUEST_ENABLED`, `CREATOR_JOBS_NO_CATALOG_SONG_FREEZE_ENABLED`.
+
+**Verification:** `scripts/kria/score_route.py` grades any route fixture (`make kria-replay FIXTURE=<name>` falls back to it): route resolved, each planner-chosen field honored (render evidence only from `scripts/kria/route_replays/<route>.py`) or disclosed, each ask met or declined, the registry gate, and negative controls with the INVALID rule. On code without the registry it grades what that code did, so the drops show red there.
+
+**Limits:** `voice_behind_footage` has no table (its drafts get no lines, never the unified ones). The unified table still lists `licensed_sfx` as unread although KRI-608 says the unified writer materializes a licensed effect; left byte-identical for a lane to verify.
+
+**Hardening after the foundation review:** the grader no longer trusts text. A field counts as disclosed only through its own registry line (`Disclosure` code `not_applied_on_route`, subject = the field) that the creator reads, or a route decline the grader maps to that field (animation -> `title_animation`, captions -> `caption_style`); a title-position decline discloses no field. A lane's render evidence must come from a replay that runs the route's code (traced), returns the recipe, and reports nothing honored with the asks removed or with its lane switch off (else INVALID). An `Applied` claim needs a strategy read in `READERS` or a `via` naming a real `file:symbol` that names the field, and a failing claim is a scored check (`10.claims`). The card never cuts a disclosure: past the 640-character budget the rest are named on one compact line (registry on only). With the registry off, `route_disclosure` reads `route_capabilities/_legacy_unified.py`, a frozen copy of the pre-registry table (guard: `tests/kria/test_route_registry_flag_off.py`, golden from ff5f2adbe). Route declines now reach the card for asks the first draft leaves to the render (`requirements_with_route_declines`), and route resolution mirrors the dispatch for unstamped jobs (`KRIA_PLAN_AUTHORITY_ENABLED=false` ignores `voice_mode`) and for the Talking writer's clip-count gates.
+
+**Second hardening (grade recipe values, not booleans):** two adversaries beat a grader that took a replay module's `honored: True`, so the premise changed. A lane replay module returns render recipe values (`recipe(fx) -> {"title_animation", "pace", "length_s", "caption_mode"}`) and the grader compares each with what the strategy field or typed ask asked, then runs its own controls on the module: the asked value perturbed must move the value, one ask dropped reverts only its key, the lane switch off makes the ask inert, each value must be one the route's `READERS` code returned, and the lane switch may be read only by route code (a probe records the reader). Synthetic constant, ask-keyed, switch-keyed and echo modules must fail every run. A `via` carrier must be a function in the route's own `READERS` or a listed shared carrier whose body reads the field off a strategy (AST); a schema class or another route's file never counts, and two routes may not list the same reader. A route decline speaks for a field only when the declined ask's typed facts and the registry's exact decline text say so. Card lines carry their table entry's typed code (`recorded_only_on_route` for `RecordedOnly`), are graded in English and Turkish, and are pinned by a recorded golden (`tests/fixtures/kria_replay/golden_lines.json`, guard `tests/kria/test_route_lines_golden.py`). Product: outside approval readiness a route decline no longer replaces the planner's summary; its line follows the summary (`reply_from_receipts(declines_after_summary=True)`), so a summary can still name a pace or length the heads-up lines below then say is not applied. The draft route also mirrors the writers' refusals (spoken-excerpt writer off, creator songs off, recorded voice beside kept camera sound).
+## [2026-11-01] Prompt fidelity wave 2: narrated
+
+**Decision:** the phone Voiceover writer (`_run_phone_narrated_job`) animates its opening title from the plan and the asks, the creator's asks first. `compile_phone_narrated_plan` takes the plan and the brief's live asks (`strategy`, `requirements`); `phone_narrated_plan.narrated_title_motion` picks the entrance: a title ask that names an edge or asks for no motion, then a whole-video one (a whole-video "no motion" yields to a title ask for motion), then the plan's `title_animation`, then the default fade for an ask that names none (`title_motion_ask`: `animation_ask(req, styles=True)`, so a style ask such as "make the hook type in" counts, plus the "none"/"static" values `animation_ask` reads as no ask, which keep the title still). The title plays one entrance, so the first deciding ask in brief order wins. The patch is `animation_ask.entrance_patch` in the form the phone plays (`text_entrance_form`: phases where `authoredText` is verified, the legacy effect where only `animatedText` is, nothing otherwise; a designed edge plays as the fade there). The opening title is the only text this route animates: captions keep their caption style and a per-clip ask still gets the animation decline.
+
+**Card:** every line says what the render does (`route_capabilities/narrated.py` reads the same `narrated_title_motion` the compiler reads, with every live ask). The `title_animation` line goes away when the title enters with the planned animation; when it does not, it says why: the creator's own ask set the entrance (`_lines.title_animation_from_ask`) or the phone plays it as the fade (`title_animation_as_fade`). An animation ask the title does not play gets a typed decline: another of the creator's asks set the title's one entrance (`TITLE_ENTRANCE_TAKEN_DECLINE`), or the phone plays its edge as the fade (`TITLE_ENTRANCE_FADE_DECLINE`); both are route declines in `DECLINE_PREFIXES`, so approval readiness approves them with disclosure. No title, a phone that plays no entrance, a per-clip ask or the switch off keep the foundation's line and decline. Deciding that needs the brief's other asks, so the declines use `GivenAsks`, the decline test the Talking lane added (`_types.py` and `route_disclosure.ask_declines` taken byte for byte from that lane, so the two merge cleanly). The field stays `NotApplied` with a builder that returns no line when the render plays it, not `Applied`: the switch-off card must keep the foundation's line, a plan without a title has nothing to animate, and `NOTICES` cannot read the asks.
+
+**Never blocks:** a title that does not compile with its entrance is compiled plain (`_with_opening_title` retried without it); the variant's `narrated_title_text_elements` carry the entrance only when the recipe's title layer plays it (`_draws_entrance`), so the editor preview, an editor Save and the post-render receipts see exactly what the recipe draws.
+
+**Length stays disclosed:** the narrated steps tile the whole recorded voice (`compile_phone_narrated_plan` refuses steps that do not end at the voice's duration), so the video is as long as the voice. The recorded thread rendered 134.5 s (132.9 s of voice-timed edit plus the 1.6 s brand tail the device adds) against "at most 120 s": reaching 120 s means cutting 12.9 s of the creator's spoken narration, which this route does only for an explicit cut ask (speech cleanup, named cuts). Trimming silence after the last word is the only cut inside the voice clock, and nothing shows 12.9 s of it here. The card keeps "its length follows your voiceover".
+
+**Kill switch:** `NARRATED_ROUTE_FOLLOWS_PROMPT_ENABLED` (default true). False + restart api and worker: the compiler reads neither the plan nor the asks and the card is the foundation's. Proven on the narrated fixture: recipe digest, title rows, EN/TR card and golden lines equal the foundation's with the switch off.
+
+**Verification:** `make kria-replay FIXTURE=narrated` (4.title_animation and 5.r3 VERIFIED through `scripts/kria/route_replays/narrated.py`, every replay control valid: each of the 9 other animations followed, field alone, ask alone, dropped, switch off). The other seven fixtures are unchanged. The card was checked against the recipe for two asks in one scope, "no motion" asks, a whole-video ask against the plan and a legacy-effect phone (EN and TR); switch off, the recipe, title rows and card equal the foundation's over the same matrix. Not covered: a native iPhone render of the typed-in title.
+
+**Not changed here:** the grader's static pass refuses frame, heap and time escapes in the replay module only by name, and frame walking in route code is a reviewer check (`score_route.py` docstring); this lane's code uses none of them. Hardening the grader belongs to the foundation, which every lane shares. `test_route_replays.py` now runs under a 300 s timeout: each fixture's replay starts fresh interpreters, so every lane that lands a replay module lengthens the module fixture past the default 30 s on a loaded machine.
+
 ## [2026-11-01] Research: an unmet part of the ask no longer holds back sourced wording
 
 Prod, "With animations, explain why people should visit Assos, Turkey" (new chat, after the
@@ -3210,6 +3263,70 @@ approval-readiness gate turned into a hold-back. Animation is applied by another
   composition (`creation_text_composition`, pinned by
   `test_initial_creation_research_replays_without_searching_again[True]`). Prod renders use
   the pinned preview, so this only bites a render without a preview.
+
+## [2026-11-01] Prompt fidelity wave 2: lipsync
+
+Lane L4 of KRI-1097 wave 2 (creator-song lip-sync montage, `pipeline/lipsync_montage.py`).
+
+**Decision:** the lip-sync titles enter the way the creator asked, only where an entrance can
+actually play. `plan_lipsync_montage` takes the bound brief's live asks (`requirements`, a plan
+parameter the render-entry pin allows) and resolves the entrance (`_title_entrance`): a named
+animation ask on the title or on all the text wins (a `style` ask such as "animate the title in"
+counts: `animation_ask(styles=True)`), then the plan's own `title_animation`, then an unnamed ask's
+plain fade. It stamps `snapshot.title_animation` only when `_entrance_plays`: the lane switch is
+on, the plan has an opening or closing title, and the phone verified a text-entrance form
+(`text_entrance_form`), as the unified montage stamps only with a title. `guided_story` plays it on
+both titles (`_lipsync_title_motion`: phases with `authoredText`, the legacy effect with
+`animatedText`). The runner passes the asks: `_run_phone_unified_montage_job` ->
+`_plan_phone_user_song_montage` -> `_plan_phone_user_song_core` -> the entry.
+
+**Card:** `title_animation` stays `NotApplied`, with a line that disappears only when the titles do
+enter (`WithAsks(_title_animation)` over `planned_title_entrance`, which finds the titles the way
+the planner does: `_title` over the asks, then the closing title). This is the unified montage's
+pacing rule ("not applied unless it is"), not `Applied`: the route honors the field only on titled
+plans and phones that play entrances, and an `Applied` entry can never disclose the other cases.
+The r3-style decline (`_animation_not_played`) stays for per-clip, one-clip and "none" asks and,
+new, for any ask with no title to play on or no verified entrance form (the unified montage keeps
+its decline when nothing moves). A decline sees only its own ask, so a title that exists only as
+another ask's literal reads as no title there: the card can say less than the render does, never
+more. Any error in the check keeps the line.
+
+**Fix round (reviewer, 2026-11-01).** (1) Grader frame-walk escape: real, in
+`scripts/kria/score_route.py`, foundation-owned, not used by this lane; left to the foundation (the
+lane module imports only `lipsync_montage`, `unified_montage` and `schemas.user_song`, and this lane
+now turns no honored check green). (2) Switch-off card: was missing the title-animation line; now
+byte-identical. (3) Phone without `authoredText`/`animatedText`: no stamp, line and decline kept.
+(4) No title (the fixture): no stamp, line and decline kept, so 4.title_animation and 5.r3 stay lane
+targets; closing them needs a fixture whose plan has a title (foundation call). (5) Composer call:
+the stamp still makes `creation_text_composition` read the request when a titled plan's entrance
+plays (guard from #1706: an entrance match does not prove segmentation or per-word timing). That is
+the unified montage's behavior for the same snapshot; untitled plans and closed phone gates call the
+composer exactly as before.
+
+**Still disclosed, not honored:** a stated length (the song span owns the length), the pace
+(`RecordedOnly`: cuts follow the song), the song section (no typed ask exists), a story direction
+(`creator_song`) and a caption style with no lyric captions.
+
+**Kill switch:** `LIPSYNC_ROUTE_FOLLOWS_PROMPT_ENABLED` (default true). `false` + restart api and
+worker: no entrance is stamped, the projection ignores one already stamped, and the card shows the
+title-animation line and every animation decline word for word as before the lane. Proof: a probe of
+21 plans (the fixture; title, closing-only, pinned-only, literal-title, ask and plan variants; pace
+and length moved) with the phone gate open and closed, lane vs foundation with the switch off:
+snapshot, plan record, compiled text rows, rows after the creation text pass, card records, card
+text and whether the composer is called are identical in all 42 cases.
+
+**Limits:** (1) The decline's one-ask view (above). (2) Two conflicting named asks (title "pop",
+all text "fade"): the title ask plays and the other is not declined. (3) The fixture's
+`replay_inputs` (song analysis, take positions) are reconstructed; the fixture builder does not
+carry them. (4) No native iPhone render or export was checked.
+
+**Verified:** `make kria-replay FIXTURE=lipsync_song` exits 0: 13 verified, 4.title_animation and
+5.r3 expected red with render evidence (the entry returns no entrance for this untitled plan),
+every control ok, `lane_targets.json` equal to the foundation, golden lines changed only on the
+titled probe (`every_field`, both languages). The other seven fixtures match the foundation output.
+Probe with the switch on and production features: titled plans stamp the asked entrance and both
+title rows play it, with no line or decline; untitled, pinned-only and closed-gate plans match the
+foundation.
 
 ## [2026-11-01] Research agents are told which asks another step applies
 
@@ -3262,6 +3379,46 @@ the same draft with the fix is `unverified`.
   and worker restores the old hold exactly (pinned by
   `test_kill_switch_off_holds_the_researched_animation_ask_as_before`).
 
+## [2026-11-01] Prompt fidelity wave 2: slide
+
+**Decision:** the slide lane (L6) ships the foundation's disclosure and no planner change. The
+plan said "stop the planner choosing direction, pace and music for slide drafts". That premise
+does not hold: no planner draft can target slides today.
+
+- `creator_capabilities._format_availability` has no `slides` branch, so `edit_format:slides`
+  is always unavailable and `creator_policy.effective_render_program` refuses a slides strategy
+  at the Main Creator's parse (`policy_edit_format_unavailable`; the retry is told to pick
+  `montage`). Checked with the real manifest builder and `MainCreatorAgent.parse` on this
+  branch. KRI-725 says the same (`prepared_coverage.py`, `test_kri725_cloud_prepared_postgres`).
+  Slide posts are composed on the Plan page (`slide_post_composer`) and dispatched from the
+  slides route without a planner turn (the 7 prod slide jobs the fixture scout found).
+- So the slide card (`route_capabilities/slide_post.py`) is reached only by the synthetic
+  fixture. The card output is unchanged; `SLIDE_ROUTE_FOLLOWS_PROMPT_ENABLED` stays reserved and
+  unread.
+
+**Why not change the prompt or parse anyway (failure modes):**
+
+1. In a Slider thread the manifest says `slides`, but the only draft the planner can make is a
+   montage, which reads pace, direction and music. A "leave video fields alone for slides" rule
+   would strip those choices from the draft that actually renders.
+2. The rule could leak into other formats' turns and flatten their pace and direction.
+3. A server-side strip of a slides strategy at the parse is dead code: the same parse refuses
+   the strategy first.
+4. The success test cannot be met by the planner alone. With every video field left at the
+   schema default, a slide card still shows three lines (balanced pace, fast montage direction,
+   licensed music), because those defaults are video defaults. "Add music" sets the same
+   `licensed_music` as the default, so no strategy value tells "asked for music" from "asked for
+   nothing". Hiding default-valued lines would drop the music ask silently.
+5. L7 bumps `MAIN_CREATOR_PROMPT_VERSION`; a second bump in this lane would conflict on the same
+   line for no creator-visible gain.
+
+**When slides become a strategy format (follow-up):** give a slides strategy slide-neutral
+values for the video-only fields unless a typed ask states them (`audio_strategy` the slides'
+own sound, no direction, no pace chip), behind `SLIDE_ROUTE_FOLLOWS_PROMPT_ENABLED`, and keep the
+music line keyed on a typed audio ask. Also check what approval does to a Slider item:
+`runtime._apply_strategy_approval_media` writes the strategy's `edit_format` onto the item
+(not verified for a Slider thread).
+
 ## [2026-11-01] Research before approval: the writer retries, truncation is not a source limit
 
 Fully live local runs of the Assos prompt on main (real Main Creator, search, writer, reviewer),
@@ -3287,6 +3444,22 @@ reads were not available).
 - Verified: 3 of 3 fully live runs on the fixed code ended on the approval card with sourced
   wording (`scripts/kria/live_assos_turn.py --live`); the same code before the change refused or
   stalled 3 of 3. Small samples; the models vary run to run.
+
+## [2026-11-01] Prompt fidelity wave 2: copilot
+
+**Decision:** the editor Copilot's `set_edit_direction` carries the direction and the pace the creator asked for, and the server says plainly what this editor cannot follow instead of failing or claiming it. Before, the parser refused every direction but `fast_montage` with a bare `invalid_value` (`edit_copilot._coerce_payload`), and a stated pace was dropped without a word.
+
+- What the editor can stage: the only client of this op is the web drawer (`snapshot.ts` lists `direction`; `ops.ts` accepts a fast montage with 0.4 to 1.2 s cuts). The iPhone chat never offers the direction family (`kria_editor_ops._allowed_families`). No client stages story beats, so the server builds no story staging (that would be web-only work outside Kria scope).
+- Story directions: `text_explainer` and `guided_story` are declined before any planner call (`capability_unavailable`) with the registry's own line (`route_capabilities._lines.direction_line`): "The text explainer direction isn't applied on this video yet: this editor can only restage it as a fast montage, so nothing changed. A different direction needs a fresh edit."
+- Pace: an optional typed `pace` (`fast` / `balanced` / `relaxed`), only when the creator stated one. A fast montage's cuts do not follow a pace (the 1.2 s fast-cut cap in `EditProposalSnapshot`, `deterministic_fast_cuts` takes none, the web validator), so the route plans the same fast montage, stages the same op byte for byte and never puts the pace on it. A stated `balanced` or `relaxed` is named on the reply with `_lines.pacing_line` (`plan_items._copilot_montage_pace_note`): "The relaxed pacing isn't applied on this video yet: a fast montage keeps its short cuts." A stated `fast` is what the montage does, so no line. An unknown value is `invalid_value` and never reaches the planner.
+- Typed wire: `pace` joins the op through `edit_copilot._op_fields`, which both the parser and `_creator_wire.copilot_schema` (native / json_guarded output) read, and only while the switch is on. The wire types it as the `ProposalPace` enum.
+- Prompt: `prompts/edit_copilot_ops/direction.txt` is added only when the switch is on and a guided revision offers the direction family. Its examples use placeholders for the revision identity. `EDIT_COPILOT_PROMPT_VERSION` is v104 (a label recorded with each run, bumped unconditionally like v98 and v99; v100-v103 were taken on main or reserved by open PR #2045 when this rebased), and the two plan-review goldens are re-pinned (their prompts are unchanged). Free replay evals pass. The live and judge evals were not run (paid).
+
+**Kill switch:** `COPILOT_DIRECTION_FOLLOWS_REQUEST_ENABLED` (default true). With `false` + restart api, the parser, the wire schema, the planner call, the op, the reply and the prompt match foundation 15c03a51b. Proof: a dump of the wire schema plus 16 recorded turns (plain, fast, balanced and relaxed montages, a text explainer, a relaxed story, an unknown direction and an unknown pace, each with the recorded planner and with the planner's deterministic fallback) is byte-identical between the switch-off branch and the foundation, full prompts included.
+
+**Verification:** `tests/routes/test_copilot_direction_follows_request.py` drives the real op path: a recorded Copilot answer through the real prompt and parser, then the route, `validate_guided_snapshot`, `plan_direction_snapshot` and a recorded planner answer through the real `EditProposalAgent.parse` (or the planner's own fallback after a `TerminalError`). It also round-trips a paced op through the typed wire with the switch on and checks the wire refuses it with the switch off. 11 of its 19 cases fail on the foundation; 7 fail on the first lane commit (the wire schema build and the claimed montage pace).
+
+**Web-only blocker (not built, Kria scope is the iPhone app):** a story direction or a slower montage from the web editor needs the drawer to stage story beats or longer cuts first.
 
 ## [2026-11-01] Phone text placement never fails a render (KRI-1152)
 
@@ -3317,3 +3490,19 @@ watermark as hard obstacles, then raised.
 - Guard: `tests/pipeline/test_phone_text_fit_never_fails.py` (roles x saved positions x obstacle
   sets, text groups, replay of job 07efa44c conditions). No burn-dict field changed, so the
   renderer-parity guard `test_both_renderers_honor_text_anchor_left` is untouched.
+
+## [2026-11-01] Prompt fidelity wave 2: catalog
+
+**Decision (owner: catalog songs never, uploads only):** the Kria planner never freezes a catalog song section into a creator draft. Before, `planner._gate_unresolved_choices` ran `_freeze_licensed_music_section`, which called `generative_build._match_best_track` directly and never asked `services/creator_song_rule.py`, so a creator job got a catalog section nothing on the phone plays (Assos: Daft Punk "Instant Crush" 130-148 s, unasked) that still set the edit's length (length plan owner `song`, card 28.44 s) and could reach a cloud render through `_approved_licensed_music_track`. Now the gate asks `creator_song_rule.planner_catalog_song_blocked()`; when it holds, the catalog matcher is not run (no paid ranking for a song that can never play), a song an earlier turn of the thread froze (`_prior_frozen_music`) is not reused, and the draft gets the footage fallback `{"status": "fallback_footage"}` (plus the asked genre, if any), which every render reader already treats as "no catalog song" (`_approved_licensed_music_track`, the guided compile), so even with the render-time switch off the approved plan pins no song. The length is then footage-owned (Assos card 44.94 s, the footage capacity, as for an empty library).
+
+**Who counts as a creator job:** every draft the Kria planner writes renders as one (the job factory stamps `creator_generation_id` on any job with a creator strategy; `plan_live_turn` is only called by `tasks/kria_runtime.py`), so the predicate needs no assembly plan, like `phone_catalog_song_match_blocked`. Web generative and admin/legacy jobs never pass through this gate; the render-time matcher and `_approved_licensed_music_track` are untouched. A creator-uploaded song (`user_song`), a voiceover or a continuous take never reached the freeze and are unchanged.
+
+**Disclosure, never a silent drop:** a genre ask ("suggest a tango song") used to get "I suggest X, add it when you post" (KRI-848). It now gets `creator_song_rule.withheld_song_notice` in the reply language ("I can't add songs from the music library, so this video won't have the tango song you asked for." plus "Upload your own song if you want one." while `USER_SONG_MONTAGE_ENABLED`), on both the summary and `policy_notices`. Nothing blocks approval or the render.
+
+**Kill switch:** `CREATOR_JOBS_NO_CATALOG_SONG_FREEZE_ENABLED` (default `true`, reserved by the foundation). `false` + restart api and worker = byte-identical to before: the Assos song step's full output (plan, notices, matcher calls, card, length plan) dumped with the switch off on this branch equals the foundation's dump byte for byte, and `tests/kria/test_music_genre_honesty.py` (177 tests of the KRI-848 suggestion path) now runs pinned to `false` and passes unchanged.
+
+**Failure modes listed before coding:** (1) the fresh freeze still matches for a creator draft; (2) a section frozen by an earlier turn (a length question's `length_context`) is reused; (3) a creator song, voiceover or take draft changes; (4) the draft keeps a song-owned length, or the card, summary or notices name the song; (5) a genre ask is dropped with no line; (6) switch off not byte-identical; (7) a non-creator job affected; (8) the fallback section refused at approval or render; (9) the scorecard passes vacuously because the replayed gate never reaches the freeze; (10) a length question carries the catalog song.
+
+**Guard:** Assos scorecard check 13 (`scripts/kria/score_assos.py`, `make kria-replay FIXTURE=assos`): the real gate runs for the Assos creator job over the recorded strategy without the server-owned section, with a catalog matcher answering prod's song; the draft and any length question carry no selected section, the matcher is not asked, and the approval card built from that draft neither takes its length from a catalog song nor names one. Controls: a frozen section, a song-owned card length, a card naming the song and a length question carrying it must FAIL, a clean footage fallback must PASS, and the real step with the switch off must reach the matcher and FAIL (covers 9). Foundation 15c03a51b: check 13 NOT VERIFIED (froze the song, asked the matcher, card length 28.44 s set by the song); this branch: VERIFIED, checks 1-12, their controls and the reproduction rows identical, the other seven fixtures unchanged.
+
+**Not done:** (a) plans approved before this change still carry `licensed_music.status == "selected"` and the cloud render still plays it (`_approved_licensed_music_track`); retiring those needs its own owner call. (b) A mood-only music ask with no genre ("add calm music") gets no song and, as before, no line: no typed "add a song" fact exists to decline it without reading wording (KRI-667). (c) `audio_strategy: licensed_music` stays `Applied(via=contract)` on the unified table although no catalog song plays on a creator job; the table is the foundation's.

@@ -6524,6 +6524,7 @@ def _plan_phone_user_song_montage(
     creator_text: str = "",
     plan_authority: bool = False,
     freeze_frames: bool = False,
+    requirements: Sequence[Any] | None = None,
 ) -> Any:
     """Plan the creator-song montage, with the song's lyrics as captions when asked (KRI-569).
 
@@ -6548,6 +6549,7 @@ def _plan_phone_user_song_montage(
         output_orientation=output_orientation,
         output_orientation_reason=output_orientation_reason,
         freeze_frames=freeze_frames,
+        requirements=requirements,
     )
     if not settings.song_captions_enabled:
         return plan
@@ -6716,6 +6718,7 @@ def _plan_phone_user_song_core(
     output_orientation: str | None = None,
     output_orientation_reason: str | None = None,
     freeze_frames: bool = False,
+    requirements: Sequence[Any] | None = None,
 ) -> tuple[Any, Any]:
     """Plan a phone montage around the creator's own song (KRI-374).
 
@@ -6726,7 +6729,8 @@ def _plan_phone_user_song_core(
     did not confirm is placed by likelihood (best candidate, tie broken toward the
     cluster) and flagged low-confidence in the receipt; a take with no evidence stays
     muted B-roll unless the creator's answer stacked it. Every failure is a
-    ``UserSongPlanDeclined`` with a message the creator can act on.
+    ``UserSongPlanDeclined`` with a message the creator can act on. ``requirements`` are the
+    bound brief's live asks: the lip-sync planner reads their typed title animation.
     """
     from app.pipeline.lipsync_montage import (  # noqa: PLC0415
         LipsyncPlanError,
@@ -6818,6 +6822,7 @@ def _plan_phone_user_song_core(
                 output_orientation_reason=output_orientation_reason,
                 creator_choices=creator_choices,
                 freeze_frames=freeze_frames,
+                requirements=requirements,
             ),
             analysis,
         )
@@ -7367,6 +7372,7 @@ def _run_phone_unified_montage_job(
                         all_candidates.get("creator_client_protocol")
                     )
                 ),
+                requirements=brief.live() if brief is not None else None,
             )
         else:
             if plan_authority:
@@ -8240,7 +8246,10 @@ def _run_phone_subtitled_job(
         compile_phone_subtitled_plan,
         sfx_duck_receipt,
     )
-    from app.pipeline.phone_subtitled_title import talking_closing_window  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_title import (  # noqa: PLC0415
+        talking_closing_window,
+        talking_title_entrances,
+    )
     from app.pipeline.phone_talking_cutaways import (  # noqa: PLC0415
         TalkingClipRoles,
         schedule_footage_cutaways,
@@ -8459,6 +8468,11 @@ def _run_phone_subtitled_job(
     caption_style = (
         "word" if all_candidates.get("voiceover_caption_style") == "word" else "sentence"
     )
+    # KRI-1097 wave 2: the approved plan and its live asks go into the compile, which makes
+    # the title rows enter the way they ask (`talking_title_entrances`).
+    talking_strategy = all_candidates.get("creator_strategy")
+    talking_strategy = talking_strategy if isinstance(talking_strategy, dict) else {}
+    talking_requirements = _phone_brief_live_requirements(snapshot)
     # KRI-467: the creator's confirmed hook title, drawn as an editable text row
     # (`phone_subtitled_title`). Read only while the lane is on, so the flag-off
     # recipe and variant stay byte-identical.
@@ -9571,6 +9585,8 @@ def _run_phone_subtitled_job(
                         title_rows or spoken_text_rows or closing_text_rows
                     ),
                     additional_speakers=extra_speaker_bindings,
+                    strategy=talking_strategy,
+                    requirements=talking_requirements,
                     **framed_compile,
                 )
             else:
@@ -10223,6 +10239,8 @@ def _run_phone_subtitled_job(
                         text_elements=text_rows,
                         text_elements_user_edited=bool(text_rows),
                         additional_speakers=extra_speaker_bindings,
+                        strategy=talking_strategy,
+                        requirements=talking_requirements,
                         **framed_compile,
                     )
 
@@ -10564,8 +10582,13 @@ def _run_phone_subtitled_job(
             # makes the read path serve it beside the projected caption
             # mirrors (an unedited caption variant serves the mirrors alone).
             # KRI-514: the closing text is a second one. KRI-707: so is text
-            # on a word the creator says.
-            new_entry["text_elements"] = title_rows + spoken_text_rows + closing_text_rows
+            # on a word the creator says. Saved with the entrance the recipe drew (KRI-1097
+            # wave 2), so the editor shows it and a Save keeps it.
+            new_entry["text_elements"] = talking_title_entrances(
+                title_rows + spoken_text_rows + closing_text_rows,
+                title_animation=talking_strategy.get("title_animation"),
+                requirements=talking_requirements,
+            )
             new_entry["text_elements_user_edited"] = True
             new_entry["text_elements_materialized_from"] = (
                 "opening_title"
@@ -11555,6 +11578,22 @@ def _phone_spoken_text_asks(snapshot: dict) -> tuple:
         return ()
 
 
+def _phone_brief_live_requirements(snapshot: dict) -> tuple:
+    """The live asks of the approved brief pinned on the job (``creator_brief_binding``).
+    Empty without a readable binding, so the render runs as if nothing was asked."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+
+    raw_binding = snapshot.get("creator_brief_binding")
+    if not raw_binding:
+        return ()
+    try:
+        brief = BriefBinding.model_validate(raw_binding).resolve()
+    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
+        log.warning("phone_talking_asks.binding_unreadable", error=str(exc)[:200])
+        return ()
+    return tuple(brief.live()) if brief is not None else ()
+
+
 def _phone_talking_spoken_text_rows(
     asks: Any,
     *,
@@ -12175,6 +12214,7 @@ def _run_phone_narrated_job(
         compile_phone_narrated_plan,
         narrated_title_element,
         narrated_title_end_s,
+        narrated_title_entrance,
         narrated_title_text_elements,
     )
     from app.pipeline.phone_subtitled_lanes import SubtitledLaneError, drop_lane  # noqa: PLC0415
@@ -12655,6 +12695,9 @@ def _run_phone_narrated_job(
                 narrated_brief = BriefBinding.model_validate(
                     snapshot["creator_brief_binding"]
                 ).resolve()
+            # KRI-1097 wave 2: the asks the compiler reads with the plan (the title entrance).
+            narrated_requirements = narrated_brief.live() if narrated_brief is not None else []
+            title_entrance = narrated_title_entrance(strategy, narrated_requirements)
             narrated_record = _narrated_alignment_record(
                 generation=generation,
                 brief_version=narrated_brief.version if narrated_brief else None,
@@ -12765,6 +12808,7 @@ def _run_phone_narrated_job(
                         end_s=opening_title_end_s,
                         timeline_duration_s=voiceover_duration_s,
                         canvas=canvas,
+                        entrance=title_entrance,
                     )
                     spoken_rows, spoken_receipt = narrated_spoken_text_rows(
                         asks,
@@ -12867,6 +12911,8 @@ def _run_phone_narrated_job(
                         visuals=visuals,
                         source_audio_media_ids=source_audio_ids,
                         resolved_text_elements=spoken_rows,
+                        strategy=strategy,
+                        requirements=narrated_requirements,
                         **(
                             {
                                 "under_voice_media_ids": clip_sound_plan.under_voice_media_ids,
@@ -13022,7 +13068,7 @@ def _run_phone_narrated_job(
         # KRI-455: the editor preview draws text from the variant, not the
         # pinned recipe, so keep the title element the recipe was compiled from.
         title_elements = narrated_title_text_elements(
-            recipe, opening_title, end_s=opening_title_end_s
+            recipe, opening_title, end_s=opening_title_end_s, entrance=title_entrance
         )
         if title_elements or spoken_rows:
             new_entry["narrated_title_text_elements"] = title_elements + spoken_rows

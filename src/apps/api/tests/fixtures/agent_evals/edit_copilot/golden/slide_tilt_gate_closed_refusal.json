@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-11-01-v103",
+  "prompt_version": "2026-11-01-v105",
   "input": {
     "utterance": "tilt slide 1 to the right",
     "prior_turns": [],

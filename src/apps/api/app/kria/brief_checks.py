@@ -11803,6 +11803,7 @@ def reply_from_receipts(
     summary: str | None = None,
     notices: Sequence[str] = (),
     outcomes: Sequence[Mapping[str, Any]] = (),
+    declines_after_summary: bool = False,
 ) -> str:
     """Compose the creator-facing reply from receipts only.
 
@@ -11817,9 +11818,24 @@ def reply_from_receipts(
     (KRI-558): the reply lists them under "Have a look at these in the video", and an
     editor turn never reaches that branch because its changes are named from the edit diff
     (`kria.editor_receipts`).
+
+    ``declines_after_summary`` (a draft outside approval readiness, KRI-1097 wave 2): a route
+    decline (`route_disclosure.with_route_declines`, "I can't animate ... yet") is a limit of
+    the route said before approval, not a miss of the plan, so on its own it never replaces
+    the summary: its line is listed after it, like a met one.
     """
     by_id = {req.id: req for req in brief.requirements}
     judged = [r for r in receipts if is_judged(by_id.get(r.requirement_id), r)]
+    misses = [
+        r
+        for r in judged
+        if r.status != "met"
+        and not (
+            declines_after_summary
+            and r.status == "not_possible"
+            and is_route_decline_reason(r.reason)
+        )
+    ]
     unchecked = [
         r
         for r in receipts
@@ -11871,7 +11887,7 @@ def reply_from_receipts(
         text = "\n".join(part for part in (body, header, "\n".join(look_lines)) if part)
         if notices:
             text += "\n" + " ".join(notices)
-    elif failed or any(r.status != "met" for r in judged):
+    elif failed or misses:
         text = (
             say(
                 en="Not everything you asked for made it in:\n",

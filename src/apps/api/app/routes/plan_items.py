@@ -6279,6 +6279,21 @@ _COPILOT_FAST_MONTAGE_REPLY = (
 )
 
 
+def _copilot_montage_pace_note(request_op: dict) -> str | None:
+    """The registry's pacing line for a pace the creator stated that this montage cannot follow
+    (KRI-1097 wave 2). Its cuts do not follow a pace (the 1.2 s fast-cut cap in
+    `EditProposalSnapshot`, `deterministic_fast_cuts` takes none, the web drawer accepts 0.4 to
+    1.2 s cuts), so a balanced or relaxed ask is named on the reply, never claimed and never put
+    on the op."""
+    from app.kria.route_capabilities import _lines as lines  # noqa: PLC0415
+
+    return lines.pacing_line(
+        lambda value, _strategy: value == "fast",
+        "a fast montage keeps its short cuts",
+        "hızlı montaj kısa kesimlerini koruyor",
+    )(request_op.get("pace"), {})
+
+
 @router.post(
     "/{item_id}/variants/{variant_id}/copilot/turn",
     response_model=CopilotTurnResponse,
@@ -6462,13 +6477,22 @@ async def plan_item_copilot_turn(
         "hard_cuts": True,
         "minimal_text": True,
     }
+    pace_note = (
+        _copilot_montage_pace_note(request_op)
+        if settings.copilot_direction_follows_request_enabled
+        else None
+    )
     return await record(
         response.model_copy(
             update={
                 "ops": [server_op],
                 "outcome": "applied",
                 "needs_clarification": False,
-                "reply": _COPILOT_FAST_MONTAGE_REPLY,
+                "reply": (
+                    f"{_COPILOT_FAST_MONTAGE_REPLY} {pace_note}."
+                    if pace_note
+                    else _COPILOT_FAST_MONTAGE_REPLY
+                ),
                 "rejection_reasons": [],
             }
         )

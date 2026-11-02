@@ -1,22 +1,27 @@
 """Say before approval what the route that will render a draft does not read (prompt fidelity).
 
-The planner returns a strategy and the brief holds the creator's asks. The phone unified
-montage route (`pipeline/unified_montage.py`) reads only part of both. What it does not read
-used to reach the creator as silence ("Balanced pacing" on the card, a fast montage on the
-phone) or, for an ask no checker owns, as a neutral "Have a look at these in the video" after
-the render. This module is the one registry of what that route does not consume, and turns
+The planner returns a strategy and the brief holds the creator's asks. Every render route reads
+only part of both. What it does not read used to reach the creator as silence ("Balanced
+pacing" on the card, a fast montage on the phone) or, for an ask no checker owns, as a neutral
+"Have a look at these in the video" after the render. Each route's table
+(`app.kria.route_capabilities`, one module per route) says what it consumes; this module turns
 each gap into a typed, creator-readable disclosure the draft shows BEFORE approval:
 
-* ``UNREAD_STRATEGY_FIELDS``: strategy fields the route ignores. A field that is set but not
-  read is named ("I can't use the story structure ... on this video"). When a route unit
-  starts reading a field, delete its entry here and the line disappears.
-* ``ask_declines``: brief asks nothing on the route reads (today: animated text outside the
-  title, when the phone plays no text entrance either). They become a typed ``not_possible``
-  receipt (`with_route_declines`) whose reason is a *route decline*: a format limit that never
-  asks "simpler version?" and that approval readiness treats as approvable (disposition
+* ``strategy_notices``: strategy fields the route ignores (``NotApplied`` / ``RecordedOnly``
+  in its ``FIELD_HANDLING``), named on the card ("I can't use the story structure ... on this
+  video"). When a route starts reading a field, its entry becomes ``Applied`` and the line
+  disappears.
+* ``ask_declines``: brief asks the route cannot do (its ``ASK_DECLINES``: animated text where no
+  entrance plays, captions where none are drawn). They become a typed ``not_possible`` receipt
+  (`with_route_declines`) whose reason is a *route decline*: a format limit that never asks
+  "simpler version?" and that approval readiness treats as approvable (disposition
   ``declined``).
-* ``research_notice``: the render's text step may search the web after approval.
+* ``research_notice``: the unified montage's text step may search the web after approval.
 * ``planned_card_length``: the length shown on the draft is the length the plan renders.
+
+``draft_route`` picks the table. With ``ROUTE_REGISTRY_ENABLED`` off only the unified montage
+has one, the frozen pre-registry copy (`route_capabilities._legacy_unified`), and its lines need
+approval readiness, byte-identical to before the registry.
 
 Owner rule: nothing here refuses a render, raises to the creator or blocks approval. Every
 function is pure and fail-open; the switch is ``settings.kria_route_disclosure_enabled``.
@@ -24,24 +29,37 @@ function is pure and fail-open; the switch is ``settings.kria_route_disclosure_e
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
+from types import ModuleType
 from typing import Any
 
 from app.config import settings
 from app.kria.brief import BriefRequirement
 from app.kria.contracts import RequirementReceipt
 from app.kria.reply_language import say
+from app.kria.route_capabilities import (
+    NotApplied,
+    RecordedOnly,
+    RouteId,
+    WithAsks,
+    registry_enabled,
+    resolve_route_id,
+    table_for,
+)
+from app.kria.route_capabilities import _legacy_unified as legacy_unified
+from app.kria.route_capabilities import _lines as lines
+from app.kria.route_capabilities._types import (
+    NOT_APPLIED_ON_ROUTE,
+    RECORDED_ONLY_ON_ROUTE,
+    AskDecline,
+    GivenAsks,
+)
 
-NOT_APPLIED = "not_applied_on_route"
+NOT_APPLIED = NOT_APPLIED_ON_ROUTE
+RECORDED_ONLY = RECORDED_ONLY_ON_ROUTE
 RESEARCH_AFTER_APPROVAL = "research_after_approval"
-UNIFIED_MONTAGE = "unified_montage"
-
-# What the unified montage route stamps on every plan it compiles
-# (`unified_montage.py`: ``direction="fast_montage"``, ``pace="fast"``). A strategy that
-# already says this loses nothing, so it needs no line.
-_ROUTE_DIRECTION = "fast_montage"
-_ROUTE_PACE = "fast"
+UNIFIED_MONTAGE = str(RouteId.UNIFIED_MONTAGE)
 
 
 def enabled() -> bool:
@@ -52,7 +70,7 @@ def enabled() -> bool:
 class Disclosure:
     """One honest line for the draft/approval card, with a typed reason for clients and logs."""
 
-    code: str  # NOT_APPLIED | RESEARCH_AFTER_APPROVAL
+    code: str  # NOT_APPLIED | RECORDED_ONLY (the table entry's own code) | RESEARCH_AFTER_APPROVAL
     subject: str  # strategy field name, or an ask class ("text_animation")
     text: str
     requirement_id: str | None = None
@@ -61,222 +79,47 @@ class Disclosure:
         return {k: v for k, v in asdict(self).items() if v is not None}
 
 
-def _clip(value: object, limit: int = 70) -> str:
-    text = " ".join(str(value or "").split()).replace('"', "'")
-    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
-
-
-def _list(values: Iterable[object]) -> str:
-    return ", ".join(_clip(v, 40) for v in values if str(v or "").strip())
-
-
-# --- strategy fields the unified montage route does not read --------------------------------
+# --- strategy fields a route does not read ---------------------------------------------------
 #
-# Source of truth for "unread": `scripts/kria/score_assos.py` check 10 scans the route files for
-# reads of every CreativeStrategy field and reports drift from this table (report only).
-# Each builder returns the creator sentence for a value the route does not apply, or None when
-# the value is the route's own behaviour / empty (nothing was asked, nothing to disclose).
+# Source of truth: each route's ``FIELD_HANDLING`` (`app.kria.route_capabilities`).
 
 
-def _hook(value: Any, _s: Mapping[str, Any]) -> str | None:
-    if not str(value or "").strip():
+def _table(route: str | None) -> ModuleType | None:
+    """The route's table; with the registry off, only the unified montage has one: the frozen
+    pre-registry copy, so nothing a lane adds to `unified_montage` reaches a switch-off card."""
+    if route is None:
         return None
-    return say(
-        en=(
-            f'I can\'t use the opening hook idea ("{_clip(value)}") on this video yet, '
-            "so it won't be shown as text"
-        ),
-        tr=(
-            f'Açılış kanca fikrini ("{_clip(value)}") bu videoda henüz kullanamıyorum, '
-            "o yüzden yazı olarak gösterilmeyecek"
-        ),
+    if not registry_enabled():
+        return legacy_unified if route == UNIFIED_MONTAGE else None
+    return table_for(route)
+
+
+def draft_route(
+    *,
+    creator_id: object,
+    edit_format: object,
+    strategy: Mapping[str, Any] | None,
+    clip_paths: Iterable[object] = (),
+    phone_montage: bool,
+) -> str | None:
+    """The route whose table the draft card reads, or None for no lines.
+
+    ``phone_montage`` is the caller's `defers_to_unified_montage` verdict. With the registry
+    off that is the only route (byte-identical to before); on, every route resolves the way
+    the worker's dispatch will (`route_capabilities.resolve_route_id`)."""
+    if not enabled():
+        return None
+    if not registry_enabled():
+        return UNIFIED_MONTAGE if phone_montage else None
+    route = resolve_route_id(
+        creator_id=creator_id, edit_format=edit_format, strategy=strategy, clip_paths=clip_paths
     )
+    return str(route) if route is not None else None
 
 
-def _story(value: Any, _s: Mapping[str, Any]) -> str | None:
-    items = [v for v in (value or []) if str(v or "").strip()]
-    if not items:
-        return None
-    return say(
-        en=(
-            f"I can't follow the planned story structure ({_list(items)}) on this video yet, "
-            "so it won't change the order of the clips"
-        ),
-        tr=(
-            f"Planlanan hikâye yapısını ({_list(items)}) bu videoda henüz uygulayamıyorum, "
-            "o yüzden kliplerin sırasını değiştirmeyecek"
-        ),
-    )
-
-
-def _pacing(value: Any, strategy: Mapping[str, Any]) -> str | None:
-    if not value or value == _ROUTE_PACE:
-        return None
-    from app.services.length_policy import effective_pace  # noqa: PLC0415
-
-    if effective_pace(strategy) is not None:
-        # The pace unit applies it: the route holds each clip as long as this pace says
-        # (`PACE_DRIVES_CUTS_ENABLED`). Only a silent "balanced" default is still not applied.
-        return None
-    return say(
-        en=(
-            f"The {str(value).replace('_', ' ')} pacing isn't applied on this video yet: "
-            "the cuts follow a fast pace"
-        ),
-        tr=(
-            f"{str(value).replace('_', ' ')} tempo bu videoda henüz uygulanmıyor: "
-            "kesimler hızlı tempoda"
-        ),
-    )
-
-
-def _direction(value: Any, _s: Mapping[str, Any]) -> str | None:
-    if not value or value == _ROUTE_DIRECTION:
-        return None
-    return say(
-        en=(
-            f"The {str(value).replace('_', ' ')} direction isn't applied on this video yet: "
-            "it is cut as a fast montage"
-        ),
-        tr=(
-            f"{str(value).replace('_', ' ')} yönü bu videoda henüz uygulanmıyor: "
-            "hızlı bir montaj olarak kesiliyor"
-        ),
-    )
-
-
-def _caption_style(value: Any, _s: Mapping[str, Any]) -> str | None:
-    if not value or value in {"auto", "none"}:
-        return None
-    return say(
-        en=f"I can't apply the {value} caption style on this video yet, so it won't be used",
-        tr=f"{value} altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak",
-    )
-
-
-def _treatments(value: Any, _s: Mapping[str, Any]) -> str | None:
-    items = [v for v in (value or []) if str(v or "").strip()]
-    if not items:
-        return None
-    return say(
-        en=(
-            f"I can't add the treatments ({_list(items)}) on this video yet, "
-            "so they won't be applied"
-        ),
-        tr=f"Şu efektleri ({_list(items)}) bu videoda henüz ekleyemiyorum, uygulanmayacak",
-    )
-
-
-def _archetype(value: Any, _s: Mapping[str, Any]) -> str | None:
-    if not value:
-        return None
-    return say(
-        en=f"I can't use the {str(value).replace('_', ' ')} story archetype on this video yet",
-        tr=f"{str(value).replace('_', ' ')} hikâye kalıbını bu videoda henüz kullanamıyorum",
-    )
-
-
-def _hero(value: Any, _s: Mapping[str, Any]) -> str | None:
-    if not value:
-        return None
-    return say(
-        en="I can't feature one hero clip on this video yet, so every clip is cut the same way",
-        tr=(
-            "Bu videoda tek bir ana klibi öne çıkaramıyorum, "
-            "bu yüzden bütün klipler aynı şekilde kesiliyor"
-        ),
-    )
-
-
-def _overlay(value: Any, _s: Mapping[str, Any]) -> str | None:
-    if not value:
-        return None
-    return say(
-        en="I can't use the planned overlay display on this video yet, so it won't be shown",
-        tr="Planlanan katman gösterimini bu videoda henüz kullanamıyorum, gösterilmeyecek",
-    )
-
-
-def _sfx(value: Any, _s: Mapping[str, Any]) -> str | None:
-    if not value:
-        return None
-    return say(
-        en="I can't add sound effects on this video yet, so none will be played",
-        tr="Bu videoya henüz ses efekti ekleyemiyorum, hiçbiri çalmayacak",
-    )
-
-
-UNREAD_STRATEGY_FIELDS: dict[str, Callable[[Any, Mapping[str, Any]], str | None]] = {
-    "intro_hook": _hook,
-    "story_structure": _story,
-    "pacing": _pacing,
-    "direction": _direction,
-    "caption_style": _caption_style,
-    "optional_treatments": _treatments,
-    "archetype": _archetype,
-    "hero_media_id": _hero,
-    "overlay_display": _overlay,
-    "licensed_sfx": _sfx,
-}
-
-
-def _story_verdict(
-    strategy: Mapping[str, Any],
-    requirements: Sequence[BriefRequirement] | None,
-    media: Mapping[str, Any] | None,
-) -> tuple[str, str | None] | None:
-    """``(direction, reason)`` for a planner direction the route builds as a story, else None.
-
-    ``reason`` None means the story will be built (the route reads ``direction``,
-    ``story_structure`` and ``pacing``); a reason means the route keeps the fast montage and
-    says why. The same pure rules the render applies (`pipeline.story_direction`), over what
-    the draft knows before approval: the strategy, the live asks and the pinned length plan.
-    Fail-open: any trouble returns None and the generic lines below stand.
-    """
-    from app.services.length_policy import story_direction  # noqa: PLC0415
-
-    direction = story_direction(strategy)
-    if direction is None:
-        return None
-    try:
-        from app.kria.brief import CreativeBrief  # noqa: PLC0415
-        from app.pipeline.story_direction import (  # noqa: PLC0415
-            crossfade_blocker,
-            story_blocker,
-            story_lines,
-            story_media_blocker,
-        )
-        from app.pipeline.unified_montage import brief_view  # noqa: PLC0415
-
-        view = brief_view(CreativeBrief(version=1, requirements=list(requirements or [])))
-        reason = (
-            story_blocker(strategy, view)
-            or (None if story_lines(strategy) else "no_story_lines")
-            or story_media_blocker(strategy, media)
-            or crossfade_blocker(strategy, direction)
-        )
-    except Exception:  # noqa: BLE001 - a disclosure must never fail a draft
-        return None
-    return direction, reason
-
-
-def _story_lines_notice(strategy: Mapping[str, Any]) -> str | None:
-    """The outline sets the chapters (clip grouping), but the clips keep their order."""
-    items = [v for v in (strategy.get("story_structure") or []) if str(v or "").strip()]
-    if not items:
-        return None
-    return say(
-        en=(
-            f"The planned story structure ({_list(items)}) sets the chapters "
-            "(which clips are grouped together), but it won't reorder your clips: they stay in "
-            "the order you gave"
-        ),
-        tr=(
-            f"Planlanan hikâye yapısı ({_list(items)}) bölümleri (hangi kliplerin birlikte "
-            "gruplanacağını) belirliyor ama kliplerinin sırasını değiştirmeyecek: verdiğin sırada "
-            "kalacaklar"
-        ),
-    )
+def decoupled_from_readiness() -> bool:
+    """Card lines and route declines for every account, not only approval-readiness ones."""
+    return enabled() and registry_enabled()
 
 
 def strategy_notices(
@@ -287,11 +130,15 @@ def strategy_notices(
     media: Mapping[str, Any] | None = None,
 ) -> list[Disclosure]:
     """Typed "not applied" lines for strategy fields the route does not read."""
-    if not enabled() or route != UNIFIED_MONTAGE or not strategy:
+    table = _table(route)
+    if not enabled() or table is None or not strategy:
         return []
-    verdict = _story_verdict(strategy, requirements, media)
+    verdict_of = getattr(table, "story_verdict", None)
+    verdict = verdict_of(strategy, requirements, media) if verdict_of is not None else None
     out: list[Disclosure] = []
-    for field, build in UNREAD_STRATEGY_FIELDS.items():
+    for field, handling in table.FIELD_HANDLING.items():
+        if not isinstance(handling, NotApplied | RecordedOnly):
+            continue
         if verdict is not None:
             direction, reason = verdict
             if reason is None and field in {"direction", "pacing"}:
@@ -307,78 +154,57 @@ def strategy_notices(
                 if says_fallback(reason, direction):
                     out.append(
                         Disclosure(
-                            NOT_APPLIED, field, fallback_note(reason, direction, future=True)
+                            handling.code, field, fallback_note(reason, direction, future=True)
                         )
                     )
                     continue
             if field == "story_structure" and reason is None:
-                text = _story_lines_notice(strategy)
+                lines_of = getattr(table, "story_lines_notice", None)
+                text = lines_of(strategy) if lines_of is not None else None
                 if text:
-                    out.append(Disclosure(NOT_APPLIED, field, text))
+                    out.append(Disclosure(handling.code, field, text))
                 continue
         try:
-            text = build(strategy.get(field), strategy)
+            build = handling.build
+            text = (
+                build.build(strategy.get(field), strategy, list(requirements or ()))
+                if isinstance(build, WithAsks)
+                else build(strategy.get(field), strategy)
+            )
         except Exception:  # noqa: BLE001 - a disclosure must never fail a draft
             text = None
         if text:
-            out.append(Disclosure(NOT_APPLIED, field, text))
+            out.append(Disclosure(handling.code, field, text))
+    for subject, notice in getattr(table, "NOTICES", {}).items():
+        try:
+            text = notice(strategy)
+        except Exception:  # noqa: BLE001 - a disclosure must never fail a draft
+            text = None
+        if text:
+            out.append(Disclosure(NOT_APPLIED, subject, text))
     return out
 
 
 # --- brief asks the route does not read ------------------------------------------------------
 
-ANIMATION_DECLINE_EN = (
-    "I can't animate on-screen text on this video yet, so the text shows without motion"
-)
-ANIMATION_DECLINE_TR = (
-    "Bu videoda ekrandaki yazıyı henüz canlandıramıyorum, o yüzden yazı hareketsiz görünecek"
-)
 # Receipt reasons that mean "this route cannot do it" (a limit of the route, not a simpler
 # plan to choose). `is_route_decline_reason` matches them by prefix like the format limits.
-ROUTE_DECLINE_PREFIXES: tuple[str, ...] = (ANIMATION_DECLINE_EN, ANIMATION_DECLINE_TR)
+ROUTE_DECLINE_PREFIXES: tuple[str, ...] = lines.DECLINE_PREFIXES
 
 
 def is_route_decline_reason(reason: object) -> bool:
     return isinstance(reason, str) and any(reason.startswith(p) for p in ROUTE_DECLINE_PREFIXES)
 
 
-def asks_text_animation(req: BriefRequirement) -> bool:
-    """True when the ask is for moving text, from the brief's typed facts only: a typed
-    ``animation`` (an edge id, or "any" for a generic "animated text" ask that named no style;
-    the brief writer records it, `main_creator` prompt v106). No wording is read here
-    (KRI-667), so an ask recorded without the fact is not disclosed."""
-    if req.kind not in {"text", "style"}:
-        return False
-    return bool(req.facts.get("animation"))
-
-
-def _text_animation_consumed(req: BriefRequirement) -> bool:
-    """The creation text pass plays this ask (prompt fidelity, animation unit).
-
-    Only a ``text`` ask the phone can play an entrance for: when the phone has not verified any
-    text-entrance form (``text_entrance_form`` is None) nothing moves, so the decline below
-    stays and says so. A ``style`` ask is not read by that pass."""
-    from app.kria.animation_ask import animation_ask, text_entrance_form  # noqa: PLC0415
-
-    return (
-        bool(settings.text_animation_ask_enabled)
-        and animation_ask(req) is not None
-        and text_entrance_form() is not None
-    )
-
-
-def _title_animation_consumed(req: BriefRequirement, strategy: Mapping[str, Any]) -> bool:
-    """The unified route animates exactly one text: the opening title, from a typed id
-    (`unified_montage.brief_view` reads ``facts.animation`` for ``scope == "title"``; the
-    strategy's ``title_animation`` is the other typed source)."""
-    from app.schemas.text_style_intent import normalize_title_animation  # noqa: PLC0415
-
-    if req.scope != "title":
-        return False
-    return bool(
-        normalize_title_animation(req.facts.get("animation"))
-        or normalize_title_animation(strategy.get("title_animation"))
-    )
+def _declines(
+    ask: AskDecline,
+    req: BriefRequirement,
+    strategy: Mapping[str, Any],
+    live: Sequence[BriefRequirement],
+) -> bool:
+    """``ask`` declines ``req``; a `GivenAsks` test also reads the brief's live asks."""
+    test = ask.applies
+    return test.test(req, strategy, live) if isinstance(test, GivenAsks) else test(req, strategy)
 
 
 def ask_declines(
@@ -388,25 +214,18 @@ def ask_declines(
     route: str | None,
 ) -> list[Disclosure]:
     """Asks on a live requirement that nothing on ``route`` reads, each with its typed reason."""
-    if not enabled() or route != UNIFIED_MONTAGE:
+    table = _table(route)
+    if not enabled() or table is None:
         return []
+    asks = table.ASK_DECLINES
     strategy = strategy or {}
+    live = [req for req in requirements if req.live]
     out: list[Disclosure] = []
-    for req in requirements:
-        if not req.live:
-            continue
-        if (
-            asks_text_animation(req)
-            and not _title_animation_consumed(req, strategy)
-            and not _text_animation_consumed(req)
-        ):
+    for req in live:
+        decline = next((ask for ask in asks if _declines(ask, req, strategy, live)), None)
+        if decline is not None:
             out.append(
-                Disclosure(
-                    NOT_APPLIED,
-                    "text_animation",
-                    say(en=ANIMATION_DECLINE_EN, tr=ANIMATION_DECLINE_TR),
-                    requirement_id=req.id,
-                )
+                Disclosure(NOT_APPLIED, decline.subject, decline.sentence(), requirement_id=req.id)
             )
     return out
 
@@ -459,6 +278,27 @@ def with_route_declines(
                 )
             )
     return out
+
+
+def requirements_with_route_declines(
+    checked: Sequence[BriefRequirement],
+    live: Iterable[BriefRequirement],
+    strategy: Mapping[str, Any] | None,
+    *,
+    route: str | None,
+) -> list[BriefRequirement]:
+    """``checked`` plus each live ask the route cannot do that the draft check left out.
+
+    A first draft leaves some asks to the render (`requirements_to_check_at_draft`: the
+    unified montage's text, order and timing asks). An ask the route cannot do at all is not
+    the render's to settle, so its decline reaches the card now, for every account. Nothing
+    else is checked or receipted differently. Registry off: ``checked`` as it is."""
+    if not decoupled_from_readiness():
+        return list(checked)
+    live = list(live)
+    ids = {req.id for req in checked}
+    declined = {d.requirement_id for d in ask_declines(live, strategy, route=route)}
+    return [*checked, *(req for req in live if req.id in declined and req.id not in ids)]
 
 
 # --- research after approval -----------------------------------------------------------------
@@ -524,21 +364,56 @@ def card_disclosures(
     )
 
 
-def card_text(disclosures: Sequence[Disclosure], *, limit: int = 640) -> str:
-    """The disclosures as card lines under a plain heads-up, within ``limit`` characters (whole
-    lines only)."""
-    lines: list[str] = []
+def card_layout(
+    disclosures: Sequence[Disclosure], *, limit: int = 640
+) -> tuple[list[Disclosure], list[Disclosure]]:
+    """``(whole, rest)``: the disclosures whose whole sentence fits ``limit`` characters, in
+    order, and the ones after the first that does not."""
+    whole: list[Disclosure] = []
     used = 0
-    for item in disclosures:
+    for index, item in enumerate(disclosures):
         extra = len(item.text) + 3
-        if lines and used + extra > limit:
-            break
-        lines.append(f"- {item.text}")
+        if whole and used + extra > limit:
+            return whole, list(disclosures[index:])
+        whole.append(item)
         used += extra
-    if not lines:
+    return whole, []
+
+
+def card_text(disclosures: Sequence[Disclosure], *, limit: int = 640) -> str:
+    """The disclosures as card lines under a plain heads-up: whole sentences within ``limit``
+    characters, then one compact line naming every disclosure that did not fit (never cut
+    silently). A subject with no short name keeps its whole sentence. With the registry or the
+    disclosure switch off the lines past the budget are dropped, as before the registry."""
+    whole, rest = card_layout(disclosures, limit=limit)
+    return _card_lines(whole, rest if decoupled_from_readiness() else [])
+
+
+def card_text_within(disclosures: Sequence[Disclosure], room: int) -> str:
+    """``card_text`` in at most ``room`` characters, for a reply with a hard length limit (a
+    held draft): fewer whole sentences, the rest named on the compact line, so no line is cut
+    mid-sentence. Registry or disclosure switch off: ``card_text`` as it is."""
+    text = card_text(disclosures)
+    if len(text) <= room or not decoupled_from_readiness():
+        return text
+    whole, _rest = card_layout(disclosures)
+    for keep in range(len(whole) - 1, -1, -1):
+        text = _card_lines(disclosures[:keep], disclosures[keep:])
+        if len(text) <= room:
+            break
+    return text
+
+
+def _card_lines(whole: Sequence[Disclosure], rest: Sequence[Disclosure]) -> str:
+    out = [f"- {item.text}" for item in whole]
+    named = [item.subject for item in rest if lines.subject_label(item.subject)]
+    if named:
+        out.append(f"- {lines.compact_line(named)}")
+    out += [f"- {item.text}" for item in rest if not lines.subject_label(item.subject)]
+    if not out:
         return ""
     heads_up = say(en="Heads-up for this video:", tr="Bu video için not:")
-    return "\n".join([heads_up, *lines])
+    return "\n".join([heads_up, *out])
 
 
 # --- length -----------------------------------------------------------------------------------

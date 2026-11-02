@@ -114,7 +114,10 @@ def main_creator_schema():
 
 
 def copilot_schema():
-    from app.agents.edit_copilot import _OP_FIELDS, _OP_REQUIRED, _STYLE_PATCH_FIELDS
+    from typing import get_args
+
+    from app.agents.edit_copilot import _OP_FIELDS, _OP_REQUIRED, _STYLE_PATCH_FIELDS, _op_fields
+    from app.schemas.edit_proposal import ProposalPace
     from app.services.kria_editor_ops_text import EXTRA_PATCH_FIELDS
 
     string = {"type": "string"}
@@ -217,6 +220,8 @@ def copilot_schema():
     def field(name):
         if name == "gap_policy":
             return enum("scale", "close", "fixed")
+        if name == "pace":
+            return enum(*get_args(ProposalPace))
         if name == "backdrop":
             return enum("blank", "color", "blur")
         if name == "preset":
@@ -369,7 +374,8 @@ def copilot_schema():
         }
     )
     ops = []
-    for name, fields in sorted(_OP_FIELDS.items()):
+    for name in sorted(_OP_FIELDS):
+        fields = _op_fields(name)
         ops.append(
             obj(
                 {

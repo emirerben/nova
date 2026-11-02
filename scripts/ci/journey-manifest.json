@@ -930,10 +930,11 @@
     {
       "id": "kri-667-turkish-chat",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri667_structured_ask_facts.py tests/kria/test_turkish_chat_guard.py tests/test_kri667_copilot_claims.py tests/kria/test_kri667_clip_exclusions.py tests/kria/test_kri667_no_new_intent_regexes.py",
+      "api_tests": "tests/kria/test_kri667_structured_ask_facts.py tests/kria/test_turkish_chat_guard.py tests/test_kri667_copilot_claims.py tests/kria/test_kri667_clip_exclusions.py tests/kria/test_kri667_no_new_intent_regexes.py tests/routes/test_copilot_direction_follows_request.py",
       "paths": [
         "src/apps/api/prompts/edit_copilot.txt",
-        "src/apps/api/prompts/edit_copilot_turn.txt"
+        "src/apps/api/prompts/edit_copilot_turn.txt",
+        "src/apps/api/prompts/edit_copilot_ops/direction.txt"
       ]
     },
     {
@@ -1458,15 +1459,32 @@
     {
       "id": "kri-721-approval-readiness",
       "needs_native": false,
-      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py tests/kria/test_lev_m1_length_photo_holds_replay.py tests/kria/test_assos_request_to_recipe.py tests/kria/test_text_animation_ask.py tests/pipeline/test_story_direction.py",
+      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py tests/kria/test_lev_m1_length_photo_holds_replay.py tests/kria/test_assos_request_to_recipe.py tests/kria/test_route_replays.py tests/kria/test_route_registry_flag_off.py tests/kria/test_route_lines_golden.py tests/kria/test_render_entry_pins.py tests/kria/test_lane_targets_guard.py tests/kria/test_text_animation_ask.py tests/pipeline/test_story_direction.py",
       "paths": [
         "src/apps/api/app/kria/approval_readiness.py",
         "src/apps/api/app/kria/route_disclosure.py",
+        "src/apps/api/app/kria/route_capabilities/",
         "src/apps/api/app/kria/animation_ask.py",
         "src/apps/api/app/pipeline/story_direction.py",
         "src/apps/api/tests/fixtures/kria_replay/assos/README.md",
         "src/apps/api/tests/fixtures/kria_replay/assos/fixture.json",
         "src/apps/api/tests/fixtures/kria_replay/assos/research.json",
+        "src/apps/api/tests/fixtures/kria_replay/assos/registry_off_golden.json",
+        "src/apps/api/tests/fixtures/kria_replay/lane_targets.json",
+        "src/apps/api/tests/fixtures/kria_replay/lane_targets.foundation.json",
+        "src/apps/api/tests/fixtures/kria_replay/golden_lines.json",
+        "src/apps/api/tests/fixtures/kria_replay/render_entries.json",
+        "src/apps/api/tests/fixtures/kria_replay/voiceover_montage/",
+        "src/apps/api/tests/fixtures/kria_replay/talking_head/",
+        "src/apps/api/tests/fixtures/kria_replay/narrated/",
+        "src/apps/api/tests/fixtures/kria_replay/lipsync_song/",
+        "src/apps/api/tests/fixtures/kria_replay/speech_excerpt/",
+        "src/apps/api/tests/fixtures/kria_replay/slide_post/",
+        "src/apps/api/tests/kria/test_route_replays.py",
+        "src/apps/api/tests/kria/test_route_registry_flag_off.py",
+        "src/apps/api/tests/kria/test_route_lines_golden.py",
+        "src/apps/api/tests/kria/test_render_entry_pins.py",
+        "src/apps/api/tests/kria/test_lane_targets_guard.py",
         "src/apps/api/tests/fixtures/kria_replay/assos/live_r1.json",
         "src/apps/api/app/kria/planner.py",
         "src/apps/api/app/kria/runtime.py",

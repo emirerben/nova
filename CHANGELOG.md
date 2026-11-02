@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.99.0] - 2026-11-02
+
+### Changed
+- fix(kria): the Copilot direction op takes direction and pace from the request, or names what it can't follow (KRI-1097 wave 2, copilot) (#2041) <!-- release-pr: 2041 -->
+
+## [0.83.98.0] - 2026-11-02
+
+### Changed
+- feat(kria): lip-sync titles enter the way the creator asked, where they play (KRI-1097 wave 2, lipsync, partial) (#2037) <!-- release-pr: 2037 -->
+
+## [0.83.97.0] - 2026-11-02
+
+### Changed
+- feat(kria): the narrated title enters as the plan and the asks say (KRI-1097 wave 2, narrated) (#2036) <!-- release-pr: 2036 -->
+
+## [0.83.96.0] - 2026-11-02
+
+### Changed
+- feat(kria): Talking title rows enter with the asked animation (KRI-1097 wave 2, talking) (#2035) <!-- release-pr: 2035 -->
+
+## [0.83.95.0] - 2026-11-02
+
+### Changed
+- fix(kria): the planner never freezes a catalog song for a creator draft (KRI-1097 wave 2, catalog) (#2042) <!-- release-pr: 2042 -->
+
+## [0.83.94.0] - 2026-11-02
+
+### Changed
+- docs(kria): slide lane ships disclosure only; no planner draft can target slides (KRI-1097 wave 2, slide) (#2040) <!-- release-pr: 2040 -->
+
+## [0.83.93.0] - 2026-11-01
+
+### Changed
+- feat(kria): every edit route names what it will not do, and replays are graded on recipe values (KRI-1097) (#2034) <!-- release-pr: 2034 -->
+
 ## [0.83.92.0] - 2026-11-01
 
 ### Changed

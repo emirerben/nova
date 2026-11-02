@@ -1,0 +1,644 @@
+{
+  "fixture_id": "lipsync_song",
+  "route": "lipsync_song",
+  "schema_version": 1,
+  "source": {
+    "kind": "recorded",
+    "what": "Prod Kria thread, approved draft and its render (origin/main ff5f2adbe).",
+    "captured": "2026-11-01 via read-only admin GETs (saved copies, no network now)",
+    "recorded": [
+      "creator messages up to the approved draft (thread events)",
+      "the planner's post-parse strategy and summary (turns plan intents[].arguments)",
+      "the Creative Brief bound to the job (assembly_plan.creator_brief_binding)",
+      "clip analyses, durations, audio (media_snapshot.clip_assignments)",
+      "the draft card prod showed and what the render did (prod_outcome)"
+    ],
+    "reconstructed": [
+      "the approval card is assembled offline from the real pure functions the draft turn calls (scripts/kria/score_route.py approval_card); the DB-bound turn body is not run",
+      "phone source bindings: synthetic proxy paths (score_route.media_rows)",
+      "capability manifest (score_route.manifest)",
+      "strategy.caption_style = \"karaoke\", strategy.title_animation = \"pop\", a stated 30 s length (target_duration_s 30 with target_duration_requested and creator_duration_s, as the server records a length the creator said) and brief r2 (timing, facts.duration_s = 30, \"keep it 30 seconds\") and r3 (style, facts.animation = \"pop\", \"animate the title in\") are NOT in the recording. The recorded plan chose none of them; they make the fixture carry a caption style, a stated length and an animation ask the lip-sync route drops."
+    ],
+    "redacted": [
+      "user, thread, item, job, turn and draft ids",
+      "storage paths and signed URLs",
+      "library asset ids (now asset-synthetic-NN)",
+      "file names and content hashes",
+      "media ids (now analysis-proxy-lipsync_song-NN)"
+    ],
+    "see": "tests/fixtures/kria_replay/lipsync_song/README.md"
+  },
+  "message": "Create a lipsync\nI filmed from 0:00 to 4:31",
+  "messages": [
+    "Create a lipsync",
+    "I filmed from 0:00 to 4:31"
+  ],
+  "client_protocol": 22,
+  "replay_inputs": {
+    "about": "Reconstructed, not recorded: the entry needs the song analysis and the take alignment, which the recording does not hold. Song length 271 s (the attached song); a beat every 0.5 s from 0.25 s and a lyric line every 4 s from 2 s are synthetic. Takes in the song order prod placed them (prod_outcome.render.song_windows_s, matched by length: 04, 03, 02, 01), the first at the recorded window start 62.945 s, each overlapping the next by about half a second. No plan or ask value.",
+    "plan_item_id": "synthetic-plan-item",
+    "song": {
+      "generation": 1,
+      "duration_s": 271.0,
+      "first_beat_s": 0.25,
+      "beat_step_s": 0.5,
+      "first_line_s": 2.0,
+      "line_step_s": 4.0,
+      "line_length_s": 3.0,
+      "line_text": "la la"
+    },
+    "takes": [
+      {
+        "media_id": "analysis-proxy-lipsync_song-04",
+        "status": "confident",
+        "delta_s": 62.645,
+        "confidence": 0.95,
+        "peak_z": 14.0
+      },
+      {
+        "media_id": "analysis-proxy-lipsync_song-03",
+        "status": "confident",
+        "delta_s": 84.0,
+        "confidence": 0.95,
+        "peak_z": 14.0
+      },
+      {
+        "media_id": "analysis-proxy-lipsync_song-02",
+        "status": "confident",
+        "delta_s": 91.2,
+        "confidence": 0.95,
+        "peak_z": 14.0
+      },
+      {
+        "media_id": "analysis-proxy-lipsync_song-01",
+        "status": "confident",
+        "delta_s": 110.9,
+        "confidence": 0.95,
+        "peak_z": 14.0
+      }
+    ]
+  },
+  "planner_summary": "I'll lip-sync your takes to your song, placing each one where it fits the music.",
+  "brief": {
+    "version": 1,
+    "requirements": [
+      {
+        "id": "r1",
+        "kind": "style",
+        "facts": {},
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "lip sync to the uploaded song",
+        "source_turn_id": "synthetic-turn"
+      },
+      {
+        "id": "r2",
+        "kind": "timing",
+        "scope": "global",
+        "literal": null,
+        "description": "keep it 30 seconds",
+        "facts": {
+          "duration_s": 30
+        },
+        "source_turn_id": "synthetic-turn",
+        "status": "open"
+      },
+      {
+        "id": "r3",
+        "kind": "style",
+        "scope": "global",
+        "literal": null,
+        "description": "animate the title in",
+        "facts": {
+          "animation": "pop"
+        },
+        "source_turn_id": "synthetic-turn",
+        "status": "open"
+      }
+    ]
+  },
+  "strategy": {
+    "pacing": "balanced",
+    "direction": "native",
+    "rationale": "Since you've recorded takes singing to the music, I will build the edit by aligning your camera audio perfectly with your uploaded song, automatically syncing your lips to the lyrics.",
+    "song_sync": "lipsync",
+    "edit_format": "montage",
+    "media_scope": "all",
+    "caption_style": "karaoke",
+    "audio_strategy": "user_song",
+    "render_program": "guided",
+    "story_structure": [
+      "Establish the singer looking into the camera",
+      "Cut between takes to match the energy of the song"
+    ],
+    "target_duration_s": 30,
+    "selected_media_ids": [],
+    "video_reuse_policy": "once",
+    "optional_treatments": [],
+    "title_animation": "pop",
+    "target_duration_requested": true,
+    "creator_duration_s": 30
+  },
+  "clips": [
+    {
+      "id": "analysis-proxy-lipsync_song-01",
+      "kind": "video",
+      "duration_s": 7.966667,
+      "has_audio": true,
+      "source_filename": "clip-01.mp4",
+      "analysis": {
+        "width": 320,
+        "aspect": 0.5634,
+        "brands": [],
+        "height": 568,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "man with glasses",
+        "exposure": {
+          "frames": 9,
+          "version": 1,
+          "mean_luma": 146.0,
+          "near_black_share": 0.0
+        },
+        "duration_s": 7.966667,
+        "transcript": "enerjisi ölmüyor da insan. Ben bunu da atfatırın.",
+        "description": "man singing with expressive face man singing and nodding head man singing and smiling slightly",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 2.12,
+            "energy": 6.0,
+            "start_s": 0.08,
+            "description": "man singing with expressive face"
+          },
+          {
+            "end_s": 5.46,
+            "energy": 7.0,
+            "start_s": 3.0,
+            "description": "man singing and nodding head"
+          },
+          {
+            "end_s": 8.0,
+            "energy": 6.5,
+            "start_s": 5.92,
+            "description": "man singing and smiling slightly"
+          }
+        ],
+        "display_width": 320,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "round glasses",
+            "black hoodie",
+            "multiple small photos on wall"
+          ],
+          "brands": [],
+          "people": {
+            "note": "a man with glasses",
+            "count": 1,
+            "speaks_to_camera": true
+          },
+          "speech": {
+            "language": "tr",
+            "segments": [
+              {
+                "text": "🎵En acısı ölmüyor da insan ben bunu da hatırlıyorum🎵",
+                "end_s": 7.96,
+                "start_s": 0.0
+              }
+            ],
+            "to_camera": true,
+            "has_speech": true,
+            "transcript": "enerjisi ölmüyor da insan. Ben bunu da atfatırın."
+          },
+          "actions": [
+            "man sings to camera",
+            "man shifts head"
+          ],
+          "setting": "room interior with white walls",
+          "subject": "man with glasses",
+          "summary": "A man wearing glasses is shown singing and looking directly into the camera.",
+          "activity": "singing to the camera",
+          "audio_type": "mixed",
+          "content_type": "talking_head",
+          "on_screen_text": "",
+          "visual_quality": "shaky handheld, stays sharp",
+          "notable_moments": [
+            {
+              "end_s": 2.12,
+              "start_s": 0.08,
+              "description": "man singing with expressive face"
+            },
+            {
+              "end_s": 5.46,
+              "start_s": 3.0,
+              "description": "man singing and nodding head"
+            },
+            {
+              "end_s": 8.0,
+              "start_s": 5.92,
+              "description": "man singing and smiling slightly"
+            }
+          ]
+        },
+        "display_height": 568,
+        "on_screen_text": "enerjisi ölmüyor da insan. Ben bunu da atfatırın.",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-lipsync_song-02",
+      "kind": "video",
+      "duration_s": 20.7667,
+      "has_audio": true,
+      "source_filename": "clip-02.mp4",
+      "analysis": {
+        "width": 320,
+        "aspect": 0.5634,
+        "brands": [],
+        "height": 568,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "man in hoodie",
+        "exposure": {
+          "frames": 22,
+          "version": 1,
+          "mean_luma": 149.2,
+          "near_black_share": 0.0
+        },
+        "duration_s": 20.7667,
+        "transcript": "",
+        "description": "man sings a line of song man sings with head tilt man passionately sings a verse",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 5.0,
+            "energy": 4.0,
+            "start_s": 0.0,
+            "description": "man sings a line of song"
+          },
+          {
+            "end_s": 12.0,
+            "energy": 4.0,
+            "start_s": 6.0,
+            "description": "man sings with head tilt"
+          },
+          {
+            "end_s": 20.0,
+            "energy": 5.0,
+            "start_s": 14.0,
+            "description": "man passionately sings a verse"
+          }
+        ],
+        "display_width": 320,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "round-rimmed glasses",
+            "black hoodie with yellow logo"
+          ],
+          "brands": [],
+          "people": {
+            "note": "a man with glasses and a black hoodie",
+            "count": 1,
+            "speaks_to_camera": true
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "actions": [
+            "man sings to the camera",
+            "man moves his head slightly"
+          ],
+          "setting": "indoor room with white walls",
+          "subject": "man in hoodie",
+          "summary": "A man wearing glasses and a black hoodie is singing a Turkish song directly at the camera. He moves his head slightly to the rhythm.",
+          "activity": "singing to camera",
+          "audio_type": "music",
+          "content_type": "talking_head",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 5.0,
+              "start_s": 0.0,
+              "description": "man sings a line of song"
+            },
+            {
+              "end_s": 12.0,
+              "start_s": 6.0,
+              "description": "man sings with head tilt"
+            },
+            {
+              "end_s": 20.0,
+              "start_s": 14.0,
+              "description": "man passionately sings a verse"
+            }
+          ]
+        },
+        "display_height": 568,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-lipsync_song-03",
+      "kind": "video",
+      "duration_s": 8.3,
+      "has_audio": true,
+      "source_filename": "clip-03.mp4",
+      "analysis": {
+        "width": 320,
+        "aspect": 0.5634,
+        "brands": [],
+        "height": 568,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "man singing",
+        "exposure": {
+          "frames": 9,
+          "version": 1,
+          "mean_luma": 147.9,
+          "near_black_share": 0.0
+        },
+        "duration_s": 8.3,
+        "transcript": "",
+        "description": "man starts singing man continues singing with expressive face man sustains vocal note",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 2.0,
+            "energy": 5.0,
+            "start_s": 0.0,
+            "description": "man starts singing"
+          },
+          {
+            "end_s": 6.0,
+            "energy": 6.0,
+            "start_s": 4.0,
+            "description": "man continues singing with expressive face"
+          },
+          {
+            "end_s": 8.0,
+            "energy": 7.0,
+            "start_s": 7.0,
+            "description": "man sustains vocal note"
+          }
+        ],
+        "display_width": 320,
+        "understanding": {
+          "kind": "video",
+          "brands": [],
+          "people": {
+            "note": "a man in glasses",
+            "count": 1,
+            "speaks_to_camera": true
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "setting": "indoors, room with light colored wall",
+          "subject": "man singing",
+          "summary": "A man wearing glasses is singing directly into the camera, looking slightly downwards.",
+          "activity": "singing to camera",
+          "audio_type": "music",
+          "content_type": "talking_head",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 2.0,
+              "start_s": 0.0,
+              "description": "man starts singing"
+            },
+            {
+              "end_s": 6.0,
+              "start_s": 4.0,
+              "description": "man continues singing with expressive face"
+            },
+            {
+              "end_s": 8.0,
+              "start_s": 7.0,
+              "description": "man sustains vocal note"
+            }
+          ]
+        },
+        "display_height": 568,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    },
+    {
+      "id": "analysis-proxy-lipsync_song-04",
+      "kind": "video",
+      "duration_s": 22.6,
+      "has_audio": true,
+      "source_filename": "clip-04.mp4",
+      "analysis": {
+        "width": 320,
+        "aspect": 0.5634,
+        "brands": [],
+        "height": 568,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "man wearing glasses and a hoodie",
+        "exposure": {
+          "frames": 24,
+          "version": 1,
+          "mean_luma": 143.5,
+          "near_black_share": 0.0
+        },
+        "duration_s": 22.6,
+        "transcript": "",
+        "description": "man singing with expressive mouth movements man singing with eyes closed and open man singing and nodding head slightly man singing with wide smile man singing with mouth shaping words",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 3.03,
+            "energy": 6.0,
+            "start_s": 0.06,
+            "description": "man singing with expressive mouth movements"
+          },
+          {
+            "end_s": 7.0,
+            "energy": 7.0,
+            "start_s": 4.1,
+            "description": "man singing with eyes closed and open"
+          },
+          {
+            "end_s": 11.0,
+            "energy": 6.0,
+            "start_s": 8.0,
+            "description": "man singing and nodding head slightly"
+          },
+          {
+            "end_s": 16.0,
+            "energy": 8.0,
+            "start_s": 13.0,
+            "description": "man singing with wide smile"
+          },
+          {
+            "end_s": 22.0,
+            "energy": 7.0,
+            "start_s": 17.0,
+            "description": "man singing with mouth shaping words"
+          }
+        ],
+        "display_width": 320,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "black hoodie with yellow text"
+          ],
+          "brands": [],
+          "people": {
+            "note": "a man with glasses",
+            "count": 1,
+            "speaks_to_camera": true
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "actions": [
+            "man sings along",
+            "man makes facial expressions"
+          ],
+          "setting": "indoor, likely a room with a plain white wall",
+          "subject": "man wearing glasses and a hoodie",
+          "summary": "A man wearing glasses and a dark hoodie is seen singing along to music, looking directly at the camera.",
+          "activity": "singing along to music",
+          "audio_type": "music",
+          "content_type": "talking_head",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 3.03,
+              "start_s": 0.06,
+              "description": "man singing with expressive mouth movements"
+            },
+            {
+              "end_s": 7.0,
+              "start_s": 4.1,
+              "description": "man singing with eyes closed and open"
+            },
+            {
+              "end_s": 11.0,
+              "start_s": 8.0,
+              "description": "man singing and nodding head slightly"
+            },
+            {
+              "end_s": 16.0,
+              "start_s": 13.0,
+              "description": "man singing with wide smile"
+            },
+            {
+              "end_s": 22.0,
+              "start_s": 17.0,
+              "description": "man singing with mouth shaping words"
+            }
+          ]
+        },
+        "display_height": 568,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      }
+    }
+  ],
+  "prod_outcome": {
+    "recorded_from": "job assembly_plan.variants[0] and route fields, thread events",
+    "creator_route": "lipsync_montage",
+    "approval_card": {
+      "draft_applied_content": "Have a look at these in the video:\n- lip sync to the uploaded song",
+      "changes": [
+        "Balanced pacing",
+        "Montage format"
+      ],
+      "requirement_receipts": [
+        {
+          "requirement_id": "r1",
+          "status": "partial",
+          "verification": "unchecked",
+          "reason": "I can't verify this one automatically yet."
+        }
+      ]
+    },
+    "render": {
+      "route": "lipsync_montage",
+      "pace": "fast",
+      "direction": "fast_montage",
+      "resolved_duration_s": 60.888,
+      "beat_window_count": 4,
+      "song_windows_s": [
+        [
+          62.945,
+          86.043,
+          "aligner"
+        ],
+        [
+          86.043,
+          94.499,
+          "aligner"
+        ],
+        [
+          94.499,
+          116.267,
+          "aligner"
+        ],
+        [
+          116.267,
+          123.833,
+          "aligner"
+        ]
+      ],
+      "captions": {
+        "lines": 8,
+        "style": "sentence",
+        "words": 51,
+        "status": "available_hidden",
+        "in_window": 51,
+        "truncated": false
+      },
+      "editor_caption_meta_enabled": false,
+      "typography_font": "Alte Haas Grotesk",
+      "text_element_count": 51
+    }
+  },
+  "checks": {
+    "fields": [
+      "direction",
+      "pacing",
+      "story_structure",
+      "caption_style",
+      "target_duration_s",
+      "title_animation"
+    ],
+    "asks": [
+      "r2",
+      "r3"
+    ],
+    "honored": {
+      "fields": {
+        "title_animation": "title_animation"
+      },
+      "asks": {
+        "r3": "title_animation"
+      }
+    },
+    "not_graded": {
+      "r1": "lip sync to the uploaded song is the route itself: check 1 verifies the draft resolves to lipsync_song",
+      "song_section": "the recorded song range (0:00 to 4:31) is the filming range the aligner searched, and the takes were placed inside it (62.9 to 123.8 s). No typed song-section ask exists in the brief or the strategy for a creator song, so a section the route ignores cannot be graded offline yet"
+    }
+  }
+}

@@ -96,6 +96,15 @@ _NEGATION = re.compile(
 _NEGATION_TR = re.compile(r"(yok|bulamadım|bulunmuyor|bulunamadı|değil|en yakın)", re.IGNORECASE)
 
 
+@pytest.fixture(autouse=True)
+def _catalog_suggestion_switch_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """KRI-1097 (owner rule: catalog songs never, uploads only): a creator draft freezes no
+    catalog song by default, so the suggestion this file covers runs only behind
+    ``CREATOR_JOBS_NO_CATALOG_SONG_FREEZE_ENABLED=false`` (the Assos scorecard's check 13
+    covers the default)."""
+    monkeypatch.setattr(planner.settings, "creator_jobs_no_catalog_song_freeze_enabled", False)
+
+
 # ── the catalog (in-memory tracks that carry ai_labels) ──────────────────────
 
 

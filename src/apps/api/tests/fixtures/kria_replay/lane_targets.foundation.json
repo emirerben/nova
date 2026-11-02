@@ -1,0 +1,99 @@
+{
+  "about": "KRI-1097 wave 2: lane_targets.json as the foundation recorded it, the fixed point lanes move away from in one direction only. scripts/kria/score_route.py and tests/kria/test_lane_targets_guard.py fail when lane_targets.json drops a must_grade entry, gains a target (a new red is a regression to fix, never a target) or loses a target the grader does not verify now. Lanes never edit this file; any change to it is a reviewer item.",
+  "must_grade": {
+    "voiceover_montage": [
+      "4.pacing",
+      "4.target_duration_s",
+      "4.title_animation",
+      "5.r1",
+      "5.r2"
+    ],
+    "talking_head": [
+      "4.title_animation",
+      "5.r6"
+    ],
+    "narrated": [
+      "4.title_animation",
+      "5.r3"
+    ],
+    "lipsync_song": [
+      "4.title_animation",
+      "5.r3"
+    ],
+    "speech_excerpt": [
+      "4.pacing"
+    ]
+  },
+  "targets": {
+    "voiceover_montage": {
+      "4.pacing": {
+        "lane": "L1",
+        "kind": "honored",
+        "why": "the balanced pace the creator said reaches the slot lengths (length_policy.effective_pace counts a requested balanced; pace_hold_bounds sizes the slots); today creator_pacing keeps only fast and relaxed"
+      },
+      "4.target_duration_s": {
+        "lane": "L1",
+        "kind": "honored",
+        "why": "the stated length is passed to the voiceover plan; today the length follows the voiceover"
+      },
+      "4.title_animation": {
+        "lane": "L1",
+        "kind": "honored",
+        "why": "the planned title animation reaches the intro text; today it is drawn with cluster_style None"
+      },
+      "5.r1": {
+        "lane": "L1",
+        "kind": "honored",
+        "why": "about 30 seconds: the render meets the stated length"
+      },
+      "5.r2": {
+        "lane": "L1",
+        "kind": "honored",
+        "why": "animate the text: animation_ask reaches the intro"
+      }
+    },
+    "talking_head": {
+      "4.title_animation": {
+        "lane": "L2",
+        "kind": "honored",
+        "why": "the planned title animation reaches the Talking title rows"
+      },
+      "5.r6": {
+        "lane": "L2",
+        "kind": "honored",
+        "why": "animate the big text in: the animation ask reaches the title rows"
+      }
+    },
+    "narrated": {
+      "4.title_animation": {
+        "lane": "L3",
+        "kind": "honored",
+        "why": "the planned title animation reaches the narrated title"
+      },
+      "5.r3": {
+        "lane": "L3",
+        "kind": "honored",
+        "why": "make the hook type in: the animation ask reaches the narrated title"
+      }
+    },
+    "lipsync_song": {
+      "4.title_animation": {
+        "lane": "L4",
+        "kind": "honored",
+        "why": "the planned title animation reaches the lip-sync titles"
+      },
+      "5.r3": {
+        "lane": "L4",
+        "kind": "honored",
+        "why": "animate the title in: the animation ask reaches the lip-sync titles"
+      }
+    },
+    "speech_excerpt": {
+      "4.pacing": {
+        "lane": "L5",
+        "kind": "honored",
+        "why": "the stated relaxed pace sets the cut length between spoken lines when the plan gives no cut_s; today it is the fixed _DEFAULT_CUT_S"
+      }
+    }
+  }
+}
