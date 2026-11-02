@@ -25,7 +25,7 @@ from app.agents.prompt_vocab import PROMPT_VOCABULARIES
 from app.kria.intent_review_catalog import ReviewCatalog
 from app.pipeline.prompt_loader import load_prompt
 
-PROMPT_VERSION = "intent_review_v1"
+PROMPT_VERSION = "intent_review_v2"
 FRAMES_REQUIRED = "frames://intent-review"
 MAX_REQUEST_CHARS = 2_000
 

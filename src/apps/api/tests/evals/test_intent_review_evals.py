@@ -57,6 +57,7 @@ def test_every_case_the_review_must_survive_has_a_fixture():
         "unmet_without_evidence",
         "incompatible_defect_kind",
         "duplicate_requirement",
+        "missing_requirement",
         "truncated_output",
         "injection_text_in_frame_manifest",
     } <= names

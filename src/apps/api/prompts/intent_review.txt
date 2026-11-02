@@ -11,7 +11,7 @@ $requirements_json
 Frames you can cite, one JSON object per line. "id" is the only name you may use for a frame. "t_s" is where in the video it was taken. A frame with "centred_on_text_span" was taken in the middle of a stretch where on-screen text should be visible:
 $frames_json
 
-For every requirement you can judge, return one finding:
+Return exactly one finding for every requirement listed above, in any order:
 - "verdict" is one of: $verdicts.
 - "met": the frames show the requirement is satisfied.
 - "unmet": the frames clearly show the requirement is not satisfied. Cite one to three frame ids in "evidence_frame_ids" that show the problem, and give a "defect_kind" that fits the requirement kind.
@@ -22,7 +22,7 @@ $defects_by_kind
 - "confidence" is one of: $confidence_levels. Use "high" only when the cited frames leave no doubt. A wrong guess is worse than "unverifiable".
 
 Rules:
-- At most one finding per requirement. Skip a requirement you cannot judge rather than guessing.
+- Exactly one finding per requirement: every listed requirement, and no requirement twice. When you cannot judge one, return it as "unverifiable" instead of leaving it out or guessing.
 - Never mention a requirement id or frame id that is not listed above.
 - When a "literal" is given, those words must appear on screen exactly as written, letter for letter. A different spelling or a missing accent is not a match; other words around them are fine.
 - Do not suggest wording, fixes or edits. Return findings only.

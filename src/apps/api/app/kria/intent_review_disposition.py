@@ -107,6 +107,10 @@ def validate_review_output(
                 update={"verdict": "unverifiable", "evidence_frame_ids": []}
             )
         checked.append(finding)
+    if {f.requirement_id for f in checked} != set(issued):
+        # The strict schema cannot force coverage. A reply that goes quiet on a requirement
+        # must not be stored as the same clean pass as one that checked everything.
+        raise InvalidReviewOutput("missing_requirement")
     return checked
 
 

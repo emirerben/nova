@@ -4,7 +4,8 @@ Failure modes, written before the flow was wired (matrix row in parentheses). Ea
 
   A clean-looking review that is not (9, 5):
     any contract violation voids the WHOLE review as unavailable(invalid_output), the call is
-    settled at actual usage and no finding is stored; a reply that judged nothing is
+    settled at actual usage and no finding is stored, and a reply that says nothing about an
+    issued requirement is such a violation; a reply that declines every requirement is
     nothing_verifiable; a review with no requirement the frames can judge makes no call at all.
   A reply read as authority (21, 22, 25):
     wrong footage is a suggestion and never changes the draft; wording the draft already has is
@@ -175,7 +176,7 @@ async def test_a_correct_edit_is_no_findings_with_provenance_and_nothing_posted(
     review = row.review
     assert [f["verdict"] for f in review["findings"]] == ["met"]
     assert review["disposition"]["outcome"] == "no_findings"
-    assert review["prompt_version"] == "intent_review_v1"
+    assert review["prompt_version"] == "intent_review_v2"
     assert review["catalog"]["requirements"][0]["brief_id"] == "r1"
     assert review["provenance"]["visual_input_received"] is True
     assert review["provenance"]["frames_sent"] == 3
@@ -329,6 +330,7 @@ async def test_a_title_that_outlives_the_video_gets_a_fit_candidate_inside_the_r
             "duplicate_requirement",
         ),
         (json.dumps({"schema_version": 1, "findings": [], "note": "approved"}), "schema"),
+        (json.dumps({"schema_version": 1, "findings": []}), "missing_requirement"),
         ('{"schema_version":1,"findings":[{"requirement_id":"R1"', "not_json"),
     ],
 )
@@ -352,7 +354,8 @@ async def test_a_reply_that_judged_nothing_is_nothing_verifiable_never_clean(
     approved_publication, real_builder, monkeypatch
 ):
     rid = await ready(approved_publication, monkeypatch)
-    assert await run_async(rid, Provider(reply())) == "unavailable"
+    declined = reply(finding("R1", "unverifiable"))
+    assert await run_async(rid, Provider(declined)) == "unavailable"
     row = review_row(rid)
     assert (row.status, row.reason) == ("unavailable", "nothing_verifiable")
     assert [entry["status"] for entry in ledger()] == ["settled"]

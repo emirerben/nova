@@ -8,6 +8,12 @@ Failure modes, written before the code (matrix row in parentheses). Each has a t
     a defect_kind on a verdict that is not unmet, a frame alias that was not sent, a requirement
     alias that was not issued (an audio requirement is never issued), and a defect kind that does
     not fit the requirement's kind (a wording defect on footage).
+  A reply that says nothing about an issued requirement is void as well (9, 5):
+    the strict JSON schema cannot force coverage, so a model that checks one requirement and goes
+    quiet on the rest must never be stored as a clean pass. Every issued alias needs exactly one
+    finding (`unverifiable` is the way to decline), however the omission is dressed up: one of
+    three, a low-confidence defect hiding a third, or no findings at all. Voiding is checked
+    last, so a reply with a more specific fault still reports that fault.
   The model cannot claim what stills cannot show (5, 21):
     a met verdict on a timing requirement is recorded as unverifiable; a review that judged
     nothing is nothing_verifiable, never "everything matches".
@@ -99,9 +105,19 @@ def raw(*findings, **extra):
     return json.dumps({"schema_version": 1, "findings": list(findings), **extra})
 
 
-def evaluate(catalog, *findings, tier="repair", preconditions=RepairPreconditions(), **extra):
+def evaluate(
+    catalog, *findings, tier="repair", preconditions=RepairPreconditions(), fill=True, **extra
+):
+    """Judge a reply. Unless `fill` is off, an issued alias the test did not mention is declined
+    as `unverifiable`, so a test about one requirement does not trip the coverage rule."""
+    said = {f["requirement_id"] for f in findings}
+    declined = (
+        [finding(alias, "unverifiable") for alias in catalog.requirement_ids if alias not in said]
+        if fill
+        else []
+    )
     return evaluate_review(
-        raw(*findings, **extra), catalog, tier=tier, repair_preconditions=preconditions
+        raw(*findings, *declined, **extra), catalog, tier=tier, repair_preconditions=preconditions
     )
 
 
@@ -177,6 +193,43 @@ def test_a_defect_kind_that_does_not_fit_the_requirement_kind_voids_the_review(k
     with pytest.raises(InvalidReviewOutput) as bad:
         evaluate(catalog, finding("R1", "unmet", defect, frames=["f0"]))
     assert bad.value.reason == "incompatible_defect_kind"
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        [finding("R1")],
+        [finding("R2"), finding("R3", frames=["f0"])],
+        [finding("R1"), finding("R2", "unmet", "other", ["f0"], "low")],
+        [finding("R1"), finding("R3", "unverifiable")],
+        [],
+    ],
+    ids=["one_of_three", "first_left_out", "low_unmet_hides_the_third", "middle_left_out", "empty"],
+)
+def test_a_reply_that_skips_an_issued_requirement_voids_the_review(said):
+    catalog = make_catalog([req("R1"), req("R2"), req("R3", "select")])
+    with pytest.raises(InvalidReviewOutput) as skipped:
+        evaluate(catalog, *said, fill=False)
+    assert skipped.value.reason == "missing_requirement"
+
+
+def test_a_skipped_requirement_never_reaches_a_stored_clean_status():
+    catalog = make_catalog([req("R1"), req("R2")])
+    for said in ([finding("R1")], [finding("R1"), finding("R3")]):
+        with pytest.raises(InvalidReviewOutput):
+            evaluate(catalog, *said, fill=False)
+    declined = evaluate(catalog, finding("R1"), finding("R2", "unverifiable"), fill=False)
+    assert (declined.status, declined.reason) == ("no_findings", "reviewed")
+
+
+def test_a_more_specific_fault_is_reported_before_the_missing_requirement():
+    catalog = make_catalog([req("R1"), req("R2")])
+    with pytest.raises(InvalidReviewOutput) as unseen:
+        evaluate(catalog, finding("R1", "unmet", "copy_mismatch", ["f5"]), fill=False)
+    assert unseen.value.reason == "unknown_frame"
+    with pytest.raises(InvalidReviewOutput) as unfitting:
+        evaluate(catalog, finding("R2", "unmet", "wrong_content", ["f0"]), fill=False)
+    assert unfitting.value.reason == "incompatible_defect_kind"
 
 
 def test_every_defect_kind_the_schema_allows_is_a_known_vocabulary_word():
