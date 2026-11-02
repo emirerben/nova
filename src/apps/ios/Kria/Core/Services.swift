@@ -1252,7 +1252,10 @@ enum KriaClientProtocolContract {
     /// 30 is the card-tilt build (KRI-1141) and 31 the media-backdrop build (KRI-1139). The server offers timed backgrounds only to this protocol (and only with
     /// `speakerBackgroundWindows` verified) and answers 426 `client_update_required` (`speaker_background_windows`)
     /// to an older build polling or saving a recipe that already carries them.
-    static let version = 32
+    /// 33 (KRI-1170): decodes and round-trips a tilt's `zoom` (a slide's media scaled 0.5 to 3x before it turns). The server
+    /// offers `slide_post_tilt_zoom` only to this protocol and answers 426 `client_update_required` (`slide_tilt_zoom`) to an
+    /// older build that would save over a zoomed tilt, since it re-encodes the tilt without the key.
+    static let version = 33
     static let header = "X-Kria-Client-Protocol"
 }
 

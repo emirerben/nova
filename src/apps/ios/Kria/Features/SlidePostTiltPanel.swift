@@ -11,6 +11,8 @@ import UIKit
 struct SlidePostTiltPanel: View {
     @ObservedObject var session: SlidePostSession
     let slideID: String
+    /// KRI-1170: the Zoom slider, shown when the server advertises `slide_post_tilt_zoom` (protocol 33).
+    var zoomEnabled = false
     let onDone: () -> Void
 
     private var tilt: SlidePostTilt? { session.draft?.slides.first { $0.id == slideID }?.edits?.tilt }
@@ -18,6 +20,7 @@ struct SlidePostTiltPanel: View {
     var body: some View {
         SlidePostTiltControls(
             tilt: tilt,
+            zoomEnabled: zoomEnabled,
             onChange: { next, coalescing in session.setTilt(slideID: slideID, next, coalescing: coalescing ? "slidepost-tilt-\(slideID)" : nil) },
             onDone: onDone
         )
@@ -25,25 +28,32 @@ struct SlidePostTiltPanel: View {
     }
 }
 
-/// The controls: a dial from -180 to 180 with detents at 0, +-90 and 180, a 1 degree nudge, Turn 90 and Reset, and the
-/// Background row (Blank, Colour, Blur). `onChange(next, coalescing)` is called with `coalescing == true` for a drag (many
+/// The controls: a dial from -180 to 180 with detents at 0, +-90 and 180, a Zoom slider from 0.5x to 3x with a detent
+/// at 1x (when `zoomEnabled`), a 1 degree nudge, Turn 90 and Reset (which also puts the zoom back), and the Background
+/// row (Blank, Colour, Blur). `onChange(next, coalescing)` is called with `coalescing == true` for a drag (many
 /// calls, one undo step) and `false` for a tap.
 struct SlidePostTiltControls: View {
     let tilt: SlidePostTilt?
+    var zoomEnabled = false
     let onChange: (SlidePostTilt?, Bool) -> Void
     let onDone: () -> Void
 
     /// The angle a drag snaps to when it comes within this many degrees of a detent.
     static let detents: [Double] = [-180, -90, 0, 90, 180]
     static let snapWindow = 3.0
+    /// The Zoom slider moves in 0.05x steps and lands exactly on 1x within this distance of it.
+    static let zoomStep = 0.05
+    static let zoomSnapWindow = 0.04
 
     @State private var colour: Color = .white
     @State private var lastDetent: Double?
+    @State private var zoomAtDetent = true
     /// The background chosen while the picture is still upright: a background with no turn draws nothing, so it is held
     /// here and goes in with the first turn.
     @State private var pending: ClipBackdrop = .blank
 
     private var degrees: Double { tilt?.rotationDeg ?? 0 }
+    private var zoom: Double { tilt?.zoom ?? 1 }
     private var backdrop: ClipBackdrop { tilt?.backdrop ?? pending }
 
     var body: some View {
@@ -60,6 +70,7 @@ struct SlidePostTiltControls: View {
                 .accessibilityIdentifier("slidepost-done")
             }
             dial
+            if zoomEnabled { zoomRow }
             HStack(spacing: 8) {
                 pill("\u{2212}1\u{00B0}", id: "slidepost-tilt-minus") { set(degrees - 1) }
                     .accessibilityLabel("Turn one degree left")
@@ -101,6 +112,27 @@ struct SlidePostTiltControls: View {
         }
     }
 
+    // MARK: Zoom
+
+    private var zoomRow: some View {
+        HStack(spacing: 10) {
+            Text("Zoom").font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.zinc)
+            Slider(
+                value: Binding(get: { zoom }, set: { dragged in setZoom(Self.snappedZoom(dragged), coalescing: true) }),
+                in: SlidePostTilt.minZoom...SlidePostTilt.maxZoom, step: Self.zoomStep
+            )
+            .frame(minHeight: 44)
+            .accessibilityLabel("Zoom")
+            .accessibilityValue(Self.zoomReadout(zoom))
+            .accessibilityIdentifier("slidepost-tilt-zoom")
+            .excludesDrawerGesture()
+            Text(Self.zoomReadout(zoom)).font(KriaFont.body(14).weight(.medium)).foregroundStyle(KriaColor.zinc)
+                .frame(minWidth: 44, alignment: .trailing)
+                .accessibilityHidden(true)
+                .accessibilityIdentifier("slidepost-tilt-zoom-readout")
+        }
+    }
+
     // MARK: Background
 
     private var backgroundRow: some View {
@@ -121,7 +153,7 @@ struct SlidePostTiltControls: View {
             }
             .excludesDrawerGesture()
             if tilt == nil {
-                Text("Shows behind the picture once you turn it.").font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
+                Text(zoomEnabled ? "Shows behind the picture once you turn or shrink it." : "Shows behind the picture once you turn it.").font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
             }
         }
     }
@@ -153,12 +185,20 @@ struct SlidePostTiltControls: View {
         let wrapped = SlidePostTilt.wrapped(next)
         if Self.detents.contains(wrapped), lastDetent != wrapped { UISelectionFeedbackGenerator().selectionChanged() }
         lastDetent = Self.detents.contains(wrapped) ? wrapped : nil
-        onChange(SlidePostTilt(rotationDeg: wrapped, backdrop: backdrop), coalescing)
+        onChange(SlidePostTilt(rotationDeg: wrapped, backdrop: backdrop, zoom: zoom), coalescing)
+    }
+
+    /// A zoom keeps the angle and the backdrop; a light tap marks the slider arriving on 1x.
+    private func setZoom(_ next: Double, coalescing: Bool = false) {
+        let onDetent = next == 1
+        if onDetent, !zoomAtDetent { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+        zoomAtDetent = onDetent
+        onChange(SlidePostTilt(rotationDeg: degrees, backdrop: backdrop, zoom: next), coalescing)
     }
 
     private func setBackdrop(_ next: ClipBackdrop, coalescing: Bool = false) {
         guard let tilt else { pending = next; return }
-        onChange(SlidePostTilt(rotationDeg: tilt.rotationDeg, backdrop: next), coalescing)
+        onChange(SlidePostTilt(rotationDeg: tilt.rotationDeg, backdrop: next, zoom: tilt.zoom), coalescing)
     }
 
     // MARK: Pure helpers (unit tested)
@@ -167,6 +207,14 @@ struct SlidePostTiltControls: View {
     static func snapped(_ degrees: Double) -> Double {
         detents.first { abs($0 - degrees) <= snapWindow } ?? degrees
     }
+
+    /// Within `zoomSnapWindow` of 1x the slider lands exactly on 1x.
+    static func snappedZoom(_ zoom: Double) -> Double {
+        abs(zoom - 1) <= zoomSnapWindow ? 1 : SlidePostTilt.clampedZoom(zoom)
+    }
+
+    /// "1.3x" (one decimal), the label next to the slider and its VoiceOver value.
+    static func zoomReadout(_ zoom: Double) -> String { String(format: "%.1fx", zoom) }
 
     /// The next multiple of 90 clockwise (so a repeated tap walks 0, 90, 180, -90, 0).
     static func quarterTurn(from degrees: Double) -> Double {

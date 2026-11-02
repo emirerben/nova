@@ -219,7 +219,8 @@ def _tilt_frame_filter(
 
     The media is the (cropped) region scaled like the slide frames it: cover for Fill, whole
     for Fit (``tilt.py``). It is NOT trimmed to the canvas before it turns, so the pixels a
-    Fill photo has beyond the frame rotate into view. The Fit bars do not draw: the tilt's
+    Fill photo has beyond the frame rotate into view. ``tilt.zoom`` (KRI-1170) scales that media
+    about the same centre before the turn. The Fit bars do not draw: the tilt's
     backdrop is what shows behind a turned photo. ``rotate`` is clockwise for a positive angle
     and ``c=none`` leaves the corners transparent for the overlay.
 
@@ -231,10 +232,21 @@ def _tilt_frame_filter(
     head = f"{ffmpeg_crop_filter(source_crop)}," if source_crop else ""
     rad = f"{math.radians(tilt.rotation_deg):.9f}"
     mode = "decrease" if fit is not None else "increase"
-    media = (
-        f"scale={cw}:{ch}:force_original_aspect_ratio={mode},format=rgba,"
-        f"rotate={rad}:ow='rotw({rad})':oh='roth({rad})':c=none"
-    )
+    if tilt.zoom == 1.0:
+        scaled = f"scale={cw}:{ch}:force_original_aspect_ratio={mode}"
+    else:
+        # One resample straight from the source to cover/whole size x zoom (a second pass
+        # would soften a zoom-in). Only the disc the turn can bring onto the canvas is kept,
+        # so a 3x photo never rotates at its full size.
+        pick = "min" if fit is not None else "max"
+        fit_scale = f"{pick}({cw}/iw,{ch}/ih)"
+        diagonal = math.ceil(math.hypot(cw, ch))
+        scaled = (
+            f"scale=w='round(iw*{fit_scale}*{tilt.zoom:.6f})':"
+            f"h='round(ih*{fit_scale}*{tilt.zoom:.6f})',"
+            f"crop=w='min(iw,{diagonal})':h='min(ih,{diagonal})'"
+        )
+    media = f"{scaled},format=rgba,rotate={rad}:ow='rotw({rad})':oh='roth({rad})':c=none"
     backdrop = tilt.backdrop
     if backdrop.kind == "blur":
         bw, bh = _even(cw / _FIT_BLUR_DOWNSCALE), _even(ch / _FIT_BLUR_DOWNSCALE)

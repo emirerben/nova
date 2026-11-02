@@ -32,15 +32,16 @@ import XCTest
             let crop: Crop?
             let fit: Bool
             let rotationDeg: Double
+            let zoom: Double?
             let expected: Expected
-            enum CodingKeys: String, CodingKey { case name, canvas, image, crop, fit, expected; case rotationDeg = "rotation_deg" }
+            enum CodingKeys: String, CodingKey { case name, canvas, image, crop, fit, expected, zoom; case rotationDeg = "rotation_deg" }
         }
         struct Validation: Decodable {
             let name: String
             let tilt: JSONValue
             let valid: Bool
         }
-        struct Normalization: Decodable { let name: String; let tilt: JSONValue }
+        struct Normalization: Decodable { let name: String; let tilt: JSONValue; let stored: JSONValue? }
         let cases: [Case]
         let validation: [Validation]
         let normalization: [Normalization]
@@ -68,20 +69,19 @@ import XCTest
         }
     }
 
-    private func fixture() throws -> Fixture {
+    private func fixture(_ version: String = "v1") throws -> Fixture {
         var url = URL(fileURLWithPath: #filePath)
         for _ in 0..<6 { url.deleteLastPathComponent() }
-        url.appendPathComponent("tests/fixtures/slide-tilt-parity/v1.json")
+        url.appendPathComponent("tests/fixtures/slide-tilt-parity/\(version).json")
         return try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
     }
 
-    func testGeometryMatchesTheSharedFixture() throws {
-        let file = try fixture()
-        XCTAssertGreaterThanOrEqual(file.cases.count, 8)
+    private func assertGeometry(_ file: Fixture) {
         for item in file.cases {
             let canvas = CGSize(width: item.canvas.w, height: item.canvas.h)
             let crop = item.crop.map { NormalizedSourceRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) }
-            let media = SlidePostTiltGeometry.mediaSize(imageSize: CGSize(width: item.image.w, height: item.image.h), crop: crop, canvas: canvas, fit: item.fit)
+            let image = CGSize(width: item.image.w, height: item.image.h)
+            let media = SlidePostTiltGeometry.mediaSize(imageSize: image, crop: crop, canvas: canvas, fit: item.fit, zoom: item.zoom ?? 1)
             XCTAssertEqual(media.width, item.expected.media.w, accuracy: 1e-6, item.name)
             XCTAssertEqual(media.height, item.expected.media.h, accuracy: 1e-6, item.name)
             let bounds = SlidePostTiltGeometry.rotatedBounds(media, degrees: item.rotationDeg)
@@ -96,6 +96,36 @@ import XCTest
         }
     }
 
+    func testGeometryMatchesTheSharedFixture() throws {
+        let file = try fixture()
+        XCTAssertGreaterThanOrEqual(file.cases.count, 8)
+        assertGeometry(file)
+    }
+
+    /// KRI-1170: the zoomed media (cover or whole, times zoom) feeds the same bounds, corners and coverage as the cloud.
+    func testZoomedGeometryMatchesTheSharedFixtureV2() throws {
+        let file = try fixture("v2")
+        XCTAssertGreaterThanOrEqual(file.cases.count, 8)
+        XCTAssertTrue(file.cases.allSatisfy { $0.zoom != nil })
+        assertGeometry(file)
+    }
+
+    func testZoomValidationAndNormalizationMatchTheSharedFixtureV2() throws {
+        let file = try fixture("v2")
+        for item in file.validation {
+            let decoded = try? JSONDecoder().decode(SlidePostTilt.self, from: item.tilt.data)
+            XCTAssertEqual(decoded != nil, item.valid, item.name)
+        }
+        for item in file.normalization {
+            let decoded = try JSONDecoder().decode(SlidePostTilt.self, from: item.tilt.data)
+            XCTAssertEqual(decoded.isNeutral, item.stored == nil, item.name)
+            guard let stored = item.stored else { continue }
+            let wire = try JSONSerialization.jsonObject(with: JSONEncoder().encode(decoded)) as? NSDictionary
+            let want = try JSONSerialization.jsonObject(with: stored.data) as? NSDictionary
+            XCTAssertEqual(wire, want, "\(item.name): the encoded tilt is the stored shape (zoom 1 left out)")
+        }
+    }
+
     func testValidationVerdictsMatchTheSharedFixture() throws {
         for item in try fixture().validation {
             let decoded = try? JSONDecoder().decode(SlidePostTilt.self, from: item.tilt.data)
@@ -107,7 +137,7 @@ import XCTest
     func testAnUprightTiltIsNoTiltAndDrawsNothing() throws {
         for item in try fixture().normalization {
             let decoded = try JSONDecoder().decode(SlidePostTilt.self, from: item.tilt.data)
-            XCTAssertTrue(decoded.isUpright, item.name)
+            XCTAssertTrue(decoded.isNeutral, item.name)
             let slide = SlidePostSlide(id: "s", assetID: "a", kind: "image", edits: .init(tilt: decoded))
             XCTAssertNil(SlidePostFraming.effectiveTilt(for: slide), item.name)
         }
@@ -139,6 +169,36 @@ import XCTest
         XCTAssertEqual(bare.backdrop, .blank)
     }
 
+    func testAUnitZoomIsLeftOutSoATiltStoredBeforeZoomRoundTripsByteForByte() throws {
+        let old = Data(#"{"backdrop":{"kind":"blur"},"rotation_deg":12.5}"#.utf8)
+        let tilt = try JSONDecoder().decode(SlidePostTilt.self, from: old)
+        XCTAssertEqual(tilt.zoom, 1)
+        let wire = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(tilt)) as? [String: Any])
+        XCTAssertEqual(Set(wire.keys), ["rotation_deg", "backdrop"], "no zoom key at 1x")
+        let zoomed = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(SlidePostTilt(rotationDeg: 0, zoom: 1.5))) as? [String: Any])
+        XCTAssertEqual(zoomed["zoom"] as? Double, 1.5)
+    }
+
+    func testAZoomAloneIsATiltAndIsNeverReadAsUpright() throws {
+        XCTAssertTrue(SlidePostTilt(rotationDeg: 0, backdrop: .blur).isNeutral)
+        XCTAssertFalse(SlidePostTilt(rotationDeg: 0, zoom: 1.25).isNeutral)
+        let slide = SlidePostSlide(id: "s", assetID: "a", kind: "image", edits: .init(tilt: SlidePostTilt(rotationDeg: 0, zoom: 0.6)))
+        XCTAssertEqual(SlidePostFraming.effectiveTilt(for: slide)?.zoom, 0.6)
+    }
+
+    func testAZoomIsHeldToTheRangeAndRoundedToTheHundredth() {
+        XCTAssertEqual(SlidePostTilt(rotationDeg: 5, zoom: 9).zoom, 3)
+        XCTAssertEqual(SlidePostTilt(rotationDeg: 5, zoom: 0.1).zoom, 0.5)
+        XCTAssertEqual(SlidePostTilt(rotationDeg: 5, zoom: 1.2999999).zoom, 1.3)
+        XCTAssertEqual(SlidePostTilt(rotationDeg: 5, zoom: .nan).zoom, 1)
+    }
+
+    func testAZoomOutsideTheRangeFailsTheDecodeInsteadOfBecomingNoZoom() {
+        for bad in [#"{"rotation_deg": 5, "zoom": 0.4}"#, #"{"rotation_deg": 5, "zoom": 3.5}"#, #"{"rotation_deg": 5, "zoom": "big"}"#] {
+            XCTAssertThrowsError(try JSONDecoder().decode(SlidePostEdits.self, from: Data("{\"tilt\": \(bad)}".utf8)), bad)
+        }
+    }
+
     func testMissingAndNullTiltBothDecodeAsNoTilt() throws {
         let missing = try JSONDecoder().decode(SlidePostEdits.self, from: Data(#"{"look_preset":"none"}"#.utf8))
         let null = try JSONDecoder().decode(SlidePostEdits.self, from: Data(#"{"look_preset":"none","tilt":null}"#.utf8))
@@ -157,6 +217,13 @@ import XCTest
         XCTAssertFalse(off.slidePostTiltEnabled)
         let on = try JSONDecoder().decode(CreationCapabilities.self, from: Data(#"{"formats":[],"slide_post_tilt":true}"#.utf8))
         XCTAssertTrue(on.slidePostTiltEnabled)
+        XCTAssertFalse(on.slidePostTiltZoomEnabled, "zoom is its own capability")
+        let zoom = try JSONDecoder().decode(CreationCapabilities.self, from: Data(#"{"formats":[],"slide_post_tilt":true,"slide_post_tilt_zoom":true}"#.utf8))
+        XCTAssertTrue(zoom.slidePostTiltZoomEnabled)
+    }
+
+    func testThisBuildSpeaksTheProtocolThatCarriesZoom() {
+        XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, 33, "a build that ships zoom must declare protocol 33")
     }
 
     // MARK: The session
@@ -177,6 +244,21 @@ import XCTest
         XCTAssertEqual(session.draft?.slides[1].edits?.tilt?.backdrop, .blur)
         session.setTilt(slideID: "s1", SlidePostTilt(rotationDeg: 0, backdrop: .blur))
         XCTAssertNil(session.draft?.slides[0].edits?.tilt, "an upright turn is stored as no tilt")
+    }
+
+    func testAZoomDragIsOneUndoStepAndKeepsTheAngleAndBackdrop() {
+        let session = session()
+        session.setTilt(slideID: "s1", SlidePostTilt(rotationDeg: 20, backdrop: .blur))
+        for zoom in stride(from: 1.05, through: 2.0, by: 0.05) {
+            session.setTilt(slideID: "s1", SlidePostTilt(rotationDeg: 20, backdrop: .blur, zoom: zoom), coalescing: "zoom-drag")
+        }
+        XCTAssertEqual(session.draft?.slides[0].edits?.tilt, SlidePostTilt(rotationDeg: 20, backdrop: .blur, zoom: 2))
+        session.undoEdit()
+        XCTAssertEqual(session.draft?.slides[0].edits?.tilt, SlidePostTilt(rotationDeg: 20, backdrop: .blur), "one undo walks the drag back to the turn")
+        session.setTilt(slideID: "s2", SlidePostTilt(rotationDeg: 0, zoom: 1.5))
+        XCTAssertEqual(session.draft?.slides[1].edits?.tilt?.zoom, 1.5, "a video zooms too, with no turn")
+        session.setTilt(slideID: "s2", SlidePostTilt(rotationDeg: 0, zoom: 1))
+        XCTAssertNil(session.draft?.slides[1].edits?.tilt, "zoom back to 1x at 0 degrees is no tilt")
     }
 
     func testADialDragIsOneUndoStepAndANoOpStagesNothing() {
@@ -205,6 +287,17 @@ import XCTest
         XCTAssertEqual(SlidePostTiltControls.readout(0), "Upright")
         XCTAssertEqual(SlidePostTiltControls.readout(12), "12\u{00B0} right")
         XCTAssertEqual(SlidePostTiltControls.readout(-30), "30\u{00B0} left")
+    }
+
+    func testTheZoomSliderLandsOnOneXAndReadsLikeALabel() {
+        XCTAssertEqual(SlidePostTiltControls.snappedZoom(1.03), 1)
+        XCTAssertEqual(SlidePostTiltControls.snappedZoom(0.97), 1)
+        XCTAssertEqual(SlidePostTiltControls.snappedZoom(1.05), 1.05)
+        XCTAssertEqual(SlidePostTiltControls.snappedZoom(0.95), 0.95)
+        XCTAssertEqual(SlidePostTiltControls.snappedZoom(3.4), 3)
+        XCTAssertEqual(SlidePostTiltControls.zoomReadout(1.3), "1.3x")
+        XCTAssertEqual(SlidePostTiltControls.zoomReadout(1), "1.0x")
+        XCTAssertEqual(SlidePostTiltControls.zoomReadout(0.5), "0.5x")
     }
 
     // MARK: Real render against the shared geometry
@@ -260,8 +353,8 @@ import XCTest
 
     /// What a canvas pixel must show for the halves photo, from the shared geometry alone: a half colour, "backdrop", or nil
     /// near an edge or the seam where anti-aliasing makes the answer ambiguous.
-    private func expected(_ point: CGPoint, canvas: CGSize, image: CGSize, fit: Bool, degrees: Double) -> String? {
-        let media = SlidePostTiltGeometry.mediaSize(imageSize: image, crop: nil, canvas: canvas, fit: fit)
+    private func expected(_ point: CGPoint, canvas: CGSize, image: CGSize, fit: Bool, degrees: Double, zoom: Double = 1) -> String? {
+        let media = SlidePostTiltGeometry.mediaSize(imageSize: image, crop: nil, canvas: canvas, fit: fit, zoom: zoom)
         let radians = degrees * .pi / 180
         let dx = Double(point.x - canvas.width / 2), dy = Double(point.y - canvas.height / 2)
         let mx = dx * cos(radians) + dy * sin(radians), my = -dx * sin(radians) + dy * cos(radians)
@@ -272,16 +365,16 @@ import XCTest
         return mx < 0 ? "red" : "blue"
     }
 
-    private func check(degrees: Double, fit: SlidePostFit?, backdrop: ClipBackdrop, backdropColour: (Int, Int, Int)?,
+    private func check(degrees: Double, fit: SlidePostFit?, backdrop: ClipBackdrop, backdropColour: (Int, Int, Int)?, zoom: Double = 1,
                        profile: String = "instagram_carousel", file: StaticString = #filePath, line: UInt = #line) async throws {
         let url = try halvesPhoto()
-        let tilt = SlidePostTilt(rotationDeg: degrees, backdrop: backdrop)
+        let tilt = SlidePostTilt(rotationDeg: degrees, backdrop: backdrop, zoom: zoom)
         let slide = SlidePostSlide(id: "s", assetID: "a", kind: "image", edits: SlidePostEdits(fit: fit, tilt: tilt))
         let asset = SlidePostAsset(id: "a", kind: "image", status: "ready", sourceURL: url)
         let data = try await SlidePostOnDeviceRender.renderSlide(slide: slide, asset: asset, profile: profile, aspect: nil, scale: 1)
         // Optional artifact for side-by-side review with the cloud render (TEST_RUNNER_KRIA_TILT_ARTIFACTS=<dir>).
         if let dir = ProcessInfo.processInfo.environment["KRIA_TILT_ARTIFACTS"] {
-            try data.write(to: URL(fileURLWithPath: dir).appending(path: "device-\(Int(degrees))-\(fit?.rawValue ?? "fill")-\(backdropName(backdrop)).jpg"))
+            try data.write(to: URL(fileURLWithPath: dir).appending(path: "device-\(Int(degrees))-\(fit?.rawValue ?? "fill")-\(backdropName(backdrop))-z\(Int((zoom * 100).rounded())).jpg"))
         }
         let out = try pixels(data)
         let canvas = SlidePostOnDeviceRender.canvas(profile: profile, aspect: nil)
@@ -292,7 +385,7 @@ import XCTest
                 let point = CGPoint(x: (Double(column) + 0.5) * canvas.width / 9, y: (Double(row) + 0.5) * canvas.height / 15)
                 // The Kria watermark sits in the lower left: not part of the photo.
                 if point.x < canvas.width * 0.35, point.y > canvas.height * 0.6 { continue }
-                guard let want = expected(point, canvas: canvas, image: CGSize(width: 400, height: 300), fit: fit != nil, degrees: degrees) else { continue }
+                guard let want = expected(point, canvas: canvas, image: CGSize(width: 400, height: 300), fit: fit != nil, degrees: degrees, zoom: zoom) else { continue }
                 let got = out.rgb(Int(point.x), Int(point.y))
                 judged += 1
                 switch want {
@@ -325,6 +418,40 @@ import XCTest
         let out = try pixels(try await SlidePostOnDeviceRender.renderSlide(slide: slide, asset: asset, profile: "instagram_carousel", aspect: nil, scale: 1))
         XCTAssertTrue(near(out.rgb(out.width / 2, out.height / 5), red), "clockwise: the old left (red) edge ends on top")
         XCTAssertTrue(near(out.rgb(out.width / 2, out.height * 4 / 5), blue))
+    }
+
+    /// KRI-1170: the same point-by-point check as the cloud's `TestZoomImageRender`, on the Core Image path.
+    func testZoomedPhotosMatchTheSharedGeometry() async throws {
+        try await check(degrees: 0, fit: nil, backdrop: .blank, backdropColour: nil, zoom: 1.5)
+        try await check(degrees: 0, fit: nil, backdrop: .blank, backdropColour: nil, zoom: 0.5)
+        try await check(degrees: 20, fit: nil, backdrop: .blank, backdropColour: nil, zoom: 0.7)
+        try await check(degrees: 20, fit: nil, backdrop: .blank, backdropColour: nil, zoom: 1)
+        try await check(degrees: 20, fit: nil, backdrop: .blank, backdropColour: nil, zoom: 1.5)
+        try await check(degrees: 30, fit: .black, backdrop: .blank, backdropColour: nil, zoom: 2)
+        try await check(degrees: -35, fit: nil, backdrop: .blank, backdropColour: nil, zoom: 0.6)
+        try await check(degrees: -35, fit: nil, backdrop: .blank, backdropColour: nil, zoom: 1.5)
+        try await check(degrees: 60, fit: nil, backdrop: .blank, backdropColour: nil, zoom: 3)
+        try await check(degrees: 30, fit: .black, backdrop: .blank, backdropColour: nil, zoom: 0.6)
+        try await check(degrees: 0, fit: .white, backdrop: .blank, backdropColour: nil, zoom: 2.5)
+        try await check(degrees: 20, fit: .black, backdrop: .color("#336699"), backdropColour: (0x33, 0x66, 0x99), zoom: 0.7)
+    }
+
+    func testAStickerKeepsItsSizeAndPlaceUnderAZoomedPhoto() async throws {
+        let url = try halvesPhoto()
+        let tile = directory.appending(path: "zoom-sticker.png")
+        let sticker = UIGraphicsImageRenderer(size: CGSize(width: 50, height: 50)).image { _ in
+            UIColor(red: 0, green: 0.9, blue: 0, alpha: 1).setFill(); UIRectFill(CGRect(x: 0, y: 0, width: 50, height: 50))
+        }
+        try XCTUnwrap(sticker.pngData()).write(to: tile)
+        let model = SlidePostSticker(id: "st", assetID: "pic", xFrac: 0.5, yFrac: 0.5, widthFrac: 0.2, rotationDeg: 0)
+        let prepared = SlidePostPreparedSticker(sticker: model, image: try XCTUnwrap(UIImage(contentsOfFile: tile.path)))
+        let slide = SlidePostSlide(id: "s", assetID: "a", kind: "image", edits: .init(stickers: [model], tilt: SlidePostTilt(rotationDeg: 0, zoom: 2.5)))
+        let asset = SlidePostAsset(id: "a", kind: "image", status: "ready", sourceURL: url)
+        let out = try pixels(try await SlidePostOnDeviceRender.renderSlide(slide: slide, asset: asset, profile: "instagram_carousel", aspect: nil, stickers: [prepared], scale: 1))
+        let half = Int(0.2 * 1080 / 2)
+        let inside = out.rgb(540 + half - 8, 675), outside = out.rgb(540 + half + 14, 675)
+        XCTAssertTrue(inside.1 > 160 && inside.0 < 80, "the sticker still covers its own 20 percent width: \(inside)")
+        XCTAssertFalse(outside.1 > 160 && outside.0 < 80, "and did not grow with the photo: \(outside)")
     }
 
     func testAWholePhotoOverAColourBackdropFillsTheUncoveredCorners() async throws {
