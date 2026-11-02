@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.102.0] - 2026-11-02
+
+### Changed
+- Show the talks full screen where the creator mentions them (parent KRI-1151, flag off) (#2051) <!-- release-pr: 2051 -->
+
 ## [0.83.101.0] - 2026-11-02
 
 ### Changed
