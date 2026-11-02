@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.94.0] - 2026-11-02
+
+### Changed
+- docs(kria): slide lane ships disclosure only; no planner draft can target slides (KRI-1097 wave 2, slide) (#2040) <!-- release-pr: 2040 -->
+
 ## [0.83.93.0] - 2026-11-01
 
 ### Changed
