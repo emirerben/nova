@@ -326,7 +326,25 @@ def _refusal_output(code: str = INCIDENT_CODE) -> MainCreatorOutput:
     )
 
 
-async def _turn(monkeypatch, output: MainCreatorOutput, manifest, brief: CreativeBrief):
+class _Db:
+    """A session stand-in that knows whether a transaction is still open."""
+
+    def __init__(self) -> None:
+        self.open = True
+
+    async def rollback(self) -> None:
+        self.open = False
+
+
+async def _turn(
+    monkeypatch,
+    output: MainCreatorOutput,
+    manifest,
+    brief: CreativeBrief,
+    *,
+    db: Any = None,
+    **extra: Any,
+):
     monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=[]))
     monkeypatch.setattr(planner, "_load_checked_inventory", AsyncMock(return_value=None))
     monkeypatch.setattr(planner, "_kick_clip_understanding", AsyncMock())
@@ -334,7 +352,7 @@ async def _turn(monkeypatch, output: MainCreatorOutput, manifest, brief: Creativ
     monkeypatch.setattr(planner, "_load_kept_labels", AsyncMock(return_value=[]))
     monkeypatch.setattr(planner, "_load_draft_strategy", AsyncMock(return_value=None))
     return await planner._plan_from_creator_output(
-        SimpleNamespace(),
+        db if db is not None else _Db(),
         thread_id=uuid.uuid4(),
         item_id=uuid.UUID(manifest.item_id),
         creator_id=uuid.uuid4(),
@@ -348,6 +366,7 @@ async def _turn(monkeypatch, output: MainCreatorOutput, manifest, brief: Creativ
         ),
         output=output,
         effective_brief=brief,
+        **extra,
     )
 
 
@@ -504,3 +523,460 @@ def test_the_replay_fixture_renders_the_lane_and_answers_without_a_refusal(monke
     assert action["kind"] == "propose_strategy"
     assert action["strategy"]["edit_format"] == "subtitled"
     assert "muted" in action["summary"] and "voice" in action["summary"]
+
+
+# ---------------------------------------------------------------- review of PR #2057, round 1
+#
+# Failure modes written before the fixes:
+#  R1 (M1) the corrective re-run dies on a deadline / quota / budget error that
+#     `_call_main_creator` re-raises, and the whole turn is lost with a valid first answer.
+#  R2 (M2) the re-run holds a database transaction open across a model call.
+#  R3 (M3) the finished receipt says "voice muted" for a sound-on ask that played no cutaway.
+#  R4 (M4) the prompt promises more than the open gates build (sound-only, mention-only), and
+#     states durations the scheduler does not use.
+#  R5 (M5) the guard fires on a refusal about something else (insert, pause, footage, hook), and
+#     the server note can talk the model into muting a voice the creator wanted paused.
+#  R6 (f) token shapes the model really writes slip past the guard; a Montage proposal is never
+#     checked.
+#  R7 (a-e) a second refusal reaches the creator as the invented card; the re-run is
+#     unattributed, ignores the last batch, and its answer / brief updates are dropped by the
+#     caller.
+
+
+def _provider_errors():
+    from app.agents._runtime import (
+        AiBudgetExceededError,
+        ProviderDeadlineExceededError,
+        ProviderOutcomeUnknownError,
+        ProviderQuotaExceededError,
+    )
+
+    return [
+        ProviderDeadlineExceededError("slow"),
+        ProviderOutcomeUnknownError("unknown"),
+        ProviderQuotaExceededError(provider="gemini"),
+        AiBudgetExceededError(scope="user", reset_at="2026-11-03", cached_behavior_available=False),
+    ]
+
+
+@pytest.mark.parametrize("exc", _provider_errors(), ids=lambda e: type(e).__name__)
+async def test_r1_a_rerun_that_cannot_finish_keeps_the_first_answer(monkeypatch, exc):
+    _gates(monkeypatch)
+    manifest = _manifest()
+    rerun = AsyncMock(side_effect=exc)
+    monkeypatch.setattr(planner, "_call_main_creator", rerun)
+
+    result = await _turn(monkeypatch, _refusal_output(), manifest, _brief())
+
+    assert rerun.await_count == 1
+    assert "Montage" in _said(result)  # the first answer, not a failed turn
+
+
+async def test_r1_no_rerun_when_the_turn_has_no_room_for_a_model_call(monkeypatch):
+    import time
+
+    _gates(monkeypatch)
+    manifest = _manifest()
+    rerun = AsyncMock(return_value=_strategy_output(manifest))
+    monkeypatch.setattr(planner, "_call_main_creator", rerun)
+    token = planner.turn_deadline.set(time.monotonic() + 25.0)
+    try:
+        result = await _turn(monkeypatch, _refusal_output(), manifest, _brief())
+    finally:
+        planner.turn_deadline.reset(token)
+
+    rerun.assert_not_awaited()
+    assert "Montage" in _said(result)
+
+
+async def test_r1_a_rerun_runs_when_the_turn_has_room(monkeypatch):
+    import time
+
+    _gates(monkeypatch)
+    manifest = _manifest()
+    rerun = AsyncMock(return_value=_strategy_output(manifest))
+    monkeypatch.setattr(planner, "_call_main_creator", rerun)
+    token = planner.turn_deadline.set(time.monotonic() + 190.0)
+    try:
+        await _turn(monkeypatch, _refusal_output(), manifest, _brief())
+    finally:
+        planner.turn_deadline.reset(token)
+
+    assert rerun.await_count == 1
+
+
+async def test_r2_no_transaction_is_open_while_the_model_runs(monkeypatch):
+    _gates(monkeypatch)
+    manifest = _manifest()
+    db = _Db()
+    open_during_call: list[bool] = []
+
+    async def rerun(*_args, **_kwargs):
+        open_during_call.append(db.open)
+        return _strategy_output(manifest)
+
+    monkeypatch.setattr(planner, "_call_main_creator", rerun)
+
+    await _turn(monkeypatch, _refusal_output(), manifest, _brief(), db=db)
+
+    assert open_during_call == [False]
+
+
+def _sound_on_receipt(*, scope: str, on_windows: list):
+    from app.kria.brief_checks import PlanFacts, check_requirement
+    from app.kria.clip_sound_toggle_ask import brief_sound_toggle_asks
+
+    req = BriefRequirement(
+        id="r1",
+        kind="audio",
+        facts={"clip_sound": "on"},
+        scope=scope,
+        status="open",
+        literal=None,
+        description="Use my own audio",
+    )
+    record = {
+        "version": 1,
+        "windows": True,
+        "rows": [
+            {
+                "requirement_id": "r1",
+                "state": "on",
+                "status": "met",
+                "reason_code": None,
+                "on_windows": on_windows,
+                "off_windows": [],
+                "line": None,
+                "mismatch_s": 0.0,
+            }
+        ],
+    }
+    facts = PlanFacts(
+        phone_talking=True,
+        edit_format="subtitled",
+        rendered_variant=True,
+        clip_ids=tuple(CLIPS),
+        clip_sound_toggles=record,
+    )
+    ask = brief_sound_toggle_asks(CreativeBrief(version=1, requirements=[req]))[0]
+    return check_requirement(req, facts), ask
+
+
+@pytest.mark.parametrize("scope", ["global", "clip:" + CLIPS[0]])
+def test_r3_a_sound_on_ask_that_played_no_cutaway_keeps_the_plain_receipt(scope):
+    from app.kria.brief_checks import _toggle_summary
+
+    receipt, ask = _sound_on_receipt(scope=scope, on_windows=[])
+
+    assert receipt.status == "met"
+    assert receipt.reason == _toggle_summary(ask)
+    assert "muted" not in receipt.reason
+
+
+def test_r3_a_cutaway_that_played_its_sound_says_the_voice_is_muted():
+    receipt, _ask = _sound_on_receipt(scope="global", on_windows=[[10.0, 14.0]])
+
+    assert "muted" in receipt.reason and "voice" in receipt.reason
+
+
+def _section_for(monkeypatch, *, mention: bool, sound: bool) -> str:
+    _gates(monkeypatch, mention=mention, sound=sound)
+    return _flat(_section(_manifest()))
+
+
+def test_r4_durations_in_the_prompt_are_the_ones_the_scheduler_uses(monkeypatch):
+    from app.pipeline.phone_talking_cutaways import MAX_WINDOW_S
+    from app.pipeline.phone_talking_mentions import SOUND_WINDOW_S
+
+    both = _section_for(monkeypatch, mention=True, sound=True)
+    spread_sound = _section_for(monkeypatch, mention=False, sound=True)
+    mention_only = _section_for(monkeypatch, mention=True, sound=False)
+    spread_only_numbers = f"{MAX_WINDOW_S:g} seconds"
+    long_numbers = f"{SOUND_WINDOW_S:g} seconds"
+
+    assert spread_only_numbers in both and long_numbers in both
+    assert spread_only_numbers in mention_only and long_numbers not in mention_only
+    assert spread_only_numbers in spread_sound
+    assert long_numbers not in spread_sound  # spread scheduling never extends a sound window
+
+
+def test_r4_sound_only_does_not_promise_placement_or_cover_for_the_talks(monkeypatch):
+    section = _section_for(monkeypatch, mention=False, sound=True)
+
+    assert "where the creator talks about" not in section
+    assert "in between my speech" not in section
+    assert "the clips that are not the creator speaking to camera" not in section
+    assert "cannot be pinned to a word" in section
+    assert "voice is muted" in section
+
+
+def test_r4_mention_only_does_not_promise_sound(monkeypatch):
+    section = _section_for(monkeypatch, mention=True, sound=False)
+
+    assert "where the creator talks about" in section
+    assert "voice is muted" not in section
+
+
+def test_r4_the_section_tells_the_worker_fallbacks_and_the_stale_reply(monkeypatch):
+    section = _section_for(monkeypatch, mention=True, sound=True)
+
+    assert "out of date" in section  # the earlier "works on a montage ... not in this edit" reply
+    assert "montage_audio" in section  # a source list drops the clips' sound
+    assert "stays silent" in section  # a sounding clip no mention placed
+    assert "order" in section  # an asked clip order keeps every clip in place
+
+
+A_REFUSAL_ABOUT_SOUND = {
+    "question": "I can't play those videos with their own audio over your talk. Silent instead?",
+    "options": ["Silent full screen", "Switch to Montage"],
+}
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "footage_limited",
+        "hook_declined",
+        "not_available_yet",
+        "insert_unavailable",
+        "insert_not_available",
+        "unsupported_pause_and_resume",
+    ],
+)
+def test_r5_a_refusal_about_something_else_is_left_alone(monkeypatch, code):
+    from app.kria.ask_refusals import stale_capability_refusal
+
+    _gates(monkeypatch)
+    ask = AskUser(
+        kind="ask_user",
+        question="I can't stop your talk, play the clip and then continue it.",
+        reason_code=code,
+        options=["Overlay it instead", "Put it at the end"],
+    )
+
+    assert stale_capability_refusal(ask, _manifest(), _brief()) is None
+
+
+def test_r5_a_refusal_naming_pause_is_left_alone_whatever_its_code(monkeypatch):
+    from app.kria.ask_refusals import stale_capability_refusal
+
+    _gates(monkeypatch)
+    ask = AskUser(
+        kind="ask_user",
+        question="Pausing your talk while the clip plays is not available. Cover it instead?",
+        reason_code=INCIDENT_CODE,
+        options=["Cover it", "Keep it as is"],
+    )
+
+    assert stale_capability_refusal(ask, _manifest(), _brief()) is None
+
+
+def test_r5_a_vague_code_is_stale_when_the_model_says_it_is_about_the_audio(monkeypatch):
+    from app.kria.ask_refusals import stale_capability_refusal
+
+    _gates(monkeypatch)
+    ask = AskUser(
+        kind="ask_user",
+        reason_code="feature_unavailable",
+        **A_REFUSAL_ABOUT_SOUND,
+    )
+
+    assert stale_capability_refusal(ask, _manifest(), _brief()) is not None
+
+
+def test_r5_a_vague_code_with_nothing_about_the_asks_is_left_alone(monkeypatch):
+    from app.kria.ask_refusals import stale_capability_refusal
+
+    _gates(monkeypatch)
+    ask = AskUser(
+        kind="ask_user",
+        question="I can't use that many clips.",
+        reason_code="feature_unavailable",
+        options=["Fewer clips", "Keep all"],
+    )
+
+    assert stale_capability_refusal(ask, _manifest(), _brief()) is None
+
+
+def test_r5_the_note_speaks_plainly_and_allows_an_honest_pause_answer():
+    from app.kria import ask_refusals
+
+    for capability in (ask_refusals.CAPABILITY_MENTION, ask_refusals.CAPABILITY_SOUND):
+        note = ask_refusals.correction_note(capability)
+        for jargon in ("ask_user", "reason_code", "gates", "gate "):
+            assert jargon not in note
+        assert "pause" in note  # a real pause ask is answered honestly, not muted
+        assert "out of date" in note  # the earlier "not in this edit" reply in the chat
+
+
+@pytest.mark.parametrize(
+    "code",
+    ["unsupportedAudioIntercut", "not supported", "can't_intercut", "capability_gap"],
+)
+def test_r6_refusal_shapes_the_model_writes_are_read_as_refusals(monkeypatch, code):
+    from app.kria.ask_refusals import stale_capability_refusal
+
+    _gates(monkeypatch)
+    ask = AskUser(
+        kind="ask_user",
+        question="I can't intercut those with their own audio.",
+        reason_code=code,
+        options=["a", "b"],
+    )
+
+    assert stale_capability_refusal(ask, _manifest(), _brief()) is not None
+
+
+@pytest.mark.parametrize("code", ["requires_montage", "montage_only"])
+def test_r6_a_montage_only_claim_is_a_refusal(monkeypatch, code):
+    from app.kria.ask_refusals import stale_capability_refusal
+
+    _gates(monkeypatch)
+    ask = AskUser(
+        kind="ask_user",
+        question="Their audio needs another format. Switch?",
+        reason_code=code,
+        options=["Switch to Montage", "Keep talking edit"],
+    )
+
+    assert stale_capability_refusal(ask, _manifest(), _brief()) is not None
+
+
+def _montage_switch_output(manifest) -> MainCreatorOutput:
+    strategy = CreativeStrategy.model_validate(
+        {
+            "direction": "fast_montage",
+            "edit_format": "montage",
+            "audio_strategy": "original_audio",
+            "render_program": "native",
+            "target_duration_s": 58,
+            "selected_media_ids": [m.media_id for m in manifest.media],
+            "rationale": "A montage plays each clip with its own sound.",
+        }
+    )
+    return MainCreatorOutput.model_validate(
+        {
+            "action": {
+                "kind": "propose_strategy",
+                "strategy": strategy.model_dump(mode="json", exclude_none=True),
+                "summary": "I'll switch to a montage.",
+            }
+        }
+    )
+
+
+async def test_r6_a_montage_switch_for_an_ask_the_talking_edit_builds_is_rerun(monkeypatch):
+    _gates(monkeypatch)
+    manifest = _manifest()
+    rerun = AsyncMock(return_value=_strategy_output(manifest))
+    monkeypatch.setattr(planner, "_call_main_creator", rerun)
+
+    result = await _turn(monkeypatch, _montage_switch_output(manifest), manifest, _brief())
+
+    assert rerun.await_count == 1
+    assert result.main_creator_output is rerun.return_value
+
+
+async def test_r6_a_talking_strategy_is_never_rerun(monkeypatch):
+    _gates(monkeypatch)
+    manifest = _manifest()
+    rerun = AsyncMock()
+    monkeypatch.setattr(planner, "_call_main_creator", rerun)
+
+    await _turn(monkeypatch, _strategy_output(manifest), manifest, _brief())
+
+    rerun.assert_not_awaited()
+
+
+async def test_r7_a_second_refusal_is_the_honest_unmet_reply_not_the_invented_card(monkeypatch):
+    _gates(monkeypatch)
+    manifest = _manifest()
+    second = _refusal_output("still_unsupported_audio")
+    rerun = AsyncMock(return_value=second)
+    monkeypatch.setattr(planner, "_call_main_creator", rerun)
+
+    result = await _turn(monkeypatch, _refusal_output(), manifest, _brief())
+
+    assert rerun.await_count == 1
+    said = _said(result)
+    assert said.strip()
+    assert "Montage" not in said and "Silent full-screen" not in said
+    assert "unsupported" not in said
+    assert result.plan.choice_question is None
+
+
+async def test_r7_a_second_answer_about_something_else_stands(monkeypatch):
+    _gates(monkeypatch)
+    manifest = _manifest()
+    second = _refusal_output("hook_declined")
+    second.action.question = "Which of the two hooks should open the video?"
+    rerun = AsyncMock(return_value=second)
+    monkeypatch.setattr(planner, "_call_main_creator", rerun)
+
+    result = await _turn(monkeypatch, _refusal_output(), manifest, _brief())
+
+    assert "Which of the two hooks" in _said(result)
+
+
+async def test_r7_the_rerun_is_attributed_to_the_session_and_reads_the_last_batch(monkeypatch):
+    _gates(monkeypatch)
+    manifest = _manifest()
+    session = uuid.uuid4()
+    rerun = AsyncMock(return_value=_strategy_output(manifest))
+    monkeypatch.setattr(planner, "_call_main_creator", rerun)
+    base = _agent_input(manifest)
+    last = planner._CreatorInputs(
+        agent_input=base.model_copy(update={"creator_request": "the LAST batch"}),
+        intent_clips=[],
+        creator_request=None,
+        raw_creator_request=REQUEST,
+    )
+
+    await _turn(
+        monkeypatch,
+        _refusal_output(),
+        manifest,
+        _brief(),
+        creator_agent_session_id=session,
+        rerun_inputs=last,
+    )
+
+    assert rerun.await_args.kwargs["creator_agent_session_id"] == session
+    sent = rerun.await_args.args[0].agent_input
+    assert sent.creator_request == "the LAST batch" and sent.server_note
+
+
+async def test_r7_the_caller_can_tell_which_answer_was_planned(monkeypatch):
+    _gates(monkeypatch)
+    manifest = _manifest()
+    rerun = AsyncMock(return_value=_strategy_output(manifest))
+    monkeypatch.setattr(planner, "_call_main_creator", rerun)
+    first = _refusal_output()
+
+    replaced = await _turn(monkeypatch, first, manifest, _brief())
+    untouched = await _turn(
+        monkeypatch, _refusal_output("which_clip_is_yours"), manifest, _brief()
+    )
+
+    assert replaced.main_creator_output is rerun.return_value
+    assert untouched.main_creator_output is None
+
+
+def test_r7_the_reruns_new_brief_updates_are_kept_and_duplicates_are_not():
+    from app.kria.brief import BriefUpdate
+
+    asked = BriefUpdate(
+        kind="style", scope="global", description="Show them full screen", facts={"display_mode": "fullscreen"}
+    )
+    same = BriefUpdate(
+        kind="style", scope="global", description="Full screen please", facts={"display_mode": "fullscreen"}
+    )
+    new = BriefUpdate(
+        kind="audio", scope="global", description="Their own audio", facts={"clip_sound": "on"}
+    )
+    rerun = SimpleNamespace(brief_updates=[same, new])
+
+    merged = planner._updates_with_rerun(None, (asked,), rerun, creator_text=REQUEST)
+
+    assert merged == (asked, new)
+    assert planner._updates_with_rerun(None, (asked,), None, creator_text=REQUEST) == (asked,)
