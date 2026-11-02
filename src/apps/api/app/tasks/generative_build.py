@@ -7686,7 +7686,7 @@ def _apply_talking_mention_ask(
             ClipRecord(
                 clip_id=cid,
                 media_id=binding.media_id,
-                speaks_to_camera=bool(getattr(meta, "speaks_to_camera", False)) if known else None,
+                speaks_to_camera=bool(meta.speaks_to_camera) if known else None,
             )
         )
     media_ids = [record.media_id for record in records]
@@ -7755,8 +7755,8 @@ def _talking_mention_footage_clips(
                 getattr(meta, "transcript", ""),
                 getattr(meta, "hook_text", ""),
                 getattr(meta, "detected_subject", ""),
-                *(getattr(meta, "clip_brands", None) or []),
-                *(getattr(meta, "clip_props", None) or []),
+                *(meta.clip_brands or []),
+                *(meta.clip_props or []),
             ]
         clips.append(
             FootageClip(
