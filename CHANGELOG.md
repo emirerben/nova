@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.115.0] - 2026-11-02
+
+### Fixed
+- fix(overlays): read placed pictures from visual blocks; readable hold (KRI-1142) (#2067) <!-- release-pr: 2067 -->
+
 ## [0.83.114.0] - 2026-11-02
 
 ### Changed
