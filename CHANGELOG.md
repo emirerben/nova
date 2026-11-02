@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.97.0] - 2026-11-02
+
+### Changed
+- feat(kria): the narrated title enters as the plan and the asks say (KRI-1097 wave 2, narrated) (#2036) <!-- release-pr: 2036 -->
+
 ## [0.83.96.0] - 2026-11-02
 
 ### Changed
