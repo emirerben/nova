@@ -2898,6 +2898,13 @@ def _extractor_retry_allowed(exc: TerminalError) -> bool:
     )
 
 
+def _insert_clips_open(inputs: _CreatorInputs) -> bool:
+    """Parent KRI-1151: can this item pause the creator's take for one of its clips right now?
+    The brief extractor is taught the ask only then (the same gate as the creator prompt)."""
+    manifest = getattr(inputs.agent_input, "capability_manifest", None)
+    return manifest is not None and bool(insert_clip_candidates(manifest))
+
+
 async def _call_brief_extractor(
     inputs: _CreatorInputs,
     *,
@@ -2916,7 +2923,7 @@ async def _call_brief_extractor(
         conversation=inputs.agent_input.conversation,
         current_brief=prior_brief,
         require_request_scope=True,
-        insert_clips_open=bool(insert_clip_candidates(inputs.agent_input.capability_manifest)),
+        insert_clips_open=_insert_clips_open(inputs),
     )
 
     def _run_agent(request_id: str):  # noqa: ANN202 - inferred BriefExtractionOutput

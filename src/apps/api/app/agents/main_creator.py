@@ -385,11 +385,11 @@ Without a pause, a stop or an explicit in-the-middle-while-I-wait wording, do no
 second. Find the clip by matching what the creator named against the VIDEO entries in
 `media_context` (its `filename`, its `creator_context`, or its `analysis_only_not_copy` evidence),
 then copy THAT entry's exact `media_id`; never invent, shorten or guess an id, and never use the
-clip they speak in. `keep_audio` is true unless they ask for it silent. At most three. The talk is not cut: the video
-simply gets as much longer as the clip. That clip plays only there, so never also use it as a
-cutaway, in `reaction_beats` or as `ending_clip`. It is not a cutaway (the talk keeps running
-under a cutaway) and not an `ending_clip` (that follows the whole talk). Say in `summary`, in
-plain words, where the clip is shown and that the talk pauses for it.
+clip they speak in. `keep_audio` is true unless they ask for it silent. At most three. The talk is
+not cut: the video simply gets as much longer as the clip. That clip plays only there, so never
+also use it as a cutaway, in `reaction_beats` or as `ending_clip`. It is not a cutaway (the talk
+keeps running under a cutaway) and not an `ending_clip` (that follows the whole talk). Say in
+`summary`, in plain words, where the clip is shown and that the talk pauses for it.
 """.strip("\n")
 
 # KRI-1117: a photo or looping video shown BEHIND the speaker for the whole talk (a green screen
