@@ -71,7 +71,7 @@ class OverlayGenerationAgent(Agent[OverlayPlanInput, OverlayPlanOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.editor.overlay_generation",
         prompt_id="overlay_generation",
-        prompt_version="2026-11-02.2",
+        prompt_version="2026-11-02.3",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -128,9 +128,13 @@ class OverlayGenerationAgent(Agent[OverlayPlanInput, OverlayPlanOutput]):
             "Avoid covering faces, captions, and visible_text from actual OCR. A text_safe_zone "
             "is an analyzed source recommendation, not a guarantee for the current crop. "
             "Keep the overlay inside that zone where available; review placement is required. "
-            "Never overlap existing_overlays in time. Two pictures may share a moment only "
-            "when they sit clearly apart on the canvas (for example x_frac 0.25 and 0.75), as "
-            "for a versus moment; otherwise never overlap another proposed overlay in time. "
+            "Never overlap existing_overlays in time, except that an existing picture whose "
+            "entry carries a rect (x0, y0, x1, y1 in canvas fractions) may share its moment "
+            "with a new picture placed clear of that rect. Two proposed pictures may likewise "
+            "share a moment only when they sit clearly apart on the canvas (for example x_frac "
+            "0.25 and 0.75), as for a versus moment; otherwise never overlap another proposed "
+            "overlay in time. Give each picture a hold of at least two seconds, not just the "
+            "length of the spoken word. "
             "Prompt is only the image provider description, text only the actual native text. "
             "If safe fulfillment is impossible, return overlays=[] with the reason.\nINPUT\n"
             + input.model_dump_json()
