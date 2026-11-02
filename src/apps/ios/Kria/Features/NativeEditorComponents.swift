@@ -612,7 +612,6 @@ struct NativeEditorToolRail: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var selectionNamespace
     let selected: NativeEditorTool?
-    var availableWidth: CGFloat = 328
     var connected = false
     /// The Draw tool is offered only when the server opens drawings for this variant.
     var showsDraw = false
@@ -626,44 +625,26 @@ struct NativeEditorToolRail: View {
     }
 
     var body: some View {
-        HStack(spacing: NativeEditorIslandMetrics.toolSpacing) {
-            ForEach(tools) { tool in
-                Button { onSelect(tool) } label: {
-                    VStack(spacing: 4) {
-                        Image(systemName: tool.icon)
-                            .font(.system(size: 17, weight: .medium))
-                        Text(tool.rawValue)
-                            .font(KriaFont.body(11).weight(selected == tool ? .semibold : .medium))
-                            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                            .lineLimit(1)
-                            // The island pins each tool to a fixed width, so
-                            // larger Dynamic Type shrinks the label instead
-                            // of truncating it.
-                            .minimumScaleFactor(0.7)
+        GeometryReader { proxy in
+            let layout = NativeEditorIslandMetrics.toolRailLayout(toolCount: tools.count, railWidth: proxy.size.width)
+            if layout.scrolls {
+                ScrollViewReader { scroller in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        toolRow(itemWidth: layout.itemWidth)
+                            .padding(.vertical, NativeEditorIslandMetrics.islandVerticalPadding)
                     }
-                    .foregroundStyle(selected == tool ? KriaColor.ink : KriaColor.zinc)
-                    .frame(width: min(NativeEditorIslandMetrics.toolWidth, max(44, (availableWidth - 22) / CGFloat(tools.count))), height: NativeEditorIslandMetrics.toolHeight)
-                    .background {
-                        if selected == tool {
-                            if shouldReduceMotion {
-                                Capsule().fill(KriaColor.ink.opacity(0.07))
-                            } else {
-                                Capsule().fill(KriaColor.ink.opacity(0.07))
-                                    .matchedGeometryEffect(id: "native-editor-tool-selection", in: selectionNamespace)
-                            }
-                        }
-                    }
-                    .contentShape(Capsule())
+                    .contentMargins(.horizontal, NativeEditorIslandMetrics.islandHorizontalPadding, for: .scrollContent)
+                    .onChange(of: selected, initial: true) { _, tool in reveal(tool, in: scroller, animated: true) }
+                    .onChange(of: layout) { _, _ in reveal(selected, in: scroller, animated: false) }
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(tool.rawValue)
-                .accessibilityHint(selected == tool ? "Close this panel" : tool.accessibilityHint)
-                .accessibilityAddTraits(selected == tool ? .isSelected : [])
-                .accessibilityIdentifier("native-editor-tool-\(tool.rawValue.lowercased())")
+            } else {
+                // A rail that fits stays a plain row, so nothing that swipes the screen can land on it.
+                toolRow(itemWidth: layout.itemWidth)
+                    .padding(.horizontal, NativeEditorIslandMetrics.islandHorizontalPadding)
+                    .padding(.vertical, NativeEditorIslandMetrics.islandVerticalPadding)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .padding(.horizontal, NativeEditorIslandMetrics.islandHorizontalPadding)
-        .padding(.vertical, NativeEditorIslandMetrics.islandVerticalPadding)
         .frame(height: NativeEditorIslandMetrics.islandHeight)
         .accessibilityElement(children: .contain)
         // `.glassEffect()` (used by `.nativeEditorIslandSurface()` on iOS
@@ -687,6 +668,58 @@ struct NativeEditorToolRail: View {
         )
         .nativeEditorIslandSurface(isEnabled: !connected)
         .animation(shouldReduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.86), value: selected)
+    }
+
+    private func toolButton(_ tool: NativeEditorTool, itemWidth: CGFloat) -> some View {
+        Button { onSelect(tool) } label: {
+            VStack(spacing: 4) {
+                Image(systemName: tool.icon)
+                    .font(.system(size: 17, weight: .medium))
+                Text(tool.rawValue)
+                    .font(KriaFont.body(11).weight(selected == tool ? .semibold : .medium))
+                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .foregroundStyle(selected == tool ? KriaColor.ink : KriaColor.zinc)
+            .frame(width: itemWidth, height: NativeEditorIslandMetrics.toolHeight)
+            .background {
+                if selected == tool {
+                    if shouldReduceMotion {
+                        Capsule().fill(KriaColor.ink.opacity(0.07))
+                    } else {
+                        Capsule().fill(KriaColor.ink.opacity(0.07))
+                            .matchedGeometryEffect(id: "native-editor-tool-selection", in: selectionNamespace)
+                    }
+                }
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(tool.rawValue)
+        .accessibilityHint(selected == tool ? "Close this panel" : tool.accessibilityHint)
+        .accessibilityAddTraits(selected == tool ? .isSelected : [])
+        .accessibilityIdentifier("native-editor-tool-\(tool.rawValue.lowercased())")
+    }
+
+    private func toolRow(itemWidth: CGFloat) -> some View {
+        HStack(spacing: NativeEditorIslandMetrics.toolSpacing) {
+            ForEach(tools) { tool in toolButton(tool, itemWidth: itemWidth) }
+        }
+    }
+
+    /// Scrolls only as far as the open tool needs. With no tool open, or the first one, the rail goes back to rest
+    /// so the next tool is cut by the edge again.
+    private func reveal(_ tool: NativeEditorTool?, in scroller: ScrollViewProxy, animated: Bool) {
+        guard let first = tools.first else { return }
+        let atStart = tool == nil || tool == first
+        guard let target = atStart ? first : tool else { return }
+        let anchor: UnitPoint? = atStart ? .leading : nil
+        if animated && !shouldReduceMotion {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { scroller.scrollTo(target.id, anchor: anchor) }
+        } else {
+            scroller.scrollTo(target.id, anchor: anchor)
+        }
     }
 }
 
