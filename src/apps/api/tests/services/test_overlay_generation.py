@@ -1038,3 +1038,39 @@ def test_one_ungrounded_row_does_not_discard_the_grounded_rows():
     )
     assert [r.start_s for r in rows] == [1.25]
     assert notices and "no source evidence" in notices[0]
+
+
+def test_spoken_start_a_hair_inside_a_title_card_moves_to_just_after_it():
+    rows = materialize_overlays(
+        proposal(start_s=1.0, end_s=3.0),
+        evidence(),
+        [],
+        duration_s=8,
+        prompt="",
+        existing_overlays=[dict(start_s=0.0, end_s=1.3)],
+    )
+    assert [(r.start_s, r.end_s) for r in rows] == [(1.3, 3.0)]
+
+
+def test_a_real_overlap_is_not_nudged_away():
+    with pytest.raises(ValueError, match="overlap"):
+        materialize_overlays(
+            proposal(start_s=1.0, end_s=3.0),
+            evidence(),
+            [],
+            duration_s=8,
+            prompt="",
+            existing_overlays=[dict(start_s=0.0, end_s=2.0)],
+        )
+
+
+def test_nudge_keeps_a_usable_duration():
+    with pytest.raises(ValueError, match="overlap"):
+        materialize_overlays(
+            proposal(start_s=1.0, end_s=1.4),
+            evidence(),
+            [],
+            duration_s=8,
+            prompt="",
+            existing_overlays=[dict(start_s=0.0, end_s=1.3)],
+        )
