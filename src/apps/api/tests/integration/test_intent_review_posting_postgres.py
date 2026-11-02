@@ -15,7 +15,13 @@ Failure modes, written before the posting stage (matrix row in parentheses). Eac
   A post about a video that is no longer the video (1):
     a render, draft or recipe change since the review means "I checked the finished video" would
     describe something the creator no longer has: nothing is posted, and that decision is
-    recorded so the sweep does not retry it forever.
+    recorded so the sweep does not retry it forever. Both ways it is noticed are guarded: the
+    authority graph no longer loads (a superseded render), and it loads but its digest moved (a
+    changed ownership epoch or dispatch setting), where the digest comparison is the only thing
+    left between the creator and a receipt about a video they no longer have.
+  A pass that is only a guess (5, 38):
+    a low-confidence "met" gets no row and no "everything matches"; a review whose only passes
+    are guesses posts nothing; a repair is never reported as having worked on a guess.
   A post into a conversation that moved on or is mid-turn (12, 27):
     a creator message since the render, or a turn in flight, means nothing is posted and the
     thread revision does not move, so a turn that is planning is not thrown back to plan again.
@@ -66,6 +72,8 @@ from app.services import intent_review_post as posting
 from app.services import intent_review_repair_flow as repair
 from tests.integration.test_intent_review_lifecycle_postgres import (  # noqa: F401
     Provider,
+    bump_ownership,
+    change_dispatch_settings,
     edit_row,
     ledger,
     paid,
@@ -230,6 +238,40 @@ async def test_wrong_footage_posts_a_receipt_that_changed_nothing_and_asks_nothi
     assert (rows["r1"]["status"], rows["r2"]["status"]) == ("met", "partial")
     assert "Optional" not in rows["r2"]["reason"]
     assert review_row(rid).question_event_id is None
+
+
+@pytest.mark.asyncio
+async def test_a_guessed_pass_gets_no_row_and_the_headline_names_the_limit(
+    approved_publication, real_builder, monkeypatch
+):
+    _, thread, _, _ = approved_publication
+    rid = await ready(approved_publication, monkeypatch)
+    edit_packet(rid, with_brief(*briefs_for_wrong_footage()))
+    seen = seen_ids(thread)
+    provider = Provider(
+        reply(finding("R1", frames=["f0"]), finding("R2", frames=["f1"], confidence="low"))
+    )
+    assert await run_async(rid, provider) == "no_findings"
+    (post,) = added(thread, seen)
+    assert post.content == (
+        "I checked frames from the finished video against your request. Everything I could see "
+        "matches. I can't judge sound or motion from still frames."
+    )
+    assert [r["requirement_id"] for r in post.payload["requirement_receipts"]] == ["r1"]
+
+
+@pytest.mark.asyncio
+async def test_a_review_whose_only_pass_is_a_guess_is_not_a_review_and_posts_nothing(
+    approved_publication, real_builder, monkeypatch
+):
+    _, thread, _, _ = approved_publication
+    rid = await ready(approved_publication, monkeypatch)
+    seen = seen_ids(thread)
+    provider = Provider(reply(finding("R1", frames=["f0"], confidence="low")))
+    assert await run_async(rid, provider) == "unavailable"
+    assert review_row(rid).reason == "nothing_verifiable"
+    silent(thread, seen, rid)
+    assert posted_decision(rid) == {}
 
 
 def briefs_for_wrong_footage():
@@ -493,13 +535,18 @@ async def test_a_poster_never_waits_for_a_row_a_settler_holds_while_it_holds_the
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change",
+    [supersede_generation, change_dispatch_settings, bump_ownership],
+    ids=["the_render_is_superseded", "the_dispatch_setting_moved", "the_ownership_epoch_moved"],
+)
 async def test_a_video_the_creator_no_longer_has_is_not_reported_on_and_the_decision_is_kept(
-    approved_publication, real_builder, monkeypatch
+    approved_publication, real_builder, monkeypatch, change
 ):
     _, thread, job_id, _ = approved_publication
     monkeypatch.setattr(flow, "post_intent_review_outcome", lambda review_id: "crashed")
     rid = await no_findings(approved_publication, monkeypatch)
-    supersede_generation(job_id)
+    change(job_id)
     seen, revision = seen_ids(thread), thread_revision(thread)
     assert posting.post_intent_review_outcome(rid) == "skipped"
     silent(thread, seen, rid)
@@ -602,6 +649,31 @@ async def test_an_unconfirmed_repair_posts_the_honest_sentence_with_its_fix_line
     (row_,) = post.payload["requirement_receipts"]
     assert (row_["status"], row_["reason"]) == ("partial", "Fixed, but not confirmed.")
     assert review_row(rid).status == "repair_unverified"
+
+
+@pytest.mark.asyncio
+async def test_a_follow_up_that_only_guesses_the_target_is_met_never_reports_the_fix_as_worked(
+    drifted, repair_on, monkeypatch
+):
+    _, thread, _, _ = drifted
+    rid, child = await unsettled_follow_up(
+        drifted,
+        monkeypatch,
+        [R1_UNMET, R2_MET],
+        [finding("R1", "met", frames=["f0"], confidence="low"), R2_MET],
+    )
+    seen = seen_ids(thread)
+    assert await settle_in_a_worker(child) == "repair_unverified"
+    (post,) = reviewer_posts(thread, seen)
+    assert post.content == (
+        "The fix is in the new video, but I couldn't confirm it worked. You can still undo it."
+    )
+    (row_,) = post.payload["requirement_receipts"]
+    assert (row_["requirement_id"], row_["status"]) == ("r1", "partial")
+    assert (review_row(rid).status, review_row(rid).reason) == (
+        "repair_unverified",
+        "not_confirmed",
+    )
 
 
 @pytest.mark.asyncio
