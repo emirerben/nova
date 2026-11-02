@@ -778,7 +778,7 @@ def recover_intent_reviews(deadline: float | None = None) -> int:
 
 
 def _recover_expired(review_id) -> str:
-    outcome = _resolve_expired(review_id)
+    outcome = _stage_repair_if_pending(review_id, _resolve_expired(review_id))
     if outcome not in {"ignored", "evidence_ready"}:
         _emit_trace(review_id, outcome)
     return outcome

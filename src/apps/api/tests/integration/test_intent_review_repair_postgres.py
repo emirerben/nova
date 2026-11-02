@@ -71,6 +71,7 @@ from app.models import (
 from app.services import intent_review_flow as flow
 from app.services import intent_review_repair_flow as repair
 from tests.integration.test_intent_review_lifecycle_postgres import (  # noqa: F401
+    Crash,
     Provider,
     edit_row,
     expire_lease,
@@ -417,10 +418,6 @@ async def test_the_code_ceiling_alone_keeps_repair_off_with_every_flag_on(
     assert row.repair_draft_id is None and len(drafts(thread)) == count
 
 
-class Crash(BaseException):
-    """A worker killed mid-flight: nothing in the code under test may catch it."""
-
-
 @pytest.mark.asyncio
 async def test_a_crash_before_the_draft_commits_cancels_the_turn_and_holds_the_repair_back(
     drifted, repair_on, monkeypatch
@@ -432,6 +429,7 @@ async def test_a_crash_before_the_draft_commits_cancels_the_turn_and_holds_the_r
     def killed(staging):
         raise Crash
 
+    real = repair._drive
     monkeypatch.setattr(repair, "_drive", killed)
     with pytest.raises(Crash):
         await run_async(rid, Provider(COPY_MISMATCH))
@@ -444,7 +442,7 @@ async def test_a_crash_before_the_draft_commits_cancels_the_turn_and_holds_the_r
             )
         )
         assert turn.status == "planning"
-    monkeypatch.undo()
+    monkeypatch.setattr(repair, "_drive", real)
     expire_lease(rid)
     assert flow.run_intent_review(rid) == "suggestion"
     row = review_row(rid)
@@ -500,8 +498,9 @@ async def test_the_planner_never_reads_or_claims_the_reviewers_system_turn(
 
     async with AsyncSessionLocal() as db:
         transcript = await planner._load_thread_events(db, thread)
-    assert INTENT_REPAIR_EVENT not in [str(entry) for entry in transcript]
-    assert not any(INTENT_REPAIR_EVENT in str(entry) for entry in transcript)
+    visible = [e for e in events(thread) if e.role in {"user", "assistant"}]
+    assert len(transcript) == len(visible) > 0
+    assert len(events(thread, INTENT_REPAIR_EVENT)) == 1
 
     with sync_session() as db:
         turn = db.scalar(
@@ -918,3 +917,95 @@ async def test_what_a_repair_adds_to_the_chat_is_only_what_old_app_builds_alread
     assert {e.event_type for e in added if e.role == "assistant"} == {"draft_applied"}
     assert {e.event_type for e in added if e.role == "assistant"} <= allowed
     assert not {e.event_type for e in added if e.role == "system"} & allowed
+
+
+def keep_the_words_as_they_are(thread_id):
+    from app.models import CreativeBriefVersion
+
+    with sync_session() as db:
+        latest = db.scalar(
+            select(CreativeBriefVersion)
+            .where(CreativeBriefVersion.thread_id == thread_id)
+            .order_by(CreativeBriefVersion.version.desc())
+        )
+        db.add(
+            CreativeBriefVersion(
+                thread_id=thread_id,
+                version=latest.version + 1,
+                requirements=[
+                    {**row, "facts": {**row.get("facts", {}), "preserve_editor_text": True}}
+                    for row in latest.requirements
+                ],
+            )
+        )
+        db.commit()
+
+
+@pytest.mark.asyncio
+async def test_a_retime_is_held_back_once_the_creator_asks_to_keep_the_text_as_it_is(
+    plain, repair_on, monkeypatch
+):
+    _, thread, _, _ = plain
+    rid = await ready(plain, monkeypatch, duration=1.6)
+    keep_the_words_as_they_are(thread)
+    count = len(drafts(thread))
+    assert await run_async(rid, Provider(TEXT_CUT_OFF)) == "suggestion"
+    row = review_row(rid)
+    (suggestion,) = row.review["disposition"]["suggestions"]
+    assert suggestion["why"] == "protected" and suggestion["candidate_id"]
+    assert row.repair_draft_id is None and len(drafts(thread)) == count
+
+
+@pytest.mark.asyncio
+async def test_a_crash_after_the_response_is_stored_still_stages_the_repair_without_a_second_call(
+    drifted, repair_on, monkeypatch
+):
+    from app.services import ai_cost_control as costs
+    from tests.integration.test_intent_review_outcome_postgres import _crash_once
+
+    _, thread, _, _ = drifted
+    rid = await ready(drifted, monkeypatch)
+    _crash_once(monkeypatch, costs, "settle_paid_call")
+    provider = Provider(COPY_MISMATCH)
+    with pytest.raises(Crash):
+        await run_async(rid, provider)
+    assert review_row(rid).status == "reviewing" and review_row(rid).repair_draft_id is None
+    expire_lease(rid)
+    flow.recover_intent_reviews()
+    row = review_row(rid)
+    assert (row.status, row.reason) == ("repair_staged", "awaiting_approval")
+    assert row.repair_draft_id == drafts(thread)[-1].id and len(drafts(thread)) == 2
+    assert [entry["status"] for entry in ledger()] == ["settled"] and len(provider.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_two_settlers_of_one_worse_repair_undo_it_once_and_agree_on_why(
+    drifted, repair_on, monkeypatch
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    _, thread, job_id, _ = drifted
+    rid = await ready(drifted, monkeypatch)
+    edit_packet(rid, two_requirements)
+    parent_reply = reply(
+        finding("R1", "unmet", "copy_mismatch", ["f0"]), finding("R2", "met", frames=["f1"])
+    )
+    assert await run_async(rid, Provider(parent_reply)) == "repair_staged"
+    claim, _, _, proof = await approve_the_repair(drifted, rid, monkeypatch)
+    child = await ready((claim, thread, job_id, proof), monkeypatch)
+    edit_packet(child, two_requirements)
+    worse = reply(
+        finding("R1", "met", frames=["f0"]),
+        finding("R2", "unmet", "wrong_content", ["f1"]),
+    )
+    settle = repair.settle_parent_from_child
+    monkeypatch.setattr(repair, "settle_parent_from_child", lambda child_id: None)
+    assert await run_async(child, Provider(worse)) == "suggestion"
+    assert review_row(rid).status == "repair_staged"
+    monkeypatch.setattr(repair, "settle_parent_from_child", settle)
+    with ThreadPoolExecutor(2) as pool:
+        results = list(pool.map(lambda _: repair.settle_parent_from_child(child), range(2)))
+    assert sorted(results, key=str) == [None, "repair_reverted"]
+    parent = review_row(rid)
+    assert (parent.status, parent.reason) == ("repair_reverted", "worse")
+    assert len(events(thread, "draft_undone")) == 1

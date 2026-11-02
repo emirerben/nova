@@ -599,14 +599,18 @@ def _undo_head(thread_id, creator_id, expected_revision: int) -> str | None:
 
 
 def revert_repair(parent_id) -> str:
-    """Undo the repair draft if it is still the head at its own revision; otherwise leave it."""
+    """Undo the repair draft if it is still the head at its own revision; otherwise leave it.
+
+    Returns the reason the parent is closed with: `worse`, or `worse_head_moved` when the
+    creator's draft moved on and was left alone.
+    """
     from app.kria.runtime import RuntimeFailure
 
     with sync_session() as db:
         parent = db.get(CreatorGenerationReview, parent_id)
         draft = db.get(CreatorEditDraft, parent.repair_draft_id) if parent else None
         if parent is None or draft is None:
-            return "repair_reverted:worse_head_moved"
+            return "worse_head_moved"
         head = db.scalar(
             select(CreatorEditDraft).where(
                 CreatorEditDraft.item_id == draft.item_id,
@@ -615,55 +619,58 @@ def revert_repair(parent_id) -> str:
             )
         )
         if head is None or head.id != draft.id:
-            return "repair_reverted:worse_head_moved"
+            return "worse_head_moved"
         thread_id, creator_id, revision = draft.thread_id, draft.creator_id, head.draft_revision
     try:
         successor = _undo_head(thread_id, creator_id, revision)
     except RuntimeFailure:
-        return "repair_reverted:worse_head_moved"
+        return "worse_head_moved"
     if successor is not None:
         from app.tasks.kria_runtime import run_kria_turn
 
         run_kria_turn.apply_async(args=[successor], task_id=successor, queue="agent-control")
-    return "repair_reverted:worse"
+    return "worse"
 
 
-def _close_parent(parent_id, status: str, reason: str, patch: dict[str, Any] | None = None) -> str:
-    changed = finish_row(
-        parent_id, expect="repair_staged", status=status, reason=reason, patch=patch
-    )
+def _close_parent(parent_id, status: str, reason: str) -> str:
+    changed = finish_row(parent_id, expect="repair_staged", status=status, reason=reason)
     return status if changed else "ignored"
 
 
+def _verdict_on_repair(parent: CreatorGenerationReview, child: CreatorGenerationReview):
+    """(status, reason, comparison) the follow-up review gives the staged repair."""
+    comparison: dict[str, Any] = {"child_review_id": str(child.id)}
+    if child.status not in {"no_findings", "suggestion", "needs_confirmation"}:
+        comparison.update(fixed=None, worse=None)
+        return "repair_unverified", "rereview_unavailable", comparison
+    fixed, worse = compare_reviews(dict(parent.review or {}), dict(child.review or {}))
+    comparison.update(fixed=fixed, worse=worse)
+    if worse:
+        return "repair_reverted", revert_repair(parent.id), comparison
+    if fixed:
+        return "repair_verified", "fixed", comparison
+    return "repair_unverified", "not_confirmed", comparison
+
+
 def settle_parent_from_child(child_id) -> str | None:
-    """Close the parent of a finished follow-up review. No-op for anything else; idempotent."""
+    """Close the parent of a finished follow-up review. No-op for anything else; idempotent.
+
+    The parent row stays locked while a worse repair is undone, so two settlers cannot both
+    decide, and the label always says what happened to the draft.
+    """
     with sync_session() as db:
         child = db.get(CreatorGenerationReview, child_id)
         if child is None or child.parent_review_id is None or child.status not in TERMINAL:
             return None
-        parent = db.get(CreatorGenerationReview, child.parent_review_id)
+        parent = _lock_row(db, child.parent_review_id)
         if parent is None or parent.status != "repair_staged":
             return None
-        parent_id, child_review = parent.id, dict(child.review or {})
-        parent_review = dict(parent.review or {})
-        child_status = child.status
-    reviewed = child_status in {"no_findings", "suggestion", "needs_confirmation"}
-    comparison = {"child_review_id": str(child_id)}
-    if not reviewed:
-        return _close_parent(
-            parent_id,
-            "repair_unverified",
-            "rereview_unavailable",
-            {"comparison": {**comparison, "fixed": None, "worse": None}},
-        )
-    fixed, worse = compare_reviews(parent_review, child_review)
-    patch = {"comparison": {**comparison, "fixed": fixed, "worse": worse}}
-    if worse:
-        reverted = revert_repair(parent_id).partition(":")[2]
-        return _close_parent(parent_id, "repair_reverted", reverted, patch)
-    if fixed:
-        return _close_parent(parent_id, "repair_verified", "fixed", patch)
-    return _close_parent(parent_id, "repair_unverified", "not_confirmed", patch)
+        status, reason, comparison = _verdict_on_repair(parent, child)
+        parent.review = {**(parent.review or {}), "comparison": comparison}
+        parent.status, parent.reason = status, reason
+        parent.lease_token = parent.lease_until = None
+        db.commit()
+        return status
 
 
 def _abandon_reason(db, row: CreatorGenerationReview, now: datetime) -> str | None:
