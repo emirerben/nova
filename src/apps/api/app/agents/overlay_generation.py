@@ -82,7 +82,7 @@ class OverlayGenerationAgent(Agent[OverlayPlanInput, OverlayPlanOutput]):
     Output = OverlayPlanOutput
 
     def required_fields(self):
-        return ["overlays", "message"]
+        return ["overlays"]
 
     def render_prompt(self, input: OverlayPlanInput) -> str:  # noqa: A002
         return (

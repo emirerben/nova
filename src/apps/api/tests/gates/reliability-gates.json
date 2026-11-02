@@ -4328,6 +4328,50 @@
         "Leverkusen M3 iPhone re-send after deploy (with KRI-1108..1113)"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1151-planner-refuses-cutaway-lane",
+      "tickets": [
+        "KRI-1151"
+      ],
+      "symptom": "Prod thread 6fa36e51, turn 7aa16b1a (2026-11-02): \"Show the talks when I talk about them. Place them in between my speech. Show the talks in full screen and use their audio. Place the stadium full screen when I talk but keep my audio\", five minutes after the Talking cutaway flags went true. The Main Creator (v108) answered ask_user with the invented reason_code unsupported_audio_intercut (\"I still can't intercut those videos with their own audio ... silent full-screen videos, or switch to a Montage?\") for an ask the render worker builds; no draft, no job. The prompt taught ending_clip / reaction_beats only, and the two cutaway gates are read after a draft exists.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1151",
+      "journey": "kri-1151-talking-cutaway-sound",
+      "paths": [
+        "src/apps/api/app/kria/ask_refusals.py",
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/services/creator_capabilities.py",
+        "src/apps/api/app/kria/planner.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_planner_knows_talking_cutaways.py",
+        "tests/evals/test_main_creator_evals.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": "phone_talking_mention_cutaways_enabled",
+      "evidence": {
+        "offline_replay": "The real _plan_from_creator_output over the thread's captured clip list, first-draft reply and brief (tests/fixtures/kri1151_thread_6fa36e51.json) with the Main Creator call mocked: the refusal-shaped answer is re-run once with a server note, a second refusal becomes the plain unmet reply, a failed or skipped re-run keeps the first answer, no transaction is open at the call, and refusals about inserts, pauses, footage or hooks are left alone. The prompt section is rendered for each gate combination (mention only, sound only, both, neither) with the scheduler's own constants; the golden and Turkish eval fixtures open the gates with a fixture-level settings override and assert the rendered prompt carries the section.",
+        "live_model": "Not run (no paid calls). The golden answers are hand-authored, so the real model's answer to the incident request is still unobserved.",
+        "native_output": "Not applicable: chat planner and receipt wording only; no render path changed.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "mention gate only, sound gate only, both, neither: the prompt promises only what the open gates build",
+        "an insert / pause ask is answered honestly, never turned into a voice-muting overlay",
+        "Turkish phrasing of the request (prompt example phrases, refusal text read as tokens, TR golden)",
+        "a sound-on ask that played no cutaway keeps the plain receipt (no voice-muted claim)"
+      ],
+      "neighbours_gap": [
+        "No paid eval has run the real model on the incident request; replay proves the prompt and parse, not the live answer.",
+        "A creator who says \"when I mention them\" without a full-screen word still gets the spread (brief extractor needs a prompt bump and live evals).",
+        "PR #2058 (insert clip) reconciles the prompt wording after this lands."
+      ],
+      "follow_ups": [
+        "KRI-1151 live eval of the incident request after approval; iPhone re-send after deploy"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

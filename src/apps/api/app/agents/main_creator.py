@@ -39,6 +39,8 @@ from app.kria.brief import BriefUpdate, parse_brief_updates
 from app.kria.reply_language import prompt_language_line
 from app.kria.take_trim import refile_take_trim
 from app.kria.text_sequence import last_quoted_literal, refile_text_sequences
+from app.pipeline.phone_talking_cutaways import HOOK_FREE_S, MAX_WINDOW_S, TAIL_FREE_S
+from app.pipeline.phone_talking_mentions import SOUND_WINDOW_S
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import (
     MAX_OPENING_TITLE_DURATION_S,
@@ -54,9 +56,11 @@ from app.schemas.edit_proposal import (
 from app.services.creator_capabilities import (
     CAPABILITY_REACTION_BEATS,
     CAPABILITY_TIMED_CARDS,
+    TalkingCutawayAvailability,
     ending_clip_candidates,
     speaker_background_open,
     speaker_background_windows_open,
+    talking_footage_cutaways,
 )
 from app.services.length_policy import creator_duration_s
 
@@ -179,10 +183,16 @@ log = structlog.get_logger()
 # v108 (KRI-1093): the Lip-sync picker card (`manifest.chosen_format`) defaults an attached song
 # to `lipsync`; the song section gains one paragraph only on that manifest, so every other
 # render is byte-identical.
+# v109 (KRI-1151): a multi-clip Talking edit can show its other clips full screen where the creator
+# talks about them, optionally playing their own sound with the creator's voice muted under it.
+# Taught (with the voice-muted honesty) only where `talking_footage_cutaways(manifest)` is open,
+# so every other render is byte-identical; `MainCreatorInput.server_note` is the planner's one
+# corrective re-run after a refusal the open gates contradict (`app.kria.ask_refusals`).
 # v109 (KRI-1162): commentary-style green screen. `background_media` gains `sequence` /
 # `spoken_phrase` / `cadence_s` / `speaker_frame`, taught in one extra paragraph only where the
 # manifest advertises `speaker_background_windows`; every other prompt is byte-identical.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-01-v109"
+# v110: the 11-01 v109 (KRI-1162) and the 11-02 v109 (KRI-1151) merged; the prompt carries both.
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-02-v110"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -363,6 +373,108 @@ stays for a photo held over the last seconds of the talk, and a plain "end on ..
 itself is not an `ending_clip`. Say in `summary`, in plain words, that the video is added after
 the talk with its own sound.
 """.strip("\n")
+
+# KRI-1151: footage clips of a multi-clip phone Talking edit shown full screen over the take.
+# Appended to the `$reaction_beats_section` slot ONLY when `talking_footage_cutaways(manifest)`
+# is open, i.e. the same gates the render worker reads, so every other prompt is byte-identical.
+# Each paragraph is true for exactly the gate combination it is shown for, and every duration is
+# the scheduler's own constant (`phone_talking_cutaways`, `phone_talking_mentions`).
+_CUTAWAY_S = f"{MAX_WINDOW_S:g} seconds"
+_CUTAWAY_SOUND_S = f"{SOUND_WINDOW_S:g} seconds"
+
+_TALKING_CUTAWAYS_HEAD = """
+CLIPS SHOWN FULL SCREEN OVER THE TALK (iPhone Talking, several clips)
+This edit has several of the creator's own clips. The clip where they talk to camera is the spine
+of the video and other clips can cover it full screen for a few seconds. This is available here:
+when the creator asks for it, never use `ask_user` to say it is unsupported, never claim the
+format cannot do it, and never offer a Montage as the answer. Propose the strategy: `edit_format`
+"subtitled" with every clip in `selected_media_ids`; the server places the clips and checks the
+ask. An earlier reply in this chat that said this works only on a montage made on the iPhone, or
+not in this edit, is out of date."""
+
+_TALKING_CUTAWAYS_MENTION = f"""
+Placement: "show the talks when I talk about them", "show the stadium full screen when I mention
+it", "place them in between my speech", "konuştuğum yerde tam ekran göster". A clip the creator
+names, or for "the talks" with no name each clip that is not the creator speaking to camera, is
+shown full screen where the creator talks about what it shows, for up to {_CUTAWAY_S}, never in
+the first {HOOK_FREE_S:g} seconds or the last {TAIL_FREE_S:g} second. The creator has to ask for
+it full screen. A clip no spoken mention matches is spread out over the talk instead, and
+`summary` says so when the creator asked for a particular moment. The creator's take keeps
+advancing underneath: this is an overlay and does not pause the take and resume it later."""
+
+_TALKING_CUTAWAYS_SPREAD = f"""
+Placement: each clip that is not the creator speaking to camera is shown full screen over the
+talk for up to {_CUTAWAY_S}, spread out in upload order. It cannot be pinned to a word the creator
+says; say so plainly in `summary` when the creator asked for a particular moment. A clip with
+clear speech of its own keeps playing in turn, not over the talk, so do not promise it covers the
+talk. The creator's take keeps advancing underneath: this is an overlay and does not pause the
+take and resume it later."""
+
+_TALKING_CUTAWAYS_SOUND_MENTION = f"""
+Sound: "use their audio", "with their own sound", "kendi sesiyle" makes a shown clip play its own
+sound while the creator's voice is muted under it, so what the creator says in that window is not
+heard. A clip placed at a mention plays for up to {_CUTAWAY_SOUND_S}, starting right after the
+creator has said the word. A clip no mention matched stays silent when the creator asked for it
+full screen, and otherwise plays its sound for up to {_CUTAWAY_S}. Say in `summary`, in plain
+words, that their voice is muted under each clip that plays its sound, so they know before they
+approve. Do not offer a silent version instead. "Keep my audio" or "keep my voice" for a clip
+means it stays silent and the creator's voice plays over it, which is also what a shown clip does
+when no sound is asked. Leave `montage_audio` unset on this edit: a list of sound sources that is
+not exactly the clips that play sound drops the clips' sound."""
+
+_TALKING_CUTAWAYS_SOUND_SPREAD = f"""
+Sound: "use their audio", "with their own sound", "kendi sesiyle" makes a shown clip play its own
+sound for the time it is shown (up to {_CUTAWAY_S}) while the creator's voice is muted under it,
+so what the creator says in that window is not heard. Say in `summary`, in plain words, that
+their voice is muted under each clip that plays its sound, so they know before they approve. Do
+not offer a silent version instead. "Keep my audio" or "keep my voice" for a clip means it stays
+silent and the creator's voice plays over it, which is also what a shown clip does when no sound
+is asked. Leave `montage_audio` unset on this edit: a list of sound sources that is not exactly
+the clips that play sound drops the clips' sound."""
+
+_TALKING_CUTAWAYS_NO_SOUND = """
+Sound: a shown clip is silent over the creator's voice here. If the creator asks to use a clip's
+own audio, still propose the edit and say in `summary` that the clips play without their sound;
+the server tells them again before they approve."""
+
+_TALKING_CUTAWAYS_LIMITS_MENTION = """
+Nothing moves when the creator also gave an order for the clips, or when no clip is the creator
+speaking to camera. A take cut for silence or retakes has no word timeline, so every clip is
+spread. Cutting the speech as a requirement is not available with several clips."""
+
+_TALKING_CUTAWAYS_LIMITS = """
+Cutting the speech as a requirement is not available with several clips."""
+
+_TALKING_CUTAWAYS_TAIL = """
+Only when the exact thing asked is impossible, say so and offer what exists. A clip that stops the
+talk and lets it continue afterwards is not available on iPhone; the nearest are the full-screen
+overlay above%s."""
+
+
+def _talking_cutaways_section(
+    availability: TalkingCutawayAvailability, *, ending_open: bool
+) -> str:
+    """The prompt section for the footage-cutaway lane; the same gates the worker reads decide
+    which paragraphs the model sees (`talking_footage_cutaways`)."""
+
+    ending = " or a video at the very end (`ending_clip`)" if ending_open else ""
+    if availability.sound:
+        sound = (
+            _TALKING_CUTAWAYS_SOUND_MENTION
+            if availability.mention
+            else _TALKING_CUTAWAYS_SOUND_SPREAD
+        )
+    else:
+        sound = _TALKING_CUTAWAYS_NO_SOUND
+    parts = [
+        _TALKING_CUTAWAYS_HEAD,
+        _TALKING_CUTAWAYS_MENTION if availability.mention else _TALKING_CUTAWAYS_SPREAD,
+        sound,
+        _TALKING_CUTAWAYS_LIMITS_MENTION if availability.mention else _TALKING_CUTAWAYS_LIMITS,
+        _TALKING_CUTAWAYS_TAIL % ending,
+    ]
+    return "".join(parts).strip("\n")
+
 
 # KRI-1117: a photo or looping video shown BEHIND the speaker for the whole talk (a green screen
 # without the green). Appended to the `$reaction_beats_section` slot ONLY when the manifest
@@ -925,6 +1037,10 @@ class MainCreatorInput(BaseModel):
     # KRI-815: footage attached, no voiceover, script flag on. False => the prompt is
     # byte-identical, the field is left out of input dumps, and the action is refused.
     voiceover_script_available: bool = Field(default=False, exclude_if=lambda v: not v)
+    # KRI-1151: the planner's one corrective re-run after an `ask_user` refusal the server's own
+    # gates contradict (`app.kria.ask_refusals`). Empty => the prompt is byte-identical and the
+    # field is left out of input dumps. Server-authored; never the creator's words.
+    server_note: str = Field(default="", max_length=1000, exclude_if=lambda v: not v)
 
 
 class MainCreatorOutput(BaseModel):
@@ -1067,6 +1183,17 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     if _timed_cards_available(input.capability_manifest)
                     else ""
                 )
+                # KRI-1151: footage clips shown full screen over the talk; "" unless the
+                # worker's own gates are open for this edit.
+                + (
+                    "\n"
+                    + _talking_cutaways_section(
+                        cutaways,
+                        ending_open=bool(ending_clip_candidates(input.capability_manifest)),
+                    )
+                    if (cutaways := talking_footage_cutaways(input.capability_manifest))
+                    else ""
+                )
                 # KRI-1117: a photo / looping video behind the speaker; "" unless advertised.
                 + (
                     "\n" + _SPEAKER_BACKGROUND_PROMPT_SECTION
@@ -1137,6 +1264,8 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         # KRI-520: the reply-language instruction goes last, where it wins over the
         # English examples above. "" for English/unknown: byte-identical prompt.
         language_line = prompt_language_line(input.reply_language)
+        if input.server_note:
+            prompt = f"{prompt.rstrip(chr(10))}\n\nSERVER CHECK\n{input.server_note}\n"
         return f"{prompt.rstrip(chr(10))}\n\n{language_line}\n" if language_line else prompt
 
     def parse(self, raw_text: str, input: MainCreatorInput) -> MainCreatorOutput:  # noqa: A002
