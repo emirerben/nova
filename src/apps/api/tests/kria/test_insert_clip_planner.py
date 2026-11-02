@@ -124,11 +124,11 @@ def test_the_render_contract_and_placed_media_know_the_field():
     from app.services.creator_render_contract import FIELD_MATRIX
 
     for path in (
-        "insert_clips",
-        "insert_clips.media_id",
-        "insert_clips.at_phrase",
-        "insert_clips.at_s",
-        "insert_clips.keep_audio",
+        "insert_clips[]",
+        "insert_clips[].media_id",
+        "insert_clips[].at_phrase",
+        "insert_clips[].at_s",
+        "insert_clips[].keep_audio",
     ):
         assert path in FIELD_MATRIX, path
     strategy = CreativeStrategy(edit_format="subtitled", insert_clips=[_insert()])
