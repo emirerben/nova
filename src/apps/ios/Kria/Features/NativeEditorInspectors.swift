@@ -463,8 +463,13 @@ private struct NativeSelectedClipInspector: View {
                 }
             }
             Section("Order and source window") {
-                Button("Move earlier") { session.moveSelected(by: -0.1) }
-                Button("Move later") { session.moveSelected(by: 0.1) }
+                // A phone Talking edit keeps its timeline closed and opens only Range, so ordering stays off
+                // while Range below decides for itself.
+                Group {
+                    Button("Move earlier") { session.moveSelected(by: -0.1) }
+                    Button("Move later") { session.moveSelected(by: 0.1) }
+                }
+                .disabled(!session.canEditTimeline || !session.canEdit(.timeline))
                 if clip != nil {
                     let blocked = session.sourceWindowBlockedReason(for: selection)
                     Button { showRange = true } label: {
@@ -479,7 +484,6 @@ private struct NativeSelectedClipInspector: View {
                     if let blocked { Text(blocked).font(.footnote).foregroundStyle(.secondary) }
                 }
             }
-            .disabled(!session.canEditTimeline)
             NativeFootagePanel(session: session, selection: selection)
                 .disabled(!session.canEdit(.timeline))
             Section("Look and transition") {
@@ -519,7 +523,10 @@ private struct NativeSelectedClipInspector: View {
             }
             NativeClipAudioSection(clipID: selection.id, session: session)
             if !session.canEditTimeline {
-                Section { Label("Clip edits are locked for this render.", systemImage: "lock") }
+                Section {
+                    Label(session.sourceWindowBlockedReason(for: selection) == nil
+                          ? "Only Range can change in this render." : "Clip edits are locked for this render.", systemImage: "lock")
+                }
             }
             Section {
                 Button("Delete clip", role: .destructive) {

@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.103.0] - 2026-11-02
+
+### Changed
+- feat(kria): Range chooses which part of a Talking take plays (dark behind PHONE_TALKING_RANGE_EDITS_ENABLED) (#2053) <!-- release-pr: 2053 -->
+
+## [0.83.102.0] - 2026-11-02
+
+### Changed
+- Show the talks full screen where the creator mentions them (parent KRI-1151, flag off) (#2051) <!-- release-pr: 2051 -->
+
+## [0.83.101.0] - 2026-11-02
+
+### Changed
+- fix(api): return analysed clips in upload order so the creator's take leads a Talking edit (#2050) <!-- release-pr: 2050 -->
+
+## [0.83.100.0] - 2026-11-02
+
+### Changed
+- feat(kria): the plan's pace sets the cut between spoken lines (KRI-1097 wave 2, speech) (#2039) <!-- release-pr: 2039 -->
+
 ## [0.83.99.0] - 2026-11-02
 
 ### Changed

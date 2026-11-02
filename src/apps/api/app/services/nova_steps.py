@@ -677,6 +677,51 @@ def render_notes_from_talking_multi_clip_receipt(receipt: dict[str, Any] | None)
             notes.append(f"{name.capitalize()} was too short to show")
         else:
             notes.append(f"There wasn't room in the video to show {name} too")
+    notes += _mention_cutaway_notes(receipt.get("mention_cutaways"))
+    return notes
+
+
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def _mention_cutaway_notes(receipt: object) -> list[str]:
+    """Lines for the show-when-mentioned record of a multi-clip Talking edit (parent KRI-1151):
+    which clips sit where the creator talks about them, which could not be matched to a
+    mention and were spread, and whether their own sound was left out. ``[]`` without it."""
+    if not isinstance(receipt, dict):
+        return []
+    notes: list[str] = []
+    if receipt.get("kept") == "clip_order_asked":
+        notes.append("Kept your clips in the order you asked, so none of them cover your take")
+    elif receipt.get("kept") == "no_creator_take_left":
+        notes.append("Couldn't tell which clip is you talking, so I left your clips as they were")
+    placements = [row for row in receipt.get("placements") or [] if isinstance(row, dict)]
+    matched = sum(1 for row in placements if row.get("basis") == "mention")
+    unmatched = sum(
+        1
+        for r in placements
+        if r.get("basis") == "spread" and r.get("reason") != "no_room_at_mention"
+    )
+    crowded = sum(1 for r in placements if r.get("reason") == "no_room_at_mention")
+    if matched:
+        notes.append(
+            f"Showed {_plural(matched, 'clip')} right where you mention "
+            f"{'it' if matched == 1 else 'them'}"
+        )
+    if unmatched:
+        notes.append(
+            f"Couldn't tell where you mention {_plural(unmatched, 'other clip')}, "
+            f"so I spread {'it' if unmatched == 1 else 'them'} across the video"
+        )
+    if crowded:
+        notes.append(
+            f"There wasn't room next to where you mention {_plural(crowded, 'clip')}, "
+            f"so I spread {'it' if crowded == 1 else 'them'} across the video"
+        )
+    sound = receipt.get("sound")
+    if placements and isinstance(sound, dict) and sound.get("asked") and not sound.get("applied"):
+        notes.append("Their own sound isn't available on this edit yet, so the clips play silent")
     return notes
 
 

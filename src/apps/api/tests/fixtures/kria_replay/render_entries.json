@@ -154,6 +154,7 @@
         "pinned_font_family"
       ],
       "recipe": {
+        "pace": "0.tracks[kind=video].clips[volume=0.0].source_duration",
         "length_s": "0.duration"
       }
     },

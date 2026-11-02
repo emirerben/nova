@@ -201,6 +201,12 @@ class Settings(BaseSettings):
     # PHONE_SUBTITLED_EDITOR_LANES_ENABLED=false --app nova-video` + `fly
     # machine restart <id>` (api + worker).
     phone_subtitled_editor_lanes_enabled: bool = False
+    # Range (the source-window sheet) on a phone Talking edit: a Save carrying the
+    # talking-source `timeline_slots` rows recompiles the speaker's kept segments, and
+    # `editor_capabilities.clips.source_window` opens. Default OFF; also its kill switch
+    # (`fly secrets set PHONE_TALKING_RANGE_EDITS_ENABLED=false` + restart api and worker).
+    # `phone_rollout.phone_talking_range_supported()` is the single source of truth.
+    phone_talking_range_edits_enabled: bool = False
     # KRI-281 (editable phone Voiceover edits): the sound-effects and Visuals
     # (media overlay) editor lanes for a phone-rendered `narrated` (recorded
     # voiceover over a script) or montage `voiceover` variant, mirroring
@@ -285,6 +291,19 @@ class Settings(BaseSettings):
     # PHONE_TALKING_CUTAWAY_SOUND_ENABLED=true --app nova-video` + restart api + worker, Fly
     # only (no Vercel twin); rollback with `=false` the same way.
     phone_talking_cutaway_sound_enabled: bool = False
+    # Talking show-when-mentioned (parent KRI-1151): "show the talks full screen when I
+    # mention them". With this on, a multi-clip Talking edit whose approved brief asks for
+    # full-screen display (`display_mode: fullscreen`) turns the clips the creator's ask
+    # covers into full-screen cutaways instead of playing them back to back (a named clip, or
+    # for an ask naming no clip, a clip whose analysis says it is not the creator speaking to
+    # camera while another clip is), and places each cutaway where the creator talks about
+    # what it shows (`app.pipeline.phone_talking_mentions`); a clip no mention matches is
+    # spread as before and the receipt says so. Recipe-only: no new device capability or
+    # protocol. A cutaway plays its own sound only through PHONE_TALKING_CUTAWAY_SOUND_ENABLED.
+    # False (default): byte-identical to before. Apply: `fly secrets set
+    # PHONE_TALKING_MENTION_CUTAWAYS_ENABLED=true --app nova-video` + restart api + worker, Fly
+    # only (no Vercel twin); rollback with `=false` the same way.
+    phone_talking_mention_cutaways_enabled: bool = False
     # KRI-183 (video Visuals as PiP): when this flag AND
     # `phone_rollout.phone_subtitled_overlays_supported()` hold AND
     # "visualVideos" is in `phone_render_verified_features` -- i.e.

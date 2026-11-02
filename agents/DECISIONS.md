@@ -3345,6 +3345,84 @@ the whole creator request, so a style ask in it looked like a research ask nobod
 - Verified offline with a reviewer that rejects when the data does not name the ask. The real
   Gemini reviewer has not been run against this prompt (paid live runs need an approved ledger).
 
+## Prompt fidelity wave 2: speech
+
+2026-11-01, KRI-1097 lane L5 (spoken-excerpt montage, `pipeline/phone_speech_montage_plan.py`).
+
+**Decision:** the plan's pace sets every fast cut between spoken lines.
+`compile_phone_speech_montage_plan(..., strategy=)` reads it through `_route_pace`
+(`length_policy.effective_pace`, behind the lane switch). Each montage section aims for
+`_paced_cut_s`: the speech planner's `cut_s` when it goes the pace's way
+(`edit_proposal.pace_selection_limits`: relaxed and balanced never shorter than their shortest
+hold, fast and balanced never longer than their longest), else the route's 0.8 s default when it
+sits inside the pace (fast), else the pace's preferred hold (`pace_hold_bounds`: relaxed 2.5 s, a
+creator-stated balanced 1.8 s). A planner `cut_s` against the pace gives way: the planner prompt's
+own example writes `cut_s` 0.8, so a relaxed plan got 0.75 s cuts wherever the planner copied it.
+A planner cut that goes the pace's way is kept, so a creator's "half-second cuts" under fast stays
+0.5 s. Equal cuts are then counted (`_paced_count`) so none drops under the pace's shortest hold
+when the aim is inside the pace (a 3 s fast section: 3 x 1.0 s, not 4 x 0.75 s), none is longer
+than the pace's longest hold, and none is longer than every b-roll clip holds whole
+(`_footage_cut_s`), so a section always keeps its exact length. A silent "balanced", no strategy
+and `PACE_DRIVES_CUTS_ENABLED=false` keep 0.8 s. `run_phone_speech_montage_job` hands the
+confirmed `creator_strategy` to the entry.
+
+**Short b-roll:** a paced cut longer than a b-roll clip used to be cut at the clip's end, so the
+video came out shorter than its sections (relaxed over 1.2 s clips: 24.1 s for a 30.5 s layout,
+29.85 s for 42.5 s, past `check_recipe_duration`'s 10%). The paced cut is now capped at what every
+b-roll clip holds whole: the video keeps its length and every cut is as long as the clips allow.
+When that leaves cuts under a relaxed or balanced pace's shortest hold, the job record's
+`adjustments` says so ("your other clips are too short for relaxed cuts, ..."). The card is judged
+before the clips are cut and cannot know their lengths; the record is where this is told. With no
+pace the old behavior is kept byte for byte (those clips are still cut short there).
+
+**Card:** `pacing` stays `NotApplied` with a value predicate (`_pace_applied`), not `Applied`,
+because what the render does depends on the value: the line disappears for relaxed (and fast, as
+before) and stays for every "balanced" and for every non-fast pace with the switch off. The
+predicate judges the plan the job carries: `generative_jobs.build_generative_job` erases
+`pacing_requested` and nothing restores it, so a "balanced" the creator said reaches every route's
+render as the silent default (KRI-1163, cross-route; when it lands, drop the filter in
+`_pace_applied`). Golden lines re-recorded for `speech_excerpt` only: the every_field probe
+(relaxed) loses its pacing line.
+
+**Fast is not "faster than nothing" (rejected review point, with evidence):** with no pace a 3 s
+section cuts 4 x 0.75 s; fast cuts it 3 x 1.0 s. 0.75 s is under fast's own shortest hold
+(`PACE_HOLD_BOUNDS["fast"]` 0.8 s), which the grader's controls require of every fast hold, and
+`floor(duration / 0.8)` is the most equal cuts inside fast, so at most one cut per section goes.
+A section that divides at 0.8 s or more is unchanged (3.5 s: 4 x 0.875 s either way).
+
+**Failure modes checked first, then verified** (scratch dumps of the entry's recipe and receipt,
+17 section layouts x 8 plans x 3 switch modes, PYTHONHASHSEED=0, foundation tree exported from
+15c03a51b, plus the real job runner with its test seams): switch off or `PACE_DRIVES_CUTS` off
+differing from the foundation (340 of 340 cases identical, as are the no-pace plans with the
+switch on); a planner `cut_s` against the pace winning (relaxed with a first montage
+`{4.5 s, cut_s 0.8}` was [0.75 x6, 2.25, 2.25], now [2.25 x4] through the real runner); a planner
+cut that goes the pace's way overridden (1.5 s under relaxed kept, 0.4 s under fast kept); the
+video shorter than its sections (every paced case of 68 keeps its planned length within 1 ms of
+4-decimal rounding; short b-roll of 0.6, 1.2 and 2.0 s included); holds outside the pace from
+rounding (fixed by the floor and the ceiling; left: a section shorter than the pace's shortest
+hold stays one cut, and b-roll too short for the pace, which the record tells); more cuts than the
+track holds (`_cut_scale` budgets the capped cuts; the count rises by one at most per section,
+inside the per-section room it keeps; 3 x 20 s relaxed over 1.2 s clips: 57 clips); a non-mapping
+strategy (default cut).
+
+**Replay:** `scripts/kria/route_replays/speech_excerpt.py` calls the entry once with the
+fixture's plan; `replay_inputs` hold only the grounded layout (three speaker excerpts after three
+montage runs, the first with the planner's habitual `cut_s` 0.8) and the b-roll ids. Recipe path
+`pace` = `0.tracks[kind=video].clips[volume=0.0].source_duration` (pin edited). Holds: relaxed
+[3.0, 2.25, 2.25, 3.5], fast 0.875 to 1.0, balanced 1.5 to 2.25, switch off 0.75/0.875 for every
+move; `4.pacing` VERIFIED, 123 controls valid, the other 7 fixtures' scorecards unchanged. The
+fixture's first-run `cut_s` turns the first lane commit (94ae85d47) red: [0.75 x4, ...] under
+relaxed.
+
+**Limits (not changed):** b-roll under a line (`visual: cutaways`) holds 2.4 s whatever the pace
+(inside balanced and relaxed, slower than fast), and the path counts it, so a fixture with
+cutaways would show a fast pace unmet. The grader cannot see a frame walk or a layout-keyed entry
+(review attempts A1 and A4 scored VERIFIED); the lane's module and entry contain neither (no
+frame, gc, ctypes, inspect, environ, argv, time, random or fixture-value keyed code).
+
+**Kill switch:** `SPEECH_EXCERPT_ROUTE_FOLLOWS_PROMPT_ENABLED` (default true, reserved by the
+foundation). `false` + restart api and worker: every cut and every card line as before this lane.
+
 ## [2026-11-01] Research proven + a look judged after render is approvable (Assos, third refusal)
 
 Third refusal of "With animations, explain why people should visit Assos, Turkey" (prod 07:54,

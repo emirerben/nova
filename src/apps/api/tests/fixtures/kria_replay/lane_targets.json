@@ -66,12 +66,6 @@
         "why": "animate the title in: the animation ask reaches the lip-sync titles"
       }
     },
-    "speech_excerpt": {
-      "4.pacing": {
-        "lane": "L5",
-        "kind": "honored",
-        "why": "the stated relaxed pace sets the cut length between spoken lines when the plan gives no cut_s; today it is the fixed _DEFAULT_CUT_S"
-      }
-    }
+    "speech_excerpt": {}
   }
 }
