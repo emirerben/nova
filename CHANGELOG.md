@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.105.0] - 2026-11-02
+
+### Fixed
+- fix(overlays): skip only overlapping rows, keep the rest of the plan (KRI-1142) (#2054) <!-- release-pr: 2054 -->
+
 ## [0.83.104.0] - 2026-11-02
 
 ### Changed
