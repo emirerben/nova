@@ -58,12 +58,13 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.config import settings
 from app.kria.recipes import (
     AssetFingerprint,
     AudioMixRecipe,
@@ -83,6 +84,11 @@ from app.pipeline.phone_recipe_shared import (
     audio_fade,
     refit_source_window,
     voice_tail_slack_s,
+)
+from app.schemas.edit_proposal import (
+    MixedMediaHoldBounds,
+    pace_hold_bounds,
+    pace_selection_limits,
 )
 from app.services.phone_sources import PhoneSourceBinding
 
@@ -242,13 +248,81 @@ class _BrollPool:
         )
 
 
-def _cut_scale(sections: tuple[PhoneSpeechSection, ...]) -> float:
+def _route_pace(strategy: Any) -> str | None:
+    """The plan's pace when it changes cut lengths here, else None.
+
+    The pace counts when `length_policy.effective_pace` says it does: "fast" and "relaxed",
+    and "balanced" only when the creator said it (a silent default keeps the fixed cut).
+    None with ``SPEECH_EXCERPT_ROUTE_FOLLOWS_PROMPT_ENABLED`` off, so every cut is as before.
+    """
+    if not settings.speech_excerpt_route_follows_prompt_enabled:
+        return None
+    if not isinstance(strategy, Mapping):
+        return None
+    from app.services.length_policy import effective_pace  # noqa: PLC0415
+
+    return effective_pace(strategy)
+
+
+def paced_cut_bounds(strategy: Any) -> MixedMediaHoldBounds | None:
+    """The hold each fast cut keeps to when the plan's pace changes cut lengths, else None."""
+    pace = _route_pace(strategy)
+    return pace_hold_bounds(pace) if pace is not None else None
+
+
+def _paced_cut_s(cut_s: float | None, pace: str) -> float:
+    """The cut a montage section aims for under the plan's pace.
+
+    The speech planner's ``cut_s`` when it goes the pace's way (`pace_selection_limits`:
+    relaxed and balanced never shorter than their shortest hold, fast and balanced never
+    longer than their longest), else the fixed default when it sits inside the pace (it is a
+    fast cut), else the pace's preferred hold. The planner prompt's own example writes
+    ``cut_s`` 0.8, so a cut against the pace the creator confirmed is no ask of theirs.
+    """
+    floor_s, ceiling_s = pace_selection_limits(pace, total_free=True)
+    if cut_s is not None and (floor_s is None or cut_s >= floor_s):
+        if ceiling_s is None or cut_s <= ceiling_s:
+            return cut_s
+    bounds = pace_hold_bounds(pace)
+    if bounds.minimum_s <= _DEFAULT_CUT_S <= bounds.maximum_s:
+        return _DEFAULT_CUT_S
+    return bounds.preferred_s
+
+
+def _footage_cut_s(bindings: list[PhoneSourceBinding]) -> float:
+    """The longest cut every b-roll clip `_BrollPool.take` would use can hold whole (it
+    skips a clip under ``_MIN_HOLD_S``). A paced cut is never longer: the pool would cut it
+    short and leave the video shorter than its sections. With no pace those clips are cut
+    short as before, so a cut this long is never shorter than what the creator saw."""
+    usable = (float(b.original.duration_s) - EXPORT_SAFETY_MARGIN_S for b in bindings)
+    return min((u for u in usable if u >= _MIN_HOLD_S), default=math.inf)
+
+
+def _paced_count(duration_s: float, cut_s: float, floor_s: float | None, longest_s: float) -> int:
+    """How many equal cuts fill a paced montage section: about ``duration_s / cut_s``, fewer
+    when that many would each be shorter than the pace's ``floor_s`` (0.75 s cuts for a fast
+    pace that starts at 0.8 s), more when each would be longer than ``longest_s``: the pace's
+    longest hold, or what every b-roll clip holds whole, so the section keeps its exact length
+    (one cut more at most, inside the per-section room `_cut_scale` keeps)."""
+    count = max(1, round(duration_s / cut_s))
+    if floor_s is not None and count > 1 and duration_s / count < floor_s:
+        count = max(1, math.floor(duration_s / floor_s))
+    if duration_s / count > longest_s:
+        count = math.ceil(duration_s / longest_s)
+    return count
+
+
+def _cut_scale(
+    sections: tuple[PhoneSpeechSection, ...], cut_by_section: Mapping[int, float]
+) -> float:
     """A global factor >= 1 that lengthens every fast cut until the main track fits.
 
     Applies to explicit per-section cut lengths too: a request for 0.4s cuts over
     80 seconds would need 200 clips, and the track holds 100.
     """
-    cuts = sum(s.duration_s / (s.cut_s or _DEFAULT_CUT_S) for s in sections if s.kind == "montage")
+    cuts = sum(
+        s.duration_s / cut_by_section[i] for i, s in enumerate(sections) if s.kind == "montage"
+    )
     cutaway_s = sum(s.length_s for s in sections if s.kind == "speech" and s.visual == "cutaways")
     speaker_n = sum(1 for s in sections if s.kind == "speech" and s.visual == "speaker")
     fixed = speaker_n + math.ceil(cutaway_s / CUTAWAY_HOLD_S) + len(sections)
@@ -267,6 +341,7 @@ def compile_phone_speech_montage_plan(
     clip_labels: Sequence[PhoneClipLabel] = (),
     pinned_texts: Sequence[Any] | None = None,
     pinned_font_family: str | None = None,
+    strategy: Mapping[str, Any] | None = None,
 ) -> tuple[EditRecipeV2, SpeechMontageReceipt]:
     """Compile ordered, grounded sections into a schema-v2 recipe plus its receipt.
 
@@ -278,6 +353,9 @@ def compile_phone_speech_montage_plan(
     ``opening_title`` / ``clip_labels`` are the approved on-screen words (KRI-939): the
     title from 0 s, each label on every cut of its clip. Before this the excerpt recipe
     carried no text at all and the contract verifier refused it after approval.
+
+    ``strategy`` is the confirmed plan: its pace sets the cut of a montage section the
+    request gave no ``cut_s`` (`paced_cut_bounds`, KRI-1097).
     """
     if not sections:
         raise UnsupportedPhonePlan("the spoken-excerpt montage has no sections")
@@ -317,7 +395,24 @@ def compile_phone_speech_montage_plan(
             "to show. Add the clips to cut between"
         )
     pool = _BrollPool(pool_bindings)
-    cut_scale = _cut_scale(sections)
+    pace = _route_pace(strategy)
+    footage_s = _footage_cut_s(pool_bindings) if pace is not None else math.inf
+    aim_by_section: dict[int, float] = {}
+    cut_by_section: dict[int, float] = {}
+    for index, section in enumerate(sections):
+        if section.kind != "montage":
+            continue
+        if pace is None:
+            cut_by_section[index] = section.cut_s or _DEFAULT_CUT_S
+        else:
+            aim_by_section[index] = _paced_cut_s(section.cut_s, pace)
+            cut_by_section[index] = min(aim_by_section[index], footage_s)
+    cut_scale = _cut_scale(sections, cut_by_section)
+    pace_floor_s, pace_ceiling_s = (
+        pace_selection_limits(pace, total_free=True) if pace is not None else (None, None)
+    )
+    longest_s = min(footage_s, pace_ceiling_s or math.inf)
+    footage_short = False
 
     registry = _Assets()
     receipt = SpeechMontageReceipt()
@@ -356,8 +451,19 @@ def compile_phone_speech_montage_plan(
         section_start = cursor
         row: dict[str, Any] = {"index": index, "kind": section.kind, "start_s": round(cursor, 3)}
         if section.kind == "montage":
-            cut_s = (section.cut_s or _DEFAULT_CUT_S) * cut_scale
-            count = max(1, round(section.duration_s / cut_s))
+            cut_s = cut_by_section[index] * cut_scale
+            if pace is None:
+                count = max(1, round(section.duration_s / cut_s))
+            else:
+                minimum_s = pace_hold_bounds(pace).minimum_s
+                floor_s = minimum_s if cut_by_section[index] >= minimum_s else None
+                count = _paced_count(section.duration_s, cut_s, floor_s, max(longest_s, cut_s))
+                if (
+                    pace_floor_s is not None
+                    and footage_s < aim_by_section[index]
+                    and section.duration_s / count < minimum_s <= section.duration_s
+                ):
+                    footage_short = True
             each = section.duration_s / count
             for _ in range(count):
                 binding, start, length = pool.take(each)
@@ -449,6 +555,11 @@ def compile_phone_speech_montage_plan(
             # contract verifier now refuses such a recipe.
             receipt.music = True
 
+    if footage_short:
+        receipt.adjustments.append(
+            f"your other clips are too short for {pace} cuts, so the cuts between your lines "
+            "run as long as those clips allow"
+        )
     if centre_cropped:
         receipt.adjustments.append(
             "your speaking clip is wider than vertical, so its sides are cropped to fill the "

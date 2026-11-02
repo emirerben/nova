@@ -1063,11 +1063,6 @@
             },
             {
               "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "The relaxed pacing isn't applied on this video yet: the cuts between spoken lines keep a fixed length"
-            },
-            {
-              "code": "not_applied_on_route",
               "subject": "direction",
               "text": "The guided story direction isn't applied on this video yet: it is cut around the spoken lines"
             },
@@ -1131,7 +1126,7 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't follow the planned story structure (Arrive at the harbour, Climb to the castle, Sunset view) on this video yet, so it won't change the order of the clips\n- The relaxed pacing isn't applied on this video yet: the cuts between spoken lines keep a fixed length\n- The guided story direction isn't applied on this video yet: it is cut around the spoken lines\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- Also not applied on this video yet: the planned music or voiceover, the title animation, the clip label position, the treatments, the story archetype, one featured hero clip, the overlay display, sound effects"
+          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't follow the planned story structure (Arrive at the harbour, Climb to the castle, Sunset view) on this video yet, so it won't change the order of the clips\n- The guided story direction isn't applied on this video yet: it is cut around the spoken lines\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- I can't add music under the spoken lines on this video yet, so it plays the clips' own sound\n- Also not applied on this video yet: the title animation, the clip label position, the treatments, the story archetype, one featured hero clip, the overlay display, sound effects"
         },
         "voice_no_captions": {
           "lines": [
@@ -1180,11 +1175,6 @@
               "code": "not_applied_on_route",
               "subject": "story_structure",
               "text": "Planlanan hikâye yapısını (Arrive at the harbour, Climb to the castle, Sunset view) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "relaxed tempo bu videoda henüz uygulanmıyor: konuşmalar arasındaki kesimler sabit uzunlukta"
             },
             {
               "code": "not_applied_on_route",
@@ -1251,7 +1241,7 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- Planlanan hikâye yapısını (Arrive at the harbour, Climb to the castle, Sunset view) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek\n- relaxed tempo bu videoda henüz uygulanmıyor: konuşmalar arasındaki kesimler sabit uzunlukta\n- guided story yönü bu videoda henüz uygulanmıyor: konuşulan cümlelerin etrafında kesiliyor\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Bu videoda henüz uygulanmayanlar: planlanan müzik ya da seslendirme, başlık animasyonu, klip etiketi konumu, efektler, hikâye kalıbı, öne çıkan ana klip, katman gösterimi, ses efektleri"
+          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- Planlanan hikâye yapısını (Arrive at the harbour, Climb to the castle, Sunset view) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek\n- guided story yönü bu videoda henüz uygulanmıyor: konuşulan cümlelerin etrafında kesiliyor\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Bu videoda konuşmaların altına henüz müzik ekleyemiyorum, o yüzden kliplerin kendi sesi çalacak\n- Bu videoda henüz uygulanmayanlar: başlık animasyonu, klip etiketi konumu, efektler, hikâye kalıbı, öne çıkan ana klip, katman gösterimi, ses efektleri"
         },
         "voice_no_captions": {
           "lines": [
