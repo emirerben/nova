@@ -20,11 +20,28 @@ Failure modes, written before the code (each is pinned below):
  L6 the corrective re-run note tells the model a pause is unavailable while the insert lane is
     open; the guard fires on an insert / pause refusal, or misses an audio refusal that merely
     names a pause as the alternative while the insert lane is open.
+
+Re-review of #2058 (each pinned below):
+
+ M1 the brief section sends a clip shown while the talk keeps running to `triggers`, but the
+    cutaway lane reads only `display_mode` (no `triggers`) and `clip_sound`: the ask is recorded
+    where the worker cannot see it.
+ M2 the only "ask once" example nearly paraphrases the prod request, so it may get a question
+    instead of the cutaway; "in between my speech" with a mention anchor is never named as the
+    cutaway lane.
+ M3 the refusal guard: (a) a generic code + an audio refusal that offers a pause is read as a
+    pause refusal while the pause exists; (b) the one legitimate clarifying question with a
+    refusal word in its code is re-run and replaced by the unmet reply; (c) the insert section
+    never says earlier "unavailable" replies are out of date.
+ M4 insert lane open with the cutaways closed: the model is told to leave `insert_clips` empty
+    and nothing else, so it improvises what is possible.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
+from pathlib import Path
 
 import pytest
 
@@ -35,7 +52,9 @@ from app.kria.ask_refusals import stale_capability_refusal
 from app.services import creator_capabilities as capabilities
 from tests.kria.test_planner_knows_talking_cutaways import (
     INCIDENT_CODE,
+    REQUEST,
     SECTION_MARK,
+    THREAD,
     _brief,
     _flat,
     _gates,
@@ -264,7 +283,7 @@ def test_l6_a_refusal_of_the_audio_ask_is_stale_whatever_the_insert_gate(monkeyp
     assert stale_capability_refusal(ask, manifest, _brief()) is not None
 
 
-def test_l6_an_audio_refusal_that_offers_a_pause_is_corrected_only_when_the_pause_exists(
+def test_l6_an_audio_refusal_that_offers_a_pause_is_re_run_only_when_the_pause_exists(
     monkeypatch,
 ):
     ask = AskUser(
@@ -274,7 +293,9 @@ def test_l6_an_audio_refusal_that_offers_a_pause_is_corrected_only_when_the_paus
         options=["Pause my talk", "Keep it silent"],
     )
     closed = _lanes(monkeypatch, cutaways=True, inserts=False)
-    assert stale_capability_refusal(ask, closed, _brief()) is None  # an honest "no pause" answer
+    # Known limit: with no pause lane the guard cannot tell this stale audio refusal from an honest
+    # "I can't pause your talk", so it is left alone rather than re-run.
+    assert stale_capability_refusal(ask, closed, _brief()) is None
     opened = _lanes(monkeypatch, cutaways=True, inserts=True)
     assert stale_capability_refusal(ask, opened, _brief()) is not None
 
@@ -307,3 +328,228 @@ async def test_l6_the_planner_hands_the_insert_gate_to_the_rerun_note(monkeypatc
 
         note = rerun.await_args.args[0].agent_input.server_note
         assert ("insert_clips" in note) is inserts, note
+
+
+# ---- M1: the brief records the right asks ----
+
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "agent_evals" / "main_creator"
+BRIEF_FIXTURE = FIXTURES / "kri1151_talking_cutaways_insert_open_brief.json"
+RECORD_RULE = (
+    "record it exactly as the full-screen (`display_mode`) and clip-sound (`clip_sound`) asks are "
+    "recorded, never as `triggers` and never as `insert_clip`"
+)
+
+
+def _show_while_talking_rule(text: str) -> str:
+    flat = _flat(text)
+    start = flat.index("A clip shown while the talk keeps running")
+    return flat[start : flat.index("On a montage,", start)]
+
+
+def _extractor_prompt(*, insert_clips_open: bool) -> str:
+    from app.agents._schemas.brief_extractor import BriefExtractionInput
+    from app.agents.brief_extractor import BriefExtractorAgent
+
+    return BriefExtractorAgent(None).render_prompt(  # type: ignore[arg-type]
+        BriefExtractionInput(
+            creator_request="",
+            user_message="x",
+            conversation=[],
+            insert_clips_open=insert_clips_open,
+        )
+    )
+
+
+def test_m1_the_creator_brief_records_a_show_while_talking_ask_as_display_mode_and_clip_sound(
+    monkeypatch,
+):
+    manifest = _lanes(monkeypatch, cutaways=True, inserts=True)
+    rule = _show_while_talking_rule(_prompt(manifest))
+
+    assert RECORD_RULE in rule
+    assert "triggers` ask" not in rule
+    for ask in ("show the congress video when I mention congress", "use their audio"):
+        assert ask in rule
+
+
+def test_m1_the_extractor_s_narrowed_brief_says_the_same_when_inserts_are_open():
+    rule = _show_while_talking_rule(_extractor_prompt(insert_clips_open=True))
+
+    assert RECORD_RULE in rule
+    assert "triggers` ask" not in rule
+    assert "A clip shown while the talk keeps running" not in _flat(
+        _extractor_prompt(insert_clips_open=False)
+    )
+
+
+def test_m1_the_triggers_rule_for_photos_and_sounds_timed_to_a_word_is_untouched(monkeypatch):
+    manifest = _lanes(monkeypatch, cutaways=True, inserts=True)
+    flat = _flat(_prompt(manifest))
+
+    assert '"show the medal photo when I say medal"' in flat
+    assert '=> {"triggers": ["medal"]}' in flat
+    assert "a photo, sticker or sound timed to a spoken word keeps `triggers`" in _flat(
+        _show_while_talking_rule(_prompt(manifest))
+    )
+
+
+def test_m1_the_prod_request_brief_shape_is_what_the_both_lanes_golden_carries(monkeypatch):
+    fixture = json.loads(BRIEF_FIXTURE.read_text(encoding="utf-8"))
+    assert fixture["input"]["brief_enabled"] is True
+    assert fixture["input"]["user_message"] == REQUEST
+    updates = fixture["output"]["brief_updates"]
+    prod = {r["id"]: r for r in THREAD["brief"]["requirements"]}
+
+    def shape(row: dict) -> tuple[str, str, str]:
+        return (row["kind"], row["scope"].split(":")[0], json.dumps(row["facts"], sort_keys=True))
+
+    assert [shape(row) for row in updates] == [shape(prod[rid]) for rid in ("r1", "r2", "r3", "r4")]
+    assert all("triggers" not in row["facts"] for row in updates)
+    assert fixture["output"]["action"]["strategy"].get("insert_clips") is None
+
+    # ... and that brief is exactly what the cutaway lane reads, with the prompt of that fixture
+    # teaching it.
+    from app.kria.cutaway_show_ask import brief_full_screen_show_ask
+
+    ask = brief_full_screen_show_ask(_brief())
+    assert ask is not None and ask.whole_video
+
+    from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
+
+    for name, value in fixture["meta"]["settings"].items():
+        monkeypatch.setattr(settings, name, value)
+    from tests._prod_profile import apply_prod_profile
+
+    apply_prod_profile(monkeypatch)
+    for name, value in fixture["meta"]["settings"].items():
+        monkeypatch.setattr(settings, name, value)
+    prompt = _flat(
+        MainCreatorAgent(None).render_prompt(MainCreatorInput.model_validate(fixture["input"]))
+    )
+    assert RECORD_RULE in prompt
+    assert SECTION_MARK in prompt and INSERT_MARK in prompt
+
+
+# ---- M2: the request goes to the cutaway ----
+
+
+def test_m2_the_ask_once_example_does_not_paraphrase_the_prod_request(monkeypatch):
+    manifest = _lanes(monkeypatch, cutaways=True, inserts=True)
+    insert = _flat(_prompt(manifest))
+    insert = insert[insert.index(INSERT_MARK) :]
+
+    assert "in the middle of my talk with its sound" not in insert
+    assert '("put the congress clip in the middle of my talk")' in insert
+    assert "no mention anchor and no pause word" in insert
+
+
+def test_m2_in_between_my_speech_with_a_mention_is_named_as_the_cutaway_lane(monkeypatch):
+    manifest = _lanes(monkeypatch, cutaways=True, inserts=True)
+    flat = _flat(_prompt(manifest))
+    insert = flat[flat.index(INSERT_MARK) :]
+
+    assert '"place them in between my speech"' in insert
+    assert "when I talk about them" in insert
+    assert "is the full-screen clip lane above" in insert
+    # The cutaway opening only allows its one question for wording with no anchor and no pause.
+    cutaway = flat[flat.index(SECTION_MARK) : flat.index(INSERT_MARK)]
+    assert "the single exception is ONE short question when the wording has no spoken anchor" in (
+        cutaway
+    )
+    assert "no pause word" in cutaway
+
+
+def test_m2_the_pause_form_still_routes_to_insert_clips(monkeypatch):
+    manifest = _lanes(monkeypatch, cutaways=True, inserts=True)
+    flat = _flat(_prompt(manifest))
+    insert = flat[flat.index(INSERT_MARK) :]
+
+    assert "pause my talk and play the congress clip with its sound, then go on" in insert
+    assert "set `insert_clips`" in insert
+    assert "Without a pause, a stop or an explicit in-the-middle-while-I-wait wording" in insert
+
+
+# ---- M3: the guard and the insert section ----
+
+
+def test_m3a_a_generic_audio_refusal_that_offers_a_pause_is_re_run_while_the_pause_exists(
+    monkeypatch,
+):
+    ask = AskUser(
+        kind="ask_user",
+        question=(
+            "I can't play their audio over your talk. Should I pause your talk for each clip "
+            "instead?"
+        ),
+        reason_code="capability_gap",
+        options=["Pause my talk", "Skip the audio"],
+    )
+    opened = _lanes(monkeypatch, cutaways=True, inserts=True)
+    assert stale_capability_refusal(ask, opened, _brief()) == ask_refusals.CAPABILITY_SOUND
+    closed = _lanes(monkeypatch, cutaways=True, inserts=False)
+    assert stale_capability_refusal(ask, closed, _brief()) is None
+
+
+def test_m3b_the_one_clarifying_question_with_a_refusal_word_in_its_code_is_not_a_refusal(
+    monkeypatch,
+):
+    ask = AskUser(
+        kind="ask_user",
+        question=(
+            "Should your talk pause while the clip plays with its own sound, or should the "
+            "clip cover your talk while it keeps running?"
+        ),
+        reason_code="cannot_tell_audio_intent",
+        options=["Pause my talk", "Cover my talk"],
+    )
+    manifest = _lanes(monkeypatch, cutaways=True, inserts=True)
+
+    assert stale_capability_refusal(ask, manifest, _brief()) is None
+
+
+def test_m3b_a_refusal_in_the_question_text_is_still_a_refusal_even_with_a_pause_option(
+    monkeypatch,
+):
+    ask = AskUser(
+        kind="ask_user",
+        question="I cannot tell whether you want their audio. Should your talk pause instead?",
+        reason_code="cannot_tell_audio_intent",
+        options=["Pause my talk", "Cover my talk"],
+    )
+    manifest = _lanes(monkeypatch, cutaways=True, inserts=True)
+
+    assert stale_capability_refusal(ask, manifest, _brief()) is not None
+
+
+@pytest.mark.parametrize("cutaways", [True, False])
+def test_m3c_the_insert_section_says_an_earlier_unavailable_reply_is_out_of_date(
+    monkeypatch, cutaways
+):
+    manifest = _lanes(monkeypatch, cutaways=cutaways, inserts=True)
+    flat = _flat(_prompt(manifest))
+    insert = flat[flat.index(INSERT_MARK) :]
+
+    assert (
+        "An earlier reply in this chat that said the talk cannot stop for a clip and carry on is "
+        "out of date"
+    ) in insert
+    closed = _flat(_prompt(_lanes(monkeypatch, cutaways=cutaways, inserts=False)))
+    assert "cannot stop for a clip" not in closed
+
+
+# ---- M4: inserts open, cutaways closed ----
+
+
+def test_m4_with_the_cutaways_closed_the_insert_section_says_plainly_what_exists(monkeypatch):
+    manifest = _lanes(monkeypatch, cutaways=False, inserts=True)
+    flat = _flat(_prompt(manifest))
+    insert = flat[flat.index(INSERT_MARK) :]
+
+    assert "leave `insert_clips` empty" in insert
+    assert "A clip shown over a talk that keeps running is not available in this edit" in insert
+    assert "offer the nearest thing that exists" in insert
+    assert "while the talk pauses and then carries on" in insert
+    assert "Never promise a clip shown over the talk" in insert
+    # ... and the cutaway-open text does not carry it.
+    both = _flat(_prompt(_lanes(monkeypatch, cutaways=True, inserts=True)))
+    assert "is not available in this edit" not in both[both.index(INSERT_MARK) :]
