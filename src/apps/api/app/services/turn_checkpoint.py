@@ -18,14 +18,15 @@ the continuation decision can be written to the turn and read from `kria/trace`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
-import hashlib
 import functools
+import hashlib
 import json
 import os
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from typing import Any, TypeVar
 
 import structlog
@@ -71,6 +72,21 @@ def note_wait(name: str, *, seconds: float) -> None:
     recorder = turn_run_recorder.get()
     if recorder is not None:
         recorder.note(name, ms=seconds * 1000, source="wait")
+
+
+@contextlib.contextmanager
+def timed_step(name: str) -> Iterator[None]:
+    """Record how long a slow step of this run took (research, a vision re-check, a script).
+
+    Noted even when the step raises, because a failed step is the one worth knowing the cost of.
+    """
+    started = time.monotonic()
+    try:
+        yield
+    finally:
+        recorder = turn_run_recorder.get()
+        if recorder is not None:
+            recorder.note(name, ms=(time.monotonic() - started) * 1000, source="step")
 
 
 def _redis():  # noqa: ANN202
@@ -183,8 +199,9 @@ async def checkpointed(
 ) -> T:
     """Run ``call`` unless an earlier run of this turn already got its answer for this input.
 
-    Outside a turn task (no turn id), for an input that is not a model, or for an agent
-    without a spec, this is just ``call()``, and so is a key that cannot be computed. The key is
+    Outside a turn task (no turn id), for an input that is not a model, for an agent without a
+    spec, with ``KRIA_TURN_CHECKPOINT_ENABLED`` off, and for a key that cannot be computed, this
+    is just ``call()`` (still timed for the run record). The key is
     described on `_digest`; ``variant`` names a runtime override the class spec does not show.
     """
 
@@ -192,13 +209,22 @@ async def checkpointed(
     run_id = turn_run_id.get()
     epoch = turn_run_epoch.get()
     spec = getattr(agent_cls, "spec", None)
-    if run_id is None or not isinstance(agent_input, BaseModel) or spec is None:
-        return await call()
+    if (
+        run_id is None
+        or not isinstance(agent_input, BaseModel)
+        or spec is None
+        or not settings.kria_turn_checkpoint_enabled
+    ):
+        output = await call()
+        _note(call_name, started, "model")
+        return output
     try:
         field = _field(call_name, _digest(call_name, spec, variant, agent_input, output_cls))
     except Exception as exc:  # noqa: BLE001 - no key means no checkpoint, never a failed turn
         log.warning("kria_turn_checkpoint_key_failed", error_class=type(exc).__name__)
-        return await call()
+        output = await call()
+        _note(call_name, started, "model")
+        return output
     if epoch > 1:
         stored = await asyncio.to_thread(_load, run_id, field, output_cls)
         if stored is not None:

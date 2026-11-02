@@ -118,7 +118,8 @@ async def test_a_failed_turn_clears_its_checkpoint(monkeypatch, store) -> None: 
 
 @pytest.mark.asyncio
 async def test_a_continued_turn_keeps_its_checkpoint_for_the_next_run(
-    monkeypatch, store  # noqa: ANN001
+    monkeypatch,
+    store,  # noqa: ANN001
 ) -> None:
     user_id, thread_id, _ = _seed_runtime_project()
     _script_planner(monkeypatch, replace(_respond("Checking.", continuable=True)))
@@ -218,7 +219,9 @@ def _creator_input() -> MainCreatorInput:
         context_hash="a" * 64,
         manifest_hash="b" * 64,
     )
-    return MainCreatorInput(user_message="Start with the cooking clip.", capability_manifest=manifest)
+    return MainCreatorInput(
+        user_message="Start with the cooking clip.", capability_manifest=manifest
+    )
 
 
 @pytest.mark.asyncio

@@ -197,6 +197,8 @@ from app.services.thought_summaries import (
 )
 from app.services.turn_checkpoint import (
     TurnRunRecorder,
+    discard,
+    timed_step,
     turn_run_id,
     turn_run_recorder,
 )
@@ -633,6 +635,71 @@ def _complete_response_turn(
 _MAX_PLANNING_RUNS = 8
 
 
+def _planning_run_record(
+    *,
+    epoch: int,
+    outcome: str,
+    reason: str,
+    at: datetime,
+    calls: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    """One run of a continued turn: reason codes and milliseconds only, never creator text."""
+    return {
+        "epoch": epoch,
+        "outcome": outcome,
+        "reason": reason or ("" if outcome in ("completed", "failed") else "unspecified"),
+        "at": at.isoformat(),
+        "calls": [dict(call) for call in calls],
+    }
+
+
+def _append_planning_run(
+    turn_id: uuid.UUID,
+    *,
+    epoch: int,
+    outcome: str,
+    reason: str = "",
+    calls: Sequence[dict[str, Any]] = (),
+) -> None:
+    """Best-effort: a trace write never changes what the creator sees or how the turn ends."""
+    try:
+        with sync_session() as db:
+            turn = db.execute(
+                select(CreatorAgentTurn).where(CreatorAgentTurn.id == turn_id).with_for_update()
+            ).scalar_one_or_none()
+            if turn is None:
+                return
+            record = _planning_run_record(
+                epoch=epoch,
+                outcome=outcome,
+                reason=reason,
+                at=db.execute(select(func.now())).scalar_one(),
+                calls=calls,
+            )
+            turn.planning_runs = [*(turn.planning_runs or []), record][-_MAX_PLANNING_RUNS:]
+            db.commit()
+    except Exception:  # noqa: BLE001 - observability only
+        log.warning("kria_planning_run_record_failed", turn_id=str(turn_id), exc_info=True)
+
+
+def _close_turn_run(
+    turn_id: uuid.UUID,
+    *,
+    lease_epoch: int,
+    outcome: str | None,
+    reason: str = "",
+    calls: Sequence[dict[str, Any]] = (),
+) -> None:
+    """The turn reached a terminal state: drop its stored planner answers, and when it had been
+    continued record this last run, so the trace ends with how the creator's turn really ended.
+    ``outcome=None`` means the run is already recorded."""
+    discard(turn_id)
+    if outcome is not None and lease_epoch > 1:
+        _append_planning_run(
+            turn_id, epoch=lease_epoch, outcome=outcome, reason=reason, calls=calls
+        )
+
+
 def _continue_turn(
     turn_id: uuid.UUID,
     *,
@@ -660,6 +727,11 @@ def _continue_turn(
     milliseconds), so a later "ran out of time" is diagnosable from `kria/trace`.
     """
     if lease_epoch >= int(settings.kria_turn_auto_continue_max_runs):
+        if int(settings.kria_turn_auto_continue_max_runs) > 1:
+            # The run the creator saw fail: with the switch off nothing was ever continued.
+            _append_planning_run(
+                turn_id, epoch=lease_epoch, outcome="exhausted", reason=reason, calls=calls
+            )
         return "exhausted"
     with sync_session() as db:
         turn = db.execute(
@@ -682,13 +754,13 @@ def _continue_turn(
         turn.lease_expires_at = database_now + timedelta(
             seconds=_CONTINUE_COUNTDOWN_S + _CONTINUE_LEASE_SLACK_S
         )
-        record = {
-            "epoch": lease_epoch,
-            "outcome": "continued",
-            "reason": reason or "unspecified",
-            "at": database_now.isoformat(),
-            "calls": [dict(call) for call in calls],
-        }
+        record = _planning_run_record(
+            epoch=lease_epoch,
+            outcome="continued",
+            reason=reason,
+            at=database_now,
+            calls=calls,
+        )
         turn.planning_runs = [*(turn.planning_runs or []), record][-_MAX_PLANNING_RUNS:]
         db.commit()
     log.info(
@@ -4421,12 +4493,15 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
             with _lease_heartbeat_thread(
                 identifier, lease_owner=lease_owner, lease_epoch=lease_epoch
             ):
-                planned = research_preview.with_research(
-                    planned,
-                    snapshot,
-                    turn_id=identifier,
-                    deadline=turn_started + float(run_kria_turn.soft_time_limit or 200),
-                )
+                with timed_step("research"):
+                    planned = research_preview.with_research(
+                        planned,
+                        snapshot,
+                        turn_id=identifier,
+                        deadline=turn_started + float(run_kria_turn.soft_time_limit or 200),
+                    )
+            # What this run's record says, unless `_continue_turn` already wrote it ("exhausted").
+            run_outcome: str | None = "completed"
             if planned.plan.mode == "respond" and planned.continuable:
                 # KRI-709: the planner stopped on a time budget with its answers saved.
                 # Run the same turn again instead of asking the creator to say "go
@@ -4452,7 +4527,10 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     except Exception:  # noqa: BLE001 - the reconciler republishes the pending row
                         log.warning("kria_turn_continue_publish_failed", turn_id=turn_id)
                     return {"turn_id": turn_id, "status": "continued"}
+                if outcome == "exhausted":
+                    run_outcome = None
                 if outcome == "successor":
+                    run_outcome = "superseded"
                     planned = replace(
                         planned,
                         plan=planned.plan.model_copy(
@@ -4577,6 +4655,13 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     )
                     return {"turn_id": turn_id, "status": "requeued"}
                 return {"turn_id": turn_id, "status": "ignored"}
+            _close_turn_run(
+                identifier,
+                lease_epoch=lease_epoch,
+                outcome=run_outcome,
+                reason=planned.continue_reason,
+                calls=recorder.calls,
+            )
             if thought_publisher is not None:
                 thought_publisher.complete()
             if planned.defer_brief:
@@ -4684,6 +4769,13 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
             "kria_turn_failed",
             turn_id=turn_id,
             error_class=type(exc).__name__,
+        )
+        _close_turn_run(
+            identifier,
+            lease_epoch=lease_epoch,
+            outcome="failed",
+            reason=_turn_failure_code(exc),
+            calls=recorder.calls,
         )
         successor_turn_id = _fail_turn(
             identifier,

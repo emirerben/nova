@@ -60,10 +60,11 @@ async def test_a_continuation_records_why_and_what_it_cost(monkeypatch: pytest.M
     assert runs[0]["epoch"] == 1
     assert runs[0]["outcome"] == "continued"
     assert runs[0]["reason"] == "clip_analysis_pending"
-    assert runs[0]["calls"] == [
+    assert runs[0]["calls"][:2] == [
         {"name": "clip_understanding_wait", "ms": 45_400, "source": "wait"},
         {"name": "main_creator", "ms": 43_227, "source": "model"},
     ]
+    assert [c["name"] for c in runs[0]["calls"][2:]] == ["research"]  # timed on every run
 
     async with AsyncSessionLocal() as db:
         trace = await resolve_kria_trace(db, turn_id=uuid.UUID(accepted.turn_id))

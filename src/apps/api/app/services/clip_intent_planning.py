@@ -67,7 +67,7 @@ from app.services.creator_label_reply import (
 )
 from app.services.spoken_quotes import regound_quoted_intents
 from app.services.too_short_clips import resolve_too_short
-from app.services.turn_checkpoint import checkpointed, note_wait
+from app.services.turn_checkpoint import checkpointed, note_wait, timed_step
 from app.text_fold import loose_words
 
 if TYPE_CHECKING:
@@ -1615,25 +1615,27 @@ async def plan_and_resolve_clip_intents(
             )
 
     async def _resolve(pending: list[ClipIntent]) -> IntentResolution:
-        return await resolve_clip_intents_for_turn(
-            intents=pending,
-            creator_request=creator_request,
-            clips=clips,
-            run_context=run_context,
-            background=background,
-            checkpoint=checkpoint,
-            max_vision_requeries=max_vision_requeries,
-            vision_deadline_s=vision_deadline_s,
-            # KRI-516: chapter captions under a filming-time order are stretches of the day.
-            # Omitted otherwise, so every other call is unchanged.
-            **({"filming_order": True} if order_by_intents else {}),
-            # KRI-692: a Turkish chat's picker row never shows a model-written English label.
-            **(
-                {"creator_words": {i.intent_id: i.source_quote for i in output.intents}}
-                if current_reply_language() == "tr"
-                else {}
-            ),
-        )
+        # The vision re-check reads clips with the model: tens of seconds a run, so it is timed.
+        with timed_step("clip_intent_resolution"):
+            return await resolve_clip_intents_for_turn(
+                intents=pending,
+                creator_request=creator_request,
+                clips=clips,
+                run_context=run_context,
+                background=background,
+                checkpoint=checkpoint,
+                max_vision_requeries=max_vision_requeries,
+                vision_deadline_s=vision_deadline_s,
+                # KRI-516: chapter captions under a filming-time order are stretches of the day.
+                # Omitted otherwise, so every other call is unchanged.
+                **({"filming_order": True} if order_by_intents else {}),
+                # KRI-692: a Turkish chat's picker row never shows a model-written English label.
+                **(
+                    {"creator_words": {i.intent_id: i.source_quote for i in output.intents}}
+                    if current_reply_language() == "tr"
+                    else {}
+                ),
+            )
 
     # KRI-991: the resolver is not deterministic and re-reads the whole list every turn, so a
     # match the asking turn already found stands and only the rest is resolved (once, or not at

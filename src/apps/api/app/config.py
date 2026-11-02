@@ -1139,6 +1139,11 @@ class Settings(BaseSettings):
     # byte-identical to the pre-fix behaviour.
     # Apply: fly secret KRIA_TURN_AUTO_CONTINUE_MAX_RUNS=1 + restart (api + worker).
     kria_turn_auto_continue_max_runs: int = Field(default=4, ge=0, le=8)
+    # A continued run takes its earlier run's Main Creator, brief-extractor and clip-intent
+    # answers for the same input instead of paying again (`app.services.turn_checkpoint`).
+    # False: every continued run calls the models again, exactly as before the checkpoint.
+    # Apply: fly secret KRIA_TURN_CHECKPOINT_ENABLED=false + restart (api + worker).
+    kria_turn_checkpoint_enabled: bool = True
     # KRI-552: an identical re-send of the creator's latest message (the chat looked stuck) is
     # answered in one line instead of being queued and planned a second time. False restores
     # the old behaviour: the copy queues behind the running turn.
