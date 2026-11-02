@@ -2936,13 +2936,18 @@
     {
       "id": "kria-continued-turn-paid-calls",
       "needs_native": false,
-      "api_tests": "tests/kria/test_continuation_paid_call_postgres.py tests/kria/test_generated_image_understanding.py",
+      "api_tests": "tests/kria/test_continuation_paid_call_postgres.py tests/kria/test_generated_image_understanding.py tests/kria/test_continuation_checkpoint_postgres.py tests/kria/test_continuation_record_postgres.py tests/kria/test_continuation_trace_postgres.py tests/services/test_turn_checkpoint.py",
       "paths": [
         "src/apps/api/app/kria/paid_call_scope.py",
         "src/apps/api/app/kria/voiceover_script.py",
         "src/apps/api/app/services/clip_understanding.py",
+        "src/apps/api/app/services/turn_checkpoint.py",
+        "src/apps/api/tests/kria/test_continuation_checkpoint_postgres.py",
         "src/apps/api/tests/kria/test_continuation_paid_call_postgres.py",
-        "src/apps/api/tests/kria/test_generated_image_understanding.py"
+        "src/apps/api/tests/kria/test_continuation_record_postgres.py",
+        "src/apps/api/tests/kria/test_continuation_trace_postgres.py",
+        "src/apps/api/tests/kria/test_generated_image_understanding.py",
+        "src/apps/api/tests/services/test_turn_checkpoint.py"
       ]
     },
     {
