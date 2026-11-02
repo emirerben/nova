@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.95.0] - 2026-11-02
+
+### Changed
+- fix(kria): the planner never freezes a catalog song for a creator draft (KRI-1097 wave 2, catalog) (#2042) <!-- release-pr: 2042 -->
+
 ## [0.83.94.0] - 2026-11-02
 
 ### Changed
