@@ -70,6 +70,15 @@ MATCHER = "nova.audio.music_matcher"
 CLIPS = ("julio-1", "julio-2", "julio-3")
 
 
+@pytest.fixture(autouse=True)
+def _catalog_song_freeze_switch_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """KRI-1097 (owner rule: catalog songs never, uploads only): a creator draft freezes no
+    catalog song by default, so the chat-time song match this file covers runs only behind
+    ``CREATOR_JOBS_NO_CATALOG_SONG_FREEZE_ENABLED=false`` (the Assos scorecard's check 13
+    covers the default)."""
+    monkeypatch.setattr(settings, "creator_jobs_no_catalog_song_freeze_enabled", False)
+
+
 @pytest.fixture
 def song_catalog(monkeypatch: pytest.MonkeyPatch) -> tuple[SimpleNamespace, MockModelClient]:
     """One analyzed track and a model client that ranks it first on every call."""
