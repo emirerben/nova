@@ -166,6 +166,7 @@ class EvidenceBundle(FrozenModel):
     )
     audio_inspected: Literal[False] = False
     review_model_received_visual_input: Literal[False] = False
+    rendered_duration_s: float | None = Field(default=None, gt=0, le=1800)
 
     @model_validator(mode="after")
     def artifact_matches(self):
@@ -360,7 +361,9 @@ def plan_frame_times(duration: float, limits: EvidenceLimits) -> list[tuple[floa
     return sorted([*anchors, *uniform], key=lambda item: item[0])
 
 
-def _frames(local: Path, artifact_sha: str, limits: EvidenceLimits, deadline: float):
+def _frames(
+    local: Path, artifact_sha: str, limits: EvidenceLimits, deadline: float
+) -> tuple[tuple[FrameEvidence, ...], float]:
     info = json.loads(
         _run(
             [
@@ -470,7 +473,7 @@ def _frames(local: Path, artifact_sha: str, limits: EvidenceLimits, deadline: fl
         )
         _remaining(deadline)
     _require(frames, "frame_timestamp_missing")
-    return tuple(frames)
+    return tuple(frames), duration
 
 
 def obtain_render_review_evidence(
@@ -518,7 +521,7 @@ def obtain_render_review_evidence(
                 size == proof.file_size_bytes and actual_sha == proof.sha256,
                 "artifact_bytes_changed",
             )
-            frames = _frames(local, actual_sha, limits, deadline)
+            frames, duration = _frames(local, actual_sha, limits, deadline)
         receipt = VerifiedArtifactReceipt(
             verification_id="server-read-"
             + hashlib.sha256(
@@ -548,7 +551,12 @@ def obtain_render_review_evidence(
             )
             for index, frame in enumerate(frames)
         )
-        bundle = EvidenceBundle(verified_artifact=receipt, frames=frames, observations=observations)
+        bundle = EvidenceBundle(
+            verified_artifact=receipt,
+            frames=frames,
+            observations=observations,
+            rendered_duration_s=duration,
+        )
         _require(len(bundle.model_dump_json().encode()) <= 2_000_000, "evidence_bytes_exceeded")
         _remaining(deadline)
         return EvidenceResult(status="ready", bundle=bundle)
