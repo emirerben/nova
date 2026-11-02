@@ -201,6 +201,10 @@ class Settings(BaseSettings):
     # PHONE_SUBTITLED_EDITOR_LANES_ENABLED=false --app nova-video` + `fly
     # machine restart <id>` (api + worker).
     phone_subtitled_editor_lanes_enabled: bool = False
+    # KRI-1142: a phone Talking edit can add pictures (Visuals > Generate media, Add photo or
+    # video). Its own kill switch on top of the lanes gate, so it rolls back without touching
+    # the SFX/overlay lanes.
+    phone_subtitled_editor_media_enabled: bool = False
     # Range (the source-window sheet) on a phone Talking edit: a Save carrying the
     # talking-source `timeline_slots` rows recompiles the speaker's kept segments, and
     # `editor_capabilities.clips.source_window` opens. Default OFF; also its kill switch

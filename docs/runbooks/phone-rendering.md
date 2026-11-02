@@ -2855,6 +2855,23 @@ PHONE_VOICEOVER_EDITOR_LANES_ENABLED=true SOUND_EFFECTS_ENABLED=true
 MEDIA_OVERLAYS_ENABLED=true --app nova-video` + restart (api + worker), after
 the iOS build that declares protocol 3 is out. Rollback: set the first to false.
 
+**Added pictures on Talking edits (KRI-1142).** A phone `subtitled` (Talking to camera) edit
+can add a picture from Visuals (including Generate media). The single gate is
+`phone_rollout.phone_subtitled_editor_media_supported()`: `PHONE_SUBTITLED_EDITOR_MEDIA_ENABLED`
+(its own kill switch, default off) AND `PHONE_EDITOR_MEDIA_ENABLED` AND `VISUAL_BLOCKS_ENABLED`
+AND `PHONE_EDITOR_MEDIA_FEATURES` verified AND the Talking lanes gate
+(`phone_subtitled_editor_lanes_supported`). No newer app build is needed (see the Voiceover
+added-media section). `generative_jobs._phone_subtitled_editor_media_available` advertises
+`phone_editor_media`, opens `visual_blocks` (no add-clip) and emits `editor_revision_number`;
+Save accepts the section. `_compile_subtitled_editor_commit` rebuilds the recipe from scratch, so
+`_talking_editor_media` recompiles the `editor-media` layer from the saved `visual_blocks` on
+EVERY Talking Save (fitted to the final cut: Range, inserts, speech cleanup), otherwise a caption
+or sound edit would silently drop the picture. With the rollout off, a variant that already
+carries pictures refuses the Save (422 `unsupported_phone_edit`) instead of dropping them; one
+without pictures compiles byte-identically. Apply: `fly secrets set
+PHONE_SUBTITLED_EDITOR_MEDIA_ENABLED=true` (+ the flags above) and restart api + worker, after a
+device smoke test of a Talking edit with captions, a cutaway and a picture. Rollback: set it false.
+
 **Added pictures on authored and empty edits (KRI-1142).** An authored or empty phone
 edit already advertised `phone_editor_media` (`authored_phone_sources_available`) but kept
 the top-level `visual_blocks` closed (`no_clean_base`). `_phone_authored_media_available`

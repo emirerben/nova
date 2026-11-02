@@ -2840,6 +2840,7 @@ def _variants_for_response(job: Job) -> list[dict]:
             # KRI-287: the app registers an added photo/video against this
             # revision; a Voiceover edit has no guided revision of its own.
             or _phone_voiceover_editor_media_available(job, v)
+            or _phone_subtitled_editor_media_available(job, v)
         ):
             from app.services.phone_editor_sources import (
                 phone_editor_source_revision,  # noqa: PLC0415
@@ -7152,6 +7153,7 @@ def _clamp_phone_editor_capabilities(
     narrated_text: bool = False,
     voiceover_lanes: bool = False,
     voiceover_media: bool = False,
+    subtitled_media: bool = False,
     authored_media: bool = False,
     shape: Any = None,
     subtitled_text: bool = False,
@@ -7209,7 +7211,10 @@ def _clamp_phone_editor_capabilities(
     subtitled_carve_out = {"sfx", "overlays"} if (subtitled_lanes or voiceover_lanes) else set()
     if guided_sfx:
         subtitled_carve_out = subtitled_carve_out | {"sfx"}
-    if voiceover_media:
+    # KRI-1142: a Talking edit with added pictures is carved out like a Voiceover one: pictures
+    # only, no add-clip (the cut belongs to the speaker's take).
+    speech_media = voiceover_media or subtitled_media
+    if speech_media:
         media_carve_out = {("lanes", "visual_blocks")}
     elif media_enabled:
         media_carve_out = {("clips", "add"), ("lanes", "visual_blocks")}
@@ -7236,7 +7241,7 @@ def _clamp_phone_editor_capabilities(
                 for name, value in operations.items()
             }
     for lane in _PHONE_UNSUPPORTED_TOP_LEVEL:
-        if (media_enabled or voiceover_media) and lane == "visual_blocks":
+        if (media_enabled or speech_media) and lane == "visual_blocks":
             continue
         if lane in subtitled_carve_out:
             continue
@@ -7257,7 +7262,7 @@ def _clamp_phone_editor_capabilities(
         # is lifted; any other reason (a lyrics variant) stays closed.
         clamped["visual_blocks"] = True
         clamped["visual_blocks_reason"] = None
-    if voiceover_media and "visual_blocks" in clamped:
+    if speech_media and "visual_blocks" in clamped:
         # The cloud map closes `visual_blocks` for want of a clean base video
         # (`no_clean_base`); a phone Voiceover edit has none, and needs none:
         # Save compiles the blocks into the pinned recipe (KRI-287).
@@ -7347,7 +7352,7 @@ def _clamp_phone_editor_capabilities(
                 "value": shape.landscape_fit.value,
                 "reason": shape.landscape_fit.reason,
             }
-    if media_enabled or voiceover_media:
+    if media_enabled or speech_media:
         clamped["phone_editor_media"] = {
             "enabled": True,
             "visual_kinds": ["image", "video"],
@@ -7801,6 +7806,7 @@ def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
     capabilities = _base_editor_capabilities(job, variant)
     if variant.get("render_destination") == "device":
         voiceover_media = _phone_voiceover_editor_media_available(job, variant)
+        subtitled_media = _phone_subtitled_editor_media_available(job, variant)
         subtitled_lanes = _phone_subtitled_editor_lanes_available(job, variant)
         voiceover_lanes = _phone_voiceover_editor_lanes_available(variant)
         shape = device_editor_offer(
@@ -7818,7 +7824,9 @@ def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
         )
         return _clamp_phone_editor_capabilities(
             capabilities,
-            media_enabled=voiceover_media or _phone_editor_media_available(job, variant),
+            media_enabled=(
+                voiceover_media or subtitled_media or _phone_editor_media_available(job, variant)
+            ),
             subtitled_lanes=subtitled_lanes,
             guided_story=variant.get("resolved_archetype") == "guided_story",
             narrated=variant.get("resolved_archetype") == "narrated",
@@ -7826,6 +7834,7 @@ def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
             narrated_text=_phone_narrated_title_edits_available(variant),
             voiceover_lanes=voiceover_lanes,
             voiceover_media=voiceover_media,
+            subtitled_media=subtitled_media,
             authored_media=_phone_authored_media_available(job, variant),
             shape=shape,
             subtitled_text=subtitled_lanes and _phone_subtitled_text_lane_available(variant),
@@ -7903,6 +7912,30 @@ def _phone_voiceover_editor_media_available(
         return False
 
 
+def _phone_subtitled_editor_media_available(job: Job, variant: dict) -> bool:
+    """True when a phone Talking (`subtitled`) edit may add a picture (KRI-1142).
+
+    Needs the shape Save compiles media for (a plain device `subtitled` variant, not an
+    authored or empty one, which has its own path), the rollout gate, phone rendering for this
+    creator and the revision-1 source catalog registration fences against."""
+    from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
+    from app.services.phone_editor_sources import phone_editor_source_revision  # noqa: PLC0415
+    from app.services.phone_rollout import phone_subtitled_editor_media_supported  # noqa: PLC0415
+
+    if variant.get("editor_timeline_mode") == "authored" or variant.get("editor_state") == "empty":
+        return False
+    if not (
+        variant.get("render_destination") == "device" and is_phone_subtitled_editor_variant(variant)
+    ):
+        return False
+    if not (phone_subtitled_editor_media_supported() and phone_rendering_allowed_for_job(job)):
+        return False
+    try:
+        return phone_editor_source_revision(job, variant) is not None
+    except (TypeError, ValueError):
+        return False
+
+
 def _phone_editor_media_available(
     job: Job, variant: dict, *, require_client: bool | None = None
 ) -> bool:
@@ -7913,6 +7946,8 @@ def _phone_editor_media_available(
     if authored_phone_sources_available(job, variant):
         return True
     if _phone_voiceover_editor_media_available(job, variant, require_client=require_client):
+        return True
+    if _phone_subtitled_editor_media_available(job, variant):
         return True
 
     return bool(
@@ -12299,6 +12334,7 @@ def _prepare_editor_commit(
             phone_guided
             or _phone_voiceover_editor_media_available(job, variant, require_client=False)
             or _phone_authored_media_available(job, variant)
+            or _phone_subtitled_editor_media_available(job, variant)
         )
         if not _settings_visual.visual_blocks_enabled:
             if "visual_block" not in payload._deleted_kinds or not _is_exact_deletion_survivor(

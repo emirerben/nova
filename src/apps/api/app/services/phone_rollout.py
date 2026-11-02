@@ -1482,6 +1482,30 @@ def phone_voiceover_editor_media_supported(*, require_client: bool | None = None
     )
 
 
+def phone_subtitled_editor_media_supported() -> bool:
+    """Single source of truth for "can a phone-rendered `subtitled` (Talking to camera)
+    variant add a picture as a media Visual block right now" (KRI-1142).
+
+    Consulted by `generative_jobs._phone_subtitled_editor_media_available` (the
+    `phone_editor_media` capability, source registration and the `visual_blocks` clamp) and by
+    `phone_editor._compile_subtitled_editor_commit` (whether Save compiles the blocks into the
+    pinned recipe or refuses), so the editor never offers a picture Save would refuse.
+
+    True iff ALL of: its own kill switch, the editor media and visual-block switches, every
+    `PHONE_EDITOR_MEDIA_FEATURES` entry verified, and the Talking lanes gate. No newer app
+    build is needed: the app already registers, places, previews and reopens editor media
+    for any archetype (see `phone_voiceover_editor_media_supported`).
+    """
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        settings.phone_subtitled_editor_media_enabled
+        and settings.phone_editor_media_enabled
+        and settings.visual_blocks_enabled
+        and all(feature in verified for feature in PHONE_EDITOR_MEDIA_FEATURES)
+        and phone_subtitled_editor_lanes_supported()
+    )
+
+
 # Device features every phone caption layer needs (KRI-280).
 PHONE_NARRATED_CAPTION_FEATURES: tuple[str, ...] = ("positionedText", "animatedText")
 
