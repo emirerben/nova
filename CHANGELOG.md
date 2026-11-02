@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.1.0] - 2026-11-02
+
+### Fixed
+- feat(editor): authored and empty phone edits can add pictures (KRI-1142) (#2071) <!-- release-pr: 2071 -->
+
 ## [0.84.0.0] - 2026-11-02
 
 ### Added
