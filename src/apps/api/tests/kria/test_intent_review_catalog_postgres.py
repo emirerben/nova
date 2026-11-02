@@ -9,7 +9,16 @@ Failure modes, written before the code (matrix row in parentheses). Each has a t
     nothing is emitted when the draft already carries the creator's exact words (equal, longer,
     or only differently cased); a restore writes the contract text byte for byte, accents and
     case intact; two different exact targets on one element are ambiguous and emit nothing;
-    removed or caption or lyric or pinned or sequence-fragment text is never a candidate.
+    removed or caption or lyric or sequence-fragment text is never a candidate, and a
+    pin that IS mapped to the requirement (by its words or by its clip) gets no restore, no fit
+    and no move.
+  A restore that rewrites text the requirement never covered (23, 24, 25):
+    a requirement is covered only by rows that carry the creator's words as whole words, so
+    "Wholesale Day" is not about "Sale" and is never mapped; a requirement that one mapped row
+    already satisfies gets no restore on any other row; a row found only through the creator's
+    words (global scope) is rewritten only when the creator's words are all it holds, so "Day 3
+    in Istanbul" is never reduced to "İstanbul" (a model claim there is a question, not a repair);
+    a title or clip label the scope itself names may still be restored whole.
   A candidate that touches what the creator protected (23):
     selected or ordered footage on a clip-linked label, an absolute sequence timing, a
     protected region, an explicit timing ask, a placement ask, and preserve_editor_text each
@@ -33,6 +42,7 @@ from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_binding import BriefBinding
 from app.kria.drafts import KriaDraftDocument
 from app.kria.intent_review_catalog import FrameRef, build_review_catalog
+from app.kria.intent_review_disposition import RepairPreconditions, evaluate_review
 from app.services.creator_render_contract import CreatorRenderContract, TextRequirement
 from tests.integration.test_intent_review_lifecycle_postgres import (  # noqa: F401
     paid,
@@ -90,6 +100,30 @@ def catalog_for(
 
 def kinds(catalog):
     return sorted(c.kind for c in catalog.candidates)
+
+
+def note(identifier, text, start=4.0, end=6.0, **fields):
+    """A plain on-screen note: not a title, not a caption, and nothing to move or fit."""
+    return bar(identifier, text, start, end, role="text", position="custom", **fields)
+
+
+def claim(catalog, defect="copy_mismatch", tier="repair"):
+    """The model says R1 is unmet; what does the server make of it?"""
+    reply = {
+        "schema_version": 1,
+        "findings": [
+            {
+                "requirement_id": "R1",
+                "verdict": "unmet",
+                "defect_kind": defect,
+                "evidence_frame_ids": ["f0"],
+                "confidence": "high",
+            }
+        ],
+    }
+    return evaluate_review(
+        json.dumps(reply), catalog, tier=tier, repair_preconditions=RepairPreconditions()
+    )
 
 
 # --- the real frozen packet ---------------------------------------------------------------
@@ -206,16 +240,112 @@ def test_a_literal_with_no_contract_row_is_never_restored():
     assert catalog.requirements[0].draft_matches_authority is False
 
 
+def test_a_row_that_only_contains_the_words_inside_another_word_is_never_mapped():
+    catalog = catalog_for(
+        [note("t1", "Wholesale Day")],
+        [requirement(scope="global", literal="Sale")],
+        exact=("Sale",),
+    )
+    assert catalog.requirements[0].element_refs == []
+    assert catalog.candidates == []
+
+
+def test_a_requirement_another_row_already_satisfies_rewrites_no_row():
+    rows = [note("t1", "Wholesale Day"), note("t2", "Big Sale", start=6.0, end=8.0)]
+    catalog = catalog_for(rows, [requirement(scope="global", literal="Sale")], exact=("Sale",))
+    assert catalog.requirements[0].element_refs == ["t2"]
+    assert catalog.requirements[0].draft_matches_authority is True
+    assert catalog.candidates == []
+    result = claim(catalog)
+    assert result.status == "suggestion" and result.disposition.repair_candidate_ids == []
+    assert [(s.candidate_id, s.why) for s in result.disposition.suggestions] == [
+        (None, "render_fidelity")
+    ]
+
+
+def test_a_satisfied_title_leaves_a_second_stacked_title_alone():
+    rows = [
+        bar("title", "Before", start=0.0, end=3.0),
+        bar("title-2", "Bef0re and after", start=0.0, end=3.0),
+    ]
+    catalog = catalog_for(rows)
+    assert catalog.requirements[0].element_refs == ["title", "title-2"]
+    assert catalog.requirements[0].draft_matches_authority is True
+    assert "restore_exact_text" not in kinds(catalog)
+
+
+def test_a_row_with_other_words_is_never_cut_down_to_the_creators_words():
+    asks = [requirement(scope="global", literal="İstanbul")]
+    catalog = catalog_for([note("t1", "Day 3 in Istanbul")], asks, exact=("İstanbul",))
+    assert catalog.requirements[0].element_refs == ["t1"]
+    assert catalog.requirements[0].draft_matches_authority is False
+    assert catalog.candidates == []
+    for tier in ("review", "repair"):
+        asked = claim(catalog, tier=tier)
+        assert asked.status == "needs_confirmation", tier
+        assert asked.disposition.repair_candidate_ids == []
+
+
+def test_a_row_holding_only_the_creators_words_is_restored_to_their_exact_spelling():
+    asks = [requirement(scope="global", literal="Çanakkale")]
+    catalog = catalog_for([note("t1", "Canakkale")], asks, exact=("Çanakkale",))
+    (restore,) = catalog.candidates
+    assert (restore.kind, restore.target, restore.element_ref) == (
+        "restore_exact_text",
+        {"text": "Çanakkale"},
+        "t1",
+    )
+    assert claim(catalog).status == "repair_staged"
+
+
+@pytest.mark.parametrize(
+    "rows,asks,exact",
+    [
+        pytest.param(
+            [bar("guided-pinned-0", "Before", start=0.0, end=10.0)],
+            [requirement(scope="global")],
+            ("Before",),
+            id="pin_found_by_its_words",
+        ),
+        pytest.param(
+            [bar("guided-pinned-0", "Before", start=0.0, end=10.0, clip_id="clip-a")],
+            [requirement(scope="clip:clip-a")],
+            ("Before",),
+            id="pin_found_by_its_clip",
+        ),
+        pytest.param(
+            [bar("guided-pinned-0", "Bef0re", start=0.0, end=10.0, clip_id="clip-a")],
+            [requirement(scope="clip:clip-a")],
+            ("Before",),
+            id="misspelt_pin_found_by_its_clip",
+        ),
+    ],
+)
+def test_a_pin_the_requirement_is_mapped_to_gets_no_candidate_of_any_kind(rows, asks, exact):
+    catalog = catalog_for(rows, asks, exact=exact, duration=10.0)
+    assert catalog.requirements[0].element_refs == ["guided-pinned-0"]
+    assert catalog.candidates == []
+
+
+def test_the_same_text_off_the_pin_prefix_is_a_candidate_so_the_pin_guard_is_what_blocks():
+    rows = [bar("note-0", "Bef0re", start=0.0, end=12.0, clip_id="clip-a")]
+    catalog = catalog_for(rows, [requirement(scope="clip:clip-a")], duration=10.0)
+    assert kinds(catalog) == [
+        "fit_text_to_duration",
+        "move_text_to_safe_anchor",
+        "restore_exact_text",
+    ]
+
+
 @pytest.mark.parametrize(
     "fields",
     [
         {"removed": True},
-        {"id": "guided-pinned-0"},
         {"source_params": {"sequence_timing": {"mode": "relative"}}},
         {"source_params": {"sequence_source_id": "seq-1"}},
     ],
 )
-def test_removed_pinned_or_sequence_text_is_never_a_candidate(fields):
+def test_removed_or_sequence_text_is_never_a_candidate(fields):
     catalog = catalog_for([bar(text="Bef0re", **fields)])
     assert catalog.candidates == []
 

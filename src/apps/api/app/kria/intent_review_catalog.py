@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import unicodedata
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,7 +23,8 @@ from app.kria.brief_binding import BriefBinding
 from app.kria.drafts import KriaDraftDocument
 from app.services.creator_render_contract import CreatorRenderContract
 from app.services.kria_editor_ops import is_caption_text_bar
-from app.services.kria_editor_ops_text import bars_from_snapshot, classify, contains_find, fold
+from app.services.kria_editor_ops_text import bars_from_snapshot, classify, fold
+from app.text_fold import loose_text
 
 MIN_VISIBLE_S = 1.0
 END_MARGIN_S = 0.3
@@ -120,9 +121,8 @@ def _is_word_char(char: str) -> bool:
     return char.isalnum() or char == "_"
 
 
-def contains_exact_words(text: str, wanted: str) -> bool:
-    """`wanted` appears in `text` as whole words after the strict fold."""
-    needle, haystack = strict_fold(wanted), strict_fold(text)
+def _contains_words(text: str, wanted: str, fold_fn: Callable[[str], str]) -> bool:
+    needle, haystack = fold_fn(wanted), fold_fn(text)
     if not needle:
         return False
     start = haystack.find(needle)
@@ -134,6 +134,17 @@ def contains_exact_words(text: str, wanted: str) -> bool:
             return True
         start = haystack.find(needle, start + 1)
     return False
+
+
+def contains_exact_words(text: str, wanted: str) -> bool:
+    """`wanted` appears in `text` as whole words after the strict fold."""
+    return _contains_words(text, wanted, strict_fold)
+
+
+def contains_loose_words(text: str, wanted: str) -> bool:
+    """`wanted` appears in `text` as whole words ignoring case and accents, the way the
+    request-following receipts decide whether the creator's words are on screen."""
+    return _contains_words(text, wanted, loose_text)
 
 
 def _seal(**parts: Any) -> ReviewCatalog:
@@ -183,14 +194,16 @@ def _issue(
 
 def _mapped(
     requirement: BriefRequirement, bars: list[dict[str, Any]], kinds: Mapping[str, str]
-) -> list[dict[str, Any]]:
-    """The on-screen text rows a requirement is about, by the editor's own scope mapping.
+) -> tuple[list[dict[str, Any]], bool]:
+    """The on-screen text rows a requirement is about, and whether its scope named them.
 
     `title` is whatever the editor resolves as the title, `clip:<id>` is that clip's text, and
-    anything else is found by the creator's words. Captions and lyric lines are never mapped.
+    anything else is found by the creator's words as whole words ("Sale" is not in "Wholesale").
+    Captions and lyric lines are never mapped. A row found only by the creator's words is
+    evidence of what is on screen, not a row the creator pointed at.
     """
     if requirement.kind not in {"text", "text_sequence"}:
-        return []
+        return [], False
     live = [
         bar
         for bar in bars
@@ -206,9 +219,11 @@ def _mapped(
         picked = [bar for bar in live if bar["clip_id"] == scope.partition(":")[2]]
     else:
         picked = []
-    if not picked and requirement.literal:
-        picked = [bar for bar in live if contains_find(bar["text"], requirement.literal)]
-    return picked
+    if picked:
+        return picked, True
+    if requirement.literal:
+        picked = [bar for bar in live if contains_loose_words(bar["text"], requirement.literal)]
+    return picked, False
 
 
 class _Guards:
@@ -286,14 +301,19 @@ def build_review_catalog(
 
     issued: list[IssuedRequirement] = []
     mapped_by_alias: dict[str, tuple[BriefRequirement, list[dict[str, Any]]]] = {}
+    scope_named: dict[str, bool] = {}
+    satisfied: set[str] = set()
     for position, requirement in enumerate(requirements, start=1):
         alias = f"R{position}"
-        picked = _mapped(requirement, bars, kinds)
+        picked, by_scope = _mapped(requirement, bars, kinds)
         authority = _exact_text_for(contract, requirement) or requirement.literal
         matches: bool | None = None
         if requirement.kind == "text" and authority and picked:
             matches = any(contains_exact_words(bar["text"], authority) for bar in picked)
+            if matches:
+                satisfied.add(alias)
         mapped_by_alias[alias] = (requirement, picked)
+        scope_named[alias] = by_scope
         issued.append(
             IssuedRequirement(
                 requirement_id=alias,
@@ -327,17 +347,17 @@ def build_review_catalog(
             ):
                 continue
             path = f"editor_payload.text_elements[{bar['index']}]"
-            text_owners = [(a, r) for a, r in owners if r.kind == "text"]
-            targets = {
-                exact
-                for _, r in text_owners
-                if (exact := _exact_text_for(contract, r)) is not None
-                and not contains_exact_words(bar["text"], exact)
+            wanted = {
+                alias: exact
+                for alias, r in owners
+                if r.kind == "text"
+                and alias not in satisfied
+                and (exact := _exact_text_for(contract, r)) is not None
+                and (scope_named[alias] or loose_text(bar["text"]) == loose_text(exact))
             }
+            targets = set(wanted.values())
             if len(targets) == 1:
-                restoring = [
-                    a for a, r in text_owners if (exact := _exact_text_for(contract, r)) in targets
-                ]
+                restoring = list(wanted)
                 candidates.append(
                     _candidate(
                         generation,
