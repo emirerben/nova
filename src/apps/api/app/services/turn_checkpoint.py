@@ -77,8 +77,13 @@ def _redis():  # noqa: ANN202
     return redis.from_url(settings.redis_url, socket_timeout=2, socket_connect_timeout=2)
 
 
-def _key(run_id: uuid.UUID, call_name: str, digest: str) -> str:
-    return f"kria:turn-checkpoint:{run_id}:{call_name}:{digest}"
+def _hash_key(run_id: uuid.UUID) -> str:
+    """One Redis hash per turn: its fields are the stored answers, so ending the turn is one DEL."""
+    return f"kria:turn-checkpoint:{run_id}"
+
+
+def _field(call_name: str, digest: str) -> str:
+    return f"{call_name}:{digest}"
 
 
 def _digest(call_name: str, version: str, agent_input: BaseModel) -> str:
@@ -90,9 +95,9 @@ def _digest(call_name: str, version: str, agent_input: BaseModel) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _load(key: str, output_cls: type[T]) -> T | None:
+def _load(run_id: uuid.UUID, field: str, output_cls: type[T]) -> T | None:
     try:
-        raw = _redis().get(key)
+        raw = _redis().hget(_hash_key(run_id), field)
         if raw is None:
             return None
         envelope = json.loads(raw)
@@ -104,12 +109,24 @@ def _load(key: str, output_cls: type[T]) -> T | None:
         return None
 
 
-def _store(key: str, output: BaseModel) -> None:
+def _store(run_id: uuid.UUID, field: str, output: BaseModel) -> None:
     try:
         envelope = json.dumps({"v": _FORMAT, "output": output.model_dump_json()})
-        _redis().set(key, envelope, ex=CHECKPOINT_TTL_S)
+        key = _hash_key(run_id)
+        pipe = _redis().pipeline()
+        pipe.hset(key, field, envelope)
+        pipe.expire(key, CHECKPOINT_TTL_S)
+        pipe.execute()
     except Exception:  # noqa: BLE001 - a skipped write costs one repeated call, nothing else
         log.warning("kria_turn_checkpoint_store_failed", exc_info=True)
+
+
+def discard(run_id: uuid.UUID) -> None:
+    """Drop everything a turn stored once it is over; the TTL is only the backstop."""
+    try:
+        _redis().delete(_hash_key(run_id))
+    except Exception:  # noqa: BLE001 - the TTL removes it anyway
+        log.warning("kria_turn_checkpoint_discard_failed", exc_info=True)
 
 
 async def checkpointed(
@@ -134,9 +151,9 @@ async def checkpointed(
     if run_id is None or not isinstance(agent_input, BaseModel) or spec is None:
         return await call()
     version = f"{spec.name}@{spec.prompt_version}:{spec.model}"
-    key = _key(run_id, call_name, _digest(call_name, version, agent_input))
+    field = _field(call_name, _digest(call_name, version, agent_input))
     if epoch > 1:
-        stored = await asyncio.to_thread(_load, key, output_cls)
+        stored = await asyncio.to_thread(_load, run_id, field, output_cls)
         if stored is not None:
             _note(call_name, started, "checkpoint")
             return stored
@@ -144,7 +161,7 @@ async def checkpointed(
     _note(call_name, started, "model")
     # The last permitted run is never continued, so nothing could read what it would store.
     if epoch < int(settings.kria_turn_auto_continue_max_runs):
-        await asyncio.to_thread(_store, key, output)
+        await asyncio.to_thread(_store, run_id, field, output)
     return output
 
 

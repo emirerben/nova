@@ -156,9 +156,7 @@ def harness(monkeypatch: pytest.MonkeyPatch, ledger):
         run=run, client=client, reservations=reservations, answers=answers, turn_id=turn_id
     )
     yield harness_
-    store = redis.from_url(settings.redis_url)
-    for key in store.scan_iter(f"kria:turn-checkpoint:{turn_id}:*"):
-        store.delete(key)
+    redis.from_url(settings.redis_url).delete(f"kria:turn-checkpoint:{turn_id}")
 
 
 async def test_a_continued_run_reuses_the_first_runs_main_creator_answer(harness) -> None:
@@ -191,14 +189,15 @@ async def test_the_last_permitted_run_stores_nothing(harness, monkeypatch) -> No
     await harness.run(2)
 
     store = redis.from_url(settings.redis_url)
-    assert list(store.scan_iter(f"kria:turn-checkpoint:{harness.turn_id}:*")) == []
+    assert store.exists(f"kria:turn-checkpoint:{harness.turn_id}") == 0
 
 
 async def test_an_unreadable_checkpoint_is_a_miss_not_an_error(harness) -> None:
     await harness.run(1)
     store = redis.from_url(settings.redis_url)
-    for key in store.scan_iter(f"kria:turn-checkpoint:{harness.turn_id}:*"):
-        store.set(key, b"{not json")
+    key = f"kria:turn-checkpoint:{harness.turn_id}"
+    for field in store.hkeys(key):
+        store.hset(key, field, b"{not json")
 
     await harness.run(2)
 
