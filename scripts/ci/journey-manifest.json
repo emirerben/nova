@@ -391,7 +391,8 @@
         "KriaTests/SlidePostSizeTests/testFitPlacementMatchesTheSharedFixtureWithinAHundredthOfAPixel",
         "KriaTests/SlidePostSizeTests/testSaveRequestAndDraftAlwaysSayWhichSizeTheyHold",
         "KriaTests/SlidePostTiltTests/testGeometryMatchesTheSharedFixture",
-        "KriaTests/SlidePostTiltTests/testEncodingAlwaysWritesTheTiltKeySoAClearIsNeverMistakenForAnOlderApp"
+        "KriaTests/SlidePostTiltTests/testEncodingAlwaysWritesTheTiltKeySoAClearIsNeverMistakenForAnOlderApp",
+        "KriaTests/SlidePostTiltTests/testZoomedGeometryMatchesTheSharedFixtureV2"
       ],
       "paths": [
         "src/apps/api/app/pipeline/slide_post/build.py",
@@ -408,6 +409,15 @@
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_tilt_one_right.json",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_tilt_relative_more_left_tr.json",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_tilt_straighten_reset.json",
+        "src/apps/api/prompts/edit_copilot_ops/slide_tilt_zoom.txt",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_zoom_absolute.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_zoom_clamped_at_3x.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_zoom_gate_closed_refusal.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_zoom_in_on_slide_2.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_zoom_reset_everything.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_zoom_reset_zoom_keeps_the_tilt.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_zoom_tilt_and_fill_corners.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_zoom_turkish_a_bit_closer.json",
         "src/apps/api/app/pipeline/slide_post/stickers.py",
         "src/apps/api/tests/pipeline/test_slide_post_stickers.py",
         "src/apps/api/tests/routes/test_slide_post_sticker_routes.py",

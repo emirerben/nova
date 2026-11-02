@@ -405,6 +405,9 @@ class CreationCapabilitiesOut(BaseModel):
     # KRI-1138: tilt a slide's photo or video. True only with MEDIA_TILT_ENABLED on AND a build
     # declaring X-Kria-Client-Protocol >= media_tilt_min_client_protocol (28).
     slide_post_tilt: bool = False
+    # KRI-1170: the Zoom slider in the slide Tilt panel. Only with `slide_post_tilt` open AND a
+    # build declaring X-Kria-Client-Protocol >= media_tilt_zoom_min_client_protocol (33).
+    slide_post_tilt_zoom: bool = False
     # KRI-646: text Bend on device-drawn text AND slide-post text. True only with the flag
     # on, `textBend` verified, and a build declaring X-Kria-Client-Protocol >=
     # text_bend_min_client_protocol.
@@ -4052,6 +4055,12 @@ async def capabilities(
             settings.media_tilt_enabled
             and client_protocol is not None
             and client_protocol >= settings.media_tilt_min_client_protocol
+        ),
+        "slide_post_tilt_zoom": bool(
+            settings.media_tilt_enabled
+            and client_protocol is not None
+            and client_protocol >= settings.media_tilt_min_client_protocol
+            and client_protocol >= settings.media_tilt_zoom_min_client_protocol
         ),
         "text_bend": bool(
             settings.text_bend_enabled

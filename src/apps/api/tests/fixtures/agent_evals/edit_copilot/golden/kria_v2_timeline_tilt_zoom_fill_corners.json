@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-11-02-v106",
+  "prompt_version": "2026-11-02-v108",
   "input": {
     "utterance": "tilt it 8 degrees and fill the corners",
     "prior_turns": [

@@ -140,6 +140,12 @@ import XCTest
         XCTAssertEqual(CMFormatDescriptionGetMediaSubType(description), kCMVideoCodecType_H264)
     }
 
+    /// Optional frame dump for side-by-side review with the cloud render (TEST_RUNNER_KRIA_TILT_ARTIFACTS=<dir>).
+    private func saveArtifact(_ image: CGImage, _ name: String) throws {
+        guard let dir = ProcessInfo.processInfo.environment["KRIA_TILT_ARTIFACTS"] else { return }
+        try XCTUnwrap(UIImage(cgImage: image).pngData()).write(to: URL(fileURLWithPath: dir).appending(path: name))
+    }
+
     private func pixel(_ image: CGImage, _ x: Int, _ y: Int) -> (Int, Int, Int) {
         var bytes = [UInt8](repeating: 0, count: 4)
         let context = CGContext(data: &bytes, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
@@ -189,6 +195,54 @@ import XCTest
             let got = pixel(plain, x, y)
             XCTAssertFalse(abs(got.0 - 0x33) < 14 && abs(got.1 - 0x66) < 14 && abs(got.2 - 0x99) < 14, "an upright slide has no backdrop")
         }
+    }
+
+    /// KRI-1170: a zoomed-out video slide shows its backdrop in the corners the shrunken picture no longer reaches, with no turn.
+    /// Failure mode: the zoom dropped on the video export path (only photos zoomed).
+    func testAZoomedOutVideoSlideShowsItsBackdropAroundTheShrunkenPicture() async throws {
+        let input = try source()
+        let output = directory.appending(path: "zoomed-out.mp4")
+        var zoomed = slide()
+        zoomed.edits = SlidePostEdits(tilt: SlidePostTilt(rotationDeg: 0, backdrop: .color("#336699"), zoom: 0.5))
+        try await SlidePostVideoRender.renderSlide(slide: zoomed, asset: asset(input), profile: "instagram_carousel", aspect: nil, outputURL: output)
+        let rendered = try await frame(output)
+        XCTAssertEqual(CGSize(width: rendered.width, height: rendered.height), CGSize(width: 2160, height: 2700))
+        try saveArtifact(rendered, "device-video-z50.png")
+        for (x, y) in [(6, 6), (2153, 6), (2153, 2693), (6, 2693)] {
+            let got = pixel(rendered, x, y)
+            XCTAssertTrue(abs(got.0 - 0x33) < 14 && abs(got.1 - 0x66) < 14 && abs(got.2 - 0x99) < 14, "corner (\(x), \(y)) shows the backdrop, got \(got)")
+        }
+        let centre = pixel(rendered, 1080, 1350)
+        XCTAssertFalse(abs(centre.0 - 0x33) < 14 && abs(centre.1 - 0x66) < 14 && abs(centre.2 - 0x99) < 14, "the picture is still at the centre")
+    }
+
+    /// KRI-1170: at 2x the frame is the centre quarter of the upright frame, enlarged about the canvas centre.
+    func testAZoomedInVideoSlideIsTheEnlargedCentreOfTheUprightFrame() async throws {
+        let input = try source()
+        let plainOutput = directory.appending(path: "plain-for-zoom.mp4")
+        try await SlidePostVideoRender.renderSlide(slide: slide(), asset: asset(input), profile: "instagram_carousel", aspect: nil, outputURL: plainOutput)
+        let plain = try await frame(plainOutput)
+        let zoomedOutput = directory.appending(path: "zoomed-in.mp4")
+        var zoomed = slide()
+        zoomed.edits = SlidePostEdits(tilt: SlidePostTilt(rotationDeg: 0, zoom: 2))
+        try await SlidePostVideoRender.renderSlide(slide: zoomed, asset: asset(input), profile: "instagram_carousel", aspect: nil, outputURL: zoomedOutput)
+        let rendered = try await frame(zoomedOutput)
+        try saveArtifact(rendered, "device-video-z200.png")
+        try saveArtifact(plain, "device-video-z100.png")
+        let width = plain.width, height = plain.height
+        let centre = CGRect(x: width / 4, y: height / 4, width: width / 2, height: height / 2)
+        let cropped = try XCTUnwrap(plain.cropping(to: centre))
+        let enlarged = try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: {
+            let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = true; return format
+        }()).image { context in
+            context.cgContext.interpolationQuality = .high
+            UIImage(cgImage: cropped).draw(in: CGRect(x: 0, y: 0, width: width, height: height))
+        }.cgImage)
+        let area = CGRect(x: 0, y: 0, width: width, height: height)
+        let toEnlarged = meanDelta(rendered, enlarged, in: area)
+        let toPlain = meanDelta(rendered, plain, in: area)
+        XCTAssertLessThan(toEnlarged, 12, "the export matches the enlarged centre of the upright frame")
+        XCTAssertLessThan(toEnlarged, toPlain, "and is not the unzoomed frame")
     }
 
     func testRejectsNonCarouselAndPosterDisplayURLsBeforeStartingAnExport() async throws {

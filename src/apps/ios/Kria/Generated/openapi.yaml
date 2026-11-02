@@ -1777,6 +1777,11 @@
             "title": "Slide Post Tilt",
             "type": "boolean"
           },
+          "slide_post_tilt_zoom": {
+            "default": false,
+            "title": "Slide Post Tilt Zoom",
+            "type": "boolean"
+          },
           "song_filming_range": {
             "default": false,
             "title": "Song Filming Range",
@@ -10894,7 +10899,7 @@
       },
       "SlideTilt": {
         "additionalProperties": false,
-        "description": "A slide's media turned to any angle about the canvas centre (KRI-1138).\n\n``rotation_deg`` is clockwise-positive in -180..180 (the clip tilt, sticker and text\nconvention). Only the PHOTO or VIDEO turns: text, ink, stickers and the watermark stay\nupright on top. What the turn uncovers shows ``backdrop`` (default blank = black). Frozen\nby ``tests/fixtures/slide-tilt-parity/v1.json``.",
+        "description": "A slide's media turned to any angle about the canvas centre (KRI-1138).\n\n``rotation_deg`` is clockwise-positive in -180..180 (the clip tilt, sticker and text\nconvention). Only the PHOTO or VIDEO turns: text, ink, stickers and the watermark stay\nupright on top. What the turn uncovers shows ``backdrop`` (default blank = black).\n``zoom`` (1 = as framed) scales the media about the canvas centre before it turns; it is\nleft out of the serialized form at 1 so a tilt stored before zoom existed keeps its shape\nand cache digest. Frozen by ``tests/fixtures/slide-tilt-parity/v1.json`` and ``v2.json``.",
         "properties": {
           "backdrop": {
             "$ref": "#/components/schemas/SlideTiltBackdrop"
@@ -10903,6 +10908,13 @@
             "maximum": 180.0,
             "minimum": -180.0,
             "title": "Rotation Deg",
+            "type": "number"
+          },
+          "zoom": {
+            "default": 1.0,
+            "maximum": 3.0,
+            "minimum": 0.5,
+            "title": "Zoom",
             "type": "number"
           }
         },

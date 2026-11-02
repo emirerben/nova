@@ -920,6 +920,11 @@ class Settings(BaseSettings):
     # `zoom`). The recipe needs no gate (older renderers already honour `transform.scale`); an
     # older build whose Save would drop a stored zoom answers 426 `client_update_required`
     # (`tilt_zoom`), and a new zoom while the gate is closed is a 422 `clip_tilt_zoom_unavailable`.
+    # KRI-1170: a tilt's `zoom` (media scaled 0.5..3x about the canvas centre before it turns).
+    # Not a second master flag: slide zoom is offered only while `media_tilt_enabled` is on and
+    # to a build declaring protocol >= this value (33: the first build that decodes and
+    # round-trips `zoom`). A save carrying a zoomed tilt from an older build, or one that would
+    # overwrite a stored zoom, answers 426 `client_update_required` (`slide_tilt_zoom`).
     media_tilt_zoom_min_client_protocol: int = 33
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring

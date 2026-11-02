@@ -4239,7 +4239,7 @@ be kept or removed.
 Chat: `patch_slots.tilt.zoom` (absolute) and `zoom_delta` (added to each clip's own zoom); an absolute zoom past 0.5..3 is
 clamped with a sentence, a relative one is clamped against each clip's own zoom and the receipt names the result ("Zoomed clip
 2 to 1.3x", "Reset the zoom of clip 2"). The prompt fragment `prompts/edit_copilot_ops/clip_tilt_zoom.txt` (cover table for
-"fill the corners", `EDIT_COPILOT_PROMPT_VERSION` `2026-11-02-v106`), the snapshot's per-clip zoom and
+"fill the corners", `EDIT_COPILOT_PROMPT_VERSION` `2026-11-02-v108`), the snapshot's per-clip zoom and
 `timeline_patch_capabilities.tilt_zoom` exist only while `clips.tilt_zoom` is open, so a closed gate leaves every prompt and
 snapshot byte-identical. `{"tilt":null}` resets the zoom with the rest; `{"tilt":{"zoom":1}}` resets only the zoom.
 
