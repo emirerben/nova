@@ -1816,6 +1816,56 @@ import KriaMediaEngine
         XCTAssertEqual(try sourceTime(try XCTUnwrap(spokenWords.first { $0.0 == "Yılda" }).1), 11.476, accuracy: 0.01)
     }
 
+    /// Parent KRI-1151: a Talking take paused for an inserted clip. The server persists the captions on the FINAL
+    /// timeline (later by the clip's length after the pause), so the preview must play the same video the recipe
+    /// does: the take, the other clip with its own sound, the take again from where it stopped. A caption that
+    /// the creator says at take second 25 shows at 40 and must burn over take second 25, not 40.
+    func testInsertedClipPausesTheTakePreviewAndCaptionsStayOnTheWordsTheySpeak() throws {
+        let cue = EditorCaptionCue(id: "after", startS: 40, endS: 42, text: "Sonra kulüp açıkladı")
+        var document = EditorDocument(editFormat: "subtitled", captionCues: [cue],
+            capabilities: ["timeline": .init(editable: false)], revision: .init(baseGeneration: "g"))
+        document = try NativePhoneTalkingSource.hydrate(document, speakers: [.init(clipIndex: 0, duration: 57.97)],
+            inserts: [(.init(clipIndex: 1, atTake: 21.8, duration: 15, keepAudio: true), 15)])
+        let projection = NativeEditorInteraction.timelineProjection(slots: document.clips, carousel: nil)
+        XCTAssertEqual(projection.totalDuration, 72.97, accuracy: 0.001, "the preview is as long as the rendered video")
+        let clips = projection.clipWindows.map { window -> EditorClip in
+            let slot = document.clips[window.sourceIndex]
+            return EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: slot.clipIndex, start: window.start, end: window.end,
+                trimIn: slot.inS, trimOut: slot.inS + (slot.durationS ?? 0), sourceDuration: slot.clipIndex == 0 ? 57.97 : 15, slotID: slot.id)
+        }
+        func source(_ index: Int, _ duration: Double) -> ResolvedEditorSource {
+            ResolvedEditorSource(clipIndex: index, mediaID: "original-\(index)", asset: MediaAsset(id: "local-\(index)", relativePath: "original-\(index).mov",
+                fingerprint: AssetFingerprint(hex: String(repeating: index == 0 ? "a" : "b", count: 64), byteCount: 100), duration: duration),
+                url: URL(fileURLWithPath: "/fixture/original-\(index).mov"))
+        }
+        let items = [NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "after"), start: 40, end: 42)]
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let recipe = try compiler.compile(document: document, clips: clips, items: items,
+                                          sources: [0: source(0, 57.97), 1: source(1, 15)]).recipe
+        XCTAssertNoThrow(try recipe.validate())
+        let video = try XCTUnwrap(recipe.tracks.first { $0.kind == .video }?.clips)
+        XCTAssertEqual(video.map(\.sourceAssetID), ["source-0", "source-1", "source-0"])
+        XCTAssertEqual(video.map(\.sourceStart), [0, 0, 21.8])
+        for (clip, expected) in zip(video, [(0.0, 21.8), (21.8, 15.0), (36.8, 36.17)]) {
+            XCTAssertEqual(clip.timelineStart, expected.0, accuracy: 0.0001)
+            XCTAssertEqual(clip.sourceDuration, expected.1, accuracy: 0.0001)
+        }
+        XCTAssertEqual(video[1].volume, 1, "the inserted clip plays its own sound")
+        func sourceTime(_ t: Double) throws -> Double {
+            let clip = try XCTUnwrap(video.last { $0.timelineStart <= t + 0.000_001 })
+            return clip.sourceStart + (t - clip.timelineStart) * clip.rate
+        }
+        let layer = try XCTUnwrap(recipe.textLayers.first)
+        XCTAssertEqual(layer.start, 40, accuracy: 0.001)
+        XCTAssertEqual(try sourceTime(layer.start), 25, accuracy: 0.001, "burned over the take second he says it at")
+        // A muted insert is silent on the preview, like the recipe's volume 0.
+        var silent = document
+        silent.clips[1].raw["muted"] = .bool(true)
+        let muted = try compiler.compile(document: silent, clips: clips, items: items,
+                                         sources: [0: source(0, 57.97), 1: source(1, 15)]).recipe
+        XCTAssertEqual(try XCTUnwrap(muted.tracks.first { $0.kind == .video }?.clips)[1].volume, 0)
+    }
+
     func testClipTrimAndAuthoredTextCompileFromPublicDocument() throws {
         let id = UUID()
         let clip = EditorClip(id: id, assetID: UUID(), sourceClipIndex: 2, start: 0, end: 4,

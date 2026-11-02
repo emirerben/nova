@@ -690,6 +690,21 @@ FIELD_MATRIX: dict[str, FieldRule] = {
     ),
     **_rules(
         "upstream_resolved",
+        "insert_clips_repair",
+        "insert_clips[]",
+        "insert_clips[].media_id",
+        "insert_clips[].at_phrase",
+        "insert_clips[].at_s",
+        "insert_clips[].keep_audio",
+        note=(
+            "Parent KRI-1151: kept or dropped by creator_capabilities.repair_creator_insert_clips; "
+            "the phone Talking worker pauses the take for each clip "
+            "(app.pipeline.phone_talking_inserts) and records variant['phone_insert_clips'], "
+            "which the brief receipts judge. The contract itself does not verify placement"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
         "speaker_background_repair",
         "background_media",
         "background_media.media_id",

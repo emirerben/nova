@@ -12,7 +12,7 @@ Emir can edit this guide or give examples to an agent. The following defaults ar
 | Motion | Existing subtle entrance and exit, only when useful | Preferred entrance and movement amount |
 | Placement | Clear space outside moving faces, important objects and captions | Preferred corner or size |
 | Text | Exact editable native text for numbers and labels | Font, weight, stroke and preferred scale |
-| Logos | Supplied exact asset | Which approved logo version? |
+| Logos | Supplied exact asset, else a reviewed generated approximation | Which approved logo version? |
 
 ## Accepted examples
 

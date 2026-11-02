@@ -3025,6 +3025,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             let sources: [Int: ResolvedEditorSource]
             var phoneTalkingIndices: [Int]?
             var phoneTalkingCutaways: [NativePhoneTalkingSource.Cutaway] = []
+            var phoneTalkingInserts: [NativePhoneTalkingSource.Insert] = []
             var phoneNarratedSeeds: [NativePhoneNarratedSource.Seed] = []
             if let base = NativeEditorBaseSource(variant: previewVariant, document: document) {
                 #if DEBUG
@@ -3057,6 +3058,13 @@ struct NativeEditorTemporaryVideo: Sendable {
                     } else {
                         phoneTalkingIndices = nil
                     }
+                    // Same for a clip the take is paused for (parent KRI-1151): without it the preview would
+                    // be shorter than the video and every caption after the pause would show late.
+                    if let inserts = NativePhoneTalkingSource.inserts(variant: previewVariant, pool: pool, speakerIndices: speakers) {
+                        phoneTalkingInserts = inserts
+                    } else {
+                        phoneTalkingIndices = nil
+                    }
                 }
                 if NativePhoneNarratedSource.applies(variant: previewVariant, document: document) {
                     phoneNarratedSeeds = await loadPhoneNarratedSeeds(pool: pool, generation: generation, sequence: sequence)
@@ -3065,6 +3073,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 var requiredIndices = Set<Int>(timelineClips.compactMap(\.sourceClipIndex))
                 requiredIndices.formUnion(phoneTalkingIndices ?? [])
                 requiredIndices.formUnion(phoneTalkingCutaways.map(\.clipIndex))
+                requiredIndices.formUnion(phoneTalkingIndices == nil ? [] : phoneTalkingInserts.map(\.clipIndex))
                 requiredIndices.formUnion(document.clipAudio.map(\.sourceClipIndex))
                 requiredIndices.formUnion(phoneNarratedSeeds.map(\.clipIndex))
                 sources = try await resolver.resolve(pool, generation: generation, requiredIndices: requiredIndices)
@@ -3078,14 +3087,18 @@ struct NativeEditorTemporaryVideo: Sendable {
                 }
                 // Captions/lanes are on the speech-cleanup cut timeline (KRI-232).
                 let removed = NativePhoneTalkingSource.removedSpans(variant: previewVariant)
+                let inserts = try phoneTalkingInserts.map { insert in
+                    guard let duration = sources[insert.clipIndex]?.asset.duration else { throw APIError.invalidResponse }
+                    return (insert: insert, sourceDuration: duration) as NativePhoneTalkingSource.PlacedInsert
+                }
                 #if DEBUG
-                NativePreviewDiagnostics.record("phone-talking-source", fields: ["index": phoneTalkingIndices.map(String.init).joined(separator: ","), "duration": speakers.map { String($0.duration) }.joined(separator: ","), "removed": String(removed.count)])
+                NativePreviewDiagnostics.record("phone-talking-source", fields: ["index": phoneTalkingIndices.map(String.init).joined(separator: ","), "duration": speakers.map { String($0.duration) }.joined(separator: ","), "removed": String(removed.count), "inserts": String(inserts.count)])
                 #endif
-                document = try NativePhoneTalkingSource.hydrate(document, speakers: speakers, removed: removed)
-                cleanDocument = try NativePhoneTalkingSource.hydrate(cleanDocument, speakers: speakers, removed: removed)
-                chatStagedDocument = try chatStagedDocument.map { try NativePhoneTalkingSource.hydrate($0, speakers: speakers, removed: removed) }
-                undoStack = try undoStack.map { try NativePhoneTalkingSource.hydrate($0, speakers: speakers, removed: removed) }
-                redoStack = try redoStack.map { try NativePhoneTalkingSource.hydrate($0, speakers: speakers, removed: removed) }
+                document = try NativePhoneTalkingSource.hydrate(document, speakers: speakers, removed: removed, inserts: inserts)
+                cleanDocument = try NativePhoneTalkingSource.hydrate(cleanDocument, speakers: speakers, removed: removed, inserts: inserts)
+                chatStagedDocument = try chatStagedDocument.map { try NativePhoneTalkingSource.hydrate($0, speakers: speakers, removed: removed, inserts: inserts) }
+                undoStack = try undoStack.map { try NativePhoneTalkingSource.hydrate($0, speakers: speakers, removed: removed, inserts: inserts) }
+                redoStack = try redoStack.map { try NativePhoneTalkingSource.hydrate($0, speakers: speakers, removed: removed, inserts: inserts) }
                 refreshDuration()
             }
             if !phoneNarratedSeeds.isEmpty {

@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.115.0] - 2026-11-02
+
+### Fixed
+- fix(overlays): read placed pictures from visual blocks; readable hold (KRI-1142) (#2067) <!-- release-pr: 2067 -->
+
+## [0.83.114.0] - 2026-11-02
+
+### Changed
+- feat(kria): pause the Talking take for a clip the creator asked to insert (parent KRI-1151) (#2058) <!-- release-pr: 2058 -->
+
+## [0.83.113.0] - 2026-11-02
+
+### Fixed
+- feat(overlays): two pictures can share a moment when apart (KRI-1142) (#2064) <!-- release-pr: 2064 -->
+
+## [0.83.112.0] - 2026-11-02
+
+### Fixed
+- feat(overlays): keep brand and logo requests for review (KRI-1142) (#2063) <!-- release-pr: 2063 -->
+
+## [0.83.111.0] - 2026-11-02
+
+### Fixed
+- fix(overlays): start just after a title an overlay only clips by a hair (KRI-1142) (#2061) <!-- release-pr: 2061 -->
+
+## [0.83.110.0] - 2026-11-02
+
+### Fixed
+- chore(media): log why an image generation was rejected (KRI-1142) (#2062) <!-- release-pr: 2062 -->
+
+## [0.83.109.0] - 2026-11-02
+
+### Changed
+- chore(fly): reduce topology to api/worker/light, shared-cpu worker (KRI-1167) (#2055) <!-- release-pr: 2055 -->
+
+## [0.83.108.0] - 2026-11-02
+
+### Fixed
+- fix(overlays): ignore a stray asset_id on generated rows (KRI-1142) (#2059) <!-- release-pr: 2059 -->
+
 ## [0.83.107.0] - 2026-11-02
 
 ### Fixed

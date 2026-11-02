@@ -304,6 +304,18 @@ class Settings(BaseSettings):
     # PHONE_TALKING_MENTION_CUTAWAYS_ENABLED=true --app nova-video` + restart api + worker, Fly
     # only (no Vercel twin); rollback with `=false` the same way.
     phone_talking_mention_cutaways_enabled: bool = False
+    # Parent KRI-1151 (insert a clip while the take is paused). With this on, a multi-clip phone
+    # Talking edit whose approved strategy carries `insert_clips` ("after I say X, show this clip
+    # with its own sound") switches the picture to that clip of the creator's own footage, plays
+    # its audio, and resumes his take exactly where it stopped: the video grows by the clip's
+    # length and every caption, text, card, effect and cutaway after the point moves later by it
+    # (`app.pipeline.phone_talking_inserts`). Recipe-only: the device already plays a different
+    # clip between two segments of the take, so no new capability or protocol. A clip that
+    # cannot be placed (phrase never said, hook/tail, too long, already in use) is not used and
+    # the `phone_insert_clips` receipt says why. False (default): byte-identical to before.
+    # Apply: `fly secrets set PHONE_TALKING_INSERT_CLIPS_ENABLED=true --app nova-video` + restart
+    # api + worker, Fly only (no Vercel twin); rollback with `=false` the same way.
+    phone_talking_insert_clips_enabled: bool = False
     # KRI-183 (video Visuals as PiP): when this flag AND
     # `phone_rollout.phone_subtitled_overlays_supported()` hold AND
     # "visualVideos" is in `phone_render_verified_features` -- i.e.

@@ -12,7 +12,7 @@ from app.agents._schemas.brief_extractor import (
     BriefExtractionInput,
     BriefExtractionOutput,
 )
-from app.agents.main_creator import _BRIEF_PROMPT_SECTION
+from app.agents.main_creator import _BRIEF_PROMPT_SECTION, with_insert_clip_brief
 from app.agents.prompt_vocab import render_vocab_tokens
 from app.kria.brief import (
     BriefUpdateBatchError,
@@ -61,7 +61,8 @@ from app.pipeline.prompt_loader import load_prompt
 # ask about how sideways clips sit in a vertical video.
 # v45 (prompt fidelity, animation): the shared brief section records an unnamed animation ask
 # as a `text` requirement with `animation: "any"`.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-31-v45"
+# v46 (parent KRI-1151): the shared brief section records `insert_clip` / `insert_at_phrase`.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-02-v46"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
@@ -158,7 +159,12 @@ class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
             creator_request=input.creator_request or "(none)",
             user_message=input.user_message,
             conversation=json.dumps(input.conversation, ensure_ascii=False),
-            brief_section=_NARROW_BRIEF_SECTION,
+            # Parent KRI-1151: the planner says whether the item can pause the take for a clip.
+            brief_section=(
+                with_insert_clip_brief(_NARROW_BRIEF_SECTION)
+                if input.insert_clips_open
+                else _NARROW_BRIEF_SECTION
+            ),
         )
 
     def parse(self, raw_text: str, input: BriefExtractionInput) -> BriefExtractionOutput:  # noqa: A002, ARG002

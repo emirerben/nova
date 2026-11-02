@@ -1418,6 +1418,18 @@ def phone_talking_mention_cutaways_supported() -> bool:
     return bool(getattr(settings, "phone_talking_mention_cutaways_enabled", False))
 
 
+def phone_talking_insert_clips_supported() -> bool:
+    """May a multi-clip phone Talking edit pause the creator's take for an inserted clip right
+    now (parent KRI-1151)? The kill switch AND everything that edit already needs: the
+    multi-clip Talking shape (the clip is one of the item's own footage clips) and the audio
+    mix the clip's own sound plays through. Recipe-only, so nothing else is gated."""
+    return bool(
+        getattr(settings, "phone_talking_insert_clips_enabled", False)
+        and phone_talking_multi_clip_supported()
+        and "audioMix" in set(settings.phone_render_verified_features)
+    )
+
+
 def phone_timed_video_cards_supported() -> bool:
     """`phone_timed_cards_supported()` AND the device plays Visuals videos
     (`visualVideos` verified): a timed card may then bind a video, played muted
