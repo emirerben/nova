@@ -372,6 +372,10 @@ def _warp_cues(cues: Sequence[dict], point: float, length: float) -> list[dict]:
 
 
 def _warp_rows(rows: Sequence[dict], point: float, length: float) -> list[dict]:
+    """Text across the point shows on both sides (never over the inserted clip), each part at
+    least `_MIN_PART_S`: a shorter one is dropped, the longer side keeps the row. A row that
+    runs the whole video is therefore two rows around the insert, and its entrance plays
+    again after it (a documented limit, see the phone-rendering runbook)."""
     out: list[dict] = []
     for row in rows:
         start, end = float(row["start_s"]), float(row["end_s"])
@@ -380,11 +384,17 @@ def _warp_rows(rows: Sequence[dict], point: float, length: float) -> list[dict]:
         elif start >= point - _EPS:
             out.append({**row, "start_s": start + length, "end_s": end + length})
         else:
-            out.append({**row, "end_s": point})
-            later = {**row, "start_s": point + length, "end_s": end + length}
-            if "id" in later:
-                later["id"] = f"{row['id']}-b"
-            out.append(later)
+            head, tail = point - start, end - point
+            keep_head, keep_tail = head >= _MIN_PART_S, tail >= _MIN_PART_S
+            if not keep_head and not keep_tail:
+                keep_head, keep_tail = head >= tail, head < tail
+            if keep_head:
+                out.append({**row, "end_s": point})
+            if keep_tail:
+                later = {**row, "start_s": point + length, "end_s": end + length}
+                if "id" in later and keep_head:
+                    later["id"] = f"{row['id']}-b"
+                out.append(later)
     return out
 
 
