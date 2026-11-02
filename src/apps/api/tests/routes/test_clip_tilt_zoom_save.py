@@ -21,7 +21,12 @@ from app.services.client_protocol import (
     set_client_protocol,
 )
 from app.services.device_render import device_status
-from tests.routes.test_clip_tilt_editor_save import _open_tilt
+from tests.routes._editor_save_matrix import VARIANT, order_required_job
+from tests.routes.test_clip_tilt_editor_save import (
+    _authored_session,
+    _guided_save,
+    _open_tilt,
+)
 from tests.routes.test_phone_voiceover_cut_edits import _recipe, _save, _slots, _track, _variant
 from tests.routes.test_phone_voiceover_editor_lanes import _enable, voiceover_job
 
@@ -112,7 +117,7 @@ def test_a_saved_zoom_reaches_the_recipe_scale_reads_back_and_resets(monkeypatch
     assert _clips(job, vid, archetype)[1].transform.scale == 1
 
 
-def test_a_zoom_alone_is_a_tilt_the_recipe_marks(monkeypatch):
+def test_a_zoom_alone_needs_no_new_recipe_capability(monkeypatch):
     _enable(monkeypatch)
     _open_tilt(monkeypatch, protocol=TILT_ZOOM_PROTOCOL)
     job, vid = voiceover_job(archetype="voiceover")
@@ -120,6 +125,7 @@ def test_a_zoom_alone_is_a_tilt_the_recipe_marks(monkeypatch):
     slots[1]["tilt"] = {"zoom": 2.0}
     _save(job, vid, timeline_slots=slots)
     assert _clips(job, vid)[1].transform.scale == pytest.approx(2.0)
+    assert "clipTilt" not in _recipe(job, vid).required_capabilities
     assert _variant(job)["user_timeline"]["slots"][1]["tilt"] == {"rotation_deg": 0.0, "zoom": 2.0}
 
 
@@ -185,6 +191,41 @@ def test_a_zoom_while_the_tilt_feature_is_dark_is_refused_as_a_tilt(monkeypatch)
     with pytest.raises(HTTPException) as refused:
         _save(job, vid, timeline_slots=slots)
     assert refused.value.detail == {"code": "clip_tilt_unavailable"}
+
+
+def test_a_guided_montage_save_carries_the_zoom_to_the_revision_row_and_recipe(monkeypatch):
+    job, variant, revision = order_required_job(monkeypatch, order_required=False)
+    _open_tilt(monkeypatch, protocol=TILT_ZOOM_PROTOCOL)
+    rows = gj.editor_deletion_timeline(job, variant)
+    first = rows[0]["slot_id"]
+
+    _guided_save(job, variant, revision, rows, **{first: {"tilt": dict(ZOOMED)}})
+
+    saved = gj.editor_deletion_timeline(job, _variant(job))
+    assert saved[0]["tilt"] == canonical_row_tilt(ZOOMED)
+    clip = next(
+        c
+        for t in device_status(job, VARIANT).request.recipe.tracks
+        for c in t.clips
+        if c.id == first
+    )
+    assert clip.transform.scale == pytest.approx(1.5)
+    assert clip.transform.rotation_degrees == 15.0
+
+    _guided_save(job, _variant(job), revision, saved, **{first: {"tilt": None}})
+    reset = device_status(job, VARIANT).request.recipe
+    assert "clipTilt" not in reset.required_capabilities
+    assert all(c.transform.scale == 1 for t in reset.tracks for c in t.clips)
+
+
+def test_an_authored_save_carries_the_zoom_to_the_recipe_and_the_stored_row(monkeypatch):
+    save = _authored_session(monkeypatch)
+    set_client_protocol(TILT_ZOOM_PROTOCOL)
+    row, recipe = save(gj.TimelineSlotEdit(clip_index=1, in_s=2, duration_s=3, tilt={"zoom": 2.0}))
+    assert row["tilt"] == {"rotation_deg": 0.0, "zoom": 2.0}
+    clip = next(c for t in recipe.tracks if t.kind == "video" for c in t.clips)
+    assert clip.transform.scale == pytest.approx(2.0)
+    assert "clipTilt" not in recipe.required_capabilities, "a zoom alone is plain transform.scale"
 
 
 @pytest.mark.parametrize("zoom", [0.49, 3.01, 0, -1, "1.5", None, True])

@@ -180,8 +180,9 @@ def test_a_zoom_of_one_leaves_every_writer_byte_identical(writer, fit):
 
 
 @pytest.mark.parametrize("writer", WRITERS)
-def test_a_zoom_alone_marks_the_recipe_and_keeps_it_upright(writer):
+def test_a_zoom_alone_changes_the_scale_and_needs_no_new_capability(writer):
     recipe = COMPILE[writer]({"zoom": 1.5})
+    assert "clipTilt" not in recipe.required_capabilities
     clip = _clip(recipe)
     assert clip.transform.scale == pytest.approx(1.5)
     assert clip.transform.rotation_degrees == 0
