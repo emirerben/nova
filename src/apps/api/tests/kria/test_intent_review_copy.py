@@ -11,8 +11,10 @@ a test.
   A claim about what stills cannot show (5, 38):
     an audio ask (withheld) and an ask the model could not judge get no row and turn the
     headline from "everything I could see matches" into the version that names the limit. A
-    low-confidence "unmet" is not a verdict and does not support a clean headline. No sentence
-    says "I listened" or "I heard".
+    low-confidence reading, "unmet" or "met", is a guess and not a verdict: it gets no row and
+    does not support a clean headline. A "met" on a timing ask is never a check, whatever the
+    stored finding says, because stills cannot show how long anything stays up. A review whose
+    only passes are guesses has nothing to say. No sentence says "I listened" or "I heard".
   Wrong footage or a doubtful reading sold as a fix (22, 34):
     a suggestion says nothing changed and offers no question; the optional fix is named only
     when the repair was held back for a reason that leaves it sensible (not once the creator's
@@ -305,6 +307,16 @@ def test_everything_judged_gets_the_plain_headline_and_a_row_per_met_ask():
             [finding("R1"), finding("R2", "unmet", "wrong_content", "low")],
             id="a_low_confidence_unmet_is_not_a_clean_pass",
         ),
+        pytest.param(
+            catalog(requirement("R1", "r1"), requirement("R2", "r2", "select")),
+            [finding("R1"), finding("R2", confidence="low")],
+            id="a_low_confidence_met_is_a_guess_not_a_pass",
+        ),
+        pytest.param(
+            catalog(requirement("R1", "r1"), requirement("R2", "r2", "timing")),
+            [finding("R1"), finding("R2")],
+            id="a_met_on_a_timing_ask_is_not_a_check",
+        ),
     ],
 )
 def test_anything_stills_cannot_judge_names_the_limit_and_gets_no_row(cat, findings):
@@ -314,6 +326,41 @@ def test_anything_stills_cannot_judge_names_the_limit_and_gets_no_row(cat, findi
         "see matches. I can't judge sound or motion from still frames."
     )
     assert set(rows(post)) == {"r1"}
+
+
+def test_a_medium_confidence_pass_is_still_a_checked_pass_only_low_is_ignored():
+    medium = review(CLEAN, [finding("R1", confidence="medium"), finding("R2")])
+    (post,) = posts("no_findings", "reviewed", medium)
+    assert set(rows(post)) == {"r1", "r2"} and "frames" not in lead(post)
+
+
+@pytest.mark.parametrize(
+    "cat,findings",
+    [
+        pytest.param(
+            CLEAN,
+            [finding("R1", confidence="low"), finding("R2", confidence="low")],
+            id="every_pass_is_a_guess",
+        ),
+        pytest.param(
+            catalog(requirement("R1", "r1", "timing")),
+            [finding("R1")],
+            id="the_only_pass_is_on_a_timing_ask",
+        ),
+    ],
+)
+def test_a_review_whose_only_passes_cannot_be_counted_has_nothing_to_say(cat, findings):
+    assert posts("no_findings", "reviewed", review(cat, findings)) == []
+
+
+def test_a_guessed_pass_beside_a_real_doubt_gets_no_checked_row():
+    rev = review(
+        CLEAN,
+        [finding("R1", confidence="low"), finding("R2", "unmet", "wrong_content")],
+        disposition("suggestion", suggestions=[("R2", None, "no_candidate")]),
+    )
+    (post,) = posts("suggestion", "reviewed", rev)
+    assert set(rows(post)) == {"r2"} and rows(post)["r2"]["status"] == "partial"
 
 
 def test_no_sentence_claims_to_have_listened_in_either_language():

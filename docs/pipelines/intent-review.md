@@ -37,11 +37,11 @@ render ready (observer)
 
 | Outcome | Chat |
 | --- | --- |
-| `no_findings` | One receipt: "I checked the finished video against your request. Everything I could see matches." If anything was withheld (audio) or could not be judged from stills, the headline names the limit instead. One `met` row per verified ask. |
+| `no_findings` | One receipt: "I checked the finished video against your request. Everything I could see matches." If anything was withheld (audio) or could not be judged from stills, the headline names the limit instead. One `met` row per ask judged `met` at medium or high confidence; a low-confidence `met` is a guess and gets no row. |
 | `suggestion` | One receipt: something may not match, nothing was changed. One `partial` row per doubtful ask; the optional fix is named only when it is still a sensible offer. |
 | `needs_confirmation` | The suggestion receipt, then one `assistant_question` with the options "Change it" / "Keep it". A tap is an ordinary user message; the reviewer stages nothing. |
 | `repair_staged` | The repair turn's own card (`draft_applied` with Undo, then `approval_requested`), then one receipt saying the fix is waiting for approval. Never a question. |
-| `repair_verified` | One receipt: the fix worked, checked again; the fix line in the past tense; Undo still available. |
+| `repair_verified` | One receipt: the fix worked, checked again; the fix line in the past tense; Undo still available. Every targeted ask must be `met` in the follow-up review at medium or high confidence; a low-confidence `met` leaves the repair `repair_unverified`. |
 | `repair_unverified` | One receipt: the fix is in the new video but could not be confirmed; never says "checked". |
 | `repair_reverted(worse)` | One receipt: the draft was undone, the video still shows the fix, ask to render the previous version. Never claims the old video is back. |
 | `repair_reverted(worse_head_moved)` | One message: the creator's newer edits are untouched; the fix can be undone from its card. |

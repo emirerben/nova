@@ -110,5 +110,5 @@ Turn every flag off first. The merged code is inert with the flags off, so the P
 
 - Whether the planner turns a plain "Render previous version" after a revert into a render has not been checked (it needs a live planner call), so the revert message says "ask me to render it" instead of naming a button.
 - The one question a wording doubt asks offers "Change it" / "Keep it". The tap is an ordinary user message read by the planner; that it resolves to the right element has not been checked live.
-- Stills cannot show sound or motion. Audio asks are never reviewed, and a timing ask is never reported as met.
+- Stills cannot show sound or motion. Audio asks are never reviewed, and a timing ask is never reported as met. A low-confidence `met` is treated like a low-confidence `unmet`: ignored. A review whose only passes are guesses is `unavailable(nothing_verifiable)` and posts nothing.
 - Receipts are English or Turkish, from the thread's stored language; any other language reads English.

@@ -37,7 +37,8 @@ Failure modes, written before the staging code (matrix row in parentheses). Each
     draft was left alone); the turn the undo promoted is published only once the parent is
     closed, and a broker that refuses it cannot strand the parent.
   A settlement that credits or blames the repair wrongly (31, 32, 33):
-    `fixed` needs every recorded target met, and at least one target; a low-confidence unmet
+    `fixed` needs every recorded target met at more than a guess, and at least one target; a
+    low-confidence met is a guess and never credits the repair; a low-confidence unmet
     finding is no loss; more high-confidence unmet requirements than before is a loss even
     when none of them was met before.
   A repair the creator or the follow-up review turned down comes back (30, 31):
@@ -1569,6 +1570,25 @@ async def test_a_refused_publish_of_the_turn_the_undo_promoted_cannot_strand_the
             False,
             two_requirements,
             id="a_repair_with_no_recorded_target_proves_nothing",
+        ),
+        pytest.param(
+            [R1_UNMET, R2_MET],
+            None,
+            [finding("R1", "met", frames=["f0"], confidence="low"), R2_MET],
+            ("repair_unverified", "not_confirmed"),
+            False,
+            id="a_low_confidence_pass_on_the_target_is_a_guess_not_a_fix",
+        ),
+        pytest.param(
+            [R1_UNMET, R2_MET],
+            None,
+            [
+                finding("R1", "met", frames=["f0"], confidence="low"),
+                finding("R2", "met", frames=["f1"], confidence="low"),
+            ],
+            ("repair_unverified", "rereview_unavailable"),
+            False,
+            id="a_follow_up_whose_passes_are_all_guesses_confirms_nothing",
         ),
     ],
 )

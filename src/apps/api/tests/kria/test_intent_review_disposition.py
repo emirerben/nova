@@ -16,7 +16,9 @@ Failure modes, written before the code (matrix row in parentheses). Each has a t
     last, so a reply with a more specific fault still reports that fault.
   The model cannot claim what stills cannot show (5, 21):
     a met verdict on a timing requirement is recorded as unverifiable; a review that judged
-    nothing is nothing_verifiable, never "everything matches".
+    nothing is nothing_verifiable, never "everything matches". A low-confidence met is a guess,
+    like a low-confidence unmet: it judges nothing, so a review whose only passes are guesses
+    is nothing_verifiable too.
   Authority stays on the server (21, 22, 23, 24, 26, 27, 28, 34):
     low confidence is ignored; medium never repairs or asks; a repair needs high confidence, a
     tier that repairs, staging preconditions that held, and a candidate matching BOTH the
@@ -261,6 +263,40 @@ def test_only_low_confidence_defects_and_no_met_judges_nothing():
     catalog = make_catalog([req("R1")], [RESTORE])
     result = evaluate(catalog, finding("R1", "unmet", "copy_mismatch", ["f0"], "low"))
     assert (result.status, result.reason) == ("unavailable", "nothing_verifiable")
+
+
+@pytest.mark.parametrize(
+    "findings",
+    [
+        pytest.param(
+            [finding("R1", confidence="low"), finding("R2", confidence="low")],
+            id="every_met_is_a_guess",
+        ),
+        pytest.param(
+            [
+                finding("R1", confidence="low"),
+                finding("R2", "unmet", "copy_mismatch", ["f0"], "low"),
+            ],
+            id="a_guessed_met_beside_an_ignored_defect",
+        ),
+    ],
+)
+def test_a_low_confidence_met_is_a_guess_and_judges_nothing(findings):
+    catalog = make_catalog([req("R1"), req("R2")], [RESTORE])
+    result = evaluate(catalog, *findings)
+    assert (result.status, result.reason) == ("unavailable", "nothing_verifiable")
+
+
+def test_a_low_confidence_met_beside_a_counted_one_still_lets_the_review_through():
+    catalog = make_catalog([req("R1"), req("R2")])
+    result = evaluate(catalog, finding("R1", confidence="low"), finding("R2", frames=["f0"]))
+    assert (result.status, result.reason) == ("no_findings", "reviewed")
+
+
+def test_a_medium_confidence_met_is_counted_only_low_is_ignored():
+    catalog = make_catalog([req("R1")])
+    result = evaluate(catalog, finding("R1", confidence="medium"))
+    assert (result.status, result.reason) == ("no_findings", "reviewed")
 
 
 # --- authority stays on the server -----------------------------------------------------------

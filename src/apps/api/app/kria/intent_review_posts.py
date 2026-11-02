@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from app.agents._schemas.intent_review import IntentFinding
+from app.agents._schemas.intent_review import IntentFinding, counts_as_met
 from app.kria.contracts import RequirementReceipt
 from app.kria.intent_review_catalog import ReviewCatalog
 from app.kria.intent_review_copy import (
@@ -155,8 +155,11 @@ def _original(status: str, stamp: _Stamp, review: Mapping[str, Any]) -> list[Pos
     catalog = ReviewCatalog.model_validate(review["catalog"])
     findings = [IntentFinding.model_validate(f) for f in review["findings"]]
     disposition = Disposition.model_validate(review["disposition"])
+    kinds = {item.requirement_id: item.kind for item in catalog.requirements}
     reasons: dict[str, tuple[str, str]] = {
-        f.requirement_id: ("met", reason_checked()) for f in findings if f.verdict == "met"
+        f.requirement_id: ("met", reason_checked())
+        for f in findings
+        if counts_as_met(f.verdict, f.confidence, kinds.get(f.requirement_id))
     }
     if status == "no_findings":
         if not reasons:

@@ -24,7 +24,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.agents._schemas.intent_review import IntentFinding
+from app.agents._schemas.intent_review import IntentFinding, counts_as_met
 from app.config import settings
 from app.database import sync_session
 from app.kria.brief import load_latest_brief_sync
@@ -637,7 +637,9 @@ def compare_reviews(parent: dict[str, Any], child: dict[str, Any]) -> tuple[bool
     touched = _touched_briefs(parent) | targeted
     parent_met = {brief for brief, f in before.items() if f["verdict"] == "met"}
     child_unmet = high(after, "unmet") & touched
-    met_after = {brief for brief, f in after.items() if f["verdict"] == "met"}
+    met_after = {
+        brief for brief, f in after.items() if counts_as_met(f["verdict"], f["confidence"])
+    }
     fixed = bool(targeted) and targeted <= met_after
     worse = bool(child_unmet & parent_met) or (
         not fixed and len(child_unmet) > len(high(before, "unmet") & touched)
