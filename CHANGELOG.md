@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.114.0] - 2026-11-02
+
+### Changed
+- feat(kria): pause the Talking take for a clip the creator asked to insert (parent KRI-1151) (#2058) <!-- release-pr: 2058 -->
+
 ## [0.83.113.0] - 2026-11-02
 
 ### Fixed
