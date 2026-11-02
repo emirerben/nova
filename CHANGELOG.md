@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.116.0] - 2026-11-02
+
+### Changed
+- feat(notifications): empty allowed-accounts list means every account (KRI-1172) (#2068) <!-- release-pr: 2068 -->
+
 ## [0.83.115.0] - 2026-11-02
 
 ### Fixed
