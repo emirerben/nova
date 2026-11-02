@@ -22,7 +22,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
-from app.agents._runtime import ProviderOutcomeUnknownError
+from app.agents._runtime import ProviderOutcomeUnknownError, TerminalError, TransientError
 from app.agents._schemas.creator_agent import (
     CapabilityAvailability,
     CreatorMediaRef,
@@ -33,6 +33,7 @@ from app.config import settings
 from app.database import sync_engine
 from app.kria import planner
 from app.kria.contracts import KriaTurnPlan
+from app.kria.paid_call_scope import paid_call_request_id, turn_run_epoch
 from app.services import ai_cost_control
 from app.tasks import kria_runtime
 from tests.agents.conftest import MockModelClient
@@ -179,3 +180,71 @@ async def test_first_run_keys_are_unchanged(one_run) -> None:
 
     (request,) = one_run.reservations
     assert request.ctx.request_id == str(one_run.thread_id)
+
+
+# --- the other planner calls that share the thread id as their request id ---------------
+
+
+def test_request_ids_of_the_first_run_are_the_thread_id() -> None:
+    thread_id = uuid.uuid4()
+
+    assert paid_call_request_id(thread_id) == str(thread_id)
+    # The brief extractor's retry id as it was spelled before the run epoch existed.
+    assert paid_call_request_id(thread_id, "extractor-retry") == (f"{thread_id}:extractor-retry")
+
+
+def test_request_ids_of_a_later_run_are_new_for_every_planner_call() -> None:
+    thread_id = uuid.uuid4()
+    token = turn_run_epoch.set(2)
+    try:
+        first = paid_call_request_id(thread_id)
+        retry = paid_call_request_id(thread_id, "extractor-retry")
+    finally:
+        turn_run_epoch.reset(token)
+
+    assert first == f"{thread_id}:e2"
+    assert retry == f"{thread_id}:e2:extractor-retry"
+    assert len({str(thread_id), f"{thread_id}:extractor-retry", first, retry}) == 4
+
+
+@pytest.mark.parametrize("epoch", [1, 2])
+async def test_brief_extractor_and_its_retry_use_the_run_scoped_request_id(
+    monkeypatch: pytest.MonkeyPatch, epoch: int
+) -> None:
+    """The extractor reserves under the same id as Main Creator, and its retry under a second."""
+
+    seen: list[str] = []
+
+    class FakeExtractor:
+        def __init__(self, _client: object) -> None: ...
+
+        def run(self, _input: object, *, ctx: Any) -> object:
+            seen.append(ctx.request_id)
+            if len(seen) == 1:
+                failure = TerminalError("provider timed out")
+                failure.__cause__ = TransientError("deadline")
+                raise failure
+            return SimpleNamespace(brief_updates=[])
+
+    monkeypatch.setattr(planner, "BriefExtractorAgent", FakeExtractor)
+    monkeypatch.setattr(planner, "default_client", lambda: None)
+    monkeypatch.setattr(planner, "_EXTRACTOR_RETRY_BACKOFF_S", 0)
+    monkeypatch.setattr(planner.settings, "kria_error_honesty_enabled", True)
+    thread_id = uuid.uuid4()
+    token = turn_run_epoch.set(epoch)
+    try:
+        await planner._call_brief_extractor(
+            planner._CreatorInputs(
+                agent_input=_main_creator_input(), intent_clips=[], creator_request=""
+            ),
+            creator_request="Start with the cooking clip.",
+            thread_id=thread_id,
+            creator_id=uuid.uuid4(),
+            item_id=uuid.uuid4(),
+            creator_agent_session_id=None,
+        )
+    finally:
+        turn_run_epoch.reset(token)
+
+    scope = "" if epoch == 1 else f":e{epoch}"
+    assert seen == [f"{thread_id}{scope}", f"{thread_id}{scope}:extractor-retry"]

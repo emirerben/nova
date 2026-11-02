@@ -77,6 +77,7 @@ from app.kria.editor_receipts import (
 )
 from app.kria.language import is_paraphrase_only
 from app.kria.order_replacement_receipts import compiled_order_preflight_sync
+from app.kria.paid_call_scope import turn_run_epoch
 from app.kria.planner import (
     PlannedKriaTurn,
     answering_through_sequence,
@@ -3384,6 +3385,8 @@ async def _plan_with_live_agent(
     # KRI-1037: "Try again" after a provider deadline starts the Main Creator on its lighter
     # rung (the claim stamped the snapshot from the thread's last finished turn).
     degraded_token = start_degraded_retry.set(bool(snapshot.get("start_degraded")))
+    # A continued or reclaimed run re-sends unchanged prompts: its paid calls are new calls.
+    epoch_token = turn_run_epoch.set(lease_epoch)
     sender = bind_sending_build(stamped_client_protocol(snapshot.get("client_protocol")))
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
@@ -3520,6 +3523,7 @@ async def _plan_with_live_agent(
     finally:
         turn_deadline.reset(deadline)
         start_degraded_retry.reset(degraded_token)
+        turn_run_epoch.reset(epoch_token)
         unbind_sending_build(sender)
         stop.set()
         try:
