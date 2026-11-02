@@ -201,6 +201,12 @@ class Settings(BaseSettings):
     # PHONE_SUBTITLED_EDITOR_LANES_ENABLED=false --app nova-video` + `fly
     # machine restart <id>` (api + worker).
     phone_subtitled_editor_lanes_enabled: bool = False
+    # Range (the source-window sheet) on a phone Talking edit: a Save carrying the
+    # talking-source `timeline_slots` rows recompiles the speaker's kept segments, and
+    # `editor_capabilities.clips.source_window` opens. Default OFF; also its kill switch
+    # (`fly secrets set PHONE_TALKING_RANGE_EDITS_ENABLED=false` + restart api and worker).
+    # `phone_rollout.phone_talking_range_supported()` is the single source of truth.
+    phone_talking_range_edits_enabled: bool = False
     # KRI-281 (editable phone Voiceover edits): the sound-effects and Visuals
     # (media overlay) editor lanes for a phone-rendered `narrated` (recorded
     # voiceover over a script) or montage `voiceover` variant, mirroring

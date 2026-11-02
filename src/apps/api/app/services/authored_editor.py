@@ -40,6 +40,112 @@ def explicit_authored_slots(variant: dict) -> list[dict]:
     return active
 
 
+def sync_talking_source_lanes(
+    job: Any, variant: dict, payload: Any, resolved: list[dict], old_slots: list[dict]
+) -> tuple[Any, bool]:
+    """Re-anchor a Talking take's speech lanes to ``resolved`` slot rows (KRI-852).
+
+    Seeds the source-anchored ``speech_timing_basis`` from the variant (and the preflight
+    transcript when one exists), syncs the lanes the Save supplies, and projects the lanes it
+    omits onto the new clock in place on ``variant``. A supplied lane is already on its
+    submitted output clock and is never remapped a second time. Returns the payload (its text
+    lane stripped of caption mirrors) and whether newly exposed speech has no caption timing.
+    """
+    from app.pipeline.speech_cut_state import (
+        SPEECH_EDITOR_LANES,
+        authored_speech_texts,
+        project_speech_basis,
+        speech_basis_entry,
+        sync_speech_basis,
+    )
+    from app.services.editor_deletions import canonical_caption_rows
+
+    basis = speech_timing_basis_for_job(job, variant, old_slots)
+    captions_enabled = variant.get("captions_enabled", True)
+    if payload.caption_meta is not None and payload.caption_meta.enabled is not None:
+        captions_enabled = payload.caption_meta.enabled
+    unresolved = False
+    projected_cues = project_speech_basis(basis.get("caption_cues", []), resolved, captions=True)
+    authored_captions = payload.caption_cues is not None and (
+        canonical_caption_rows(payload.caption_cues) != projected_cues
+        or any(row.kind == "caption_cue" for row in payload.deletions)
+    )
+    if authored_captions:
+        # A creator-authored full lane replacement owns its content on this
+        # exact submitted timeline. Merely sending the automatically rebased
+        # lane does not confirm missing source words (the native client
+        # sends that lane whenever source geometry makes it dirty).
+        basis["source_windows"] = speech_basis_entry({}, resolved)["slots"]
+    elif captions_enabled and (variant.get("caption_cues") or basis.get("caption_cues")):
+        coverage = basis.get("source_windows") or old_slots
+        for row in resolved:
+            if not str(row.get("slot_id")).startswith("native-phone-talking-source"):
+                continue
+            start = float(row["in_s"])
+            nominal_end = start + float(row["duration_s"]) * float(row.get("playback_rate") or 1)
+            end = min(nominal_end, float(row.get("source_end_s") or nominal_end))
+            if not any(
+                w.get("slot_id") == row["slot_id"]
+                and start >= float(w["in_s"]) - 1e-6
+                and end
+                <= float(w["in_s"])
+                + float(w["duration_s"]) * float(w.get("playback_rate") or 1)
+                + 1e-6
+                for w in coverage
+            ):
+                unresolved = True
+    variant["speech_timing_unresolved"] = unresolved
+    if payload.text_elements is not None:
+        payload = payload.model_copy(
+            update={"text_elements": authored_speech_texts(payload.text_elements)}
+        )
+    for field in SPEECH_EDITOR_LANES:
+        current = variant.get(field)
+        if field == "text_elements" and isinstance(current, list):
+            current = authored_speech_texts(current)
+        if not isinstance(current, list):
+            continue
+        if field == "caption_cues":
+            current = canonical_caption_rows(current)
+        entries = sync_speech_basis(
+            basis.get(field), current, old_slots, captions=field == "caption_cues"
+        )
+        supplied = getattr(payload, field, None)
+        if supplied is not None:
+            if field == "caption_cues":
+                supplied = canonical_caption_rows(supplied)
+            entries = sync_speech_basis(
+                entries,
+                supplied,
+                resolved,
+                captions=field == "caption_cues",
+                deleted_ids={
+                    row.id
+                    for row in payload.deletions
+                    if row.kind
+                    == {
+                        "caption_cues": "caption_cue",
+                        "text_elements": "text",
+                        "sound_effects": "sound_effect",
+                        "media_overlays": "media_overlay",
+                        "visual_blocks": "visual_block",
+                        "motion_scenes": "motion_scene",
+                        "camera_effects": "camera_effect",
+                        "drawings": "drawing",
+                    }[field]
+                },
+            )
+        basis[field] = entries
+        # Only omitted lanes need server projection. A present lane is an
+        # authored replacement on the submitted output clock, never remap twice.
+        if supplied is None:
+            variant[field] = project_speech_basis(
+                entries, resolved, captions=field == "caption_cues"
+            )
+    variant["speech_timing_basis"] = basis
+    return payload, unresolved
+
+
 def prepare_authored_editor_commit(
     job: Any,
     variant_id: str,
@@ -101,15 +207,6 @@ def prepare_authored_editor_commit(
     if (payload.timeline_slots is not None or variant.get("speech_timing_basis")) and any(
         str(key).startswith("native-phone-talking-source") for key in canonical
     ):
-        from app.pipeline.speech_cut_state import (
-            SPEECH_EDITOR_LANES,
-            authored_speech_texts,
-            project_speech_basis,
-            speech_basis_entry,
-            sync_speech_basis,
-        )
-        from app.services.editor_deletions import canonical_caption_rows
-
         variant["editor_timeline_mode"] = AUTHORED_TIMELINE_MODE
         resolved = (
             resolve_authored_phone_slots(job, variant, payload.timeline_slots)
@@ -117,93 +214,7 @@ def prepare_authored_editor_commit(
             else list(canonical.values())
         )
         old_slots = list(canonical.values())
-        basis = speech_timing_basis_for_job(job, variant, old_slots)
-        captions_enabled = variant.get("captions_enabled", True)
-        if payload.caption_meta is not None and payload.caption_meta.enabled is not None:
-            captions_enabled = payload.caption_meta.enabled
-        unresolved = False
-        projected_cues = project_speech_basis(
-            basis.get("caption_cues", []), resolved, captions=True
-        )
-        authored_captions = payload.caption_cues is not None and (
-            canonical_caption_rows(payload.caption_cues) != projected_cues
-            or any(row.kind == "caption_cue" for row in payload.deletions)
-        )
-        if authored_captions:
-            # A creator-authored full lane replacement owns its content on this
-            # exact submitted timeline. Merely sending the automatically rebased
-            # lane does not confirm missing source words (the native client
-            # sends that lane whenever source geometry makes it dirty).
-            basis["source_windows"] = speech_basis_entry({}, resolved)["slots"]
-        elif captions_enabled and (variant.get("caption_cues") or basis.get("caption_cues")):
-            coverage = basis.get("source_windows") or old_slots
-            for row in resolved:
-                if not str(row.get("slot_id")).startswith("native-phone-talking-source"):
-                    continue
-                start = float(row["in_s"])
-                nominal_end = start + float(row["duration_s"]) * float(
-                    row.get("playback_rate") or 1
-                )
-                end = min(nominal_end, float(row.get("source_end_s") or nominal_end))
-                if not any(
-                    w.get("slot_id") == row["slot_id"]
-                    and start >= float(w["in_s"]) - 1e-6
-                    and end
-                    <= float(w["in_s"])
-                    + float(w["duration_s"]) * float(w.get("playback_rate") or 1)
-                    + 1e-6
-                    for w in coverage
-                ):
-                    unresolved = True
-        variant["speech_timing_unresolved"] = unresolved
-        if payload.text_elements is not None:
-            payload = payload.model_copy(
-                update={"text_elements": authored_speech_texts(payload.text_elements)}
-            )
-        for field in SPEECH_EDITOR_LANES:
-            current = variant.get(field)
-            if field == "text_elements" and isinstance(current, list):
-                current = authored_speech_texts(current)
-            if not isinstance(current, list):
-                continue
-            if field == "caption_cues":
-                current = canonical_caption_rows(current)
-            entries = sync_speech_basis(
-                basis.get(field), current, old_slots, captions=field == "caption_cues"
-            )
-            supplied = getattr(payload, field, None)
-            if supplied is not None:
-                if field == "caption_cues":
-                    supplied = canonical_caption_rows(supplied)
-                entries = sync_speech_basis(
-                    entries,
-                    supplied,
-                    resolved,
-                    captions=field == "caption_cues",
-                    deleted_ids={
-                        row.id
-                        for row in payload.deletions
-                        if row.kind
-                        == {
-                            "caption_cues": "caption_cue",
-                            "text_elements": "text",
-                            "sound_effects": "sound_effect",
-                            "media_overlays": "media_overlay",
-                            "visual_blocks": "visual_block",
-                            "motion_scenes": "motion_scene",
-                            "camera_effects": "camera_effect",
-                            "drawings": "drawing",
-                        }[field]
-                    },
-                )
-            basis[field] = entries
-            # Only omitted lanes need server projection. A present lane is an
-            # authored replacement on the submitted output clock, never remap twice.
-            if supplied is None:
-                variant[field] = project_speech_basis(
-                    entries, resolved, captions=field == "caption_cues"
-                )
-        variant["speech_timing_basis"] = basis
+        payload, _unresolved = sync_talking_source_lanes(job, variant, payload, resolved, old_slots)
     variant["editor_timeline_mode"] = AUTHORED_TIMELINE_MODE
     if variant.get("render_destination") == "device":
         from app.services.phone_editor import prepare_phone_editor_commit

@@ -1148,6 +1148,20 @@ def phone_subtitled_editor_lanes_supported() -> bool:
     )
 
 
+def phone_talking_range_supported() -> bool:
+    """Single source of truth for "may the Range sheet choose which part of a phone Talking
+    take plays right now": the kill switch (``phone_talking_range_edits_enabled``) AND the
+    Talking editor lanes it rides on. The recipe shape (several hard-cut keep segments) is the
+    one cleanup already ships, so no extra verified token is needed.
+
+    Consulted by ``generative_jobs._editor_capabilities`` (whether ``clips.source_window``
+    appears) and by the Talking Save (whether ``timeline_slots`` recompiles or 422s), so the
+    capability never advertises a Save the server would refuse."""
+    return bool(
+        settings.phone_talking_range_edits_enabled and phone_subtitled_editor_lanes_supported()
+    )
+
+
 # Device features a phone Voiceover (`narrated` / montage `voiceover`) Save needs
 # to recompile its sound-effect and Visuals lanes (KRI-281): the same set the
 # Talking lanes need, since both reuse `phone_subtitled_plan`'s lane compilers.
