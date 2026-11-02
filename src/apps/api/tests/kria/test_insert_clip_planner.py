@@ -373,3 +373,130 @@ def test_the_turkish_twin_exists_for_every_reason_the_worker_can_write():
     generic = bc._insert_clip_why("zzz")
     known = [r for r in worker_reasons if bc._insert_clip_why(r) != generic]
     assert set(known) == set(worker_reasons)
+
+
+# --- 5b. a closed rollout leaves BOTH prompts as they were (review of #2058, MAJOR 3) ---------
+
+
+def _brief_prompt(manifest, *, brief=True) -> str:
+    from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
+
+    return MainCreatorAgent(None).render_prompt(
+        MainCreatorInput(
+            user_message="x",
+            media_context=[{"media_id": FOOTAGE_C, "kind": "video", "filename": "congress.mp4"}],
+            capability_manifest=manifest,
+            brief_enabled=brief,
+        )
+    )
+
+
+def _extractor_prompt(**kw) -> str:
+    from app.agents._schemas.brief_extractor import BriefExtractionInput
+    from app.agents.brief_extractor import BriefExtractorAgent
+
+    return BriefExtractorAgent(None).render_prompt(  # type: ignore[arg-type]
+        BriefExtractionInput(creator_request="", user_message="x", conversation=[], **kw)
+    )
+
+
+# sha256 of the shared brief section at origin/main before the insert paragraph existed.
+_BRIEF_SECTION_BEFORE_INSERTS = "a3798035e169f3aeff144526a6d8f9bf3f044b0d0985267fb1547831f17a4386"
+
+
+def test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inserts():
+    from app.agents.main_creator import _BRIEF_PROMPT_SECTION, brief_prompt_section
+
+    assert brief_prompt_section(False) == _BRIEF_PROMPT_SECTION
+    assert hashlib.sha256(_BRIEF_PROMPT_SECTION.encode()).hexdigest() == (
+        _BRIEF_SECTION_BEFORE_INSERTS
+    )
+    assert "insert_clip" not in _BRIEF_PROMPT_SECTION
+    assert "insert_clip" in brief_prompt_section(True)
+
+
+def test_the_creator_prompt_with_the_brief_on_changes_only_while_inserts_are_open(monkeypatch):
+    from app.agents.main_creator import _BRIEF_PROMPT_SECTION, brief_prompt_section
+
+    _open(monkeypatch, insert=False)
+    manifest = _julio_manifest()
+    closed = _brief_prompt(manifest)
+    assert "insert_clip" not in closed and "IN THE MIDDLE of the talk" not in closed
+    assert "\n" + _BRIEF_PROMPT_SECTION in closed
+    # A montage / single-clip manifest is untouched even with the rollout open.
+    monkeypatch.setattr(settings, "phone_talking_insert_clips_enabled", True)
+    montage = _manifest(
+        [
+            {"media_id": FOOTAGE_A, "kind": "video", "duration_s": 12.9},
+            {"media_id": FOOTAGE_B, "kind": "video", "duration_s": 2.0},
+        ],
+        edit_format="montage",
+    )
+    assert "insert_clip" not in _brief_prompt(montage)
+    opened = _brief_prompt(manifest)
+    assert "\n" + brief_prompt_section(True) in opened
+    assert opened.replace(brief_prompt_section(True), _BRIEF_PROMPT_SECTION) != opened
+
+
+def test_the_brief_extractor_prompt_teaches_inserts_only_when_told_they_are_open():
+    from app.agents.brief_extractor import _NARROW_BRIEF_SECTION
+
+    assert "insert_clip" not in _extractor_prompt()
+    assert "insert_clip" not in _NARROW_BRIEF_SECTION
+    assert '"insert_clip"' in _extractor_prompt(insert_clips_open=True)
+
+
+def test_the_planner_tells_the_brief_extractor_whether_inserts_are_open(monkeypatch):
+    import asyncio
+    import uuid
+
+    from app.agents.main_creator import MainCreatorInput
+    from app.kria import planner
+
+    seen = []
+
+    class _Agent:
+        def __init__(self, _client):
+            pass
+
+        def run(self, agent_input, ctx=None):  # noqa: ARG002
+            seen.append(agent_input.insert_clips_open)
+            return planner.BriefExtractionOutput(brief_updates=[])
+
+    monkeypatch.setattr(planner, "BriefExtractorAgent", _Agent)
+    monkeypatch.setattr(planner, "default_client", lambda: None)
+    manifest = _julio_manifest()
+    inputs = planner._CreatorInputs(
+        agent_input=MainCreatorInput(user_message="x", capability_manifest=manifest),
+        intent_clips=[],
+        creator_request=None,
+    )
+
+    def _call():
+        return asyncio.run(
+            planner._call_brief_extractor(
+                inputs,
+                creator_request="",
+                thread_id=uuid.uuid4(),
+                creator_id=uuid.uuid4(),
+                item_id=uuid.uuid4(),
+                creator_agent_session_id=None,
+            )
+        )
+
+    _open(monkeypatch, insert=False)
+    _call()
+    monkeypatch.setattr(settings, "phone_talking_insert_clips_enabled", True)
+    _call()
+    assert seen == [False, True]
+
+
+def test_only_an_explicit_pause_is_an_insert_show_it_when_i_mention_it_is_not():
+    from app.agents.main_creator import _INSERT_CLIP_PROMPT_SECTION, brief_prompt_section
+
+    for text in (brief_prompt_section(True), _INSERT_CLIP_PROMPT_SECTION):
+        # The ask that keeps the talk running is served by the existing cutaway features.
+        assert "kongre dediğimde kongre videosunu sesiyle göster" not in text
+        assert "NOT an insert" in text
+        assert "keeps running" in text
+        assert "pause" in text.lower()
