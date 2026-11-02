@@ -443,18 +443,19 @@ def claim_exact_review(
     if settings.kria_intent_review_enabled:
         from sqlalchemy import select
 
+        from app.kria.intent_review_tier import intent_review_replaces_legacy
         from app.models import CreationThread
 
-        if (
-            db.scalar(
-                select(CreationThread.id)
-                .where(
-                    CreationThread.active_creator_agent_session_id == uuid.UUID(session_id),
-                    CreationThread.runtime_version == 2,
-                )
-                .limit(1)
+        canonical_thread = db.scalar(
+            select(CreationThread)
+            .where(
+                CreationThread.active_creator_agent_session_id == uuid.UUID(session_id),
+                CreationThread.runtime_version == 2,
             )
-            is not None
+            .limit(1)
+        )
+        if canonical_thread is not None and intent_review_replaces_legacy(
+            canonical_thread.creator_id, canonical_thread
         ):
             return None
 

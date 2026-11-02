@@ -209,6 +209,7 @@ async def test_observer_admits_without_get_and_lost_publish_is_recoverable(
 
     claim, thread, job_id, proof = approved_publication
     monkeypatch.setattr(settings, "kria_intent_review_enabled", True)
+    monkeypatch.setattr(settings, "kria_intent_review_user_ids", ["*"])
     broker = Mock(side_effect=RuntimeError("broker unavailable"))
     monkeypatch.setattr(prepare_generation_review, "apply_async", broker)
     assert (await asyncio.to_thread(_observe_dispatched_execution, claim.execution_id))[
@@ -244,6 +245,8 @@ async def admit_case(case, monkeypatch):
     from app.tasks.render_review import prepare_generation_review
 
     monkeypatch.setattr(settings, "kria_intent_review_enabled", True)
+
+    monkeypatch.setattr(settings, "kria_intent_review_user_ids", ["*"])
     monkeypatch.setattr(prepare_generation_review, "apply_async", Mock())
     assert (await asyncio.to_thread(_observe_dispatched_execution, case[0].execution_id))[
         0
@@ -441,23 +444,59 @@ async def test_flag_off_observer_has_no_outbox_or_broker(approved_publication, m
         )
 
 
+def _target_published_generation(session_id):
+    with sync_session() as db:
+        db.get(CreatorAgentSession, session_id).target_generation_id = "synthetic-publication"
+        db.commit()
+
+
+def _seed_pending_legacy_review(session_id, job_id):
+    from app.tasks.creator_quality_review import review_key
+
+    with sync_session() as db:
+        session = db.get(CreatorAgentSession, session_id)
+        session.target_variant_id, session.target_generation_id = (
+            "guided_story",
+            "synthetic-publication",
+        )
+        # The legacy claim reads epoch 0 as unset, so a claimable fixture needs a real epoch.
+        session.ownership_epoch = 1
+        db.get(Job, job_id).content_plan_ownership_epoch = 1
+        session.last_review = {
+            "review_key": review_key(
+                str(session_id), str(job_id), "guided_story", "synthetic-publication"
+            ),
+            "status": "pending",
+        }
+        db.commit()
+
+
 @pytest.mark.asyncio
 async def test_legacy_queue_and_claim_yield_to_canonical_runtime(approved_publication, monkeypatch):
     from unittest.mock import Mock
 
+    from app.kria import intent_review_tier
     from app.services.creator_sessions import reconcile_render_state
     from app.tasks.creator_quality_review import claim_exact_review
 
     claim, thread, job_id, proof = approved_publication
     monkeypatch.setattr(settings, "kria_intent_review_enabled", True)
+    monkeypatch.setattr(settings, "kria_intent_review_user_ids", ["*"])
+    monkeypatch.setattr(settings, "kria_intent_review_paid_enabled", True)
+    monkeypatch.setattr(settings, "ai_openai_intent_review_budget_usd", 50.0)
+    monkeypatch.setattr(settings, "ai_openai_monthly_budget_usd", 500.0)
+    monkeypatch.setattr(intent_review_tier, "_CODE_TIER_CEILING", "review")
     monkeypatch.setattr(settings, "main_creator_agent_review_enabled", True)
     monkeypatch.setattr(settings, "main_creator_agent_quality_review_enabled", True)
     forbidden = Mock(side_effect=AssertionError("Canonical runtime must not queue Gemini"))
     monkeypatch.setattr("app.tasks.creator_quality_review.queue_creator_quality_review", forbidden)
+    _target_published_generation(claim.session_id)
     async with AsyncSessionLocal() as db:
         session = await db.get(CreatorAgentSession, claim.session_id)
-        await reconcile_render_state(db, session)
+        assert await reconcile_render_state(db, session) is True
+        assert session.phase == "awaiting_feedback"
     forbidden.assert_not_called()
+    _seed_pending_legacy_review(claim.session_id, job_id)
     with sync_session() as db:
         assert (
             claim_exact_review(
@@ -468,6 +507,39 @@ async def test_legacy_queue_and_claim_yield_to_canonical_runtime(approved_public
                 generation_id="synthetic-publication",
             )
             is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_evidence_tier_does_not_silence_legacy(approved_publication, monkeypatch):
+    from unittest.mock import Mock
+
+    from app.services.creator_sessions import reconcile_render_state
+    from app.tasks.creator_quality_review import claim_exact_review
+
+    claim, thread, job_id, proof = approved_publication
+    monkeypatch.setattr(settings, "kria_intent_review_enabled", True)
+    monkeypatch.setattr(settings, "kria_intent_review_user_ids", ["*"])
+    monkeypatch.setattr(settings, "main_creator_agent_review_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_quality_review_enabled", True)
+    queued = Mock()
+    monkeypatch.setattr("app.tasks.creator_quality_review.queue_creator_quality_review", queued)
+    _target_published_generation(claim.session_id)
+    async with AsyncSessionLocal() as db:
+        session = await db.get(CreatorAgentSession, claim.session_id)
+        await reconcile_render_state(db, session)
+    queued.assert_called_once()
+    _seed_pending_legacy_review(claim.session_id, job_id)
+    with sync_session() as db:
+        assert (
+            claim_exact_review(
+                db,
+                session_id=str(claim.session_id),
+                job_id=str(job_id),
+                variant_id="guided_story",
+                generation_id="synthetic-publication",
+            )
+            is not None
         )
 
 
@@ -523,6 +595,7 @@ async def test_missing_approved_draft_is_durable_unavailable_not_hidden_video(
 
     claim, _, job_id, _ = approved_publication
     monkeypatch.setattr(settings, "kria_intent_review_enabled", True)
+    monkeypatch.setattr(settings, "kria_intent_review_user_ids", ["*"])
     broker = Mock(side_effect=AssertionError("Missing authority must not run evidence"))
     monkeypatch.setattr(prepare_generation_review, "apply_async", broker)
     with sync_session() as db:
@@ -555,6 +628,7 @@ async def test_admission_failure_has_durable_bounded_recovery(
 
     claim, _, job_id, _ = approved_publication
     monkeypatch.setattr(settings, "kria_intent_review_enabled", True)
+    monkeypatch.setattr(settings, "kria_intent_review_user_ids", ["*"])
     broker = Mock()
     monkeypatch.setattr(prepare_generation_review, "apply_async", broker)
     real_insert = admission.insert
@@ -638,6 +712,7 @@ async def test_ready_non_native_video_survives_missing_review_authority(
         execution.target_generation_id = "synthetic-publication"
         db.commit()
     monkeypatch.setattr(settings, "kria_intent_review_enabled", True)
+    monkeypatch.setattr(settings, "kria_intent_review_user_ids", ["*"])
     broker = Mock()
     monkeypatch.setattr(prepare_generation_review, "apply_async", broker)
     assert (await asyncio.to_thread(_observe_dispatched_execution, claim.execution_id))[

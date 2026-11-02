@@ -33,6 +33,7 @@ from tests.services.test_render_review_evidence import local_video  # noqa: F401
 def canonical_admission(monkeypatch, local_video):
     _, video, _ = local_video
     monkeypatch.setattr(settings, "kria_intent_review_enabled", True)
+    monkeypatch.setattr(settings, "kria_intent_review_user_ids", ["*"])
     monkeypatch.setattr(prepare_generation_review, "apply_async", Mock())
     original = initial._observe_dispatched_execution
 

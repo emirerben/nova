@@ -16,6 +16,7 @@ from app.config import settings
 from app.database import sync_session
 from app.kria.brief_binding import BriefBinding
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
+from app.kria.intent_review_tier import intent_review_tier, lower_tier, tier_rank
 from app.kria.render_review_context import build_render_review_context, load_review_rows
 from app.kria.review_canon import digest
 from app.models import (
@@ -269,6 +270,10 @@ def admit_generation_review(db, execution):
     try:
         with db.begin_nested():
             owner_session = db.get(CreatorAgentSession, execution.session_id)
+            tier = intent_review_tier(owner_session.creator_id)
+            if tier == "off":
+                _set_admission_marker(execution, status="not_admitted")
+                return None
             try:
                 rows = load_review_rows(db, execution.id)
                 inputs = _inputs(rows)
@@ -302,6 +307,12 @@ def admit_generation_review(db, execution):
                     status=state,
                     attempts=0,
                     reason=reason,
+                    tier=tier,
+                    max_usd=(
+                        settings.kria_intent_review_max_usd
+                        if tier_rank(tier) >= tier_rank("review")
+                        else None
+                    ),
                 )
                 .on_conflict_do_nothing(index_elements=["review_key"])
             )
@@ -346,6 +357,12 @@ def reconcile_generation_reviews(deadline=None):
     if not settings.kria_intent_review_enabled:
         return 0
     _recover_admission_demands(deadline)
+    try:
+        from app.services.intent_review_flow import recover_intent_reviews
+
+        recover_intent_reviews()
+    except Exception:
+        log.warning("intent_review_recovery_failed", exc_info=True)
     with sync_session() as db:
         ids = list(
             db.scalars(
@@ -467,15 +484,33 @@ def run_generation_review(review_id):
     if claim is None:
         return "ignored"
     execution_id, token, input_digest, inputs = claim
-    from app.services.render_review_evidence import ReviewBasis, obtain_render_review_evidence
+    from app.services.render_review_evidence import (
+        EvidenceLimits,
+        ReviewBasis,
+        obtain_render_review_evidence,
+        text_anchor_plan,
+    )
 
     # Recheck before storage I/O so a known stale generation consumes no evidence work.
     try:
         with sync_session() as db:
             if digest(_inputs(load_review_rows(db, execution_id))) != input_digest:
                 raise ValueError("authority_changed")
+        brief = (inputs.get("binding") or {}).get("brief") or {}
+        anchor_times, anchor_refs = text_anchor_plan(
+            inputs.get("recipe") or {},
+            [
+                requirement["literal"]
+                for requirement in brief.get("requirements") or []
+                if requirement.get("literal")
+                and requirement.get("kind") in {"text", "text_sequence"}
+                and requirement.get("status") != "superseded"
+            ],
+        )
         evidence = obtain_render_review_evidence(
-            ReviewBasis.model_validate(inputs["basis"]), deadline_monotonic=time.monotonic() + 90
+            ReviewBasis.model_validate(inputs["basis"]),
+            limits=EvidenceLimits(anchor_times_s=anchor_times, anchor_refs=anchor_refs),
+            deadline_monotonic=time.monotonic() + 90,
         )
         bundle = evidence.bundle if evidence.status == "ready" else None
         evidence_json = bundle.model_dump(mode="json") if bundle else None
@@ -523,6 +558,7 @@ def run_generation_review(review_id):
             )
             if capture.status == "ready":
                 row.status, row.reason = "evidence_ready", None
+                row.evidence_ready_at = datetime.now(UTC)
                 row.result = {
                     "packet": capture.packet.model_dump(mode="json"),
                     "evidence": evidence_json,
@@ -534,8 +570,16 @@ def run_generation_review(review_id):
                         "review_result_too_large",
                         None,
                     )
+                    row.evidence_ready_at = None
             else:
                 row.status, row.reason = "unavailable", capture.reason
         row.lease_token, row.lease_until = None, None
+        status, review_id, stamped, owner = row.status, row.id, row.tier, row.owner_id
         db.commit()
-        return row.status
+    if status == "evidence_ready" and tier_rank(
+        lower_tier(stamped, intent_review_tier(owner))
+    ) >= tier_rank("review"):
+        from app.services.intent_review_flow import publish_intent_review
+
+        publish_intent_review(review_id)
+    return status

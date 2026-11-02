@@ -237,6 +237,7 @@ celery_app.conf.update(
         "tasks.extract_kria_brief": {"queue": "agent-control"},
         "tasks.kria_suggester": {"queue": "agent-control"},
         "tasks.prepare_generation_review": {"queue": settings.kria_intent_review_evidence_queue},
+        "tasks.review_generation_intent": {"queue": "agent-control"},
         "tasks.analyze_kria_clips": {"queue": settings.pool_asset_analysis_queue},
         "tasks.analyze_user_song": {"queue": settings.pool_asset_analysis_queue},
         "tasks.align_user_song_takes": {"queue": settings.pool_asset_analysis_queue},

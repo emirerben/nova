@@ -28,6 +28,7 @@ from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS
 from app.agents._writing_context import writing_voice
 from app.config import settings
 from app.kria.creator_cues import SFX_NOUN_PATTERN_TR
+from app.kria.intent_review_tier import intent_review_replaces_legacy
 from app.kria.media_sources import is_analysis_proxy_path
 from app.models import (
     ContentPlan,
@@ -1464,15 +1465,17 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
             review_enabled and settings.main_creator_agent_quality_review_enabled
         )
         if quality_review_enabled and settings.kria_intent_review_enabled:
-            canonical_runtime = await db.scalar(
-                select(CreationThread.id)
+            canonical_thread = await db.scalar(
+                select(CreationThread)
                 .where(
                     CreationThread.active_creator_agent_session_id == session.id,
                     CreationThread.runtime_version == 2,
                 )
                 .limit(1)
             )
-            if canonical_runtime is not None:
+            if canonical_thread is not None and intent_review_replaces_legacy(
+                canonical_thread.creator_id, canonical_thread
+            ):
                 return True
         if quality_review_enabled and session.target_variant_id and session.target_generation_id:
             from app.tasks.creator_quality_review import (  # noqa: PLC0415
