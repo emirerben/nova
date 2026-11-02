@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import unicodedata
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
@@ -117,9 +116,24 @@ def strict_fold(value: str) -> str:
     return " ".join(unicodedata.normalize("NFC", value).casefold().split())
 
 
+def _is_word_char(char: str) -> bool:
+    return char.isalnum() or char == "_"
+
+
 def contains_exact_words(text: str, wanted: str) -> bool:
-    needle = strict_fold(wanted)
-    return bool(needle) and bool(re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", strict_fold(text)))
+    """`wanted` appears in `text` as whole words after the strict fold."""
+    needle, haystack = strict_fold(wanted), strict_fold(text)
+    if not needle:
+        return False
+    start = haystack.find(needle)
+    while start != -1:
+        end = start + len(needle)
+        if (start == 0 or not _is_word_char(haystack[start - 1])) and (
+            end == len(haystack) or not _is_word_char(haystack[end])
+        ):
+            return True
+        start = haystack.find(needle, start + 1)
+    return False
 
 
 def _seal(**parts: Any) -> ReviewCatalog:
