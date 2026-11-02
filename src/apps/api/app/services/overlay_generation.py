@@ -303,13 +303,8 @@ def materialize_overlays(
     by_asset = {row["asset_id"]: row for row in assets}
     result = []
     occupied = [(row["start_s"], row["end_s"]) for row in existing_overlays or []]
-    for row in raw.overlays:
-        if row.kind == "image" and row.depicts != "generic_subject":
-            # Only this row is refused; the rest of a mixed request still gets planned.
-            # Anything the model did not explicitly call generic fails safe.
-            if notices is not None and LOGO_NOTICE not in notices:
-                notices.append(LOGO_NOTICE)
-            continue
+
+    def plan_row(row) -> PlannedOverlay | None:
         if all(ref.kind == "visual" for ref in row.evidence) and re.search(
             r"\b(?:when|once|as soon as|exactly when)\b|(?:dığımda|diğimde|duğumda|düğümde)",
             prompt,
@@ -352,7 +347,7 @@ def materialize_overlays(
                 raise ValueError(OVERLAP_NOTICE)
             if OVERLAP_NOTICE not in notices:
                 notices.append(OVERLAP_NOTICE)
-            continue
+            return None
         occupied.append((start, row.end_s))
         if row.kind == "library_asset":
             if row.asset_id not in by_asset:
@@ -360,8 +355,6 @@ def materialize_overlays(
             asset = by_asset[row.asset_id]
             if asset["kind"] != "image":
                 raise ValueError("Choose a still image for this overlay.")
-        elif row.asset_id:
-            raise ValueError("Only library overlays may reference an existing asset.")
         if row.kind == "image":
             if not row.prompt.strip() or row.text:
                 raise ValueError(
@@ -369,7 +362,28 @@ def materialize_overlays(
                 )
         if row.kind == "text" and not row.text.strip():
             raise ValueError("A text overlay needs readable text.")
-        result.append(PlannedOverlay(**{**row.model_dump(exclude={"depicts"}), "start_s": start}))
+        planned = row.model_dump(exclude={"depicts"})
+        if row.kind != "library_asset":
+            planned["asset_id"] = None
+        return PlannedOverlay(**{**planned, "start_s": start})
+
+    for row in raw.overlays:
+        if row.kind == "image" and row.depicts != "generic_subject":
+            # Only this row is refused; the rest of a mixed request still gets planned.
+            # Anything the model did not explicitly call generic fails safe.
+            if notices is not None and LOGO_NOTICE not in notices:
+                notices.append(LOGO_NOTICE)
+            continue
+        try:
+            planned_row = plan_row(row)
+        except ValueError as exc:
+            if notices is None:
+                raise
+            if str(exc) not in notices:
+                notices.append(str(exc))
+            continue
+        if planned_row is not None:
+            result.append(planned_row)
     return result
 
 
