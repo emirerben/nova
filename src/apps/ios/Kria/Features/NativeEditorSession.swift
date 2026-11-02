@@ -1491,6 +1491,30 @@ struct NativeEditorTemporaryVideo: Sendable {
             }
             cleanDocument = document
         }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-talking-range") {
+            // KRI-717 on a Talking edit: Save goes through the real request encoder to the stub transport, which
+            // keeps the saved rows and captions so a relaunch reopens the saved windows.
+            api = NativeEditorUITestCommitTransport.api()
+            itemID = "fixture-talking-range-item"
+            variantKey = "initial"
+            rendersOnDevice = true
+            let defaults = UserDefaults.standard
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-talking-range-reset") {
+                defaults.removeObject(forKey: NativeEditorUITestFixtures.savedTalkingRangeKey)
+            }
+            if let data = defaults.data(forKey: NativeEditorUITestFixtures.savedTalkingRangeKey),
+               let saved = try? JSONDecoder().decode([String: JSONValue].self, from: data) {
+                let savedLanes = EditorDocument(snapshot: ["editor_payload": .object(["sections": .object([
+                    "timeline_slots": saved["timeline_slots"] ?? .array([]), "caption_cues": saved["caption_cues"] ?? .array([])])])])
+                for row in savedLanes.clips {
+                    guard let index = document.clips.firstIndex(where: { $0.id == row.id }) else { continue }
+                    document.clips[index].inS = row.inS
+                    document.clips[index].durationS = row.durationS
+                }
+                if saved["caption_cues"]?.arrayValue != nil { document.captionCues = savedLanes.captionCues }
+            }
+            cleanDocument = document
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background") {
             // KRI-1118: same stub commit transport; the pool visuals are canned (see `refreshVisualLibrary`).
             api = NativeEditorUITestCommitTransport.api()
@@ -4182,8 +4206,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         transactDocument(section: .timeline) { doc in var restored = doc.tombstones.remove(at: index); restored.removed = false; doc.clips.append(restored) }
     }
 
-    private func mutateClip(clipID: String, _ body: (inout EditorTimelineSlot) -> Void) {
-        guard canEditSection(.timeline), let index = clipSlotIndex(clipID) else { return }
+    private func mutateClip(clipID: String, gatedByTimeline: Bool = true, _ body: (inout EditorTimelineSlot) -> Void) {
+        guard !gatedByTimeline || canEditSection(.timeline), let index = clipSlotIndex(clipID) else { return }
         transactDocument(section: .timeline) { doc in var slot = doc.clips[index]; body(&slot); doc.clips[index] = slot }
     }
     private func clipSlotIndex(_ id: String) -> Int? { clipSlotIndex(id, in: document) }
@@ -7171,10 +7195,40 @@ struct NativeEditorTemporaryVideo: Sendable {
         return (slot, clip)
     }
 
+    /// The `clips.source_window` leaf a phone Talking edit opens Range through. Nil: not offered, or the
+    /// timeline is open (an authored Talking edit), in which case the ordinary timeline gate decides and a
+    /// leaf an older server still sent must not close it.
+    private var talkingRangeLeaf: EditorCapability? {
+        canEdit("timeline") ? nil : document.capabilities[NativePhoneTalkingSource.rangeCapabilityKey]
+    }
+
+    /// A closed Talking Range answers a tap with its reason instead of a greyed-out dead end.
+    func sourceWindowExplainsOnTap(for selection: EditorSelection?) -> Bool {
+        guard talkingRangeLeaf?.editable == false, let found = sourceWindowSlot(for: selection) else { return false }
+        return NativePhoneTalkingSource.isSourceSlot(found.slot)
+    }
+
+    /// Why Range cannot be used on a Talking edit right now, in plain words, or nil when it is open or the
+    /// server does not offer it. It covers the case with no clip to select: while the finished MP4 plays
+    /// (applied word cuts or sound cleanup, a receipt that no longer matches) nothing is hydrated. Shown only
+    /// where the creator asks for Range (the button, the sheet, the Range row), never as a standing banner.
+    private var talkingRangeUnavailableCopy: String? {
+        guard let leaf = talkingRangeLeaf else { return nil }
+        if !leaf.editable { return NativePhoneTalkingSource.rangeClosedCopy(reason: leaf.reason) }
+        guard !document.clips.contains(where: NativePhoneTalkingSource.isSourceSlot) else { return nil }
+        switch sourcePreviewState {
+        case .idle, .preparing: return nil
+        case .ready, .failed, .originalsUnavailable: return NativePhoneTalkingSource.rangeClosedCopy(reason: nil)
+        }
+    }
+
     /// Why Range is greyed out for the selected clip, or nil when it is available.
     func sourceWindowBlockedReason(for selection: EditorSelection?) -> String? {
-        guard let found = sourceWindowSlot(for: selection) else { return "Select a clip to choose its range." }
-        if !canEditTimeline || !canEdit(.timeline) { return "Clip edits are locked for this render." }
+        guard let found = sourceWindowSlot(for: selection) else { return talkingRangeUnavailableCopy ?? "Select a clip to choose its range." }
+        if let leaf = talkingRangeLeaf, NativePhoneTalkingSource.isSourceSlot(found.slot) {
+            // The timeline is closed for Talking; the leaf alone decides a window change on its own segments.
+            if !leaf.editable { return NativePhoneTalkingSource.rangeClosedCopy(reason: leaf.reason) }
+        } else if !canEditTimeline || !canEdit(.timeline) { return "Clip edits are locked for this render." }
         let kind = found.slot.raw["media_kind"]?.stringValue ?? found.slot.raw["kind"]?.stringValue
         if kind == "image" { return "Photos have no range to choose." }
         if let url = found.clip.sourceClipIndex.flatMap({ resolvedSources?[$0] })?.url, isStill(url) { return "Photos have no range to choose." }
@@ -7217,10 +7271,14 @@ struct NativeEditorTemporaryVideo: Sendable {
         let shrinks = window.start >= 0 && window.length >= KriaSourceWindowGeometry.minimumLength - 1e-9
             && KriaSourceWindowGeometry.sourceEnd(window, rate: rate) <= KriaSourceWindowGeometry.sourceEnd(current, rate: rate) + 1e-9
         guard KriaSourceWindowGeometry.isWithinBounds(window, rate: rate, sourceDuration: sourceDuration) || shrinks else { return false }
+        let talking = talkingRangeLeaf != nil && NativePhoneTalkingSource.isSourceSlot(found.slot)
+        if talking, breaksTalkingCut(window, rate: rate, of: found.slot) { return false }
         let moved = abs(window.start - current.start) > 1e-6, resized = abs(window.length - current.length) > 1e-6
         guard moved || resized else { return true }
         // A pure slide writes `in_s` alone, so a beat-bound slot keeps `duration_beats`; a new length is a fixed length.
-        mutateClip(clipID: selection.id) { slot in
+        // A Talking segment goes through the leaf gate (checked above), not the closed timeline section, but still
+        // through `.timeline` so the speech projection moves the captions and Save sends the rows.
+        mutateClip(clipID: selection.id, gatedByTimeline: !talking) { slot in
             slot.inS = max(0, window.start)
             if moved { slot.raw["source_start_locked"] = .bool(true) }
             if resized { slot.durationS = max(minimumClipDuration, window.length); slot.durationBeats = nil }
@@ -7229,6 +7287,22 @@ struct NativeEditorTemporaryVideo: Sendable {
             }
         }
         return true
+    }
+
+    /// A Talking segment may grow into the pause beside it, never into a neighbouring segment's source and never
+    /// out of the cut's order: the server answers `talking_range_overlap` / `talking_range_order`, and the take
+    /// would play the same words twice or out of order.
+    private func breaksTalkingCut(_ window: KriaSourceWindowGeometry.Window, rate: Double, of slot: EditorTimelineSlot) -> Bool {
+        let end = KriaSourceWindowGeometry.sourceEnd(window, rate: rate)
+        let slack = 1e-6
+        var reachedSelf = false
+        for other in document.clips where NativePhoneTalkingSource.isSourceSlot(other) && other.clipIndex == slot.clipIndex {
+            if other.id == slot.id { reachedSelf = true; continue }
+            let otherEnd = other.inS + (other.durationS ?? 0) * (other.raw["playback_rate"]?.numberValue ?? 1)
+            if window.start < otherEnd - slack && end > other.inS + slack { return true }
+            if reachedSelf ? window.start > other.inS + slack : window.start < other.inS - slack { return true }
+        }
+        return false
     }
 
     func operationCapability(_ key: String) -> EditorCapability? { document.capabilities[key] }

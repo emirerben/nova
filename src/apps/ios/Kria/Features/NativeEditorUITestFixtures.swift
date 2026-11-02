@@ -37,6 +37,11 @@ enum NativeEditorUITestFixtures {
         /// can reorder them without reaching the auto-scroll edge, and the durations tell the order apart. Each is
         /// at least 1 s so the default crossfades are never capped by a short neighbour and the length is exact.
         case reorderClips = "reorder-clips"
+        /// KRI-717 on a phone Talking edit: three kept segments of one take (timeline closed, Range open through
+        /// `clips.source_window`). Save commits through the stub transport, which keeps the saved windows across
+        /// relaunches (`-ui-testing-editor-talking-range-reset` starts clean; `-ui-testing-editor-talking-range-closed`
+        /// closes the leaf with a reason).
+        case talkingRange = "talking-range"
     }
 
     /// Three catalog sounds in two categories; nil preview URLs keep UI tests off the network.
@@ -153,8 +158,49 @@ enum NativeEditorUITestFixtures {
         case .drawing: drawing
         case .speakerBackground: speakerBackground
         case .reorderClips: reorderClips
+        case .talkingRange: talkingRange
         }
     }
+
+    /// The Talking Range windows the stub commit transport last saved (UserDefaults, so a relaunch "reopens" them).
+    static let savedTalkingRangeKey = "kria.ui-test.saved-talking-range.v1"
+
+    /// Three kept segments of one 4.6 s take (the bundled preview footage is 4.67 s) at source 0-1, 1.5-2.5 and
+    /// 3-4 s, output 0-1, 1-2 and 2-3 s, with one caption in each. The server keeps the timeline closed for Talking
+    /// and opens only Range. Needs `-ui-testing-editor-live-preview` for the compiled preview the sheet reads.
+    static let talkingRange: EditorDraft = {
+        let windows: [(id: String, start: Double)] = [
+            ("native-phone-talking-source", 0), ("native-phone-talking-source-1", 1.5), ("native-phone-talking-source-2", 3),
+        ]
+        let clips = windows.enumerated().map { index, window in
+            EditorClip(id: id(700 + index), assetID: id(1_700), sourceClipIndex: 0,
+                       start: Double(index), end: Double(index + 1), trimIn: window.start, trimOut: window.start + 1,
+                       sourceDuration: 4.6, slotID: window.id)
+        }
+        let closed = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-talking-range-closed")
+        let leaf: JSONValue = closed
+            ? .object(["editable": .bool(false), "reason": .string("talking_range_multi_clip")])
+            : .object(["editable": .bool(true)])
+        let words = ["First part", "Second part", "Third part"]
+        return draft(clips: clips, text: [], captions: true, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "caption_cues": .array(words.enumerated().map { index, text in
+                .object(["id": .string("talking-range-cue-\(index)"), "text": .string(text),
+                         "start_s": .number(Double(index) + 0.1), "end_s": .number(Double(index) + 0.9)])
+            }),
+            "caption_meta": .object(["enabled": .bool(true), "style": .string("sentence")]),
+        ], rootExtras: [
+            "render_destination": .string("device"),
+            "resolved_archetype": .string("subtitled"),
+            "editor_capabilities": .object([
+                "timeline": .bool(false),
+                "caption_cues": .object(["editable": .bool(true)]),
+                "caption_meta": .object(["editable": .bool(true)]),
+                "text_elements": .object(["editable": .bool(false), "reason": .string("Text isn’t editable for this edit on this iPhone.")]),
+                "clips": .object(["source_window": leaf]),
+            ]),
+        ])
+    }()
 
     /// The drawings the stub commit transport last saved (UserDefaults, so a relaunch "reopens" them).
     static let savedDrawingsKey = "kria.ui-test.saved-drawings.v1"
@@ -929,6 +975,11 @@ enum NativeEditorUITestCommitTransport {
                     } else if first["tilt"] != nil {
                         UserDefaults.standard.removeObject(forKey: NativeEditorUITestFixtures.savedTiltKey)
                     }
+                }
+                if let slots = fields["timeline_slots"]?.arrayValue,
+                   slots.contains(where: { $0.objectValue?["slot_id"]?.stringValue?.hasPrefix("native-phone-talking-source") == true }),
+                   let saved = try? JSONEncoder().encode(JSONValue.object(["timeline_slots": .array(slots), "caption_cues": fields["caption_cues"] ?? .null])) {
+                    UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedTalkingRangeKey)
                 }
                 if let lane = fields["speaker_background"], let saved = try? JSONEncoder().encode(lane) {
                     UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedSpeakerBackgroundKey)

@@ -93,6 +93,7 @@ from app.services.phone_rollout import (
     phone_subtitled_editor_lanes_supported,
     phone_subtitled_title_supported,
     phone_talking_cutaway_sound_supported,
+    phone_talking_range_supported,
     phone_timed_cards_supported,
     phone_voiceover_editor_lanes_supported,
     phone_voiceover_editor_media_supported,
@@ -1266,8 +1267,14 @@ def _compile_subtitled_editor_commit(
         raise ValueError("phone Talking edits aren't editable yet")
 
     active_sections = {key for key, value in prep["sections"].items() if value}
-    allowed_sections = _SUBTITLED_EDITOR_SECTIONS | (
-        _SUBTITLED_TEXT_SECTIONS if phone_subtitled_title_supported() else frozenset()
+    # Range: the speaker's own window rows (`phone_talking_range`), never any other timeline edit.
+    range_rows = prep.get("timeline_override") if "timeline" in active_sections else None
+    if range_rows is not None and not phone_talking_range_supported():
+        range_rows = None
+    allowed_sections = (
+        _SUBTITLED_EDITOR_SECTIONS
+        | (_SUBTITLED_TEXT_SECTIONS if phone_subtitled_title_supported() else frozenset())
+        | (frozenset({"timeline"}) if range_rows is not None else frozenset())
     )
     unsupported_sections = active_sections - allowed_sections
     if unsupported_sections:
@@ -1280,6 +1287,13 @@ def _compile_subtitled_editor_commit(
     bindings = tuple(
         PhoneSourceBinding.model_validate(row) for row in assembly[PHONE_SOURCES_FIELD]
     )
+    range_keep: list[tuple[float, float]] | None = None
+    if range_rows is not None:
+        if not isinstance(previous.recipe, EditRecipeV2) or len(bindings) != 1:
+            raise ValueError("Range needs a single-clip pinned Talking recipe")
+        range_keep, previous_lanes = _apply_talking_range(
+            range_rows, previous.recipe, bindings[0], previous_lanes
+        )
     lanes = lanes_from_editor_sections(
         previous=previous_lanes,
         sound_effects=prep.get("sfx_override"),
@@ -1324,7 +1338,9 @@ def _compile_subtitled_editor_commit(
     elif len(bindings) != 1:
         raise ValueError("multi-clip phone Talking edits need a pinned recipe")
     keep_segments = (
-        _previous_keep_segments(previous.recipe, speaker.render_asset().id)
+        range_keep
+        if range_keep is not None
+        else _previous_keep_segments(previous.recipe, speaker.render_asset().id)
         if isinstance(previous.recipe, EditRecipeV2)
         else None
     )
@@ -1471,6 +1487,32 @@ def _compile_subtitled_editor_commit(
         _persist_lane_state(
             row, lanes, labels, paths, caption_style=caption_style, duck_receipt=duck_receipt
         )
+
+
+def _apply_talking_range(
+    rows: list[dict],
+    recipe: EditRecipeV2,
+    speaker: PhoneSourceBinding,
+    previous_lanes: PhoneSubtitledLanes | None,
+) -> tuple[list[tuple[float, float]], PhoneSubtitledLanes | None]:
+    """The new keep segments from the Range rows, and the pinned card/effect lanes moved from
+    the old layout onto it (a lane the Save also carries replaces its moved copy)."""
+    from app.services.phone_talking_range import (  # noqa: PLC0415
+        keep_segments_from_rows,
+        layout_slots,
+        reproject_lanes,
+    )
+
+    old_keep = _previous_keep_segments(recipe, speaker.render_asset().id)
+    if old_keep is None or len(old_keep) != len(rows):
+        raise ValueError("The pinned cut no longer matches this Range edit")
+    ids = [str(row["slot_id"]) for row in rows]
+    new_keep = keep_segments_from_rows(rows)
+    speaker_end = sum(end - start for start, end in old_keep)
+    tail_s = max(0.0, float(recipe.duration) - speaker_end)
+    old_slots = layout_slots(old_keep, ids, tail_s=tail_s)
+    new_slots = layout_slots(new_keep, ids, tail_s=tail_s)
+    return new_keep, reproject_lanes(previous_lanes, old_slots, new_slots)
 
 
 def _restale_protected_text(

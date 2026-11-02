@@ -7559,6 +7559,14 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             # KRI-1139: a pool photo or video behind the clip. Present only when ON, so the
             # payload of a build or deployment without it keeps its exact shape.
             capabilities["clips"]["tilt_backdrop_media"] = {"editable": True, "reason": None}
+    range_leaf = _talking_range_capability(job, variant)
+    if range_leaf is not None:
+        # Present only when ON: every closed-gate payload keeps its exact shape. `timeline`
+        # stays false for Talking; this leaf alone opens the Range sheet (the speaker window).
+        capabilities["clips"] = {
+            **(capabilities.get("clips") if isinstance(capabilities.get("clips"), dict) else {}),
+            "source_window": range_leaf,
+        }
     if _media_overlay_tilt_capability(variant, capabilities):
         # KRI-1141: present only when ON (same reason as `text_bend`); the editor opens the
         # rotate gesture and the Rotation slider for a card, and nothing else of `editor_style`.
@@ -7574,6 +7582,24 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     ):
         capabilities["caption_style_scope"] = True
     return capabilities
+
+
+def _talking_range_capability(job: Job, variant: dict) -> dict | None:
+    """``editor_capabilities.clips.source_window`` for a phone Talking edit, or None (absent).
+
+    ``editable`` is exactly "Save will compile a Range window now"; when it is not, ``reason``
+    names why (`phone_talking_range.talking_range_reason`) so the app can say so in plain words.
+    """
+    from app.services.phone_rollout import phone_talking_range_supported  # noqa: PLC0415
+    from app.services.phone_talking_range import (  # noqa: PLC0415
+        is_phone_talking_range_variant,
+        talking_range_reason,
+    )
+
+    if not (is_phone_talking_range_variant(variant) and phone_talking_range_supported()):
+        return None
+    reason = talking_range_reason(job, variant)
+    return {"editable": reason is None, "reason": reason}
 
 
 def _media_overlay_tilt_capability(variant: dict, capabilities: dict) -> bool:
@@ -9630,6 +9656,15 @@ def resolve_timeline_slots_for_edit(
             else resolve_authored_cloud_slots
         )
         return resolver(job, variant, slots, preserve_intent=preserve_intent)
+    from app.services.phone_rollout import phone_talking_range_supported  # noqa: PLC0415
+    from app.services.phone_talking_range import (  # noqa: PLC0415
+        is_phone_talking_range_variant,
+        resolve_phone_talking_range_slots,
+    )
+
+    if is_phone_talking_range_variant(variant) and phone_talking_range_supported():
+        # Range on a phone Talking edit: only the speaker's own window rows may change.
+        return resolve_phone_talking_range_slots(job, variant, slots)
     reason = _timeline_ineligibility(job, variant)
     if reason is not None:
         raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, reason)
@@ -10967,6 +11002,25 @@ def prepare_editor_commit(
             from app.services.authored_editor import prepare_authored_editor_commit
 
             return prepare_authored_editor_commit(
+                job,
+                variant_id,
+                payload,
+                validation_arguments=arguments,
+                phone_sfx_catalog_paths=phone_sfx_catalog_paths,
+                creator_brief_binding=creator_brief_binding,
+            )
+        from app.services.phone_rollout import phone_talking_range_supported  # noqa: PLC0415
+        from app.services.phone_talking_range import (  # noqa: PLC0415
+            is_phone_talking_range_variant,
+            prepare_phone_talking_range_commit,
+        )
+
+        if (
+            payload.timeline_slots is not None
+            and is_phone_talking_range_variant(variant)
+            and phone_talking_range_supported()
+        ):
+            return prepare_phone_talking_range_commit(
                 job,
                 variant_id,
                 payload,

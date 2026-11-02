@@ -322,7 +322,7 @@ struct NativeSourceWindowSheet: View {
 
     @ViewBuilder private var content: some View {
         Group {
-            if let context {
+            if let context, session.sourceWindowBlockedReason(for: selection) == nil {
                 if let duration = context.sourceDuration ?? loadedDuration {
                     KriaSourceWindowEditor(
                         url: context.url, rate: context.rate, sourceDuration: duration, committed: context.window,
