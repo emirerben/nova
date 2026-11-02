@@ -788,6 +788,15 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
         else InsertClipFact("planned")
         for problem in insert_clips_problems(manifest, repaired)
     )
+    if not insert_facts:
+        # Nothing was asked of the plan: while the rollout is closed the planner is not taught
+        # the field, so an `insert_clip` requirement reads "not available yet", not "left out".
+        from app.services.phone_rollout import (  # noqa: PLC0415
+            phone_talking_insert_clips_supported,
+        )
+
+        if not phone_talking_insert_clips_supported():
+            insert_facts = (InsertClipFact("dropped", reason="insert_clips_off"),)
     kept = list(repaired.reaction_beats or [])
     raw_closing = parsed.closing_media
     closing = repaired.closing_media

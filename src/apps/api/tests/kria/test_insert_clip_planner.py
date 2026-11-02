@@ -303,7 +303,10 @@ def test_a_draft_is_met_only_when_the_repaired_strategy_keeps_the_insert(monkeyp
     assert _verdict(kept).status == "met"
     none = _facts_for_draft(_strategy(manifest), manifest)
     assert _verdict(none).status == "not_possible"
+    assert none.insert_clips == ()
     monkeypatch.setattr(settings, "phone_talking_insert_clips_enabled", False)
+    closed = _verdict(_facts_for_draft(_strategy(manifest), manifest))
+    assert closed.status == "not_possible" and "available yet" in closed.reason
     off = _facts_for_draft(_strategy(manifest, insert_clips=[_insert()]), manifest)
     verdict = _verdict(off)
     assert off.insert_clips == (InsertClipFact("dropped", reason="insert_clips_off"),)
