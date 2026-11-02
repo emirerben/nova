@@ -87,7 +87,11 @@ log = structlog.get_logger()
 # names what this editor cannot restage. Taught only where a guided revision offers the direction
 # family and COPILOT_DIRECTION_FOLLOWS_REQUEST_ENABLED is on; every other prompt is byte-identical.
 # (v103 is reserved by the commentary green-screen branch, PR #2045.)
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v104"
+# v105 (KRI-1169): CLIP TILT ZOOM: patch_slots tilt "zoom" (absolute, 0.5..3, 1 as framed) and
+# "zoom_delta" (added), the zoom that fills the corners a tilt leaves empty, taught in
+# clip_tilt_zoom.txt only where `tilt_zoom` is open; a clip row lists its zoom only then. Every
+# other prompt, including a tilt-open one without zoom, is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-02-v105"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1310,7 +1314,8 @@ def _format_slot_tilt(raw: object) -> str:
         behind = f", backdrop=media({backdrop.asset_id})"
     else:
         behind = f", backdrop={backdrop.color or backdrop.kind}"
-    return f" tilt=(rotation_deg={_fmt_num(tilt.rotation_deg)}{behind})"
+    zoom = f", zoom={_fmt_num(tilt.zoom)}" if tilt.zoom != 1 else ""
+    return f" tilt=(rotation_deg={_fmt_num(tilt.rotation_deg)}{zoom}{behind})"
 
 
 def _format_snapshot(snapshot: dict) -> str:

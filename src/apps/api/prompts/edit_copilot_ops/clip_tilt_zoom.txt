@@ -1,0 +1,16 @@
+CLIP ZOOM (this edit can zoom clips and photos)
+
+Zoom makes a whole clip or photo bigger or smaller about the middle of the frame, before any tilt turns it. It is "zoom" or "zoom_delta" inside the same "tilt" field of patch_slots, alone or with an angle and a backdrop.
+- "zoom" is the clip's absolute zoom: 1 is as framed, bigger than 1 is closer (1.3 is a little closer, 2 is twice as close), smaller than 1 is further away (0.8 shows the whole clip a bit smaller on its background). Range 0.5 to 3. "Zoom in" without a number is 1.2 on top of what the clip has, "zoom in a lot" is 1.6, "zoom out" is 0.85, "a bit closer" 1.15.
+- RELATIVE asks ("a bit more", "zoom in a little more", "a bit less"): use "zoom_delta", the amount to ADD to each clip's own current zoom (+0.2 is a little more, -0.2 a little less). The current zoom is on the clip's row in CLIP SLOTS as tilt=(rotation_deg=..., zoom=...); a row with no zoom is at 1. Never answer a relative ask with "zoom": that REPLACES the zoom.
+- Reset the zoom, "back to normal size", "undo the zoom": {"tilt":{"zoom":1}} keeps the angle and backdrop. {"tilt":null} resets everything: angle, backdrop and zoom. To straighten a clip but keep its zoom send {"tilt":{"rotation_deg":0}}.
+- "Fill the corners" / "no black corners" / "zoom so the edges are covered" after a tilt: pick the smallest zoom that covers the frame at the clip's angle A (its angle in CLIP SLOTS, or the one you set in the same op). For a clip that fills the vertical frame: zoom = cos(A) + 1.78 * sin(A), rounded UP to two places. 3 degrees is 1.10, 5 is 1.16, 8 is 1.24, 10 is 1.30, 15 is 1.43, 20 is 1.55, 30 is 1.76, 45 is 1.97. Use the same value for A and -A. Do not ask which zoom; send it. A sideways clip that sits between black bars needs much more zoom to cover the frame: use the same table and say the bars may still show.
+- The zoom is kept between 0.5 and 3. Targets are the same selectors as the rest of patch_slots ("the second clip" is slot_indexes [1]). A clip whose look_preset is not "none" cannot be zoomed, and neither can a photo shown as a card; say which and why.
+- If the edit refuses the zoom, say so plainly. Never tell the creator a clip is zoomed unless the op was emitted.
+
+Examples (JSON ops only):
+- "zoom in a bit on the second clip" -> {"op":"patch_slots","selector":{"slot_indexes":[1]},"patch":{"tilt":{"zoom_delta":0.2}}}
+- "ikinci klibe biraz yakınlaş" -> {"op":"patch_slots","selector":{"slot_indexes":[1]},"patch":{"tilt":{"zoom_delta":0.2}}}
+- "tilt it 8 degrees and fill the corners" (clip 2, no tilt yet) -> {"op":"patch_slots","selector":{"slot_indexes":[1]},"patch":{"tilt":{"rotation_deg":8,"zoom":1.24}}}
+- "make clip 1 twice as close" -> {"op":"patch_slots","selector":{"slot_indexes":[0]},"patch":{"tilt":{"zoom":2}}}
+- "zoom back out on every clip" / "boyutu normale döndür" -> {"op":"patch_slots","selector":{"all":true},"patch":{"tilt":{"zoom":1}}}

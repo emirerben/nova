@@ -2114,6 +2114,7 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "clip_backdrop_media_not_in_pool": "That photo or video isn’t in this video’s Visuals any more. Choose another background or reset the tilt, then save again. Your edits are still here.",
             "clip_backdrop_media_unavailable": "A photo or video behind a clip isn’t available right now. Choose another background or reset the tilt, then save again. Your edits are still here.",
             "clip_tilt_unavailable": "Tilt isn’t available right now. Reset the tilt on that clip and save again. Your edits are still here.",
+            "clip_tilt_zoom_unavailable": "Zoom isn’t available right now. Set the zoom back to 1x on that clip and save again. Your edits are still here.",
             "transitions_disabled": "Transitions aren’t available right now. Set the clip to a cut and save again. Your edits are still here.",
             "song_shorter_than_video": "The song is shorter than your video. Pick a longer song or shorten the video, then save again. Your edits are still here.",
             "music_track_unavailable": "That song isn’t available any more. Pick another song and save again. Your edits are still here.",

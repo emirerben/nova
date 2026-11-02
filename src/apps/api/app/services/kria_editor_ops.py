@@ -115,6 +115,9 @@ def timeline_patch_capabilities(job: Any, variant: dict[str, Any]) -> dict[str, 
         if enabled("tilt_backdrop_media", default=False):
             # KRI-1139: a pool photo or video behind a tilted clip; same rule, open-only.
             fields["tilt_backdrop_media"] = True
+        if enabled("tilt_zoom", default=False):
+            # KRI-1169: the Zoom slider's twin; open-only, like the backdrop above.
+            fields["tilt_zoom"] = True
     return fields
 
 
@@ -1271,8 +1274,12 @@ def build_editor_snapshot(
     if "clip" in families:
         snapshot["timeline_patch_capabilities"] = timeline_patch_capabilities(job, variant)
         if snapshot["timeline_patch_capabilities"].get("tilt") is True:
+            zoom_open = snapshot["timeline_patch_capabilities"].get("tilt_zoom") is True
             for slot, row in zip(slots, slot_rows, strict=True):
-                if tilt := ClipTilt.from_row(row.get("tilt")).row():
+                current = ClipTilt.from_row(row.get("tilt"))
+                if not zoom_open:
+                    current = current.model_copy(update={"zoom": 1.0})
+                if tilt := current.row():
                     slot["tilt"] = tilt
         if snapshot["timeline_patch_capabilities"].get("tilt_backdrop_media") is True:
             # KRI-1139: the item's ready photos and videos a backdrop may name, the same rows
