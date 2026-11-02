@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.109.0] - 2026-11-02
+
+### Changed
+- chore(fly): reduce topology to api/worker/light, shared-cpu worker (KRI-1167) (#2055) <!-- release-pr: 2055 -->
+
+## [0.83.108.0] - 2026-11-02
+
+### Fixed
+- fix(overlays): ignore a stray asset_id on generated rows (KRI-1142) (#2059) <!-- release-pr: 2059 -->
+
+## [0.83.107.0] - 2026-11-02
+
+### Fixed
+- fix(kria): the chat planner offers the Talking cutaway lane instead of refusing it (#2057) <!-- release-pr: 2057 -->
+
 ## [0.83.106.0] - 2026-11-02
 
 ### Fixed

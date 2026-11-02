@@ -6651,6 +6651,16 @@ def _check_sound_toggle(
                 row.get("on_windows") if ask.state == "off" else row.get("off_windows")
             )
             summary = _toggle_summary(ask)
+            if (
+                ask.state == "on"
+                and facts.phone_talking
+                and not (facts.voiceover_edit or facts.phone_narrated)
+                and row.get("on_windows")
+            ):
+                # Only a clip that really played its sound mutes the creator's voice; a "met"
+                # ask that played no cutaway (a speaker clip named, no cutaway in the edit)
+                # keeps the plain wording, which is true.
+                summary = _talking_cutaway_sound_on()
             if ask.exceptions and seconds:
                 summary = say(en=f"{summary} ({seconds})", tr=f"{summary} ({seconds})")
             kept = (
@@ -6764,13 +6774,15 @@ def _draft_talking_cutaway_sound(
         return _receipt(req, "not_possible", _toggle_missed(ask, row))
     if ask.state == "off":
         return _receipt(req, "met", _toggle_summary(ask))
-    return _receipt(
-        req,
-        "met",
-        say(
-            en="Clips shown full screen play their own sound, with your voice muted under them",
-            tr="Tam ekran gösterilen klipler kendi sesiyle çalıyor, senin sesin altta kapalı",
-        ),
+    return _receipt(req, "met", _talking_cutaway_sound_on())
+
+
+def _talking_cutaway_sound_on() -> str:
+    """What a Talking cutaway that plays its own sound does to the creator's voice (KRI-1151):
+    it is muted under the clip, so what they say there is not heard."""
+    return say(
+        en="Clips shown full screen play their own sound, with your voice muted under them",
+        tr="Tam ekran gösterilen klipler kendi sesiyle çalıyor, senin sesin altta kapalı",
     )
 
 

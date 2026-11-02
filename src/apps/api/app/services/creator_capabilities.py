@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from app.agents._schemas.creator_agent import (
@@ -76,8 +77,10 @@ from app.services.phone_rollout import (
     phone_subtitled_reaction_beats_supported,
     phone_subtitled_title_supported,
     phone_subtitled_video_overlays_supported,
+    phone_talking_cutaway_sound_supported,
     phone_talking_head_supported,
     phone_talking_insert_clips_supported,
+    phone_talking_mention_cutaways_supported,
     phone_talking_multi_clip_supported,
     phone_timed_cards_supported,
     phone_timed_video_cards_supported,
@@ -1399,6 +1402,42 @@ def ending_clip_candidates(manifest: ResolvedCreatorManifest) -> list[CreatorMed
     if len(own) >= 2 and phone_talking_multi_clip_supported():
         found = [*found, *own]
     return found
+
+
+@dataclass(frozen=True)
+class TalkingCutawayAvailability:
+    """What a multi-clip phone Talking edit can do with its footage clips right now."""
+
+    # Show a clip full screen where the creator talks about what it shows.
+    mention: bool
+    # A shown clip plays its own sound with the creator's voice muted under it.
+    sound: bool
+
+
+def talking_footage_cutaways(
+    manifest: ResolvedCreatorManifest,
+) -> TalkingCutawayAvailability | None:
+    """KRI-1151: the footage-cutaway lane of a multi-clip phone Talking edit, else None.
+
+    Reads the gates the worker reads (`phone_talking_mention_cutaways_supported`,
+    `phone_talking_cutaway_sound_supported`, `phone_talking_multi_clip_supported`), so the
+    planner offers the lane exactly when the render builds it. None (nothing to teach) for a
+    montage or voiceover edit, one footage clip, or both flags off.
+    """
+
+    phone = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    if manifest.edit_format != "subtitled" or manifest.has_voiceover:
+        return None
+    if phone is None or not phone.available or not phone_talking_multi_clip_supported():
+        return None
+    own = [m for m in manifest.media if m.kind == "video" and not m.media_id.startswith("asset-")]
+    if len(own) < 2:
+        return None
+    found = TalkingCutawayAvailability(
+        mention=phone_talking_mention_cutaways_supported(),
+        sound=phone_talking_cutaway_sound_supported(),
+    )
+    return found if found.mention or found.sound else None
 
 
 def _repair_creator_timed_cards(
