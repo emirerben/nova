@@ -1021,3 +1021,20 @@ def test_library_row_still_cannot_use_an_unowned_asset():
             duration_s=8,
             prompt="",
         )
+
+
+def test_one_ungrounded_row_does_not_discard_the_grounded_rows():
+    base = proposal().overlays[0].model_dump()
+    bad = {**base, "evidence": [dict(kind="speech", reference_id="made-up", quote="kahve")]}
+    good = {**base, "start_s": 1.0, "end_s": 3.0}
+    notices: list[str] = []
+    rows = materialize_overlays(
+        OverlayPlanOutput(overlays=[bad, good]),
+        evidence(),
+        [],
+        duration_s=8,
+        prompt="",
+        notices=notices,
+    )
+    assert [r.start_s for r in rows] == [1.25]
+    assert notices and "no source evidence" in notices[0]
