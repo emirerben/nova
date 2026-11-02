@@ -9,6 +9,7 @@ import unicodedata
 import uuid
 from dataclasses import dataclass
 
+import structlog
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 
@@ -276,6 +277,12 @@ def _speech_start(fact: dict, quote: str) -> float:
     return matches[0]
 
 
+log = structlog.get_logger()
+
+OVERLAP_NOTICE = (
+    "Some suggestions overlap an existing overlay or each other. "
+    "Choose a free moment or remove an existing overlay."
+)
 LOGO_NOTICE = "Upload the real logo or choose it from your visual library."
 
 
@@ -339,10 +346,11 @@ def materialize_overlays(
                 "Choose a footage interval on one side."
             )
         if any(start < end and row.end_s > begin for begin, end in occupied):
-            raise ValueError(
-                "The suggested overlays overlap. "
-                "Choose a free moment or remove an existing overlay."
-            )
+            if notices is None:
+                raise ValueError(OVERLAP_NOTICE)
+            if OVERLAP_NOTICE not in notices:
+                notices.append(OVERLAP_NOTICE)
+            continue
         occupied.append((start, row.end_s))
         if row.kind == "library_asset":
             if row.asset_id not in by_asset:
@@ -607,6 +615,34 @@ def plan_context(
     )
 
 
+def _log_outcome(body, context, raw, overlays, notices, refused: str = "") -> None:
+    """Shape of what the model proposed and what survived; never the prompt or overlay text."""
+    evidence_kinds: dict[str, int] = {}
+    for row in context.evidence:
+        evidence_kinds[row["kind"]] = evidence_kinds.get(row["kind"], 0) + 1
+    log.info(
+        "overlay_plan_outcome",
+        mode=body.mode,
+        duration_s=round(context.duration_s, 3),
+        evidence=evidence_kinds,
+        existing=[
+            (round(r["start_s"], 2), round(r["end_s"], 2)) for r in context.existing_overlays
+        ],
+        proposed=[
+            dict(
+                kind=row.kind,
+                start_s=row.start_s,
+                end_s=row.end_s,
+                evidence=[ref.kind for ref in row.evidence],
+            )
+            for row in raw.overlays
+        ],
+        kept=len(overlays),
+        notices=len(notices),
+        refused=refused,
+    )
+
+
 def generate_overlay_plan(
     db, *, owner_id, item_id, body: OverlayPlanRequest, ctx, agent=None, locale: str | None = None
 ):
@@ -680,7 +716,9 @@ def generate_overlay_plan(
             notices=notices,
         )
     except ValueError as exc:
+        _log_outcome(body, context, raw, [], notices, refused=str(exc))
         return OverlayPlanResponse(**response, message=" ".join((str(exc), *notices)))
+    _log_outcome(body, context, raw, overlays, notices)
     message = raw.message
     if overlays:
         message = (message + " Review placement over your footage.").strip()

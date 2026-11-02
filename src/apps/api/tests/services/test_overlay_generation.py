@@ -894,3 +894,44 @@ def test_narration_timing_ignores_the_brand_tail_the_phone_does_not_send():
         r for r in plan_context(job, variant, item, body, []).evidence if r["kind"] == "speech"
     ]
     assert speech
+
+
+def test_one_overlapping_row_does_not_discard_the_rest_of_the_plan():
+    from app.services.overlay_generation import OVERLAP_NOTICE
+
+    base = proposal().overlays[0].model_dump()
+    clash = {**base, "start_s": 1.0, "end_s": 3.0}
+    clear = {**base, "start_s": 5.0, "end_s": 6.0}
+    facts = evidence() + [
+        dict(kind="speech", reference_id="speech-1", quote="kahve", start_s=5.25, end_s=5.7)
+    ]
+    clear["evidence"] = [dict(kind="speech", reference_id="speech-1", quote="kahve")]
+    clash["evidence"] = [dict(kind="speech", reference_id="speech-0", quote="kahve")]
+    notices: list[str] = []
+    rows = materialize_overlays(
+        OverlayPlanOutput(overlays=[clash, clear]),
+        facts,
+        [],
+        duration_s=8,
+        prompt="",
+        existing_overlays=[dict(start_s=0.0, end_s=2.0)],
+        notices=notices,
+    )
+    assert [r.start_s for r in rows] == [5.25]
+    assert notices == [OVERLAP_NOTICE]
+
+
+def test_plan_where_every_row_overlaps_explains_why_instead_of_failing():
+    from app.services.overlay_generation import OVERLAP_NOTICE
+
+    notices: list[str] = []
+    rows = materialize_overlays(
+        proposal(),
+        evidence(),
+        [],
+        duration_s=8,
+        prompt="",
+        existing_overlays=[dict(start_s=0.0, end_s=4.0)],
+        notices=notices,
+    )
+    assert rows == [] and notices == [OVERLAP_NOTICE]
