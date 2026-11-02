@@ -6523,6 +6523,7 @@ def _plan_phone_user_song_montage(
     creator_text: str = "",
     plan_authority: bool = False,
     freeze_frames: bool = False,
+    requirements: Sequence[Any] | None = None,
 ) -> Any:
     """Plan the creator-song montage, with the song's lyrics as captions when asked (KRI-569).
 
@@ -6547,6 +6548,7 @@ def _plan_phone_user_song_montage(
         output_orientation=output_orientation,
         output_orientation_reason=output_orientation_reason,
         freeze_frames=freeze_frames,
+        requirements=requirements,
     )
     if not settings.song_captions_enabled:
         return plan
@@ -6715,6 +6717,7 @@ def _plan_phone_user_song_core(
     output_orientation: str | None = None,
     output_orientation_reason: str | None = None,
     freeze_frames: bool = False,
+    requirements: Sequence[Any] | None = None,
 ) -> tuple[Any, Any]:
     """Plan a phone montage around the creator's own song (KRI-374).
 
@@ -6725,7 +6728,8 @@ def _plan_phone_user_song_core(
     did not confirm is placed by likelihood (best candidate, tie broken toward the
     cluster) and flagged low-confidence in the receipt; a take with no evidence stays
     muted B-roll unless the creator's answer stacked it. Every failure is a
-    ``UserSongPlanDeclined`` with a message the creator can act on.
+    ``UserSongPlanDeclined`` with a message the creator can act on. ``requirements`` are the
+    bound brief's live asks: the lip-sync planner reads their typed title animation.
     """
     from app.pipeline.lipsync_montage import (  # noqa: PLC0415
         LipsyncPlanError,
@@ -6817,6 +6821,7 @@ def _plan_phone_user_song_core(
                 output_orientation_reason=output_orientation_reason,
                 creator_choices=creator_choices,
                 freeze_frames=freeze_frames,
+                requirements=requirements,
             ),
             analysis,
         )
@@ -7366,6 +7371,7 @@ def _run_phone_unified_montage_job(
                         all_candidates.get("creator_client_protocol")
                     )
                 ),
+                requirements=brief.live() if brief is not None else None,
             )
         else:
             if plan_authority:
