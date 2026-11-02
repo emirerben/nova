@@ -178,16 +178,37 @@ enum NativeEditorUITestFixtures {
         var value = talkingCaptions
         var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
         caps["speaker_background"] = .object(["editable": .bool(true)])
+        // KRI-1162: `-ui-testing-editor-speaker-background-windows` also opens the timed-background gate and, until a
+        // save has been kept (reset forgets it), seeds the lane with a photo fill and two windows (a photo 0-2 s, a video 2.5-5 s).
+        let windowsOn = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background-windows")
+        if windowsOn { caps["speaker_background_windows"] = .object(["editable": .bool(true)]) }
         value.serverSnapshot["editor_capabilities"] = .object(caps)
+        var lane: JSONValue?
         if let data = defaults.data(forKey: savedSpeakerBackgroundKey), let saved = try? JSONDecoder().decode(JSONValue.self, from: data) {
+            lane = saved
+        } else if windowsOn {
+            lane = seededSpeakerBackgroundWindows
+        }
+        if let lane {
             var payload = value.serverSnapshot["editor_payload"]?.objectValue ?? [:]
             var sections = payload["sections"]?.objectValue ?? [:]
-            sections["speaker_background"] = saved
+            sections["speaker_background"] = lane
             payload["sections"] = .object(sections)
             value.serverSnapshot["editor_payload"] = .object(payload)
         }
         return value
     }
+
+    /// The lane `-ui-testing-editor-speaker-background-windows` starts from.
+    static let seededSpeakerBackgroundWindows: JSONValue = .object([
+        "media_id": .string("fixture-bg-photo"), "kind": .string("image"), "source_start_s": .number(0),
+        "windows": .array([
+            .object(["media_id": .string("fixture-bg-photo"), "kind": .string("image"), "source_start_s": .number(0),
+                     "start_s": .number(0), "end_s": .number(2)]),
+            .object(["media_id": .string("fixture-bg-video"), "kind": .string("video"), "source_start_s": .number(0),
+                     "start_s": .number(2.5), "end_s": .number(5)]),
+        ]),
+    ])
 
     static let drawing: EditorDraft = {
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-drawing-reset") {

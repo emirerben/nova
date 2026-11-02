@@ -37,7 +37,14 @@ from typing import Any, Literal
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1187,12 +1194,41 @@ class EditorCommitMusicWindow(BaseModel):
         return value
 
 
+class EditorCommitSpeakerBackgroundWindow(BaseModel):
+    """One timed background of the Save section (KRI-1162): a pool visual shown from
+    ``start_s`` to ``end_s`` (the edit's timeline). Order, overlap and the 0.5 s minimum are
+    checked by `_validate_speaker_background_section` so they answer with their own code."""
+
+    model_config = {"extra": "forbid"}
+
+    media_id: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    kind: Literal["image", "video"]
+    source_start_s: float = Field(default=0.0, ge=0.0, le=1800.0, allow_inf_nan=False)
+    start_s: float = Field(ge=0.0, le=1800.0, allow_inf_nan=False)
+    end_s: float = Field(ge=0.0, le=1800.0, allow_inf_nan=False)
+
+
+class EditorCommitSpeakerFrame(BaseModel):
+    """Where the matted speaker is drawn (KRI-1162): the document's ``speaker_frame``. The app
+    writes it from a named corner preset; the server never takes a corner name on the wire."""
+
+    model_config = {"extra": "forbid"}
+
+    width_fraction: float = Field(ge=0.2, le=1.0, allow_inf_nan=False)
+    x_fraction: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+    y_fraction: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+
+
 class EditorCommitSpeakerBackground(BaseModel):
     """Editor Save section for the Talk-to-camera background (KRI-1117).
 
     The wire is the same ``{media_id, kind, source_start_s}`` the editor document carries:
     the media id names a visual in this item's pool, never a path (the server pins the
     exact bytes). Sent as an object to set it, as an explicit ``null`` to clear it.
+
+    KRI-1162: ``windows`` (1..40 timed backgrounds over the fill) and ``speaker_frame`` are
+    optional and omitted from the dump while unused, so an old-shape Save dumps exactly as it
+    did and still equals the stored document.
     """
 
     model_config = {"extra": "forbid"}
@@ -1200,6 +1236,23 @@ class EditorCommitSpeakerBackground(BaseModel):
     media_id: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
     kind: Literal["image", "video"]
     source_start_s: float = Field(default=0.0, ge=0.0, le=1800.0, allow_inf_nan=False)
+    windows: list[EditorCommitSpeakerBackgroundWindow] | None = Field(
+        default=None, min_length=1, max_length=40
+    )
+    speaker_frame: EditorCommitSpeakerFrame | None = None
+
+    @property
+    def uses_windows(self) -> bool:
+        return bool(self.windows) or self.speaker_frame is not None
+
+    @model_serializer(mode="wrap")
+    def _omit_unused(self, handler):  # noqa: ANN001, ANN202
+        data = handler(self)
+        if not data.get("windows"):
+            data.pop("windows", None)
+        if data.get("speaker_frame") is None:
+            data.pop("speaker_frame", None)
+        return data
 
 
 class EditorCommitUserSong(BaseModel):
@@ -7544,6 +7597,9 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     # and every cloud / closed-gate payload keep their exact shape.
     if _speaker_background_capability(job, variant):
         capabilities["speaker_background"] = True
+        # KRI-1162: timed backgrounds + the speaker frame, present only when ON (same reason).
+        if _speaker_background_windows_capability(job, variant):
+            capabilities["speaker_background_windows"] = True
     if _caption_animation_capability(variant, capabilities):
         capabilities["caption_animation"] = True
     if _clip_tilt_capability(job, variant, capabilities):
@@ -11230,6 +11286,61 @@ def _speaker_background_capability(job: Job, variant: dict) -> bool:
     )
 
 
+def _speaker_background_windows_capability(job: Job, variant: dict) -> bool:
+    """KRI-1162: may the app author background windows and a speaker frame
+    (``editor_capabilities.speaker_background_windows``)? The base capability AND the windows
+    gate (``speakerBackgroundWindows`` verified, protocol >=
+    ``speaker_background_windows_min_client_protocol``)."""
+    from app.services.phone_rollout import speaker_background_windows_supported  # noqa: PLC0415
+
+    return bool(
+        _speaker_background_capability(job, variant)
+        and speaker_background_windows_supported(require_client=True)
+    )
+
+
+def _validate_speaker_background_windows(
+    requested: EditorCommitSpeakerBackground, assembly: dict
+) -> None:
+    """KRI-1162 (S28, S35): refuse a window list the compositor cannot show.
+
+    Sorted by start, never overlapping, each at least 0.5 s, every visual a pinned pool visual
+    (the route pinned each new id before this runs) of the asked kind, a photo with no source
+    start and a video's start inside its footage.
+    """
+    from app.pipeline.phone_subtitled_lanes import MIN_BACKGROUND_WINDOW_S  # noqa: PLC0415
+    from app.services.phone_subtitled_editor import pinned_visual  # noqa: PLC0415
+
+    windows = requested.windows or []
+    previous_end = 0.0
+    for window in windows:
+        if window.end_s - window.start_s < MIN_BACKGROUND_WINDOW_S or window.start_s < previous_end:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_window_invalid"},
+            )
+        previous_end = window.end_s
+    for window in windows:
+        binding = pinned_visual(assembly, window.media_id)
+        if binding is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_media_not_in_pool"},
+            )
+        if binding.kind != window.kind:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_kind_mismatch"},
+            )
+        if (binding.kind == "image" and window.source_start_s != 0) or (
+            binding.kind == "video" and window.source_start_s >= (binding.duration_s or 0.0)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_start_out_of_range"},
+            )
+
+
 def _validate_speaker_background_section(
     job: Job, variant: dict, payload: EditorCommitRequest
 ) -> tuple[bool, dict | None]:
@@ -11245,8 +11356,15 @@ def _validate_speaker_background_section(
     THIS item's pool (S19): the route pins a new pool visual before it gets here, and any
     other id (another item's, another user's, a made-up one) is refused.
     """
-    from app.pipeline.phone_subtitled_lanes import SubtitledBackground  # noqa: PLC0415
-    from app.services.phone_rollout import speaker_background_unavailable_reason  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+        SubtitledBackground,
+        SubtitledBackgroundWindow,
+        SubtitledSpeakerFrame,
+    )
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        speaker_background_unavailable_reason,
+        speaker_background_windows_unavailable_reason,
+    )
     from app.services.phone_subtitled_editor import (  # noqa: PLC0415
         pinned_visual,
         speaker_background_document,
@@ -11292,6 +11410,25 @@ def _validate_speaker_background_section(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"code": "speaker_background_disabled", "reason": reason},
         )
+    if requested.uses_windows:
+        # KRI-1162 (S32, S33): the windows gate on top of the base gate above.
+        windows_reason = speaker_background_windows_unavailable_reason()
+        if windows_reason == "client_protocol_below_min":
+            raise HTTPException(
+                426,
+                detail={
+                    "code": "client_update_required",
+                    "feature": "speaker_background_windows",
+                    "minimum_client_protocol": (
+                        settings.speaker_background_windows_min_client_protocol
+                    ),
+                },
+            )
+        if windows_reason is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_windows_disabled", "reason": windows_reason},
+            )
     binding = pinned_visual(assembly, requested.media_id)
     if binding is None:
         raise HTTPException(
@@ -11313,6 +11450,22 @@ def _validate_speaker_background_section(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"code": "speaker_background_start_out_of_range"},
         )
+    window_lanes: list[SubtitledBackgroundWindow] = []
+    if requested.uses_windows:
+        _validate_speaker_background_windows(requested, assembly)
+        for window in requested.windows or []:
+            window_binding = pinned_visual(assembly, window.media_id)
+            window_lanes.append(
+                SubtitledBackgroundWindow(
+                    media_id=window_binding.media_id,
+                    gcs_path=window_binding.gcs_path,
+                    generation=window_binding.generation,
+                    kind=window_binding.kind,
+                    source_start_s=window.source_start_s,
+                    start_s=window.start_s,
+                    end_s=window.end_s,
+                )
+            )
     return True, speaker_background_document(
         SubtitledBackground(
             media_id=binding.media_id,
@@ -11320,6 +11473,12 @@ def _validate_speaker_background_section(
             generation=binding.generation,
             kind=binding.kind,
             source_start_s=requested.source_start_s,
+            windows=tuple(window_lanes),
+            speaker_frame=(
+                SubtitledSpeakerFrame(**requested.speaker_frame.model_dump())
+                if requested.speaker_frame is not None
+                else None
+            ),
         )
     )
 

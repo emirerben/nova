@@ -914,12 +914,17 @@ enum NativeEditorRenderError: Error, Equatable {
         var speakerBackground: SpeakerBackgroundLayer?
         if let background = document.speakerBackground {
             let layer = background.layer
-            guard let source = mediaSources[EditorSpeakerBackground.sourceKey(forMediaID: background.mediaID)],
-                  let fingerprint = source.asset.fingerprint else { throw MediaEngineError.missingAsset(layer.assetID) }
-            assets[layer.assetID] = MediaAsset(id: layer.assetID, relativePath: layer.assetID, fingerprint: fingerprint)
-            references[layer.assetID] = RenderAssetReference(id: layer.assetID, fingerprint: try RenderFingerprint(fingerprint),
-                source: .visual(visualID: background.mediaID, generation: source.visualGeneration ?? "0", mediaKind: background.kind))
-            urls[layer.assetID] = source.url
+            // KRI-1162: the fill and every window visual are pinned pool assets (one entry per media id, however
+            // many windows reuse it).
+            for requirement in background.mediaRequirements {
+                let assetID = EditorSpeakerBackground.assetID(forMediaID: requirement.mediaID)
+                guard let source = mediaSources[EditorSpeakerBackground.sourceKey(forMediaID: requirement.mediaID)],
+                      let fingerprint = source.asset.fingerprint else { throw MediaEngineError.missingAsset(assetID) }
+                assets[assetID] = MediaAsset(id: assetID, relativePath: assetID, fingerprint: fingerprint)
+                references[assetID] = RenderAssetReference(id: assetID, fingerprint: try RenderFingerprint(fingerprint),
+                    source: .visual(visualID: requirement.mediaID, generation: source.visualGeneration ?? "0", mediaKind: requirement.kind))
+                urls[assetID] = source.url
+            }
             speakerBackground = layer
         }
         // KRI-1139: a clip's media backdrop is one pinned pool-visual asset. A photo or video the session could not

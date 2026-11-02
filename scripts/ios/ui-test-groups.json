@@ -353,7 +353,10 @@
       "KriaUITests/OverlayGenerationUITests/testInlineImageApprovalUsesNormalVisualControlsUndoAndSavedReopen",
       "KriaUITests/OverlayGenerationUITests/testNewLookCanBeAddedAfterAcceptedSourceRegistrationResponseIsLost",
       "KriaUITests/OverlayGenerationUITests/testMixedPlanShowsTheLogoNoticeNextToTheKeptOverlay",
-      "KriaUITests/OverlayGenerationUITests/testAvailabilityCheckFailureCanBeRetriedWithoutLeavingThePanel"
+      "KriaUITests/OverlayGenerationUITests/testAvailabilityCheckFailureCanBeRetriedWithoutLeavingThePanel",
+      "KriaUITests/BackgroundLaneUITests/testDraggingAWindowMovesTheInspectorAndTheSave",
+      "KriaUITests/BackgroundLaneUITests/testTheSequenceTilesAddAndRemoveWindowsAndTheSpeakerControlSetsThePreset",
+      "KriaUITests/BackgroundLaneUITests/testAProjectWithoutWindowsKeepsItsLanesAndHidesTheWindowControls"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -520,6 +523,7 @@
     "src/apps/ios/Kria/Core/OverlayGeneration.swift": "editor",
     "src/apps/ios/Kria/Features/NativeBackgroundPanel.swift": "editor",
     "src/apps/ios/Tests/KriaUITests/SpeakerBackgroundUITests.swift": "editor",
+    "src/apps/ios/Tests/KriaUITests/BackgroundLaneUITests.swift": "editor",
     "src/apps/ios/Kria/Core/WhatsNew.swift": "projects",
     "src/apps/ios/Kria/Core/WhatsNewReleases.swift": "projects",
     "src/apps/ios/Kria/Features/WhatsNewView.swift": "projects",

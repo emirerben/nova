@@ -10,6 +10,9 @@ enum EditorSelectionKind: String, Codable, CaseIterable, Hashable, Sendable {
     case motionScene = "motion_scene", cameraEffect = "camera_effect"
     case soundEffect = "sound_effect", mediaOverlay = "media_overlay"
     case music, carousel, drawing
+    /// KRI-1162: one timed Talk-to-camera background (`speaker_background.windows[]`). Client-only: a selection
+    /// is never encoded to the server, and the id is the window's local `bg-<n>` block id.
+    case speakerBackgroundWindow = "speaker_background_window"
 }
 
 struct EditorSelection: Codable, Equatable, Hashable, Sendable {
@@ -159,19 +162,29 @@ struct EditorUserSongState: Equatable, Sendable {
 
 /// The `speaker_background` lane (KRI-1118): `null | {media_id, kind, source_start_s}`. `mediaID` names a photo or
 /// video in the item's Visuals pool; the recipe asset id derived from it is `visual-<media_id>`.
+/// KRI-1162 adds, both keys absent while unused: `windows` (timed pool visuals; the fields above stay the FILL shown
+/// wherever no window covers the time) and `speaker_frame` (the matted speaker drawn small in a corner).
 struct EditorSpeakerBackground: Equatable, Sendable {
     var mediaID: String
     var kind: VisualMediaKind
     /// Seconds into a video where playback starts; always 0 for a photo.
     var sourceStartS: Double
+    /// Sorted by `startS`, non-overlapping, at most `SpeakerBackgroundLimits.maxWindows`; empty = key absent.
+    var windows: [EditorSpeakerBackgroundWindow]
+    /// Nil = the speaker fills the frame (key absent).
+    var speakerFrame: EditorSpeakerFrame?
 
-    init(mediaID: String, kind: VisualMediaKind, sourceStartS: Double = 0) {
+    init(mediaID: String, kind: VisualMediaKind, sourceStartS: Double = 0,
+         windows: [EditorSpeakerBackgroundWindow] = [], speakerFrame: EditorSpeakerFrame? = nil) {
         self.mediaID = mediaID; self.kind = kind; self.sourceStartS = kind == .video ? sourceStartS : 0
+        self.windows = windows; self.speakerFrame = speakerFrame
     }
 
-    /// Nil for any shape this client cannot represent exactly (extra keys, a bad kind, a photo with a start).
+    /// Nil for any shape this client cannot represent exactly (extra keys, a bad kind, a photo with a start, a
+    /// `null`/empty `windows` or `speaker_frame`, windows out of order or overlapping).
     init?(json: JSONValue) {
-        guard case .object(let fields) = json, Set(fields.keys).isSubset(of: ["media_id", "kind", "source_start_s"]),
+        guard case .object(let fields) = json,
+              Set(fields.keys).isSubset(of: ["media_id", "kind", "source_start_s", "windows", "speaker_frame"]),
               case .string(let id)? = fields["media_id"], !id.isEmpty, id.count <= SpeakerBackgroundLimits.maxIDLength,
               !id.contains(where: \.isWhitespace),
               case .string(let rawKind)? = fields["kind"], let kind = VisualMediaKind(rawValue: rawKind) else { return nil }
@@ -182,22 +195,159 @@ struct EditorSpeakerBackground: Equatable, Sendable {
         default: return nil
         }
         guard start.isFinite, (0...SpeakerBackgroundLimits.maxSourceStart).contains(start), kind == .video || start == 0 else { return nil }
-        self.init(mediaID: id, kind: kind, sourceStartS: start)
+        var windows: [EditorSpeakerBackgroundWindow] = []
+        if let raw = fields["windows"] {
+            guard case .array(let rows) = raw, !rows.isEmpty, rows.count <= SpeakerBackgroundLimits.maxWindows else { return nil }
+            for (index, row) in rows.enumerated() {
+                guard let window = EditorSpeakerBackgroundWindow(json: row, localID: Self.localID(index)) else { return nil }
+                windows.append(window)
+            }
+            guard Self.windowsAreOrdered(windows) else { return nil }
+        }
+        var frame: EditorSpeakerFrame?
+        if let raw = fields["speaker_frame"] {
+            guard let value = EditorSpeakerFrame(json: raw) else { return nil }
+            frame = value
+        }
+        self.init(mediaID: id, kind: kind, sourceStartS: start, windows: windows, speakerFrame: frame)
     }
 
     var json: JSONValue {
-        .object(["media_id": .string(mediaID), "kind": .string(kind.rawValue), "source_start_s": .number(sourceStartS)])
+        var fields: [String: JSONValue] = ["media_id": .string(mediaID), "kind": .string(kind.rawValue), "source_start_s": .number(sourceStartS)]
+        if !windows.isEmpty { fields["windows"] = .array(windows.map(\.json)) }
+        if let speakerFrame { fields["speaker_frame"] = speakerFrame.json }
+        return .object(fields)
     }
 
     /// The engine layer this lane compiles to: asset `visual-<media_id>`, looping, bound to the Talking speaker track.
     var layer: SpeakerBackgroundLayer {
         SpeakerBackgroundLayer(assetID: Self.assetID(forMediaID: mediaID), mediaKind: kind, sourceStart: sourceStartS,
-                               loop: true, subjectTrackID: SpeakerBackgroundLimits.defaultSubjectTrackID)
+                               loop: true, subjectTrackID: SpeakerBackgroundLimits.defaultSubjectTrackID,
+                               windows: windows.isEmpty ? nil : windows.map(\.layerWindow), speakerFrame: speakerFrame?.layerFrame)
+    }
+
+    /// Every pool visual the lane needs bytes for: the fill and each window, once per media id.
+    var mediaRequirements: [(mediaID: String, kind: VisualMediaKind)] {
+        var seen = Set<String>()
+        return ([(mediaID, kind)] + windows.map { ($0.mediaID, $0.kind) }).filter { seen.insert($0.0).inserted }
     }
 
     static func assetID(forMediaID id: String) -> String { "visual-" + id }
     /// The `mediaSources` key under which the session resolves this background's bytes for the compiler.
     static func sourceKey(forMediaID id: String) -> String { "speaker_background:" + id }
+
+    /// Client-local block ids (`bg-<n>`): assigned at load or creation, never written to the wire.
+    static func localID(_ n: Int) -> String { "bg-\(n)" }
+
+    /// The server's rule: sorted by start, non-overlapping (touching is fine), each at least half a second.
+    static func windowsAreOrdered(_ windows: [EditorSpeakerBackgroundWindow]) -> Bool {
+        guard (1...SpeakerBackgroundLimits.maxWindows).contains(windows.count) else { return false }
+        for window in windows where !window.isValid { return false }
+        for (earlier, later) in zip(windows, windows.dropFirst()) where later.startS < earlier.endS { return false }
+        return true
+    }
+}
+
+/// One timed background: a pool photo (held) or muted video (looping from `sourceStartS` inside the window).
+struct EditorSpeakerBackgroundWindow: Equatable, Sendable {
+    /// Client-local block id (`bg-<n>`). Never written to the wire and ignored by `==`, so a window that is
+    /// removed and added back is not a false edit.
+    var localID: String
+    var mediaID: String
+    var kind: VisualMediaKind
+    var sourceStartS: Double
+    var startS: Double
+    var endS: Double
+
+    /// The shortest window the wire accepts.
+    static let minDuration = SpeakerBackgroundLimits.minWindowSeconds
+
+    init(localID: String, mediaID: String, kind: VisualMediaKind, sourceStartS: Double = 0, startS: Double, endS: Double) {
+        self.localID = localID; self.mediaID = mediaID; self.kind = kind
+        self.sourceStartS = kind == .video ? sourceStartS : 0; self.startS = startS; self.endS = endS
+    }
+
+    init?(json: JSONValue, localID: String) {
+        guard case .object(let fields) = json, Set(fields.keys) == ["media_id", "kind", "source_start_s", "start_s", "end_s"],
+              case .string(let id)? = fields["media_id"], case .string(let rawKind)? = fields["kind"],
+              let kind = VisualMediaKind(rawValue: rawKind),
+              case .number(let sourceStart)? = fields["source_start_s"],
+              case .number(let start)? = fields["start_s"], case .number(let end)? = fields["end_s"] else { return nil }
+        let window = EditorSpeakerBackgroundWindow(localID: localID, mediaID: id, kind: kind, sourceStartS: sourceStart, startS: start, endS: end)
+        guard window.isValid, kind == .video || sourceStart == 0 else { return nil }
+        self = window
+    }
+
+    var isValid: Bool {
+        !mediaID.isEmpty && mediaID.count <= SpeakerBackgroundLimits.maxIDLength && !mediaID.contains(where: \.isWhitespace)
+            && sourceStartS.isFinite && (0...SpeakerBackgroundLimits.maxSourceStart).contains(sourceStartS)
+            && startS.isFinite && endS.isFinite && startS >= 0 && endS <= SpeakerBackgroundLimits.maxTimeline
+            && endS - startS >= Self.minDuration
+    }
+
+    var json: JSONValue {
+        .object(["media_id": .string(mediaID), "kind": .string(kind.rawValue), "source_start_s": .number(sourceStartS),
+                 "start_s": .number(startS), "end_s": .number(endS)])
+    }
+
+    var layerWindow: SpeakerBackgroundWindow {
+        SpeakerBackgroundWindow(assetID: EditorSpeakerBackground.assetID(forMediaID: mediaID), mediaKind: kind,
+                                sourceStart: sourceStartS, start: startS, end: endS)
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.mediaID == rhs.mediaID && lhs.kind == rhs.kind && lhs.sourceStartS == rhs.sourceStartS
+            && lhs.startS == rhs.startS && lhs.endS == rhs.endS
+    }
+}
+
+/// Where the matted speaker is drawn (canvas fractions; x/y are the centre). The editor writes only the named
+/// presets; a frame the server sends that is not a preset is shown as "Custom" and kept untouched.
+struct EditorSpeakerFrame: Equatable, Sendable {
+    var widthFraction: Double
+    var xFraction: Double
+    var yFraction: Double
+
+    /// Preset names in the order the Speaker control lists them (`full` is the absent frame).
+    static let presetNames = ["small_bottom_right", "small_bottom_left", "small_top_right", "small_top_left"]
+
+    static func preset(_ name: String) -> EditorSpeakerFrame? {
+        switch name {
+        case "small_bottom_right": EditorSpeakerFrame(widthFraction: 0.42, xFraction: 0.76, yFraction: 0.80)
+        case "small_bottom_left": EditorSpeakerFrame(widthFraction: 0.42, xFraction: 0.24, yFraction: 0.80)
+        case "small_top_right": EditorSpeakerFrame(widthFraction: 0.42, xFraction: 0.76, yFraction: 0.22)
+        case "small_top_left": EditorSpeakerFrame(widthFraction: 0.42, xFraction: 0.24, yFraction: 0.22)
+        default: nil
+        }
+    }
+
+    /// The preset these fractions match within 0.001, else nil (a custom frame).
+    var presetName: String? {
+        Self.presetNames.first { name in
+            guard let preset = Self.preset(name) else { return false }
+            return abs(preset.widthFraction - widthFraction) <= 0.001 && abs(preset.xFraction - xFraction) <= 0.001
+                && abs(preset.yFraction - yFraction) <= 0.001
+        }
+    }
+
+    init(widthFraction: Double, xFraction: Double, yFraction: Double) {
+        self.widthFraction = widthFraction; self.xFraction = xFraction; self.yFraction = yFraction
+    }
+
+    init?(json: JSONValue) {
+        guard case .object(let fields) = json, Set(fields.keys) == ["width_fraction", "x_fraction", "y_fraction"],
+              case .number(let width)? = fields["width_fraction"], case .number(let x)? = fields["x_fraction"],
+              case .number(let y)? = fields["y_fraction"],
+              width.isFinite, x.isFinite, y.isFinite,
+              (SpeakerBackgroundLimits.minFrameWidthFraction...1).contains(width), (0...1).contains(x), (0...1).contains(y) else { return nil }
+        self.init(widthFraction: width, xFraction: x, yFraction: y)
+    }
+
+    var json: JSONValue {
+        .object(["width_fraction": .number(widthFraction), "x_fraction": .number(xFraction), "y_fraction": .number(yFraction)])
+    }
+
+    var layerFrame: SpeakerFrame { SpeakerFrame(widthFraction: widthFraction, xFraction: xFraction, yFraction: yFraction) }
 }
 
 struct EditorTimelineSlot: Codable, Equatable, Sendable {

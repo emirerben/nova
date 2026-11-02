@@ -54,6 +54,8 @@ from app.pipeline.phone_subtitled_lanes import (
     PhoneSubtitledLanes,
     ResolvedSoundEffect,
     SubtitledBackground,
+    SubtitledBackgroundWindow,
+    SubtitledSpeakerFrame,
     lane_names,
 )
 from app.pipeline.phone_subtitled_plan import (
@@ -101,6 +103,7 @@ from app.services.phone_rollout import (
     single_word_text_client_supported,
     single_word_text_verified,
     speaker_background_client_supported,
+    speaker_background_windows_client_supported,
     text_bend_client_supported,
     validate_phone_pilot_recipe,
 )
@@ -118,6 +121,7 @@ from app.services.phone_subtitled_editor import (
     lanes_from_recipe,
     sections_from_lanes,
     variant_carries_speaker_background,
+    variant_carries_speaker_background_windows,
 )
 from app.services.phone_voiceover_timeline import (
     narrated_timings_and_assignments,
@@ -862,6 +866,22 @@ def prepare_phone_editor_commit(
                 "minimum_client_protocol": settings.speaker_background_min_client_protocol,
             },
         )
+    if (
+        stored_variant is not None
+        and not speaker_background_windows_client_supported()
+        and variant_carries_speaker_background_windows(job.assembly_plan or {}, stored_variant)
+    ):
+        # KRI-1162 (S32): a recompile would pin `windows` / `speaker_frame`, which this app
+        # build cannot decode, or (compile strips them for such a build) silently take them off.
+        # Nothing is committed.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_background_windows",
+                "minimum_client_protocol": settings.speaker_background_windows_min_client_protocol,
+            },
+        )
     try:
         _rebind_editor_render_contract(
             staged,
@@ -956,6 +976,23 @@ def prepare_phone_editor_commit(
                 "code": "client_update_required",
                 "feature": "speaker_background",
                 "minimum_client_protocol": settings.speaker_background_min_client_protocol,
+            },
+        )
+    staged_background = getattr(
+        device_status(staged, variant_id).request.recipe, "speaker_background", None
+    )
+    if (
+        staged_background is not None
+        and staged_background.uses_windows
+        and not speaker_background_windows_client_supported()
+    ):
+        # KRI-1162: the belt for a recompile that pinned windows this build cannot decode.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_background_windows",
+                "minimum_client_protocol": settings.speaker_background_windows_min_client_protocol,
             },
         )
     if not freeze_frame_client_supported() and recipe_has_freeze_frame(
@@ -1185,12 +1222,32 @@ def _background_lane(
     binding = next((v for v in visuals if v.media_id == document["media_id"]), None)
     if binding is None:
         raise ValueError("that background isn't a visual Kria pinned for this Talking edit")
+    windows: list[SubtitledBackgroundWindow] = []
+    for entry in document.get("windows") or ():
+        # KRI-1162: every window is a pinned pool visual too (the route validated each id).
+        window_binding = next((v for v in visuals if v.media_id == entry["media_id"]), None)
+        if window_binding is None:
+            raise ValueError("that background isn't a visual Kria pinned for this Talking edit")
+        windows.append(
+            SubtitledBackgroundWindow(
+                media_id=window_binding.media_id,
+                gcs_path=window_binding.gcs_path,
+                generation=window_binding.generation,
+                kind=window_binding.kind,
+                source_start_s=entry.get("source_start_s", 0.0),
+                start_s=entry["start_s"],
+                end_s=entry["end_s"],
+            )
+        )
+    frame = document.get("speaker_frame")
     return SubtitledBackground(
         media_id=binding.media_id,
         gcs_path=binding.gcs_path,
         generation=binding.generation,
         kind=binding.kind,
         source_start_s=document.get("source_start_s", 0.0),
+        windows=tuple(windows),
+        speaker_frame=SubtitledSpeakerFrame(**frame) if frame else None,
     )
 
 

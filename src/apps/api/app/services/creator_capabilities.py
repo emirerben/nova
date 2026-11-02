@@ -59,6 +59,10 @@ from app.agents._schemas.edit_format import (
     guided_edit_applicable,
     render_program_for_intent,
 )
+from app.agents._schemas.reaction_beats import (
+    DEFAULT_BACKGROUND_CADENCE_S,
+    BackgroundSequenceEntry,
+)
 from app.config import settings
 from app.schemas.creation_formats import SONG_SYNC_DEFAULT_BY_FORMAT
 from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS
@@ -82,6 +86,7 @@ from app.services.phone_rollout import (
     phone_user_song_supported,
     phone_voiceover_reaction_beats_supported,
     speaker_background_supported,
+    speaker_background_windows_supported,
 )
 
 CAPABILITY_SET_ITEM_INTENT = "set_item_intent"
@@ -119,6 +124,10 @@ TIMED_CARDS_UNAVAILABLE_NOTICE = (
 # `capabilities` ONLY while the gate (`speaker_background_supported()`, the phone media lanes)
 # is open on a phone `subtitled` manifest, so every other manifest and hash stays byte-identical.
 CAPABILITY_SPEAKER_BACKGROUND = "speaker_background"
+# KRI-1162: several backgrounds in time + the speaker small in a corner. Present ONLY while
+# `speaker_background` is advertised AND `speaker_background_windows_supported()` holds, so a
+# manifest without it keeps its dict, both hashes and the creator prompt byte-identical.
+CAPABILITY_SPEAKER_BACKGROUND_WINDOWS = "speaker_background_windows"
 # The reason a background (the creator's pick in the camera, or the agent's
 # `background_media`) is not kept. The creator reads it before approving; the Turkish twins
 # live in `app.kria.strategy_policy._KNOWN_TR`.
@@ -135,6 +144,15 @@ SPEAKER_BACKGROUND_NOTICES: dict[str, str] = {
         "edit's photos and videos; kept your own background."
     ),
     "kind_off": ("Couldn't use that as the background: this iPhone can't draw it behind you yet."),
+    # KRI-1162: the changing backgrounds / the small speaker.
+    "windows_unavailable": (
+        "Couldn't change the backgrounds or put you small in a corner: your iPhone app can't "
+        "switch backgrounds yet. One background stays behind you for the whole video."
+    ),
+    "sequence_not_found": (
+        "Couldn't find some of the photos or videos you named for the changing background; "
+        "left them out."
+    ),
 }
 TALKING_CLIP_INTENTS_DROPPED_NOTICE = (
     "Talking edits caption what you say, so I didn't add separate labels or captions "
@@ -919,6 +937,8 @@ def resolve_creator_manifest(
         # hashes and the creator prompt exactly as they were before this lane existed.
         if settings.phone_subtitled_media_lanes_enabled and speaker_background_supported():
             capabilities[CAPABILITY_SPEAKER_BACKGROUND] = _available()
+            if speaker_background_windows_supported():
+                capabilities[CAPABILITY_SPEAKER_BACKGROUND_WINDOWS] = _available()
             background_pick = speaker_background_pick or None
     if has_voiceover and not runs_guided_voiceover:
         # KRI-598: runtime v2 downgraded every guided_voiceover_v1 strategy to the native
@@ -1550,6 +1570,13 @@ def speaker_background_open(manifest: ResolvedCreatorManifest) -> bool:
     return capability is not None and capability.available
 
 
+def speaker_background_windows_open(manifest: ResolvedCreatorManifest) -> bool:
+    """True when the manifest also advertises timed backgrounds + the speaker frame (KRI-1162)."""
+
+    capability = manifest.capabilities.get(CAPABILITY_SPEAKER_BACKGROUND_WINDOWS)
+    return capability is not None and capability.available and speaker_background_open(manifest)
+
+
 def _speaker_background_media(
     manifest: ResolvedCreatorManifest, requested: str | None
 ) -> CreatorMediaRef | None:
@@ -1582,6 +1609,13 @@ def _repair_creator_speaker_background(
     THIS item's pool, a closed capability or a kind the phone cannot draw is dropped with a
     plain notice (S18, S19), never silently. A kept background is also taken out of every
     reaction beat and the closing shot: it is the backdrop, never also a pop-in.
+
+    KRI-1162: every ``sequence`` entry is held to the same pool check (canonical
+    ``asset-<id>`` spelling; others dropped with one notice, S35); a sequence that loses
+    every entry falls back to the fill alone; ``cadence_s``, ``sequence`` and a
+    ``speaker_frame`` other than ``full`` are kept only while the manifest advertises
+    ``speaker_background_windows`` and otherwise stripped with ONE notice, the fill kept (S37).
+    Every kept sequence entry is also taken out of the pop-ins like the fill (S43).
     """
 
     wanted = strategy.background_media
@@ -1608,17 +1642,66 @@ def _repair_creator_speaker_background(
     if media is not None and media.kind not in phone_drawable_visual_kinds():
         notices.append(SPEAKER_BACKGROUND_NOTICES["kind_off"])
         media = None
+    entries: list[BackgroundSequenceEntry] = []
+    cadence_s = DEFAULT_BACKGROUND_CADENCE_S
+    frame = "full"
+    asked_windows = wanted is not None and (
+        bool(wanted.sequence)
+        or wanted.speaker_frame != "full"
+        or wanted.cadence_s != DEFAULT_BACKGROUND_CADENCE_S
+    )
+    if asked_windows and wanted is not None:
+        if not speaker_background_windows_open(manifest):
+            notices.append(SPEAKER_BACKGROUND_NOTICES["windows_unavailable"])
+        else:
+            cadence_s = wanted.cadence_s
+            frame = wanted.speaker_frame
+            lost = False
+            for entry in wanted.sequence:
+                found = _speaker_background_media(manifest, entry.media_id)
+                if found is None or found.kind not in phone_drawable_visual_kinds():
+                    lost = True
+                    continue
+                entries.append(
+                    entry.model_copy(
+                        update={
+                            "media_id": found.media_id,
+                            "source_start_s": entry.source_start_s
+                            if found.kind == "video"
+                            else 0.0,
+                        }
+                    )
+                )
+            if lost:
+                notices.append(SPEAKER_BACKGROUND_NOTICES["sequence_not_found"])
+            if not entries:
+                cadence_s = DEFAULT_BACKGROUND_CADENCE_S
+    if media is None and entries:
+        # The model named no usable fill but a usable sequence: its first entry fills.
+        first = entries[0]
+        media = _speaker_background_media(manifest, first.media_id)
+        start = first.source_start_s
     if media is None:
         return strategy.model_copy(update={"background_media": None}), notices
     update: dict[str, Any] = {
         "background_media": BackgroundMedia(
-            media_id=media.media_id, source_start_s=start if media.kind == "video" else 0.0
+            media_id=media.media_id,
+            source_start_s=start if media.kind == "video" else 0.0,
+            sequence=tuple(entries),
+            cadence_s=cadence_s,
+            speaker_frame=frame,
         )
     }
+    backdrop_ids = {media.media_id, *(entry.media_id for entry in entries)}
+
+    def _is_backdrop(media_id: str | None) -> bool:
+        found = _speaker_background_media(manifest, media_id) if media_id else None
+        return found is not None and found.media_id in backdrop_ids
+
     popped = False
     beats = []
     for beat in strategy.reaction_beats or ():
-        if beat.visual_id is None or _speaker_background_media(manifest, beat.visual_id) != media:
+        if beat.visual_id is None or not _is_backdrop(beat.visual_id):
             beats.append(beat)
             continue
         popped = True
@@ -1628,13 +1711,10 @@ def _repair_creator_speaker_background(
         update["reaction_beats"] = beats or None
     closing = strategy.closing_media
     if closing is not None:
-        if _speaker_background_media(manifest, closing.visual_id) == media:
+        if _is_backdrop(closing.visual_id):
             update["closing_media"] = None
             popped = True
-        elif (
-            closing.badge_visual_id is not None
-            and _speaker_background_media(manifest, closing.badge_visual_id) == media
-        ):
+        elif closing.badge_visual_id is not None and _is_backdrop(closing.badge_visual_id):
             update["closing_media"] = closing.model_copy(update={"badge_visual_id": None})
             popped = True
     if popped:
@@ -2128,6 +2208,7 @@ __all__ = [
     "repair_creator_ending_clip",
     "repair_creator_speaker_background",
     "speaker_background_open",
+    "speaker_background_windows_open",
     "speaker_background_pick_from_state",
     "canonical_pool_media_id",
     "SPEAKER_BACKGROUND_STATE_KEY",

@@ -336,6 +336,30 @@ class EndingClipFact:
 
 
 @dataclass(frozen=True)
+class SpeakerBackgroundFact:
+    """The photo / video behind a phone Talking speaker, as a plan or a render holds it (KRI-1161).
+
+    ``status``: "planned" (a draft whose repaired strategy keeps a background), "applied" (the
+    finished video really has one), "none" (nothing behind the speaker) or "unavailable" (this
+    edit cannot show one; ``code`` says why: "not_talking", "unavailable", "app_too_old").
+    ``pool_count`` is how many of the item's own photos / videos exist to put there (None =
+    unknown, as on a render); ``window_count`` how many timed backgrounds take turns over the
+    fill; ``asked_windows`` / ``asked_frame`` what the strategy asked for before the repair
+    dropped any; ``frame`` the corner preset the speaker sits in (None = full size).
+    """
+
+    status: str
+    code: str | None = None
+    pool_count: int | None = None
+    fill_id: str | None = None
+    window_count: int = 0
+    asked_windows: int = 0
+    windows_open: bool = False
+    frame: str | None = None
+    asked_frame: str | None = None
+
+
+@dataclass(frozen=True)
 class PlanFacts:
     """What a drafted plan verifiably contains. Missing facts stay None/empty."""
 
@@ -716,6 +740,9 @@ class PlanFacts:
     # against the manifest) or as the phone render placed them (`phone_timed_card_receipt`).
     timed_cards_available: bool | None = None
     timed_cards: tuple[TimedCardFact, ...] | None = None
+    # KRI-1161: the background behind a Talking speaker. None = these facts cannot speak to it
+    # (an editor turn, or a render that recorded nothing): a background ask stays unchecked.
+    speaker_background: SpeakerBackgroundFact | None = None
 
     @property
     def reaction_beat_count(self) -> int | None:
@@ -790,6 +817,140 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
         "ending_clip": ending,
         "ending_clip_known": True,
     }
+
+
+def _frame_preset_name(frame: object) -> str | None:
+    """The named corner a stored ``speaker_frame`` fractions dict is; "custom" for any other."""
+    if not isinstance(frame, Mapping) or not frame:
+        return None
+    from app.kria.portable_speaker_background import SPEAKER_FRAME_PRESETS  # noqa: PLC0415
+
+    for name, preset in SPEAKER_FRAME_PRESETS.items():
+        try:
+            if all(abs(float(frame.get(key, -1)) - value) < 1e-6 for key, value in preset.items()):
+                return name
+        except (TypeError, ValueError):
+            break
+    return "custom"
+
+
+def _speaker_background_closed_code(manifest: ResolvedCreatorManifest) -> str:
+    """Why this manifest cannot put a photo or video behind the speaker (a stable code)."""
+    from app.services.phone_rollout import speaker_background_unavailable_reason  # noqa: PLC0415
+
+    if manifest.edit_format not in _TALKING_FORMATS:
+        return "not_talking"
+    reason = speaker_background_unavailable_reason()
+    if reason == "client_protocol_below_min":
+        return "app_too_old"
+    if reason is not None:
+        return "unavailable"
+    return "not_talking"  # a cloud or voiceover Talking render: the lane is advertised nowhere
+
+
+def _speaker_background_facts(
+    strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest
+) -> dict[str, Any]:
+    """The background as approval will keep it: the same repair `compile_strategy_to_plan` runs.
+
+    A draft never promises a photo the render cannot show: an id outside the item's pool, a
+    closed gate or a window request an old app cannot draw is dropped here exactly as at
+    approval (KRI-1161, S18).
+    """
+    from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+    from app.services.creator_capabilities import (  # noqa: PLC0415
+        repair_creator_speaker_background,
+        speaker_background_open,
+        speaker_background_windows_open,
+    )
+
+    pool = [
+        item
+        for item in manifest.media
+        if item.media_id.startswith("asset-") and item.kind in {"image", "video"}
+    ]
+    try:
+        parsed = CreativeStrategy.model_validate(dict(strategy))
+    except ValueError:
+        return {}
+    asked = parsed.background_media
+    asked_windows = len(asked.sequence) if asked is not None else 0
+    asked_frame = (
+        asked.speaker_frame if asked is not None and asked.speaker_frame != "full" else None
+    )
+    if not speaker_background_open(manifest):
+        return {
+            "speaker_background": SpeakerBackgroundFact(
+                "unavailable",
+                code=_speaker_background_closed_code(manifest),
+                pool_count=len(pool),
+                asked_windows=asked_windows,
+                asked_frame=asked_frame,
+            )
+        }
+    repaired, _notices = repair_creator_speaker_background(manifest, parsed)
+    kept = repaired.background_media
+    windows_open = speaker_background_windows_open(manifest)
+    if kept is None:
+        return {
+            "speaker_background": SpeakerBackgroundFact(
+                "none",
+                pool_count=len(pool),
+                asked_windows=asked_windows,
+                windows_open=windows_open,
+                asked_frame=asked_frame,
+            )
+        }
+    return {
+        "speaker_background": SpeakerBackgroundFact(
+            "planned",
+            pool_count=len(pool),
+            fill_id=kept.media_id,
+            window_count=len(kept.sequence),
+            asked_windows=asked_windows,
+            windows_open=windows_open,
+            frame=kept.speaker_frame if kept.speaker_frame != "full" else None,
+            asked_frame=asked_frame,
+        )
+    }
+
+
+def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBackgroundFact | None:
+    """The background a finished Talking video really has, or None when it recorded nothing.
+
+    An editor Save writes the variant's own ``speaker_background`` document (its absence of a
+    background is an explicit ``None``); a first render records the worker's
+    ``phone_lane_receipt`` (`applied` names the lanes the recipe holds, ``background`` the
+    timed windows and the corner). Neither present: the render says nothing about it.
+    """
+    if "speaker_background" in variant:
+        doc = variant["speaker_background"]
+        if not isinstance(doc, Mapping) or not doc.get("media_id"):
+            return SpeakerBackgroundFact("none")
+        windows = doc.get("windows")
+        return SpeakerBackgroundFact(
+            "applied",
+            fill_id=str(doc["media_id"]),
+            window_count=len(windows) if isinstance(windows, list) else 0,
+            windows_open=True,
+            frame=_frame_preset_name(doc.get("speaker_frame")),
+        )
+    receipt = variant.get("phone_lane_receipt")
+    if not isinstance(receipt, Mapping) or not isinstance(receipt.get("applied"), list):
+        return None
+    if "background" not in receipt["applied"]:
+        return SpeakerBackgroundFact("none")
+    detail = receipt.get("background")
+    detail = detail if isinstance(detail, Mapping) else {}
+    windows = detail.get("windows")
+    return SpeakerBackgroundFact(
+        "applied",
+        window_count=int(windows)
+        if isinstance(windows, int) and not isinstance(windows, bool)
+        else 0,
+        windows_open=True,
+        frame=detail.get("speaker_frame") if isinstance(detail.get("speaker_frame"), str) else None,
+    )
 
 
 def _timed_card_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) -> dict:
@@ -1048,6 +1209,7 @@ def plan_facts_from_strategy(
     if manifest is not None:
         extra = _beat_facts(strategy, manifest)
         extra.update(_timed_card_facts(strategy, manifest))
+        extra.update(_speaker_background_facts(strategy, manifest))
         extra["fullscreen_sequence"] = _draft_fullscreen_sequence(strategy, manifest)
         extra["video_clip_count"] = _video_clip_count(strategy, manifest)
         extra["take_duration_s"] = _selected_video_seconds(strategy, manifest)
@@ -2271,6 +2433,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
         # KRI-841: a finished Talking render says whether it really ended on the video.
         changes["ending_clip_known"] = True
         changes["ending_clip"] = _ending_clip_receipt_fact(variant.get("phone_ending_clip"))
+        changes["speaker_background"] = _rendered_speaker_background_fact(variant)  # KRI-1161
     return dataclasses.replace(base, **changes) if changes else base
 
 
@@ -3960,6 +4123,146 @@ def _closing_photo_ask(req: BriefRequirement, facts: PlanFacts) -> bool:
 # ending video to judge.
 _TALKING_FORMATS = frozenset({"subtitled", "talking_head"})
 
+# KRI-1161: a photo or video behind a phone Talking speaker (a "green screen"). Static strings:
+# `is_format_limit` reads the first group by prefix (the creator cannot plan around them), the
+# Turkish twins are in `_REASON_TR`.
+_SB_NOT_TALKING = (
+    "Only a talking-to-camera edit made on your iPhone can put a photo or video behind you"
+)
+_SB_UNAVAILABLE = "Putting a photo or video behind you isn't available on your iPhone yet"
+_SB_APP_TOO_OLD = "Your iPhone app is too old to put a photo or video behind you; update it first"
+_SB_NO_SWITCHING = (
+    "One photo or video stays behind you for the whole video; your iPhone can't switch "
+    "backgrounds yet"
+)
+_SB_FULL_SIZE = "You stay full size, not small in a corner; your iPhone can't do that yet"
+_SB_ONLY_ONE_ATTACHED = (
+    "Only one photo or video is attached, so it stays behind you for the whole video"
+)
+# Not limits of the format: the creator can attach media, or the draft can be redone.
+_SB_NO_MEDIA = (
+    "There is no photo or video to put behind you. Attach the photos or videos first, in Visuals"
+)
+_SB_NOT_PLANNED = "This draft doesn't put a photo or video behind you"
+_SB_NOT_DRAWN = "The finished video doesn't have a photo or video behind you"
+_SB_NO_CHANGE = "One photo or video stays behind you for the whole video; it doesn't change"
+_SB_FORMAT_LIMITS: tuple[str, ...] = (
+    _SB_NOT_TALKING,
+    _SB_UNAVAILABLE,
+    _SB_APP_TOO_OLD,
+    _SB_NO_SWITCHING,
+    _SB_FULL_SIZE,
+    _SB_ONLY_ONE_ATTACHED,
+)
+
+
+def asks_speaker_background(req: BriefRequirement) -> bool:
+    """A photo or video behind the speaker ("put the beach photo behind me", a green screen).
+
+    KRI-667: the model that read the message records it as ``facts["speaker_background"]``
+    (language-neutral, prompt: ``main_creator._BRIEF_PROMPT_SECTION``) and this reads that field,
+    never the creator's words. So "background music" / "arka plan müziği" / "no music", which
+    record no such fact, can never be read as this ask.
+    """
+    return bool(req.facts.get("speaker_background"))
+
+
+def _asks_changing_backgrounds(req: BriefRequirement) -> bool:
+    """Several photos or videos take turns (``facts["background_changes"]``)."""
+    return _fact_flag(req, "background_changes") is True
+
+
+def _asks_small_speaker(req: BriefRequirement) -> bool:
+    """The speaker small in a corner (``facts["speaker_small"]``)."""
+    return _fact_flag(req, "speaker_small") is True
+
+
+_FRAME_WORDS = {
+    "small_bottom_right": ("small at the bottom right", "sağ altta küçük"),
+    "small_bottom_left": ("small at the bottom left", "sol altta küçük"),
+    "small_top_right": ("small at the top right", "sağ üstte küçük"),
+    "small_top_left": ("small at the top left", "sol üstte küçük"),
+}
+
+
+def _sb(text: str, suffix: str = ".") -> str:
+    """A static background reason in the chat's language (its Turkish twin is in `_REASON_TR`)."""
+    return say(en=text + suffix, tr=_REASON_TR[text] + suffix)
+
+
+def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """Is a photo or video behind the speaker, as the creator asked (KRI-1161)?
+
+    A draft judges the repaired strategy against the item's own pool; a finished video its own
+    record. A refusal always names the part and the reason: never the generic Talking "can't"
+    (which left the whole green-screen ask out of the reply), never silence.
+    """
+    fact = facts.speaker_background
+    if fact is None:
+        return _receipt(req, "partial", _NO_CHECKER)
+    rendered = facts.rendered_variant
+    if fact.status == "unavailable":
+        reason = {"unavailable": _SB_UNAVAILABLE, "app_too_old": _SB_APP_TOO_OLD}.get(
+            fact.code or "", _SB_NOT_TALKING
+        )
+        return _receipt(req, "not_possible", _sb(reason))
+    if fact.status == "none":
+        if rendered:
+            return _receipt(req, "not_possible", _sb(_SB_NOT_DRAWN))
+        if fact.pool_count == 0:
+            return _receipt(req, "not_possible", _sb(_SB_NO_MEDIA))
+        return _receipt(req, "not_possible", _sb(_SB_NOT_PLANNED))
+    wants_several = _asks_changing_backgrounds(req)
+    wants_corner = _asks_small_speaker(req)
+    if wants_several and fact.window_count == 0:
+        if fact.pool_count == 1:
+            return _receipt(req, "partial", _sb(_SB_ONLY_ONE_ATTACHED))
+        if not rendered and not fact.windows_open:
+            return _receipt(req, "partial", _sb(_SB_NO_SWITCHING))
+        return _receipt(req, "partial", _sb(_SB_NO_CHANGE))
+    if wants_corner and fact.frame is None:
+        if not rendered and not fact.windows_open:
+            return _receipt(req, "partial", _sb(_SB_FULL_SIZE))
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en="You stay full size, not small in a corner.",
+                tr="Tam boyutta kalıyorsun, köşede küçük değilsin.",
+            ),
+        )
+    if fact.asked_windows > fact.window_count > 0 and not rendered:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=(
+                    f"Only {fact.window_count} of your {fact.asked_windows} photos or videos "
+                    "take turns behind you; I couldn't use the rest."
+                ),
+                tr=(
+                    f"{fact.asked_windows} fotoğraf ya da videodan yalnızca {fact.window_count} "
+                    "tanesi arkanda sırayla değişiyor; gerisini kullanamadım."
+                ),
+            ),
+        )
+    corner = _FRAME_WORDS.get(fact.frame or "")
+    if fact.window_count:
+        en = f"{fact.window_count} photos or videos take turns behind you"
+        tr = f"{fact.window_count} fotoğraf ya da video arkanda sırayla değişiyor"
+        if corner:
+            en += f"; you're {corner[0]}"
+            tr += f"; sen {corner[1]}sın"
+    else:
+        en, tr = (
+            "That photo or video sits behind you for the whole video",
+            ("O fotoğraf ya da video bütün video boyunca arkanda duruyor"),
+        )
+        if corner:
+            en += f"; you're {corner[0]}"
+            tr += f"; sen {corner[1]}sın"
+    return _receipt(req, "met", say(en=en + ".", tr=tr + "."))
+
 
 def _ending_clip_fact(req: BriefRequirement) -> bool:
     return bool(req.facts.get("ending_clip"))
@@ -4863,6 +5166,29 @@ _REASON_TR: dict[str, str] = {
         "söyle"
     ),
     "Some requested text ends before the video does.": "Bazı yazılar video bitmeden kayboluyor.",
+    # KRI-1161: a photo or video behind the speaker.
+    _SB_NOT_TALKING: (
+        "Arkana fotoğraf ya da video yalnızca iPhone'da hazırlanan konuşmalı düzenlemede konabilir"
+    ),
+    _SB_UNAVAILABLE: "Arkana fotoğraf ya da video koymak iPhone'unda henüz kullanılamıyor",
+    _SB_APP_TOO_OLD: (
+        "iPhone uygulaman arkana fotoğraf ya da video koymak için çok eski; önce güncelle"
+    ),
+    _SB_NO_SWITCHING: (
+        "Bütün video boyunca arkanda tek bir fotoğraf ya da video duruyor; iPhone'un henüz arka "
+        "planı değiştiremiyor"
+    ),
+    _SB_FULL_SIZE: "Tam boyutta kalıyorsun, köşede küçük değilsin; iPhone'un bunu henüz yapamıyor",
+    _SB_ONLY_ONE_ATTACHED: (
+        "Yalnızca bir fotoğraf ya da video ekli, o yüzden bütün video boyunca arkanda duruyor"
+    ),
+    _SB_NO_MEDIA: (
+        "Arkana koyacak fotoğraf ya da video yok. "
+        "Önce fotoğrafları ya da videoları Visuals'tan ekle"
+    ),
+    _SB_NOT_PLANNED: "Bu taslak arkana fotoğraf ya da video koymuyor",
+    _SB_NOT_DRAWN: "Biten videoda arkanda fotoğraf ya da video yok",
+    _SB_NO_CHANGE: ("Bütün video boyunca arkanda tek bir fotoğraf ya da video duruyor; değişmiyor"),
 }
 
 
@@ -4954,6 +5280,7 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _CLIP_SOUND_NEEDS_PHONE_VOICEOVER,
     *_TALKING_HONEST_EN,
     _VOICEOVER_SPOKEN_TEXT_PLAN,
+    *_SB_FORMAT_LIMITS,
 )
 _FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
     *_FORMAT_LIMIT_EN,
@@ -10127,6 +10454,8 @@ def _has_checker(req: BriefRequirement) -> bool:
         return True
     if _ending_clip_fact(req):
         return True  # KRI-841: judged against the plan's / render's ending video
+    if asks_speaker_background(req):
+        return True  # KRI-1161: judged against the plan's / render's background
     if requirement_clip_sound(req) is not None:
         return True  # KRI-842
     if asks_if_unclear(req):
@@ -10720,6 +11049,10 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # This must own a timing/select row before generic timing sees its ordinal as ordinary
         # timing.  A receipt is source-space evidence, not a claim based on captions.
         return _check_explicit_speech_cut(req, speech_cut, facts)
+    if asks_speaker_background(req):
+        # KRI-1161: "put the photo behind me" / a green screen is judged against the background
+        # the plan (or the render) holds, ahead of the framing and generic Talking answers.
+        return _check_speaker_background(req, facts)
     clip_sound = requirement_clip_sound(req)
     if clip_sound is not None:
         # KRI-842: a recorded fact owns the ask, whatever words it is worded in.
@@ -11597,6 +11930,8 @@ __all__ = [
     "EngineNoiseReductionFact",
     "ExplicitSpeechCutFact",
     "EndingClipFact",
+    "SpeakerBackgroundFact",
+    "asks_speaker_background",
     "NO_TITLE_REASON",
     "NARRATED_ALIGNMENT_RECOVERY",
     "RenderBlockRecovery",

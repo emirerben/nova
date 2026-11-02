@@ -389,8 +389,7 @@ public struct PreviewComposition: @unchecked Sendable {
             StillClockLifetime.retain(clock, on: composition)
         }
         if let background = recipe.speakerBackground {
-            guard let url = assetURLs[background.assetID] else { throw MediaEngineError.missingAsset(background.assetID) }
-            layers.append(try await Self.speakerBackgroundLayer(background, url: url, composition: composition, canvas: canvas, duration: total))
+            layers += try await Self.speakerBackgroundLayers(background, assetURLs: assetURLs, composition: composition, canvas: canvas, duration: total)
         }
         for backdrop in Self.mediaBackdrops(in: recipe) {
             guard let url = assetURLs[backdrop.assetID] else { throw MediaEngineError.missingAsset(backdrop.assetID) }
@@ -478,7 +477,7 @@ public struct PreviewComposition: @unchecked Sendable {
         videoComposition.instructions = RecipeInstructionTiming.tiledRanges(total: covered, layers: layers).map { range, active in
             RecipeVideoInstruction(timeRange: range, layers: active, text: textLayers, canvas: canvas,
                 cameraPulses: recipe.cameraPulses, motionScenes: motion, textStore: textStore, drawings: drawings, subjectMatte: subjectMatte,
-                speakerMatte: speakerMatte)
+                speakerMatte: speakerMatte, speakerFrame: recipe.speakerBackground?.speakerFrame)
         }
         let audioMix = AVMutableAudioMix()
         audioMix.inputParameters = audioParameters

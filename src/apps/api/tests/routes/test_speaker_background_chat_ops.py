@@ -418,3 +418,226 @@ def test_only_a_save_that_sets_a_background_on_a_variant_that_can_carry_one_is_p
     monkeypatch.setattr(settings, "speaker_background_enabled", True)
     job.assembly_plan["variants"][0]["render_destination"] = "cloud"
     assert background_pin_request(job, "subtitled", sets) is None
+
+
+# ------------------------------------------------------- KRI-1162: several backgrounds in chat
+#
+# Failure modes pinned here (each through the real snapshot -> parser -> compile -> Save chain):
+#  7. a closed windows gate changes the snapshot or the prompt the model sees (S33);
+#  8. the model emits a corner or an id it was never offered (S35, S37);
+#  9. a sequence is laid out past the video or leaves it dark (S39);
+# 10. "one photo instead" leaves the old windows behind, or loses the corner;
+# 11. "remove the background" leaves the small speaker on an empty backdrop.
+
+
+def _open_windows(monkeypatch, *, token: bool = True) -> None:
+    features = [
+        f for f in settings.phone_render_verified_features if f != "speakerBackgroundWindows"
+    ]
+    if token:
+        features.append("speakerBackgroundWindows")
+    monkeypatch.setattr(settings, "phone_render_verified_features", features)
+
+
+def _windows_job(monkeypatch, *, background=None):
+    job = _job(monkeypatch, background=background)
+    _open_windows(monkeypatch)
+    return job
+
+
+def _document_windows(compiled):
+    return compiled.payload.speaker_background.model_dump(exclude_none=True)
+
+
+def test_a_closed_windows_gate_changes_neither_the_snapshot_nor_the_prompt(monkeypatch):
+    job = _job(monkeypatch)
+    _open_windows(monkeypatch, token=False)
+    snapshot = _snapshot(job)
+    assert snapshot["background"] == {"available": True, "current": None, "pool": POOL}
+    assert "background_windows" not in snapshot["allowed_op_families"]
+    assert "SEVERAL BACKGROUNDS" not in _with_v2_fragments("PROMPT", snapshot)
+
+    # The model cannot reach the new ops through the base family either.
+    for raw in (
+        {"op": "set_background_sequence", "asset_ids": [PHOTO.media_id]},
+        {"op": "set_speaker_frame", "preset": "small_bottom_right"},
+        {"op": "clear_speaker_frame"},
+    ):
+        (op,), state = _parse(snapshot, raw)
+        assert op is None
+        assert state.rejection_reasons[-1]["reason"] == "capability_unavailable"
+
+
+def test_an_open_windows_gate_tells_the_model_what_is_behind_the_speaker_and_when(monkeypatch):
+    job = _windows_job(monkeypatch)
+    snapshot = _snapshot(job)
+    section = snapshot["background"]
+    assert section["windows_available"] is True
+    assert section["duration_s"] > 0
+    assert section["windows"] == [] and section["speaker_frame"] is None
+    assert "background_windows" in snapshot["allowed_op_families"]
+    prompt = _with_v2_fragments("PROMPT", snapshot)
+    assert "SEVERAL BACKGROUNDS AND A SMALL SPEAKER" in prompt
+    assert '"op":"set_speaker_frame"' in prompt
+
+
+def test_chat_sets_a_sequence_and_the_save_draws_every_window(monkeypatch):
+    job = _windows_job(monkeypatch)
+    base = _base(job)
+    snapshot = _snapshot(job, base)
+    (op,), _ = _parse(
+        snapshot,
+        {"op": "set_background_sequence", "asset_ids": [PHOTO.media_id, VIDEO.media_id]},
+    )
+    assert op == {
+        "op": "set_background_sequence",
+        "asset_ids": [PHOTO.media_id, VIDEO.media_id],
+        "kinds": ["image", "video"],
+        "cadence_s": 4.0,
+    }
+    compiled = compile_editor_ops(job, base, [op])
+    document = _document_windows(compiled)
+    # The first id fills where no window shows; windows run from 0 to the end of the video (S39).
+    assert document["media_id"] == PHOTO.media_id
+    duration = snapshot["background"]["duration_s"]
+    windows = document["windows"]
+    assert [w["media_id"] for w in windows[:2]] == [PHOTO.media_id, VIDEO.media_id]
+    assert windows[0]["start_s"] == 0.0 and windows[0]["end_s"] == 4.0
+    assert windows[-1]["end_s"] == pytest.approx(duration, abs=1e-3)
+    assert all(later["start_s"] == earlier["end_s"] for earlier, later in zip(windows, windows[1:]))
+
+    _commit(job, compiled)
+    layer = _recipe(job).speaker_background
+    assert layer.asset_id == f"visual-{PHOTO.media_id}"
+    assert len(layer.windows) == len(windows)
+
+
+def test_a_sequence_may_name_only_what_the_pool_listed(monkeypatch):
+    job = _windows_job(monkeypatch)
+    snapshot = _snapshot(job)
+    for bad in (
+        {"asset_ids": [PHOTO.media_id, FOREIGN]},
+        {"asset_ids": []},
+        {"asset_ids": [PHOTO.media_id] * 41},
+        {"asset_ids": [PHOTO.media_id], "cadence_s": 1.0},
+        {"asset_ids": [PHOTO.media_id], "cadence_s": 11},
+    ):
+        (op,), state = _parse(snapshot, {"op": "set_background_sequence", **bad})
+        assert op is None, bad
+        assert state.invalid_value_seen, bad
+
+
+def test_chat_makes_the_speaker_small_then_full_screen_again(monkeypatch):
+    job = _windows_job(monkeypatch, background=_background(PHOTO))
+    base = _base(job)
+    (op,), _ = _parse(
+        _snapshot(job, base), {"op": "set_speaker_frame", "preset": "small_bottom_right"}
+    )
+    compiled = compile_editor_ops(job, base, [op])
+    assert compiled.changes == ["Made you small in the corner"]
+    assert _document_windows(compiled)["speaker_frame"] == {
+        "width_fraction": 0.42,
+        "x_fraction": 0.76,
+        "y_fraction": 0.8,
+    }
+    _commit(job, compiled)
+    frame = _recipe(job).speaker_background.speaker_frame
+    assert (frame.width_fraction, frame.x_fraction, frame.y_fraction) == (0.42, 0.76, 0.8)
+
+    # Turn two: the snapshot names the corner, and "full screen again" removes only the frame.
+    second_base = _base(job)
+    snapshot = _snapshot(job, second_base)
+    assert snapshot["background"]["speaker_frame"] == "small_bottom_right"
+    (clear,), _ = _parse(snapshot, {"op": "clear_speaker_frame"})
+    cleared = compile_editor_ops(job, second_base, [clear])
+    assert "speaker_frame" not in _document_windows(cleared)
+    assert _document_windows(cleared)["media_id"] == PHOTO.media_id
+
+
+def test_a_corner_name_the_phone_cannot_draw_never_reaches_the_save(monkeypatch):
+    job = _windows_job(monkeypatch, background=_background(PHOTO))
+    snapshot = _snapshot(job)
+    for preset in ("middle", "full", "small_bottom_right ", 3, None):
+        (op,), state = _parse(snapshot, {"op": "set_speaker_frame", "preset": preset})
+        assert op is None, preset
+        assert state.invalid_value_seen or state.rejection_reasons, preset
+
+
+def test_the_corner_needs_a_background_and_clearing_needs_a_corner(monkeypatch):
+    job = _windows_job(monkeypatch)
+    base = _base(job)
+    snapshot = _snapshot(job, base)
+    (op,), _ = _parse(snapshot, {"op": "set_speaker_frame", "preset": "small_top_left"})
+    with pytest.raises(KriaEditorOpError, match="photo or video behind you first"):
+        compile_editor_ops(job, base, [op])
+    (clear,), _ = _parse(snapshot, {"op": "clear_speaker_frame"})
+    with pytest.raises(KriaEditorOpError, match="already full screen"):
+        compile_editor_ops(job, base, [clear])
+
+
+def test_a_sequence_and_a_corner_in_one_turn_compose(monkeypatch):
+    job = _windows_job(monkeypatch)
+    base = _base(job)
+    snapshot = _snapshot(job, base)
+    ops = [
+        _parse(snapshot, raw)[0][0]
+        for raw in (
+            {"op": "set_background_sequence", "asset_ids": [VIDEO.media_id, PHOTO.media_id]},
+            {"op": "set_speaker_frame", "preset": "small_bottom_left"},
+        )
+    ]
+    document = _document_windows(compile_editor_ops(job, base, ops))
+    assert document["media_id"] == VIDEO.media_id
+    assert document["windows"] and document["speaker_frame"]["x_fraction"] == 0.24
+
+
+def test_one_photo_instead_clears_the_windows_and_keeps_the_corner(monkeypatch):
+    job = _windows_job(monkeypatch)
+    base = _base(job)
+    snapshot = _snapshot(job, base)
+    ops = [
+        _parse(snapshot, raw)[0][0]
+        for raw in (
+            {"op": "set_background_sequence", "asset_ids": [PHOTO.media_id, VIDEO.media_id]},
+            {"op": "set_speaker_frame", "preset": "small_bottom_right"},
+        )
+    ]
+    first = editor_payload_dump(compile_editor_ops(job, base, ops).payload)
+    second_base = _base(job, first)
+    (single,), _ = _parse(
+        _snapshot(job, second_base), {"op": "set_background", "asset_id": VIDEO.media_id}
+    )
+    document = _document_windows(compile_editor_ops(job, second_base, [single]))
+    assert document["media_id"] == VIDEO.media_id
+    assert "windows" not in document
+    assert document["speaker_frame"]["x_fraction"] == 0.76
+
+
+def test_removing_the_background_removes_the_corner_with_it(monkeypatch):
+    job = _windows_job(monkeypatch)
+    base = _base(job)
+    snapshot = _snapshot(job, base)
+    ops = [
+        _parse(snapshot, raw)[0][0]
+        for raw in (
+            {"op": "set_background_sequence", "asset_ids": [PHOTO.media_id]},
+            {"op": "set_speaker_frame", "preset": "small_bottom_right"},
+        )
+    ]
+    first = editor_payload_dump(compile_editor_ops(job, base, ops).payload)
+    second_base = _base(job, first)
+    (remove,), _ = _parse(_snapshot(job, second_base), {"op": "remove_background"})
+    cleared = compile_editor_ops(job, second_base, [remove])
+    assert cleared.payload.speaker_background is None
+    assert "speaker_background" in cleared.payload.model_fields_set
+
+
+def test_the_new_ops_read_as_plain_phrases_in_a_not_done_line():
+    from app.services import creation_editor_actions as actions
+
+    lines = actions._not_done_lines(
+        [{"op": "set_speaker_frame", "reason": "capability_unavailable"}], []
+    )
+    assert lines == [
+        "Not done: make you small in a corner (that isn't something I can change in this edit yet)."
+    ]

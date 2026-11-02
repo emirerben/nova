@@ -847,6 +847,16 @@ class Settings(BaseSettings):
     # docs/pipelines/speaker-background.md.
     speaker_background_enabled: bool = False
     speaker_background_min_client_protocol: int = 27
+    # KRI-1162: timed background ``windows`` and a ``speaker_frame`` (the speaker small in a
+    # corner) on the same lane. No new kill switch: SPEAKER_BACKGROUND_ENABLED stays the one
+    # switch; the device-parity gate is the verified token `speakerBackgroundWindows` in
+    # PHONE_RENDER_VERIFIED_FEATURES plus an app build declaring `X-Kria-Client-Protocol`
+    # >= 32 (29 is unused; 30 is the card-tilt build, KRI-1141; 31 the media-backdrop
+    # build, KRI-1139). Below either, the compile
+    # keeps the fill background and strips the windows and the frame (trace
+    # `speaker_background_windows_phone_fallback`). Design:
+    # docs/reviews/speaker-background-windows-failure-modes.md.
+    speaker_background_windows_min_client_protocol: int = 32
     # KRI-1134: tilt a clip or photo to any angle (`transform.rotation_degrees`, clockwise on
     # screen) with a blank, colour or blurred backdrop behind it (`TimelineClip.backdrop`),
     # drawn ON DEVICE by `KriaMediaEngine`. Capability `clipTilt` (derived from the clips). The

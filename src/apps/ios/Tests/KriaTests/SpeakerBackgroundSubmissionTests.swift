@@ -28,7 +28,7 @@ final class SpeakerBackgroundWireTests: XCTestCase {
         XCTAssertEqual(updated.revision, 6)
         XCTAssertEqual(seen?.method, "PUT")
         XCTAssertEqual(seen?.path, "/creation-threads/\(PreviewFixtures.projectID.uuidString)/speaker-background")
-        XCTAssertEqual(seen?.protocolHeader, "31")
+        XCTAssertEqual(seen?.protocolHeader, "32")
         XCTAssertEqual(seen?.body["client_upload_id"] as? String, "ios-ABC")
         XCTAssertEqual(seen?.body["client_event_id"] as? String, "evt-1")
         XCTAssertEqual(seen?.body["expected_revision"] as? Int, 5)
@@ -130,5 +130,43 @@ final class SpeakerBackgroundPolicyTests: XCTestCase {
         _ = await SpeakerBackgroundSubmission.submit(client: client, threadID: UUID(), intent: .clear(eventID: "c"))
         XCTAssertEqual(client.sent.count, 1)
         XCTAssertNil(client.sent[0].upload)
+    }
+}
+
+
+/// KRI-1162: the refusals the timed-background Save can meet are told in plain sentences.
+final class SpeakerBackgroundWindowsRefusalTests: XCTestCase {
+    override func tearDown() {
+        NativeEditorURLProtocol.handler = nil
+        super.tearDown()
+    }
+
+    private func commit(status: Int, body: String) async throws -> EditorSaveError {
+        NativeEditorURLProtocol.handler = { _ in (status, Data(body.utf8)) }
+        do {
+            _ = try await NativeEditorTestSupport.api().editorCommit(itemID: "item", variantID: "variant", request: EditorCommitRequest(baseGeneration: "generation"))
+            XCTFail("Expected a refusal")
+        } catch let error as EditorSaveError {
+            return error
+        }
+        return .rejected
+    }
+
+    func testTheNewRefusalCodesAreWordedForTheCreator() async throws {
+        for code in ["speaker_background_windows_disabled", "speaker_background_window_invalid"] {
+            let error = try await commit(status: 422, body: #"{"detail":{"code":"\#(code)"}}"#)
+            XCTAssertNotEqual(error, .rejected, code)
+            let sentence = error.localizedDescription
+            XCTAssertFalse(sentence.contains("_"), "no machine code in \(sentence)")
+            XCTAssertTrue(sentence.hasSuffix("Your edits are still here."), sentence)
+        }
+        let invalid = try await commit(status: 422, body: #"{"detail":{"code":"speaker_background_window_invalid"}}"#)
+        XCTAssertTrue(invalid.localizedDescription.contains("half a second"), invalid.localizedDescription)
+    }
+
+    func testAnUpdateRequiredSaveReadsAsAnInstructionNotAFailureCode() async throws {
+        let body = #"{"detail":{"code":"client_update_required","feature":"speaker_background_windows","minimum_client_protocol":31}}"#
+        let error = try await commit(status: 426, body: body)
+        XCTAssertEqual(error.localizedDescription, "Update Kria to save this edit. Your edits are still here.")
     }
 }
