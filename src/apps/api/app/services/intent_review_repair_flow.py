@@ -15,7 +15,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
 import structlog
 from sqlalchemy import func, select
@@ -598,11 +598,49 @@ def _undo_head(thread_id, creator_id, expected_revision: int) -> str | None:
     return successor
 
 
-def revert_repair(parent_id) -> str:
+class Reverted(NamedTuple):
+    reason: str
+    successor: str | None = None
+
+
+class _Verdict(NamedTuple):
+    status: str
+    reason: str
+    comparison: dict[str, Any]
+    successor: str | None = None
+
+
+def _already_undone(db, draft: CreatorEditDraft) -> bool:
+    """Has `undo_draft` already written the revision that restores this draft's parent?"""
+    if draft.parent_draft_id is None:
+        return False
+    on_top = [
+        str(identifier)
+        for identifier in db.scalars(
+            select(CreatorEditDraft.id).where(CreatorEditDraft.parent_draft_id == draft.id)
+        )
+    ]
+    return bool(on_top) and bool(
+        db.scalar(
+            select(func.count())
+            .select_from(CreationThreadEvent)
+            .where(
+                CreationThreadEvent.thread_id == draft.thread_id,
+                CreationThreadEvent.event_type == "draft_undone",
+                CreationThreadEvent.payload["restored_from_draft_id"].astext
+                == str(draft.parent_draft_id),
+                CreationThreadEvent.payload["draft_id"].astext.in_(on_top),
+            )
+        )
+    )
+
+
+def revert_repair(parent_id) -> Reverted:
     """Undo the repair draft if it is still the head at its own revision; otherwise leave it.
 
-    Returns the reason the parent is closed with: `worse`, or `worse_head_moved` when the
-    creator's draft moved on and was left alone.
+    `worse` means the draft stands restored, by this call or by an earlier one that died before
+    its parent was closed, so a redelivery never mistakes its own undo for the creator's newer
+    work. `worse_head_moved` means the creator's draft moved on and was left alone.
     """
     from app.kria.runtime import RuntimeFailure
 
@@ -610,7 +648,9 @@ def revert_repair(parent_id) -> str:
         parent = db.get(CreatorGenerationReview, parent_id)
         draft = db.get(CreatorEditDraft, parent.repair_draft_id) if parent else None
         if parent is None or draft is None:
-            return "worse_head_moved"
+            return Reverted("worse_head_moved")
+        if _already_undone(db, draft):
+            return Reverted("worse")
         head = db.scalar(
             select(CreatorEditDraft).where(
                 CreatorEditDraft.item_id == draft.item_id,
@@ -619,17 +659,28 @@ def revert_repair(parent_id) -> str:
             )
         )
         if head is None or head.id != draft.id:
-            return "worse_head_moved"
+            return Reverted("worse_head_moved")
+        draft_id = draft.id
         thread_id, creator_id, revision = draft.thread_id, draft.creator_id, head.draft_revision
     try:
         successor = _undo_head(thread_id, creator_id, revision)
     except RuntimeFailure:
-        return "worse_head_moved"
-    if successor is not None:
-        from app.tasks.kria_runtime import run_kria_turn
+        with sync_session() as db:
+            raced = _already_undone(db, db.get(CreatorEditDraft, draft_id))
+        return Reverted("worse" if raced else "worse_head_moved")
+    return Reverted("worse", successor)
 
-        run_kria_turn.apply_async(args=[successor], task_id=successor, queue="agent-control")
-    return "worse"
+
+def _dispatch(turn_id: str | None) -> None:
+    """Publish a turn the undo promoted; a lost publish is republished by the turn reconciler."""
+    if turn_id is None:
+        return
+    from app.tasks.kria_runtime import run_kria_turn
+
+    try:
+        run_kria_turn.apply_async(args=[turn_id], task_id=turn_id, queue="agent-control")
+    except Exception:
+        log.warning("intent_review_successor_dispatch_failed", turn_id=turn_id, exc_info=True)
 
 
 def _close_parent(parent_id, status: str, reason: str) -> str:
@@ -638,25 +689,27 @@ def _close_parent(parent_id, status: str, reason: str) -> str:
 
 
 def _verdict_on_repair(parent: CreatorGenerationReview, child: CreatorGenerationReview):
-    """(status, reason, comparison) the follow-up review gives the staged repair."""
+    """The status, reason and comparison the follow-up review gives the staged repair."""
     comparison: dict[str, Any] = {"child_review_id": str(child.id)}
     if child.status not in {"no_findings", "suggestion", "needs_confirmation"}:
         comparison.update(fixed=None, worse=None)
-        return "repair_unverified", "rereview_unavailable", comparison
+        return _Verdict("repair_unverified", "rereview_unavailable", comparison)
     fixed, worse = compare_reviews(dict(parent.review or {}), dict(child.review or {}))
     comparison.update(fixed=fixed, worse=worse)
     if worse:
-        return "repair_reverted", revert_repair(parent.id), comparison
+        reverted = revert_repair(parent.id)
+        return _Verdict("repair_reverted", reverted.reason, comparison, reverted.successor)
     if fixed:
-        return "repair_verified", "fixed", comparison
-    return "repair_unverified", "not_confirmed", comparison
+        return _Verdict("repair_verified", "fixed", comparison)
+    return _Verdict("repair_unverified", "not_confirmed", comparison)
 
 
 def settle_parent_from_child(child_id) -> str | None:
     """Close the parent of a finished follow-up review. No-op for anything else; idempotent.
 
     The parent row stays locked while a worse repair is undone, so two settlers cannot both
-    decide, and the label always says what happened to the draft.
+    decide, and a settler that dies after the undo finds it again on the next pass. Anything
+    the undo promoted is published only once the parent is closed.
     """
     with sync_session() as db:
         child = db.get(CreatorGenerationReview, child_id)
@@ -665,12 +718,13 @@ def settle_parent_from_child(child_id) -> str | None:
         parent = _lock_row(db, child.parent_review_id)
         if parent is None or parent.status != "repair_staged":
             return None
-        status, reason, comparison = _verdict_on_repair(parent, child)
-        parent.review = {**(parent.review or {}), "comparison": comparison}
-        parent.status, parent.reason = status, reason
+        verdict = _verdict_on_repair(parent, child)
+        parent.review = {**(parent.review or {}), "comparison": verdict.comparison}
+        parent.status, parent.reason = verdict.status, verdict.reason
         parent.lease_token = parent.lease_until = None
         db.commit()
-        return status
+    _dispatch(verdict.successor)
+    return verdict.status
 
 
 def _abandon_reason(db, row: CreatorGenerationReview, now: datetime) -> str | None:

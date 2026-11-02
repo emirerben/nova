@@ -115,9 +115,12 @@ A repair is never a model output. The disposition names catalog candidate ids (a
 | --- | --- |
 | not a completed review (`stale`, `unavailable`, `exhausted`, `review_unknown`) | `repair_unverified(rereview_unavailable)` |
 | worse, and the repair draft is still the head | draft undone through `undo_draft` (a new revision copied from the approved draft, never `last_good`), `repair_reverted(worse)` |
+| worse, and the repair draft was already undone (a revision with the repair draft as its parent, named by a `draft_undone` event) | no second undo, `repair_reverted(worse)` |
 | worse, head moved | `repair_reverted(worse_head_moved)`, no undo |
 | every targeted requirement met | `repair_verified(fixed)` |
 | otherwise | `repair_unverified(not_confirmed)` |
+
+The parent row stays locked while the undo runs, so two settlers cannot both decide. The undo commits on its own connection, so a settler that dies between the undo and closing the parent leaves the draft restored and the parent still `repair_staged`; the next pass (a redelivery or the sweep) finds the restored draft and closes the parent as `worse`, never as `worse_head_moved`, which means the creator's draft was left alone. A turn the undo promoted from the queue is published only after the parent is closed (a lost publish is republished by the turn reconciler).
 
 "Worse" is by requirement (brief id): a requirement the parent judged met that the follow-up judges unmet at high confidence, or more high-confidence unmet requirements than the parent had. The comparison is stored in `review.comparison`.
 
