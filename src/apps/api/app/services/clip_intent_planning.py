@@ -1327,10 +1327,9 @@ async def plan_and_resolve_clip_intents(
                     ClipIntentPlannerAgent(default_client()).run, planner_input, ctx=run_context
                 )
 
-            planner_spec = ClipIntentPlannerAgent.spec
             output = await checkpointed(
                 "clip_intent_planner",
-                version=f"{planner_spec.name}@{planner_spec.prompt_version}:{planner_spec.model}",
+                agent_cls=ClipIntentPlannerAgent,
                 agent_input=planner_input,
                 output_cls=ClipIntentPlannerOutput,
                 call=_plan,

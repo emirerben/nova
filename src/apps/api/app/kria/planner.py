@@ -2873,10 +2873,9 @@ async def _call_main_creator(
             raise RuntimeError("Kria could not produce a reliable editorial plan") from exc
 
     # A continued run takes the first run's answer for this exact input instead of paying again.
-    spec = MainCreatorAgent.spec
     return await checkpointed(
         "main_creator",
-        version=f"{spec.name}@{spec.prompt_version}:{spec.model}",
+        agent_cls=MainCreatorAgent,
         agent_input=inputs.agent_input,
         output_cls=MainCreatorOutput,
         call=_call,
@@ -2989,10 +2988,9 @@ async def _call_brief_extractor(
                     "Kria could not extract the creative brief reliably"
                 ) from retry_exc
 
-    spec = BriefExtractorAgent.spec
     return await checkpointed(
         "brief_extractor",
-        version=f"{spec.name}@{spec.prompt_version}:{spec.model}",
+        agent_cls=BriefExtractorAgent,
         agent_input=agent_input,
         output_cls=BriefExtractionOutput,
         call=_call,

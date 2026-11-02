@@ -115,23 +115,25 @@ def _store(key: str, output: BaseModel) -> None:
 async def checkpointed(
     call_name: str,
     *,
-    version: str,
+    agent_cls: object,
     agent_input: object,
     output_cls: type[T],
     call: Callable[[], Awaitable[T]],
 ) -> T:
     """Run ``call`` unless an earlier run of this turn already got its answer for this input.
 
-    Outside a turn task (no turn id) or for an input that is not a model, this is just
-    ``call()``. ``version`` names the agent, prompt version and model, so a deploy that
-    changes any of them misses.
+    Outside a turn task (no turn id), for an input that is not a model, or for an agent
+    without a spec, this is just ``call()``. The key holds the agent's name, prompt version
+    and model, so a deploy that changes any of them misses.
     """
 
     started = time.monotonic()
     run_id = turn_run_id.get()
     epoch = turn_run_epoch.get()
-    if run_id is None or not isinstance(agent_input, BaseModel):
+    spec = getattr(agent_cls, "spec", None)
+    if run_id is None or not isinstance(agent_input, BaseModel) or spec is None:
         return await call()
+    version = f"{spec.name}@{spec.prompt_version}:{spec.model}"
     key = _key(run_id, call_name, _digest(call_name, version, agent_input))
     if epoch > 1:
         stored = await asyncio.to_thread(_load, key, output_cls)
