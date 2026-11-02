@@ -10,6 +10,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
+import structlog
 from google.api_core.exceptions import GoogleAPIError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select, text
@@ -417,12 +418,30 @@ def execute_generated_media(
             usage_json=asset.usage,
         )
     except ProviderRejected as exc:
+        log.warning(
+            "generated_media_provider_rejected",
+            operation_id=str(operation.id),
+            capability=body.capability,
+            model=model,
+            status_code=exc.status_code,
+            error_code=exc.error_code,
+            error_type=exc.error_type,
+            retryable=exc.retryable,
+        )
         release_paid_call(receipt)
         operation.state = "failed"
         operation.failure_code = "provider_rate_limited" if exc.retryable else "provider_rejected"
         db.commit()
         return operation
-    except Exception:
+    except Exception as exc:
+        log.error(
+            "generated_media_outcome_unknown",
+            operation_id=str(operation.id),
+            capability=body.capability,
+            model=model,
+            error_class=type(exc).__name__,
+            exc_info=True,
+        )
         db.rollback()
         mark_paid_call_unknown(receipt)
         operation = get_generated_operation(
@@ -518,6 +537,9 @@ def accept_generated_media(db, operation_id, *, owner_id, item_id, body: Generat
     db.commit()
     publish_preflight_after_commit(preflight)
     return operation
+
+
+log = structlog.get_logger()
 
 
 def operation_response(operation):

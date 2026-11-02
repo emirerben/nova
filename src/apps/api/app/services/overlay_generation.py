@@ -285,7 +285,24 @@ OVERLAP_NOTICE = (
     "Some suggestions overlap an existing overlay or each other. "
     "Choose a free moment or remove an existing overlay."
 )
-LOGO_NOTICE = "Upload the real logo or choose it from your visual library."
+BRAND_NOTICE = (
+    "Generated logos are approximations. Review the image, or add the real logo "
+    "to your visual library for an exact match."
+)
+
+
+NUDGE_MAX_S = 0.25
+NUDGE_MIN_REMAINING_S = 0.5
+
+
+def _after_leading_overlap(start: float, end: float, occupied: list[tuple[float, float]]) -> float:
+    """Start just after an existing overlay that this one only clips by a hair (spoken
+    words land a few hundredths inside a title card), keeping a usable duration."""
+    shifted = start
+    for begin, stop in sorted(occupied):
+        if begin <= shifted < stop and stop - shifted <= NUDGE_MAX_S:
+            shifted = stop
+    return shifted if end - shifted >= NUDGE_MIN_REMAINING_S else start
 
 
 def materialize_overlays(
@@ -342,6 +359,7 @@ def materialize_overlays(
                 "That overlay would stretch across the Carousel. "
                 "Choose a footage interval on one side."
             )
+        start = _after_leading_overlap(start, row.end_s, occupied)
         if any(start < end and row.end_s > begin for begin, end in occupied):
             if notices is None:
                 raise ValueError(OVERLAP_NOTICE)
@@ -368,12 +386,13 @@ def materialize_overlays(
         return PlannedOverlay(**{**planned, "start_s": start})
 
     for row in raw.overlays:
-        if row.kind == "image" and row.depicts != "generic_subject":
-            # Only this row is refused; the rest of a mixed request still gets planned.
-            # Anything the model did not explicitly call generic fails safe.
-            if notices is not None and LOGO_NOTICE not in notices:
-                notices.append(LOGO_NOTICE)
-            continue
+        if (
+            row.kind == "image"
+            and row.depicts == "brand_or_logo"
+            and notices is not None
+            and BRAND_NOTICE not in notices
+        ):
+            notices.append(BRAND_NOTICE)
         try:
             planned_row = plan_row(row)
         except ValueError as exc:
