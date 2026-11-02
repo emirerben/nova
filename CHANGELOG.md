@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.112.0] - 2026-11-02
+
+### Fixed
+- feat(overlays): keep brand and logo requests for review (KRI-1142) (#2063) <!-- release-pr: 2063 -->
+
 ## [0.83.111.0] - 2026-11-02
 
 ### Fixed
