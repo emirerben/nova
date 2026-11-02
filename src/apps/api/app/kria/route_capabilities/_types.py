@@ -70,16 +70,26 @@ Handling = Applied | RecordedOnly | NotApplied
 
 
 @dataclass(frozen=True)
+class GivenAsks:
+    """An ``AskDecline`` test that also reads the brief's other live asks, typed facts only:
+    ``(req, strategy, live requirements) -> bool``, for a limit that depends on them (a Talking
+    edit plays a text animation only on a text row the plan or another ask draws)."""
+
+    test: Callable[[BriefRequirement, Mapping[str, Any], Sequence[BriefRequirement]], bool]
+
+
+@dataclass(frozen=True)
 class AskDecline:
     """A typed brief ask the route cannot do, answered as a route decline before approval.
 
-    ``applies`` reads typed facts only (KRI-667: never the creator's wording). ``sentence``
-    is the receipt reason; every reason is listed in ``route_disclosure.ROUTE_DECLINE_PREFIXES``
-    so approval readiness treats it as a format limit, never a "simpler version?" question.
+    ``applies`` reads typed facts only (KRI-667: never the creator's wording); a `GivenAsks`
+    test reads the brief's other live asks too. ``sentence`` is the receipt reason; every reason
+    is listed in ``route_disclosure.ROUTE_DECLINE_PREFIXES`` so approval readiness treats it as a
+    format limit, never a "simpler version?" question.
     """
 
     subject: str
-    applies: Callable[[BriefRequirement, Mapping[str, Any]], bool]
+    applies: Callable[[BriefRequirement, Mapping[str, Any]], bool] | GivenAsks
     sentence: Callable[[], str]
 
 

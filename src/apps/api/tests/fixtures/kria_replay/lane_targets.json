@@ -52,18 +52,6 @@
         "why": "animate the text: animation_ask reaches the intro"
       }
     },
-    "talking_head": {
-      "4.title_animation": {
-        "lane": "L2",
-        "kind": "honored",
-        "why": "the planned title animation reaches the Talking title rows"
-      },
-      "5.r6": {
-        "lane": "L2",
-        "kind": "honored",
-        "why": "animate the big text in: the animation ask reaches the title rows"
-      }
-    },
     "narrated": {
       "4.title_animation": {
         "lane": "L3",

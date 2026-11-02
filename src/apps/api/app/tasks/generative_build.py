@@ -8086,7 +8086,10 @@ def _run_phone_subtitled_job(
         compile_phone_subtitled_plan,
         sfx_duck_receipt,
     )
-    from app.pipeline.phone_subtitled_title import talking_closing_window  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_title import (  # noqa: PLC0415
+        talking_closing_window,
+        talking_title_entrances,
+    )
     from app.pipeline.phone_talking_cutaways import (  # noqa: PLC0415
         TalkingClipRoles,
         schedule_footage_cutaways,
@@ -8303,6 +8306,11 @@ def _run_phone_subtitled_job(
     caption_style = (
         "word" if all_candidates.get("voiceover_caption_style") == "word" else "sentence"
     )
+    # KRI-1097 wave 2: the approved plan and its live asks go into the compile, which makes
+    # the title rows enter the way they ask (`talking_title_entrances`).
+    talking_strategy = all_candidates.get("creator_strategy")
+    talking_strategy = talking_strategy if isinstance(talking_strategy, dict) else {}
+    talking_requirements = _phone_brief_live_requirements(snapshot)
     # KRI-467: the creator's confirmed hook title, drawn as an editable text row
     # (`phone_subtitled_title`). Read only while the lane is on, so the flag-off
     # recipe and variant stay byte-identical.
@@ -9415,6 +9423,8 @@ def _run_phone_subtitled_job(
                         title_rows or spoken_text_rows or closing_text_rows
                     ),
                     additional_speakers=extra_speaker_bindings,
+                    strategy=talking_strategy,
+                    requirements=talking_requirements,
                     **framed_compile,
                 )
             else:
@@ -10025,6 +10035,8 @@ def _run_phone_subtitled_job(
                         text_elements=text_rows,
                         text_elements_user_edited=bool(text_rows),
                         additional_speakers=extra_speaker_bindings,
+                        strategy=talking_strategy,
+                        requirements=talking_requirements,
                         **framed_compile,
                     )
 
@@ -10350,8 +10362,13 @@ def _run_phone_subtitled_job(
             # makes the read path serve it beside the projected caption
             # mirrors (an unedited caption variant serves the mirrors alone).
             # KRI-514: the closing text is a second one. KRI-707: so is text
-            # on a word the creator says.
-            new_entry["text_elements"] = title_rows + spoken_text_rows + closing_text_rows
+            # on a word the creator says. Saved with the entrance the recipe drew (KRI-1097
+            # wave 2), so the editor shows it and a Save keeps it.
+            new_entry["text_elements"] = talking_title_entrances(
+                title_rows + spoken_text_rows + closing_text_rows,
+                title_animation=talking_strategy.get("title_animation"),
+                requirements=talking_requirements,
+            )
             new_entry["text_elements_user_edited"] = True
             new_entry["text_elements_materialized_from"] = (
                 "opening_title"
@@ -11339,6 +11356,22 @@ def _phone_spoken_text_asks(snapshot: dict) -> tuple:
     except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
         log.warning("phone_spoken_text.binding_unreadable", error=str(exc)[:200])
         return ()
+
+
+def _phone_brief_live_requirements(snapshot: dict) -> tuple:
+    """The live asks of the approved brief pinned on the job (``creator_brief_binding``).
+    Empty without a readable binding, so the render runs as if nothing was asked."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+
+    raw_binding = snapshot.get("creator_brief_binding")
+    if not raw_binding:
+        return ()
+    try:
+        brief = BriefBinding.model_validate(raw_binding).resolve()
+    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
+        log.warning("phone_talking_asks.binding_unreadable", error=str(exc)[:200])
+        return ()
+    return tuple(brief.live()) if brief is not None else ()
 
 
 def _phone_talking_spoken_text_rows(
