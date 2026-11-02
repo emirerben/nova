@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.113.0] - 2026-11-02
+
+### Fixed
+- feat(overlays): two pictures can share a moment when apart (KRI-1142) (#2064) <!-- release-pr: 2064 -->
+
 ## [0.83.112.0] - 2026-11-02
 
 ### Fixed
