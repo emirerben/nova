@@ -30,6 +30,10 @@ SUITES = (
     "tests/kria/test_render_review_admission_postgres.py",
     "tests/kria/test_initial_render_review_authority_postgres.py",
     "tests/kria/test_initial_render_review_admission_postgres.py",
+    "tests/kria/test_intent_review_tier.py",
+    "tests/services/test_openai_vision_transport.py",
+    "tests/services/test_ai_cost_control_intent_review.py",
+    "tests/integration/test_intent_review_lifecycle_postgres.py",
 )
 CLAIM = (
     "Deterministic regression execution and recorded-evidence checks only. "

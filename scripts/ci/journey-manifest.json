@@ -3063,6 +3063,27 @@
         "src/apps/api/tests/kria/test_initial_render_review_authority_postgres.py",
         "src/apps/api/tests/kria/test_initial_render_review_admission_postgres.py"
       ]
+    },
+    {
+      "id": "kria-intent-review",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_intent_review_tier.py tests/services/test_openai_vision_transport.py tests/services/test_ai_cost_control_intent_review.py tests/integration/test_intent_review_lifecycle_postgres.py",
+      "paths": [
+        "src/apps/api/app/kria/intent_review_tier.py",
+        "src/apps/api/app/agents/_openai_vision.py",
+        "src/apps/api/app/services/bounded_media_review.py",
+        "src/apps/api/app/services/intent_review_flow.py",
+        "src/apps/api/app/services/render_review_admission.py",
+        "src/apps/api/app/services/render_review_evidence.py",
+        "src/apps/api/app/tasks/render_review.py",
+        "src/apps/api/app/migrations/versions/0131_intent_review_lifecycle.py",
+        "src/apps/api/prompts/intent_review.txt",
+        "src/apps/api/tests/fixtures/agent_evals/intent_review/",
+        "src/apps/api/tests/kria/test_intent_review_tier.py",
+        "src/apps/api/tests/services/test_openai_vision_transport.py",
+        "src/apps/api/tests/services/test_ai_cost_control_intent_review.py",
+        "src/apps/api/tests/integration/test_intent_review_lifecycle_postgres.py"
+      ]
     }
   ]
 }
