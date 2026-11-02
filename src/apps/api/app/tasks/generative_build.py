@@ -106,6 +106,7 @@ from app.pipeline.look_presets import (
     normalize_look_adjustments,
     normalize_look_preset,
 )
+from app.pipeline.phone_talking_inserts import PHONE_INSERT_CLIPS_FIELD
 from app.pipeline.speech_cleanup_apply import (
     PREFLIGHT_JOB_CONTRACT_FIELD,
     PREFLIGHT_JOB_CONTRACT_VALUE,
@@ -7832,7 +7833,6 @@ PHONE_ENDING_CLIP_FIELD = "phone_ending_clip"
 # Parent KRI-1151: the approved strategy's `insert_clips` ("after I say X, show this clip with its
 # own sound"): the creator's take pauses for the clip. `PHONE_INSERT_CLIPS_FIELD` is the variant
 # receipt, read back from what the worker really placed, that the brief check judges.
-PHONE_INSERT_CLIPS_FIELD = "phone_insert_clips"
 _POOL_ASSET_PREFIX = "asset-"
 
 
