@@ -1148,6 +1148,20 @@ def phone_subtitled_editor_lanes_supported() -> bool:
     )
 
 
+def phone_talking_range_supported() -> bool:
+    """Single source of truth for "may the Range sheet choose which part of a phone Talking
+    take plays right now": the kill switch (``phone_talking_range_edits_enabled``) AND the
+    Talking editor lanes it rides on. The recipe shape (several hard-cut keep segments) is the
+    one cleanup already ships, so no extra verified token is needed.
+
+    Consulted by ``generative_jobs._editor_capabilities`` (whether ``clips.source_window``
+    appears) and by the Talking Save (whether ``timeline_slots`` recompiles or 422s), so the
+    capability never advertises a Save the server would refuse."""
+    return bool(
+        settings.phone_talking_range_edits_enabled and phone_subtitled_editor_lanes_supported()
+    )
+
+
 # Device features a phone Voiceover (`narrated` / montage `voiceover`) Save needs
 # to recompile its sound-effect and Visuals lanes (KRI-281): the same set the
 # Talking lanes need, since both reuse `phone_subtitled_plan`'s lane compilers.
@@ -1326,6 +1340,14 @@ def phone_talking_cutaway_sound_supported() -> bool:
         and phone_clip_sound_windows_supported()
         and {"audioMix", "visualVideos", "alphaOverlay"} <= verified
     )
+
+
+def phone_talking_mention_cutaways_supported() -> bool:
+    """May a multi-clip phone Talking edit show clips full screen where the creator mentions
+    them right now (parent KRI-1151)? The kill switch alone: the cutaway track is the one
+    `phone_talking_multi_clip_supported()` already requires, and a cutaway's own sound has its
+    own gate (`phone_talking_cutaway_sound_supported`)."""
+    return bool(getattr(settings, "phone_talking_mention_cutaways_enabled", False))
 
 
 def phone_timed_video_cards_supported() -> bool:

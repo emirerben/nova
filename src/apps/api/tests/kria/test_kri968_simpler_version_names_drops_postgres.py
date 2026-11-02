@@ -98,6 +98,21 @@ TAG = 'name tag when he first appears ("ATAKAN")'
 PROD_ASK = "Should I try a different approach, or make this simpler version?"
 ASK = "Should I make it without these, or do you want to change your request?"
 LOOK = "Have a look at these in the video:"
+# The phone Talking writer reads none of the draft's story structure, pacing or direction, so the
+# card names them for every account (KRI-1097 route registry). The held draft's reply has a hard
+# length limit: there the three are named on one line instead of cut mid-sentence.
+HEADS_UP_LINES = [
+    "Heads-up for this video:",
+    "- I can't follow the planned story structure (Open on the question 'what do you think…, "
+    "Capture Atakan's enthusiastic reply, End the edit right after 'Nice!') on this video yet, so "
+    "it won't change the order of the clips",
+    "- The balanced pacing isn't applied on this video yet: the video follows your speech",
+    "- The native direction isn't applied on this video yet: the video follows your speech",
+]
+HELD_HEADS_UP = (
+    "Heads-up for this video:\n- Also not applied on this video yet: the planned story "
+    "structure, the planned pacing, the planned direction"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -391,7 +406,8 @@ async def test_the_held_draft_names_what_the_simpler_version_leaves_out(monkeypa
     # Prod's reply, plus one sentence naming the one requirement the simpler version drops.
     assert held.content == HELD["content"].replace(
         f"I held this first draft back. {PROD_ASK}",
-        f"I held this first draft back. The simpler version leaves out: {TAG}. {ASK}",
+        f"{HELD_HEADS_UP}\nI held this first draft back. The simpler version leaves out: {TAG}. "
+        f"{ASK}",
     )
     question = held.payload["choice_question"]
     assert question["omitted_requirement_ids"] == ["r4"]
@@ -416,7 +432,9 @@ async def test_the_tap_leaves_out_only_the_named_tag(monkeypatch) -> None:
     assert lines.count(f"- Left out as agreed: {TAG}") == 1
     # F10: the line sits with the Done/Partly lines, never under "Have a look".
     assert lines.index(f"- Left out as agreed: {TAG}") < lines.index(LOOK)
-    assert sorted(draft.content.splitlines()) == sorted(DRAFT["content"].splitlines())
+    assert sorted(draft.content.splitlines()) == sorted(
+        [*DRAFT["content"].splitlines(), *HEADS_UP_LINES]
+    )
     assert _pending_approval(thread_id).consequence_summary == f"Render this draft: {draft.content}"
     with sync_session() as db:
         brief = load_latest_brief_sync(db, thread_id)

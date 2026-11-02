@@ -224,8 +224,16 @@ def compile_phone_subtitled_plan(
     additional_speakers: tuple[PhoneSourceBinding, ...] = (),
     output_orientation: Literal["portrait", "landscape"] = "portrait",
     clip_tilts: Mapping[str, Any] | None = None,
+    strategy: Mapping[str, Any] | None = None,
+    requirements: Sequence[Any] = (),
 ) -> EditRecipeV2:
     """Compile the subtitled edit format's phone recipe.
+
+    ``strategy`` / ``requirements`` (KRI-1097 wave 2) are the approved plan and the live asks
+    of its brief: the title rows in ``text_elements`` enter the way they ask
+    (`phone_subtitled_title.talking_title_entrances`, behind
+    ``TALKING_HEAD_ROUTE_FOLLOWS_PROMPT_ENABLED``). ``None`` (an editor Save, which compiles the
+    rows as saved) leaves ``text_elements`` as given.
 
     ``clip_tilts`` (KRI-1136) maps a main-track clip id (``clip-<n>`` for the speaker's
     kept segments, ``speaker-<n>`` for an extra speaker) to its tilt row value; an id with
@@ -573,6 +581,14 @@ def compile_phone_subtitled_plan(
         timeline_end = speaker_end + ending_duration
         required_capabilities |= {"visualVideos", "audioMix"}
 
+    if strategy is not None and text_elements:
+        from app.pipeline.phone_subtitled_title import talking_title_entrances  # noqa: PLC0415
+
+        text_elements = talking_title_entrances(
+            text_elements,
+            title_animation=strategy.get("title_animation"),
+            requirements=requirements,
+        )
     if text_elements:
         text_layers = _compile_text_lane(
             text_elements,

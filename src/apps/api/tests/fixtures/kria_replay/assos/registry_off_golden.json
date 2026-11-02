@@ -1,0 +1,143 @@
+{
+ "about": "The unified montage's draft disclosures for the Assos fixture, recorded on origin/main ff5f2adbe (before the route registry): route_disclosure.strategy_notices / ask_declines / card_text over the draft's strategy, live brief and pinned media (score_assos.build_job). 'assos' is the fixture as recorded; 'assos_every_field' sets every_field on the strategy and appends extra_asks to the brief. tests/kria/test_route_registry_flag_off.py requires ROUTE_REGISTRY_ENABLED=false to give exactly this.",
+ "every_field": {
+  "archetype": "before_after",
+  "hero_media_id": "analysis-proxy-assos-01",
+  "caption_style": "kinetic",
+  "optional_treatments": [
+   "film_grain"
+  ],
+  "overlay_display": "fullscreen",
+  "licensed_sfx": [
+   {
+    "id": "whoosh"
+   }
+  ],
+  "title_animation": "pop",
+  "label_position": "top_left",
+  "opening_title": "Why visit Assos",
+  "closing_title": "See you there",
+  "shot_labels": [
+   "Harbour"
+  ]
+ },
+ "extra_asks": [
+  {
+   "id": "x1",
+   "kind": "style",
+   "facts": {
+    "animation": "any"
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "synthetic x1",
+   "source_turn_id": "synthetic-turn-1"
+  },
+  {
+   "id": "x2",
+   "kind": "text",
+   "facts": {
+    "position": "top"
+   },
+   "scope": "title",
+   "status": "open",
+   "literal": null,
+   "description": "synthetic x2",
+   "source_turn_id": "synthetic-turn-1"
+  },
+  {
+   "id": "x3",
+   "kind": "style",
+   "facts": {
+    "captions": "on"
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "synthetic x3",
+   "source_turn_id": "synthetic-turn-1"
+  }
+ ],
+ "cases": {
+  "assos": {
+   "strategy_notices": [
+    {
+     "code": "not_applied_on_route",
+     "subject": "intro_hook",
+     "text": "I can't use the opening hook idea (\"Why you need to visit Assos\") on this video yet, so it won't be shown as text"
+    },
+    {
+     "code": "not_applied_on_route",
+     "subject": "story_structure",
+     "text": "The planned story structure (Introduce Assos and its beautiful coast…, Showcase the ancient ruins and history, End on the stunning Aegean views and pe…) sets the chapters (which clips are grouped together), but it won't reorder your clips: they stay in the order you gave"
+    }
+   ],
+   "ask_declines": [],
+   "card_text": "Heads-up for this video:\n- To write that text I may research facts on the web after you approve\n- I can't use the opening hook idea (\"Why you need to visit Assos\") on this video yet, so it won't be shown as text\n- The planned story structure (Introduce Assos and its beautiful coast…, Showcase the ancient ruins and history, End on the stunning Aegean views and pe…) sets the chapters (which clips are grouped together), but it won't reorder your clips: they stay in the order you gave"
+  },
+  "assos_every_field": {
+   "strategy_notices": [
+    {
+     "code": "not_applied_on_route",
+     "subject": "intro_hook",
+     "text": "I can't use the opening hook idea (\"Why you need to visit Assos\") on this video yet, so it won't be shown as text"
+    },
+    {
+     "code": "not_applied_on_route",
+     "subject": "story_structure",
+     "text": "I can't follow the planned story structure (Introduce Assos and its beautiful coast…, Showcase the ancient ruins and history, End on the stunning Aegean views and pe…) on this video yet, so it won't change the order of the clips"
+    },
+    {
+     "code": "not_applied_on_route",
+     "subject": "pacing",
+     "text": "The balanced pacing isn't applied on this video yet: the cuts follow a fast pace"
+    },
+    {
+     "code": "not_applied_on_route",
+     "subject": "direction",
+     "text": "I'll cut this as a fast montage instead of a text explainer: you asked for text on individual clips, which only the fast-montage layout places"
+    },
+    {
+     "code": "not_applied_on_route",
+     "subject": "caption_style",
+     "text": "I can't apply the kinetic caption style on this video yet, so it won't be used"
+    },
+    {
+     "code": "not_applied_on_route",
+     "subject": "optional_treatments",
+     "text": "I can't add the treatments (film_grain) on this video yet, so they won't be applied"
+    },
+    {
+     "code": "not_applied_on_route",
+     "subject": "archetype",
+     "text": "I can't use the before after story archetype on this video yet"
+    },
+    {
+     "code": "not_applied_on_route",
+     "subject": "hero_media_id",
+     "text": "I can't feature one hero clip on this video yet, so every clip is cut the same way"
+    },
+    {
+     "code": "not_applied_on_route",
+     "subject": "overlay_display",
+     "text": "I can't use the planned overlay display on this video yet, so it won't be shown"
+    },
+    {
+     "code": "not_applied_on_route",
+     "subject": "licensed_sfx",
+     "text": "I can't add sound effects on this video yet, so none will be played"
+    }
+   ],
+   "ask_declines": [
+    {
+     "code": "not_applied_on_route",
+     "subject": "text_animation",
+     "text": "I can't animate on-screen text on this video yet, so the text shows without motion",
+     "requirement_id": "x1"
+    }
+   ],
+   "card_text": "Heads-up for this video:\n- To write that text I may research facts on the web after you approve\n- I can't use the opening hook idea (\"Why you need to visit Assos\") on this video yet, so it won't be shown as text\n- I can't follow the planned story structure (Introduce Assos and its beautiful coast…, Showcase the ancient ruins and history, End on the stunning Aegean views and pe…) on this video yet, so it won't change the order of the clips\n- The balanced pacing isn't applied on this video yet: the cuts follow a fast pace"
+  }
+ }
+}

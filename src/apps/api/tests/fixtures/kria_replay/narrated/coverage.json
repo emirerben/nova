@@ -1,0 +1,28 @@
+{
+  "notes": [
+    "strategy.title_animation = \"typewriter\" and brief r3 (style, global, facts.animation = \"typewriter\", \"make the hook type in\") are NOT in the recording. They give the fixture an animation ask, the render target of the Narrated lane (L3)."
+  ],
+  "strategy": {"title_animation": "typewriter"},
+  "requirements": [
+    {
+      "id": "r3",
+      "kind": "style",
+      "scope": "global",
+      "literal": null,
+      "description": "make the hook type in",
+      "facts": {"animation": "typewriter"},
+      "source_turn_id": "synthetic-turn",
+      "status": "open"
+    }
+  ],
+  "checks": {
+    "fields": ["direction", "pacing", "story_structure", "title_animation"],
+    "asks": ["r1", "r2", "r3"],
+    "honored": {"fields": ["title_animation"], "asks": ["r3"]},
+    "not_graded": {
+      "opening_title": "Applied in the narrated table (narrated_title.py reads it); the consumer gate (check 10) holds that claim. The recorded render's title element was edited in the editor afterwards (Montserrat, typewriter, custom position, not the writer's Playfair preset), so it is evidence of neither",
+      "target_duration_s": "graded through r1, the creator's length ask: the strategy carries 120 s without the server's length provenance (creator_duration_s, target_duration_requested)",
+      "caption_style": "auto, the schema default: the planner chose no caption style"
+    }
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "notes": [
+    "strategy.caption_style = \"karaoke\", strategy.title_animation = \"pop\", a stated 30 s length (target_duration_s 30 with target_duration_requested and creator_duration_s, as the server records a length the creator said) and brief r2 (timing, facts.duration_s = 30, \"keep it 30 seconds\") and r3 (style, facts.animation = \"pop\", \"animate the title in\") are NOT in the recording. The recorded plan chose none of them; they make the fixture carry a caption style, a stated length and an animation ask the lip-sync route drops."
+  ],
+  "strategy": {
+    "caption_style": "karaoke",
+    "title_animation": "pop",
+    "target_duration_s": 30,
+    "target_duration_requested": true,
+    "creator_duration_s": 30
+  },
+  "requirements": [
+    {
+      "id": "r2",
+      "kind": "timing",
+      "scope": "global",
+      "literal": null,
+      "description": "keep it 30 seconds",
+      "facts": {
+        "duration_s": 30
+      },
+      "source_turn_id": "synthetic-turn",
+      "status": "open"
+    },
+    {
+      "id": "r3",
+      "kind": "style",
+      "scope": "global",
+      "literal": null,
+      "description": "animate the title in",
+      "facts": {
+        "animation": "pop"
+      },
+      "source_turn_id": "synthetic-turn",
+      "status": "open"
+    }
+  ],
+  "checks": {
+    "fields": [
+      "direction",
+      "pacing",
+      "story_structure",
+      "caption_style",
+      "target_duration_s",
+      "title_animation"
+    ],
+    "asks": [
+      "r2",
+      "r3"
+    ],
+    "honored": {
+      "fields": [
+        "title_animation"
+      ],
+      "asks": [
+        "r3"
+      ]
+    },
+    "not_graded": {
+      "r1": "lip sync to the uploaded song is the route itself: check 1 verifies the draft resolves to lipsync_song",
+      "song_section": "the recorded song range (0:00 to 4:31) is the filming range the aligner searched, and the takes were placed inside it (62.9 to 123.8 s). No typed song-section ask exists in the brief or the strategy for a creator song, so a section the route ignores cannot be graded offline yet"
+    }
+  }
+}

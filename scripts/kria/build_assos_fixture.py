@@ -8,18 +8,19 @@ Dump the raw responses first (never commit them), for thread T, plan item P, job
     python3 scripts/admin.py --prod GET "creation-threads/T/turns?limit=50"   > raw/turns.json
     python3 scripts/admin.py --prod GET jobs/J/debug                          > raw/job.json
 
-then `python3 scripts/kria/build_assos_fixture.py raw/`. Stdlib only. Scrubs user ids, storage
-paths, library ids, file names, content hashes and signed or redirect URLs; media ids become
-analysis-proxy-assos-NN. Fixtures are JSON only (no media). The builder refuses to write a file
-that still contains a path, a URL or a UUID.
+then `python3 scripts/kria/build_assos_fixture.py raw/ [--out-dir DIR] [--source-sha SHA]`
+(defaults: the assos fixture directory and the commit it was captured against). Stdlib only.
+Scrubs user ids, storage paths, library ids, file names, content hashes and signed or redirect
+URLs; media ids become analysis-proxy-assos-NN. Fixtures are JSON only (no media). The builder
+refuses to write a file that still contains a path, a URL or a UUID.
 """
 
 from __future__ import annotations
 
+import argparse
 import copy
 import json
 import re
-import sys
 from pathlib import Path
 
 OUT_DIR = Path(__file__).resolve().parents[2] / "src/apps/api/tests/fixtures/kria_replay/assos"
@@ -38,7 +39,7 @@ def _ids(job: dict) -> list[str]:
     ]
 
 
-def build(raw: Path) -> tuple[dict, dict]:
+def build(raw: Path, *, source_sha: str = SOURCE_SHA) -> tuple[dict, dict]:
     load = lambda n: json.loads((raw / f"{n}.json").read_text(encoding="utf-8"))  # noqa: E731
     job, turns, events = load("job"), load("turns"), load("events")
     ap = job["job"]["assembly_plan"]
@@ -238,7 +239,7 @@ def build(raw: Path) -> tuple[dict, dict]:
         "source": {
             "what": (
                 "Prod Kria thread 'Why Visit Assos, Turkey? (Animated)': one creation turn and "
-                "one chip follow-up. Code under audit: origin/main " + SOURCE_SHA + "."
+                "one chip follow-up. Code under audit: origin/main " + source_sha + "."
             ),
             "captured": "2026-10-31 via read-only admin GETs (saved copies, no network now)",
             "recorded": [
@@ -305,17 +306,20 @@ def _check_clean(name: str, value: dict) -> None:
         raise SystemExit(f"{name} is not clean: {bad} {sorted(urls)[:3]} {sorted(uuids)[:3]}")
 
 
-def main(raw_dir: str) -> None:
-    fixture, research = build(Path(raw_dir))
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+def main(raw_dir: str, *, out_dir: Path = OUT_DIR, source_sha: str = SOURCE_SHA) -> None:
+    fixture, research = build(Path(raw_dir), source_sha=source_sha)
+    out_dir.mkdir(parents=True, exist_ok=True)
     for name, value in (("fixture", fixture), ("research", research)):
         _check_clean(name, value)
-        path = OUT_DIR / f"{name}.json"
+        path = out_dir / f"{name}.json"
         path.write_text(json.dumps(copy.deepcopy(value), ensure_ascii=False, indent=2) + "\n")
         print(f"wrote {path} ({path.stat().st_size} bytes)")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        raise SystemExit(__doc__)
-    main(sys.argv[1])
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("raw_dir", help="directory holding item/events/turns/job .json")
+    parser.add_argument("--out-dir", type=Path, default=OUT_DIR)
+    parser.add_argument("--source-sha", default=SOURCE_SHA, help="commit the capture audits")
+    args = parser.parse_args()
+    main(args.raw_dir, out_dir=args.out_dir, source_sha=args.source_sha)

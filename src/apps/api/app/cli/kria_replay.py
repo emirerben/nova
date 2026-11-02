@@ -2,7 +2,8 @@
 
 A fixture is either a frozen turn (``tests/fixtures/kria_turns/<name>.json``) or a recorded
 conversation (``tests/fixtures/kria_replay/<name>/fixture.json``) scored by
-``scripts/kria/score_<name>.py``, e.g. ``make kria-replay FIXTURE=29-ekim``.
+``scripts/kria/score_<name>.py``, e.g. ``make kria-replay FIXTURE=29-ekim``. A recorded draft with
+no scorecard of its own is scored by the route grader (``scripts/kria/score_route.py``).
 """
 
 from __future__ import annotations
@@ -17,17 +18,22 @@ DEFAULT_FIXTURES = Path(__file__).parents[2] / "tests" / "fixtures" / "kria_turn
 CONVERSATION_FIXTURES = Path(__file__).parents[2] / "tests" / "fixtures" / "kria_replay"
 
 
-def _scorecard_for(value: str) -> Path | None:
-    """The scorecard script of a recorded-conversation fixture, when ``value`` names one."""
+def _scorecard_for(value: str) -> tuple[Path, list[str]] | None:
+    """The scorecard script (and its leading arguments) of a recorded-conversation fixture,
+    when ``value`` names one."""
     if Path(value).exists() and Path(value).suffix == ".json":
         return None
     name = Path(value).name
     if len(Path(__file__).parents) < 6:  # the prod image has no repo checkout or scripts/
         return None
-    script = Path(__file__).parents[5] / "scripts" / "kria" / f"score_{name.replace('-', '_')}.py"
-    if (CONVERSATION_FIXTURES / name / "fixture.json").is_file() and script.is_file():
-        return script
-    return None
+    if not (CONVERSATION_FIXTURES / name / "fixture.json").is_file():
+        return None
+    scripts = Path(__file__).parents[5] / "scripts" / "kria"
+    own = scripts / f"score_{name.replace('-', '_')}.py"
+    if own.is_file():
+        return own, []
+    generic = scripts / "score_route.py"
+    return (generic, ["--fixture", name]) if generic.is_file() else None
 
 
 def _run_scorecard(script: Path, argv: list[str]) -> int:
@@ -58,7 +64,8 @@ def main(argv: list[str] | None = None) -> int:
     args, extra = parser.parse_known_args(argv)
     scorecard = _scorecard_for(args.fixture)
     if scorecard is not None:
-        return _run_scorecard(scorecard, extra)
+        script, leading = scorecard
+        return _run_scorecard(script, [*leading, *extra])
     if extra:
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
 

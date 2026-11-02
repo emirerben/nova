@@ -31,7 +31,7 @@ from app.kria.contracts import RequirementReceipt
 from app.kria.order_replacement_receipts import with_verified_order_execution
 from app.kria.order_replacement_sources import OrderReplacementSourceContext
 from app.kria.reply_language import say
-from app.kria.route_disclosure import UNIFIED_MONTAGE, ask_declines
+from app.kria.route_disclosure import ask_declines, draft_route
 from app.kria.strategy_policy import RefusedStrategy, check_strategy_for_runtime_v2
 from app.models import ContentPlan, Persona
 from app.services.clip_order_sequence import stated_anchors
@@ -537,15 +537,21 @@ def assess_readiness(
         and editor_payload is None
         and _defers_to_unified_montage(strategy, media, manifest, creator_id)
     )
+    # The same route the draft card reads (`route_disclosure.draft_route`), so a decline on the
+    # card is the decline readiness approves.
+    decline_route = (
+        draft_route(
+            creator_id=creator_id,
+            edit_format=strategy.get("edit_format") or (manifest.edit_format if manifest else None),
+            strategy=strategy,
+            clip_paths=[str(path) for path in media.get("clip_paths") or []],
+            phone_montage=on_unified_montage,
+        )
+        if settings.kria_route_disclosure_enabled and not policy_problem and editor_payload is None
+        else None
+    )
     declined = (
-        {
-            d.requirement_id: d
-            for d in ask_declines(
-                requirements,
-                strategy,
-                route=UNIFIED_MONTAGE if on_unified_montage else None,
-            )
-        }
+        {d.requirement_id: d for d in ask_declines(requirements, strategy, route=decline_route)}
         if not policy_problem
         else {}
     )

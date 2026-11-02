@@ -971,9 +971,9 @@ window with the speaker muted under it.
   window AND the speaker is muted across it; sound but no mute = partial). The render-ready review
   re-judges the pinned recipe (`rendered_cutaway_receipt`, editor Saves included).
 - **Known gaps**: the in-app editor preview does not play the cutaway's sound or mute the
-  speaker (it previews cutaways from the receipt, silent); a clip the classifier files as an extra
-  *speaker* (it has clear speech, e.g. the thread 6fa36e51 "talks") plays back to back on the main
-  track with its own sound and is never a cutaway, so "show it when I mention it" is not built.
+  speaker (it previews cutaways from the receipt, silent). A clip the classifier files as an extra
+  *speaker* (clear speech, e.g. the thread 6fa36e51 "talks") plays back to back on the main track
+  unless `PHONE_TALKING_MENTION_CUTAWAYS_ENABLED` is on (next section).
 - **Evidence** (real `KriaMediaEngine` exporter, macOS host, not a physical iPhone):
   `python scripts/ios/phone-audio-parity.py prepare OUT --cases talking_cutaway_sound`, then
   `(cd src/apps/ios/Packages/KriaMediaEngine && KRIA_AUDIO_PARITY_DIR=OUT swift test --filter
@@ -983,6 +983,71 @@ window with the speaker muted under it.
   `tests/pipeline/test_phone_talking_cutaway_sound.py`,
   `tests/kria/test_kri1151_talking_cutaway_sound_checks.py` (replay of thread 6fa36e51),
   `tests/tasks/test_kri1151_talking_cutaway_sound_dispatch.py`.
+
+#### Talks shown full screen where the creator mentions them (parent KRI-1151, `PHONE_TALKING_MENTION_CUTAWAYS_ENABLED`)
+
+"Show the talks full screen when I mention them" on a multi-clip Talking (`subtitled`) edit
+(thread 6fa36e51, job 8cb3fc21). Before, `classify_talking_clips` filed the three podium clips as
+speakers from Whisper pace alone (24/26/30 words at 1.7-2.5 words/s, while their Gemini records
+said `speaks_to_camera: false`), played them back to back ahead of the creator, and set
+`lanes_skipped: multiple_speakers` (overlay grounding, beats, video overlays off). Footage was
+then spread mechanically, never at a mention.
+
+- **Request**: the one typed fact the brief already carries, a live `style`/`select`/`timing`
+  requirement with `facts.display_mode = fullscreen` and no `triggers` (a photo pop-in on a spoken word,
+  KRI-840, is not this ask) (`app/kria/cutaway_show_ask.py`; no wording is matched, KRI-667).
+  `clip:<id>` scope names a clip (a Visuals-pool photo or a clip outside this edit means no ask);
+  `global` names none. A live `order`
+  requirement means the creator also arranged the clips, so nothing moves (`kept:
+  clip_order_asked`). No full-screen ask, or the flag off: today's behavior, byte-identical.
+- **Roles** (`phone_talking_mentions.demote_speakers_to_cutaways`, runs right after the pace
+  classifier): a named clip becomes footage; for a global ask a clip whose analysis says it is NOT
+  the creator speaking to camera becomes footage when another clip does speak to camera. A failed or
+  degraded analysis is "unknown", never evidence. A clip left that the analysis says speaks to
+  camera (not the ending clip) must remain and leads the main track, else nothing moves (`kept:
+  no_creator_take_left`, the edit is left exactly as before). Speakers and spread follow upload order. The ending clip (KRI-841) keeps its own rule.
+- **Placement** (`schedule_mention_cutaways`, called from `_schedule_talking_footage`): each footage
+  clip's words (its own Whisper words plus its analysis: transcript, hook, summary, subject, brands,
+  props) are compared with the creator's spoken-pass word timeline. Words are folded, split at
+  letter/digit seams ("Euro2032"), cut to a 5-letter stem (Turkish endings) and weighted by rarity
+  (1 / times the creator says it / clips that carry it). A mention needs two distinct shared words
+  within 6 s, one of them distinctive (a number of 3+ digits or a word of 6+ letters), and a weighted
+  total of 1.0. The clip's English summary is not compared. The window starts at the first matched
+  word and runs up to 4 s; when the clip's own sound plays (`PHONE_TALKING_CUTAWAY_SOUND_ENABLED`) it
+  starts after the last matched word, so his mention stays audible, runs up to 6 s and a clip no
+  mention placed stays silent. It stops where the next
+  clip's mention starts, keeps the 2.5 s hook and the last second clear, and shifts at most 3 s to
+  find room. No match or no room: the mechanical spread, with `reason`
+  `no_mention_found` / `no_room_at_mention`. Only timing comes from the analysis; none of it reaches
+  the screen. A cut take (speech cleanup) has no uncut word timeline, so every clip is spread.
+- **Sound**: nothing new. With the sound lane off a cutaway is muted and
+  `mention_cutaways.sound = {asked: true, applied: false, reason: sound_not_enabled}` says so (the
+  creator-facing note reads "Their own sound isn't available on this edit yet"). With this flag on,
+  the sound lane (every Talking edit, ask or not) also matches a brief scope written as the phone's
+  file name to the edit's `analysis-proxy-ios-` id; without that, "keep my audio while the stadium is
+  shown" never matched and the whole-video "on" ask turned the stadium's sound on too. Flag off:
+  the old exact match, unchanged. The talk plays from its own start (`source_start_s` 0): the editor
+  preview assumes it.
+- **Receipt**: `variants[i].phone_talking_multi_clip.mention_cutaways` = `{version, demoted[{clip_id,
+  media_id, reason}], kept, placements[{media_id, basis: mention|spread, start_s, end_s, at_s?,
+  reason?}], sound?}` (only with the flag on and a full-screen ask); the roles receipt `clips` marks
+  a moved clip `{role: footage, was: speaker, reason}`. `render_notes` (nova_steps) says how many
+  clips sit at a mention, how many were spread, and a missing sound.
+- **Gate / apply**: `phone_rollout.phone_talking_mention_cutaways_supported()` = the flag, on top of
+  `TALKING_MULTI_CLIP_ENABLED`. Apply: `fly secrets set PHONE_TALKING_MENTION_CUTAWAYS_ENABLED=true
+  --app nova-video` + restart api + worker (Fly only, no Vercel twin, no app build: recipe-only, no
+  new protocol). Rollback: `=false` the same way. To hear the talks' own audio also set
+  `PHONE_TALKING_CUTAWAY_SOUND_ENABLED` and `PHONE_CLIP_SOUND_WINDOWS_ENABLED` (above).
+- **Known gaps**: a creator take the analysis marks not-to-camera next to another person's clip
+  marked to-camera is read the other way round under a global ask; the signal is the display fact plus the clip analysis; a creator who says "when I
+  mention them" without a full-screen word gets today's behavior (a typed "show when mentioned" fact
+  would need a brief-extractor prompt bump and live evals). Matching is lexical on the clip's own
+  speech and analysis against the creator's words, so a clip about something the creator never
+  names (the congress talk, a drone shot) is spread, and a different language between clip and
+  creator matches only names and numbers.
+- **Evidence**: `tests/tasks/test_talking_show_when_mentioned.py` replays the prod job's clips,
+  words and analyses (`tests/fixtures/talking_show_when_mentioned_6fa36e51.json`) through
+  `_run_generative_job`; `tests/pipeline/test_phone_talking_mentions.py` lists the failure modes.
 
 #### Phase 2: PiP cards grounded from the transcript (KRI-176)
 
@@ -3989,3 +4054,55 @@ tilt); the AI naming an id outside the pool (`test_clip_tilt_media_ai.py` and a 
 Rollout: after `MEDIA_TILT_ENABLED` is on, add `clipBackdropMedia` to `PHONE_RENDER_VERIFIED_FEATURES` on Fly (api and
 worker, restart) once a physical-device preview and export check has passed, then ship the TestFlight build that
 declares protocol 31. Rollback is removing the token or `MEDIA_TILT_ENABLED=false`, never a code revert.
+
+## Range on phone Talking edits
+
+The editor's Range sheet (`KriaSourceWindowEditor`, KRI-717) chooses which part of a clip plays. On a
+phone Talking (`subtitled`, device) edit it picks which part of the speaker take plays. Related: KRI-717,
+KRI-1149.
+
+**Gate:** `PHONE_TALKING_RANGE_EDITS_ENABLED` (default `false`, also the kill switch), through
+`phone_rollout.phone_talking_range_supported()` (flag AND the Talking editor lanes). No client protocol
+bump and no `PHONE_RENDER_VERIFIED_FEATURES` token: the recipe is the same hard-cut keep segments that
+speech cleanup already ships. Builds that predate this ignore the new capability and stay blocked.
+
+**Contract.** `editor_capabilities.clips.source_window = {editable, reason}` appears only while the flag
+is on (`timeline` stays `false`). `reason` is one of `talking_range_multi_clip`, `talking_range_word_cuts`
+(explicit spoken-word cuts applied), `talking_range_processed_audio` (noise reduction applied),
+`talking_range_cut_mismatch` (the stored rows, or an empty editor state, no longer match the speaker's
+clips on the pinned recipe). The speaker's clips are the main-track clips over the speaker's own asset;
+a muted ending clip on the same track is not part of the cut and never closes Range. A Talking edit that
+became authored (a clip delete, KRI-852) gets no `source_window` leaf at all: it edits through the open
+`timeline` capability. One predicate, `phone_talking_range.talking_range_reason`, drives both the capability and
+Save. A Save carries `timeline_slots`: the SAME `native-phone-talking-source[-n]` ids, order and count
+the server derived (`editor_deletion_timeline`), with new `in_s` / `duration_s`. Anything else is
+`422 talking_range_structure_changed` (a `muted` row is `422 talking_range_muted`); segments that no
+longer run in cut order are `422 talking_range_order`; a window reaching into the next segment's footage
+is `422 talking_range_overlap`; a window the Save changed shorter than the editor minimum (0.1 s, with
+the KRI-770 float tolerance) is `TIMELINE_INVALID_WINDOW`, while an untouched short cleanup segment keeps
+its length; past the source is `TIMELINE_OUT_OF_BOUNDS`; widening into footage with no
+caption timing while captions are on is `422 talking_range_captions_missing` (no silent caption gap).
+
+**Compile.** The rows become `keep_segments` for `compile_phone_subtitled_plan`
+(`phone_editor._apply_talking_range`). Lanes move through the existing speech projection
+(`speech_cut_state.reproject_authored_speech_records`; the KRI-852 basis sync was factored into
+`authored_editor.sync_talking_source_lanes` and is shared, not copied). A lane the Save carries is
+already on the new clock and is never moved twice. The variant never enters authored mode, so
+cutaways, speaker background, ending clip and framing keep compiling through the Talking compiler. A
+lane under the ending clip shifts with the cut (the ending is a tail pseudo-slot of its length).
+The rows persist as `variant.user_timeline.slots`; the pinned recipe stays the source of truth. A
+regenerate builds a fresh variant entry without `user_timeline`, so it reopens Range with rows that
+match its new pinned cut.
+
+**App.** The app reads the leaf only while its own `timeline` capability is closed. A closed Range is not
+a banner: the Range button stays tappable and the sheet names the reason when the creator asks for it.
+The app also refuses a staged window that overlaps a neighbour or jumps out of the cut's order.
+
+**Not in this slice (follow-ups).** Delete / split / reorder of speech segments, several-clip Talking
+(per-speaker windows and cutaway re-projection), a cutaway's own source start, variants with spoken-word
+cuts or noise reduction, copilot `set_source_window`, and a "your take is 0:58, the video uses 0:41"
+line in the editor.
+
+**Deploy order.** API first with the flag off (payloads byte-identical), then the iOS build, then flip
+`PHONE_TALKING_RANGE_EDITS_ENABLED=true` (fly secret, restart api and worker). Rollback: set it to
+`false`; saved Range windows stay in their pinned recipes and keep rendering.

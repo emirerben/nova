@@ -806,7 +806,11 @@ async def test_six_moments_card_keeps_the_checked_summary_and_freeze_limit(monke
     assert "Couldn't: Freeze the frame for one second on Atakan's bite" in reply
     assert "I can't freeze a frame in this edit yet, so that moment plays normally" in reply
     assert "you asked for 1s" not in reply
-    assert reply.endswith("(6 moments, the longest 2.0 s)")
+    assert any(
+        line.startswith("- Done: Make a montage of six moments")
+        and line.endswith("(6 moments, the longest 2.0 s)")
+        for line in reply.splitlines()
+    )
     assert card == f"Render this draft: {reply}"
 
 

@@ -76,5 +76,9 @@ They check the named observable, not that the video is good. Check 2 compares me
 differential (reversed `story_structure` must change the order). Check 5 treats the draft
 strategy's `target_duration_s` as creator-visible: whether the iOS card renders it is unknown.
 Check 6 cannot tell an echo from a pick in the worker input (no such field exists today), so only the
-echoed-default case decides. Check 10 is report-only. The iOS render, export verification and
-device behaviour are not covered (`make ios-verify` is a separate evidence level).
+echoed-default case decides. Check 10 is report-only. Check 13 replays only the planner's song
+step (`_gate_unresolved_choices`) over the recorded strategy minus its server-owned song section,
+with no earlier thread events and a catalog matcher that answers prod's recorded song; the Main
+Creator and the database-bound turn body are not run. Checks 1-12 still render the recorded
+strategy, frozen song included, so they keep reproducing prod. The iOS render, export verification
+and device behaviour are not covered (`make ios-verify` is a separate evidence level).

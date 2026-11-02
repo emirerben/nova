@@ -73,14 +73,23 @@ def _fact_ask(value: object) -> tuple[bool, str | None]:
     return True, normalize_title_animation(value)
 
 
-def animation_ask(req: Any) -> AnimationAsk | None:
+def animates_text_kind(req: Any, *, styles: bool = True) -> bool:
+    """``req`` is a kind whose ``facts.animation`` animates the on-screen text: a ``text`` ask,
+    or (``styles``) a ``style`` ask ("animate the big text in"). The one rule the route card
+    (`route_capabilities._lines.asks_text_animation`) and `animation_ask` share."""
+    kind = getattr(req, "kind", None)
+    return kind == "text" or (styles and kind == "style")
+
+
+def animation_ask(req: Any, *, styles: bool = False) -> AnimationAsk | None:
     """The animation a live ``text`` requirement asks for, else None.
 
     Reads ``facts.animation`` only: a registry edge is NAMED; the sentinel, ``true`` or an id
     the registry does not know is UNNAMED (the creator wanted some animation); "none" /
-    "static" is no ask.
+    "static" is no ask. ``styles`` counts a ``style`` ask too (`animates_text_kind`): a route
+    lane passes it behind its own switch; the unified montage keeps text asks only.
     """
-    if getattr(req, "kind", None) != "text" or not getattr(req, "live", True):
+    if not animates_text_kind(req, styles=styles) or not getattr(req, "live", True):
         return None
     facts: Mapping[str, Any] = getattr(req, "facts", None) or {}
     if "animation" not in facts:
@@ -89,15 +98,17 @@ def animation_ask(req: Any) -> AnimationAsk | None:
     return AnimationAsk(edge, str(getattr(req, "scope", "") or "global")) if asked else None
 
 
-def animation_targets(requirements: Iterable[Any]) -> list[tuple[str, AnimationAsk]]:
-    """``(target, ask)`` per distinct target, most specific first.
+def animation_targets(
+    requirements: Iterable[Any], *, styles: bool = False
+) -> list[tuple[str, AnimationAsk]]:
+    """``(target, ask)`` per distinct target, most specific first (``styles``: `animation_ask`).
 
     Targets: ``clip:<id>`` (one label), ``labels`` (per-clip), ``title``, ``all`` (global).
     When two asks hit one target the named one wins; the first named (or first) is kept.
     """
     found: dict[str, AnimationAsk] = {}
     for req in requirements:
-        ask = animation_ask(req)
+        ask = animation_ask(req, styles=styles)
         if ask is None:
             continue
         scope = ask.scope

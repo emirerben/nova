@@ -214,6 +214,7 @@ from app.services.creator_sessions import (
     load_intent_clips_for_item,
     resolve_item_creator_context,
 )
+from app.services.creator_song_rule import planner_catalog_song_blocked, withheld_song_notice
 from app.services.kept_sound_lines import kept_line_records
 from app.services.kria_editor_ops import (
     EDITOR_STATE_STALE_REPLY,
@@ -841,12 +842,15 @@ async def _freeze_licensed_music_section(
     run_context: RunContext,
     target_s: float | None = None,
     music_ask: str = "",
+    catalog_withheld: bool = False,
 ) -> dict[str, Any] | None:
     """Match once in a real live session and return an immutable catalog section.
 
     ``target_s`` is the creator's own length; the section follows it (KRI-679).
     ``music_ask`` is the creator's own words about the song; the matcher weighs it first.
     ``run_context`` owns the matcher run: no render Job exists yet (KRI-809).
+    ``catalog_withheld`` (`creator_song_rule.planner_catalog_song_blocked`): the catalog is
+    never asked and the draft gets the footage fallback, with the genre asked recorded.
     """
     if not isinstance(db, AsyncSession) or not isinstance(snapshot, dict):
         return None
@@ -854,6 +858,8 @@ async def _freeze_licensed_music_section(
         return None
     if strategy.get("has_voiceover") or strategy.get("voice_mode") == "continuous":
         return None
+    if catalog_withheld:
+        return {"status": "fallback_footage", **genre_record(asked_genres(music_ask), None)}
     rows = snapshot.get("clip_assignments")
     if not isinstance(rows, list) or not rows:
         return {"status": "fallback_footage"}
@@ -5530,7 +5536,13 @@ async def _gate_unresolved_choices(
         and creator_target > 0
         else None
     )
-    frozen_music = _prior_frozen_music(events, music_input_digest, music_pool_digest)
+    catalog_withheld = planner_catalog_song_blocked()
+    # A song an earlier turn of the thread froze is a catalog song too.
+    frozen_music = (
+        None
+        if catalog_withheld
+        else _prior_frozen_music(events, music_input_digest, music_pool_digest)
+    )
     if isinstance(frozen_music, dict) and GENRE_FIT not in frozen_music and asked_genres(music_ask):
         # KRI-848: frozen before the song's genre was checked, so nobody has looked at it.
         frozen_music = None
@@ -5550,6 +5562,7 @@ async def _gate_unresolved_choices(
             ),
             target_s=music_target_s,
             music_ask=music_ask,
+            catalog_withheld=catalog_withheld,
         )
     elif isinstance(frozen_music, dict):
         # A section frozen before KRI-600 may be longer than the footage can fill, and
@@ -5690,7 +5703,9 @@ async def _gate_unresolved_choices(
     # KRI-848: say which song is suggested and whether its labels fit the genre asked for.
     # The receipts reply replaces the summary whenever a judged ask is unmet and keeps only
     # the policy notices, so the song notice rides both.
-    song_notice = music_genre_notice(frozen_music)
+    song_notice = (
+        withheld_song_notice(frozen_music) if catalog_withheld else music_genre_notice(frozen_music)
+    )
     if song_notice and song_notice not in planned.policy_notices:
         planned = replace(planned, policy_notices=(*planned.policy_notices, song_notice))
     # KRI-1068: the clip the creator just dropped is said like the song, on both replies.

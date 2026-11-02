@@ -132,3 +132,25 @@ def test_one_clip_has_nothing_to_cut_away_to_so_no_sound_is_promised(
     receipt = check_requirement(REQS["r2"], alone)
     assert receipt.status == "not_possible"
     assert UNSUPPORTED in receipt.reason
+
+
+def _proxy_of_stadium() -> str:
+    return f"analysis-proxy-ios-{STADIUM}"
+
+
+def test_keep_my_audio_over_the_stadium_is_met_when_the_scope_is_the_phone_file_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _switch(monkeypatch, cutaway_sound=False)
+    monkeypatch.setattr(settings, "phone_talking_mention_cutaways_enabled", True)
+    facts = _talking_draft(talking_footage_ids=(_proxy_of_stadium(),))
+    assert check_requirement(REQS["r4"], facts).status == "met"
+
+
+def test_the_file_name_match_is_off_with_the_mention_switch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _switch(monkeypatch, cutaway_sound=False)
+    monkeypatch.setattr(settings, "phone_talking_mention_cutaways_enabled", False)
+    facts = _talking_draft(talking_footage_ids=(_proxy_of_stadium(),))
+    assert check_requirement(REQS["r4"], facts).status != "met"
