@@ -1004,10 +1004,15 @@ is lost and the video grows by the clip's length.
   `test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inserts`). **Ask
   routing**: only an explicit pause / stop / in-the-middle-while-I-wait ask is an insert; "show it
   when I mention X" (the talk keeps running), with or without "use their audio", is the existing
-  show-when-mentioned / cutaway-sound ask (`triggers`), never `insert_clip`. With both planner
-  lanes open, wording that genuinely fits both ("put the congress clip in the middle of my talk
-  with its sound") gets ONE `ask_user` question (pause the talk, or cover it?); with only the
-  insert lane open the plain show-it asks leave `insert_clips` empty. The brief records the
+  show-when-mentioned / cutaway-sound ask, recorded exactly as the full-screen (`display_mode`)
+  and clip-sound (`clip_sound`) asks are (the cutaway lane reads those two typed facts and ignores
+  a `display_mode` that carries `triggers`), never as `triggers` and never as `insert_clip`. With
+  both planner lanes open, "place them in between my speech" together with "when I talk about
+  them" is the full-screen cutaway lane, and wording with no mention anchor and no pause word
+  ("put the congress clip in the middle of my talk") gets ONE `ask_user` question (pause the talk,
+  or cover it?); with only the insert lane open the plain show-it asks leave `insert_clips`
+  empty and the model says plainly that a clip over a running talk is not available, offering
+  only the pause form. The brief records the
   insert as a `style` requirement with `facts.insert_clip` (+ `insert_at_phrase` / `insert_at_s`,
   `keep_audio`). The server repair (`repair_creator_insert_clips`) drops what the phone cannot play
   with a plain notice.

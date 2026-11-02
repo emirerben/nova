@@ -192,6 +192,7 @@ log = structlog.get_logger()
 # taught only where `insert_clip_candidates(manifest)` is non-empty, and the shared brief records
 # it as an `insert_clip` fact (brief_extractor v46 shares the section). The cutaway section
 # says an insert exists only as `insert_clips` while that lane is open.
+# A clip shown while the talk keeps running is recorded as `display_mode` / `clip_sound`, never `triggers`.
 MAIN_CREATOR_PROMPT_VERSION = "2026-11-02-v110"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
@@ -400,8 +401,8 @@ _TALKING_CUTAWAYS_NO_ASK = "never use `ask_user` to say it is unsupported, "
 # genuinely fits both lanes (the insert section says which wording that is).
 _TALKING_CUTAWAYS_ONE_ASK = (
     "never use `ask_user` to say it is unsupported (the single exception is ONE short question "
-    "when the wording genuinely fits both this and a clip played while the talk pauses, see the "
-    "section on a clip played in the middle of the talk), "
+    "when the wording has no spoken anchor and no pause word and so fits both this and a clip "
+    "played while the talk pauses, see the section on a clip played in the middle of the talk), "
 )
 
 _TALKING_CUTAWAYS_HEAD = (
@@ -473,8 +474,6 @@ talk and lets it continue afterwards exists only as `insert_clips` (see the sect
 played in the middle of the talk), and only when the creator explicitly asks the talk to pause or
 stop; for anything else the nearest are the full-screen overlay above%s."""
 
-_TALKING_CUTAWAYS_TAIL = _TALKING_CUTAWAYS_TAIL_PREFIX + _TALKING_CUTAWAYS_TAIL_NO_INSERT
-
 
 def _talking_cutaways_section(
     availability: TalkingCutawayAvailability, *, ending_open: bool, inserts_open: bool = False
@@ -533,21 +532,35 @@ clip they speak in. `keep_audio` is true unless they ask for it silent. At most 
 not cut: the video simply gets as much longer as the clip. That clip plays only there, so never
 also use it as a cutaway, in `reaction_beats` or as `ending_clip`. It is not a cutaway (the talk
 keeps running under a cutaway) and not an `ending_clip` (that follows the whole talk). Say in
-`summary`, in plain words, where the clip is shown and that the talk pauses for it.
+`summary`, in plain words, where the clip is shown and that the talk pauses for it. An earlier
+reply in this chat that said the talk cannot stop for a clip and carry on is out of date.
 """.strip("\n")
 
-_INSERT_NOT_THIS_CLOSED = " The talk keeps running there, so leave `insert_clips` empty."
+# Insert lane open, full-screen clip lane closed: say what exists. Showing a clip over a talk that
+# keeps running is not available then (the cutaway lane is the only thing that does it), and the
+# only nearby thing that exists is the pause form, so that is the only thing offered.
+_INSERT_NOT_THIS_CLOSED = (
+    " The talk keeps running there, so leave `insert_clips` empty. A clip shown over a talk that"
+    " keeps running is not available in this edit: say so plainly. Only when the creator's ask is"
+    " really to see one of the clips, with its sound, at a point in the talk, offer the nearest"
+    " thing that exists: the same clip played with its sound while the talk pauses and then"
+    " carries on (`insert_clips`, once they say yes). Never promise a clip shown over the talk"
+    " while it keeps running, in full or silent."
+)
 
 # With the full-screen clip lane open too: the plain show-it asks belong to that lane, and wording
 # that genuinely fits both gets one short question instead of a guess.
 _INSERT_NOT_THIS_CUTAWAYS_OPEN = (
     " That is the clip shown over the talk (the full-screen clip lane above, with or without"
-    " its sound), not this."
-    " If the wording genuinely fits both and says nothing about the talk stopping or waiting"
-    ' ("put the congress clip in the middle of my talk with its sound"), use `ask_user` ONCE'
+    ' its sound), not this. "In between my speech" together with "when I talk about them" or'
+    ' "when I mention it" ("place them in between my speech", "show the talks when I talk about'
+    ' them") is the full-screen clip lane above, whatever it says about sound.'
+    " If the wording genuinely fits both, with no mention anchor and no pause word"
+    ' ("put the congress clip in the middle of my talk"), use `ask_user` ONCE'
     " with one short question: should the talk pause while the clip plays and then carry on, or"
-    " should the clip cover the talk while it keeps running? Never ask when the wording is a"
-    ' plain show-it-when-I-mention-it ask, or when it says pause, stop or "while I wait".'
+    " should the clip cover the talk while it keeps running? Never ask when the wording says"
+    ' where it is said ("when I talk about it", "when I mention it"), or when it says pause, stop'
+    ' or "while I wait".'
 )
 
 
@@ -1077,8 +1090,12 @@ _BRIEF_INSERT_CLIP_SENTENCE = (
     " order. Only an explicit pause, stop or in-the-middle-while-I-wait ask is an insert. A clip"
     ' shown while the talk keeps running ("show the congress video when I mention congress",'
     ' "kongre dediğimde kongre videosunu sesiyle göster", "use their audio") is NOT an'
-    " insert, with or without the clip's sound: record it as the `triggers` ask below, never as"
-    " `insert_clip`."
+    " insert, with or without the clip's sound: record it exactly as the full-screen"
+    " (`display_mode`) and clip-sound (`clip_sound`) asks are recorded, never as `triggers` and"
+    ' never as `insert_clip`: a `style` requirement with {"display_mode": "fullscreen"} and, for'
+    ' their sound, an `audio` one with {"clip_sound": "on"} (or "off" for "keep my audio"), scope'
+    " `clip:<media_id>` for a clip they name, else `global`; a photo, sticker or sound timed to a"
+    " spoken word keeps `triggers`, as below."
 )
 _BRIEF_INSERT_ANCHOR = "or `closing`. On a montage,"
 

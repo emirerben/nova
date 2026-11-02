@@ -17,9 +17,13 @@ checked when ALL hold:
   intercutting, cutaways or a Montage;
 - it is not a refusal OF an insert or a pause (the talk stopping while a clip plays). That is
   the other lane (`insert_clip_candidates`, its own gate): a reason code that names it is never
-  contradicted, open or closed. A question that merely names a pause is the model's honest "no
-  pause" answer while that lane is closed; while it is open, a refusal whose own code names the
-  audio / cutaway ask is stale even when its question offers a pause;
+  contradicted, open or closed. While that lane is closed, a question that merely names a pause
+  is left alone: the guard cannot tell a stale audio refusal that offers a pause that does not
+  exist from an honest "I can't pause your talk". While it is open the pause exists, so a refusal
+  whose own code does not name it is stale even when its question offers a pause;
+- it is not the one clarifying question the insert lane allows (the wording fits both lanes): a
+  question that offers the pause as a choice and says no refusal in its own words is a question,
+  whatever its code is called;
 - this multi-clip Talking edit's gates are open for it (`talking_footage_cutaways`) and the live
   brief carries the typed ask the lane builds (a full-screen display ask, or a clip-sound "on" ask).
 
@@ -140,16 +144,24 @@ def _refuses_an_insert(action: AskUser, *, inserts_open: bool) -> bool:
     The reason code is the model's own label: when it names an insert or a pause the refusal is
     that lane's, whatever else the question says. Otherwise a question or option that names a
     pause is read as a (correct) refusal of a pause while the insert lane is closed. While it is
-    open, a pause is something this edit does, so a code that names the audio / cutaway ask
-    keeps its refusal stale and the one corrective re-run teaches the difference.
+    open, a pause is something this edit does, so a refusal whose code does not name it stays
+    stale (a generic ``capability_gap`` included) and the one corrective re-run teaches the
+    difference.
     """
     code = tokens(action.reason_code)
     if code & _PAUSE_OR_INSERT:
         return True
     rest = tokens(" ".join([action.question, *action.options]))
-    if not rest & _PAUSE_OR_INSERT:
+    return bool(rest & _PAUSE_OR_INSERT) and not inserts_open
+
+
+def _asks_which_lane(action: AskUser, *, inserts_open: bool) -> bool:
+    """True for the one clarifying question the insert lane allows: the pause is offered as a
+    choice and the question's own words refuse nothing ("Should the talk pause while the clip
+    plays, or should the clip cover it?"), even when the model's code for it says "cannot_tell"."""
+    if not inserts_open or tokens(action.question) & _REFUSAL:
         return False
-    return not (inserts_open and code & _TOPIC)
+    return bool(tokens(" ".join([action.question, *action.options])) & _PAUSE_OR_INSERT)
 
 
 def stale_capability_refusal(
@@ -169,7 +181,10 @@ def stale_capability_refusal(
         words = _ask_words(action)
         if not is_refusal_code(action.reason_code) or not words & _TOPIC:
             return None
-        if _refuses_an_insert(action, inserts_open=bool(insert_clip_candidates(manifest))):
+        inserts_open = bool(insert_clip_candidates(manifest))
+        if _refuses_an_insert(action, inserts_open=inserts_open):
+            return None
+        if _asks_which_lane(action, inserts_open=inserts_open):
             return None
     elif isinstance(action, ProposeStrategy):
         if action.strategy.edit_format != "montage":
