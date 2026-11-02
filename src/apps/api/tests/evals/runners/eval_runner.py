@@ -263,6 +263,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.song_classifier import SongClassifierAgent
 
         return SongClassifierAgent
+    if agent_name == "nova.kria.intent_review":
+        from app.agents.intent_review import IntentReviewAgent
+
+        return IntentReviewAgent
     if agent_name == "nova.audio.song_sections":
         from app.agents.song_sections import SongSectionsAgent
 
