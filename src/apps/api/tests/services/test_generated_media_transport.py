@@ -125,3 +125,33 @@ def test_iphone_sized_reference_is_bounded_without_changing_original():
         assert image.size == (1536, 1152)
     with Image.open(io.BytesIO(original)) as image:
         assert image.size == (4032, 3024)
+
+
+def test_provider_rejection_keeps_status_and_error_code_for_the_log():
+    from types import SimpleNamespace
+
+    from app.services.generated_media_transport import _provider_error
+
+    sdk_error = SimpleNamespace(
+        status_code=403, code="organization_not_verified", type="invalid_request_error"
+    )
+    with pytest.raises(ProviderRejected) as caught:
+        _provider_error(sdk_error)
+    rejected = caught.value
+    assert (rejected.status_code, rejected.error_code, rejected.error_type) == (
+        403,
+        "organization_not_verified",
+        "invalid_request_error",
+    )
+    assert rejected.retryable is False
+    assert "organization" not in str(rejected)
+
+
+def test_provider_server_error_still_propagates_unchanged():
+    from app.services.generated_media_transport import _provider_error
+
+    class Boom(Exception):
+        status_code = 500
+
+    with pytest.raises(Boom):
+        _provider_error(Boom())
