@@ -105,21 +105,22 @@ def test_light_queues_stay_disjoint_from_render_queues():
     assert _fly_toml_queues("light").isdisjoint(RENDER_WORKER_QUEUES)
 
 
-def test_autoplace_queue_has_dedicated_and_transitional_worker_consumers():
-    """Release 1 preserves the dedicated consumer while preparing cutover."""
+def test_analysis_queues_are_consumed_by_the_worker() -> None:
+    """The dedicated autoplace and speech_analysis groups are retired (2026-11-02);
+    the worker is the only consumer of the analysis queues."""
     from app.services.queue_state import RENDER_WORKER_QUEUES
 
-    assert _fly_toml_queues("autoplace") == {"autoplace-jobs", "visuals-analysis"}
-    assert {"autoplace-jobs", "speech-analysis"}.issubset(RENDER_WORKER_QUEUES)
-    assert {"autoplace-jobs", "speech-analysis"}.issubset(_fly_toml_queues("worker"))
+    analysis = {"autoplace-jobs", "speech-analysis", "visuals-analysis"}
+    assert analysis <= RENDER_WORKER_QUEUES
+    assert analysis <= _fly_toml_queues("worker")
+    assert analysis.isdisjoint(_fly_toml_queues("light"))
 
 
 def test_visuals_queue_has_the_same_consumers_as_autoplace_jobs():
     """Visuals analysis is split out of autoplace-jobs only for fairness; it must
-    keep every consumer autoplace-jobs has. The unified worker owns the analysis
-    queues once the device-only topology drops the autoplace process, and the
-    media download never belongs on the 1GB light machine."""
-    for process in ("autoplace", "worker", "light"):
+    keep every consumer autoplace-jobs has, and the media download never belongs
+    on the 1GB light machine."""
+    for process in ("worker", "light"):
         queues = _fly_toml_queues(process)
         assert ("visuals-analysis" in queues) == ("autoplace-jobs" in queues), process
 
