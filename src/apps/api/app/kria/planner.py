@@ -973,6 +973,10 @@ class PlannedKriaTurn:
     # the selected renderer cannot draw that field. Runtime binds the same omission.
     policy_omitted_texts: dict[str, tuple[str, ...]] = field(default_factory=dict)
     creative_copy_resolution: dict | None = None
+    # KRI-1151: the Main Creator answer this turn actually planned when the corrective re-run
+    # replaced the one the caller passed in (`_plan_from_creator_output`); None otherwise. The
+    # caller reads its brief updates and its action, not the answer it started with.
+    main_creator_output: MainCreatorOutput | None = field(default=None, compare=False, repr=False)
     # KRI-709: the plan is a "still checking, come back later" reply, and the work behind
     # it can still progress (cached vision answers, clip analysis or song alignment in
     # flight). The runtime re-runs the same turn instead of asking the creator to say
@@ -3040,7 +3044,130 @@ async def _kick_clip_understanding(item_id: uuid.UUID, clips: list[IntentClip]) 
         log.warning("kria_clip_understanding_kick_failed", item_id=str(item_id), exc_info=True)
 
 
+# What a corrective Main Creator re-run needs left in the turn (the call's own timeout is 130 s;
+# the typical answer is well under a minute). Below it the first answer stands.
+_REFUSAL_RERUN_MIN_BUDGET_S = 60.0
+
+
+async def _rerun_after_stale_refusal(
+    db: AsyncSession,
+    *,
+    capability: str,
+    thread_id: uuid.UUID,
+    item_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    inputs: _CreatorInputs,
+    creator_agent_session_id: uuid.UUID | None,
+) -> MainCreatorOutput | None:
+    """The Main Creator's answer to ONE corrective re-run, else None (the first answer stands).
+
+    The model declined an ask the server's own gates say this edit builds (thread 6fa36e51).
+    No re-run when the turn has no room for another model call; a failed re-run never costs the
+    creator the answer they already have, including the provider outcomes
+    `_call_main_creator` re-raises.
+    """
+    deadline = turn_deadline.get()
+    if (
+        deadline is not None
+        and deadline - _POST_UNDERSTANDING_RESERVE_S - time.monotonic()
+        < _REFUSAL_RERUN_MIN_BUDGET_S
+    ):
+        log.info("kria_ask_refusal_rerun_skipped", thread_id=str(thread_id), reason="turn_budget")
+        return None
+    log.info("kria_ask_refusal_rechecked", thread_id=str(thread_id), capability=capability)
+    # No connection stays pinned across a model call (every other call in this file does this).
+    await db.rollback()
+    try:
+        return await _call_main_creator(
+            replace(
+                inputs,
+                agent_input=inputs.agent_input.model_copy(
+                    update={"server_note": ask_refusals.correction_note(capability)}
+                ),
+            ),
+            thread_id=thread_id,
+            creator_id=creator_id,
+            item_id=item_id,
+            creator_agent_session_id=creator_agent_session_id,
+        )
+    except (
+        ProviderOutcomeUnknownError,
+        ProviderQuotaExceededError,
+        AiBudgetExceededError,
+        RuntimeError,
+        ValidationError,
+    ) as exc:
+        log.warning(
+            "kria_ask_refusal_rerun_failed",
+            thread_id=str(thread_id),
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
+        return None
+
+
 async def _plan_from_creator_output(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    item_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    manifest,  # noqa: ANN001 - resolved creator manifest
+    inputs: _CreatorInputs,
+    output: MainCreatorOutput,
+    effective_brief: CreativeBrief | None = None,
+    creator_agent_session_id: uuid.UUID | None = None,
+    rerun_inputs: _CreatorInputs | None = None,
+    **rest: Any,
+) -> PlannedKriaTurn:
+    """`_plan_creator_answer` after ONE corrective re-run of a refusal the gates contradict.
+
+    A refusal-shaped answer to an ask this edit builds (`app.kria.ask_refusals`) is re-run once
+    with a server note, on ``rerun_inputs`` (the last brief batch's) when the caller has them.
+    If that answer still refuses, the creator reads the plain unmet reply, never the model's
+    invented reason. ``PlannedKriaTurn.main_creator_output`` names the answer that was planned
+    when it is not ``output``.
+    """
+    replaced: MainCreatorOutput | None = None
+    capability = stale_capability_refusal(output.action, manifest, effective_brief)
+    if capability is not None:
+        replaced = await _rerun_after_stale_refusal(
+            db,
+            capability=capability,
+            thread_id=thread_id,
+            item_id=item_id,
+            creator_id=creator_id,
+            inputs=rerun_inputs or inputs,
+            creator_agent_session_id=creator_agent_session_id,
+        )
+    if replaced is not None:
+        output = replaced
+        if stale_capability_refusal(output.action, manifest, effective_brief) is not None:
+            return PlannedKriaTurn(
+                plan=KriaTurnPlan(
+                    mode="respond",
+                    turn_value="question",
+                    response=ask_refusals.unmet_reply(),
+                ),
+                manifest_hash=manifest.manifest_hash,
+                context_hash=manifest.context_hash,
+                main_creator_output=replaced,
+            )
+    planned = await _plan_creator_answer(
+        db,
+        thread_id=thread_id,
+        item_id=item_id,
+        creator_id=creator_id,
+        manifest=manifest,
+        inputs=inputs,
+        output=output,
+        effective_brief=effective_brief,
+        **rest,
+    )
+    return planned if replaced is None else replace(planned, main_creator_output=replaced)
+
+
+async def _plan_creator_answer(
     db: AsyncSession,
     *,
     thread_id: uuid.UUID,
@@ -3067,30 +3194,6 @@ async def _plan_from_creator_output(
     wording question while the clip checks run, so a clip picker they end on is asked in
     the same reply instead of one full re-plan later.
     """
-    capability = stale_capability_refusal(output.action, manifest, effective_brief)
-    if capability is not None:
-        # The model declined an ask the server's own gates say this edit builds (thread
-        # 6fa36e51): one corrective re-run, then its answer stands.
-        log.info(
-            "kria_ask_refusal_rechecked",
-            thread_id=str(thread_id),
-            capability=capability,
-            reason_code=str(output.action.reason_code)[:80],
-        )
-        try:
-            output = await _call_main_creator(
-                replace(
-                    inputs,
-                    agent_input=inputs.agent_input.model_copy(
-                        update={"server_note": ask_refusals.correction_note(capability)}
-                    ),
-                ),
-                thread_id=thread_id,
-                creator_id=creator_id,
-                item_id=item_id,
-            )
-        except (RuntimeError, ValidationError):
-            log.warning("kria_ask_refusal_rerun_failed", thread_id=str(thread_id), exc_info=True)
     if isinstance(output.action, DraftVoiceoverScript):
         return await _plan_voiceover_script(
             db,
@@ -6796,6 +6899,8 @@ async def _plan_live_turn(
             manifest=manifest,
             inputs=inputs,
             output=output,
+            creator_agent_session_id=creator_agent_session_id,
+            rerun_inputs=batch_inputs,
             **({"batch_questions": True} if batch_questions else {}),
         )
 
@@ -6996,13 +7101,21 @@ async def _plan_live_turn(
         spoken_text=spoken_text_literals(effective),
         effective_brief=effective,
         keeps_sound=sound_asks_unchanged(prior_brief, effective),
+        creator_agent_session_id=creator_agent_session_id,
+        rerun_inputs=batch_inputs,
         **({"batch_questions": True} if batch_questions else {}),
     )
+    # The corrective re-run (`_plan_from_creator_output`) may have replaced the answer: its
+    # action decides what this turn was, and its brief updates are kept with the first's.
+    output = planned.main_creator_output or output
     if isinstance(output.action, DraftVoiceoverScript):
         # KRI-815: a script draft or revision is not an edit request. "Make it shorter" is
         # about the script, so it must not become a timing requirement on the video, and
         # nothing the brief already holds changes.
         return planned
+    updates = _updates_with_rerun(
+        prior_brief, updates, planned.main_creator_output, creator_text=user_message
+    )
     planned, updates, pin_notices = _without_excluded_anchors(
         planned, prior_brief, updates, pin_notices
     )
@@ -7020,6 +7133,49 @@ async def _plan_live_turn(
         brief_coverage=coverage,
         brief_expected_version=prior_brief.version if prior_brief else 0,
     )
+
+
+def _update_signature(update: BriefUpdate) -> tuple:
+    return (
+        update.operation,
+        update.target_requirement_id,
+        update.kind,
+        update.scope,
+        json.dumps(update.facts, sort_keys=True, default=str),
+    )
+
+
+def _updates_with_rerun(
+    prior: CreativeBrief | None,
+    updates: tuple[BriefUpdate, ...],
+    rerun: MainCreatorOutput | None,
+    *,
+    creator_text: str,
+) -> tuple[BriefUpdate, ...]:
+    """``updates`` plus the requirements only the corrective re-run's answer stated.
+
+    The re-run answers the same creator message as the first answer, so most of its updates are
+    the first answer's again (same operation, target, kind, scope and facts) and add nothing.
+    An update the server cannot apply is dropped with the rest of the re-run's extras: the first
+    answer's updates alone are the turn's brief, as before the re-run existed.
+    """
+    if rerun is None:
+        return updates
+    held = {_update_signature(update) for update in updates}
+    extra = [
+        update
+        for update in bind_updates(prior, rerun.brief_updates)
+        if _update_signature(update) not in held
+    ]
+    if not extra:
+        return updates
+    merged = (*updates, *extra)
+    try:
+        apply_updates(prior, merged, source_turn_id=None, creator_text=creator_text)
+    except BriefUpdateBatchError:
+        log.warning("kria_ask_refusal_rerun_updates_dropped", exc_info=True)
+        return updates
+    return merged
 
 
 async def extract_deferred_brief(

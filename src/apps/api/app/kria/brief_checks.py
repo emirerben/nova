@@ -6456,7 +6456,11 @@ def _check_sound_toggle(
                 ask.state == "on"
                 and facts.phone_talking
                 and not (facts.voiceover_edit or facts.phone_narrated)
+                and row.get("on_windows")
             ):
+                # Only a clip that really played its sound mutes the creator's voice; a "met"
+                # ask that played no cutaway (a speaker clip named, no cutaway in the edit)
+                # keeps the plain wording, which is true.
                 summary = _talking_cutaway_sound_on()
             if ask.exceptions and seconds:
                 summary = say(en=f"{summary} ({seconds})", tr=f"{summary} ({seconds})")
