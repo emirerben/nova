@@ -4372,6 +4372,49 @@
         "KRI-1151 live eval of the incident request after approval; iPhone re-send after deploy"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "continued-turn-repays-planner-calls",
+      "tickets": [
+        "KRI-709"
+      ],
+      "symptom": "Prod thread b61b7673 (2026-11-02): turns cc841fbf (133 s) and b84c92a3 (144 s) failed runtime_provider_outcome_unknown (\"paid call 07ddbdc5f695 already settled\"). A Kria-generated image was never analysed so every run waited out the 45 s clip-understanding wait and was continued (KRI-709); lease epoch 2 re-sent the identical Main Creator prompt under the identical paid-call key and the ledger refused it.",
+      "boundary": "model_budget",
+      "status": "open_pr",
+      "owner": "KRI-709",
+      "paths": [
+        "src/apps/api/app/kria/paid_call_scope.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/kria/voiceover_script.py",
+        "src/apps/api/app/services/clip_understanding.py",
+        "src/apps/api/app/tasks/kria_runtime.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_continuation_paid_call_postgres.py",
+        "tests/kria/test_generated_image_understanding.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Real Postgres reservation ledger, real MainCreatorAgent and the turn task's own _plan_with_live_agent epoch hand-off with a fake model client: epoch 2 of the same prompt is a new paid call (red on the test-only commit), a same-epoch replay is still refused, epoch 1 keys are unchanged; a generated image no longer holds the 45 s wait.",
+        "live_model": "Not run (no paid calls).",
+        "native_output": "Not applicable: planning-stage only.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "brief extractor and its retry id, epoch 1 and 2",
+        "same-epoch replay still refused by the ledger",
+        "blank or probe-only uploaded images still wait for analysis"
+      ],
+      "neighbours_gap": [
+        "clip-intent planner and voiceover-script writer share the request-id helper but have no per-site test",
+        "each continued run still re-bills its planner calls until the follow-up checkpoint PR lands"
+      ],
+      "follow_ups": [
+        "KRI-709 checkpoint + continuation record PR"
+      ],
+      "red_control": "not_applicable",
+      "journey": "kria-continued-turn-paid-calls"
     }
   ]
 }
