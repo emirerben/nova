@@ -552,19 +552,10 @@ def voiceover_words(path: str) -> list:
         return list(transcribe_whisper_cached(local).words)
 
 
-def voiceover_speech_evidence(path: str, clock: OverlayClock, duration_s: float) -> list[dict]:
-    """Speech evidence for a montage whose only speech is a separate narration track.
+def _speech_from_cues(cues: list[dict], clock: OverlayClock, duration_s: float) -> list[dict]:
+    """Move word-timed cues from the output clock onto the editor base clock as evidence.
 
-    The narration starts at output time 0, so its word clock is the output clock; each word is
-    moved onto the editor base clock, and a sentence that touches a Carousel or the end of the
-    footage is dropped whole. Any transcription failure means no speech evidence.
-    """
-    from app.pipeline.captions import build_plain_cues
-
-    try:
-        cues = build_plain_cues(voiceover_words(path), attach_words=True)
-    except Exception:  # noqa: BLE001 - planning continues from visual and explicit-time evidence
-        return []
+    A sentence that touches a Carousel or runs past the footage is dropped whole."""
     based = []
     for cue in cues:
         try:
@@ -581,6 +572,58 @@ def voiceover_speech_evidence(path: str, clock: OverlayClock, duration_s: float)
         if words and words[-1]["end_s"] <= duration_s:
             based.append({**cue, "words": words})
     return speech_evidence(based, based)
+
+
+def voiceover_speech_evidence(path: str, clock: OverlayClock, duration_s: float) -> list[dict]:
+    """Speech evidence for a montage whose only speech is a separate narration track.
+
+    The narration starts at output time 0, so its word clock is the output clock. Any
+    transcription failure means no speech evidence."""
+    from app.pipeline.captions import build_plain_cues
+
+    try:
+        cues = build_plain_cues(voiceover_words(path), attach_words=True)
+    except Exception:  # noqa: BLE001 - planning continues from visual and explicit-time evidence
+        return []
+    return _speech_from_cues(cues, clock, duration_s)
+
+
+def saved_transcript_evidence(variant: dict, clock: OverlayClock, duration_s: float) -> list[dict]:
+    """Speech evidence from the words the variant already stores (no ASR): a persisted
+    transcript, or word-timed caption cues. Covers edits whose captions carry no word timings
+    or that keep their speech only as a transcript (talking head)."""
+    from app.pipeline.captions import build_plain_cues
+    from app.pipeline.transcribe import Word
+    from app.services.transcript_source import speech_words_for_variant
+
+    try:
+        found = speech_words_for_variant(variant)
+        if found is None:
+            return []
+        words = [
+            Word(
+                text=str(w["word"]),
+                start_s=float(w["start_s"]),
+                end_s=float(w["end_s"]),
+                confidence=1.0,
+            )
+            for w in found[0]
+        ]
+        cues = build_plain_cues(words, attach_words=True)
+    except Exception:  # noqa: BLE001 - a malformed stored transcript means no evidence
+        return []
+    return _speech_from_cues(cues, clock, duration_s)
+
+
+def has_separate_narration(variant: dict) -> bool:
+    """A recorded narration plays over the footage, so its words keep their time when clips
+    are re-cut: narrated and voiceover edits, including the cloud voiceover montage, which
+    records a voice mix instead of an archetype."""
+    return (
+        variant.get("resolved_archetype") in SEPARATE_NARRATION_ARCHETYPES
+        or variant.get("mix") is not None
+        or str(variant.get("variant_id") or "").startswith("voiceover")
+    )
 
 
 def occupied_intervals(variant: dict, duration_s: float | None = None) -> list[dict]:
@@ -685,12 +728,16 @@ def plan_context(
     originals = list(variant.get("caption_cues") or [])
     current = list(base.projected.get("caption_cues") or [])
     speech_timing_holds = current_timing == saved_timing or (
-        variant.get("resolved_archetype") in SEPARATE_NARRATION_ARCHETYPES
+        has_separate_narration(variant)
         and abs(clock.output_duration - _edit_length(variant)) <= NARRATION_LENGTH_TOLERANCE_S
     )
     evidence = speech_evidence(originals, current) if speech_timing_holds else []
-    narration = getattr(item, "voiceover_gcs_path", None)
-    if not evidence and variant.get("resolved_archetype") == "voiceover" and narration:
+    if not evidence and speech_timing_holds:
+        evidence = saved_transcript_evidence(variant, clock, duration)
+    narration = (job.all_candidates or {}).get("voiceover_gcs_path") or getattr(
+        item, "voiceover_gcs_path", None
+    )
+    if not evidence and has_separate_narration(variant) and narration:
         evidence = voiceover_speech_evidence(narration, clock, duration)
     evidence.extend(
         explicit_time_evidence(
