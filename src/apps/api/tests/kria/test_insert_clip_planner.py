@@ -86,10 +86,11 @@ def test_the_strategy_round_trips_insert_clips_and_drops_malformed_rows():
         {"media_id": FOOTAGE_C, "at_phrase": "congress", "keep_audio": True}
     ]
     assert CreativeStrategy.model_validate(dumped) == strategy
+    # More than the cap parse (so the repair can name each extra one), they are not cut here.
     many = CreativeStrategy(
         edit_format="subtitled", insert_clips=[_insert(f"m{i}") for i in range(9)]
     )
-    assert len(many.insert_clips) == MAX_INSERT_CLIPS
+    assert len(many.insert_clips) > MAX_INSERT_CLIPS
     with pytest.raises(ValueError):
         InsertClip(media_id=FOOTAGE_C)  # needs exactly one of at_phrase / at_s
 
@@ -504,3 +505,19 @@ def test_only_an_explicit_pause_is_an_insert_show_it_when_i_mention_it_is_not():
         assert "NOT an insert" in text
         assert "keeps running" in text
         assert "pause" in text.lower()
+
+
+def test_a_fourth_insert_is_dropped_with_a_named_notice_not_silently(monkeypatch):
+    _open(monkeypatch)
+    ids = [f"clip-{i}.mp4" for i in range(5)]
+    manifest = _manifest([{"media_id": m, "kind": "video", "duration_s": 5.0} for m in ids])
+    strategy = _strategy(
+        manifest, insert_clips=[_insert(m, at_phrase=f"word {i}") for i, m in enumerate(ids[1:])]
+    )
+    repaired, notices = _repair(manifest, strategy)
+    assert [c.media_id for c in repaired.insert_clips] == ids[1:4]
+    assert notices == [capabilities.INSERT_CLIP_NOTICES["too_many"]]
+    assert capabilities.insert_clips_problems(manifest, strategy) == [None, None, None, "too_many"]
+    facts = _facts_for_draft(strategy, manifest)
+    assert [row.reason for row in facts.insert_clips if row.status == "dropped"] == ["too_many"]
+    assert _verdict(facts).status == "partial"
