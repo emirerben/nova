@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.103.0] - 2026-11-02
+
+### Changed
+- feat(kria): Range chooses which part of a Talking take plays (dark behind PHONE_TALKING_RANGE_EDITS_ENABLED) (#2053) <!-- release-pr: 2053 -->
+
 ## [0.83.102.0] - 2026-11-02
 
 ### Changed
