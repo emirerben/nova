@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.100.0] - 2026-11-02
+
+### Changed
+- feat(kria): the plan's pace sets the cut between spoken lines (KRI-1097 wave 2, speech) (#2039) <!-- release-pr: 2039 -->
+
 ## [0.83.99.0] - 2026-11-02
 
 ### Changed
