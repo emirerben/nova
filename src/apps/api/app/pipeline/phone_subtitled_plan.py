@@ -219,6 +219,8 @@ class PhoneCutaway(BaseModel):
 MAX_INSERT_CLIPS = 3
 INSERT_CLIP_PREFIX = "insert-"
 _INSERT_EPS_S = 1e-6
+# A speaker clip beside an insert shorter than this (one frame at 30 fps) is not worth playing.
+_MIN_SPEAKER_PIECE_S = 1 / 30
 
 
 class PhoneInsert(BaseModel):
@@ -493,8 +495,16 @@ def compile_phone_subtitled_plan(
         speaker_media_id=binding.media_id,
         extra_media_ids=[extra.media_id for extra in additional_speakers],
         take_s=sum(max(0.0, end - start) for start, end in resolved_keep_segments),
+        seams=take_seams(resolved_keep_segments),
     )
     insert_queue = list(ordered_inserts)
+
+    # With an insert every time on the speaker's track sits on a microsecond grid, so the
+    # recompile of a saved recipe (which reads these numbers back) lands on the same bits.
+    # Without one nothing is rounded: the output stays byte-identical.
+    def grid(value: float) -> float:
+        return round(value, 6) if ordered_inserts else value
+
     take_cursor = 0.0
     id_offset = 0
 
@@ -515,7 +525,7 @@ def compile_phone_subtitled_plan(
             is_proxy_available=True,
         )
         insert_width, insert_height = _display_dims(insert_original)
-        insert_duration = float(insert_original.duration_s)
+        insert_duration = grid(float(insert_original.duration_s))
         main_clips.append(
             TimelineClip(
                 id=f"{INSERT_CLIP_PREFIX}{len(ordered_inserts) - len(insert_queue) - 1}",
@@ -528,10 +538,11 @@ def compile_phone_subtitled_plan(
                 volume=1 if insert.keep_audio else 0,
             )
         )
-        cursor += insert_duration
+        cursor = grid(cursor + insert_duration)
 
     for index, (seg_start, seg_end) in enumerate(resolved_keep_segments):
-        seg_duration = seg_end - seg_start
+        seg_start, seg_end = grid(seg_start), grid(seg_end)
+        seg_duration = grid(seg_end - seg_start)
         if seg_duration <= 0:
             continue
         piece_start = seg_start
@@ -540,7 +551,7 @@ def compile_phone_subtitled_plan(
             # An insert inside this segment splits it: the take plays up to the insert point,
             # the insert plays, and the rest of the segment resumes from the second it stopped.
             if insert_queue and insert_queue[0].at_take_s < take_cursor + remaining - _INSERT_EPS_S:
-                before = insert_queue[0].at_take_s - take_cursor
+                before = grid(insert_queue[0].at_take_s - take_cursor)
                 if before > _INSERT_EPS_S:
                     main_clips.append(
                         _speaker_piece(
@@ -553,10 +564,10 @@ def compile_phone_subtitled_plan(
                             clip_tilts,
                         )
                     )
-                    cursor += before
-                    take_cursor += before
-                    piece_start += before
-                    remaining -= before
+                    cursor = grid(cursor + before)
+                    take_cursor = grid(take_cursor + before)
+                    piece_start = grid(piece_start + before)
+                    remaining = grid(remaining - before)
                     id_offset += 1
                 _emit_insert(insert_queue.pop(0))
                 continue
@@ -571,8 +582,8 @@ def compile_phone_subtitled_plan(
                     clip_tilts,
                 )
             )
-            cursor += remaining
-            take_cursor += remaining
+            cursor = grid(cursor + remaining)
+            take_cursor = grid(take_cursor + remaining)
             break
         if insert_queue and abs(insert_queue[0].at_take_s - take_cursor) <= _INSERT_EPS_S:
             _emit_insert(insert_queue.pop(0))
@@ -875,8 +886,12 @@ def _validated_inserts(
     speaker_media_id: str,
     extra_media_ids: Sequence[str],
     take_s: float,
+    seams: Sequence[float] = (),
 ) -> tuple[PhoneInsert, ...]:
-    """``inserts`` in take order, or `UnsupportedPhonePlan` naming what cannot be played."""
+    """``inserts`` in take order, or `UnsupportedPhonePlan` naming what cannot be played.
+
+    A point within `_MIN_SPEAKER_PIECE_S` of a cut seam in the take moves onto the seam: the
+    other way it would leave a speaker clip of a few milliseconds beside the insert."""
     if not inserts:
         return ()
     if len(inserts) > MAX_INSERT_CLIPS:
@@ -900,7 +915,24 @@ def _validated_inserts(
         if insert.at_take_s - previous <= _INSERT_EPS_S:
             raise UnsupportedPhonePlan("two inserts cannot pause the take at the same moment")
         previous = insert.at_take_s
-    return ordered
+    return tuple(_onto_seam(insert, seams) for insert in ordered)
+
+
+def take_seams(keep_segments: Sequence[tuple[float, float]]) -> list[float]:
+    """Take-timeline seconds where one kept segment ends and the next begins."""
+    seams: list[float] = []
+    total = 0.0
+    for start, end in keep_segments[:-1]:
+        total += max(0.0, end - start)
+        seams.append(total)
+    return seams
+
+
+def _onto_seam(insert: PhoneInsert, seams: Sequence[float]) -> PhoneInsert:
+    near = min(seams, key=lambda seam: abs(seam - insert.at_take_s), default=None)
+    if near is None or abs(near - insert.at_take_s) > _MIN_SPEAKER_PIECE_S:
+        return insert
+    return insert.model_copy(update={"at_take_s": near})
 
 
 def _compile_background(

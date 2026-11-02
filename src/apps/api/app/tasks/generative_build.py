@@ -7836,6 +7836,13 @@ PHONE_INSERT_CLIPS_FIELD = "phone_insert_clips"
 _POOL_ASSET_PREFIX = "asset-"
 
 
+def _cleanup_seams(keep_segments: Any) -> list[float]:
+    """Take-timeline seconds where speech cleanup joined two kept segments of the take."""
+    from app.pipeline.phone_subtitled_plan import take_seams  # noqa: PLC0415
+
+    return take_seams([(float(a), float(b)) for a, b in keep_segments or []])
+
+
 def _strategy_insert_asks(all_candidates: dict) -> list[Any]:
     """The approved strategy's ``insert_clips`` as `InsertAsk`s (empty without any)."""
     from app.pipeline.phone_talking_inserts import MAX_INSERTS, InsertAsk  # noqa: PLC0415
@@ -9569,6 +9576,7 @@ def _run_phone_subtitled_job(
                         *(extra.media_id for extra in extra_speaker_bindings),
                         *insert_in_use,
                     },
+                    seams=_cleanup_seams(speaker_keep_segments),
                 )
                 inserts = tuple(p.insert for p in placements if p.insert is not None)
                 insert_drops.extend(

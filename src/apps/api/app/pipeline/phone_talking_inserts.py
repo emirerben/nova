@@ -72,6 +72,9 @@ SNAP_SLACK_S = 2.5
 # A gap between two words this long is a pause the insert can sit in.
 PAUSE_S = 0.25
 _EPS = 1e-6
+# A cleanup seam this close to the point takes it: a speaker clip of a few frames beside the
+# insert is not worth playing.
+SEAM_SNAP_S = 0.1
 # A part of a split window shorter than this is not worth drawing.
 _MIN_PART_S = 0.3
 _MIN_CUTAWAY_PART_S = 0.5
@@ -97,7 +100,7 @@ class InsertPlacement:
     insert: PhoneInsert | None
     reason: str | None = None
     basis: str | None = None  # "phrase" | "second"
-    snap: str | None = None  # "cue_end" | "pause" | "word_end" | "exact"
+    snap: str | None = None  # "cue_end" | "pause" | "word_end" | "exact" | "seam"
 
 
 @dataclass(frozen=True)
@@ -176,12 +179,15 @@ def place_inserts(
     cues: Sequence[Mapping[str, Any]],
     take_s: float,
     in_use: Collection[str] = (),
+    seams: Sequence[float] = (),
 ) -> list[InsertPlacement]:
     """One `InsertPlacement` per ask, in ask order.
 
     ``words``/``cues`` are the creator's speech on the take timeline (speech cleanup already
     applied, so a phrase inside a cut-out region is not found); ``in_use`` is every clip the
-    edit already plays (speakers, cutaways, the ending).
+    edit already plays (speakers, cutaways, the ending); ``seams`` are the take-timeline seconds
+    where speech cleanup joined two kept segments: a point within `SEAM_SNAP_S` of one moves
+    onto it, unrounded, so no sliver of speech is left beside the insert.
     """
     speech = _take_words(words, take_s)
     placed: list[PhoneInsert] = []
@@ -227,10 +233,14 @@ def place_inserts(
             out.append(refuse(ask, "in_hook_window", basis=basis))
             continue
         at, snap = _snap(point, speech, cues)
+        seam = min(seams, key=lambda s: abs(s - at), default=None)
+        if seam is not None and abs(seam - at) <= SEAM_SNAP_S:
+            at, snap = float(seam), "seam"
         if at > take_s - TAIL_FREE_S + _EPS:
             out.append(refuse(ask, "in_tail_window", basis=basis, snap=snap))
             continue
-        at = round(at, 3)
+        if snap != "seam":
+            at = round(at, 3)
         if any(abs(at - other.at_take_s) < MIN_GAP_S for other in placed):
             out.append(refuse(ask, "too_close_to_previous", basis=basis, snap=snap))
             continue
