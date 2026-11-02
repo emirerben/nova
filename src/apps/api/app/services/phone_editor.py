@@ -1485,7 +1485,7 @@ def _compile_subtitled_editor_commit(
         _restale_protected_text(
             row,
             speaker=speaker,
-            keep_segments=keep_segments,
+            keep_segments=_without_insert_splits(keep_segments),
             landscape_fit=landscape_fit,
             speaker_position_x=speaker_position_x,
             canvas_changed=canvas_changed,
@@ -2036,6 +2036,24 @@ def _previous_clip_tilts(recipe: Any) -> dict[str, dict]:
                 if (tilt := row_tilt_from_clip(clip)) is not None:
                     tilts[clip.id] = tilt
     return tilts
+
+
+def _without_insert_splits(
+    keep_segments: list[tuple[float, float]] | None,
+) -> list[tuple[float, float]] | None:
+    """The take's keep segments as the cleanup cut made them. A clip inserted into the take
+    (parent KRI-1151) splits one segment in two at the point, back to back in the source; the
+    receipts measured the unsplit take, so compare on that. A real cut leaves a gap, so it is
+    never merged."""
+    if not keep_segments:
+        return keep_segments
+    merged = [keep_segments[0]]
+    for start, end in keep_segments[1:]:
+        if abs(start - merged[-1][1]) <= 1e-4:
+            merged[-1] = (merged[-1][0], end)
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def _previous_keep_segments(
