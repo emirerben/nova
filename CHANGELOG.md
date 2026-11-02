@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.96.0] - 2026-11-02
+
+### Changed
+- feat(kria): Talking title rows enter with the asked animation (KRI-1097 wave 2, talking) (#2035) <!-- release-pr: 2035 -->
+
 ## [0.83.95.0] - 2026-11-02
 
 ### Changed
