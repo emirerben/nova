@@ -3088,7 +3088,7 @@
     {
       "id": "kria-intent-review",
       "needs_native": false,
-      "api_tests": "tests/kria/test_intent_review_tier.py tests/services/test_openai_vision_transport.py tests/services/test_ai_cost_control_intent_review.py tests/integration/test_intent_review_lifecycle_postgres.py tests/kria/test_intent_review_disposition.py tests/kria/test_intent_review_catalog_postgres.py tests/integration/test_intent_review_outcome_postgres.py tests/evals/test_intent_review_evals.py",
+      "api_tests": "tests/kria/test_intent_review_tier.py tests/services/test_openai_vision_transport.py tests/services/test_ai_cost_control_intent_review.py tests/integration/test_intent_review_lifecycle_postgres.py tests/kria/test_intent_review_disposition.py tests/kria/test_intent_review_catalog_postgres.py tests/integration/test_intent_review_outcome_postgres.py tests/integration/test_intent_review_repair_postgres.py tests/evals/test_intent_review_evals.py",
       "paths": [
         "src/apps/api/app/kria/intent_review_tier.py",
         "src/apps/api/app/agents/_openai_vision.py",
@@ -3104,6 +3104,9 @@
         "src/apps/api/app/agents/intent_review.py",
         "src/apps/api/app/agents/_schemas/intent_review.py",
         "src/apps/api/app/services/intent_review_prompt.py",
+        "src/apps/api/app/services/intent_review_repair_flow.py",
+        "src/apps/api/app/kria/intent_review_repair.py",
+        "src/apps/api/app/kria/intent_review_copy.py",
         "src/apps/api/tests/fixtures/agent_evals/intent_review/",
         "src/apps/api/tests/kria/test_intent_review_tier.py",
         "src/apps/api/tests/services/test_openai_vision_transport.py",
@@ -3113,6 +3116,7 @@
         "src/apps/api/tests/kria/test_intent_review_disposition.py",
         "src/apps/api/tests/kria/test_intent_review_catalog_postgres.py",
         "src/apps/api/tests/integration/test_intent_review_outcome_postgres.py",
+        "src/apps/api/tests/integration/test_intent_review_repair_postgres.py",
         "src/apps/api/tests/evals/test_intent_review_evals.py"
       ]
     }
