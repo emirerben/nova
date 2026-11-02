@@ -267,13 +267,15 @@ def test_the_planner_is_taught_the_field_only_while_the_rollout_is_open(monkeypa
 def test_the_shared_brief_records_the_ask_as_an_insert_clip_fact():
     from app.agents._schemas.brief_extractor import BriefExtractionInput
     from app.agents.brief_extractor import BriefExtractorAgent
-    from app.agents.main_creator import _BRIEF_PROMPT_SECTION
+    from app.agents.main_creator import brief_prompt_section
     from app.kria.brief import STICKY_FACTS
 
-    assert '"insert_clip"' in _BRIEF_PROMPT_SECTION
+    assert '"insert_clip"' in brief_prompt_section(True)
     assert {"insert_clip", "insert_at_phrase", "insert_at_s"} <= STICKY_FACTS
     narrow = BriefExtractorAgent(None).render_prompt(  # type: ignore[arg-type]
-        BriefExtractionInput(creator_request="", user_message="x", conversation=[])
+        BriefExtractionInput(
+            creator_request="", user_message="x", conversation=[], insert_clips_open=True
+        )
     )
     assert '"insert_clip"' in narrow
 
@@ -496,7 +498,9 @@ def test_only_an_explicit_pause_is_an_insert_show_it_when_i_mention_it_is_not():
 
     for text in (brief_prompt_section(True), _INSERT_CLIP_PROMPT_SECTION):
         # The ask that keeps the talk running is served by the existing cutaway features.
-        assert "kongre dediğimde kongre videosunu sesiyle göster" not in text
+        ask = "kongre dediğimde kongre videosunu"
+        assert ask in text
+        assert "NOT an insert" in text[text.index(ask) : text.index(ask) + 160]
         assert "NOT an insert" in text
         assert "keeps running" in text
         assert "pause" in text.lower()

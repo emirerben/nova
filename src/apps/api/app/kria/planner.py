@@ -208,6 +208,7 @@ from app.services.creative_copy_decisions import (
     question_message,
     wording_question,
 )
+from app.services.creator_capabilities import insert_clip_candidates
 from app.services.creator_model_comparison import configure_creator_agent
 from app.services.creator_sessions import (
     creator_context,
@@ -2915,6 +2916,7 @@ async def _call_brief_extractor(
         conversation=inputs.agent_input.conversation,
         current_brief=prior_brief,
         require_request_scope=True,
+        insert_clips_open=bool(insert_clip_candidates(inputs.agent_input.capability_manifest)),
     )
 
     def _run_agent(request_id: str):  # noqa: ANN202 - inferred BriefExtractionOutput

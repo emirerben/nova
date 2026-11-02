@@ -371,20 +371,25 @@ the talk with its own sound.
 # repair (`creator_capabilities.repair_creator_insert_clips`) never trusts the model's choice.
 _INSERT_CLIP_PROMPT_SECTION = """
 A CLIP PLAYED IN THE MIDDLE OF THE TALK (iPhone Talking only)
-When the creator asks to show one of the project's own clips while their talk PAUSES, then go
-back to the talk where it stopped ("After I say congress, show the congress clip with its sound",
-"kongre dediğimde kongre videosunu sesiyle göster"), set `insert_clips`: [{"media_id": "<the
-matching media_context VIDEO entry's exact media_id>", "at_phrase": "<the words the creator
-says it after, in their own language>", "keep_audio": true}]. Use `at_s` (a second of the talk)
-instead of `at_phrase` only when they state a second. Find the clip by matching what the creator
-named against the VIDEO entries in `media_context` (its `filename`, its `creator_context`, or
-its `analysis_only_not_copy` evidence), then copy THAT entry's exact `media_id`; never invent,
-shorten or guess an id, and never use the clip they speak in. `keep_audio` is true unless they
-ask for it silent. At most three. The talk is not cut: the video simply gets as much longer as
-the clip. That clip plays only there, so never also use it as a cutaway, in `reaction_beats` or
-as `ending_clip`. It is not a cutaway (the talk keeps running under a cutaway) and not an
-`ending_clip` (that follows the whole talk). Say in `summary`, in plain words, where the clip is
-shown and that the talk pauses for it.
+Only when the creator explicitly asks for their talk to PAUSE or STOP while one of the project's
+own clips plays, then to carry on where it stopped ("when I say congress, pause my talk and play
+the congress clip with its sound, then go on", "kongre dediğimde konuşmamı durdur, kongre
+videosunu sesiyle oynat, sonra devam et"), set `insert_clips`: [{"media_id": "<the matching
+media_context VIDEO entry's exact media_id>", "at_phrase": "<the words the creator says it
+after, in their own language>", "keep_audio": true}]. Showing a clip WHILE the talk keeps running
+("show the congress video when I mention congress", "kongre dediğimde kongre videosunu göster",
+"... sesiyle göster", "use their audio") is NOT an insert, whatever it says about sound: that is
+the clip shown over the talk, with or without its sound, as described above. Without a pause, a
+stop or an explicit in-the-middle-while-I-wait wording, do not set `insert_clips`. Use `at_s` (a
+second of the talk) instead of `at_phrase` only when they state a second. Find the clip by
+matching what the creator named against the VIDEO entries in `media_context` (its `filename`,
+its `creator_context`, or its `analysis_only_not_copy` evidence), then copy THAT entry's exact
+`media_id`; never invent, shorten or guess an id, and never use the clip they speak in.
+`keep_audio` is true unless they ask for it silent. At most three. The talk is not cut: the video
+simply gets as much longer as the clip. That clip plays only there, so never also use it as a
+cutaway, in `reaction_beats` or as `ending_clip`. It is not a cutaway (the talk keeps running
+under a cutaway) and not an `ending_clip` (that follows the whole talk). Say in `summary`, in
+plain words, where the clip is shown and that the talk pauses for it.
 """.strip("\n")
 
 # KRI-1117: a photo or looping video shown BEHIND the speaker for the whole talk (a green screen
@@ -676,13 +681,7 @@ VIDEO the creator asks to ADD after the talk, at the very end, to play with its 
 very end, add the cheers video with its own sound", "en sona Atakan'ın ilk ısırık videosunu kendi
 sesiyle ekle") is not a clip order: record it as a `style` requirement with {"ending_clip": "<the
 creator's words for that video>", "keep_audio": true} (`keep_audio` false only when they want it
-silent), whatever language they write in, and never as `last_clip` or `closing`. A clip the
-creator asks to play IN THE MIDDLE of the talk, pausing it ("after I say congress, show the
-congress clip with its sound", "kongre dediğimde kongre videosunu sesiyle göster") is a `style`
-requirement with {"insert_clip": "<the creator's words for that clip>", "insert_at_phrase": "<the
-words they say it after>"} (or `insert_at_s` for a stated second; `keep_audio` false only when
-they want it silent), whatever language they write in; it is not a cutaway, an `ending_clip` or
-a clip order. On a montage,
+silent), whatever language they write in, and never as `last_clip` or `closing`. On a montage,
 adding or ending on a clip keeps `last_clip` as above. How on-screen text should look goes in the
 `facts` of its text requirement, only what the creator said: `animation` (an id from
 {{TEXT_ANIMATION_EDGES}}, never none or the name in brackets) for "animated with typewriter";
@@ -899,6 +898,42 @@ message itself states, even one the contract already had. Otherwise set it to fa
 """.strip("\n")
 )
 
+_BRIEF_INSERT_CLIP_SENTENCE = (
+    " A clip the creator asks to play IN THE MIDDLE of the talk, with the talk PAUSED until the"
+    ' clip ends and then going on from where it stopped ("when I say congress, pause my talk and'
+    ' play the congress clip with its sound", "kongre dediğimde konuşmamı durdur, kongre'
+    ' videosunu sesiyle oynat, sonra devam et") is a `style` requirement with {"insert_clip":'
+    ' "<the creator\'s words for that clip>", "insert_at_phrase": "<the words they say it'
+    ' after>"} (or `insert_at_s` for a stated second; `keep_audio` false only when they want it'
+    " silent), whatever language they write in; it is not a cutaway, an `ending_clip` or a clip"
+    " order. Only an explicit pause, stop or in-the-middle-while-I-wait ask is an insert. A clip"
+    ' shown while the talk keeps running ("show the congress video when I mention congress",'
+    ' "kongre dediğimde kongre videosunu sesiyle göster", "use their audio") is NOT an'
+    " insert, with or without the clip's sound: record it as the `triggers` ask below, never as"
+    " `insert_clip`."
+)
+_BRIEF_INSERT_ANCHOR = "or `closing`. On a montage,"
+
+
+def with_insert_clip_brief(section: str) -> str:
+    """``section`` (the shared brief section, or the extractor's narrowing of it) with the one
+    insert paragraph added. Only called where inserts are open (the same availability that
+    teaches `insert_clips`, `insert_clip_candidates(manifest)`); a closed rollout never calls
+    it, so those prompts keep the bytes they had before inserts existed."""
+    assert section.count(_BRIEF_INSERT_ANCHOR) == 1, "brief insert anchor moved"
+    return section.replace(
+        _BRIEF_INSERT_ANCHOR,
+        "or `closing`." + _BRIEF_INSERT_CLIP_SENTENCE + " On a montage,",
+    )
+
+
+def brief_prompt_section(insert_clips_open: bool = False) -> str:
+    return (
+        with_insert_clip_brief(_BRIEF_PROMPT_SECTION)
+        if insert_clips_open
+        else _BRIEF_PROMPT_SECTION
+    )
+
 
 class MainCreatorInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -1079,7 +1114,11 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 )
             ),
             # KRI-188: "" (flag off) adds no bytes; same line-suffix trick.
-            brief_section=("\n" + _BRIEF_PROMPT_SECTION if input.brief_enabled else ""),
+            brief_section=(
+                "\n" + brief_prompt_section(bool(insert_clip_candidates(input.capability_manifest)))
+                if input.brief_enabled
+                else ""
+            ),
             # KRI-374: "" (no usable song) adds no bytes; same line-suffix trick.
             user_song_section=(
                 "\n"
