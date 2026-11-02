@@ -627,20 +627,22 @@ struct NativeEditorToolRail: View {
     var body: some View {
         GeometryReader { proxy in
             let layout = NativeEditorIslandMetrics.toolRailLayout(toolCount: tools.count, railWidth: proxy.size.width)
-            ScrollViewReader { scroller in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: NativeEditorIslandMetrics.toolSpacing) {
-                        ForEach(tools) { tool in toolButton(tool, itemWidth: layout.itemWidth) }
+            if layout.scrolls {
+                ScrollViewReader { scroller in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        toolRow(itemWidth: layout.itemWidth)
+                            .padding(.vertical, NativeEditorIslandMetrics.islandVerticalPadding)
                     }
-                    .padding(.vertical, NativeEditorIslandMetrics.islandVerticalPadding)
-                    // A rail that fits stays centred; one that overflows is wider than this and scrolls.
-                    .frame(minWidth: proxy.size.width - 2 * NativeEditorIslandMetrics.islandHorizontalPadding)
+                    .contentMargins(.horizontal, NativeEditorIslandMetrics.islandHorizontalPadding, for: .scrollContent)
+                    .onChange(of: selected, initial: true) { _, tool in reveal(tool, in: scroller, animated: true) }
+                    .onChange(of: layout) { _, _ in reveal(selected, in: scroller, animated: false) }
                 }
-                .contentMargins(.horizontal, NativeEditorIslandMetrics.islandHorizontalPadding, for: .scrollContent)
-                .scrollDisabled(!layout.scrolls)
-                .excludesDrawerGestureWhen(layout.scrolls)
-                .onChange(of: selected) { _, tool in reveal(tool, in: scroller, animated: true) }
-                .onChange(of: layout) { _, _ in reveal(selected, in: scroller, animated: false) }
+            } else {
+                // A rail that fits stays a plain row, so nothing that swipes the screen can land on it.
+                toolRow(itemWidth: layout.itemWidth)
+                    .padding(.horizontal, NativeEditorIslandMetrics.islandHorizontalPadding)
+                    .padding(.vertical, NativeEditorIslandMetrics.islandVerticalPadding)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(height: NativeEditorIslandMetrics.islandHeight)
@@ -700,13 +702,23 @@ struct NativeEditorToolRail: View {
         .accessibilityIdentifier("native-editor-tool-\(tool.rawValue.lowercased())")
     }
 
-    /// Keeps the open tool on screen when the rail scrolls (a no-op when everything fits).
+    private func toolRow(itemWidth: CGFloat) -> some View {
+        HStack(spacing: NativeEditorIslandMetrics.toolSpacing) {
+            ForEach(tools) { tool in toolButton(tool, itemWidth: itemWidth) }
+        }
+    }
+
+    /// Scrolls only as far as the open tool needs. With no tool open, or the first one, the rail goes back to rest
+    /// so the next tool is cut by the edge again.
     private func reveal(_ tool: NativeEditorTool?, in scroller: ScrollViewProxy, animated: Bool) {
-        guard let tool else { return }
+        guard let first = tools.first else { return }
+        let atStart = tool == nil || tool == first
+        guard let target = atStart ? first : tool else { return }
+        let anchor: UnitPoint? = atStart ? .leading : nil
         if animated && !shouldReduceMotion {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { scroller.scrollTo(tool.id, anchor: .center) }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { scroller.scrollTo(target.id, anchor: anchor) }
         } else {
-            scroller.scrollTo(tool.id, anchor: .center)
+            scroller.scrollTo(target.id, anchor: anchor)
         }
     }
 }
