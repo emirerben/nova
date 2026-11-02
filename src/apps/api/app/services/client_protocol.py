@@ -33,6 +33,10 @@ CARD_TILT_PROTOCOL = 30
 # capability).
 CLIP_BACKDROP_MEDIA_PROTOCOL = 31
 
+# The first build that decodes and round-trips a tilt's `zoom` (KRI-1170). Below it the key is
+# an unknown field a build drops on its next save.
+TILT_ZOOM_PROTOCOL = 32
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()

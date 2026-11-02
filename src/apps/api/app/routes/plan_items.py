@@ -4753,14 +4753,42 @@ def _require_sticker_capable_client(slides: list[SlideRef], client_protocol: int
         )
 
 
-def _require_tilt_capable_client(slides: list[SlideRef], client_protocol: int | None) -> None:
+def _require_tilt_capable_client(
+    slides: list[SlideRef], client_protocol: int | None, current: SlidePostDraft | None = None
+) -> None:
     """426 when a save carries a tilt from a build that cannot decode it (KRI-1138).
 
     A build below ``media_tilt_min_client_protocol`` neither sends nor round-trips ``tilt``
     (an unknown key is dropped), so a tilt in its save means something forged or replayed it.
     Same ``client_update_required`` shape the sticker lane uses. A build that DOES understand it
     while the flag is off is not refused: the merge ignores its value and keeps the stored one.
+
+    ``zoom`` (KRI-1170) needs protocol ``media_tilt_zoom_min_client_protocol``: below it a zoomed
+    tilt is refused, and so is a tilt (or ``null``) sent over a slide whose STORED tilt is zoomed,
+    since that build re-encodes the tilt without the key and the save would erase the zoom.
     """
+    zoom_floor = settings.media_tilt_zoom_min_client_protocol
+    if client_protocol is None or client_protocol < zoom_floor:
+        stored_zoomed = {
+            ref.id
+            for ref in (current.slides if current is not None else [])
+            if ref.edits is not None and ref.edits.tilt is not None and ref.edits.tilt.zoom != 1.0
+        }
+        for ref in slides:
+            edits = ref.edits
+            if edits is None:
+                continue
+            sent_zoom = edits.tilt is not None and edits.tilt.zoom != 1.0
+            overwrites_stored = (
+                settings.media_tilt_enabled
+                and ref.id in stored_zoomed
+                and "tilt" in edits.model_fields_set
+            )
+            if sent_zoom or overwrites_stored:
+                raise HTTPException(
+                    status_code=status.HTTP_426_UPGRADE_REQUIRED,
+                    detail={"code": "client_update_required", "feature": "slide_tilt_zoom"},
+                )
     if not any(ref.edits is not None and ref.edits.tilt is not None for ref in slides):
         return
     if client_protocol is None or client_protocol < settings.media_tilt_min_client_protocol:
@@ -4878,7 +4906,7 @@ async def put_slide_post_draft(
     )
     _validate_slide_ref_ownership(body.slides, owned_assets)
     _require_sticker_capable_client(body.slides, client_protocol)
-    _require_tilt_capable_client(body.slides, client_protocol)
+    _require_tilt_capable_client(body.slides, client_protocol, current)
     platform_profile = coerce_platform_profile(_require_slide_post_profile(body.platform_profile))
     try:
         # Old clients omit `texts`; keep the stored rich text (KRI-299).

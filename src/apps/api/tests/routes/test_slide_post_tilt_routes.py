@@ -267,3 +267,134 @@ def test_chat_edit_backfill_restores_an_omitted_tilt_and_respects_null() -> None
     out = plan_items._backfill_slide_post_sizes(sent, stored)
     assert out.slides[0].edits is not None and out.slides[0].edits.tilt is not None
     assert out.slides[1].edits is None or out.slides[1].edits.tilt is None
+
+
+# ── KRI-1170: zoom ───────────────────────────────────────────────────────────────────────
+#
+# Failure modes (listed before the code):
+#  Z1  a build below protocol 32 saves a zoomed tilt (it cannot have authored one)
+#  Z2  a build below protocol 32 re-saves a slide whose STORED tilt is zoomed and the key it
+#      re-encodes without `zoom` erases the stored zoom
+#  Z3  the zoom slider is offered to a build below 32 or with the flag off
+#  Z4  a protocol-32 build's zoom is dropped, or the older worker's export reads as current
+
+ZOOMED = {"rotation_deg": 12.5, "backdrop": {"kind": "blur"}, "zoom": 1.5}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", [28, 31])
+async def test_a_zoomed_tilt_from_a_build_below_32_is_refused_with_426(monkeypatch, protocol):
+    asset_id = uuid.uuid4()
+    item = _item(asset_id, SlideEdits(tilt=TILT))
+    with pytest.raises(HTTPException) as exc:
+        await _put(monkeypatch, item, _body(asset_id, {"tilt": ZOOMED}), protocol=protocol)
+    assert exc.value.status_code == 426
+    assert exc.value.detail == {"code": "client_update_required", "feature": "slide_tilt_zoom"}
+    assert "zoom" not in _saved(item)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sent", [{"tilt": {"rotation_deg": 12.5}}, {"tilt": None}])
+async def test_a_build_below_32_cannot_overwrite_a_stored_zoom(monkeypatch, sent):
+    asset_id = uuid.uuid4()
+    item = _item(asset_id, SlideEdits(tilt=ZOOMED))
+    with pytest.raises(HTTPException) as exc:
+        await _put(monkeypatch, item, _body(asset_id, sent), protocol=31)
+    assert exc.value.status_code == 426
+    assert exc.value.detail["feature"] == "slide_tilt_zoom"
+    assert _saved(item)["zoom"] == 1.5
+
+
+@pytest.mark.asyncio
+async def test_a_build_below_32_that_leaves_the_tilt_alone_keeps_the_stored_zoom(monkeypatch):
+    asset_id = uuid.uuid4()
+    item = _item(asset_id, SlideEdits(tilt=ZOOMED))
+    await _put(monkeypatch, item, _body(asset_id, {"look_preset": "olive_film"}), protocol=31)
+    assert _saved(item)["zoom"] == 1.5
+    assert item.slide_post["slides"][0]["edits"]["look_preset"] == "olive_film"
+
+
+@pytest.mark.asyncio
+async def test_a_build_below_32_may_still_resave_a_zoomless_tilt_over_a_zoomless_tilt(
+    monkeypatch,
+):
+    asset_id = uuid.uuid4()
+    item = _item(asset_id, SlideEdits(tilt=TILT))
+    await _put(monkeypatch, item, _body(asset_id, {"tilt": {"rotation_deg": 40}}), protocol=31)
+    assert _saved(item)["rotation_deg"] == 40.0
+
+
+@pytest.mark.asyncio
+async def test_a_protocol_32_build_sets_changes_and_clears_a_zoom(monkeypatch):
+    asset_id = uuid.uuid4()
+    item = _item(asset_id, None)
+    await _put(monkeypatch, item, _body(asset_id, {"tilt": ZOOMED}, version=2), protocol=32)
+    assert _saved(item) == {"rotation_deg": 12.5, "backdrop": {"kind": "blur"}, "zoom": 1.5}
+
+    item.slide_post["version"] = 3
+    await _put(
+        monkeypatch,
+        item,
+        _body(asset_id, {"tilt": {"rotation_deg": 12.5, "zoom": 1}}, version=3),
+        protocol=32,
+    )
+    assert _saved(item) == {"rotation_deg": 12.5, "backdrop": {"kind": "blank"}}
+
+    item.slide_post["version"] = 4
+    await _put(
+        monkeypatch,
+        item,
+        _body(asset_id, {"tilt": {"rotation_deg": 0, "zoom": 2}}, version=4),
+        protocol=32,
+    )
+    assert _saved(item) == {"rotation_deg": 0.0, "backdrop": {"kind": "blank"}, "zoom": 2.0}
+
+
+@pytest.mark.asyncio
+async def test_flag_off_a_stored_zoom_wins_and_no_426_fires_for_the_overwrite(monkeypatch):
+    monkeypatch.setattr(settings, "media_tilt_enabled", False)
+    asset_id = uuid.uuid4()
+    item = _item(asset_id, SlideEdits(tilt=ZOOMED))
+    await _put(monkeypatch, item, _body(asset_id, {"tilt": {"rotation_deg": 3}}), protocol=31)
+    assert _saved(item)["zoom"] == 1.5
+
+
+def test_zoom_defaults_and_wire_shape() -> None:
+    from app.routes.creation_threads import CreationCapabilitiesOut
+    from app.services.client_protocol import TILT_ZOOM_PROTOCOL
+
+    assert TILT_ZOOM_PROTOCOL == 32
+    assert type(settings).model_fields["media_tilt_zoom_min_client_protocol"].default == 32
+    assert CreationCapabilitiesOut.model_fields["slide_post_tilt_zoom"].default is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("flag", "protocol", "expected"),
+    [
+        (True, None, False),
+        (True, 28, False),
+        (True, 31, False),
+        (True, 32, True),
+        (True, 33, True),
+        (False, 32, False),
+    ],
+)
+async def test_the_zoom_capability_needs_the_flag_and_a_protocol_32_build(
+    monkeypatch, flag, protocol, expected
+) -> None:
+    from app.routes.creation_threads import capabilities
+
+    monkeypatch.setattr(settings, "media_tilt_enabled", flag)
+    caps = await capabilities(_user(), False, protocol)
+    assert caps["slide_post_tilt_zoom"] is expected
+    if expected:
+        assert caps["slide_post_tilt"] is True
+
+
+def test_a_zoomed_draft_is_current_only_for_the_tilt_renderer_and_an_unzoomed_one_is_unchanged():
+    current = plan_items._slide_post_export_is_current
+    zoomed = _draft(SlideEdits(tilt=ZOOMED))
+    assert not current(zoomed, _variant(SLIDES_STICKER_RENDERER_VERSION))
+    assert current(zoomed, _variant(SLIDES_TILT_RENDERER_VERSION))
+    assert current(_draft(SlideEdits(tilt=TILT)), _variant(SLIDES_TILT_RENDERER_VERSION))
