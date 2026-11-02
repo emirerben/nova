@@ -146,6 +146,9 @@ class EndingClip(BaseModel):
 
 
 MAX_INSERT_CLIPS = 3
+# Rows kept when parsing, so the repair can name each one past the cap (`too_many`) instead of
+# the parse cutting it unseen.
+MAX_INSERT_CLIP_ROWS = 8
 
 
 class InsertClip(BaseModel):

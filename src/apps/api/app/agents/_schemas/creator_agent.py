@@ -28,7 +28,7 @@ from pydantic.json_schema import SkipJsonSchema
 
 from app.agents._schemas.edit_format import EditFormat, RenderProgram
 from app.agents._schemas.reaction_beats import (
-    MAX_INSERT_CLIPS,
+    MAX_INSERT_CLIP_ROWS,
     MAX_REACTION_BEATS,
     MAX_TIMED_CARDS,
     BackgroundMedia,
@@ -532,7 +532,7 @@ class CreativeStrategy(_CreatorModel):
     # every derived JSON schema, omitted when None, taught in the creator prompt only where the
     # manifest says the phone can render it.
     insert_clips: SkipJsonSchema[list[InsertClip] | None] = Field(
-        default=None, max_length=MAX_INSERT_CLIPS
+        default=None, max_length=MAX_INSERT_CLIP_ROWS
     )
     # KRI-1117: a photo / looping video shown behind the speaker of a phone Talking edit. Same
     # pattern as `ending_clip`: out of every derived JSON schema, omitted when None, taught in
@@ -587,7 +587,7 @@ class CreativeStrategy(_CreatorModel):
     @classmethod
     def _coerce_insert_clips(cls, value: object) -> object:
         """Rows that do not parse are dropped, never a schema failure (KRI-129: repair, never
-        reject); at most MAX_INSERT_CLIPS are kept."""
+        reject); at most MAX_INSERT_CLIP_ROWS are kept, the repair trims to the cap by name."""
         if value is None or not isinstance(value, list):
             return None
         rows: list[InsertClip] = []
@@ -596,7 +596,7 @@ class CreativeStrategy(_CreatorModel):
                 rows.append(raw if isinstance(raw, InsertClip) else InsertClip.model_validate(raw))
             except ValueError:
                 continue
-        return rows[:MAX_INSERT_CLIPS] or None
+        return rows[:MAX_INSERT_CLIP_ROWS] or None
 
     @field_validator("pinned_texts", mode="before")
     @classmethod

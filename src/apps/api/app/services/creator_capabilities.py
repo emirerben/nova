@@ -59,6 +59,7 @@ from app.agents._schemas.edit_format import (
     guided_edit_applicable,
     render_program_for_intent,
 )
+from app.agents._schemas.reaction_beats import MAX_INSERT_CLIPS
 from app.config import settings
 from app.schemas.creation_formats import SONG_SYNC_DEFAULT_BY_FORMAT
 from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS
@@ -1540,6 +1541,10 @@ INSERT_CLIP_NOTICES: dict[str, str] = {
         "That clip is already the one the video ends on, so it can't also pause your talk."
     ),
     "duplicate_clip": "That clip was asked for twice; it plays once.",
+    "too_many": (
+        "Couldn't play that clip in the middle of your talk: a talk can pause for at most "
+        "three clips."
+    ),
 }
 
 
@@ -1588,6 +1593,8 @@ def insert_clips_problems(
         media, problem = _insert_clip_resolution(manifest, strategy, row.media_id)
         if media is not None and media.media_id in seen:
             problem = "duplicate_clip"
+        if media is not None and problem is None and len(seen) >= MAX_INSERT_CLIPS:
+            problem = "too_many"
         if media is not None and problem is None:
             seen.add(media.media_id)
         problems.append(problem)
