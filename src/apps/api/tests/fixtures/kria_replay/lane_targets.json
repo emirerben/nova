@@ -53,16 +53,6 @@
       }
     },
     "narrated": {
-      "4.title_animation": {
-        "lane": "L3",
-        "kind": "honored",
-        "why": "the planned title animation reaches the narrated title"
-      },
-      "5.r3": {
-        "lane": "L3",
-        "kind": "honored",
-        "why": "make the hook type in: the animation ask reaches the narrated title"
-      }
     },
     "lipsync_song": {
       "4.title_animation": {

@@ -670,11 +670,6 @@
             },
             {
               "code": "not_applied_on_route",
-              "subject": "title_animation",
-              "text": "I can't animate the title (pop) on this video yet, so it shows without motion"
-            },
-            {
-              "code": "not_applied_on_route",
               "subject": "label_position",
               "text": "I can't place the clip labels at the top on this video yet"
             },
@@ -704,15 +699,8 @@
               "text": "I can't add sound effects on this video yet, so none will be played"
             }
           ],
-          "declines": [
-            {
-              "code": "not_applied_on_route",
-              "subject": "text_animation",
-              "text": "I can't animate on-screen text on this video yet, so the text shows without motion",
-              "requirement_id": "g1"
-            }
-          ],
-          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't follow the planned story structure (Arrive at the harbour, Climb to the castle, Sunset view) on this video yet, so it won't change the order of the clips\n- The relaxed pacing isn't applied on this video yet: the cuts follow your voiceover\n- The guided story direction isn't applied on this video yet: the video follows your voiceover\n- I can't make this video the length you asked for yet: its length follows your voiceover\n- Also not applied on this video yet: the title animation, the clip label position, the treatments, the story archetype, one featured hero clip, the overlay display, sound effects"
+          "declines": [],
+          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't follow the planned story structure (Arrive at the harbour, Climb to the castle, Sunset view) on this video yet, so it won't change the order of the clips\n- The relaxed pacing isn't applied on this video yet: the cuts follow your voiceover\n- The guided story direction isn't applied on this video yet: the video follows your voiceover\n- I can't make this video the length you asked for yet: its length follows your voiceover\n- I can't place the clip labels at the top on this video yet\n- Also not applied on this video yet: the treatments, the story archetype, one featured hero clip, the overlay display, sound effects"
         },
         "voice_no_captions": {
           "lines": [
@@ -783,11 +771,6 @@
             },
             {
               "code": "not_applied_on_route",
-              "subject": "title_animation",
-              "text": "Başlığı (pop) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
-            },
-            {
-              "code": "not_applied_on_route",
               "subject": "label_position",
               "text": "Klip etiketlerini bu videoda henüz top konumuna yerleştiremiyorum"
             },
@@ -817,15 +800,8 @@
               "text": "Bu videoya henüz ses efekti ekleyemiyorum, hiçbiri çalmayacak"
             }
           ],
-          "declines": [
-            {
-              "code": "not_applied_on_route",
-              "subject": "text_animation",
-              "text": "Bu videoda ekrandaki yazıyı henüz canlandıramıyorum, o yüzden yazı hareketsiz görünecek",
-              "requirement_id": "g1"
-            }
-          ],
-          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- Planlanan hikâye yapısını (Arrive at the harbour, Climb to the castle, Sunset view) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek\n- relaxed tempo bu videoda henüz uygulanmıyor: kesimler seslendirmeni izliyor\n- guided story yönü bu videoda henüz uygulanmıyor: video seslendirmeni izliyor\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor\n- Başlığı (pop) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek\n- Bu videoda henüz uygulanmayanlar: klip etiketi konumu, efektler, hikâye kalıbı, öne çıkan ana klip, katman gösterimi, ses efektleri"
+          "declines": [],
+          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- Planlanan hikâye yapısını (Arrive at the harbour, Climb to the castle, Sunset view) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek\n- relaxed tempo bu videoda henüz uygulanmıyor: kesimler seslendirmeni izliyor\n- guided story yönü bu videoda henüz uygulanmıyor: video seslendirmeni izliyor\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor\n- Klip etiketlerini bu videoda henüz top konumuna yerleştiremiyorum\n- Bu videoda henüz uygulanmayanlar: efektler, hikâye kalıbı, öne çıkan ana klip, katman gösterimi, ses efektleri"
         },
         "voice_no_captions": {
           "lines": [

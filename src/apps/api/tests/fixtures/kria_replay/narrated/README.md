@@ -41,11 +41,11 @@ ids (`analysis-proxy-narrated-NN`).
 | 2.direction (`native`) | disclosed_ok | VERIFIED (card line) | |
 | 2.pacing (`balanced`) | disclosed_ok | VERIFIED (card line: every pace is named, the cuts follow the voiceover) | |
 | 2.story_structure | disclosed_ok | VERIFIED (card line: the narrated table now lists it) | |
-| 2.title_animation | disclosed_ok | VERIFIED (card line) | |
-| 3.r1 at most 120 s | disclosed_ok | VERIFIED (the card's length line, which now fires from the creator's typed length ask as well as from the server's provenance) | |
+| 2.title_animation | disclosed_ok | VERIFIED (card line) | VERIFIED (render: the title types in, so the line is gone) |
+| 3.r1 at most 120 s | disclosed_ok | VERIFIED (the card's length line, which now fires from the creator's typed length ask as well as from the server's provenance) | VERIFIED (same line: the length follows the voice) |
 | 3.r2 approved opening title | disclosed_ok | VERIFIED (checked met) | |
-| 3.r3 animation ask | disclosed_ok | VERIFIED (route decline) | |
-| 4.title_animation, 5.r3 | honored | NOT VERIFIED (no render replay yet) | L3 |
+| 3.r3 animation ask | disclosed_ok | VERIFIED (route decline) | VERIFIED (render: the decline is gone) |
+| 4.title_animation, 5.r3 | honored | NOT VERIFIED (no render replay yet) | VERIFIED (L3, `NARRATED_ROUTE_FOLLOWS_PROMPT_ENABLED`) |
 | 10.claims registry claims (every `Applied` field has a reader or a real carrier) | gate | VERIFIED | |
 | 10 consumer gate | report | REPORT (gaps) | |
 
@@ -65,6 +65,9 @@ title nor that it drew it.
 ## What the checks do not prove
 
 As for every route fixture: the field's own registry line (whole lines within the 640-character budget, then one compact line naming every line that did not fit) plus typed declines, no
-wording quality, no native render. Honored checks need
+wording quality, no native render. Honored checks come from
 `scripts/kria/route_replays/narrated.py`, which calls the route's `RENDER_ENTRY` with this
-fixture's own plan and asks.
+fixture's own plan and asks. Its timeline is synthetic (one step per clip at full length, so
+about 337 s): the replay's `length_s` says nothing about the recorded voice. The length stays
+disclosed because the steps tile the whole recorded voice (agents/DECISIONS.md, "Prompt fidelity
+wave 2: narrated").

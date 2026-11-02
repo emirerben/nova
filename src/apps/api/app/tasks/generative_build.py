@@ -11994,6 +11994,7 @@ def _run_phone_narrated_job(
         compile_phone_narrated_plan,
         narrated_title_element,
         narrated_title_end_s,
+        narrated_title_entrance,
         narrated_title_text_elements,
     )
     from app.pipeline.phone_subtitled_lanes import SubtitledLaneError, drop_lane  # noqa: PLC0415
@@ -12474,6 +12475,9 @@ def _run_phone_narrated_job(
                 narrated_brief = BriefBinding.model_validate(
                     snapshot["creator_brief_binding"]
                 ).resolve()
+            # KRI-1097 wave 2: the asks the compiler reads with the plan (the title entrance).
+            narrated_requirements = narrated_brief.live() if narrated_brief is not None else []
+            title_entrance = narrated_title_entrance(strategy, narrated_requirements)
             narrated_record = _narrated_alignment_record(
                 generation=generation,
                 brief_version=narrated_brief.version if narrated_brief else None,
@@ -12584,6 +12588,7 @@ def _run_phone_narrated_job(
                         end_s=opening_title_end_s,
                         timeline_duration_s=voiceover_duration_s,
                         canvas=canvas,
+                        entrance=title_entrance,
                     )
                     spoken_rows, spoken_receipt = narrated_spoken_text_rows(
                         asks,
@@ -12686,6 +12691,8 @@ def _run_phone_narrated_job(
                         visuals=visuals,
                         source_audio_media_ids=source_audio_ids,
                         resolved_text_elements=spoken_rows,
+                        strategy=strategy,
+                        requirements=narrated_requirements,
                         **(
                             {
                                 "under_voice_media_ids": clip_sound_plan.under_voice_media_ids,
@@ -12841,7 +12848,7 @@ def _run_phone_narrated_job(
         # KRI-455: the editor preview draws text from the variant, not the
         # pinned recipe, so keep the title element the recipe was compiled from.
         title_elements = narrated_title_text_elements(
-            recipe, opening_title, end_s=opening_title_end_s
+            recipe, opening_title, end_s=opening_title_end_s, entrance=title_entrance
         )
         if title_elements or spoken_rows:
             new_entry["narrated_title_text_elements"] = title_elements + spoken_rows
