@@ -459,3 +459,108 @@ def test_decoder_child_never_inherits_the_workers_credentials(monkeypatch):
     assert "secret-value" not in " ".join(environment.values())
     assert environment["PATH"] == "/usr/bin"
     assert environment["OMP_NUM_THREADS"] == "1"
+def _limits(count=6, anchors=(), refs=None):
+    return evidence.EvidenceLimits(
+        frame_count=count,
+        anchor_times_s=tuple(anchors),
+        anchor_refs=tuple(
+            refs if refs is not None else [f"layer-{i}" for i in range(len(anchors))]
+        ),
+    )
+
+
+def test_uniform_sampling_alone_misses_a_two_second_title_in_a_thirty_second_video():
+    uniform = [t for t, _ in evidence.plan_frame_times(30.0, _limits(count=4))]
+    assert not any(0.0 <= t <= 2.0 for t in uniform)
+    anchored = evidence.plan_frame_times(30.0, _limits(anchors=[1.0], refs=["title-0"]))
+    assert (1.0, "title-0") in anchored
+    assert len(anchored) == 6
+
+
+def test_frame_plan_is_bounded_ordered_and_spreads_the_remainder():
+    plan = evidence.plan_frame_times(
+        30.0, _limits(anchors=[1.0, 9.0, 15.0, 25.0], refs=list("abcd"))
+    )
+    times = [t for t, _ in plan]
+    assert times == sorted(times)
+    assert len(plan) <= 6
+    assert {ref for _, ref in plan if ref} == set("abcd")
+    uniform = [t for t, ref in plan if ref is None]
+    assert len(uniform) == 2 and all(
+        abs(t - kept) >= 0.5 for t in uniform for kept, ref in plan if ref
+    )
+
+
+def test_anchors_are_clamped_merged_by_priority_and_capped():
+    plan = evidence.plan_frame_times(
+        10.0, _limits(anchors=[0.0, 0.3, 10.0, 5.0], refs=["first", "dup", "last", "mid"])
+    )
+    anchors = {ref: t for t, ref in plan if ref}
+    assert anchors["first"] == pytest.approx(0.1)
+    assert "dup" not in anchors
+    assert anchors["last"] == pytest.approx(9.9)
+    assert anchors["mid"] == 5.0
+
+
+def test_anchors_never_displace_the_frame_budget():
+    for count in (1, 2, 3):
+        plan = evidence.plan_frame_times(
+            20.0, _limits(count=count, anchors=[2.0, 6.0, 10.0, 14.0], refs=list("abcd"))
+        )
+        assert 1 <= len(plan) <= count
+
+
+def test_very_short_videos_still_plan_inside_the_clip():
+    plan = evidence.plan_frame_times(0.15, _limits(anchors=[5.0], refs=["late"]))
+    assert all(0.0 <= t <= 0.15 for t, _ in plan)
+
+
+def test_anchor_labels_must_pair_with_times():
+    with pytest.raises(ValueError):
+        evidence.EvidenceLimits(anchor_times_s=(1.0,), anchor_refs=())
+    with pytest.raises(ValueError):
+        evidence.EvidenceLimits(anchor_times_s=(1.0,) * 5, anchor_refs=("a",) * 5)
+
+
+def test_text_anchors_prefer_requested_wording_then_titles_then_other_text_then_captions():
+    def layer(identifier, start, end, text="x", **extra):
+        return {"id": identifier, "start": start, "end": end, "runs": [{"text": text}], **extra}
+
+    recipe = {
+        "text_layers": [
+            layer("caption-9", 0.0, 0.4, effect="caption-pop"),
+            layer("pin-1", 8.0, 12.0, "My handle"),
+            layer("title-0", 0.0, 2.0, "Big Day"),
+            layer("wording", 4.0, 5.0, "Meet  ME at the bridge"),
+            layer("zero", 3.0, 3.0, "no span"),
+        ]
+    }
+    times, refs = evidence.text_anchor_plan(recipe, ["meet me at the bridge"])
+    assert refs == ("wording", "title-0", "pin-1", "caption-9")
+    assert times == (4.5, 1.0, 10.0, 0.2)
+
+
+def test_text_anchors_are_capped_at_four():
+    recipe = {
+        "text_layers": [
+            {"id": f"t{i}", "start": i, "end": i + 1, "runs": [{"text": "x"}]} for i in range(9)
+        ]
+    }
+    times, refs = evidence.text_anchor_plan(recipe)
+    assert len(times) == len(refs) == 4
+
+
+def test_anchor_frames(local_video):
+    basis, video, proof = local_video
+    result = evidence.obtain_render_review_evidence(
+        basis,
+        limits=evidence.EvidenceLimits(
+            frame_count=3, anchor_times_s=(0.4,), anchor_refs=("title-0",)
+        ),
+    )
+    assert result.status == "ready", result.reason
+    frames = result.bundle.frames
+    assert frames[0].anchor_ref == "title-0"
+    assert frames[0].timestamp_s == pytest.approx(0.4, abs=0.15)
+    assert all(f.anchor_ref is None for f in frames[1:])
+    assert all(f.extraction_version == "render-review-frames-v2" for f in frames)
