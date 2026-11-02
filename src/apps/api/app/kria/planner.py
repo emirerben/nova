@@ -2879,6 +2879,7 @@ async def _call_main_creator(
         agent_input=inputs.agent_input,
         output_cls=MainCreatorOutput,
         call=_call,
+        variant=settings.main_creator_output_mode,
     )
 
 

@@ -20,7 +20,9 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import hashlib
+import functools
 import json
+import os
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -86,9 +88,46 @@ def _field(call_name: str, digest: str) -> str:
     return f"{call_name}:{digest}"
 
 
-def _digest(call_name: str, version: str, agent_input: BaseModel) -> str:
+@functools.lru_cache(maxsize=64)
+def _schema_digest(*classes: type[BaseModel]) -> str:
+    schemas = [cls.model_json_schema() for cls in classes]
+    return hashlib.sha256(json.dumps(schemas, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _release() -> str:
+    """The deployed image (Fly sets it per release): a deploy never reads an older code's answer."""
+    return os.environ.get("FLY_IMAGE_REF", "")
+
+
+def _digest(
+    call_name: str,
+    spec: Any,
+    variant: str,
+    agent_input: BaseModel,
+    output_cls: type[BaseModel],
+) -> str:
+    """Everything that can make the same input produce a different answer.
+
+    The class-level spec (name, prompt version, model, fallbacks, thinking), the runtime
+    override the caller names in ``variant`` (Main Creator's output mode changes the prompt and
+    the parse), both schemas, and the deployed image: for up to the TTL after a deploy or a
+    flag change a continued run would otherwise take a plausible answer from the old behaviour.
+    """
+
     payload = json.dumps(
-        {"call": call_name, "version": version, "input": agent_input.model_dump(mode="json")},
+        {
+            "call": call_name,
+            "agent": f"{spec.name}@{spec.prompt_version}:{spec.model}",
+            "fallbacks": list(getattr(spec, "fallback_models", ()) or ()),
+            "thinking": [
+                getattr(spec, "thinking_level", None),
+                getattr(spec, "thinking_budget", None),
+            ],
+            "variant": variant,
+            "schemas": _schema_digest(type(agent_input), output_cls),
+            "release": _release(),
+            "input": agent_input.model_dump(mode="json"),
+        },
         sort_keys=True,
         default=str,
     )
@@ -140,12 +179,13 @@ async def checkpointed(
     agent_input: object,
     output_cls: type[T],
     call: Callable[[], Awaitable[T]],
+    variant: str = "",
 ) -> T:
     """Run ``call`` unless an earlier run of this turn already got its answer for this input.
 
     Outside a turn task (no turn id), for an input that is not a model, or for an agent
-    without a spec, this is just ``call()``. The key holds the agent's name, prompt version
-    and model, so a deploy that changes any of them misses.
+    without a spec, this is just ``call()``, and so is a key that cannot be computed. The key is
+    described on `_digest`; ``variant`` names a runtime override the class spec does not show.
     """
 
     started = time.monotonic()
@@ -154,8 +194,11 @@ async def checkpointed(
     spec = getattr(agent_cls, "spec", None)
     if run_id is None or not isinstance(agent_input, BaseModel) or spec is None:
         return await call()
-    version = f"{spec.name}@{spec.prompt_version}:{spec.model}"
-    field = _field(call_name, _digest(call_name, version, agent_input))
+    try:
+        field = _field(call_name, _digest(call_name, spec, variant, agent_input, output_cls))
+    except Exception as exc:  # noqa: BLE001 - no key means no checkpoint, never a failed turn
+        log.warning("kria_turn_checkpoint_key_failed", error_class=type(exc).__name__)
+        return await call()
     if epoch > 1:
         stored = await asyncio.to_thread(_load, run_id, field, output_cls)
         if stored is not None:
