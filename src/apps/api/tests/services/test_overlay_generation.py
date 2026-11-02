@@ -1136,3 +1136,73 @@ def test_pictures_that_nearly_touch_are_treated_as_overlapping():
 def test_a_picture_never_shares_a_moment_with_text_whose_size_is_unknown():
     rows, notices = _versus(dict(x_frac=0.25), dict(x_frac=0.75, kind="text", text="10", prompt=""))
     assert len(rows) == 1 and notices
+
+
+def _placed_card(**changes):
+    return {
+        **dict(
+            id="placed",
+            kind="image",
+            display_mode="pip",
+            position="custom",
+            x_frac=0.25,
+            y_frac=0.5,
+            scale=0.35,
+            start_s=1.0,
+            end_s=3.0,
+        ),
+        **changes,
+    }
+
+
+def test_a_placed_floating_picture_exposes_its_canvas_box():
+    from app.services.overlay_generation import occupied_intervals
+
+    [interval] = occupied_intervals(dict(media_overlays=[_placed_card()]))
+    assert interval["rect"][0] < 0.25 < interval["rect"][2]
+
+
+def test_a_fullscreen_or_unreadable_placed_card_stays_time_exclusive():
+    from app.services.overlay_generation import occupied_intervals
+
+    rows = occupied_intervals(
+        dict(
+            media_overlays=[
+                _placed_card(display_mode="fullscreen"),
+                _placed_card(x_frac="left"),
+            ]
+        )
+    )
+    assert rows and all("rect" not in row for row in rows)
+
+
+def _plan_next_to_placed(placed, x_frac):
+    from app.services.overlay_generation import occupied_intervals
+
+    existing = occupied_intervals(dict(media_overlays=[placed]))
+    notices: list[str] = []
+    rows = materialize_overlays(
+        proposal(x_frac=x_frac, start_s=1.0, end_s=3.0),
+        evidence(),
+        [],
+        duration_s=8,
+        prompt="",
+        existing_overlays=existing,
+        notices=notices,
+    )
+    return rows, notices
+
+
+def test_a_new_picture_can_go_beside_one_already_placed():
+    rows, notices = _plan_next_to_placed(_placed_card(), x_frac=0.75)
+    assert len(rows) == 1 and notices == []
+
+
+def test_a_new_picture_on_top_of_one_already_placed_is_skipped():
+    rows, notices = _plan_next_to_placed(_placed_card(), x_frac=0.3)
+    assert rows == [] and notices
+
+
+def test_a_fullscreen_placed_card_still_blocks_the_moment():
+    rows, notices = _plan_next_to_placed(_placed_card(display_mode="fullscreen"), x_frac=0.75)
+    assert rows == [] and notices
