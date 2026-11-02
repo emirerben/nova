@@ -996,7 +996,7 @@ is lost and the video grows by the clip's length.
   8 rows parse so a 4th and beyond get the named notice "a talk can pause for at most three clips"
   instead of vanishing; exactly one of the two positions; one of the item's OWN footage clips, a
   Visuals video is refused for now). Model-hidden like `ending_clip`. **Prompt gating**: the
-  creator prompt's insert section AND the shared brief paragraph (brief extractor v46, creator v109)
+  creator prompt's insert section AND the shared brief paragraph (brief extractor v46, creator v110)
   are added only where `creator_capabilities.insert_clip_candidates(manifest)` is non-empty (rollout
   open, 2+ own clips); the planner tells the brief extractor through
   `BriefExtractionInput.insert_clips_open`. With the rollout closed both prompts are byte-identical
@@ -1004,7 +1004,10 @@ is lost and the video grows by the clip's length.
   `test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inserts`). **Ask
   routing**: only an explicit pause / stop / in-the-middle-while-I-wait ask is an insert; "show it
   when I mention X" (the talk keeps running), with or without "use their audio", is the existing
-  show-when-mentioned / cutaway-sound ask (`triggers`), never `insert_clip`. The brief records the
+  show-when-mentioned / cutaway-sound ask (`triggers`), never `insert_clip`. With both planner
+  lanes open, wording that genuinely fits both ("put the congress clip in the middle of my talk
+  with its sound") gets ONE `ask_user` question (pause the talk, or cover it?); with only the
+  insert lane open the plain show-it asks leave `insert_clips` empty. The brief records the
   insert as a `style` requirement with `facts.insert_clip` (+ `insert_at_phrase` / `insert_at_s`,
   `keep_audio`). The server repair (`repair_creator_insert_clips`) drops what the phone cannot play
   with a plain notice.
@@ -1072,6 +1075,23 @@ is lost and the video grows by the clip's length.
   and keeps surviving Saves). Tests: `tests/pipeline/test_phone_talking_inserts.py` (failure-mode
   list), `tests/tasks/test_talking_insert_clip.py` (prod thread 6fa36e51 replay),
   `tests/routes/test_phone_talking_insert_commit.py`, `tests/kria/test_insert_clip_planner.py`.
+- **With the full-screen cutaway lane** (below; #2057, creator prompt v109 -> v110 here): each lane
+  is taught on its OWN gate. `insert_clip_candidates` = the insert flag + multi-clip Talking +
+  `audioMix` (so it already needs `TALKING_MULTI_CLIP_ENABLED`); `talking_footage_cutaways` = a
+  cutaway flag (mention or sound) + multi-clip Talking. Four states: neither (main's bytes), cutaways
+  only (main's bytes, the tail still says a pausing clip is "not available on iPhone"), insert only
+  (the insert section, no mention of a lane that is not in the prompt), both (cutaway section, then
+  insert section; the cutaway tail says a pausing clip "exists only as `insert_clips`" on an explicit
+  pause / stop ask; one routing question allowed). Pinned by `tests/kria/test_insert_and_cutaway_lanes.py`
+  (sha of what origin/main renders) and the golden fixtures `kri1151_talking_cutaways_insert_open_*`
+  (the prod request with both lanes open => cutaway, not insert) and `kri1151_talking_insert_pause_form`.
+- **Worker footprint**: the insert adds only pure-Python steps (`place_inserts`, `warp_for_inserts`)
+  to the phone recipe compile in `_run_phone_subtitled_job` (inside `orchestrate_generative_job`,
+  soft limit 1740 s); no media is read, no ffmpeg or Skia runs, the clip is one of the item's own
+  footage clips already fetched. The shared-cpu-4x / 4 GB unified worker of #2055 (api / worker /
+  light only) changes nothing for it. Flag order: deploy (Fly API + worker) first, then
+  `PHONE_TALKING_INSERT_CLIPS_ENABLED=true` only after a TestFlight build with the editor preview
+  is out; the cutaway flags are independent of it.
 
 #### Talks shown full screen where the creator mentions them (parent KRI-1151, `PHONE_TALKING_MENTION_CUTAWAYS_ENABLED`)
 
@@ -1127,19 +1147,26 @@ then spread mechanically, never at a mention.
   --app nova-video` + restart api + worker (Fly only, no Vercel twin, no app build: recipe-only, no
   new protocol). Rollback: `=false` the same way. To hear the talks' own audio also set
   `PHONE_TALKING_CUTAWAY_SOUND_ENABLED` and `PHONE_CLIP_SOUND_WINDOWS_ENABLED` (above).
-- **Planner knowledge**: the chat planner (Main Creator, prompt v109) is taught this lane only
+- **Planner knowledge**: the chat planner (Main Creator, prompt v110) is taught this lane only
   while `creator_capabilities.talking_footage_cutaways(manifest)` is open (the gates above plus
   2+ own clips on a phone Talking edit), so a flag-off prompt is byte-identical. The paragraphs
   follow the gates: mention only (clips at a mention, silent), sound only (clips spread, sound for
   the slot, a speaking clip keeps playing in turn), both, neither. Durations are the scheduler's
   constants. It says the creator's voice is muted under a clip that plays its sound, that the clip
-  is an overlay (an insert that pauses the take is not available), the worker fallbacks, and that
+  is an overlay (the take keeps advancing underneath; an insert that pauses the take is "not
+  available on iPhone" while `PHONE_TALKING_INSERT_CLIPS_ENABLED` is off, and with it open the
+  same sentence says it exists only as `insert_clips` on an explicit pause / stop ask), the worker
+  fallbacks, and that
   the earlier "works on a montage, not in this edit" reply is out of date. A refusal the open lane
   contradicts gets ONE corrective re-run with `MainCreatorInput.server_note`
   (`app.kria.ask_refusals`): an `ask_user` whose reason code, question or options (read as tokens,
   never prose patterns) are a refusal about audio / intercut / cutaway / Montage, or a strategy that
-  moves the edit to a Montage, against a live full-screen or clip-sound-on ask. Insert / pause
-  answers, footage and hook questions are never re-run. The re-run keeps the agent session, takes
+  moves the edit to a Montage, against a live full-screen or clip-sound-on ask. A refusal whose
+  own reason code names an insert or a pause, footage and hook questions are never re-run; a
+  refusal coded as the audio / cutaway ask whose question merely names a pause is the model's
+  honest "no pause" answer while the insert lane is closed, and is re-run (the note then points
+  an explicit pause ask at `insert_clips`) while it is open. The re-run note's pause sentence
+  follows the insert gate too (`correction_note(inserts_open=)`). The re-run keeps the agent session, takes
   the last brief batch, is skipped under 60 s of turn budget, and any provider or validation
   failure keeps the first answer (`kria_ask_refusal_rerun_failed`). A second refusal becomes the
   plain unmet reply, never the model's invented reason. The re-run's action and new brief updates
