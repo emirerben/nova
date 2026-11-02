@@ -28,6 +28,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 import structlog
+from pydantic import ValidationError
 from sqlalchemy import func, literal, null, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -38,8 +39,11 @@ from app.agents._openai_vision import (
     validate_frames,
 )
 from app.agents._runtime import RunContext, TerminalError
+from app.agents._schemas.intent_review import InvalidReviewOutput
 from app.config import settings
 from app.database import sync_session
+from app.kria.intent_review_catalog import ReviewCatalog
+from app.kria.intent_review_disposition import evaluate_review
 from app.kria.intent_review_tier import intent_review_tier, lower_tier, tier_rank
 from app.kria.review_canon import digest as canonical_digest
 from app.models import CreatorGenerationReview
@@ -101,15 +105,29 @@ class BuiltReview:
     prompt_version: str
 
 
+class NothingToReview(Exception):
+    """No requirement the frames could judge: finish without spending anything."""
+
+
 class ReviewPromptBuilder(Protocol):
-    def build(self, packet: dict[str, Any], frames: Sequence[FrameView]) -> BuiltReview: ...
+    def build(
+        self,
+        packet: dict[str, Any],
+        frames: Sequence[FrameView],
+        *,
+        rendered_duration_s: float | None = None,
+    ) -> BuiltReview: ...
 
 
 _PROMPT_BUILDER: ReviewPromptBuilder | None = None
 
 
-def resolve_prompt_builder() -> ReviewPromptBuilder | None:
-    return _PROMPT_BUILDER
+def resolve_prompt_builder() -> ReviewPromptBuilder:
+    if _PROMPT_BUILDER is not None:
+        return _PROMPT_BUILDER
+    from app.services.intent_review_prompt import IntentReviewPromptBuilder
+
+    return IntentReviewPromptBuilder()
 
 
 @dataclass(frozen=True)
@@ -398,11 +416,14 @@ def _call_review(claim: Claim, client: OpenAIVisionClient | None) -> str:
         frames = decode_frames(claim)
     except _Unusable as exc:
         return _terminal_for_claim(claim, "unavailable", exc.reason)
-    builder = resolve_prompt_builder()
-    if builder is None:
-        return _terminal_for_claim(claim, "unavailable", "prompt_builder_unavailable")
     try:
-        built = builder.build(claim.packet, frames)
+        built = resolve_prompt_builder().build(
+            claim.packet,
+            frames,
+            rendered_duration_s=claim.evidence.get("rendered_duration_s"),
+        )
+    except NothingToReview:
+        return _terminal_for_claim(claim, "unavailable", "nothing_verifiable")
     except Exception:
         log.warning("intent_review_prompt_failed", review_id=str(claim.review_id), exc_info=True)
         return _terminal_for_claim(claim, "unavailable", "prompt_builder_unavailable")
@@ -508,6 +529,29 @@ def _settle_outcome(claim: Claim, result: MediaReviewResult, state: dict[str, An
     return _terminal_for_claim(claim, status, reason, patch=patch)
 
 
+def _judge(row, review: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+    """Turn a stored, settled response into a terminal state; a void review never lands as clean."""
+    try:
+        catalog = ReviewCatalog.model_validate(review.get("catalog"))
+    except (ValidationError, TypeError):
+        return "unavailable", "disposition_unavailable", {}
+    if review.get("raw_output_truncated"):
+        return "unavailable", "invalid_output", {"invalid_output": "truncated"}
+    try:
+        evaluation = evaluate_review(
+            review.get("raw_output") or "",
+            catalog,
+            tier=lower_tier(row.tier, intent_review_tier(row.owner_id)),
+            repair_preconditions=None,
+        )
+    except InvalidReviewOutput as exc:
+        return "unavailable", "invalid_output", {"invalid_output": exc.reason}
+    patch: dict[str, Any] = {"findings": [f.model_dump(mode="json") for f in evaluation.findings]}
+    if evaluation.disposition is not None:
+        patch["disposition"] = evaluation.disposition.model_dump(mode="json")
+    return evaluation.status, evaluation.reason, patch
+
+
 def _finish(review_id, token, *, settled: dict[str, Any] | None = None) -> str:
     """Judge the stored response once the ledger is settled."""
     with sync_session() as db:
@@ -527,7 +571,9 @@ def _finish(review_id, token, *, settled: dict[str, Any] | None = None) -> str:
         elif provenance.get("response_status") != "completed":
             verdict = ("unavailable", "invalid_output")
         else:
-            verdict = ("unavailable", "disposition_unavailable")
+            status, reason, patch = _judge(row, review)
+            review.update(patch)
+            verdict = (status, reason)
         row.review = review
         row.status, row.reason = verdict
         row.lease_token = row.lease_until = None
@@ -551,7 +597,16 @@ def run_intent_review(review_id, *, client: OpenAIVisionClient | None = None) ->
         outcome = _call_review(claimed, client)
     if outcome != "ignored":
         _emit_trace(review_id, outcome)
+        post_intent_review_outcome(review_id)
     return outcome
+
+
+def post_intent_review_outcome(review_id) -> None:
+    """Shadow mode: the outcome is stored and traced, and the creator is shown nothing.
+
+    The creator-facing receipt and question arrive with the posting stage; until then the
+    deterministic post-render receipt stands, so a review can never say more than it checked.
+    """
 
 
 def _emit_trace(review_id, outcome: str) -> None:
@@ -572,8 +627,27 @@ def _emit_trace(review_id, outcome: str) -> None:
         }
         prompt_version = review.get("prompt_version") or "unversioned"
         raw, error = review.get("raw_output"), row.reason
+        voided = row.reason == "invalid_output"
+        verdicts = {
+            "findings": review.get("findings"),
+            "disposition": review.get("disposition"),
+        }
+        catalog_digest = (review.get("catalog") or {}).get("digest")
+        fidelity = [
+            item["requirement_id"]
+            for item in (review.get("disposition") or {}).get("suggestions") or []
+            if item.get("why") == "render_fidelity"
+        ]
+        if review.get("invalid_output"):
+            data["invalid_output"] = review["invalid_output"]
     with pipeline_trace_for(basis.get("job_id")):
         record_pipeline_event("intent_review", "outcome", data)
+        for requirement_id in fidelity:
+            record_pipeline_event(
+                "intent_review",
+                "render_fidelity",
+                {"review_id": str(review_id), "requirement_id": requirement_id},
+            )
     if provenance.get("provider_outcome") not in {"ok", "rejected", "unknown"}:
         return
     from app.agents._persistence import persist_agent_run
@@ -587,7 +661,7 @@ def _emit_trace(review_id, outcome: str) -> None:
         agent_name=AGENT_NAME,
         prompt_version=prompt_version,
         model=VISION_MODEL,
-        outcome=_agent_outcome(provenance),
+        outcome=_agent_outcome(provenance, voided=voided),
         attempts=1,
         tokens_in=int(usage.get("input_tokens", 0)),
         tokens_out=int(usage.get("output_tokens", 0)),
@@ -603,19 +677,20 @@ def _emit_trace(review_id, outcome: str) -> None:
         input_dict={
             "frame_hashes": provenance.get("frame_hashes"),
             "frame_set_digest": provenance.get("frame_set_digest"),
+            "catalog_digest": catalog_digest,
         },
-        output_dict=None,
+        output_dict=None if voided or verdicts["findings"] is None else verdicts,
         raw_text=raw,
         error=None if provenance.get("provider_outcome") == "ok" else error,
     )
 
 
-def _agent_outcome(provenance: dict[str, Any]) -> str:
+def _agent_outcome(provenance: dict[str, Any], *, voided: bool = False) -> str:
     if provenance.get("provider_outcome") != "ok":
         return "terminal_transient"
     status = provenance.get("response_status")
     if status == "completed":
-        return "ok"
+        return "terminal_schema" if voided else "ok"
     return "terminal_refusal" if status == "refused" else "terminal_transient"
 
 

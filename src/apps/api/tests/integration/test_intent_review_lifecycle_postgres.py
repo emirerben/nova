@@ -116,7 +116,7 @@ class Builder:
         self.prompt = prompt
         self.seen = []
 
-    def build(self, packet, frames):
+    def build(self, packet, frames, *, rendered_duration_s=None):
         self.seen.append((packet, list(frames)))
         return flow.BuiltReview(
             prompt=self.prompt,
@@ -921,11 +921,16 @@ async def test_paid_flag_off_after_admission_makes_no_call(approved_publication,
 
 
 @pytest.mark.asyncio
-async def test_no_prompt_builder_is_unavailable_without_a_call(
+async def test_a_failing_prompt_builder_is_unavailable_without_a_call(
     approved_publication, paid, monkeypatch
 ):
     rid, _, _ = await ready_review(approved_publication, monkeypatch)
-    monkeypatch.setattr(flow, "_PROMPT_BUILDER", None)
+
+    class Broken:
+        def build(self, packet, frames, *, rendered_duration_s=None):
+            raise RuntimeError("catalog could not be built")
+
+    monkeypatch.setattr(flow, "_PROMPT_BUILDER", Broken())
     provider = Provider()
     assert await run_async(rid, provider) == "unavailable"
     assert review_row(rid).reason == "prompt_builder_unavailable"

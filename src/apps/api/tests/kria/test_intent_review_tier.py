@@ -43,8 +43,19 @@ def test_shipping_ceiling_caps_every_flag_combination(flags, monkeypatch):
         assert tier.intent_review_tier(USER) == expected
 
 
-def test_the_ceiling_in_this_stack_position_is_evidence_only():
-    assert tier._CODE_TIER_CEILING == "evidence"
+def test_shipped_ceiling_reviews_but_never_repairs_even_with_every_flag_on(monkeypatch):
+    for name, value in dict(
+        kria_intent_review_enabled=True,
+        kria_intent_review_paid_enabled=True,
+        kria_intent_review_repair_enabled=True,
+        kria_intent_review_user_ids=[USER],
+        openai_api_key="sk-test",
+        ai_openai_intent_review_budget_usd=50.0,
+        ai_openai_monthly_budget_usd=500.0,
+    ).items():
+        monkeypatch.setattr(settings, name, value)
+    assert tier._CODE_TIER_CEILING == "review"
+    assert tier.intent_review_tier(USER) == "review"
 
 
 @pytest.mark.parametrize(
