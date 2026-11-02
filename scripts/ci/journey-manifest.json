@@ -2224,6 +2224,7 @@
         "src/apps/api/app/kria/ask_refusals.py",
         "src/apps/api/app/pipeline/phone_talking_cutaway_sound.py",
         "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1151_talking_cutaways_show_when_mentioned.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1151_talking_cutaways_tr.json",
         "src/apps/api/tests/fixtures/kri1151_thread_6fa36e51.json",
         "src/apps/api/tests/kria/test_planner_knows_talking_cutaways.py",
         "src/apps/api/tests/pipeline/test_phone_talking_cutaway_sound.py",

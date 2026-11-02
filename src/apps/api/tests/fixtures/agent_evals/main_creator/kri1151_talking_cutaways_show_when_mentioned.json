@@ -288,8 +288,21 @@
   },
   "meta": {
     "source": "hand_authored_golden",
-    "note": "KRI-1151 / thread 6fa36e51 turn 7aa16b1a: the request the Main Creator refused (AskUser reason_code unsupported_audio_intercut) five minutes after the Talking cutaway flags went true. Context rebuilt from the thread's captured media list, first-draft reply and brief; the prod input_json is redacted, so this is the golden answer, not a capture of live model output. Replay proves it parses and renders against the open-gate prompt; it does not prove the live model now answers this way.",
+    "note": "KRI-1151 / thread 6fa36e51 turn 7aa16b1a: the request the Main Creator refused (AskUser reason_code unsupported_audio_intercut) five minutes after the Talking cutaway flags went true. Context rebuilt from the thread's captured media list, first-draft reply and brief; the prod input_json is redacted, so this is the golden answer, not a capture of live model output. Replay proves the answer parses and that the open-gate prompt (the `settings` override below) contains the lane section; the cassette ignores the prompt, so it does not prove the live model now answers this way. That needs the paid live eval (tests/evals/README.md).",
     "forbids_ask_user": true,
-    "voice_muted_said": true
+    "voice_muted_said": true,
+    "prod_profile": true,
+    "settings": {
+      "phone_render_user_ids": [],
+      "phone_subtitled_rendering_enabled": true,
+      "talking_multi_clip_enabled": true,
+      "phone_talking_mention_cutaways_enabled": true,
+      "phone_talking_cutaway_sound_enabled": true,
+      "phone_clip_sound_windows_enabled": true
+    },
+    "prompt_contains": [
+      "CLIPS SHOWN FULL SCREEN OVER THE TALK",
+      "voice is muted"
+    ]
   }
 }

@@ -974,3 +974,73 @@ def test_r7_the_reruns_new_brief_updates_are_kept_and_duplicates_are_not():
 
     assert merged == (asked, new)
     assert planner._updates_with_rerun(None, (asked,), None, creator_text=REQUEST) == (asked,)
+
+
+# ---------------------------------------------------------------- Turkish phrasing
+
+TURKISH_REQUEST = (
+    "Konuştuğum yerde ilgili konuşma kliplerini araya tam ekran koy ve kendi sesiyle çalsın. "
+    "Stadyum klibini de konuşurken tam ekran koy ama benim sesim kalsın"
+)
+
+
+def test_the_turkish_request_reaches_a_prompt_that_teaches_the_lane(monkeypatch):
+    _gates(monkeypatch)
+    manifest = _manifest()
+    agent_input = _agent_input(
+        manifest,
+    ).model_copy(
+        update={
+            "user_message": TURKISH_REQUEST,
+            "creator_request": TURKISH_REQUEST,
+            "reply_language": "tr",
+        }
+    )
+
+    prompt = _flat(MainCreatorAgent(None).render_prompt(agent_input))
+
+    assert SECTION_MARK in prompt and "konuştuğum yerde tam ekran göster" in prompt
+    assert TURKISH_REQUEST in prompt
+
+
+async def test_a_turkish_refusal_about_the_audio_is_rerun(monkeypatch):
+    _gates(monkeypatch)
+    manifest = _manifest()
+    rerun = AsyncMock(return_value=_strategy_output(manifest))
+    monkeypatch.setattr(planner, "_call_main_creator", rerun)
+    refusal = MainCreatorOutput.model_validate(
+        {
+            "action": {
+                "kind": "ask_user",
+                "question": "Bu klipleri kendi sesleriyle araya koyamıyorum. Sessiz mi olsun?",
+                "reason_code": "feature_unavailable",
+                "options": ["Sessiz tam ekran", "Montaja geç"],
+            }
+        }
+    )
+
+    result = await _turn(monkeypatch, refusal, manifest, _brief())
+
+    assert rerun.await_count == 1
+    assert "Montaj" not in _said(result) and "Sessiz" not in _said(result)
+
+
+async def test_a_turkish_question_about_something_else_is_left_alone(monkeypatch):
+    _gates(monkeypatch)
+    manifest = _manifest()
+    rerun = AsyncMock()
+    monkeypatch.setattr(planner, "_call_main_creator", rerun)
+    question = MainCreatorOutput.model_validate(
+        {
+            "action": {
+                "kind": "ask_user",
+                "question": "Bu kadar çok klibi kullanamıyorum. Hangilerini çıkarayım?",
+                "reason_code": "footage_limited",
+                "options": ["Son ikisini", "İlk ikisini"],
+            }
+        }
+    )
+
+    await _turn(monkeypatch, question, manifest, _brief())
+
+    rerun.assert_not_awaited()
