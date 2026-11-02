@@ -406,7 +406,9 @@ def test_extra_speakers_and_the_ending_move_after_the_insert():
 
 
 def test_an_insert_at_the_edges_or_a_clip_already_playing_is_refused():
-    for at in (0.0, 30.0, 31.0):
+    with pytest.raises(ValueError):  # the model itself refuses a point at the very start
+        _insert(at=0.0, dur=3.0)
+    for at in (30.0, 31.0):
         with pytest.raises(UnsupportedPhonePlan):
             _compile((_insert(at=at, dur=3.0),))
     with pytest.raises(UnsupportedPhonePlan):

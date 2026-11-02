@@ -53,6 +53,16 @@ speech on the same main track, back to back after the first speaker, each
 with its own audio, at full length. The first speaker alone carries any
 cleanup cut (``cut_plan``/``keep_segments``) and the KRI-547 face fill. With
 ``additional_speakers=()`` the output is byte-identical.
+
+Insert clips (parent KRI-1151): ``inserts`` pauses the first speaker's take for another clip of the
+creator's own footage. The insert is one more main-track `TimelineClip` (``insert-<n>``) between
+two pieces of the take, with its own audio at volume 1 (muted, volume 0, when the creator asked
+for it silent); the take resumes at the source second it stopped at, and everything after the
+insert -- the rest of the take, the extra speakers, the ending -- starts later by its length.
+The device already plays a different clip between two clips of the same source, so no new
+primitive is needed. Captions, text, cards, effects and cutaways are expressed on the FINAL
+timeline like everywhere else: `app.pipeline.phone_talking_inserts.warp_for_inserts` moves a
+take-timeline set onto it. With ``inserts=()`` the output is byte-identical.
 """
 
 from __future__ import annotations
@@ -205,6 +215,25 @@ class PhoneCutaway(BaseModel):
         return self
 
 
+# Parent KRI-1151: the most clips a Talking edit pauses its take for.
+MAX_INSERT_CLIPS = 3
+INSERT_CLIP_PREFIX = "insert-"
+_INSERT_EPS_S = 1e-6
+
+
+class PhoneInsert(BaseModel):
+    """One clip that plays while the first speaker's take is paused (parent KRI-1151):
+    ``binding``'s whole clip, from its start, at ``at_take_s`` on the TAKE timeline -- the
+    first speaker's (possibly cut) seconds, with no insert counted. Its own audio plays at
+    full volume unless ``keep_audio`` is False."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+    binding: PhoneSourceBinding
+    at_take_s: float = Field(gt=0, le=1800)
+    keep_audio: bool = True
+
+
 def compile_phone_subtitled_plan(
     bindings: tuple[PhoneSourceBinding, ...],
     *,
@@ -226,6 +255,7 @@ def compile_phone_subtitled_plan(
     clip_tilts: Mapping[str, Any] | None = None,
     strategy: Mapping[str, Any] | None = None,
     requirements: Sequence[Any] = (),
+    inserts: tuple[PhoneInsert, ...] = (),
 ) -> EditRecipeV2:
     """Compile the subtitled edit format's phone recipe.
 
@@ -458,25 +488,95 @@ def compile_phone_subtitled_plan(
     manifest: dict[str, object] = {asset.id: asset}
     main_clips: list[TimelineClip] = []
     cursor = 0.0
+    ordered_inserts = _validated_inserts(
+        inserts,
+        speaker_media_id=binding.media_id,
+        extra_media_ids=[extra.media_id for extra in additional_speakers],
+        take_s=sum(max(0.0, end - start) for start, end in resolved_keep_segments),
+    )
+    insert_queue = list(ordered_inserts)
+    take_cursor = 0.0
+    id_offset = 0
+
+    def _emit_insert(insert: PhoneInsert) -> None:
+        nonlocal cursor
+        insert_original = insert.binding.original
+        insert_asset = insert.binding.render_asset()
+        manifest[insert_asset.id] = insert_asset
+        assets[insert_asset.id] = MediaAsset(
+            id=insert_asset.id,
+            relative_path=insert_asset.id,
+            fingerprint=AssetFingerprint(
+                hex=insert_original.sha256, byte_count=insert_original.byte_count
+            ),
+            duration=insert_original.duration_s,
+            natural_size=MediaSize(width=insert_original.width, height=insert_original.height),
+            orientation_degrees=insert_original.orientation_degrees,
+            is_proxy_available=True,
+        )
+        insert_width, insert_height = _display_dims(insert_original)
+        insert_duration = float(insert_original.duration_s)
+        main_clips.append(
+            TimelineClip(
+                id=f"{INSERT_CLIP_PREFIX}{len(ordered_inserts) - len(insert_queue) - 1}",
+                source_asset_id=insert_asset.id,
+                source_start=0.0,
+                source_duration=insert_duration,
+                timeline_start=cursor,
+                rate=1.0,
+                transform=fit_transform(insert_width, insert_height, canvas, landscape_fit),
+                volume=1 if insert.keep_audio else 0,
+            )
+        )
+        cursor += insert_duration
+
     for index, (seg_start, seg_end) in enumerate(resolved_keep_segments):
         seg_duration = seg_end - seg_start
         if seg_duration <= 0:
             continue
-        tilt_patch, backdrop = clip_tilt_fields({"tilt": (clip_tilts or {}).get(f"clip-{index}")})
-        main_clips.append(
-            TimelineClip(
-                id=f"clip-{index}",
-                source_asset_id=asset.id,
-                source_start=seg_start,
-                source_duration=seg_duration,
-                timeline_start=cursor,
-                rate=1.0,
-                transform=speaker_transform.model_copy(update=tilt_patch),
-                backdrop=backdrop,
+        piece_start = seg_start
+        remaining = seg_duration
+        while True:
+            # An insert inside this segment splits it: the take plays up to the insert point,
+            # the insert plays, and the rest of the segment resumes from the second it stopped.
+            if insert_queue and insert_queue[0].at_take_s < take_cursor + remaining - _INSERT_EPS_S:
+                before = insert_queue[0].at_take_s - take_cursor
+                if before > _INSERT_EPS_S:
+                    main_clips.append(
+                        _speaker_piece(
+                            f"clip-{index + id_offset}",
+                            asset.id,
+                            piece_start,
+                            before,
+                            cursor,
+                            speaker_transform,
+                            clip_tilts,
+                        )
+                    )
+                    cursor += before
+                    take_cursor += before
+                    piece_start += before
+                    remaining -= before
+                    id_offset += 1
+                _emit_insert(insert_queue.pop(0))
+                continue
+            main_clips.append(
+                _speaker_piece(
+                    f"clip-{index + id_offset}",
+                    asset.id,
+                    piece_start,
+                    remaining,
+                    cursor,
+                    speaker_transform,
+                    clip_tilts,
+                )
             )
-        )
-        cursor += seg_duration
-    seen_speakers = {binding.media_id}
+            cursor += remaining
+            take_cursor += remaining
+            break
+        if insert_queue and abs(insert_queue[0].at_take_s - take_cursor) <= _INSERT_EPS_S:
+            _emit_insert(insert_queue.pop(0))
+    seen_speakers = {binding.media_id} | {i.binding.media_id for i in ordered_inserts}
     for extra_index, extra in enumerate(additional_speakers):
         extra_original = extra.original
         if extra.media_id in seen_speakers:
@@ -559,6 +659,9 @@ def compile_phone_subtitled_plan(
     )
     if any(layer.effect not in {"static", "none"} for layer in layers):
         required_capabilities |= {"animatedText"}
+    if any(not insert.keep_audio for insert in ordered_inserts):
+        # A silent insert is a main-track clip at volume 0; the device derives `audioMix` from it.
+        required_capabilities |= {"audioMix"}
 
     # `timeline_end` grows to include the ending clip, if any, BEFORE the sfx
     # lane is compiled -- an sfx clip is allowed to play under the ending
@@ -742,6 +845,60 @@ def compile_phone_subtitled_plan(
         # keeps its exact bytes and digest.
         speaker_background=speaker_background,
     )
+
+
+def _speaker_piece(
+    clip_id: str,
+    asset_id: str,
+    source_start: float,
+    duration: float,
+    timeline_start: float,
+    transform: MediaTransform,
+    clip_tilts: Mapping[str, Any] | None,
+) -> TimelineClip:
+    tilt_patch, backdrop = clip_tilt_fields({"tilt": (clip_tilts or {}).get(clip_id)})
+    return TimelineClip(
+        id=clip_id,
+        source_asset_id=asset_id,
+        source_start=source_start,
+        source_duration=duration,
+        timeline_start=timeline_start,
+        rate=1.0,
+        transform=transform.model_copy(update=tilt_patch),
+        backdrop=backdrop,
+    )
+
+
+def _validated_inserts(
+    inserts: tuple[PhoneInsert, ...],
+    *,
+    speaker_media_id: str,
+    extra_media_ids: Sequence[str],
+    take_s: float,
+) -> tuple[PhoneInsert, ...]:
+    """``inserts`` in take order, or `UnsupportedPhonePlan` naming what cannot be played."""
+    if not inserts:
+        return ()
+    if len(inserts) > MAX_INSERT_CLIPS:
+        raise UnsupportedPhonePlan(f"a Talking edit can pause its take for at most {MAX_INSERT_CLIPS} clips")
+    ordered = tuple(sorted(inserts, key=lambda i: i.at_take_s))
+    seen = {speaker_media_id, *extra_media_ids}
+    previous = 0.0
+    for insert in ordered:
+        original = insert.binding.original
+        if insert.binding.media_id in seen:
+            raise UnsupportedPhonePlan("a Talking clip cannot play twice")
+        seen.add(insert.binding.media_id)
+        if original.width is None or original.height is None:
+            raise UnsupportedPhonePlan("an inserted Talking clip must be a video")
+        if original.duration_s <= 0 or original.duration_s > _MAX_CLIP_DURATION_S:
+            raise UnsupportedPhonePlan("an inserted Talking clip must be at most 5 minutes")
+        if insert.at_take_s <= _INSERT_EPS_S or insert.at_take_s >= take_s - _INSERT_EPS_S:
+            raise UnsupportedPhonePlan("an insert must fall inside the take, not at its edges")
+        if insert.at_take_s - previous <= _INSERT_EPS_S:
+            raise UnsupportedPhonePlan("two inserts cannot pause the take at the same moment")
+        previous = insert.at_take_s
+    return ordered
 
 
 def _compile_background(
@@ -1425,6 +1582,8 @@ def additional_speakers_from_recipe(
     by_media_id = {b.media_id: b for b in bindings}
     ordered: list[PhoneSourceBinding] = []
     for clip in sorted(main_track.clips, key=lambda c: c.timeline_start):
+        if clip.id.startswith(INSERT_CLIP_PREFIX):
+            continue  # an inserted clip pauses the take; it is not a speaker
         speaker = by_media_id.get(clip.source_asset_id)
         if speaker is not None and speaker not in ordered:
             ordered.append(speaker)
@@ -1445,6 +1604,8 @@ def speaker_binding_from_recipe(
     main_track = next((t for t in recipe.tracks if t.id == "subtitled"), None)
     by_media_id = {b.media_id: b for b in bindings}
     for clip in sorted(main_track.clips if main_track else [], key=lambda c: c.timeline_start):
+        if clip.id.startswith(INSERT_CLIP_PREFIX):
+            continue
         speaker = by_media_id.get(clip.source_asset_id)
         if speaker is not None:
             return speaker
