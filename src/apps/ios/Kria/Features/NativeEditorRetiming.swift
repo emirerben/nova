@@ -128,6 +128,10 @@ extension NativeEditorSession {
 
     var canTiltClips: Bool { document.capabilities["clips.tilt"]?.editable == true }
 
+    /// KRI-1169: the Zoom slider. Offered only where the server lists `clips.tilt_zoom` (builds below protocol 32 never
+    /// get it, and the server refuses a zoom while it is closed); a stored zoom stays editable back to 1 either way.
+    var canTiltZoom: Bool { canTiltClips && document.capabilities["clips.tilt_zoom"]?.editable == true }
+
     /// KRI-1139: a pool photo or video behind a tilted clip. Offered only where the server lists
     /// `clips.tilt_backdrop_media` (never inferred from `clips.tilt`) and the edit has a Visuals pool to read.
     var canTiltBackdropMedia: Bool {
@@ -177,7 +181,8 @@ extension NativeEditorSession {
         guard let section = footageSection(selection), section == .timeline,
               canEditFootage(section, keys: ["footage.tilt", "tilt"], operation: "tilt", resetting: straightening),
               straightening || tiltBlockedReason(for: selection) == nil,
-              !Self.needsMediaBackdropGate(tilt) || canTiltBackdropMedia else { return }
+              !Self.needsMediaBackdropGate(tilt) || canTiltBackdropMedia,
+              tiltZoomAllowed(tilt, for: selection) else { return }
         let clearValue = footageClearValue(selection, key: "tilt")
         let value = tilt?.rowValue
         transactDocument(section: section) { document in
@@ -187,6 +192,15 @@ extension NativeEditorSession {
                 else { raw.removeValue(forKey: "tilt") }
             }
         }
+    }
+
+    /// A zoom other than 1 needs the server's `clips.tilt_zoom`; the zoom a clip already stores always passes, so a
+    /// closed gate never blocks keeping it or changing the angle around it.
+    private func tiltZoomAllowed(_ tilt: ClipTilt?, for selection: EditorSelection) -> Bool {
+        let zoom: Double = tilt?.zoom ?? 1
+        if zoom == 1 || canTiltZoom { return true }
+        let stored: Double = clipTilt(for: selection)?.zoom ?? 1
+        return zoom == stored
     }
 
     private static func needsMediaBackdropGate(_ tilt: ClipTilt?) -> Bool {

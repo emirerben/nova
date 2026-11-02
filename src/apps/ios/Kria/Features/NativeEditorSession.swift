@@ -1489,6 +1489,10 @@ struct NativeEditorTemporaryVideo: Sendable {
             if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-tilt-media") {
                 document.capabilities["clips.tilt_backdrop_media"] = EditorCapability(editable: true)
             }
+            // KRI-1169: the Zoom slider is its own capability, opened only by `-ui-testing-editor-tilt-zoom`.
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-tilt-zoom") {
+                document.capabilities["clips.tilt_zoom"] = EditorCapability(editable: true)
+            }
             cleanDocument = document
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-talking-range") {

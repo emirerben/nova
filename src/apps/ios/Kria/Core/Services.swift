@@ -1247,7 +1247,10 @@ enum KriaClientProtocolContract {
     /// `clipBackdropMedia` capability, and draws it. The server offers it only to this protocol (and only with
     /// `MEDIA_TILT_ENABLED` + `clipBackdropMedia` verified) and answers 426 `client_update_required`
     /// (`clip_backdrop_media`) to an older build polling a recipe that already carries one.
-    static let version = 31
+    /// 32 (KRI-1169): reads and keeps a clip tilt row's `zoom` (`0.5...3`, carried in the recipe's `transform.scale`).
+    /// The server offers `clips.tilt_zoom` only to this protocol and answers 426 `client_update_required`
+    /// (`tilt_zoom`) to an older build whose Save would replace a timeline holding a stored zoom.
+    static let version = 32
     static let header = "X-Kria-Client-Protocol"
 }
 
