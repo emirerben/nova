@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.104.0] - 2026-11-02
+
+### Changed
+- feat(ios): the editor's tool rail scrolls and hints at more tools (#2052) <!-- release-pr: 2052 -->
+
 ## [0.83.103.0] - 2026-11-02
 
 ### Changed
