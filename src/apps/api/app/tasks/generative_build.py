@@ -8705,6 +8705,9 @@ def _run_phone_subtitled_job(
             # to play while his take is paused. All empty with the flag off or no such ask, so
             # the variant carries no receipt and the recipe is byte-identical.
             insert_asks = _strategy_insert_asks(all_candidates) if insert_clips_enabled else []
+            # What he SAID on the take timeline (never the caption words: a translation or a
+            # word left out of the captions would hide a phrase or invent a pause).
+            insert_spoken_words: list[Any] = []
             insert_in_use: set[str] = set()
             insert_drops: list[dict[str, Any]] = []
             inserts: tuple = ()
@@ -9292,6 +9295,8 @@ def _run_phone_subtitled_job(
                 if spoken_text_asks:
                     # KRI-707: the SPOKEN words (never a requested caption language), cut.
                     timeline_words = remap_words(words, cut_plan)
+                if insert_asks:
+                    insert_spoken_words = remap_words(words, cut_plan)
             else:
                 # KRI-839: `transcript` is the SPOKEN pass -- always auto-language, even
                 # when the creator asked for captions in another language. Reaction
@@ -9406,6 +9411,8 @@ def _run_phone_subtitled_job(
                 cues = build_plain_cues(caption_words, attach_words=True, budget=PHONE_CUE_BUDGET)
                 if spoken_text_asks:
                     timeline_words = list(transcript.words)
+                if insert_asks:
+                    insert_spoken_words = list(transcript.words)
                 if mention_ask is not None:
                     mention_words = list(transcript.words)
                 # KRI-719: each extra speaker's own words, shifted to where it
@@ -9550,9 +9557,10 @@ def _run_phone_subtitled_job(
                 placements = place_inserts(
                     insert_asks,
                     bindings={row.media_id: row for row in bindings},
-                    # His words on the take timeline: the measured ones when the branch kept
-                    # them, else the per-word timings every caption cue carries.
-                    words=timeline_words
+                    # His spoken words on the take timeline; the caption cues' own words only
+                    # when this branch measured none.
+                    words=insert_spoken_words
+                    or timeline_words
                     or [w for cue in cues or [] for w in cue.get("words") or []],
                     cues=cues or [],
                     take_s=sum(max(0.0, end - start) for start, end in speaker_keep_segments),
