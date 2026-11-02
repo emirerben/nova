@@ -456,3 +456,142 @@ def test_a_sound_cutaway_never_mutes_the_inserted_clip():
     assert recipe.audio.mute_windows
     clip_ids = {cid for w in recipe.audio.mute_windows for cid in w.clip_ids}
     assert "insert-0" not in clip_ids
+
+
+# --- a spoken caption never comes back after the insert (review of #2058, MAJOR 2) ----------
+
+
+def _cue_words(cues):
+    return [w for cue in cues for w in cue.get("words") or []]
+
+
+def _assert_each_caption_word_once_and_clear_of_inserts(spoken, warped, inserts):
+    got = [w["text"] for w in _cue_words(warped)]
+    assert sorted(got) == sorted(w["text"] for w in spoken), "a caption word was repeated or lost"
+    windows = []
+    shift = 0.0
+    for i in sorted(inserts, key=lambda i: i.at_take_s):
+        length = i.binding.original.duration_s
+        windows.append((i.at_take_s + shift, i.at_take_s + shift + length))
+        shift += length
+    for w in _cue_words(warped):
+        for lo, hi in windows:
+            assert w["end_s"] <= lo + 1e-6 or w["start_s"] >= hi - 1e-6, (w, lo, hi)
+    for cue in warped:
+        for lo, hi in windows:
+            assert cue["end_s"] <= lo + 1e-6 or cue["start_s"] >= hi - 1e-6, (cue, lo, hi)
+
+
+def test_a_caption_spoken_before_the_insert_does_not_come_back_after_it():
+    from app.pipeline.captions import (
+        PHONE_CUE_BUDGET,
+        build_plain_cues,
+        resplit_cues_into_sentences,
+    )
+    from app.pipeline.transcribe import Word
+
+    spec = [
+        ("Bugün", 3.0, 3.3),
+        ("size", 3.4, 3.6),
+        ("kongrede", 3.7, 4.2),
+        ("olanları", 4.3, 4.9),
+        ("anlatacağım,", 5.4, 5.9),
+        ("sonra", 6.0, 6.3),
+        ("kulübün", 6.4, 6.8),
+        ("kararını", 6.9, 7.4),
+        ("açıklayacağım", 7.5, 8.2),
+        ("ve", 8.3, 8.4),
+        ("bitireceğim.", 8.5, 9.2),
+        ("Son", 12.0, 12.3),
+        ("söz.", 12.4, 12.8),
+    ]
+    words = [Word(text=t, start_s=s, end_s=e, confidence=1.0) for t, s, e in spec]
+    cues = resplit_cues_into_sentences(
+        build_plain_cues(words, attach_words=True, budget=PHONE_CUE_BUDGET)
+    )
+    flat = _cue_words(cues)
+    (placed,) = place_inserts(
+        [_ask(phrase="kongrede olanları")],
+        bindings={"talk": _binding("talk", duration_s=6.0)},
+        words=flat,
+        cues=cues,
+        take_s=20.0,
+    )
+    assert placed.insert is not None
+    warped = warp_for_inserts((placed.insert,), cues=cues).cues
+    _assert_each_caption_word_once_and_clear_of_inserts(flat, warped, (placed.insert,))
+    for style in ("sentence", "word"):
+        compile_phone_subtitled_plan(
+            (_binding("take", duration_s=20.0),),
+            caption_cues=warped,
+            inserts=(placed.insert,),
+            caption_style=style,
+        )
+
+
+def test_a_cue_with_all_its_words_on_one_side_is_never_duplicated_across_the_point():
+    cue = {
+        "text": "bir iki üç",
+        "start_s": 6.0,
+        "end_s": 9.0,  # held to the next block: the pause after "üç" is inside it
+        "words": _words([("bir", 6.0, 6.4), ("iki", 6.5, 6.9), ("üç", 7.0, 7.4)]),
+    }
+    out = warp_for_inserts((_insert(at=7.4, dur=5.0),), cues=[cue]).cues
+    assert [w["text"] for w in _cue_words(out)] == ["bir", "iki", "üç"]
+    assert all(c["end_s"] <= 7.4 + 1e-6 for c in out)
+    # All of its words after the point: it plays after the insert, once.
+    late = {**cue, "start_s": 6.0, "words": _words([("a", 7.45, 7.9), ("b", 8.0, 8.4)])}
+    out = warp_for_inserts((_insert(at=7.5, dur=5.0),), cues=[late]).cues
+    assert [w["text"] for w in _cue_words(out)] == ["a", "b"]
+    assert all(c["start_s"] >= 12.5 - 1e-6 for c in out)
+
+
+def test_random_cue_and_insert_layouts_show_each_caption_word_exactly_once():
+    import random
+
+    rng = random.Random(20261102)
+    for trial in range(300):
+        t, spoken = 1.0, []
+        for k in range(rng.randint(6, 30)):
+            t += rng.choice([0.05, 0.1, 0.1, 0.3, 0.6, 1.4])
+            dur = rng.uniform(0.15, 0.7)
+            spoken.append({"text": f"w{k}", "start_s": round(t, 3), "end_s": round(t + dur, 3)})
+            t += dur
+        cues, i = [], 0
+        while i < len(spoken):
+            n = rng.randint(1, 5)
+            cues.append(spoken[i : i + n])
+            i += n
+        rows = []
+        for k, group in enumerate(cues):
+            end = cues[k + 1][0]["start_s"] if k + 1 < len(cues) else group[-1]["end_s"]
+            rows.append(
+                {
+                    "text": " ".join(w["text"] for w in group),
+                    "start_s": group[0]["start_s"],
+                    "end_s": end,
+                    "words": [dict(w) for w in group],
+                }
+            )
+        take_s = t + 3.0
+        points = sorted(
+            {round(rng.uniform(2.5, take_s - 1.0), 3) for _ in range(rng.randint(1, 3))}
+        )
+        picked = [p for k, p in enumerate(points) if all(abs(p - q) >= 2.0 for q in points[:k])]
+        inserts = tuple(
+            PhoneInsert(binding=_binding(f"i{k}", duration_s=rng.choice([3.0, 6.0])), at_take_s=p)
+            for k, p in enumerate(picked)
+        )
+        # Through the real placement too: its snaps land on pauses and caption ends.
+        asks = [_ask(f"i{k}", at_s=p) for k, p in enumerate(picked)]
+        placed = place_inserts(
+            asks,
+            bindings={f"i{k}": _binding(f"i{k}", duration_s=6.0) for k in range(len(picked))},
+            words=spoken,
+            cues=rows,
+            take_s=take_s,
+        )
+        snapped = tuple(p.insert for p in placed if p.insert is not None)
+        for chosen in (inserts, snapped):
+            warped = warp_for_inserts(chosen, cues=rows).cues
+            _assert_each_caption_word_once_and_clear_of_inserts(spoken, warped, chosen)
