@@ -24,6 +24,10 @@ class BriefExtractionInput(BaseModel):
     # the deterministic router considers legacy wording.  Direct/offline callers
     # retain the old brief-only contract by leaving this false.
     require_request_scope: bool = False
+    # Parent KRI-1151: the item can pause the creator's take for one of its clips right now
+    # (`insert_clip_candidates`), so the prompt may record that ask. Closed (default): the prompt
+    # is byte-identical to before inserts existed.
+    insert_clips_open: bool = False
 
 
 class BriefExtractionOutput(BaseModel):

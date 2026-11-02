@@ -1139,6 +1139,18 @@
       ]
     },
     {
+      "id": "kri-1151-talking-insert-clip",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_phone_talking_inserts.py tests/tasks/test_talking_insert_clip.py tests/routes/test_phone_talking_insert_commit.py tests/kria/test_insert_clip_planner.py",
+      "paths": [
+        "src/apps/api/app/pipeline/phone_talking_inserts.py",
+        "src/apps/api/tests/kria/test_insert_clip_planner.py",
+        "src/apps/api/tests/pipeline/test_phone_talking_inserts.py",
+        "src/apps/api/tests/routes/test_phone_talking_insert_commit.py",
+        "src/apps/api/tests/tasks/test_talking_insert_clip.py"
+      ]
+    },
+    {
       "id": "kri-841-talking-ending-clip",
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri841_talking_ending_clip.py tests/kria/test_kri841_ending_clip_ask.py tests/pipeline/test_phone_subtitled_plan.py tests/services/test_phone_subtitled_editor.py tests/routes/test_admin_plan_item_phone_lanes.py",
@@ -2219,13 +2231,15 @@
     {
       "id": "kri-1151-talking-cutaway-sound",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_phone_talking_cutaway_sound.py tests/kria/test_kri1151_talking_cutaway_sound_checks.py tests/kria/test_planner_knows_talking_cutaways.py tests/tasks/test_kri1151_talking_cutaway_sound_dispatch.py tests/pipeline/test_phone_subtitled_plan.py",
+      "api_tests": "tests/pipeline/test_phone_talking_cutaway_sound.py tests/kria/test_kri1151_talking_cutaway_sound_checks.py tests/kria/test_planner_knows_talking_cutaways.py tests/kria/test_insert_and_cutaway_lanes.py tests/tasks/test_kri1151_talking_cutaway_sound_dispatch.py tests/pipeline/test_phone_subtitled_plan.py",
       "paths": [
         "src/apps/api/app/kria/ask_refusals.py",
         "src/apps/api/app/pipeline/phone_talking_cutaway_sound.py",
         "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1151_talking_cutaways_show_when_mentioned.json",
         "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1151_talking_cutaways_tr.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1151_talking_cutaways_insert_open_brief.json",
         "src/apps/api/tests/fixtures/kri1151_thread_6fa36e51.json",
+        "src/apps/api/tests/kria/test_insert_and_cutaway_lanes.py",
         "src/apps/api/tests/kria/test_planner_knows_talking_cutaways.py",
         "src/apps/api/tests/pipeline/test_phone_talking_cutaway_sound.py",
         "src/apps/api/tests/kria/test_kri1151_talking_cutaway_sound_checks.py",
@@ -2925,6 +2939,52 @@
         "tests/fixtures/card-tilt-parity/v1.json",
         "src/apps/ios/Tests/KriaTests/NativeOverlayCardTiltTests.swift",
         "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/PlacedCardTiltTests.swift"
+      ]
+    },
+    {
+      "id": "kria-continued-turn-paid-calls",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_continuation_paid_call_postgres.py tests/kria/test_generated_image_understanding.py",
+      "paths": [
+        "src/apps/api/app/kria/paid_call_scope.py",
+        "src/apps/api/app/kria/voiceover_script.py",
+        "src/apps/api/app/services/clip_understanding.py",
+        "src/apps/api/tests/kria/test_continuation_paid_call_postgres.py",
+        "src/apps/api/tests/kria/test_generated_image_understanding.py"
+      ]
+    },
+    {
+      "id": "kri-1162-speaker-background-windows",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_speaker_background_windows.py tests/routes/test_speaker_background_windows_editor.py tests/kria/test_brief_checks_speaker_background.py tests/kria/test_speaker_background_chat.py tests/tasks/test_speaker_background_strategy_worker.py tests/routes/test_speaker_background_chat_ops.py tests/kria/test_editor_capability_parity.py tests/evals/test_edit_copilot_evals.py",
+      "xctests": [
+        "KriaTests/SpeakerBackgroundEditorTests/testTheLaneIsNotAnUnsupportedLaneAndAnUnreadableOneIs",
+        "KriaTests/SpeakerBackgroundEditorTests/testTheLaneDecodesAndASnapshotWithoutItIsUntouched",
+        "KriaTests/SpeakerBackgroundEditorTests/testEditingTheLaneWritesTheObjectAndClearingWritesNull",
+        "KriaTests/SpeakerBackgroundEditorTests/testCommitRequestOmitsSendsAndNullsTheLane",
+        "KriaTests/SpeakerBackgroundEditorTests/testSaveCarriesWindowsAndTheSpeakerFrameAndOmitsThemOnceTheyAreGone",
+        "KriaTests/SpeakerBackgroundEditorTests/testWindowsAndTheSpeakerFrameRoundTripAndLocalIDsNeverReachTheWire",
+        "KriaTests/SpeakerBackgroundEditorTests/testALaneWithoutWindowsOrFrameEncodesByteIdenticallyToToday",
+        "KriaTests/SpeakerBackgroundEditorTests/testWindowsCannotOverlapOrShrinkBelowHalfASecond",
+        "KriaTests/SpeakerBackgroundEditorTests/testTimelineWithoutWindowsHasNoBackgroundLane",
+        "KriaTests/SpeakerBackgroundEditorTests/testTheCompilerRegistersTheFillAndEveryWindowAssetOnce",
+        "KriaTests/SpeakerBackgroundEditorTests/testSpeakerFramePresetsAreDetectedWithinAThousandth",
+        "KriaTests/SpeakerBackgroundEditorTests/testSpeakerFramePresetsAreSetClearedAndACustomFrameIsKeptUntilAPresetIsPicked",
+        "KriaTests/SpeakerBackgroundEditorTests/testAddingAWindowAppendsItAfterTheLastOneAndClipsItToTheVideo",
+        "KriaUITests/BackgroundLaneUITests/testDraggingAWindowMovesTheInspectorAndTheSave",
+        "KriaUITests/BackgroundLaneUITests/testTheSequenceTilesAddAndRemoveWindowsAndTheSpeakerControlSetsThePreset",
+        "KriaUITests/BackgroundLaneUITests/testAProjectWithoutWindowsKeepsItsLanesAndHidesTheWindowControls"
+      ],
+      "paths": [
+        "src/apps/api/app/services/phone_background_sequence.py",
+        "src/apps/api/prompts/edit_copilot_ops/speaker_background_windows.txt",
+        "src/apps/api/tests/kria/test_speaker_background_windows.py",
+        "src/apps/api/tests/routes/test_speaker_background_windows_editor.py",
+        "src/apps/api/tests/kria/test_brief_checks_speaker_background.py",
+        "tests/fixtures/speaker-background-parity/v2.json",
+        "docs/reviews/speaker-background-windows-failure-modes.md",
+        "src/apps/ios/Tests/KriaUITests/BackgroundLaneUITests.swift",
+        "src/apps/ios/Kria/Features/NativeBackgroundPanel.swift"
       ]
     }
   ]

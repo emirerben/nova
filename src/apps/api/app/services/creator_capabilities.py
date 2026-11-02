@@ -60,6 +60,11 @@ from app.agents._schemas.edit_format import (
     guided_edit_applicable,
     render_program_for_intent,
 )
+from app.agents._schemas.reaction_beats import (
+    DEFAULT_BACKGROUND_CADENCE_S,
+    MAX_INSERT_CLIPS,
+    BackgroundSequenceEntry,
+)
 from app.config import settings
 from app.schemas.creation_formats import SONG_SYNC_DEFAULT_BY_FORMAT
 from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS
@@ -78,6 +83,7 @@ from app.services.phone_rollout import (
     phone_subtitled_video_overlays_supported,
     phone_talking_cutaway_sound_supported,
     phone_talking_head_supported,
+    phone_talking_insert_clips_supported,
     phone_talking_mention_cutaways_supported,
     phone_talking_multi_clip_supported,
     phone_timed_cards_supported,
@@ -85,6 +91,7 @@ from app.services.phone_rollout import (
     phone_user_song_supported,
     phone_voiceover_reaction_beats_supported,
     speaker_background_supported,
+    speaker_background_windows_supported,
 )
 
 CAPABILITY_SET_ITEM_INTENT = "set_item_intent"
@@ -122,6 +129,10 @@ TIMED_CARDS_UNAVAILABLE_NOTICE = (
 # `capabilities` ONLY while the gate (`speaker_background_supported()`, the phone media lanes)
 # is open on a phone `subtitled` manifest, so every other manifest and hash stays byte-identical.
 CAPABILITY_SPEAKER_BACKGROUND = "speaker_background"
+# KRI-1162: several backgrounds in time + the speaker small in a corner. Present ONLY while
+# `speaker_background` is advertised AND `speaker_background_windows_supported()` holds, so a
+# manifest without it keeps its dict, both hashes and the creator prompt byte-identical.
+CAPABILITY_SPEAKER_BACKGROUND_WINDOWS = "speaker_background_windows"
 # The reason a background (the creator's pick in the camera, or the agent's
 # `background_media`) is not kept. The creator reads it before approving; the Turkish twins
 # live in `app.kria.strategy_policy._KNOWN_TR`.
@@ -138,6 +149,15 @@ SPEAKER_BACKGROUND_NOTICES: dict[str, str] = {
         "edit's photos and videos; kept your own background."
     ),
     "kind_off": ("Couldn't use that as the background: this iPhone can't draw it behind you yet."),
+    # KRI-1162: the changing backgrounds / the small speaker.
+    "windows_unavailable": (
+        "Couldn't change the backgrounds or put you small in a corner: your iPhone app can't "
+        "switch backgrounds yet. One background stays behind you for the whole video."
+    ),
+    "sequence_not_found": (
+        "Couldn't find some of the photos or videos you named for the changing background; "
+        "left them out."
+    ),
 }
 TALKING_CLIP_INTENTS_DROPPED_NOTICE = (
     "Talking edits caption what you say, so I didn't add separate labels or captions "
@@ -922,6 +942,8 @@ def resolve_creator_manifest(
         # hashes and the creator prompt exactly as they were before this lane existed.
         if settings.phone_subtitled_media_lanes_enabled and speaker_background_supported():
             capabilities[CAPABILITY_SPEAKER_BACKGROUND] = _available()
+            if speaker_background_windows_supported():
+                capabilities[CAPABILITY_SPEAKER_BACKGROUND_WINDOWS] = _available()
             background_pick = speaker_background_pick or None
     if has_voiceover and not runs_guided_voiceover:
         # KRI-598: runtime v2 downgraded every guided_voiceover_v1 strategy to the native
@@ -1549,6 +1571,147 @@ def _repair_creator_ending_clip(
     return strategy.model_copy(update=update), notices
 
 
+# Parent KRI-1151: why an `insert_clips` row (one of the creator's own clips played while his take
+# is paused) cannot be kept. The creator reads the notice before approving; the brief receipt
+# words the same code in `app.kria.brief_checks`.
+INSERT_CLIP_NOTICES: dict[str, str] = {
+    "not_talking": (
+        "Couldn't pause your talk for that clip: only a talking-to-camera edit on your iPhone "
+        "can do that."
+    ),
+    "insert_clips_off": (
+        "Couldn't pause your talk for that clip: playing a clip in the middle of your talk "
+        "isn't available yet."
+    ),
+    "not_found": "Couldn't find the clip you named to play in the middle of your talk.",
+    "not_video": "Couldn't play that in the middle of your talk: it's a photo, not a video clip.",
+    "visual_unsupported": (
+        "Couldn't play that in the middle of your talk: only one of your own clips can pause "
+        "the talk, not a video from Visuals yet."
+    ),
+    "only_clip": (
+        "Couldn't play that clip in the middle of your talk: it is the only clip in this edit."
+    ),
+    "not_selected": (
+        "Couldn't play that clip in the middle of your talk: you asked to leave it out of this "
+        "edit."
+    ),
+    "is_ending": (
+        "That clip is already the one the video ends on, so it can't also pause your talk."
+    ),
+    "duplicate_clip": "That clip was asked for twice; it plays once.",
+    "too_many": (
+        "Couldn't play that clip in the middle of your talk: a talk can pause for at most "
+        "three clips."
+    ),
+}
+
+
+def _insert_clip_resolution(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy, media_id: str
+) -> tuple[CreatorMediaRef | None, str | None]:
+    """(the clip an ``insert_clips`` row names, None) when the phone can pause the take for it,
+    else (None, why). Only one of the item's OWN footage clips, in a several-clip Talking edit."""
+
+    phone = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    if (
+        strategy.edit_format != "subtitled"
+        or phone is None
+        or not phone.available
+        or manifest.has_voiceover
+    ):
+        return None, "not_talking"
+    if not phone_talking_insert_clips_supported():
+        return None, "insert_clips_off"
+    videos = [item for item in manifest.media if item.kind == "video"]
+    media = _match_owned_media_ref(videos, media_id)
+    if media is None:
+        if resolve_creator_image_media_ref(manifest, media_id) is not None:
+            return None, "not_video"
+        return None, "not_found"
+    if media.media_id.startswith("asset-"):
+        return None, "visual_unsupported"
+    if sum(1 for item in videos if not item.media_id.startswith("asset-")) < 2:
+        return None, "only_clip"
+    if _creator_left_out(strategy, media.media_id):
+        return None, "not_selected"
+    ending = strategy.ending_clip
+    if ending is not None and _match_owned_media_ref(videos, ending.media_id) == media:
+        return None, "is_ending"
+    return media, None
+
+
+def insert_clips_problems(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+) -> list[str | None]:
+    """One entry per ``strategy.insert_clips`` row: the code the repair drops it by, else None."""
+
+    problems: list[str | None] = []
+    seen: set[str] = set()
+    for row in strategy.insert_clips or ():
+        media, problem = _insert_clip_resolution(manifest, strategy, row.media_id)
+        if media is not None and media.media_id in seen:
+            problem = "duplicate_clip"
+        if media is not None and problem is None and len(seen) >= MAX_INSERT_CLIPS:
+            problem = "too_many"
+        if media is not None and problem is None:
+            seen.add(media.media_id)
+        problems.append(problem)
+    return problems
+
+
+def insert_clip_candidates(manifest: ResolvedCreatorManifest) -> list[CreatorMediaRef]:
+    """The clips a phone Talking edit could pause the take for right now (empty = nothing to
+    teach or keep): the item's own footage clips, with the insert rollout open."""
+
+    phone = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    if manifest.edit_format != "subtitled" or manifest.has_voiceover:
+        return []
+    if phone is None or not phone.available or not phone_talking_insert_clips_supported():
+        return []
+    own = [
+        item
+        for item in manifest.media
+        if item.kind == "video" and not item.media_id.startswith("asset-")
+    ]
+    return own if len(own) >= 2 else []
+
+
+def _repair_creator_insert_clips(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+) -> tuple[CreativeStrategy, list[str]]:
+    """Parent KRI-1151: keep an ``insert_clips`` row only where the phone can pause the take for
+    it, honestly. Repair (never reject): a row the edit cannot render is dropped with a plain
+    notice so the brief receipt can say "Couldn't" before approval; a kept one carries the
+    manifest's canonical id, and its clip is kept in ``selected_media_ids`` (the worker binds
+    only the selected clips)."""
+
+    rows = strategy.insert_clips
+    if not rows:
+        return strategy, []
+    problems = insert_clips_problems(manifest, strategy)
+    kept = []
+    notices: list[str] = []
+    selected = list(strategy.selected_media_ids)
+    videos = [item for item in manifest.media if item.kind == "video"]
+    for row, problem in zip(rows, problems, strict=True):
+        if problem is not None:
+            notices.append(INSERT_CLIP_NOTICES[problem])
+            continue
+        media = _match_owned_media_ref(videos, row.media_id)
+        kept.append(row.model_copy(update={"media_id": media.media_id}))
+        if (
+            selected
+            and strategy.media_scope != "all"
+            and media.media_id.casefold() not in {m.casefold() for m in selected}
+        ):
+            selected.append(media.media_id)
+    update: dict[str, Any] = {"insert_clips": kept or None}
+    if selected != list(strategy.selected_media_ids):
+        update["selected_media_ids"] = selected
+    return strategy.model_copy(update=update), notices
+
+
 SPEAKER_BACKGROUND_STATE_KEY = "speaker_background"
 
 
@@ -1589,6 +1752,13 @@ def speaker_background_open(manifest: ResolvedCreatorManifest) -> bool:
     return capability is not None and capability.available
 
 
+def speaker_background_windows_open(manifest: ResolvedCreatorManifest) -> bool:
+    """True when the manifest also advertises timed backgrounds + the speaker frame (KRI-1162)."""
+
+    capability = manifest.capabilities.get(CAPABILITY_SPEAKER_BACKGROUND_WINDOWS)
+    return capability is not None and capability.available and speaker_background_open(manifest)
+
+
 def _speaker_background_media(
     manifest: ResolvedCreatorManifest, requested: str | None
 ) -> CreatorMediaRef | None:
@@ -1621,6 +1791,13 @@ def _repair_creator_speaker_background(
     THIS item's pool, a closed capability or a kind the phone cannot draw is dropped with a
     plain notice (S18, S19), never silently. A kept background is also taken out of every
     reaction beat and the closing shot: it is the backdrop, never also a pop-in.
+
+    KRI-1162: every ``sequence`` entry is held to the same pool check (canonical
+    ``asset-<id>`` spelling; others dropped with one notice, S35); a sequence that loses
+    every entry falls back to the fill alone; ``cadence_s``, ``sequence`` and a
+    ``speaker_frame`` other than ``full`` are kept only while the manifest advertises
+    ``speaker_background_windows`` and otherwise stripped with ONE notice, the fill kept (S37).
+    Every kept sequence entry is also taken out of the pop-ins like the fill (S43).
     """
 
     wanted = strategy.background_media
@@ -1647,17 +1824,66 @@ def _repair_creator_speaker_background(
     if media is not None and media.kind not in phone_drawable_visual_kinds():
         notices.append(SPEAKER_BACKGROUND_NOTICES["kind_off"])
         media = None
+    entries: list[BackgroundSequenceEntry] = []
+    cadence_s = DEFAULT_BACKGROUND_CADENCE_S
+    frame = "full"
+    asked_windows = wanted is not None and (
+        bool(wanted.sequence)
+        or wanted.speaker_frame != "full"
+        or wanted.cadence_s != DEFAULT_BACKGROUND_CADENCE_S
+    )
+    if asked_windows and wanted is not None:
+        if not speaker_background_windows_open(manifest):
+            notices.append(SPEAKER_BACKGROUND_NOTICES["windows_unavailable"])
+        else:
+            cadence_s = wanted.cadence_s
+            frame = wanted.speaker_frame
+            lost = False
+            for entry in wanted.sequence:
+                found = _speaker_background_media(manifest, entry.media_id)
+                if found is None or found.kind not in phone_drawable_visual_kinds():
+                    lost = True
+                    continue
+                entries.append(
+                    entry.model_copy(
+                        update={
+                            "media_id": found.media_id,
+                            "source_start_s": entry.source_start_s
+                            if found.kind == "video"
+                            else 0.0,
+                        }
+                    )
+                )
+            if lost:
+                notices.append(SPEAKER_BACKGROUND_NOTICES["sequence_not_found"])
+            if not entries:
+                cadence_s = DEFAULT_BACKGROUND_CADENCE_S
+    if media is None and entries:
+        # The model named no usable fill but a usable sequence: its first entry fills.
+        first = entries[0]
+        media = _speaker_background_media(manifest, first.media_id)
+        start = first.source_start_s
     if media is None:
         return strategy.model_copy(update={"background_media": None}), notices
     update: dict[str, Any] = {
         "background_media": BackgroundMedia(
-            media_id=media.media_id, source_start_s=start if media.kind == "video" else 0.0
+            media_id=media.media_id,
+            source_start_s=start if media.kind == "video" else 0.0,
+            sequence=tuple(entries),
+            cadence_s=cadence_s,
+            speaker_frame=frame,
         )
     }
+    backdrop_ids = {media.media_id, *(entry.media_id for entry in entries)}
+
+    def _is_backdrop(media_id: str | None) -> bool:
+        found = _speaker_background_media(manifest, media_id) if media_id else None
+        return found is not None and found.media_id in backdrop_ids
+
     popped = False
     beats = []
     for beat in strategy.reaction_beats or ():
-        if beat.visual_id is None or _speaker_background_media(manifest, beat.visual_id) != media:
+        if beat.visual_id is None or not _is_backdrop(beat.visual_id):
             beats.append(beat)
             continue
         popped = True
@@ -1667,13 +1893,10 @@ def _repair_creator_speaker_background(
         update["reaction_beats"] = beats or None
     closing = strategy.closing_media
     if closing is not None:
-        if _speaker_background_media(manifest, closing.visual_id) == media:
+        if _is_backdrop(closing.visual_id):
             update["closing_media"] = None
             popped = True
-        elif (
-            closing.badge_visual_id is not None
-            and _speaker_background_media(manifest, closing.badge_visual_id) == media
-        ):
+        elif closing.badge_visual_id is not None and _is_backdrop(closing.badge_visual_id):
             update["closing_media"] = closing.model_copy(update={"badge_visual_id": None})
             popped = True
     if popped:
@@ -1736,6 +1959,10 @@ def compile_strategy_to_plan(
     # the dispatched strategy is the repaired one.
     strategy, ending_notices = _repair_creator_ending_clip(manifest, strategy)
     shape_notices = [*shape_notices, *ending_notices]
+    # Parent KRI-1151: clips played while the take is paused; judged after the ending so a clip
+    # that is the ending is not also an insert.
+    strategy, insert_notices = _repair_creator_insert_clips(manifest, strategy)
+    shape_notices = [*shape_notices, *insert_notices]
     # KRI-1117: the photo / looping video behind the speaker (the creator's camera pick fills in
     # an agent that left it out); same entry so receipts judge exactly what the worker resolves.
     strategy, background_notices = _repair_creator_speaker_background(manifest, strategy)
@@ -2133,6 +2360,7 @@ build_creator_manifest = resolve_creator_manifest
 repair_creator_reaction_beats = _repair_creator_reaction_beats
 # ... and the ending clip (KRI-841), judged by the same checks.
 repair_creator_ending_clip = _repair_creator_ending_clip
+repair_creator_insert_clips = _repair_creator_insert_clips
 repair_creator_speaker_background = _repair_creator_speaker_background
 # ... and the exact-timed small cards, judged by the same checks.
 repair_creator_timed_cards = _repair_creator_timed_cards
@@ -2162,11 +2390,16 @@ __all__ = [
     "effective_render_program",
     "ending_clip_candidates",
     "ending_clip_problem",
+    "INSERT_CLIP_NOTICES",
+    "insert_clip_candidates",
+    "insert_clips_problems",
+    "repair_creator_insert_clips",
     "normalize_creator_strategy_media",
     "phone_talking_title_lane_open",
     "repair_creator_ending_clip",
     "repair_creator_speaker_background",
     "speaker_background_open",
+    "speaker_background_windows_open",
     "speaker_background_pick_from_state",
     "canonical_pool_media_id",
     "SPEAKER_BACKGROUND_STATE_KEY",

@@ -128,7 +128,7 @@ extension NativeEditorSession {
 
     var canTiltClips: Bool { document.capabilities["clips.tilt"]?.editable == true }
 
-    /// KRI-1169: the Zoom slider. Offered only where the server lists `clips.tilt_zoom` (builds below protocol 32 never
+    /// KRI-1169: the Zoom slider. Offered only where the server lists `clips.tilt_zoom` (builds below protocol 33 never
     /// get it, and the server refuses a zoom while it is closed); a stored zoom stays editable back to 1 either way.
     var canTiltZoom: Bool { canTiltClips && document.capabilities["clips.tilt_zoom"]?.editable == true }
 

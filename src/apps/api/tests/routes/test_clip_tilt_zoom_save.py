@@ -1,6 +1,6 @@
 """KRI-1169: the editor Save contract of a clip's tilt zoom.
 
-Capability `clips.tilt_zoom` (the tilt gate plus protocol 32), the Save of `tilt.zoom` into the
+Capability `clips.tilt_zoom` (the tilt gate plus protocol 33), the Save of `tilt.zoom` into the
 recipe's `transform.scale` and back, the 426 a build that cannot keep a stored zoom gets, and
 the 422 a zoom gets while its gate is closed.
 """
@@ -48,7 +48,7 @@ def _leaf(job, key="tilt_zoom"):
     return (gj._editor_capabilities(job, _variant(job)).get("clips") or {}).get(key)
 
 
-def test_the_zoom_capability_follows_the_tilt_gate_and_protocol_32(monkeypatch):
+def test_the_zoom_capability_follows_the_tilt_gate_and_protocol_33(monkeypatch):
     _enable(monkeypatch)
     job, _ = voiceover_job(archetype="voiceover")
     _open_tilt(monkeypatch, protocol=TILT_ZOOM_PROTOCOL)

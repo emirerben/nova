@@ -368,6 +368,16 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
             "Speaker backgrounds await native parity and device qualification",
             capability="speakerBackground",
         )
+    # KRI-1162: timed windows / a speaker frame need their own verified token (S33).
+    if (
+        recipe.speaker_background is not None
+        and recipe.speaker_background.uses_windows
+        and "speakerBackgroundWindows" not in set(settings.phone_render_verified_features)
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Timed speaker backgrounds await native parity and device qualification",
+            capability="speakerBackgroundWindows",
+        )
     # Text behind people: same explicit gate (`compile_text_overlay` strips the flag before
     # it gets here unless verified; this catches a caller that stamped it afterwards).
     if any(layer.behind_subject for layer in recipe.text_layers) and "behindSubject" not in set(
@@ -779,6 +789,64 @@ def speaker_background_unavailable_reason(*, require_client: bool | None = None)
     return None
 
 
+def speaker_background_windows_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode a background's ``windows`` / ``speaker_frame``?
+
+    At least ``speaker_background_windows_min_client_protocol`` (31) knows the keys; an
+    older build refuses the whole layer (strict decoder). Same ``require_client`` contract
+    as `speaker_background_client_supported` (KRI-1162).
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return (
+        protocol is not None and protocol >= settings.speaker_background_windows_min_client_protocol
+    )
+
+
+def speaker_background_windows_supported(*, require_client: bool | None = None) -> bool:
+    """May a phone recipe carry a background with ``windows`` / ``speaker_frame`` right now?
+
+    The base lane gate (`speaker_background_supported`) AND ``speakerBackgroundWindows`` in
+    ``phone_render_verified_features`` AND the app-build gate
+    (`speaker_background_windows_client_supported`). When False while the base gate holds, the
+    compile keeps the fill background and strips the windows and the frame (KRI-1162, S33).
+    """
+    return bool(
+        speaker_background_supported(require_client=require_client)
+        and "speakerBackgroundWindows" in set(settings.phone_render_verified_features)
+        and speaker_background_windows_client_supported(require_client=require_client)
+    )
+
+
+def speaker_background_windows_unavailable_reason(
+    *, require_client: bool | None = None
+) -> str | None:
+    """Why `speaker_background_windows_supported` is False, or None when open.
+
+    The base lane's reasons first (`disabled`, `token_not_verified`,
+    `client_protocol_below_min`, from `speaker_background_unavailable_reason`), then
+    ``windows_token_not_verified`` and ``client_protocol_below_min`` for the windows build gate.
+    Named for the job-debug trace (`speaker_background_windows_phone_fallback`) and the
+    editor's 422/426 answers.
+    """
+    base = speaker_background_unavailable_reason(require_client=require_client)
+    if base is not None:
+        return base
+    if "speakerBackgroundWindows" not in set(settings.phone_render_verified_features):
+        return "windows_token_not_verified"
+    if not speaker_background_windows_client_supported(require_client=require_client):
+        return "client_protocol_below_min"
+    return None
+
+
 def recipe_has_clip_tilt(recipe: Any) -> bool:
     """Does any clip of this recipe turn (`rotation_degrees != 0`) or carry a `backdrop`?"""
     return any(
@@ -869,7 +937,7 @@ def clip_tilt_supported(*, require_client: bool | None = None) -> bool:
 def clip_tilt_zoom_client_supported(*, require_client: bool | None = None) -> bool:
     """Does the requesting app build read and keep a tilt row's ``zoom`` (KRI-1169)?
 
-    At least ``media_tilt_zoom_min_client_protocol`` (32). ``require_client`` as in
+    At least ``media_tilt_zoom_min_client_protocol`` (33). ``require_client`` as in
     `clip_tilt_client_supported`.
     """
     from app.services.client_protocol import (  # noqa: PLC0415
@@ -888,7 +956,7 @@ def clip_tilt_zoom_client_supported(*, require_client: bool | None = None) -> bo
 def clip_tilt_zoom_supported(*, require_client: bool | None = None) -> bool:
     """Single source of truth for "may a tilted or untilted clip be zoomed right now".
 
-    The tilt gate (`clip_tilt_supported`) plus a build at protocol 32. No second flag and no
+    The tilt gate (`clip_tilt_supported`) plus a build at protocol 33. No second flag and no
     second verified token: zoom is ``transform.scale``, which every renderer already honours.
     """
     return bool(
@@ -1379,6 +1447,18 @@ def phone_talking_mention_cutaways_supported() -> bool:
     `phone_talking_multi_clip_supported()` already requires, and a cutaway's own sound has its
     own gate (`phone_talking_cutaway_sound_supported`)."""
     return bool(getattr(settings, "phone_talking_mention_cutaways_enabled", False))
+
+
+def phone_talking_insert_clips_supported() -> bool:
+    """May a multi-clip phone Talking edit pause the creator's take for an inserted clip right
+    now (parent KRI-1151)? The kill switch AND everything that edit already needs: the
+    multi-clip Talking shape (the clip is one of the item's own footage clips) and the audio
+    mix the clip's own sound plays through. Recipe-only, so nothing else is gated."""
+    return bool(
+        getattr(settings, "phone_talking_insert_clips_enabled", False)
+        and phone_talking_multi_clip_supported()
+        and "audioMix" in set(settings.phone_render_verified_features)
+    )
 
 
 def phone_timed_video_cards_supported() -> bool:

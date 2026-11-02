@@ -1247,10 +1247,15 @@ enum KriaClientProtocolContract {
     /// `clipBackdropMedia` capability, and draws it. The server offers it only to this protocol (and only with
     /// `MEDIA_TILT_ENABLED` + `clipBackdropMedia` verified) and answers 426 `client_update_required`
     /// (`clip_backdrop_media`) to an older build polling a recipe that already carries one.
-    /// 32 (KRI-1169): reads and keeps a clip tilt row's `zoom` (`0.5...3`, carried in the recipe's `transform.scale`).
+    /// 32 (KRI-1162): decodes a recipe's `speaker_background.windows` / `speaker_frame` and the
+    /// `speakerBackgroundWindows` capability, and edits them (Background tool + timeline lane). 29 is unused,
+    /// 30 is the card-tilt build (KRI-1141) and 31 the media-backdrop build (KRI-1139). The server offers timed backgrounds only to this protocol (and only with
+    /// `speakerBackgroundWindows` verified) and answers 426 `client_update_required` (`speaker_background_windows`)
+    /// to an older build polling or saving a recipe that already carries them.
+    /// 33 (KRI-1169): reads and keeps a clip tilt row's `zoom` (`0.5...3`, carried in the recipe's `transform.scale`).
     /// The server offers `clips.tilt_zoom` only to this protocol and answers 426 `client_update_required`
     /// (`tilt_zoom`) to an older build whose Save would replace a timeline holding a stored zoom.
-    static let version = 32
+    static let version = 33
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1889,6 +1894,11 @@ struct KriaAPI: KriaAPIClient {
                 ])
                 throw saveError
             }
+            // KRI-1162: a Save the server holds back for an older build (`client_update_required`, e.g. for
+            // `speaker_background_windows`) reads as a plain sentence, not as a failure with a code.
+            if http.statusCode == 426, path.hasSuffix("/editor-commit"), Self.decodeCodedDetail(from: data)?.code == "client_update_required" {
+                throw EditorSaveError.timeline(code: "client_update_required")
+            }
             #if DEBUG
             NativePreviewDiagnostics.record("http-failure", fields: ["status": String(http.statusCode)])
             #endif
@@ -2141,6 +2151,10 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "talking_range_order": "The parts of this video have to stay in their order. Put them back in order and save again. Your edits are still here.",
             "talking_range_muted": "Range can’t mute a part of this video. Turn the sound back on for it and save again. Your edits are still here.",
             "talking_range_captions_missing": "Part of your range has no captions yet. Add captions for it, turn captions off, or put the range back, then save again. Your edits are still here.",
+            "speaker_background_windows_disabled": "Timed backgrounds aren’t available right now. Remove them and save again. Your edits are still here.",
+            "speaker_background_window_invalid": "The timed backgrounds overlap or one is too short. Give each at least half a second without overlap, then save again. Your edits are still here.",
+            // 426 from the editor-commit route: this build is older than the feature the edit uses (see the call site).
+            "client_update_required": "Update Kria to save this edit. Your edits are still here.",
         ]
     }()
 

@@ -71,6 +71,64 @@ struct NativeSelectionInspector: View {
             NativeSelectedMusicInspector(selection: selection, session: session)
         case .soundEffect, .mediaOverlay, .visualBlock, .motionScene, .cameraEffect, .carousel, .drawing:
             NativeSelectedEffectInspector(selection: selection, session: session)
+        case .speakerBackgroundWindow:
+            NativeSelectedBackgroundWindowInspector(selection: selection, session: session)
+        }
+    }
+}
+
+/// KRI-1162: one timed Talk-to-camera background picked on the BACKGROUND lane. Its span is edited by dragging the
+/// block, so the times here are read-only text; the Background tool owns picking and ordering.
+private struct NativeSelectedBackgroundWindowInspector: View {
+    let selection: EditorSelection
+    @ObservedObject var session: NativeEditorSession
+    @Environment(\.dismiss) private var dismiss
+
+    private var window: EditorSpeakerBackgroundWindow? { session.speakerBackgroundWindows.first { $0.localID == selection.id } }
+
+    private func name(_ window: EditorSpeakerBackgroundWindow) -> String {
+        session.visualLibrary.first { $0.id == window.mediaID }?.sourceFilename ?? (window.kind == .video ? "Video" : "Photo")
+    }
+
+    private func timeRow(_ title: String, seconds: Double, id: String) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(nativeTimecode(seconds))
+                .foregroundStyle(KriaColor.zinc)
+                .accessibilityValue(String(format: "%.3f", seconds))
+                .accessibilityIdentifier(id)
+        }
+    }
+
+    var body: some View {
+        Form {
+            if let window {
+                Section("Background") {
+                    LabeledContent("Shows", value: name(window))
+                    LabeledContent("Kind", value: window.kind == .video ? "Video" : "Photo")
+                    timeRow("Starts", seconds: window.startS, id: "native-editor-selected-\(selection.kind.rawValue)-start")
+                    timeRow("Ends", seconds: window.endS, id: "native-editor-selected-\(selection.kind.rawValue)-end")
+                }
+                Section {
+                    Button("Open Background tool") {
+                        dismiss()
+                        session.requestBackgroundTool()
+                    }
+                    .accessibilityIdentifier("native-editor-selected-background-open-tool")
+                    Button("Remove", role: .destructive) {
+                        _ = session.removeSpeakerBackgroundWindow(id: selection.id)
+                        dismiss()
+                    }
+                    .disabled(!session.canEditSpeakerBackgroundWindows)
+                    .accessibilityIdentifier("native-editor-selected-background-remove")
+                }
+                if !session.canEditSpeakerBackgroundWindows {
+                    Section { Label("Timed backgrounds are locked for this render.", systemImage: "lock") }
+                }
+            } else {
+                Section { Text("This background is no longer in the edit.").foregroundStyle(KriaColor.zinc) }
+            }
         }
     }
 }

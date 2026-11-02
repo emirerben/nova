@@ -1264,6 +1264,37 @@ final class NativeEditorSessionTests: XCTestCase {
         }
     }
 
+    /// Parent KRI-1151: a Talking take paused for another clip. The preview is the server's video: the take up to
+    /// the pause, the other clip with its own sound, the take again from where it stopped. The editor must not
+    /// call the inserted clip an edit, and a receipt it cannot draw keeps the finished MP4.
+    func testPhoneTalkingEditPreviewsAnInsertedClipBetweenTwoHalvesOfTheTake() async throws {
+        let insertURL = try XCTUnwrap(Bundle.main.url(forResource: "istanbul", withExtension: "mp4"))
+        let insertLength = try await AVURLAsset(url: insertURL).load(.duration).seconds
+        let row: JSONValue = .object(["media_id": .string("congress"), "at_take_s": .number(0.4), "duration_s": .number(insertLength),
+            "keep_audio": .bool(true), "volume": .number(1), "start_s": .number(0.4), "end_s": .number(0.4 + insertLength)])
+        let (session, _) = try await Self.phoneTalkingSession(lanesEditable: true, insertedClips: [row])
+
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        XCTAssertEqual(session.timelineClips.map(\.sourceClipIndex), [0, 1, 0])
+        XCTAssertFalse(session.hasUnsavedChanges, "the inserted clip is server state, never an edit to Save")
+        XCTAssertFalse(session.canEditTimeline)
+        let recipe = try XCTUnwrap(session.displayedSourcePreviewRecipe)
+        let video = try XCTUnwrap(recipe.tracks.first { $0.kind == .video }?.clips)
+        XCTAssertEqual(video.map(\.sourceAssetID), ["source-0", "source-1", "source-0"])
+        XCTAssertEqual(video[0].sourceDuration, 0.4, accuracy: 0.001)
+        XCTAssertEqual(video[1].timelineStart, 0.4, accuracy: 0.001)
+        XCTAssertEqual(video[1].sourceDuration, insertLength, accuracy: 0.001)
+        XCTAssertEqual(video[1].volume, 1, "the inserted clip plays its own sound")
+        XCTAssertEqual(video[2].sourceStart, 0.4, accuracy: 0.001, "the take resumes where it stopped")
+        XCTAssertEqual(video[2].timelineStart, 0.4 + insertLength, accuracy: 0.001)
+
+        // A receipt naming a clip the pool does not have is not drawn at all.
+        let missing: JSONValue = .object(["media_id": .string("gone"), "at_take_s": .number(0.4), "duration_s": .number(2)])
+        let (fallback, _) = try await Self.phoneTalkingSession(lanesEditable: true, insertedClips: [missing])
+        XCTAssertTrue(fallback.timelineClips.isEmpty)
+        guard case .failed = fallback.sourcePreviewState else { return XCTFail("state: \(fallback.sourcePreviewState)") }
+    }
+
     /// A receipt cutaway whose clip isn't in the source pool can't be drawn: the editor keeps the finished MP4
     /// instead of a live preview that shows the speaker where the video cuts away.
     func testPhoneTalkingEditWithAnUnknownCutawayClipKeepsTheFinishedMP4() async throws {
@@ -1759,7 +1790,8 @@ final class NativeEditorSessionTests: XCTestCase {
     /// as clip 1 and the variant carries a `phone_talking_multi_clip` receipt with "source" as the one speaker.
     private static func phoneTalkingSession(lanesEditable: Bool, card: Bool = false, bindOriginal: Bool = true, title: Bool = false,
                                             unloadableCards: Bool = false, withholdPool: Bool = false,
-                                            talkingCutaways: [JSONValue]? = nil) async throws -> (NativeEditorSession, EditorCommitSpy) {
+                                            talkingCutaways: [JSONValue]? = nil,
+                                            insertedClips: [JSONValue]? = nil) async throws -> (NativeEditorSession, EditorCommitSpy) {
         let threadID = UUID(), jobID = UUID()
         let project = BackgroundUploadCoordinator.projectDirectory(threadID)
         let input = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
@@ -1839,6 +1871,19 @@ final class NativeEditorSessionTests: XCTestCase {
             poolClips.append(.init(clipIndex: 1, nativeSource: .init(mediaID: "street", sourceURL: nil,
                 original: OriginalMediaDescriptor(sha256: try XCTUnwrap(footage.fingerprint).hex, byteCount: try XCTUnwrap(footage.fingerprint).byteCount,
                     durationS: 6, width: 1280, height: 720, orientationDegrees: 0, hasAudio: false), localRequired: true)))
+        }
+        if let insertedClips {
+            // Parent KRI-1151: the take is paused for another clip; the receipt says where.
+            variant["phone_talking_multi_clip"] = .object(["version": .number(1), "speaker_media_ids": .array([.string("source")])])
+            variant["phone_insert_clips"] = .object(["placed": .array(insertedClips), "dropped": .array([])])
+            let insertInput = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+            try FileManager.default.copyItem(at: XCTUnwrap(Bundle.main.url(forResource: "istanbul", withExtension: "mp4")), to: insertInput)
+            defer { try? FileManager.default.removeItem(at: insertInput) }
+            let inserted = try await AssetImportCoordinator(project: project).importAsset(from: insertInput)
+            try SourceAssetStore(project: project).bind(mediaID: "congress", original: inserted)
+            poolClips.append(.init(clipIndex: 1, nativeSource: .init(mediaID: "congress", sourceURL: nil,
+                original: OriginalMediaDescriptor(sha256: try XCTUnwrap(inserted.fingerprint).hex, byteCount: try XCTUnwrap(inserted.fingerprint).byteCount,
+                    durationS: 6, width: 1280, height: 720, orientationDegrees: 0, hasAudio: true), localRequired: true)))
         }
         let fake = EditorCommitSpy(
             draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,

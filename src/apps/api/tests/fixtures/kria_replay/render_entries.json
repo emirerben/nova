@@ -77,7 +77,8 @@
         "speaker_position_x",
         "additional_speakers",
         "output_orientation",
-        "clip_tilts"
+        "clip_tilts",
+        "inserts"
       ],
       "recipe": {
         "title_animation": "text_layers[id^=text-].animation_phases.entrance",

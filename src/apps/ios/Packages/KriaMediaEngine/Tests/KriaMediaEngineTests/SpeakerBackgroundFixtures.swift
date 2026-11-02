@@ -198,15 +198,26 @@ struct SpeakerTestBackground {
     var loop = true
 }
 
+/// A timed background (KRI-1162): `url` shows from `start` to `end`.
+struct SpeakerTestWindow {
+    var url: URL
+    var kind: VisualMediaKind = .image
+    var sourceStart: Double = 0
+    var start: Double
+    var end: Double
+}
+
 /// The Talk-to-camera recipe shape `phone_subtitled_plan.py` compiles: the speaker clip on the
 /// `subtitled` track (plus an optional ending clip after it), optional extra tracks, and the background
 /// as a Visuals-pool asset. `extraAssets` are camera originals; `visuals` are Visuals-pool media.
 func speakerRecipe(canvas: Canvas, speaker: URL, duration: Double, transform: MediaTransform = .identity,
                    background: SpeakerTestBackground?, endingClip: TimelineClip? = nil, extraTracks: [TimelineTrack] = [],
                    extraAssets: [String: URL] = [:], visuals: [String: (url: URL, kind: VisualMediaKind)] = [:],
-                   audio: AudioMixRecipe = .default) throws -> (recipe: EditRecipe, urls: [String: URL]) {
+                   audio: AudioMixRecipe = .default, windows: [SpeakerTestWindow] = [],
+                   speakerFrame: SpeakerFrame? = nil) throws -> (recipe: EditRecipe, urls: [String: URL]) {
     var visuals = visuals
     if let background { visuals["visual-background"] = (background.url, background.kind) }
+    for (index, window) in windows.enumerated() { visuals["visual-window-\(index)"] = (window.url, window.kind) }
     let urls = extraAssets.merging(["speaker": speaker]) { $1 }.merging(visuals.mapValues(\.url)) { $1 }
     let assets = try urls.sorted(by: { $0.key < $1.key }).map {
         MediaAsset(id: $0.key, relativePath: $0.key, fingerprint: try SHA256Fingerprinter().fingerprint(file: $0.value))
@@ -222,7 +233,11 @@ func speakerRecipe(canvas: Canvas, speaker: URL, duration: Double, transform: Me
         ] + [endingClip].compactMap { $0 })] + extraTracks,
         audio: audio, assetManifest: RenderAssetManifest(assets: references),
         speakerBackground: background.map {
-            SpeakerBackgroundLayer(assetID: "visual-background", mediaKind: $0.kind, sourceStart: $0.sourceStart, loop: $0.loop)
+            SpeakerBackgroundLayer(assetID: "visual-background", mediaKind: $0.kind, sourceStart: $0.sourceStart, loop: $0.loop,
+                windows: windows.isEmpty ? nil : windows.enumerated().map { index, window in
+                    SpeakerBackgroundWindow(assetID: "visual-window-\(index)", mediaKind: window.kind, sourceStart: window.sourceStart,
+                                            start: window.start, end: window.end)
+                }, speakerFrame: speakerFrame)
         })
     try recipe.validate()
     return (recipe, urls)
