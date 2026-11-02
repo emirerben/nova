@@ -935,3 +935,70 @@ def test_plan_where_every_row_overlaps_explains_why_instead_of_failing():
         notices=notices,
     )
     assert rows == [] and notices == [OVERLAP_NOTICE]
+
+
+def _plan_with_agent(monkeypatch, agent):
+    import uuid
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from app.services import generated_media
+    from app.services import overlay_generation as service
+
+    body = service.OverlayPlanRequest(
+        job_id=uuid.uuid4(),
+        variant_id="v",
+        base_generation="g",
+        document_fingerprint="f",
+        mode="automatic",
+        editor_snapshot={},
+    )
+    owner = uuid.uuid4()
+    monkeypatch.setattr(
+        generated_media, "owned_item", lambda *a: SimpleNamespace(current_job_id=body.job_id)
+    )
+    monkeypatch.setattr(
+        service,
+        "plan_context",
+        lambda *a, **k: SimpleNamespace(
+            evidence=evidence(), duration_s=8, existing_overlays=[], insertion_base=None
+        ),
+    )
+    db = Mock()
+    db.get.return_value = SimpleNamespace(
+        user_id=owner,
+        status="ready",
+        assembly_plan={"variants": [{"variant_id": "v", "render_generation_id": "g"}]},
+    )
+    db.scalars.return_value.all.return_value = []
+    return service.generate_overlay_plan(
+        db, owner_id=owner, item_id=uuid.uuid4(), body=body, ctx=None, agent=agent
+    )
+
+
+def test_model_answer_without_a_message_is_accepted():
+    from app.agents.overlay_generation import OverlayGenerationAgent
+
+    assert OverlayGenerationAgent.required_fields(None) == ["overlays"]
+
+
+def test_model_refusal_becomes_a_retryable_message_not_a_server_error(monkeypatch):
+    from unittest.mock import Mock
+
+    from app.agents._runtime import TerminalError
+
+    agent = Mock()
+    agent.run.side_effect = TerminalError("refusal")
+    reply = _plan_with_agent(monkeypatch, agent)
+    assert reply.overlays == [] and "Try again" in reply.message
+
+
+def test_provider_quota_exhaustion_is_not_hidden_as_a_retry_message(monkeypatch):
+    from unittest.mock import Mock
+
+    from app.agents._runtime import ProviderQuotaExceededError
+
+    agent = Mock()
+    agent.run.side_effect = ProviderQuotaExceededError()
+    with pytest.raises(ProviderQuotaExceededError):
+        _plan_with_agent(monkeypatch, agent)
