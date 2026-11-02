@@ -1691,6 +1691,9 @@ class CreatorAgentTurn(Base):
     # The editor's unsaved state (EditorStateIn) for this turn; NULLed on completion.
     # Never copied into thread events (up to 256 KB).
     editor_state: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # One entry per run that asked to run again (KRI-709): {epoch, outcome, reason, at, calls}.
+    # Redacted by construction (names, milliseconds, reason codes); surfaced on `kria/trace`.
+    planning_runs: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()

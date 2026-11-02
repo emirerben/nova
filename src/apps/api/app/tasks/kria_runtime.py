@@ -195,6 +195,11 @@ from app.services.thought_summaries import (
     bind_thought_publisher,
     publisher_for_creation,
 )
+from app.services.turn_checkpoint import (
+    TurnRunRecorder,
+    turn_run_id,
+    turn_run_recorder,
+)
 from app.text_fold import loose_words
 from app.worker import celery_app
 
@@ -624,7 +629,18 @@ def _complete_response_turn(
     )
 
 
-def _continue_turn(turn_id: uuid.UUID, *, lease_owner: str, lease_epoch: int) -> str:
+# Bound on the per-turn continuation record (the run cap is lower; this is a safety net).
+_MAX_PLANNING_RUNS = 8
+
+
+def _continue_turn(
+    turn_id: uuid.UUID,
+    *,
+    lease_owner: str,
+    lease_epoch: int,
+    reason: str = "",
+    calls: Sequence[dict[str, Any]] = (),
+) -> str:
     """KRI-709: release a turn whose planner stopped on a time budget so it runs again.
 
     Returns ``"continued"`` (turn is ``pending`` again, caller publishes it),
@@ -639,7 +655,9 @@ def _continue_turn(turn_id: uuid.UUID, *, lease_owner: str, lease_epoch: int) ->
 
     Same lock discipline as `_complete_response_turn`: the turn row under FOR UPDATE and
     the lease re-checked, so a cancel during planning stays cancelled. No event is
-    written and no brief version persisted: the next run does both.
+    written and no brief version persisted: the next run does both. The decision itself is
+    recorded on the turn (`planning_runs`: run, reason code, per-call and per-wait
+    milliseconds), so a later "ran out of time" is diagnosable from `kria/trace`.
     """
     if lease_epoch >= int(settings.kria_turn_auto_continue_max_runs):
         return "exhausted"
@@ -664,8 +682,22 @@ def _continue_turn(turn_id: uuid.UUID, *, lease_owner: str, lease_epoch: int) ->
         turn.lease_expires_at = database_now + timedelta(
             seconds=_CONTINUE_COUNTDOWN_S + _CONTINUE_LEASE_SLACK_S
         )
+        record = {
+            "epoch": lease_epoch,
+            "outcome": "continued",
+            "reason": reason or "unspecified",
+            "at": database_now.isoformat(),
+            "calls": [dict(call) for call in calls],
+        }
+        turn.planning_runs = [*(turn.planning_runs or []), record][-_MAX_PLANNING_RUNS:]
         db.commit()
-    log.info("kria_turn_auto_continued", turn_id=str(turn_id), lease_epoch=lease_epoch)
+    log.info(
+        "kria_turn_auto_continued",
+        turn_id=str(turn_id),
+        lease_epoch=lease_epoch,
+        reason=record["reason"],
+        calls=record["calls"],
+    )
     return "continued"
 
 
@@ -3387,6 +3419,7 @@ async def _plan_with_live_agent(
     degraded_token = start_degraded_retry.set(bool(snapshot.get("start_degraded")))
     # A continued or reclaimed run re-sends unchanged prompts: its paid calls are new calls.
     epoch_token = turn_run_epoch.set(lease_epoch)
+    run_id_token = turn_run_id.set(turn_id)
     sender = bind_sending_build(stamped_client_protocol(snapshot.get("client_protocol")))
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
@@ -3524,6 +3557,7 @@ async def _plan_with_live_agent(
         turn_deadline.reset(deadline)
         start_degraded_retry.reset(degraded_token)
         turn_run_epoch.reset(epoch_token)
+        turn_run_id.reset(run_id_token)
         unbind_sending_build(sender)
         stop.set()
         try:
@@ -4358,6 +4392,9 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
     )
     # A follow-up sent while this turn plans is queued behind it: plan without it.
     history_token = answering_through_sequence.set(snapshot.get("source_sequence"))
+    # This run's calls and waits, for the continuation record (see `_continue_turn`).
+    recorder = TurnRunRecorder()
+    recorder_token = turn_run_recorder.set(recorder)
     try:
         if (
             settings.main_creator_agent_enabled or snapshot.get("camera_roll_story")
@@ -4395,7 +4432,11 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                 # Run the same turn again instead of asking the creator to say "go
                 # ahead"; the chat keeps showing "Thinking" (no assistant event yet).
                 outcome = _continue_turn(
-                    identifier, lease_owner=lease_owner, lease_epoch=lease_epoch
+                    identifier,
+                    lease_owner=lease_owner,
+                    lease_epoch=lease_epoch,
+                    reason=planned.continue_reason,
+                    calls=recorder.calls,
                 )
                 if outcome == "lost":
                     return {"turn_id": turn_id, "status": "ignored"}
@@ -4667,6 +4708,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
             thought_publisher.fail()
         release_reply_language(language_token)
         answering_through_sequence.reset(history_token)
+        turn_run_recorder.reset(recorder_token)
 
 
 async def _extract_brief_async(snapshot: dict[str, Any], user_message: str):

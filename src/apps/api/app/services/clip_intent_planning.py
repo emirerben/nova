@@ -67,6 +67,7 @@ from app.services.creator_label_reply import (
 )
 from app.services.spoken_quotes import regound_quoted_intents
 from app.services.too_short_clips import resolve_too_short
+from app.services.turn_checkpoint import checkpointed, note_wait
 from app.text_fold import loose_words
 
 if TYPE_CHECKING:
@@ -199,7 +200,9 @@ async def wait_for_clip_understanding(
         if not _unanalysed(clips) or remaining <= 0:
             break
         await asyncio.sleep(min(UNDERSTANDING_POLL_S, remaining))
-    return clips, round(time.monotonic() - started, 1)
+    spent = round(time.monotonic() - started, 1)
+    note_wait("clip_understanding_wait", seconds=spent)
+    return clips, spent
 
 
 def resolve_order_by_intent(intent: ClipIntent, clips: list[IntentClip]) -> ResolvedClipIntent:
@@ -1315,9 +1318,23 @@ async def plan_and_resolve_clip_intents(
     if checked_inventory is not None:
         log.info("clip_intent_planner.inventory_reuse", reused=reused is not None)
     try:
-        output = reused or await asyncio.to_thread(
-            ClipIntentPlannerAgent(default_client()).run, planner_input, ctx=run_context
-        )
+        if reused is not None:
+            output = reused
+        else:
+
+            async def _plan() -> ClipIntentPlannerOutput:
+                return await asyncio.to_thread(
+                    ClipIntentPlannerAgent(default_client()).run, planner_input, ctx=run_context
+                )
+
+            planner_spec = ClipIntentPlannerAgent.spec
+            output = await checkpointed(
+                "clip_intent_planner",
+                version=f"{planner_spec.name}@{planner_spec.prompt_version}:{planner_spec.model}",
+                agent_input=planner_input,
+                output_cls=ClipIntentPlannerOutput,
+                call=_plan,
+            )
     except TerminalSchemaError as exc:
         # Invalid model output is a content-recovery problem, not a failed
         # preparation. Ask for a restatement and trust none of the candidate

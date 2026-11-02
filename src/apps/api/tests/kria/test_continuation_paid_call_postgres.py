@@ -216,6 +216,8 @@ async def test_brief_extractor_and_its_retry_use_the_run_scoped_request_id(
     seen: list[str] = []
 
     class FakeExtractor:
+        spec = SimpleNamespace(name="fake.extractor", prompt_version="v", model="m")
+
         def __init__(self, _client: object) -> None: ...
 
         def run(self, _input: object, *, ctx: Any) -> object:

@@ -15,11 +15,11 @@ import uuid
 from dataclasses import replace
 
 import pytest
-from app.services.turn_checkpoint import current_run_recorder
 
 from app.database import AsyncSessionLocal, sync_session
 from app.models import CreatorAgentTurn
 from app.services.kria_trace import resolve_kria_trace
+from app.services.turn_checkpoint import current_run_recorder
 from app.tasks.kria_runtime import run_kria_turn
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project
 from tests.kria.test_turn_auto_continue_postgres import (  # noqa: F401
@@ -67,4 +67,4 @@ async def test_a_continuation_records_why_and_what_it_cost(monkeypatch: pytest.M
 
     async with AsyncSessionLocal() as db:
         trace = await resolve_kria_trace(db, turn_id=uuid.UUID(accepted.turn_id))
-    assert trace["trace"]["turns"][0]["planning_runs"] == runs
+    assert trace["turns"][0]["planning_runs"] == runs

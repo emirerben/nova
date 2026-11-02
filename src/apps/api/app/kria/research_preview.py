@@ -979,6 +979,7 @@ def with_research(
                 planned,
                 plan=KriaTurnPlan(mode="respond", turn_value="recovery", response=pending_reply()),
                 continuable=True,
+                continue_reason="research_pending",
             )
         except Exception:  # noqa: BLE001
             log.exception("kria_research_preview_failed", turn_id=str(turn_id))
