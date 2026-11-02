@@ -73,6 +73,12 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
         None,
     ),
     "agents/montage_reviewer.py": ("agent_prompt", "montage review input/prompt", None),
+    "kria/intent_review_catalog.py": (
+        "agent_prompt",
+        "Issued-requirement labels are frame-review model context; the server decides every "
+        "outcome from the catalog, never from this prose.",
+        frozenset({"_label"}),
+    ),
     "agents/narrated_clip_alignment.py": ("agent_prompt", "alignment input/prompt", None),
     "agents/narrated_storyboard.py": ("agent_prompt", "storyboard input/prompt", None),
     "agents/narration_annotations.py": ("agent_prompt", "annotation input/prompt", None),
