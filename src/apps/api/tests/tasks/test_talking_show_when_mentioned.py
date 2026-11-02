@@ -75,6 +75,7 @@ def _run(
     analysis_order: tuple[int, ...] = (3, 4, 1, 2, 0),
     strategy: dict | None = None,
     settings_overrides: dict | None = None,
+    extra_candidates: dict | None = None,
 ):
     clips = CLIPS if clips is None else clips
     bindings = {c["media_id"]: _binding(c["media_id"], duration_s=c["duration_s"]) for c in clips}
@@ -90,6 +91,7 @@ def _run(
         "edit_format": "subtitled",
         "language": "tr",
         **({"creator_strategy": strategy} if strategy is not None else {}),
+        **(extra_candidates or {}),
     }
     job, _session = _job_and_session(
         monkeypatch, assembly_plan=snapshot, all_candidates=all_candidates

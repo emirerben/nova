@@ -139,3 +139,34 @@ def _other_talk():
     from tests.tasks.test_talking_show_when_mentioned import ALLOCATE_TALK
 
     return ALLOCATE_TALK
+
+
+def test_the_phrase_is_found_in_what_he_said_not_in_the_translated_captions(monkeypatch):
+    # English captions were asked for: the caption words are a translation, the take is Turkish.
+    from types import SimpleNamespace
+
+    from app.pipeline.transcribe import Word
+
+    def _translate(words, **_kw):
+        return SimpleNamespace(
+            words=[
+                Word(text=f"english{i}", start_s=w.start_s, end_s=w.end_s, confidence=1.0)
+                for i, w in enumerate(words)
+            ],
+            language="en",
+        )
+
+    monkeypatch.setattr(gb, "_ensure_requested_caption_language", _translate)
+    _job, recipe, variant = _run(
+        monkeypatch,
+        mention=True,
+        strategy=STRATEGY,
+        settings_overrides=FLAG,
+        extra_candidates={"caption_language_request": "en"},
+    )
+    assert variant["caption_cues"][0]["text"].startswith("english")
+    receipt = variant[gb.PHONE_INSERT_CLIPS_FIELD]
+    assert receipt["dropped"] == []
+    (row,) = receipt["placed"]
+    assert row["basis"] == "phrase"
+    assert row["at_take_s"] == pytest.approx(PHRASE_END_S, abs=2.6)
