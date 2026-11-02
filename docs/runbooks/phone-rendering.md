@@ -1038,6 +1038,25 @@ then spread mechanically, never at a mention.
   --app nova-video` + restart api + worker (Fly only, no Vercel twin, no app build: recipe-only, no
   new protocol). Rollback: `=false` the same way. To hear the talks' own audio also set
   `PHONE_TALKING_CUTAWAY_SOUND_ENABLED` and `PHONE_CLIP_SOUND_WINDOWS_ENABLED` (above).
+- **Planner knowledge**: the chat planner (Main Creator, prompt v109) is taught this lane only
+  while `creator_capabilities.talking_footage_cutaways(manifest)` is open (the gates above plus
+  2+ own clips on a phone Talking edit), so a flag-off prompt is byte-identical. The paragraphs
+  follow the gates: mention only (clips at a mention, silent), sound only (clips spread, sound for
+  the slot, a speaking clip keeps playing in turn), both, neither. Durations are the scheduler's
+  constants. It says the creator's voice is muted under a clip that plays its sound, that the clip
+  is an overlay (an insert that pauses the take is not available), the worker fallbacks, and that
+  the earlier "works on a montage, not in this edit" reply is out of date. A refusal the open lane
+  contradicts gets ONE corrective re-run with `MainCreatorInput.server_note`
+  (`app.kria.ask_refusals`): an `ask_user` whose reason code, question or options (read as tokens,
+  never prose patterns) are a refusal about audio / intercut / cutaway / Montage, or a strategy that
+  moves the edit to a Montage, against a live full-screen or clip-sound-on ask. Insert / pause
+  answers, footage and hook questions are never re-run. The re-run keeps the agent session, takes
+  the last brief batch, is skipped under 60 s of turn budget, and any provider or validation
+  failure keeps the first answer (`kria_ask_refusal_rerun_failed`). A second refusal becomes the
+  plain unmet reply, never the model's invented reason. The re-run's action and new brief updates
+  replace / join the first answer's (`PlannedKriaTurn.main_creator_output`). Origin: prod thread
+  6fa36e51, turn 7aa16b1a. The real model's answer to that request needs the paid live eval of
+  `kri1151_talking_cutaways_show_when_mentioned` (tests/evals/README.md).
 - **Known gaps**: a creator take the analysis marks not-to-camera next to another person's clip
   marked to-camera is read the other way round under a global ask; the signal is the display fact plus the clip analysis; a creator who says "when I
   mention them" without a full-screen word gets today's behavior (a typed "show when mentioned" fact
