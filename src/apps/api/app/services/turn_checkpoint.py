@@ -104,7 +104,11 @@ def _load(run_id: uuid.UUID, field: str, output_cls: type[T]) -> T | None:
         if envelope.get("v") != _FORMAT:
             return None
         return output_cls.model_validate_json(envelope["output"])
-    except Exception:  # noqa: BLE001 - unreadable, drifted or unreachable is a miss
+    except (ValueError, KeyError, TypeError, AttributeError):
+        # Drifted or corrupt: a miss. Say nothing about the content: Pydantic's message quotes
+        # the offending value, and Main Creator answers carry creator words (sensitive_io).
+        return None
+    except Exception:  # noqa: BLE001 - an unreachable store is a miss
         log.warning("kria_turn_checkpoint_unreadable", exc_info=True)
         return None
 
