@@ -170,3 +170,32 @@ def test_the_phrase_is_found_in_what_he_said_not_in_the_translated_captions(monk
     (row,) = receipt["placed"]
     assert row["basis"] == "phrase"
     assert row["at_take_s"] == pytest.approx(PHRASE_END_S, abs=2.6)
+
+
+def test_the_receipt_carries_what_the_phone_needs_to_rebuild_the_preview(monkeypatch):
+    """The app rebuilds the editor preview from this receipt (never from the recipe), so every
+    field it hydrates the paused take from must be there, in the clip's own units."""
+    _job, recipe, variant = _run(
+        monkeypatch, mention=True, strategy=STRATEGY, settings_overrides=FLAG
+    )
+    (row,) = variant[gb.PHONE_INSERT_CLIPS_FIELD]["placed"]
+    main = _tracks(recipe)["subtitled"].clips
+    before, insert, after = main
+    assert row["media_id"] == CONGRESS_TALK
+    assert row["at_take_s"] == pytest.approx(before.source_duration, abs=1e-6)
+    assert row["duration_s"] == pytest.approx(CONGRESS_S, abs=1e-6)
+    assert row["keep_audio"] is True and row["volume"] == 1
+    # On the take timeline the point is the seconds of speech before it; on the final one the
+    # clip starts at the same second (nothing is inserted before it).
+    assert row["start_s"] == pytest.approx(row["at_take_s"], abs=1e-3)
+    assert row["end_s"] - row["start_s"] == pytest.approx(row["duration_s"], abs=1e-3)
+    assert after.source_start == pytest.approx(row["at_take_s"], abs=1e-6)
+
+
+def test_a_muted_insert_says_volume_zero_in_the_receipt(monkeypatch):
+    strategy = {"insert_clips": [{**STRATEGY["insert_clips"][0], "keep_audio": False}]}
+    _job, _recipe, variant = _run(
+        monkeypatch, mention=True, strategy=strategy, settings_overrides=FLAG
+    )
+    (row,) = variant[gb.PHONE_INSERT_CLIPS_FIELD]["placed"]
+    assert row["keep_audio"] is False and row["volume"] == 0
