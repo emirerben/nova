@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.107.0] - 2026-11-02
+
+### Fixed
+- fix(kria): the chat planner offers the Talking cutaway lane instead of refusing it (#2057) <!-- release-pr: 2057 -->
+
 ## [0.83.106.0] - 2026-11-02
 
 ### Fixed
