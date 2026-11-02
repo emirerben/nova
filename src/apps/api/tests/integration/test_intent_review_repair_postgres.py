@@ -54,7 +54,9 @@ Failure modes, written before the staging code (matrix row in parentheses). Each
     cancels it instead of planning, and what the chat shows are the ordinary draft and approval
     events old app builds already render.
   A follow-up judged against the wrong request (40):
-    the repaired render's review inherits the parent's request and issued requirements.
+    the repaired render's review inherits the parent's request and issued requirements, so a
+    requirement added after the render is never asked of the repaired render and cannot make
+    the repair look worse (and so cannot trigger its undo).
 
 The only fakes are the OpenAI SDK object and the synthetic frames/publication; the runtime-v2
 turn, the compiler, the drafts, the approval and the undo chain run for real on PostgreSQL.
@@ -736,6 +738,58 @@ async def test_a_worse_repair_over_a_newer_edit_is_marked_but_not_undone(
     assert (parent.status, parent.reason) == ("repair_reverted", "worse_head_moved")
     assert [(d.id, d.is_head) for d in drafts(thread)] == after_move
     assert events(thread, "draft_undone") == []
+
+
+def brief_ids(review):
+    return [item["brief_id"] for item in review.review["catalog"]["requirements"]]
+
+
+@pytest.mark.asyncio
+async def test_a_requirement_added_after_the_render_is_never_asked_of_the_repaired_render(
+    drifted, repair_on, monkeypatch
+):
+    rid, child = await staged_and_rendered(drifted, monkeypatch)
+    edit_packet(child, two_requirements)
+    follow_up = review_row(child)
+    assert "r2" in follow_up.result["packet"]["binding_json"]
+
+    provider = Provider(reply(R1_MET))
+    assert await run_async(child, provider) == "no_findings"
+    (call,) = provider.calls
+    schema = call["text"]["format"]["schema"]
+    assert schema["properties"]["findings"]["items"]["properties"]["requirement_id"]["enum"] == [
+        "R1"
+    ]
+    assert brief_ids(review_row(child)) == brief_ids(review_row(rid)) == ["r1"]
+    parent = review_row(rid)
+    assert (parent.status, parent.reason) == ("repair_verified", "fixed")
+
+
+@pytest.mark.asyncio
+async def test_a_requirement_the_repair_never_targeted_cannot_make_it_worse(
+    drifted, repair_on, monkeypatch
+):
+    _, thread, job_id, _ = drifted
+    rid, child = await staged_and_rendered(drifted, monkeypatch)
+    edit_packet(child, two_requirements)
+    staged = drafts(thread)[-1]
+    count = len(drafts(thread))
+    plan_before = copy.deepcopy(job_plan(job_id))
+
+    blames_the_new_ask = Provider(reply(R1_UNMET, R2_UNMET))
+    assert await run_async(child, blames_the_new_ask) == "unavailable"
+    follow_up = review_row(child)
+    assert (follow_up.status, follow_up.reason) == ("unavailable", "invalid_output")
+    assert brief_ids(follow_up) == brief_ids(review_row(rid)) == ["r1"]
+    assert follow_up.review.get("findings") is None
+
+    parent = review_row(rid)
+    assert (parent.status, parent.reason) == ("repair_unverified", "rereview_unavailable")
+    assert events(thread, "draft_undone") == []
+    assert len(drafts(thread)) == count
+    head = drafts(thread)[-1]
+    assert head.is_head and head.id == staged.id == parent.repair_draft_id
+    assert job_plan(job_id) == plan_before
 
 
 def end_the_approval(status):
