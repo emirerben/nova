@@ -125,3 +125,24 @@ def test_range_is_closed_by_name_once_the_take_has_an_insert(monkeypatch):
     assert talking_range_reason(job, variant) == REASON_MULTI_CLIP
     del variant["phone_talking_multi_clip"]
     assert talking_range_reason(job, variant) == REASON_MULTI_CLIP
+
+
+def test_a_save_does_not_make_the_no_text_on_the_object_receipt_stale_because_of_the_insert(
+    monkeypatch,
+):
+    from app.kria.protected_targets import PROTECTED_TEXT_FIELD
+
+    job, _old = insert_job(monkeypatch)
+    variant = job.assembly_plan["variants"][0]
+    # Measured on the take, which has no insert in it (the take is 30 s whole).
+    variant[PROTECTED_TEXT_FIELD] = {
+        "version": 1,
+        "verdict": "clear",
+        "targets": [{"status": "clear"}],
+        "keep_segments": [[0.0, 30.0]],
+        "speaker_position_x": None,
+        "landscape_fit": None,
+    }
+    save(job, caption_cues=CUES)
+    kept = job.assembly_plan["variants"][0][PROTECTED_TEXT_FIELD]
+    assert kept["verdict"] == "clear" and "stale_reason" not in kept
