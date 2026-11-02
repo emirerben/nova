@@ -17,11 +17,13 @@ Three ops that exist ONLY on the slide-post surface (``snapshot["surface"] ==
   ``snapshot["post"]["allowed_aspects"]``.
 * ``set_slide_fit{slide_indexes|all, fit, background?}`` (KRI-606): show a photo whole
   with bars (``fit: "fit"``) or fill the frame (``fit: "fill"``). Same gate.
-* ``set_slide_tilt{slide_indexes|all, rotation_deg?, backdrop?, color?, reset?}``
-  (KRI-1138): turn a photo or video to any angle (clockwise-positive, -180..180) over a
-  blank, colour or blurred backdrop. A SIBLING op of ``set_slide_framing`` rather than
-  two more fields on it: framing is photo-only, gated on ``framing_enabled`` and is about
-  the crop, while a tilt turns videos too, is gated on ``tilt_enabled`` (MEDIA_TILT_ENABLED
+* ``set_slide_tilt{slide_indexes|all, rotation_deg?, backdrop?, color?, zoom?, zoom_delta?,
+  reset?}`` (KRI-1138): turn a photo or video to any angle (clockwise-positive, -180..180)
+  over a blank, colour or blurred backdrop. ``zoom`` / ``zoom_delta`` (KRI-1170) scale the
+  media 0.5..3x before it turns and are offered only while
+  ``snapshot["post"]["tilt_zoom_enabled"]`` is true. A SIBLING op of ``set_slide_framing``
+  rather than two more fields on it: framing is photo-only, gated on ``framing_enabled`` and
+  is about the crop, while a tilt turns videos too, is gated on ``tilt_enabled`` (MEDIA_TILT_ENABLED
   and a protocol-28 build) and persists in its own ``SlideEdits.tilt`` key. Only offered
   while ``snapshot["post"]["tilt_enabled"]`` is true.
 
@@ -345,10 +347,20 @@ def _coerce_set_slide_fit(name: str, payload: dict, snapshot: dict, state: Any) 
 
 _TILT_BACKDROPS = ("blank", "color", "blur")
 _HEX_COLOUR = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_MIN_TILT_ZOOM = 0.5
+_MAX_TILT_ZOOM = 3.0
 
 
 def _tilt_enabled(post: Any) -> bool:
     return isinstance(post, dict) and post.get("tilt_enabled") is True
+
+
+def _tilt_zoom_enabled(post: Any) -> bool:
+    return isinstance(post, dict) and post.get("tilt_zoom_enabled") is True
+
+
+def _finite_number(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)
 
 
 def _slot_tilt(slot: dict) -> dict | None:
@@ -384,6 +396,20 @@ def _coerce_set_slide_tilt(name: str, payload: dict, snapshot: dict, state: Any)
     backdrop = payload.get("backdrop")
     colour = payload.get("color")
     reset = payload.get("reset") is True
+    zoom = payload.get("zoom")
+    zoom_delta = payload.get("zoom_delta")
+    if (zoom is not None or zoom_delta is not None) and not _tilt_zoom_enabled(post):
+        state.reject(
+            op=name, reason="capability_unavailable", detail="zooming slides isn't available yet"
+        )
+        return None
+    if (
+        (zoom is not None and (not _finite_number(zoom) or zoom <= 0))
+        or (zoom_delta is not None and not _finite_number(zoom_delta))
+        or (zoom is not None and zoom_delta is not None)
+    ):
+        state.invalid_value()
+        return None
     if rotation is not None and (
         isinstance(rotation, bool)
         or not isinstance(rotation, (int, float))
@@ -400,10 +426,11 @@ def _coerce_set_slide_tilt(name: str, payload: dict, snapshot: dict, state: Any)
         # A colour goes with backdrop "color" and only with it, as a #RRGGBB.
         state.invalid_value()
         return None
-    if reset and (rotation is not None or backdrop is not None):
+    zooming = zoom is not None or zoom_delta is not None
+    if reset and (rotation is not None or backdrop is not None or zooming):
         state.invalid_value()
         return None
-    if rotation is None and backdrop is None and not reset:
+    if rotation is None and backdrop is None and not reset and not zooming:
         state.invalid_value()
         return None
     target_rotation: float | None = None
@@ -413,6 +440,8 @@ def _coerce_set_slide_tilt(name: str, payload: dict, snapshot: dict, state: Any)
         folded = folded - 360.0 if folded > 180.0 else folded + 360.0 if folded < -180.0 else folded
         target_rotation = round(folded, 3)
     changes: list[dict[str, Any]] = []
+    stopped_low: list[int] = []
+    stopped_high: list[int] = []
     for index in indexes:
         slot = slots[index]
         slide_id = slot.get("media_id")
@@ -430,9 +459,21 @@ def _coerce_set_slide_tilt(name: str, payload: dict, snapshot: dict, state: Any)
         )
         if backdrop is not None:
             current_backdrop = {"kind": backdrop, **({"color": colour} if colour else {})}
+        current_zoom = float(current.get("zoom") or 1.0) if current is not None else 1.0
+        target_zoom = current_zoom
+        if zoom is not None:
+            target_zoom = float(zoom)
+        elif zoom_delta is not None:
+            target_zoom = current_zoom + float(zoom_delta)
+        bounded = round(min(max(target_zoom, _MIN_TILT_ZOOM), _MAX_TILT_ZOOM), 3)
+        if bounded > round(target_zoom, 3):
+            stopped_low.append(index + 1)
+        elif bounded < round(target_zoom, 3):
+            stopped_high.append(index + 1)
+        target_zoom = bounded
         degrees = target_rotation
         if degrees is None:
-            if current is None:
+            if current is None and target_zoom == 1.0:
                 # A background with no turn draws nothing; say so instead of storing it.
                 state.reject(
                     op=name,
@@ -440,18 +481,24 @@ def _coerce_set_slide_tilt(name: str, payload: dict, snapshot: dict, state: Any)
                     detail="Turn the slide first, then pick what shows behind it.",
                 )
                 return None
-            degrees = float(current.get("rotation_deg") or 0.0)
-        changes.append(
-            {
-                "slide_id": slide_id,
-                "tilt": None
-                if degrees == 0
-                else {"rotation_deg": degrees, "backdrop": current_backdrop},
-            }
-        )
+            degrees = float(current.get("rotation_deg") or 0.0) if current is not None else 0.0
+        if degrees == 0 and target_zoom == 1.0:
+            changes.append({"slide_id": slide_id, "tilt": None})
+            continue
+        tilt: dict[str, Any] = {"rotation_deg": degrees, "backdrop": current_backdrop}
+        if target_zoom != 1.0:
+            tilt["zoom"] = target_zoom
+        changes.append({"slide_id": slide_id, "tilt": tilt})
     if not changes:
         state.invalid_value()
         return None
+    for numbers, limit in ((stopped_low, _MIN_TILT_ZOOM), (stopped_high, _MAX_TILT_ZOOM)):
+        if numbers:
+            which = "slide " if len(numbers) == 1 else "slides "
+            state.reply_notes.append(
+                f"Zoom runs from {_MIN_TILT_ZOOM:g}x to {_MAX_TILT_ZOOM:g}x, so "
+                f"{which}{', '.join(str(n) for n in numbers)} stopped at {limit:g}x."
+            )
     return {"changes": changes}
 
 
@@ -494,7 +541,18 @@ SPECS: list[OpSpec] = [
     OpSpec(
         name="set_slide_tilt",
         required=frozenset(),
-        fields=frozenset({"slide_indexes", "all", "rotation_deg", "backdrop", "color", "reset"}),
+        fields=frozenset(
+            {
+                "slide_indexes",
+                "all",
+                "rotation_deg",
+                "backdrop",
+                "color",
+                "reset",
+                "zoom",
+                "zoom_delta",
+            }
+        ),
         family=_FAMILY,
         coerce=_coerce_set_slide_tilt,
     ),

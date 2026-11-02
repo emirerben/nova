@@ -87,7 +87,11 @@ log = structlog.get_logger()
 # names what this editor cannot restage. Taught only where a guided revision offers the direction
 # family and COPILOT_DIRECTION_FOLLOWS_REQUEST_ENABLED is on; every other prompt is byte-identical.
 # (v103 is reserved by the commentary green-screen branch, PR #2045.)
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v104"
+# v106 (KRI-1170): SLIDE ZOOM: set_slide_tilt "zoom" / "zoom_delta" (0.5..3, the server adds the
+# delta and says when it stopped at a limit) in prompts/edit_copilot_ops/slide_tilt_zoom.txt, and
+# `zoom=` on a zoomed slide's `slide N tilt` line, taught only where a slide post shows
+# `tilt_zoom_enabled: true`; every other prompt is byte-identical. (v105 is the clip lane's.)
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-02-v106"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -2236,6 +2240,9 @@ def _format_slide_post_block(snapshot: dict, field: Any) -> list[str]:
     if post.get("tilt_enabled") is True:
         # KRI-1138: the gate and each tilted slide's current angle, so "a bit more" resolves.
         lines.append("tilt_enabled: true")
+        zoom_open = post.get("tilt_zoom_enabled") is True
+        if zoom_open:
+            lines.append("tilt_zoom_enabled: true")
         for number, slot in enumerate(_snapshot_list(snapshot, _SLOT_INDEX_KEYS), start=1):
             tilt = slot.get("tilt") if isinstance(slot, dict) else None
             if not isinstance(tilt, dict):
@@ -2244,7 +2251,14 @@ def _format_slide_post_block(snapshot: dict, field: Any) -> list[str]:
             kind = field(backdrop.get("kind") or "blank", max_chars=12)
             colour = f" {field(backdrop['color'], max_chars=9)}" if backdrop.get("color") else ""
             degrees = field(tilt.get("rotation_deg"), max_chars=12)
-            lines.append(f"slide {number} tilt: rotation_deg={degrees} backdrop={kind}{colour}")
+            zoom = (
+                f" zoom={field(tilt.get('zoom'), max_chars=8)}"
+                if zoom_open and tilt.get("zoom") is not None
+                else ""
+            )
+            lines.append(
+                f"slide {number} tilt: rotation_deg={degrees} backdrop={kind}{colour}{zoom}"
+            )
     return lines
 
 

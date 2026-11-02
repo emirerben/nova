@@ -5343,6 +5343,12 @@ async def chat_edit_slide_post(
                 settings.media_tilt_enabled
                 and (client_protocol or 0) >= settings.media_tilt_min_client_protocol
             ),
+            # ...and its zoom needs one that round-trips that key too (KRI-1170).
+            tilt_zoom_enabled=bool(
+                settings.media_tilt_enabled
+                and (client_protocol or 0) >= settings.media_tilt_min_client_protocol
+                and (client_protocol or 0) >= settings.media_tilt_zoom_min_client_protocol
+            ),
         )
     except Exception:
         if thoughts is not None:

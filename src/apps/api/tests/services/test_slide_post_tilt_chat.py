@@ -28,8 +28,16 @@ from tests.services.test_slide_post_chat_edit import (
 )
 
 
-def _snapshot(draft: SlidePostDraft, assets: list[SimpleNamespace], *, enabled: bool = True):
-    return build_slide_post_snapshot(draft, _by_id(assets), user_id=USER_ID, tilt_enabled=enabled)
+def _snapshot(
+    draft: SlidePostDraft,
+    assets: list[SimpleNamespace],
+    *,
+    enabled: bool = True,
+    zoom: bool = False,
+):
+    return build_slide_post_snapshot(
+        draft, _by_id(assets), user_id=USER_ID, tilt_enabled=enabled, tilt_zoom_enabled=zoom
+    )
 
 
 def _edit(draft: SlidePostDraft, assets: list[SimpleNamespace], ops: list[dict], **kw):
@@ -274,3 +282,172 @@ def test_the_flag_pair_is_what_opens_the_gate(monkeypatch) -> None:
     # The route opens it with MEDIA_TILT_ENABLED and a protocol-28 build; this pins both names.
     assert settings.media_tilt_min_client_protocol == 28
     assert hasattr(settings, "media_tilt_enabled")
+
+
+# ── KRI-1170: zoom ───────────────────────────────────────────────────────────────────────
+#
+# Failure modes (listed before the code):
+#  Y1  zoom is accepted while its gate (flag + protocol 32) is closed, or opens without tilt
+#  Y2  a relative zoom is added blindly by the model instead of by the server, or the sum
+#      leaves 0.5..3 without the creator being told
+#  Y3  a rotation / backdrop / text edit on a zoomed slide drops the zoom
+#  Y4  "reset" leaves the zoom behind, or "reset the zoom" erases the tilt
+#  Y5  the prompt teaches zoom, or shows `zoom=`, while the gate is closed
+#  Y6  a zoom-only ask on an upright slide is refused as "a background with no turn"
+
+
+def _zoom_edit(draft, assets, ops, **kw):
+    output = _parse(_snapshot(draft, assets, zoom=True, **kw), ops)
+    assert output.ops, output.rejection_reasons
+    return compile_slide_post_ops(draft, output.ops), output
+
+
+class TestZoomGate:
+    def test_the_snapshot_opens_zoom_only_with_the_flag_and_tilt(self):
+        assets = [_asset()]
+        draft = _draft(assets)
+        assert _snapshot(draft, assets, zoom=True)["post"]["tilt_zoom_enabled"] is True
+        assert "tilt_zoom_enabled" not in _snapshot(draft, assets)["post"]
+        assert "tilt_zoom_enabled" not in _snapshot(draft, assets, enabled=False, zoom=True)["post"]
+
+    @pytest.mark.parametrize("field", ["zoom", "zoom_delta"])
+    def test_a_closed_zoom_gate_refuses_the_field_but_not_the_tilt(self, field):
+        assets = [_asset()]
+        snapshot = _snapshot(_draft(assets), assets)
+        output = _parse(snapshot, [{"op": "set_slide_tilt", "slide_indexes": [0], field: 1.5}])
+        assert not output.ops
+        assert any(r.get("reason") == "capability_unavailable" for r in output.rejection_reasons)
+        assert _parse(
+            snapshot, [{"op": "set_slide_tilt", "slide_indexes": [0], "rotation_deg": 5}]
+        ).ops
+
+    def test_the_prompt_teaches_and_shows_zoom_only_when_open(self):
+        assets = [_asset(), _asset()]
+        draft = _draft(
+            assets,
+            edits={
+                1: SlideEdits(tilt={"rotation_deg": 10, "zoom": 1.5, "backdrop": {"kind": "blur"}})
+            },
+        )
+        open_prompt = _render(_snapshot(draft, assets, zoom=True))
+        assert "\ntilt_zoom_enabled: true\n" in open_prompt
+        assert "slide 2 tilt: rotation_deg=10.0 backdrop=blur zoom=1.5" in open_prompt
+        assert "SLIDE ZOOM" in open_prompt and "zoom_delta" in open_prompt
+        closed = _render(_snapshot(draft, assets))
+        assert "zoom" not in closed.split("CURRENT POST")[1].split("\n\n")[0]
+        assert "SLIDE ZOOM" not in closed and "zoom_delta" not in closed
+        assert "slide 2 tilt: rotation_deg=10.0 backdrop=blur\n" in closed
+
+
+class TestZoomValues:
+    def test_a_zoom_only_ask_on_an_upright_slide_is_a_tilt_at_zero_degrees(self):
+        assets = [_asset(), _asset()]
+        compiled, _ = _zoom_edit(
+            _draft(assets),
+            assets,
+            [{"op": "set_slide_tilt", "slide_indexes": [1], "zoom_delta": 0.5}],
+        )
+        tilt = _tilt(compiled.draft, 1)
+        assert tilt.rotation_deg == 0 and tilt.zoom == 1.5 and tilt.backdrop.kind == "blank"
+        assert _tilt(compiled.draft, 0) is None
+
+    def test_the_server_adds_a_delta_to_the_slides_current_zoom(self):
+        assets = [_asset()]
+        draft = _draft(assets, edits={0: SlideEdits(tilt={"rotation_deg": 5, "zoom": 1.5})})
+        compiled, _ = _zoom_edit(
+            draft, assets, [{"op": "set_slide_tilt", "slide_indexes": [0], "zoom_delta": 0.25}]
+        )
+        assert _tilt(compiled.draft, 0).zoom == 1.75 and _tilt(compiled.draft, 0).rotation_deg == 5
+        out, _ = _zoom_edit(
+            draft, assets, [{"op": "set_slide_tilt", "slide_indexes": [0], "zoom_delta": -0.5}]
+        )
+        assert _tilt(out.draft, 0).zoom == 1.0
+        assert "zoom" not in _tilt(out.draft, 0).model_dump(mode="json")
+
+    @pytest.mark.parametrize(
+        ("start", "delta", "landed", "limit"),
+        [(2.5, 1.0, 3.0, "3x"), (0.75, -0.5, 0.5, "0.5x")],
+    )
+    def test_a_zoom_past_a_limit_stops_there_and_says_so(self, start, delta, landed, limit):
+        assets = [_asset()]
+        draft = _draft(assets, edits={0: SlideEdits(tilt={"rotation_deg": 5, "zoom": start})})
+        compiled, output = _zoom_edit(
+            draft, assets, [{"op": "set_slide_tilt", "slide_indexes": [0], "zoom_delta": delta}]
+        )
+        assert _tilt(compiled.draft, 0).zoom == landed
+        assert f"stopped at {limit}" in output.reply  # Y2
+
+    def test_an_absolute_zoom_above_the_limit_is_clamped_with_a_sentence(self):
+        assets = [_asset(), _asset()]
+        compiled, output = _zoom_edit(
+            _draft(assets), assets, [{"op": "set_slide_tilt", "all": True, "zoom": 9}]
+        )
+        assert [_tilt(compiled.draft, i).zoom for i in range(2)] == [3.0, 3.0]
+        assert "slides 1, 2 stopped at 3x" in output.reply
+
+    @pytest.mark.parametrize(
+        "op",
+        [
+            {"op": "set_slide_tilt", "slide_indexes": [0], "zoom": 0},
+            {"op": "set_slide_tilt", "slide_indexes": [0], "zoom": -1},
+            {"op": "set_slide_tilt", "slide_indexes": [0], "zoom": "big"},
+            {"op": "set_slide_tilt", "slide_indexes": [0], "zoom": 2, "zoom_delta": 0.5},
+            {"op": "set_slide_tilt", "slide_indexes": [0], "zoom_delta": "more"},
+            {"op": "set_slide_tilt", "slide_indexes": [0], "reset": True, "zoom": 2},
+        ],
+    )
+    def test_an_invalid_zoom_is_refused(self, op):
+        assets = [_asset()]
+        draft = _draft(assets, edits={0: SlideEdits(tilt=TILT)})
+        assert not _parse(_snapshot(draft, assets, zoom=True), [op]).ops
+
+
+class TestZoomIsKept:
+    def test_a_rotation_or_backdrop_change_keeps_the_zoom(self):
+        assets = [_asset()]
+        draft = _draft(assets, edits={0: SlideEdits(tilt={"rotation_deg": 5, "zoom": 2})})
+        turned, _ = _zoom_edit(
+            draft, assets, [{"op": "set_slide_tilt", "slide_indexes": [0], "rotation_deg": -20}]
+        )
+        assert _tilt(turned.draft, 0).zoom == 2 and _tilt(turned.draft, 0).rotation_deg == -20
+        blurred, _ = _zoom_edit(
+            draft, assets, [{"op": "set_slide_tilt", "slide_indexes": [0], "backdrop": "blur"}]
+        )
+        assert _tilt(blurred.draft, 0).zoom == 2 and _tilt(blurred.draft, 0).backdrop.kind == "blur"
+
+    def test_straightening_to_zero_degrees_keeps_a_zoomed_slide(self):
+        assets = [_asset()]
+        draft = _draft(assets, edits={0: SlideEdits(tilt={"rotation_deg": 12, "zoom": 1.4})})
+        compiled, _ = _zoom_edit(
+            draft, assets, [{"op": "set_slide_tilt", "slide_indexes": [0], "rotation_deg": 0}]
+        )
+        tilt = _tilt(compiled.draft, 0)
+        assert tilt is not None and tilt.rotation_deg == 0 and tilt.zoom == 1.4  # Y4
+
+    def test_a_backdrop_alone_is_allowed_on_a_zoomed_upright_slide(self):
+        assets = [_asset()]
+        draft = _draft(assets, edits={0: SlideEdits(tilt={"rotation_deg": 0, "zoom": 0.6})})
+        compiled, _ = _zoom_edit(
+            draft, assets, [{"op": "set_slide_tilt", "slide_indexes": [0], "backdrop": "blur"}]
+        )
+        assert _tilt(compiled.draft, 0).backdrop.kind == "blur"  # Y6
+
+    def test_reset_drops_tilt_and_zoom_but_zoom_one_keeps_the_tilt(self):
+        assets = [_asset()]
+        draft = _draft(assets, edits={0: SlideEdits(tilt={"rotation_deg": 12, "zoom": 1.4})})
+        reset, _ = _zoom_edit(
+            draft, assets, [{"op": "set_slide_tilt", "slide_indexes": [0], "reset": True}]
+        )
+        assert _tilt(reset.draft, 0) is None
+        unzoomed, _ = _zoom_edit(
+            draft, assets, [{"op": "set_slide_tilt", "slide_indexes": [0], "zoom": 1}]
+        )
+        assert _tilt(unzoomed.draft, 0).rotation_deg == 12 and _tilt(unzoomed.draft, 0).zoom == 1.0
+
+    def test_a_text_edit_on_a_zoomed_slide_keeps_the_zoom(self):
+        assets = [_asset(), _asset()]
+        draft = _draft(assets, edits={0: SlideEdits(tilt={"rotation_deg": 0, "zoom": 2})})
+        compiled, _ = _zoom_edit(
+            draft, assets, [{"op": "add_text", "text": "Hello", "start_s": 0.0, "end_s": 1.0}]
+        )
+        assert _tilt(compiled.draft, 0).zoom == 2

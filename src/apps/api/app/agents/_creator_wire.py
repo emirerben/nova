@@ -189,6 +189,7 @@ def copilot_schema():
         "x_frac",
         "y_frac",
         "zoom",
+        "zoom_delta",
         "size_px",
         "size_scale",
         "rotation_deg",

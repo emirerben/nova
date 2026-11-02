@@ -288,6 +288,7 @@ def build_slide_post_snapshot(
     brief_binding: BriefBinding | None = None,
     sizes_enabled: bool = False,
     tilt_enabled: bool = False,
+    tilt_zoom_enabled: bool = False,
 ) -> dict[str, Any]:
     """The copilot's view of a slide post (``surface: "slide_post"``, editor ops v2).
 
@@ -296,7 +297,8 @@ def build_slide_post_snapshot(
     refused, so an older app is never told "it's square now" and then drops the field.
     ``tilt_enabled`` (KRI-1138) is the same kind of gate for ``set_slide_tilt``:
     MEDIA_TILT_ENABLED AND a protocol-28 build. Closed, the snapshot (and so the prompt)
-    carries no tilt at all.
+    carries no tilt at all. ``tilt_zoom_enabled`` (KRI-1170) additionally opens ``zoom`` /
+    ``zoom_delta``: MEDIA_TILT_ENABLED AND a protocol-32 build.
     """
     facts_on = settings.clip_facts_for(user_id)
     slots: list[dict[str, Any]] = []
@@ -370,6 +372,8 @@ def build_slide_post_snapshot(
         snapshot["post"]["allowed_aspects"] = list(spec.allowed_aspects)
     if tilt_enabled:
         snapshot["post"]["tilt_enabled"] = True
+        if tilt_zoom_enabled:
+            snapshot["post"]["tilt_zoom_enabled"] = True
     if any(slot.get("facts") for slot in slots):
         snapshot["label_facts"] = True
     binding = brief_binding or draft.brief_binding
@@ -913,6 +917,7 @@ async def run_slide_post_chat_edit(
     brief_binding: BriefBinding | None = None,
     sizes_enabled: bool = False,
     tilt_enabled: bool = False,
+    tilt_zoom_enabled: bool = False,
 ) -> SlidePostChatEditResponse:
     """One chat-edit turn. Never writes; every outcome is honest about what changed."""
     from app.agents._model_client import default_client  # noqa: PLC0415
@@ -945,6 +950,7 @@ async def run_slide_post_chat_edit(
         brief_binding=active_binding,
         sizes_enabled=sizes_enabled,
         tilt_enabled=tilt_enabled,
+        tilt_zoom_enabled=tilt_zoom_enabled,
     )
     agent_input = EditCopilotInput(
         utterance=message,
