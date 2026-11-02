@@ -67,8 +67,6 @@ jobs:
                   ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "worker")
                 and any($managed[];
                   ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "light")
-                and any($managed[];
-                  ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "autoplace")
             ' >/dev/null
           }
           managed_fleet_has_transitional_states() {
@@ -95,9 +93,6 @@ jobs:
                   ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "worker")
                 and any($managed[];
                   ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "light"
-                    and .state == "started")
-                and any($managed[];
-                  ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "autoplace"
                     and .state == "started")
                 and all($managed[];
                   (.config // .incomplete_config // {}) as $config
@@ -136,7 +131,7 @@ jobs:
               exit 1
             }
             managed_fleet_has_required_processes <<<"$machines_json" || {
-              echo "::error::managed production Machines are missing a required api, worker, light, or autoplace process group"
+              echo "::error::managed production Machines are missing a required api, worker, or light process group"
               exit 1
             }
             jq -e '
