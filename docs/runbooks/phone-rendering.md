@@ -2855,6 +2855,15 @@ PHONE_VOICEOVER_EDITOR_LANES_ENABLED=true SOUND_EFFECTS_ENABLED=true
 MEDIA_OVERLAYS_ENABLED=true --app nova-video` + restart (api + worker), after
 the iOS build that declares protocol 3 is out. Rollback: set the first to false.
 
+**Added pictures on authored and empty edits (KRI-1142).** An authored or empty phone
+edit already advertised `phone_editor_media` (`authored_phone_sources_available`) but kept
+the top-level `visual_blocks` closed (`no_clean_base`). `_phone_authored_media_available`
+(that gate AND `VISUAL_BLOCKS_ENABLED`) now lifts only that closure in the clamp, and the
+generic Save check in `prepare_editor_commit` accepts blocks for it; the authored compile
+(`phone_authored_timeline`) already compiled them. Any other closure reason (a lyrics
+variant) stays closed. Rollback: set `VISUAL_BLOCKS_ENABLED=false`. The same gate is what
+lets Visuals → Generate media appear on these edits.
+
 **Added photos and videos (KRI-287).** Visuals → "Add photo or video" places
 a media Visual block (`visual_blocks`), not a Visuals card. The single gate is
 `phone_rollout.phone_voiceover_editor_media_supported()`: the lanes gate above

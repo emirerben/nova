@@ -7099,6 +7099,7 @@ def _clamp_phone_editor_capabilities(
     narrated_text: bool = False,
     voiceover_lanes: bool = False,
     voiceover_media: bool = False,
+    authored_media: bool = False,
     shape: Any = None,
     subtitled_text: bool = False,
     guided_sfx: bool = False,
@@ -7193,6 +7194,16 @@ def _clamp_phone_editor_capabilities(
             clamped[lane] = False
             if f"{lane}_reason" in clamped:
                 clamped[f"{lane}_reason"] = _PHONE_EDIT_UNSUPPORTED_REASON
+    if (
+        authored_media
+        and "visual_blocks" in clamped
+        and clamped.get("visual_blocks_reason") == "no_clean_base"
+    ):
+        # KRI-1142: an authored or empty phone edit has no clean base video either, and Save
+        # compiles its picture blocks into the authored recipe. Only the no-clean-base closure
+        # is lifted; any other reason (a lyrics variant) stays closed.
+        clamped["visual_blocks"] = True
+        clamped["visual_blocks_reason"] = None
     if voiceover_media and "visual_blocks" in clamped:
         # The cloud map closes `visual_blocks` for want of a clean base video
         # (`no_clean_base`); a phone Voiceover edit has none, and needs none:
@@ -7759,6 +7770,7 @@ def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
             narrated_text=_phone_narrated_title_edits_available(variant),
             voiceover_lanes=voiceover_lanes,
             voiceover_media=voiceover_media,
+            authored_media=_phone_authored_media_available(job, variant),
             shape=shape,
             subtitled_text=subtitled_lanes and _phone_subtitled_text_lane_available(variant),
             guided_sfx=_phone_guided_sfx_available(job, variant),
@@ -7778,6 +7790,16 @@ def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
             ),
         )
     return capabilities
+
+
+def _phone_authored_media_available(job: Job, variant: dict) -> bool:
+    """KRI-1142: an authored or empty phone edit may add pictures once visual blocks are on.
+
+    `authored_phone_sources_available` already checks the media flag, the phone rollout and the
+    verified features; it does not check the visual-block switch."""
+    from app.services.phone_editor_sources import authored_phone_sources_available
+
+    return bool(settings.visual_blocks_enabled and authored_phone_sources_available(job, variant))
 
 
 def _phone_voiceover_editor_media_available(
@@ -12114,8 +12136,10 @@ def _prepare_editor_commit(
         phone_guided = guided_v2 and variant.get("render_destination") == "device"
         # KRI-287: a phone Voiceover edit has no clean base video either; Save
         # compiles its media blocks into the pinned device recipe.
-        phone_media = phone_guided or _phone_voiceover_editor_media_available(
-            job, variant, require_client=False
+        phone_media = (
+            phone_guided
+            or _phone_voiceover_editor_media_available(job, variant, require_client=False)
+            or _phone_authored_media_available(job, variant)
         )
         if not _settings_visual.visual_blocks_enabled:
             if "visual_block" not in payload._deleted_kinds or not _is_exact_deletion_survivor(
