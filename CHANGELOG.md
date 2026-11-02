@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.101.0] - 2026-11-02
+
+### Changed
+- fix(api): return analysed clips in upload order so the creator's take leads a Talking edit (#2050) <!-- release-pr: 2050 -->
+
 ## [0.83.100.0] - 2026-11-02
 
 ### Changed
