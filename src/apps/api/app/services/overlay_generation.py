@@ -13,6 +13,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 
+from app.agents._runtime import TerminalError, TerminalSchemaError
 from app.agents.overlay_generation import (
     OverlayGenerationAgent,
     OverlayPlanInput,
@@ -279,6 +280,7 @@ def _speech_start(fact: dict, quote: str) -> float:
 
 log = structlog.get_logger()
 
+PLANNER_RETRY_MESSAGE = "Kria couldn't plan overlays this time. Your edit is unchanged. Try again."
 OVERLAP_NOTICE = (
     "Some suggestions overlap an existing overlay or each other. "
     "Choose a free moment or remove an existing overlay."
@@ -702,7 +704,12 @@ def generate_overlay_plan(
                 "Save and reopen recent timeline edits, or name an exact time."
             ),
         )
-    raw = (agent or OverlayGenerationAgent(default_client())).run(context, ctx=ctx)
+    try:
+        raw = (agent or OverlayGenerationAgent(default_client())).run(context, ctx=ctx)
+    except TerminalError as exc:
+        if type(exc) not in (TerminalError, TerminalSchemaError):
+            raise
+        return OverlayPlanResponse(**response, message=PLANNER_RETRY_MESSAGE)
     notices: list[str] = []
     try:
         overlays = materialize_overlays(
