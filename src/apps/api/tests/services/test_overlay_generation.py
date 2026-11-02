@@ -1287,3 +1287,94 @@ def test_a_full_frame_visual_block_still_blocks_the_moment():
             prompt="",
             existing_overlays=existing,
         )
+
+
+def _plain_edit(slots, *, variant_changes=None, candidates=None, saved_slots=None):
+    import uuid
+    from types import SimpleNamespace
+
+    from app.services.overlay_generation import OverlayPlanRequest
+
+    variant = {
+        **dict(variant_id="talking", render_generation_id="g1", duration_s=10),
+        **(variant_changes or {}),
+    }
+    if saved_slots:
+        variant["user_timeline"] = {"slots": saved_slots}
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        mode="content_plan",
+        assembly_plan={"variants": [variant]},
+        all_candidates=candidates or {},
+    )
+    body = OverlayPlanRequest(
+        job_id=job.id,
+        variant_id=variant["variant_id"],
+        base_generation="g1",
+        document_fingerprint="f",
+        mode="automatic",
+        prompt="",
+        editor_snapshot={
+            "editor_payload": {"base_generation": "g1", "sections": {"timeline_slots": slots}}
+        },
+    )
+    item = SimpleNamespace(clip_assignments=[], voiceover_gcs_path="items/live-recording.m4a")
+    return job, variant, item, body
+
+
+TRANSCRIPT = [
+    dict(word="fresh", start_s=1.0, end_s=1.4),
+    dict(word="coffee", start_s=1.4, end_s=2.0),
+    dict(word="today.", start_s=2.0, end_s=2.5),
+]
+
+
+def _speech(job, variant, item, body):
+    from app.services.overlay_generation import plan_context
+
+    return [r for r in plan_context(job, variant, item, body, []).evidence if r["kind"] == "speech"]
+
+
+def test_a_stored_transcript_gives_speech_to_an_edit_with_no_word_timed_captions():
+    job, variant, item, body = _plain_edit(
+        _slots(5, 5), variant_changes=dict(overlay_transcript=TRANSCRIPT), saved_slots=_slots(5, 5)
+    )
+    speech = _speech(job, variant, item, body)
+    assert speech and speech[0]["words"][1] == dict(quote="coffee", start_s=1.4, end_s=2.0)
+
+
+def test_a_stored_transcript_is_not_trusted_once_the_clips_were_re_cut():
+    job, variant, item, body = _plain_edit(
+        _slots(4, 6), variant_changes=dict(overlay_transcript=TRANSCRIPT), saved_slots=_slots(5, 5)
+    )
+    assert _speech(job, variant, item, body) == []
+
+
+def test_a_malformed_stored_transcript_means_no_speech_not_an_error():
+    job, variant, item, body = _plain_edit(
+        _slots(5, 5),
+        variant_changes=dict(overlay_transcript=[dict(word="x")]),
+        saved_slots=_slots(5, 5),
+    )
+    assert _speech(job, variant, item, body) == []
+
+
+def test_cloud_voiceover_montage_uses_the_pinned_narration_not_the_live_recording(monkeypatch):
+    from app.pipeline.transcribe import Word
+    from app.services import overlay_generation
+
+    asked = []
+
+    def fake_words(path):
+        asked.append(path)
+        return [Word(text="coffee", start_s=1.0, end_s=1.6, confidence=0.9)]
+
+    monkeypatch.setattr(overlay_generation, "voiceover_words", fake_words)
+    job, variant, item, body = _plain_edit(
+        _slots(5, 5),
+        variant_changes=dict(variant_id="voiceover_only", mix=1.0),
+        candidates=dict(voiceover_gcs_path="jobs/pinned-narration.m4a"),
+    )
+    assert _speech(job, variant, item, body)
+    assert asked == ["jobs/pinned-narration.m4a"]

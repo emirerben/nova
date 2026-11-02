@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-11-01-v102",
+  "prompt_version": "2026-11-01-v105",
   "input": {
     "utterance": "put my cat photo behind the tilted clip",
     "prior_turns": [],

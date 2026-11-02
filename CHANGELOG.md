@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.2.0] - 2026-11-02
+
+### Changed
+- fix(kria): continued turns re-pay their planner calls; generated images no longer force a continuation (KRI-709) (#2072) <!-- release-pr: 2072 -->
+
+## [0.84.1.0] - 2026-11-02
+
+### Fixed
+- feat(editor): authored and empty phone edits can add pictures (KRI-1142) (#2071) <!-- release-pr: 2071 -->
+
+## [0.84.0.0] - 2026-11-02
+
+### Added
+- feat(kria): commentary-style green screen: timed background windows, speaker small in a corner, BACKGROUND editor lane, honest chat receipts (KRI-1162, KRI-1161) (#2045) <!-- release-pr: 2045 -->
+
+## [0.83.118.0] - 2026-11-02
+
+### Fixed
+- feat(overlays): plan from saved transcripts and pinned narration (KRI-1142) (#2070) <!-- release-pr: 2070 -->
+
 ## [0.83.117.0] - 2026-11-02
 
 ### Fixed

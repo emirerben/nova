@@ -60,6 +60,7 @@ from app.services.creator_capabilities import (
     ending_clip_candidates,
     insert_clip_candidates,
     speaker_background_open,
+    speaker_background_windows_open,
     talking_footage_cutaways,
 )
 from app.services.length_policy import creator_duration_s
@@ -194,7 +195,12 @@ log = structlog.get_logger()
 # says an insert exists only as `insert_clips` while that lane is open.
 # A clip shown while the talk keeps running is recorded as `display_mode` / `clip_sound`, never
 # `triggers`.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-02-v110"
+# v109 (KRI-1162): commentary-style green screen. `background_media` gains `sequence` /
+# `spoken_phrase` / `cadence_s` / `speaker_frame`, taught in one extra paragraph only where the
+# manifest advertises `speaker_background_windows`; every other prompt is byte-identical.
+# v111: v109 (KRI-1162, 11-01), v109 (KRI-1151, 11-02) and v110 (insert clips) merged;
+# the prompt carries all three.
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-02-v111"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -596,6 +602,32 @@ A background is only the backdrop: never also use the same photo or video in `re
 this. Say in `summary`, in plain words, that it sits behind them for the whole video.
 """.strip("\n")
 
+# KRI-1162: several backgrounds in time + the speaker small in a corner. Appended after the
+# paragraph above ONLY when the manifest advertises `speaker_background_windows`.
+_SPEAKER_BACKGROUND_WINDOWS_PROMPT_SECTION = """
+SEVERAL BACKGROUNDS, SPEAKER IN A CORNER (commentary-style green screen)
+When the creator wants SEVERAL photos or videos to take turns behind them ("make the whole video
+like a green screen: me small at the bottom right in front, and behind me full screen whichever
+photo or video I'm talking about, changing every 3-5 seconds", "her konuştuğum fotoğraf arkamda
+dursun"), extend `background_media` with `sequence`: an ordered list of up to 40 objects
+{"media_id": "<exact media_context IMAGE or VIDEO media_id>", "spoken_phrase": "<the words they
+say when this one should appear, in their language, optional>", "hold_s": <seconds, optional>}.
+Use `spoken_phrase` only when the creator says which photo goes with which words ("the beach
+photo when I say beach"); otherwise leave it out and the photos take turns in the order listed.
+Without a stated rhythm they change every 4 seconds; set `cadence_s` (2 to 10) when the creator
+names one ("every 3 seconds", "5 saniyede bir"), and use the midpoint of a range ("3-5 seconds"
+= 4). List each photo or video once unless the creator wants repeats; the list repeats by itself
+until the talk ends. Copy exact `media_id`s from `media_context`, never invent one, never use the
+speaker's own clips. With a `sequence`, `background_media.media_id` is the FILL shown wherever no
+window covers the time: use the first entry's id unless the creator names a different fill.
+`speaker_frame` places the speaker (cut out of their own background) as a small picture over the
+backgrounds: "small_bottom_right", "small_bottom_left", "small_top_right" or "small_top_left"
+("me small at the bottom right" = "small_bottom_right"). Leave it out, or "full", to keep the
+speaker full-screen. Pick only these names, never numbers. If no photo or video is attached to
+use, leave `background_media` out rather than guess an id. Say in `summary`, in plain words, how
+the backgrounds change and where the speaker sits.
+""".strip("\n")
+
 # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED) on a phone Montage / Voiceover
 # edit. Appended to the `$reaction_beats_section` slot ONLY when the manifest advertises
 # `timed_cards`; "" otherwise, so every other prompt stays byte-identical.
@@ -864,7 +896,13 @@ very end, add the cheers video with its own sound", "en sona Atakan'ın ilk ıs�
 sesiyle ekle") is not a clip order: record it as a `style` requirement with {"ending_clip": "<the
 creator's words for that video>", "keep_audio": true} (`keep_audio` false only when they want it
 silent), whatever language they write in, and never as `last_clip` or `closing`. On a montage,
-adding or ending on a clip keeps `last_clip` as above. How on-screen text should look goes in the
+adding or ending on a clip keeps `last_clip` as above. A photo or video the creator wants BEHIND
+them on a talking-to-camera edit ("put the beach photo behind me", "make it like a green screen",
+"arkamda bu fotoğraf dursun") is a `style` requirement with {"speaker_background": true}, whatever
+language they write in; add "background_changes": true when several photos or videos take turns
+behind them and "speaker_small": true when they want to be small in a corner. Sound that merely
+plays in the background ("background music", "arka plan müziği") is NOT this and records no such
+fact. How on-screen text should look goes in the
 `facts` of its text requirement, only what the creator said: `animation` (an id from
 {{TEXT_ANIMATION_EDGES}}, never none or the name in brackets) for "animated with typewriter";
 `position` ("top_left", "top", "top_right", "middle", "bottom_left", "bottom", "bottom_right")
@@ -1315,6 +1353,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 + (
                     "\n" + _SPEAKER_BACKGROUND_PROMPT_SECTION
                     if speaker_background_open(input.capability_manifest)
+                    else ""
+                )
+                # KRI-1162: timed backgrounds + the speaker frame; "" unless advertised.
+                + (
+                    "\n" + _SPEAKER_BACKGROUND_WINDOWS_PROMPT_SECTION
+                    if speaker_background_windows_open(input.capability_manifest)
                     else ""
                 )
             ),

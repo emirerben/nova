@@ -2981,7 +2981,11 @@ async def _call_brief_extractor(
                 return await asyncio.to_thread(
                     _run_agent, paid_call_request_id(thread_id, "extractor-retry")
                 )
-            except (ProviderOutcomeUnknownError, ProviderQuotaExceededError, AiBudgetExceededError):
+            except (
+                ProviderOutcomeUnknownError,
+                ProviderQuotaExceededError,
+                AiBudgetExceededError,
+            ):
                 raise
             except TerminalError as retry_exc:
                 raise RuntimeError(

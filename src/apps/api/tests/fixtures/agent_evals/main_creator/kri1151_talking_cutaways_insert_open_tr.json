@@ -1,6 +1,6 @@
 {
   "agent": "nova.creator.main",
-  "prompt_version": "2026-11-02-v110",
+  "prompt_version": "2026-11-02-v111",
   "input": {
     "user_message": "Konuştuğum yerde ilgili konuşma kliplerini araya tam ekran koy ve kendi sesiyle çalsın. Stadyum klibini de konuşurken tam ekran koy ama benim sesim kalsın",
     "creator_request": "Konuştuğum yerde ilgili konuşma kliplerini araya tam ekran koy ve kendi sesiyle çalsın. Stadyum klibini de konuşurken tam ekran koy ama benim sesim kalsın",
