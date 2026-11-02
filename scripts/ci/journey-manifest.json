@@ -930,10 +930,11 @@
     {
       "id": "kri-667-turkish-chat",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri667_structured_ask_facts.py tests/kria/test_turkish_chat_guard.py tests/test_kri667_copilot_claims.py tests/kria/test_kri667_clip_exclusions.py tests/kria/test_kri667_no_new_intent_regexes.py",
+      "api_tests": "tests/kria/test_kri667_structured_ask_facts.py tests/kria/test_turkish_chat_guard.py tests/test_kri667_copilot_claims.py tests/kria/test_kri667_clip_exclusions.py tests/kria/test_kri667_no_new_intent_regexes.py tests/routes/test_copilot_direction_follows_request.py",
       "paths": [
         "src/apps/api/prompts/edit_copilot.txt",
-        "src/apps/api/prompts/edit_copilot_turn.txt"
+        "src/apps/api/prompts/edit_copilot_turn.txt",
+        "src/apps/api/prompts/edit_copilot_ops/direction.txt"
       ]
     },
     {

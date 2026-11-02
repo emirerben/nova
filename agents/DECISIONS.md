@@ -3445,6 +3445,22 @@ reads were not available).
   wording (`scripts/kria/live_assos_turn.py --live`); the same code before the change refused or
   stalled 3 of 3. Small samples; the models vary run to run.
 
+## [2026-11-01] Prompt fidelity wave 2: copilot
+
+**Decision:** the editor Copilot's `set_edit_direction` carries the direction and the pace the creator asked for, and the server says plainly what this editor cannot follow instead of failing or claiming it. Before, the parser refused every direction but `fast_montage` with a bare `invalid_value` (`edit_copilot._coerce_payload`), and a stated pace was dropped without a word.
+
+- What the editor can stage: the only client of this op is the web drawer (`snapshot.ts` lists `direction`; `ops.ts` accepts a fast montage with 0.4 to 1.2 s cuts). The iPhone chat never offers the direction family (`kria_editor_ops._allowed_families`). No client stages story beats, so the server builds no story staging (that would be web-only work outside Kria scope).
+- Story directions: `text_explainer` and `guided_story` are declined before any planner call (`capability_unavailable`) with the registry's own line (`route_capabilities._lines.direction_line`): "The text explainer direction isn't applied on this video yet: this editor can only restage it as a fast montage, so nothing changed. A different direction needs a fresh edit."
+- Pace: an optional typed `pace` (`fast` / `balanced` / `relaxed`), only when the creator stated one. A fast montage's cuts do not follow a pace (the 1.2 s fast-cut cap in `EditProposalSnapshot`, `deterministic_fast_cuts` takes none, the web validator), so the route plans the same fast montage, stages the same op byte for byte and never puts the pace on it. A stated `balanced` or `relaxed` is named on the reply with `_lines.pacing_line` (`plan_items._copilot_montage_pace_note`): "The relaxed pacing isn't applied on this video yet: a fast montage keeps its short cuts." A stated `fast` is what the montage does, so no line. An unknown value is `invalid_value` and never reaches the planner.
+- Typed wire: `pace` joins the op through `edit_copilot._op_fields`, which both the parser and `_creator_wire.copilot_schema` (native / json_guarded output) read, and only while the switch is on. The wire types it as the `ProposalPace` enum.
+- Prompt: `prompts/edit_copilot_ops/direction.txt` is added only when the switch is on and a guided revision offers the direction family. Its examples use placeholders for the revision identity. `EDIT_COPILOT_PROMPT_VERSION` is v104 (a label recorded with each run, bumped unconditionally like v98 and v99; v100-v103 were taken on main or reserved by open PR #2045 when this rebased), and the two plan-review goldens are re-pinned (their prompts are unchanged). Free replay evals pass. The live and judge evals were not run (paid).
+
+**Kill switch:** `COPILOT_DIRECTION_FOLLOWS_REQUEST_ENABLED` (default true). With `false` + restart api, the parser, the wire schema, the planner call, the op, the reply and the prompt match foundation 15c03a51b. Proof: a dump of the wire schema plus 16 recorded turns (plain, fast, balanced and relaxed montages, a text explainer, a relaxed story, an unknown direction and an unknown pace, each with the recorded planner and with the planner's deterministic fallback) is byte-identical between the switch-off branch and the foundation, full prompts included.
+
+**Verification:** `tests/routes/test_copilot_direction_follows_request.py` drives the real op path: a recorded Copilot answer through the real prompt and parser, then the route, `validate_guided_snapshot`, `plan_direction_snapshot` and a recorded planner answer through the real `EditProposalAgent.parse` (or the planner's own fallback after a `TerminalError`). It also round-trips a paced op through the typed wire with the switch on and checks the wire refuses it with the switch off. 11 of its 19 cases fail on the foundation; 7 fail on the first lane commit (the wire schema build and the claimed montage pace).
+
+**Web-only blocker (not built, Kria scope is the iPhone app):** a story direction or a slower montage from the web editor needs the drawer to stage story beats or longer cuts first.
+
 ## [2026-11-01] Phone text placement never fails a render (KRI-1152)
 
 Job 07efa44c failed `phone_plan_unsupported` ("This text cannot fit clearly in the requested area")

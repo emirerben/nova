@@ -16,7 +16,7 @@ import unicodedata
 from collections.abc import Iterable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, ClassVar, Literal, NamedTuple
+from typing import Any, ClassVar, Literal, NamedTuple, get_args
 
 import structlog
 from pydantic import BaseModel, Field
@@ -82,7 +82,12 @@ log = structlog.get_logger()
 # v102 (KRI-1139): a media backdrop ({"kind":"media","asset_id"}) in the tilt, taught in
 # clip_tilt_media.txt and the BACKDROP POOL section only where `tilt_backdrop_media` is open;
 # every other prompt, including a tilt-open one without it, is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v102"
+# v104 (KRI-1097 wave 2): set_edit_direction carries the creator's direction (fast_montage,
+# text_explainer, guided_story) and a stated pace (edit_copilot_ops/direction.txt); the server
+# names what this editor cannot restage. Taught only where a guided revision offers the direction
+# family and COPILOT_DIRECTION_FOLLOWS_REQUEST_ENABLED is on; every other prompt is byte-identical.
+# (v103 is reserved by the commentary green-screen branch, PR #2045.)
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v104"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -3445,6 +3450,51 @@ def _guided_revision_identity(snapshot: dict) -> tuple[int, str] | None:
     return number, generation.strip()
 
 
+def _op_fields(name: str) -> frozenset[str]:
+    """The fields the parser and the typed wire keep for an op. ``pace`` on set_edit_direction
+    (the pace the creator stated) exists only while ``COPILOT_DIRECTION_FOLLOWS_REQUEST_ENABLED``
+    is on, so with it off the parser and `_creator_wire.copilot_schema` match the foundation."""
+    fields = _OP_FIELDS[name]
+    if name == "set_edit_direction" and settings.copilot_direction_follows_request_enabled:
+        return fields | {"pace"}
+    return fields
+
+
+def _story_direction_not_staged(direction: str) -> str:
+    """The registry's direction line (`route_capabilities._lines.direction_line`) for a story
+    direction: the editor drawer stages fast-montage cuts only (no client stages story beats),
+    so nothing changes, and the creator reads why."""
+    from app.kria.route_capabilities import _lines as lines  # noqa: PLC0415
+
+    line = lines.direction_line(
+        "fast_montage",
+        "this editor can only restage it as a fast montage, so nothing changed. "
+        "A different direction needs a fresh edit",
+        "bu editör onu yalnızca hızlı bir montaj olarak yeniden kurabiliyor, o yüzden hiçbir şey "
+        "değişmedi. Başka bir yön için yeni bir düzenleme gerekiyor",
+    )(direction, {})
+    return f"{line}." if line else CAPABILITY_UNAVAILABLE_DETAIL
+
+
+def _with_direction_fragment(prompt: str, snapshot: object) -> str:
+    """Teach the direction op the creator's direction and stated pace, only where a guided
+    revision offers it and ``COPILOT_DIRECTION_FOLLOWS_REQUEST_ENABLED`` is on. Every other
+    prompt stays byte-identical."""
+    if (
+        not settings.copilot_direction_follows_request_enabled
+        or not isinstance(snapshot, dict)
+        or _guided_revision_identity(snapshot) is None
+        or not _family_allowed("set_edit_direction", snapshot)
+    ):
+        return prompt
+    path = Path(__file__).resolve().parents[2] / "prompts" / "edit_copilot_ops" / "direction.txt"
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return prompt
+    return f"{prompt}\n\n{text}"
+
+
 class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.edit.copilot",
@@ -3488,6 +3538,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         )
         prompt = _with_v2_fragments(prompt, input.variant_snapshot)
         prompt = _with_scope_fragment(prompt, input.variant_snapshot)
+        prompt = _with_direction_fragment(prompt, input.variant_snapshot)
         turn = load_prompt(
             "edit_copilot_turn",
             utterance=(
@@ -4124,7 +4175,7 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
         payload = dict(raw_payload)
     else:
         payload = {k: v for k, v in raw_op.items() if k not in {"op", "type"}}
-    payload = {k: v for k, v in payload.items() if k in _OP_FIELDS[name]}
+    payload = {k: v for k, v in payload.items() if k in _op_fields(name)}
     if name in _BULK_OPS and "selector" not in payload:
         selector = {
             key: payload[key] for key in ("scope", "media_kind", "quantifier") if key in payload
@@ -5168,7 +5219,22 @@ def _coerce_payload(
         return _coerce_label_each_clip(name, out, snapshot, state)
 
     if name == "set_edit_direction":
-        if out.get("direction") != "fast_montage":
+        direction = out.get("direction")
+        if settings.copilot_direction_follows_request_enabled:
+            from app.schemas.edit_proposal import ProposalPace  # noqa: PLC0415
+            from app.services.length_policy import STORY_DIRECTIONS  # noqa: PLC0415
+
+            if direction in STORY_DIRECTIONS:
+                state.reject(
+                    op=name,
+                    reason="capability_unavailable",
+                    detail=_story_direction_not_staged(direction),
+                )
+                return None
+            if out.get("pace") not in (None, *get_args(ProposalPace)):
+                state.invalid_value()
+                return None
+        if direction != "fast_montage":
             state.invalid_value()
             return None
         identity = _guided_revision_identity(snapshot)
