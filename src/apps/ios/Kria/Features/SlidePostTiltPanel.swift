@@ -11,7 +11,7 @@ import UIKit
 struct SlidePostTiltPanel: View {
     @ObservedObject var session: SlidePostSession
     let slideID: String
-    /// KRI-1170: the Zoom slider, shown when the server advertises `slide_post_tilt_zoom` (protocol 32).
+    /// KRI-1170: the Zoom slider, shown when the server advertises `slide_post_tilt_zoom` (protocol 33).
     var zoomEnabled = false
     let onDone: () -> Void
 

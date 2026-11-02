@@ -272,18 +272,18 @@ def test_chat_edit_backfill_restores_an_omitted_tilt_and_respects_null() -> None
 # ── KRI-1170: zoom ───────────────────────────────────────────────────────────────────────
 #
 # Failure modes (listed before the code):
-#  Z1  a build below protocol 32 saves a zoomed tilt (it cannot have authored one)
-#  Z2  a build below protocol 32 re-saves a slide whose STORED tilt is zoomed and the key it
+#  Z1  a build below protocol 33 saves a zoomed tilt (it cannot have authored one)
+#  Z2  a build below protocol 33 re-saves a slide whose STORED tilt is zoomed and the key it
 #      re-encodes without `zoom` erases the stored zoom
-#  Z3  the zoom slider is offered to a build below 32 or with the flag off
-#  Z4  a protocol-32 build's zoom is dropped, or the older worker's export reads as current
+#  Z3  the zoom slider is offered to a build below 33 or with the flag off
+#  Z4  a protocol-33 build's zoom is dropped, or the older worker's export reads as current
 
 ZOOMED = {"rotation_deg": 12.5, "backdrop": {"kind": "blur"}, "zoom": 1.5}
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("protocol", [28, 31])
-async def test_a_zoomed_tilt_from_a_build_below_32_is_refused_with_426(monkeypatch, protocol):
+async def test_a_zoomed_tilt_from_a_build_below_33_is_refused_with_426(monkeypatch, protocol):
     asset_id = uuid.uuid4()
     item = _item(asset_id, SlideEdits(tilt=TILT))
     with pytest.raises(HTTPException) as exc:
@@ -295,7 +295,7 @@ async def test_a_zoomed_tilt_from_a_build_below_32_is_refused_with_426(monkeypat
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("sent", [{"tilt": {"rotation_deg": 12.5}}, {"tilt": None}])
-async def test_a_build_below_32_cannot_overwrite_a_stored_zoom(monkeypatch, sent):
+async def test_a_build_below_33_cannot_overwrite_a_stored_zoom(monkeypatch, sent):
     asset_id = uuid.uuid4()
     item = _item(asset_id, SlideEdits(tilt=ZOOMED))
     with pytest.raises(HTTPException) as exc:
@@ -306,7 +306,7 @@ async def test_a_build_below_32_cannot_overwrite_a_stored_zoom(monkeypatch, sent
 
 
 @pytest.mark.asyncio
-async def test_a_build_below_32_that_leaves_the_tilt_alone_keeps_the_stored_zoom(monkeypatch):
+async def test_a_build_below_33_that_leaves_the_tilt_alone_keeps_the_stored_zoom(monkeypatch):
     asset_id = uuid.uuid4()
     item = _item(asset_id, SlideEdits(tilt=ZOOMED))
     await _put(monkeypatch, item, _body(asset_id, {"look_preset": "olive_film"}), protocol=31)
@@ -315,7 +315,7 @@ async def test_a_build_below_32_that_leaves_the_tilt_alone_keeps_the_stored_zoom
 
 
 @pytest.mark.asyncio
-async def test_a_build_below_32_may_still_resave_a_zoomless_tilt_over_a_zoomless_tilt(
+async def test_a_build_below_33_may_still_resave_a_zoomless_tilt_over_a_zoomless_tilt(
     monkeypatch,
 ):
     asset_id = uuid.uuid4()
@@ -325,10 +325,10 @@ async def test_a_build_below_32_may_still_resave_a_zoomless_tilt_over_a_zoomless
 
 
 @pytest.mark.asyncio
-async def test_a_protocol_32_build_sets_changes_and_clears_a_zoom(monkeypatch):
+async def test_a_protocol_33_build_sets_changes_and_clears_a_zoom(monkeypatch):
     asset_id = uuid.uuid4()
     item = _item(asset_id, None)
-    await _put(monkeypatch, item, _body(asset_id, {"tilt": ZOOMED}, version=2), protocol=32)
+    await _put(monkeypatch, item, _body(asset_id, {"tilt": ZOOMED}, version=2), protocol=33)
     assert _saved(item) == {"rotation_deg": 12.5, "backdrop": {"kind": "blur"}, "zoom": 1.5}
 
     item.slide_post["version"] = 3
@@ -336,7 +336,7 @@ async def test_a_protocol_32_build_sets_changes_and_clears_a_zoom(monkeypatch):
         monkeypatch,
         item,
         _body(asset_id, {"tilt": {"rotation_deg": 12.5, "zoom": 1}}, version=3),
-        protocol=32,
+        protocol=33,
     )
     assert _saved(item) == {"rotation_deg": 12.5, "backdrop": {"kind": "blank"}}
 
@@ -345,7 +345,7 @@ async def test_a_protocol_32_build_sets_changes_and_clears_a_zoom(monkeypatch):
         monkeypatch,
         item,
         _body(asset_id, {"tilt": {"rotation_deg": 0, "zoom": 2}}, version=4),
-        protocol=32,
+        protocol=33,
     )
     assert _saved(item) == {"rotation_deg": 0.0, "backdrop": {"kind": "blank"}, "zoom": 2.0}
 
@@ -363,8 +363,8 @@ def test_zoom_defaults_and_wire_shape() -> None:
     from app.routes.creation_threads import CreationCapabilitiesOut
     from app.services.client_protocol import TILT_ZOOM_PROTOCOL
 
-    assert TILT_ZOOM_PROTOCOL == 32
-    assert type(settings).model_fields["media_tilt_zoom_min_client_protocol"].default == 32
+    assert TILT_ZOOM_PROTOCOL == 33
+    assert type(settings).model_fields["media_tilt_zoom_min_client_protocol"].default == 33
     assert CreationCapabilitiesOut.model_fields["slide_post_tilt_zoom"].default is False
 
 
@@ -374,13 +374,13 @@ def test_zoom_defaults_and_wire_shape() -> None:
     [
         (True, None, False),
         (True, 28, False),
-        (True, 31, False),
-        (True, 32, True),
+        (True, 32, False),
         (True, 33, True),
-        (False, 32, False),
+        (True, 34, True),
+        (False, 33, False),
     ],
 )
-async def test_the_zoom_capability_needs_the_flag_and_a_protocol_32_build(
+async def test_the_zoom_capability_needs_the_flag_and_a_protocol_33_build(
     monkeypatch, flag, protocol, expected
 ) -> None:
     from app.routes.creation_threads import capabilities

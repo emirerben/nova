@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-11-02-v106",
+  "prompt_version": "2026-11-02-v107",
   "input": {
     "utterance": "zoom in on slide 2",
     "prior_turns": [],

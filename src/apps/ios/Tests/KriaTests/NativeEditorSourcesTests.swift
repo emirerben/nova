@@ -300,6 +300,122 @@ final class NativeEditorSourcesTests: XCTestCase {
         XCTAssertThrowsError(try NativePhoneTalkingSource.hydrate(document, clipIndex: 0, duration: 2, removed: [(0, 3)]))
     }
 
+    /// Parent KRI-1151: the preview of a Talking edit whose take is paused for another clip. The editor
+    /// rebuilds the preview from the variant's receipts (not the recipe), so the receipt must carry the
+    /// insert and the take must be split around it: the prod case is the 58 s take, paused after 21.8 s
+    /// for a 15 s clip. The captions, text and cutaways the server persisted are already on the final timeline.
+    private func insertPool() -> NativeEditorSourcePool {
+        func source(_ id: String) -> NativeTimelineSource {
+            NativeTimelineSource(mediaID: id, sourceURL: URL(string: "https://example.com/\(id).mov"), original: nil, localRequired: false)
+        }
+        return NativeEditorSourcePool(clips: [
+            .init(clipIndex: 0, nativeSource: source("take")),
+            .init(clipIndex: 1, nativeSource: source("congress")),
+            .init(clipIndex: 2, nativeSource: source("second")),
+        ], baseGeneration: "g")
+    }
+
+    private func insertVariant(_ rows: [JSONValue]?) -> [String: JSONValue] {
+        var variant: [String: JSONValue] = ["resolved_archetype": .string("subtitled"), "render_destination": .string("device"),
+            "phone_talking_multi_clip": .object(["version": .number(1), "speaker_media_ids": .array([.string("take")])])]
+        if let rows { variant["phone_insert_clips"] = .object(["placed": .array(rows), "dropped": .array([])]) }
+        return variant
+    }
+
+    private func insertRow(_ id: String, at: Double, duration: Double, keepAudio: Bool = true) -> JSONValue {
+        .object(["media_id": .string(id), "at_take_s": .number(at), "duration_s": .number(duration), "keep_audio": .bool(keepAudio),
+                 "volume": .number(keepAudio ? 1 : 0), "start_s": .number(at), "end_s": .number(at + duration)])
+    }
+
+    func testPhoneTalkingInsertsComeFromTheReceiptAndNothingElseChanges() {
+        let pool = insertPool()
+        let row = insertRow("congress", at: 21.8, duration: 15)
+        XCTAssertEqual(NativePhoneTalkingSource.inserts(variant: insertVariant([row]), pool: pool, speakerIndices: [0]),
+                       [.init(clipIndex: 1, atTake: 21.8, duration: 15, keepAudio: true)])
+        // An old build's variant, a flag-off render, a render that placed nothing: no inserts, the preview is as before.
+        XCTAssertEqual(NativePhoneTalkingSource.inserts(variant: insertVariant(nil), pool: pool, speakerIndices: [0]), [])
+        XCTAssertEqual(NativePhoneTalkingSource.inserts(variant: insertVariant([]), pool: pool, speakerIndices: [0]), [])
+        XCTAssertEqual(NativePhoneTalkingSource.inserts(variant: ["resolved_archetype": .string("subtitled")], pool: pool, speakerIndices: [0]), [])
+        XCTAssertEqual(NativePhoneTalkingSource.inserts(variant: insertVariant([insertRow("congress", at: 5, duration: 3, keepAudio: false)]),
+                                                        pool: pool, speakerIndices: [0]),
+                       [.init(clipIndex: 1, atTake: 5, duration: 3, keepAudio: false)])
+        // Sorted by where the take pauses.
+        let two = NativePhoneTalkingSource.inserts(variant: insertVariant([insertRow("second", at: 30, duration: 4), row]), pool: pool, speakerIndices: [0])
+        XCTAssertEqual(two?.map(\.clipIndex), [1, 2])
+        // A receipt the preview cannot draw faithfully is nil (the finished MP4 plays instead of a different video).
+        for bad: [JSONValue] in [
+            [insertRow("gone", at: 5, duration: 3)],
+            [insertRow("take", at: 5, duration: 3)],
+            [insertRow("congress", at: 0, duration: 3)],
+            [insertRow("congress", at: -1, duration: 3)],
+            [insertRow("congress", at: 5, duration: 0)],
+            [insertRow("congress", at: 5, duration: 3), insertRow("congress", at: 20, duration: 3)],
+            [insertRow("congress", at: 5, duration: 3), insertRow("second", at: 5, duration: 3)],
+            [.string("congress")],
+            [.object(["media_id": .string("congress"), "duration_s": .number(3)])],
+        ] {
+            XCTAssertNil(NativePhoneTalkingSource.inserts(variant: insertVariant(bad), pool: pool, speakerIndices: [0]), "\(bad)")
+        }
+        // A malformed receipt shape is nil too, not an empty list.
+        var broken = insertVariant(nil)
+        broken["phone_insert_clips"] = .object(["placed": .string("x")])
+        XCTAssertNil(NativePhoneTalkingSource.inserts(variant: broken, pool: pool, speakerIndices: [0]))
+    }
+
+    func testPhoneTalkingTakePausesForTheInsertAndResumesWhereItStopped() throws {
+        let document = EditorDocument(capabilities: ["timeline": .init(editable: false)], revision: .init(baseGeneration: "g"))
+        let insert = NativePhoneTalkingSource.Insert(clipIndex: 1, atTake: 21.8, duration: 15, keepAudio: true)
+        let hydrated = try NativePhoneTalkingSource.hydrate(document, speakers: [.init(clipIndex: 0, duration: 57.97)],
+                                                            inserts: [(insert, 15)])
+        XCTAssertEqual(hydrated.clips.map(\.clipIndex), [0, 1, 0])
+        XCTAssertEqual(hydrated.clips.map(\.inS), [0, 0, 21.8])
+        let durations = hydrated.clips.compactMap(\.durationS)
+        for (actual, expected) in zip(durations, [21.8, 15, 36.17]) { XCTAssertEqual(actual, expected, accuracy: 0.0001) }
+        XCTAssertEqual(durations.reduce(0, +), 57.97 + 15, accuracy: 0.0001, "the server's recipe duration")
+        XCTAssertEqual(Set(hydrated.clips.compactMap(\.id)).count, 3)
+        XCTAssertTrue(hydrated.clips.allSatisfy { $0.raw["native_composite_source"] == .bool(true) })
+        XCTAssertEqual(hydrated.clips[1].raw["muted"], .bool(false), "the clip plays its own sound")
+        XCTAssertNil(hydrated.clips[0].raw["muted"], "the take is untouched")
+        XCTAssertFalse(NativePhoneTalkingSource.isSourceSlot(hydrated.clips[1]), "Range never offers to trim the inserted clip")
+        // Already hydrated: a rebuild leaves it alone (history, Undo and the clean baseline all rehydrate).
+        XCTAssertEqual(try NativePhoneTalkingSource.hydrate(hydrated, speakers: [.init(clipIndex: 0, duration: 57.97)],
+                                                            inserts: [(insert, 15)]), hydrated)
+        // Without inserts the document is exactly what it was.
+        let plain = try NativePhoneTalkingSource.hydrate(document, speakers: [.init(clipIndex: 0, duration: 57.97)])
+        XCTAssertEqual(try NativePhoneTalkingSource.hydrate(document, speakers: [.init(clipIndex: 0, duration: 57.97)], inserts: []), plain)
+        XCTAssertEqual(plain.clips.count, 1)
+        // A muted insert (the creator asked it silent) is muted on the document.
+        let silent = try NativePhoneTalkingSource.hydrate(document, speakers: [.init(clipIndex: 0, duration: 57.97)],
+            inserts: [(.init(clipIndex: 1, atTake: 21.8, duration: 15, keepAudio: false), 15)])
+        XCTAssertEqual(silent.clips[1].raw["muted"], .bool(true))
+    }
+
+    func testPhoneTalkingInsertPositionIsOnTheCutTimelineAndExtraSpeakersFollowIt() throws {
+        let document = EditorDocument(capabilities: ["timeline": .init(editable: false)], revision: .init(baseGeneration: "g"))
+        // Cleanup kept [0,5) [7,20) [24,30) of a 30 s take: 5 + 13 + 6 = 24 s of take. 9 s of take = source 11 s.
+        let removed: [(start: Double, end: Double)] = [(5, 7), (20, 24)]
+        let speakers: [NativePhoneTalkingSource.Speaker] = [.init(clipIndex: 0, duration: 30), .init(clipIndex: 2, duration: 6)]
+        let inMiddle = try NativePhoneTalkingSource.hydrate(document, speakers: speakers, removed: removed,
+            inserts: [(.init(clipIndex: 1, atTake: 9, duration: 4, keepAudio: true), 4)])
+        XCTAssertEqual(inMiddle.clips.map(\.clipIndex), [0, 0, 1, 0, 0, 2])
+        XCTAssertEqual(inMiddle.clips.map(\.inS), [0, 7, 0, 11, 24, 0])
+        for (actual, expected) in zip(inMiddle.clips.compactMap(\.durationS), [5, 4, 4, 9, 6, 6]) { XCTAssertEqual(actual, Double(expected), accuracy: 0.0001) }
+        // On a seam between two kept segments the insert sits between them without a sliver of speech.
+        let onSeam = try NativePhoneTalkingSource.hydrate(document, speakers: [speakers[0]], removed: removed,
+            inserts: [(.init(clipIndex: 1, atTake: 5, duration: 4, keepAudio: true), 4)])
+        XCTAssertEqual(onSeam.clips.map(\.clipIndex), [0, 1, 0, 0])
+        XCTAssertEqual(onSeam.clips.map(\.inS), [0, 0, 7, 24])
+        // Two inserts, the second counted on the take timeline (the first one's length is not in it).
+        let both = try NativePhoneTalkingSource.hydrate(document, speakers: [speakers[0]], removed: [],
+            inserts: [(.init(clipIndex: 1, atTake: 10, duration: 4, keepAudio: true), 4), (.init(clipIndex: 2, atTake: 20, duration: 6, keepAudio: true), 6)])
+        XCTAssertEqual(both.clips.map(\.clipIndex), [0, 1, 0, 2, 0])
+        XCTAssertEqual(both.clips.map(\.inS), [0, 0, 10, 0, 20])
+        XCTAssertEqual(both.clips.compactMap(\.durationS).reduce(0, +), 40, accuracy: 0.0001)
+        // An insert past the take's end or at its edges cannot be drawn: the server never writes one.
+        XCTAssertThrowsError(try NativePhoneTalkingSource.hydrate(document, speakers: [speakers[0]],
+            inserts: [(.init(clipIndex: 1, atTake: 31, duration: 4, keepAudio: true), 4)]))
+    }
+
     func testProductionTimelineVideoURLsDecodeAsOriginalSources() throws {
         let data = Data(#"{"clips":[{"clip_index":0,"signed_url":"https://storage.googleapis.com/bucket/original.mov","used":true},{"clip_index":1,"media_id":"approved-video","kind":"video","signed_url":"https://storage.googleapis.com/bucket/other.mp4"}]}"#.utf8)
         let pool = try JSONDecoder().decode(NativeEditorSourcePool.self, from: data)

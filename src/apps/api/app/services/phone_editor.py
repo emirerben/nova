@@ -54,6 +54,8 @@ from app.pipeline.phone_subtitled_lanes import (
     PhoneSubtitledLanes,
     ResolvedSoundEffect,
     SubtitledBackground,
+    SubtitledBackgroundWindow,
+    SubtitledSpeakerFrame,
     lane_names,
 )
 from app.pipeline.phone_subtitled_plan import (
@@ -65,6 +67,7 @@ from app.pipeline.phone_subtitled_plan import (
     sfx_duck_receipt,
     speaker_binding_from_recipe,
 )
+from app.pipeline.phone_talking_inserts import inserts_from_recipe
 from app.pipeline.phone_timed_cards import TIMED_CARDS_FIELD, timed_cards_from_rows
 from app.pipeline.phone_voiceover_cut import replace_voiceover_cut
 from app.services.creator_render_contract import (
@@ -102,6 +105,7 @@ from app.services.phone_rollout import (
     single_word_text_client_supported,
     single_word_text_verified,
     speaker_background_client_supported,
+    speaker_background_windows_client_supported,
     text_bend_client_supported,
     validate_phone_pilot_recipe,
 )
@@ -119,6 +123,7 @@ from app.services.phone_subtitled_editor import (
     lanes_from_recipe,
     sections_from_lanes,
     variant_carries_speaker_background,
+    variant_carries_speaker_background_windows,
 )
 from app.services.phone_voiceover_timeline import (
     narrated_timings_and_assignments,
@@ -863,6 +868,22 @@ def prepare_phone_editor_commit(
                 "minimum_client_protocol": settings.speaker_background_min_client_protocol,
             },
         )
+    if (
+        stored_variant is not None
+        and not speaker_background_windows_client_supported()
+        and variant_carries_speaker_background_windows(job.assembly_plan or {}, stored_variant)
+    ):
+        # KRI-1162 (S32): a recompile would pin `windows` / `speaker_frame`, which this app
+        # build cannot decode, or (compile strips them for such a build) silently take them off.
+        # Nothing is committed.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_background_windows",
+                "minimum_client_protocol": settings.speaker_background_windows_min_client_protocol,
+            },
+        )
     try:
         _rebind_editor_render_contract(
             staged,
@@ -957,6 +978,23 @@ def prepare_phone_editor_commit(
                 "code": "client_update_required",
                 "feature": "speaker_background",
                 "minimum_client_protocol": settings.speaker_background_min_client_protocol,
+            },
+        )
+    staged_background = getattr(
+        device_status(staged, variant_id).request.recipe, "speaker_background", None
+    )
+    if (
+        staged_background is not None
+        and staged_background.uses_windows
+        and not speaker_background_windows_client_supported()
+    ):
+        # KRI-1162: the belt for a recompile that pinned windows this build cannot decode.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_background_windows",
+                "minimum_client_protocol": settings.speaker_background_windows_min_client_protocol,
             },
         )
     if not freeze_frame_client_supported() and recipe_has_freeze_frame(
@@ -1186,12 +1224,32 @@ def _background_lane(
     binding = next((v for v in visuals if v.media_id == document["media_id"]), None)
     if binding is None:
         raise ValueError("that background isn't a visual Kria pinned for this Talking edit")
+    windows: list[SubtitledBackgroundWindow] = []
+    for entry in document.get("windows") or ():
+        # KRI-1162: every window is a pinned pool visual too (the route validated each id).
+        window_binding = next((v for v in visuals if v.media_id == entry["media_id"]), None)
+        if window_binding is None:
+            raise ValueError("that background isn't a visual Kria pinned for this Talking edit")
+        windows.append(
+            SubtitledBackgroundWindow(
+                media_id=window_binding.media_id,
+                gcs_path=window_binding.gcs_path,
+                generation=window_binding.generation,
+                kind=window_binding.kind,
+                source_start_s=entry.get("source_start_s", 0.0),
+                start_s=entry["start_s"],
+                end_s=entry["end_s"],
+            )
+        )
+    frame = document.get("speaker_frame")
     return SubtitledBackground(
         media_id=binding.media_id,
         gcs_path=binding.gcs_path,
         generation=binding.generation,
         kind=binding.kind,
         source_start_s=document.get("source_start_s", 0.0),
+        windows=tuple(windows),
+        speaker_frame=SubtitledSpeakerFrame(**frame) if frame else None,
     )
 
 
@@ -1329,12 +1387,16 @@ def _compile_subtitled_editor_commit(
     speaker = bindings[0]
     cutaways: tuple = ()
     additional_speakers: tuple = ()
+    inserts: tuple = ()
     if isinstance(previous.recipe, EditRecipeV2):
         speaker = speaker_binding_from_recipe(previous.recipe, bindings)
         cutaways = cutaways_from_recipe(previous.recipe, bindings)
         if not phone_talking_cutaway_sound_supported():
             cutaways = tuple(c.model_copy(update={"sound": False}) for c in cutaways)
         additional_speakers = additional_speakers_from_recipe(previous.recipe, bindings)
+        # Parent KRI-1151: a clip the take was paused for comes back where it was, whatever the
+        # insert flag says now; the rows below are already on the final timeline.
+        inserts = inserts_from_recipe(previous.recipe, bindings)
     elif len(bindings) != 1:
         raise ValueError("multi-clip phone Talking edits need a pinned recipe")
     keep_segments = (
@@ -1391,6 +1453,7 @@ def _compile_subtitled_editor_commit(
         caption_look=caption_look,
         cutaways=cutaways,
         additional_speakers=additional_speakers,
+        **({"inserts": inserts} if inserts else {}),
         landscape_fit=landscape_fit,
         # KRI-467: the staged row's text (already this Save's, when it carries
         # a text section), in the cut-timeline seconds the cues use.
@@ -1479,7 +1542,7 @@ def _compile_subtitled_editor_commit(
         _restale_protected_text(
             row,
             speaker=speaker,
-            keep_segments=keep_segments,
+            keep_segments=_without_insert_splits(keep_segments),
             landscape_fit=landscape_fit,
             speaker_position_x=speaker_position_x,
             canvas_changed=canvas_changed,
@@ -2030,6 +2093,24 @@ def _previous_clip_tilts(recipe: Any) -> dict[str, dict]:
                 if (tilt := row_tilt_from_clip(clip)) is not None:
                     tilts[clip.id] = tilt
     return tilts
+
+
+def _without_insert_splits(
+    keep_segments: list[tuple[float, float]] | None,
+) -> list[tuple[float, float]] | None:
+    """The take's keep segments as the cleanup cut made them. A clip inserted into the take
+    (parent KRI-1151) splits one segment in two at the point, back to back in the source; the
+    receipts measured the unsplit take, so compare on that. A real cut leaves a gap, so it is
+    never merged."""
+    if not keep_segments:
+        return keep_segments
+    merged = [keep_segments[0]]
+    for start, end in keep_segments[1:]:
+        if abs(start - merged[-1][1]) <= 1e-4:
+            merged[-1] = (merged[-1][0], end)
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def _previous_keep_segments(

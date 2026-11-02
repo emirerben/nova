@@ -287,7 +287,7 @@ def test_the_flag_pair_is_what_opens_the_gate(monkeypatch) -> None:
 # ── KRI-1170: zoom ───────────────────────────────────────────────────────────────────────
 #
 # Failure modes (listed before the code):
-#  Y1  zoom is accepted while its gate (flag + protocol 32) is closed, or opens without tilt
+#  Y1  zoom is accepted while its gate (flag + protocol 33) is closed, or opens without tilt
 #  Y2  a relative zoom is added blindly by the model instead of by the server, or the sum
 #      leaves 0.5..3 without the creator being told
 #  Y3  a rotation / backdrop / text edit on a zoomed slide drops the zoom

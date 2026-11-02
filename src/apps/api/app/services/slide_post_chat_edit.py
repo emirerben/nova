@@ -298,7 +298,7 @@ def build_slide_post_snapshot(
     ``tilt_enabled`` (KRI-1138) is the same kind of gate for ``set_slide_tilt``:
     MEDIA_TILT_ENABLED AND a protocol-28 build. Closed, the snapshot (and so the prompt)
     carries no tilt at all. ``tilt_zoom_enabled`` (KRI-1170) additionally opens ``zoom`` /
-    ``zoom_delta``: MEDIA_TILT_ENABLED AND a protocol-32 build.
+    ``zoom_delta``: MEDIA_TILT_ENABLED AND a protocol-33 build.
     """
     facts_on = settings.clip_facts_for(user_id)
     slots: list[dict[str, Any]] = []

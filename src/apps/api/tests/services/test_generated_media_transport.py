@@ -155,3 +155,12 @@ def test_provider_server_error_still_propagates_unchanged():
 
     with pytest.raises(Boom):
         _provider_error(Boom())
+
+
+def test_image_request_keeps_the_lettering_that_belongs_to_a_logo():
+    from app.services.generated_asset_contracts import ImageRequest, image_payload
+
+    payload = image_payload(ImageRequest(prompt="Official Fenerbahce crest with its wordmark"))
+    assert "kept as drawn" in payload["prompt"]
+    assert "Do not include lettering" not in payload["prompt"]
+    assert payload["prompt"].endswith("Official Fenerbahce crest with its wordmark")

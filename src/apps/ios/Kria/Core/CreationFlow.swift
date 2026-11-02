@@ -32,7 +32,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostStickers: Bool? = nil
     /// KRI-1138: tilt a slide's photo or video. The server advertises it only to a build that speaks protocol 28. Missing = off (no Tilt tool, no `tilt` authored).
     var slidePostTilt: Bool? = nil
-    /// KRI-1170: the Zoom slider in the slide Tilt panel. Advertised only to a build that speaks protocol 32. Missing = off (no slider, no `zoom` authored).
+    /// KRI-1170: the Zoom slider in the slide Tilt panel. Advertised only to a build that speaks protocol 33. Missing = off (no slider, no `zoom` authored).
     var slidePostTiltZoom: Bool? = nil
     /// KRI-646: text Bend (curved text). The server advertises it only to a build that speaks protocol 9. Missing = off (no Bend slider).
     var textBend: Bool? = nil

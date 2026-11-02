@@ -64,6 +64,7 @@ _IMAGE_SUFFIXES = {".avif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".webp"}
 _PORTABLE_FAMILIES = {
     "automatic_cut",
     "background",
+    "background_windows",
     "caption",
     "clip",
     "effect",
@@ -794,6 +795,8 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
         families.append("effect")
     if background_state(job, variant)[0]:
         families.append("background")
+        if background_windows_open(job, variant):
+            families.append("background_windows")
     return sorted(set(families) & _PORTABLE_FAMILIES)
 
 
@@ -898,6 +901,42 @@ def background_state(job: Any, variant: dict[str, Any]) -> tuple[bool, str | Non
     return reason is None, reason
 
 
+def background_windows_open(job: Any, variant: dict[str, Any]) -> bool:
+    """May chat also time several backgrounds and place the speaker in a corner (KRI-1162)?
+
+    The base lane is open (`background_state`) AND the windows gate holds
+    (`speaker_background_windows_unavailable_reason`, same worker-side client rule). False
+    adds nothing to the snapshot, so a closed windows gate is byte-identical to before.
+    """
+    if not background_state(job, variant)[0]:
+        return False
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        speaker_background_windows_unavailable_reason,
+    )
+
+    return speaker_background_windows_unavailable_reason() is None
+
+
+def background_duration_s(variant: dict[str, Any]) -> float:
+    """The edit's length in seconds, 0.0 when the variant does not say (KRI-1162)."""
+    try:
+        return float(visual_block_variant_duration(variant))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def background_frame_preset(frame: object) -> str | None:
+    """The named corner a stored ``speaker_frame`` is, ``"custom"`` for any other geometry."""
+    if not isinstance(frame, dict) or not frame:
+        return None
+    from app.kria.portable_speaker_background import SPEAKER_FRAME_PRESETS  # noqa: PLC0415
+
+    for name, preset in SPEAKER_FRAME_PRESETS.items():
+        if all(abs(float(frame.get(key, -1)) - value) < 1e-6 for key, value in preset.items()):
+            return name
+    return "custom"
+
+
 def background_current(job: Any, variant: dict[str, Any]) -> dict[str, Any] | None:
     """The background behind the speaker now: the variant's own row (an explicit ``None`` is a
     cleared draft), else what the pinned recipe says for a Talking edit never Saved."""
@@ -929,7 +968,7 @@ def _background_snapshot(
         for row in clip_context.get("background_pool") or []
         if isinstance(row, dict) and row.get("kind") in {"image", "video"}
     ][:MAX_BACKGROUND_POOL_ROWS]
-    return {
+    section: dict[str, Any] = {
         "available": True,
         "current": (
             {
@@ -942,6 +981,24 @@ def _background_snapshot(
         ),
         "pool": pool,
     }
+    if background_windows_open(job, variant):
+        # KRI-1162: only while the windows gate is open, so a closed gate's section is unchanged.
+        windows = current.get("windows") if isinstance(current, dict) else None
+        section["windows_available"] = True
+        section["duration_s"] = round(background_duration_s(variant), 3)
+        section["windows"] = [
+            {
+                "media_id": window.get("media_id"),
+                "start_s": window.get("start_s"),
+                "end_s": window.get("end_s"),
+            }
+            for window in windows or []
+            if isinstance(window, dict)
+        ]
+        section["speaker_frame"] = background_frame_preset(
+            current.get("speaker_frame") if isinstance(current, dict) else None
+        )
+    return section
 
 
 def derived_phone_overlays(job: Any, variant: dict[str, Any]) -> list[dict[str, Any]] | None:

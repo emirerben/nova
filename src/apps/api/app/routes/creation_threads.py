@@ -406,7 +406,7 @@ class CreationCapabilitiesOut(BaseModel):
     # declaring X-Kria-Client-Protocol >= media_tilt_min_client_protocol (28).
     slide_post_tilt: bool = False
     # KRI-1170: the Zoom slider in the slide Tilt panel. Only with `slide_post_tilt` open AND a
-    # build declaring X-Kria-Client-Protocol >= media_tilt_zoom_min_client_protocol (32).
+    # build declaring X-Kria-Client-Protocol >= media_tilt_zoom_min_client_protocol (33).
     slide_post_tilt_zoom: bool = False
     # KRI-646: text Bend on device-drawn text AND slide-post text. True only with the flag
     # on, `textBend` verified, and a build declaring X-Kria-Client-Protocol >=

@@ -95,6 +95,7 @@ from app.kria.plan_blocks import (
 from app.kria.plan_blocks import (
     make_stage_reporter as _make_plan_stage_reporter,
 )
+from app.kria.portable_speaker_background import SPEAKER_FRAME_PRESETS
 from app.models import Job, MusicTrack
 from app.pipeline.canvas import PORTRAIT, Canvas, canvas_for_orientation
 from app.pipeline.generative_decision import (
@@ -106,6 +107,7 @@ from app.pipeline.look_presets import (
     normalize_look_adjustments,
     normalize_look_preset,
 )
+from app.pipeline.phone_talking_inserts import PHONE_INSERT_CLIPS_FIELD
 from app.pipeline.speech_cleanup_apply import (
     PREFLIGHT_JOB_CONTRACT_FIELD,
     PREFLIGHT_JOB_CONTRACT_VALUE,
@@ -7829,7 +7831,45 @@ def _talking_mention_sound_receipt(
 # once, at the very end, and is never also placed mid-talk. `PHONE_ENDING_CLIP_FIELD` is the
 # variant receipt, read back from the COMPILED recipe, that the brief check judges.
 PHONE_ENDING_CLIP_FIELD = "phone_ending_clip"
+# Parent KRI-1151: the approved strategy's `insert_clips` ("after I say X, show this clip with its
+# own sound"): the creator's take pauses for the clip. `PHONE_INSERT_CLIPS_FIELD` is the variant
+# receipt, read back from what the worker really placed, that the brief check judges.
 _POOL_ASSET_PREFIX = "asset-"
+
+
+def _cleanup_seams(keep_segments: Any) -> list[float]:
+    """Take-timeline seconds where speech cleanup joined two kept segments of the take."""
+    from app.pipeline.phone_subtitled_plan import take_seams  # noqa: PLC0415
+
+    return take_seams([(float(a), float(b)) for a, b in keep_segments or []])
+
+
+def _strategy_insert_asks(all_candidates: dict) -> list[Any]:
+    """The approved strategy's ``insert_clips`` as `InsertAsk`s (empty without any)."""
+    from app.pipeline.phone_talking_inserts import MAX_INSERTS, InsertAsk  # noqa: PLC0415
+
+    strategy = all_candidates.get("creator_strategy")
+    raw = strategy.get("insert_clips") if isinstance(strategy, dict) else None
+    asks: list[Any] = []
+    for row in raw if isinstance(raw, list) else []:
+        if not isinstance(row, dict):
+            continue
+        media_id = row.get("media_id")
+        if not isinstance(media_id, str) or not media_id.strip():
+            continue
+        phrase = row.get("at_phrase")
+        at_s = row.get("at_s")
+        asks.append(
+            InsertAsk(
+                media_id=media_id.strip(),
+                at_phrase=phrase.strip() if isinstance(phrase, str) and phrase.strip() else None,
+                at_s=float(at_s)
+                if isinstance(at_s, int | float) and not isinstance(at_s, bool)
+                else None,
+                keep_audio=row.get("keep_audio") is not False,
+            )
+        )
+    return asks[: MAX_INSERTS + 4]
 
 
 def _strategy_ending_request(all_candidates: dict) -> dict[str, Any] | None:
@@ -7861,7 +7901,12 @@ def _names_pool_media(visual_id: object, media_id: str) -> bool:
 
 
 def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
-    """The approved strategy's ``background_media`` as ``{"media_id", "source_start_s"}``."""
+    """The approved strategy's ``background_media`` as ``{"media_id", "source_start_s"}``.
+
+    KRI-1162: plus ``sequence`` (``[{media_id, source_start_s, spoken_phrase, hold_s}]``),
+    ``cadence_s`` and ``speaker_frame`` (a preset name) -- each present only when the strategy
+    carries it, so a single-background strategy yields exactly the pre-KRI-1162 dict.
+    """
     strategy = all_candidates.get("creator_strategy")
     raw = strategy.get("background_media") if isinstance(strategy, dict) else None
     if not isinstance(raw, dict):
@@ -7870,16 +7915,54 @@ def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
     if not isinstance(media_id, str) or not media_id.strip():
         return None
     start = raw.get("source_start_s")
-    return {
+    request: dict[str, Any] = {
         "media_id": media_id.strip(),
         "source_start_s": float(start)
         if isinstance(start, (int, float)) and not isinstance(start, bool)
         else 0.0,
     }
+    entries: list[dict[str, Any]] = []
+    raw_sequence = raw.get("sequence")
+    for item in raw_sequence if isinstance(raw_sequence, list) else []:
+        entry_id = item.get("media_id") if isinstance(item, dict) else None
+        if not isinstance(entry_id, str) or not entry_id.strip():
+            continue
+        entry_start = item.get("source_start_s")
+        hold = item.get("hold_s")
+        phrase = item.get("spoken_phrase")
+        entries.append(
+            {
+                "media_id": entry_id.strip(),
+                "source_start_s": float(entry_start)
+                if isinstance(entry_start, (int, float)) and not isinstance(entry_start, bool)
+                else 0.0,
+                "spoken_phrase": phrase.strip()
+                if isinstance(phrase, str) and phrase.strip()
+                else None,
+                "hold_s": float(hold)
+                if isinstance(hold, (int, float)) and not isinstance(hold, bool)
+                else None,
+            }
+        )
+    if entries:
+        request["sequence"] = entries
+        cadence = raw.get("cadence_s")
+        if isinstance(cadence, (int, float)) and not isinstance(cadence, bool):
+            request["cadence_s"] = float(cadence)
+    frame = raw.get("speaker_frame")
+    if isinstance(frame, str) and frame in SPEAKER_FRAME_PRESETS:
+        request["speaker_frame"] = frame
+    return request
 
 
 def _resolve_strategy_background(
-    request: dict[str, Any], *, job_id: str, lane_drops: list[dict]
+    request: dict[str, Any],
+    *,
+    job_id: str,
+    lane_drops: list[dict],
+    words: list[dict] | None = None,
+    keep_segments: list[tuple[float, float]] | None = None,
+    take_s: float | None = None,
 ) -> tuple[Any, frozenset[str]]:
     """The ``SubtitledBackground`` lane the approved strategy names, and the pool spellings
     that stay out of every mid-talk placement (KRI-1117).
@@ -7890,15 +7973,31 @@ def _resolve_strategy_background(
     dropped with a ``lane_drops`` receipt and never fails the job; the reservation is returned
     whatever becomes of the lane, so the photo is never also a card, except while the phone
     gate is closed (then nothing about the render changes).
+
+    KRI-1162: a ``sequence`` is resolved entry by entry against the same ready pool (a bad
+    entry is a ``{"lane": "background", "window": i, "reason": ...}`` drop, never a failed
+    job) and laid out on the KEPT take by `phone_background_sequence.lay_out`. ``words`` are
+    the spoken words in the ORIGINAL take's time (the worker's ``raw_words``), ``keep_segments``
+    the speech cut's kept spans in that same time and ``take_s`` the kept take's length; every
+    window is written in ORIGINAL take time, which is what the lane expects
+    (`remap_lanes_for_cut` moves it into cut time). Every window's pool id joins the
+    reservation (S43); a window gate closed alone strips the windows and the frame again in
+    `strip_unsupported_background`, and only what survives is reserved.
     """
     import app.services.phone_overlay_grounding as pool_mod  # noqa: PLC0415
     from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
         PhoneSubtitledLaneRequest,
         SubtitledBackground,
+        SubtitledBackgroundWindow,
+        SubtitledSpeakerFrame,
         strip_unsupported_background,
     )
+    from app.services import phone_background_sequence as sequence_mod  # noqa: PLC0415
 
+    sequence_request: list[dict[str, Any]] = list(request.get("sequence") or [])
     reserved = _pool_media_keys(request["media_id"])
+    for entry in sequence_request:
+        reserved = reserved | _pool_media_keys(entry["media_id"])
     try:
         rows = pool_mod._load_ready_pool_assets(_sync_session, job_id=job_id)
     except OperationalError:
@@ -7906,25 +8005,107 @@ def _resolve_strategy_background(
     except Exception as exc:  # noqa: BLE001 - the background never fails the job
         lane_drops.append({"lane": "background", "reason": f"pool unavailable: {exc}"[:300]})
         return None, reserved
-    row = next((r for r in rows if _names_pool_media(str(r.get("id")), request["media_id"])), None)
-    if row is None:
+
+    def _pool_row(media_id: str, *, window: int | None) -> dict | None:
+        """The ready, playable pool row a background names, else None with a receipt."""
+        extra = {} if window is None else {"window": window}
+        row = next((r for r in rows if _names_pool_media(str(r.get("id")), media_id)), None)
+        if row is None:
+            lane_drops.append({"lane": "background", **extra, "reason": "not_in_ready_pool"})
+            return None
+        if row.get("kind") not in ("image", "video"):
+            lane_drops.append({"lane": "background", **extra, "reason": "not_a_photo_or_video"})
+            return None
+        if not row.get("gcs_path") or not row.get("gcs_generation"):
+            lane_drops.append({"lane": "background", **extra, "reason": "missing_generation"})
+            return None
+        return row
+
+    entry_rows: list[tuple[int, dict, dict]] = []  # (sequence index, request entry, pool row)
+    for index, entry in enumerate(sequence_request):
+        row = _pool_row(entry["media_id"], window=index)
+        if row is not None:
+            entry_rows.append((index, entry, row))
+            reserved = reserved | _pool_media_keys(str(row["id"]))
+
+    fill_row = next(
+        (r for r in rows if _names_pool_media(str(r.get("id")), request["media_id"])), None
+    )
+    fill_start = request["source_start_s"]
+    if fill_row is None and entry_rows:
+        # The named fill is gone but the sequence survives: its first entry fills, and the
+        # drop of the named one is still on the receipt.
+        lane_drops.append({"lane": "background", "reason": "not_in_ready_pool"})
+        _first_index, first_entry, fill_row = entry_rows[0]
+        fill_start = first_entry["source_start_s"]
+    elif fill_row is None:
         lane_drops.append({"lane": "background", "reason": "not_in_ready_pool"})
         return None, reserved
-    reserved = reserved | _pool_media_keys(str(row["id"]))
-    kind = row.get("kind")
-    if kind not in ("image", "video"):
+    reserved = reserved | _pool_media_keys(str(fill_row["id"]))
+    fill_kind = fill_row.get("kind")
+    if fill_kind not in ("image", "video"):
         lane_drops.append({"lane": "background", "reason": "not_a_photo_or_video"})
         return None, reserved
-    if not row.get("gcs_path") or not row.get("gcs_generation"):
+    if not fill_row.get("gcs_path") or not fill_row.get("gcs_generation"):
         lane_drops.append({"lane": "background", "reason": "missing_generation"})
         return None, reserved
+
+    windows: list[SubtitledBackgroundWindow] = []
+    if entry_rows:
+        by_index = {index: (entry, row) for index, entry, row in entry_rows}
+        layout = sequence_mod.lay_out(
+            [
+                sequence_mod.SequenceEntry(
+                    index=index,
+                    spoken_phrase=entry.get("spoken_phrase"),
+                    hold_s=entry.get("hold_s"),
+                )
+                for index, entry, _row in entry_rows
+            ],
+            cadence_s=float(request.get("cadence_s") or 4.0),
+            take_s=float(take_s) if take_s is not None else 0.0,
+            words=words,
+            keep_segments=keep_segments,
+        )
+        lane_drops.extend(layout.notes)
+        for placed in layout.windows:
+            entry, row = by_index[placed.index]
+            kind = row["kind"]
+            try:
+                windows.append(
+                    SubtitledBackgroundWindow(
+                        media_id=str(row["id"]),
+                        gcs_path=str(row["gcs_path"]),
+                        generation=str(row["gcs_generation"]),
+                        kind=kind,
+                        source_start_s=entry["source_start_s"] if kind == "video" else 0.0,
+                        start_s=sequence_mod.to_source_time(placed.start_s, keep_segments),
+                        end_s=sequence_mod.to_source_time(placed.end_s, keep_segments, as_end=True),
+                    )
+                )
+            except ValueError as exc:
+                lane_drops.append(
+                    {
+                        "lane": "background",
+                        "window": placed.index,
+                        "reason": str(exc)[:300],
+                    }
+                )
+    frame_preset = request.get("speaker_frame")
+    frame = (
+        SubtitledSpeakerFrame(**SPEAKER_FRAME_PRESETS[frame_preset])
+        if frame_preset in SPEAKER_FRAME_PRESETS
+        else None
+    )
     try:
         background = SubtitledBackground(
-            media_id=str(row["id"]),
-            gcs_path=str(row["gcs_path"]),
-            generation=str(row["gcs_generation"]),
-            kind=kind,
-            source_start_s=request["source_start_s"] if kind == "video" else 0.0,
+            media_id=str(fill_row["id"]),
+            gcs_path=str(fill_row["gcs_path"]),
+            generation=str(fill_row["gcs_generation"]),
+            kind=fill_kind,
+            source_start_s=fill_start if fill_kind == "video" else 0.0,
+            windows=tuple(windows),
+            speaker_frame=frame,
         )
     except ValueError as exc:
         lane_drops.append({"lane": "background", "reason": str(exc)[:300]})
@@ -7934,7 +8115,19 @@ def _resolve_strategy_background(
         # A closed gate renders exactly what a strategy that never asked renders: no lane and no
         # reservation (the trace `speaker_background_phone_fallback` says why).
         return None, frozenset()
-    return stripped.background, reserved
+    kept = stripped.background
+    if windows and not kept.windows:
+        # Only the windows gate is closed: the render equals a single-background ask, so only
+        # the fill is reserved (S33).
+        reserved = _pool_media_keys(request["media_id"]) | _pool_media_keys(str(fill_row["id"]))
+    return kept, reserved
+
+
+def _background_take_s(keep_segments: list[tuple[float, float]] | None, full_s: float) -> float:
+    """The kept take's length in output seconds (the whole clip when nothing was cut)."""
+    from app.services.phone_background_sequence import kept_duration  # noqa: PLC0415
+
+    return kept_duration(keep_segments, full_s)
 
 
 def _creator_pinned_media_keys(beats: list, closing: dict | None) -> frozenset[str]:
@@ -8296,6 +8489,7 @@ def _run_phone_subtitled_job(
         phone_subtitled_title_supported,
         phone_subtitled_video_overlays_supported,
         phone_talking_head_supported,
+        phone_talking_insert_clips_supported,
         phone_talking_mention_cutaways_supported,
         phone_talking_multi_clip_supported,
         validate_phone_pilot_recipe,
@@ -8342,6 +8536,8 @@ def _run_phone_subtitled_job(
             PhoneSubtitledLanes,
             SubtitledEndingClip,
             SubtitledLaneError,
+            background_media_refs,
+            background_pins,
             drop_lane,
             lane_names,
             strip_unsupported_background,
@@ -8424,6 +8620,8 @@ def _run_phone_subtitled_job(
     )
     if multi_clip and not ((self_narrated and phone_talking_head_supported()) or talking_multi):
         raise ValueError("Phone subtitled rendering requires exactly one clip")
+    # Parent KRI-1151: read once; False keeps every statement below that mentions inserts inert.
+    insert_clips_enabled = phone_talking_insert_clips_supported()
 
     clip_paths_gcs: list[str] = list(all_candidates.get("clip_paths") or [])
     if len(clip_paths_gcs) != len(bindings):
@@ -8666,6 +8864,17 @@ def _run_phone_subtitled_job(
             mention_ask: Any = None
             mention_receipt: dict[str, Any] | None = None
             mention_words: list[Any] = []
+            # Parent KRI-1151 (PHONE_TALKING_INSERT_CLIPS_ENABLED): the clips the creator asked
+            # to play while his take is paused. All empty with the flag off or no such ask, so
+            # the variant carries no receipt and the recipe is byte-identical.
+            insert_asks = _strategy_insert_asks(all_candidates) if insert_clips_enabled else []
+            # What he SAID on the take timeline (never the caption words: a translation or a
+            # word left out of the captions would hide a phrase or invent a pause).
+            insert_spoken_words: list[Any] = []
+            insert_in_use: set[str] = set()
+            insert_drops: list[dict[str, Any]] = []
+            inserts: tuple = ()
+            insert_basis: dict[str, dict[str, Any]] = {}
             if talking_multi:
                 talking_roles, talking_transcripts = _classify_phone_talking_clips(
                     clip_metas,
@@ -8674,6 +8883,40 @@ def _run_phone_subtitled_job(
                     caption_language=caption_language_req,
                     job_id=job_id,
                 )
+                if insert_asks:
+                    # The inserted clip plays once, in its own pause: out of the speakers and
+                    # out of the footage cutaways, whatever its pace of speech said. A clip the
+                    # edit cannot spare (the only speaker, the ending) is left where it is and
+                    # the ask is refused for it.
+                    insert_ids: dict[str, str] = {}
+                    for ask in insert_asks:
+                        row = next((b for b in bindings if b.media_id == ask.media_id), None)
+                        cid = (
+                            next(
+                                (c for c, path in clip_id_to_gcs.items() if path == row.proxy_path),
+                                None,
+                            )
+                            if row is not None
+                            else None
+                        )
+                        if cid is not None and ask.media_id not in insert_ids.values():
+                            insert_ids[cid] = ask.media_id
+                    for cid, media_id in list(insert_ids.items()):
+                        others = [c for c in talking_roles.speakers if c != cid]
+                        is_ending = ending_request is not None and (
+                            ending_request["media_id"] == media_id
+                        )
+                        if is_ending or (cid in talking_roles.speakers and not others):
+                            insert_in_use.add(media_id)
+                            del insert_ids[cid]
+                    if insert_ids:
+                        talking_roles = replace(
+                            talking_roles,
+                            speakers=tuple(
+                                c for c in talking_roles.speakers if c not in insert_ids
+                            ),
+                            footage=tuple(c for c in talking_roles.footage if c not in insert_ids),
+                        )
                 if phone_talking_mention_cutaways_supported():
                     talking_roles, mention_ask, mention_receipt = _apply_talking_mention_ask(
                         snapshot,
@@ -8805,6 +9048,17 @@ def _run_phone_subtitled_job(
                 if any(row.media_id == ending_request["media_id"] for row in bindings):
                     ending_source = "footage"
                     ending_reason = "talking_multi_off" if multi_clip else "is_speaker"
+            if insert_asks and not talking_multi:
+                # An insert is one of the creator's OTHER clips: a single clip has nothing to
+                # play while it pauses, and a multi-clip Talking head has no main-track slot.
+                insert_drops.extend(
+                    {
+                        "media_id": ask.media_id,
+                        "reason": "talking_multi_off" if multi_clip else "only_clip",
+                    }
+                    for ask in insert_asks
+                )
+                insert_asks = []
 
             clip_id = spine_clip_id if multi_clip else next(iter(clip_id_to_local))
             clip_path = clip_id_to_local[clip_id]
@@ -9204,6 +9458,8 @@ def _run_phone_subtitled_job(
                 if spoken_text_asks:
                     # KRI-707: the SPOKEN words (never a requested caption language), cut.
                     timeline_words = remap_words(words, cut_plan)
+                if insert_asks:
+                    insert_spoken_words = remap_words(words, cut_plan)
             else:
                 # KRI-839: `transcript` is the SPOKEN pass -- always auto-language, even
                 # when the creator asked for captions in another language. Reaction
@@ -9318,6 +9574,8 @@ def _run_phone_subtitled_job(
                 cues = build_plain_cues(caption_words, attach_words=True, budget=PHONE_CUE_BUDGET)
                 if spoken_text_asks:
                     timeline_words = list(transcript.words)
+                if insert_asks:
+                    insert_spoken_words = list(transcript.words)
                 if mention_ask is not None:
                     mention_words = list(transcript.words)
                 # KRI-719: each extra speaker's own words, shifted to where it
@@ -9451,6 +9709,62 @@ def _run_phone_subtitled_job(
             talking_timeline_s = sum(
                 max(0.0, end - start) for start, end in speaker_keep_segments
             ) + sum(float(extra.original.duration_s) for extra in extra_speaker_bindings)
+            if insert_asks:
+                # Parent KRI-1151: where each asked clip pauses the take. Everything below
+                # (cutaways, titles, lanes) is still laid out on the TAKE timeline, which has
+                # no insert in it; `_inserted` moves it onto the final one at compile time.
+                from app.pipeline.phone_talking_inserts import (  # noqa: PLC0415
+                    place_inserts,
+                )
+
+                placements = place_inserts(
+                    insert_asks,
+                    bindings={row.media_id: row for row in bindings},
+                    # His spoken words on the take timeline; the caption cues' own words only
+                    # when this branch measured none.
+                    words=insert_spoken_words
+                    or timeline_words
+                    or [w for cue in cues or [] for w in cue.get("words") or []],
+                    cues=cues or [],
+                    take_s=sum(max(0.0, end - start) for start, end in speaker_keep_segments),
+                    in_use={
+                        binding.media_id,
+                        *(extra.media_id for extra in extra_speaker_bindings),
+                        *insert_in_use,
+                    },
+                    seams=_cleanup_seams(speaker_keep_segments),
+                )
+                inserts = tuple(p.insert for p in placements if p.insert is not None)
+                insert_drops.extend(
+                    {"media_id": p.ask.media_id, "reason": p.reason}
+                    for p in placements
+                    if p.insert is None
+                )
+                insert_basis = {
+                    p.insert.binding.media_id: {"basis": p.basis, "snap": p.snap}
+                    for p in placements
+                    if p.insert is not None
+                }
+
+            def _insert_blocked() -> list[tuple[float, float]]:
+                from app.pipeline.phone_talking_inserts import (  # noqa: PLC0415
+                    insert_blocked_windows,
+                )
+
+                return insert_blocked_windows(inserts)
+
+            def _inserted(
+                cues_: Any = (), rows_: Any = (), lanes_: Any = None, cutaways_: Any = ()
+            ) -> Any:
+                """The take-timeline set moved onto the final timeline (no-op without inserts)."""
+                from app.pipeline.phone_talking_inserts import (  # noqa: PLC0415
+                    warp_for_inserts,
+                )
+
+                return warp_for_inserts(
+                    inserts, cues=cues_, text_rows=rows_, lanes=lanes_, cutaways=cutaways_
+                )
+
             if ending_footage_media_id is not None:
                 # No footage cutaway covers the ending clip: it plays last, in the clear.
                 ending_blocked.append(
@@ -9542,6 +9856,7 @@ def _run_phone_subtitled_job(
                     [(float(row["start_s"]), float(row["end_s"])) for row in title_rows]
                     + blocked
                     + ending_blocked
+                    + _insert_blocked()
                 )
                 if mention_ask is not None and mention_receipt is not None:
                     # Parent KRI-1151: each footage clip where the creator talks about what
@@ -9634,14 +9949,16 @@ def _run_phone_subtitled_job(
             if current_phone_text_policy():
                 # Reserve the compiled caption lane before fitting titles and
                 # closing text. The final recipe reuses this resolved look.
+                reserved = _inserted(cues, (), None, cutaways)
                 compile_phone_subtitled_plan(
                     speaker_bindings,
-                    caption_cues=cues,
+                    caption_cues=reserved.cues,
                     caption_style=caption_style,
                     cut_plan=cut_plan,
-                    cutaways=cutaways,
+                    cutaways=reserved.cutaways,
                     landscape_fit=landscape_fit,
                     additional_speakers=extra_speaker_bindings,
+                    **({"inserts": inserts} if inserts else {}),
                     **framed_compile,
                 )
             if not media_lanes_enabled:
@@ -9670,20 +9987,24 @@ def _run_phone_subtitled_job(
                 ]
                 if talking_multi:
                     cutaways = _schedule_talking_footage([])
+                moved = _inserted(
+                    cues, title_rows + spoken_text_rows + closing_text_rows, None, cutaways
+                )
                 recipe = compile_phone_subtitled_plan(
                     speaker_bindings,
-                    caption_cues=cues,
+                    caption_cues=moved.cues,
                     caption_style=caption_style,
                     cut_plan=cut_plan,
-                    cutaways=cutaways,
+                    cutaways=moved.cutaways,
                     landscape_fit=landscape_fit,  # type: ignore[arg-type]
-                    text_elements=title_rows + spoken_text_rows + closing_text_rows,
+                    text_elements=moved.text_rows,
                     text_elements_user_edited=bool(
                         title_rows or spoken_text_rows or closing_text_rows
                     ),
                     additional_speakers=extra_speaker_bindings,
                     strategy=talking_strategy,
                     requirements=talking_requirements,
+                    **({"inserts": inserts} if inserts else {}),
                     **framed_compile,
                 )
             else:
@@ -9766,9 +10087,22 @@ def _run_phone_subtitled_job(
                             {"lane": "background", "reason": "lane_request_background_wins"}
                         )
                     else:
+                        # KRI-1162: the sequence is laid out on the KEPT take. `raw_words` are the
+                        # spoken words in the ORIGINAL take's time (what the lane's windows use;
+                        # the caption cues are already in cut time), `cut_plan` the kept spans.
+                        _bg_keep = (
+                            [tuple(seg) for seg in cut_plan.keep_segments]
+                            if cut_plan is not None and cut_plan.removed
+                            else None
+                        )
                         strategy_background_lane, background_reserved = (
                             _resolve_strategy_background(
-                                background_request, job_id=job_id, lane_drops=lane_drops
+                                background_request,
+                                job_id=job_id,
+                                lane_drops=lane_drops,
+                                words=raw_words,
+                                keep_segments=_bg_keep,
+                                take_s=_background_take_s(_bg_keep, float(probe.duration_s)),
                             )
                         )
 
@@ -10169,27 +10503,41 @@ def _run_phone_subtitled_job(
                             )
                             background_lane = None
                         else:
+                            # KRI-1162: a window whose kind the phone cannot draw is dropped alone
+                            # (the fill and the other windows keep rendering).
+                            if background_lane.windows:
+                                drawable_windows = tuple(
+                                    window
+                                    for window in background_lane.windows
+                                    if ("stillImages" if window.kind == "image" else "visualVideos")
+                                    in settings.phone_render_verified_features
+                                )
+                                if len(drawable_windows) != len(background_lane.windows):
+                                    lane_drops.append(
+                                        {
+                                            "lane": "background",
+                                            "reason": "window kind not verified on the phone",
+                                        }
+                                    )
+                                    background_lane = background_lane.model_copy(
+                                        update={"windows": drawable_windows}
+                                    )
                             already_bound = {
                                 (v.media_id, v.gcs_path, v.generation)
                                 for v in (*overlay_visuals, *ending_visuals)
                             }
-                            background_pin = (
-                                background_lane.media_id,
-                                background_lane.gcs_path,
-                                background_lane.generation,
-                            )
-                            if background_pin not in already_bound:
+                            # The fill and every window pool visual, bound like the fill is (S35).
+                            background_pins_by_id = {
+                                media_id: pin
+                                for media_id, pin in background_pins(background_lane).items()
+                                if (media_id, pin[1], pin[2]) not in already_bound
+                            }
+                            if background_pins_by_id:
                                 try:
                                     background_visuals = bind_phone_visual_assets(
                                         _sync_session,
                                         job_id=job_id,
-                                        pins={
-                                            background_lane.media_id: (
-                                                background_lane.kind,
-                                                background_lane.gcs_path,
-                                                background_lane.generation,
-                                            )
-                                        },
+                                        pins=background_pins_by_id,
                                     )
                                 except OperationalError:
                                     raise  # transient DB -> Celery autoretry, never a lane drop
@@ -10241,7 +10589,22 @@ def _run_phone_subtitled_job(
                     # window is final, does it move onto the CUT timeline
                     # the compiled recipe actually plays.
                     id_to_media = {card.id: card.media_id for card in lanes.overlays}
+                    # KRI-1162: a background window inside a removal comes back among the
+                    # dropped ids as its pool media id; it is a lane drop, not a card.
+                    window_media_ids = (
+                        frozenset(window.media_id for window in lanes.background.windows)
+                        if lanes.background is not None
+                        else frozenset()
+                    )
                     lanes, cut_dropped_card_ids = remap_lanes_for_cut(lanes, cut_plan)
+                    for dropped_media_id in sorted(cut_dropped_card_ids & window_media_ids):
+                        lane_drops.append(
+                            {
+                                "lane": "background",
+                                "reason": "window_inside_cut",
+                                "media_id": dropped_media_id,
+                            }
+                        )
                     if cut_dropped_card_ids:
                         demoted_media_ids = grounded_media_ids & {
                             id_to_media[card_id]
@@ -10262,6 +10625,14 @@ def _run_phone_subtitled_job(
                                 reason="speech_cleanup_cut",
                             )
 
+                if inserts and lanes is not None and lanes.background is not None:
+                    # The matte cuts out every camera-roll clip on the main track as "the
+                    # speaker", so it would cut out the inserted clip too: no insert, said so.
+                    insert_drops.extend(
+                        {"media_id": i.binding.media_id, "reason": "speaker_background"}
+                        for i in inserts
+                    )
+                    inserts = ()
                 if talking_multi:
                     # Full-screen Visuals keep their slots; footage fills the gaps.
                     cutaways = _schedule_talking_footage(
@@ -10281,21 +10652,23 @@ def _run_phone_subtitled_job(
                     )
                     for row, updated in zip(text_rows, styled, strict=True):
                         row.update(updated)
+                    moved = _inserted(cues, text_rows, lanes, cutaways)
                     return compile_phone_subtitled_plan(
                         speaker_bindings,
-                        caption_cues=cues,
+                        caption_cues=moved.cues,
                         caption_style=caption_style,
                         visuals=visuals,
-                        lanes=lanes,
+                        lanes=moved.lanes,
                         duck_sfx_under_speech=settings.phone_sfx_speech_duck_enabled,
                         cut_plan=cut_plan,
-                        cutaways=cutaways,
+                        cutaways=moved.cutaways,
                         landscape_fit=landscape_fit,  # type: ignore[arg-type]
-                        text_elements=text_rows,
+                        text_elements=moved.text_rows,
                         text_elements_user_edited=bool(text_rows),
                         additional_speakers=extra_speaker_bindings,
                         strategy=talking_strategy,
                         requirements=talking_requirements,
+                        **({"inserts": inserts} if inserts else {}),
                         **framed_compile,
                     )
 
@@ -10318,12 +10691,16 @@ def _run_phone_subtitled_job(
                             else None
                         )
                         recipe = _compile_lanes(title_rows + spoken_text_rows + closing_text_rows)
+                        # Rows are on the take timeline; the inserts' length is on the recipe.
+                        take_duration = recipe.duration - sum(
+                            float(i.binding.original.duration_s) for i in inserts
+                        )
                         if closing_text_rows and closing_text_rows[0]["end_s"] < (
-                            recipe.duration - 1e-3
+                            take_duration - 1e-3
                         ):
                             # An ending clip plays after the speaker: closing text
                             # runs to the very end, which the contract checks.
-                            closing_text_rows = [{**closing_text_rows[0], "end_s": recipe.duration}]
+                            closing_text_rows = [{**closing_text_rows[0], "end_s": take_duration}]
                             recipe = _compile_lanes(
                                 title_rows + spoken_text_rows + closing_text_rows
                             )
@@ -10342,8 +10719,7 @@ def _run_phone_subtitled_job(
                     referenced = {card.media_id for card in lanes.overlays}
                     if lanes.ending_clip is not None:
                         referenced.add(lanes.ending_clip.media_id)
-                    if lanes.background is not None:
-                        referenced.add(lanes.background.media_id)
+                    referenced.update(ref[0] for ref in background_media_refs(lanes.background))
                     visuals = tuple(v for v in visuals if v.media_id in referenced)
                 if grounded_media_ids and overlay_receipt is not None:
                     # A grounded card that didn't survive the compiler's own
@@ -10379,6 +10755,23 @@ def _run_phone_subtitled_job(
                     "applied": list(lane_names(lanes)) if lanes is not None else [],
                     "dropped": lane_drops,
                 }
+                if lanes is not None and lanes.background is not None:
+                    # KRI-1161: what the finished video really has behind the speaker, so the
+                    # render-ready review judges the ask (omitted while the background is plain).
+                    _bg = lanes.background
+                    if _bg.windows or _bg.speaker_frame is not None:
+                        lane_receipt["background"] = {
+                            "windows": len(_bg.windows),
+                            "speaker_frame": next(
+                                (
+                                    name
+                                    for name, preset in SPEAKER_FRAME_PRESETS.items()
+                                    if _bg.speaker_frame is not None
+                                    and _bg.speaker_frame.model_dump() == preset
+                                ),
+                                None,
+                            ),
+                        }
                 try:
                     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -10448,6 +10841,44 @@ def _run_phone_subtitled_job(
                         )
                 except Exception:  # noqa: BLE001
                     pass
+
+            insert_receipt: dict[str, Any] | None = None
+            if insert_clips_enabled and (inserts or insert_drops):
+                # Parent KRI-1151: from here on the persisted set (captions, text rows,
+                # cutaways) is the one the recipe plays, on the final timeline -- the editor's
+                # Save recompiles from it as saved.
+                from app.pipeline.phone_talking_inserts import insert_rows  # noqa: PLC0415
+
+                if inserts:
+                    final = _inserted(cues, (), None, cutaways)
+                    cues, cutaways = final.cues, final.cutaways
+                    title_rows = _inserted((), title_rows).text_rows
+                    spoken_text_rows = _inserted((), spoken_text_rows).text_rows
+                    closing_text_rows = _inserted((), closing_text_rows).text_rows
+                    if talking_cutaway_windows:
+                        talking_cutaway_windows[:] = [
+                            {
+                                "media_id": c.binding.media_id,
+                                "start_s": c.start_s,
+                                "end_s": c.end_s,
+                            }
+                            for c in cutaways
+                        ]
+                    if mention_receipt is not None and mention_receipt.get("placements"):
+                        from app.pipeline.phone_talking_inserts import shift_time  # noqa: PLC0415
+
+                        for placement in mention_receipt["placements"]:
+                            placement["start_s"] = shift_time(placement["start_s"], inserts)
+                            placement["end_s"] = (
+                                shift_time(placement["end_s"] - 1e-3, inserts) + 1e-3
+                            )
+                insert_receipt = {
+                    "placed": [
+                        {**row, **insert_basis.get(row["media_id"], {})}
+                        for row in insert_rows(inserts)
+                    ],
+                    "dropped": list(insert_drops),
+                }
 
             from app.pipeline.explicit_speech_audio import (  # noqa: PLC0415
                 protect_explicit_speech_cut_audio,
@@ -10577,6 +11008,8 @@ def _run_phone_subtitled_job(
             new_entry["phone_lane_receipt"] = lane_receipt
         if ending_receipt is not None:
             new_entry[PHONE_ENDING_CLIP_FIELD] = ending_receipt
+        if insert_receipt is not None:
+            new_entry[PHONE_INSERT_CLIPS_FIELD] = insert_receipt
         if unclear_words_receipt is not None:
             new_entry["caption_unclear"] = unclear_words_receipt  # KRI-849
         if sfx_duck is not None:

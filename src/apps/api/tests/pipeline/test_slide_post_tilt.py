@@ -605,7 +605,7 @@ class TestZoomFixtureContract:
 
         assert FIXTURE_V2["caps"]["zoom_min"] == MIN_SLIDE_TILT_ZOOM
         assert FIXTURE_V2["caps"]["zoom_max"] == MAX_SLIDE_TILT_ZOOM
-        assert FIXTURE_V2["caps"]["protocol"] == TILT_ZOOM_PROTOCOL == 32
+        assert FIXTURE_V2["caps"]["protocol"] == TILT_ZOOM_PROTOCOL == 33
 
 
 class TestZoomDefaultsAreUnchanged:

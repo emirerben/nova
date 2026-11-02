@@ -223,7 +223,7 @@ import XCTest
     }
 
     func testThisBuildSpeaksTheProtocolThatCarriesZoom() {
-        XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, 32, "a build that ships zoom must declare protocol 32")
+        XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, 33, "a build that ships zoom must declare protocol 33")
     }
 
     // MARK: The session

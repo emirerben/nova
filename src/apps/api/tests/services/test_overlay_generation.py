@@ -1087,10 +1087,294 @@ def test_a_real_overlap_is_not_nudged_away():
 def test_nudge_keeps_a_usable_duration():
     with pytest.raises(ValueError, match="overlap"):
         materialize_overlays(
-            proposal(start_s=1.0, end_s=1.4),
+            proposal(kind="text", text="10", prompt="", start_s=1.0, end_s=1.4),
             evidence(),
             [],
             duration_s=8,
             prompt="",
             existing_overlays=[dict(start_s=0.0, end_s=1.3)],
         )
+
+
+def _versus(first, second):
+    base = proposal().overlays[0].model_dump()
+    one = {**base, "start_s": 1.0, "end_s": 3.0, **first}
+    two = {
+        **base,
+        "start_s": 1.0,
+        "end_s": 3.0,
+        "evidence": [dict(kind="speech", reference_id="speech-1", quote="kahve")],
+        **second,
+    }
+    facts = evidence() + [
+        dict(kind="speech", reference_id="speech-1", quote="kahve", start_s=1.5, end_s=1.9)
+    ]
+    notices: list[str] = []
+    rows = materialize_overlays(
+        OverlayPlanOutput(overlays=[one, two]), facts, [], duration_s=8, prompt="", notices=notices
+    )
+    return rows, notices
+
+
+def test_two_pictures_side_by_side_can_share_a_moment():
+    rows, notices = _versus(dict(x_frac=0.25), dict(x_frac=0.75))
+    assert len(rows) == 2 and notices == []
+
+
+def test_two_pictures_in_the_same_place_still_cannot_share_a_moment():
+    from app.services.overlay_generation import OVERLAP_NOTICE
+
+    rows, notices = _versus(dict(x_frac=0.5), dict(x_frac=0.55))
+    assert len(rows) == 1 and notices == [OVERLAP_NOTICE]
+
+
+def test_pictures_that_nearly_touch_are_treated_as_overlapping():
+    rows, _ = _versus(dict(x_frac=0.3), dict(x_frac=0.66))
+    assert len(rows) == 1
+
+
+def test_a_picture_never_shares_a_moment_with_text_whose_size_is_unknown():
+    rows, notices = _versus(dict(x_frac=0.25), dict(x_frac=0.75, kind="text", text="10", prompt=""))
+    assert len(rows) == 1 and notices
+
+
+def _placed_card(**changes):
+    return {
+        **dict(
+            id="placed",
+            kind="image",
+            display_mode="pip",
+            position="custom",
+            x_frac=0.25,
+            y_frac=0.5,
+            scale=0.35,
+            start_s=1.0,
+            end_s=3.0,
+        ),
+        **changes,
+    }
+
+
+def test_a_placed_floating_picture_exposes_its_canvas_box():
+    from app.services.overlay_generation import occupied_intervals
+
+    [interval] = occupied_intervals(dict(media_overlays=[_placed_card()]))
+    assert interval["rect"][0] < 0.25 < interval["rect"][2]
+
+
+def test_a_fullscreen_or_unreadable_placed_card_stays_time_exclusive():
+    from app.services.overlay_generation import occupied_intervals
+
+    rows = occupied_intervals(
+        dict(
+            media_overlays=[
+                _placed_card(display_mode="fullscreen"),
+                _placed_card(x_frac="left"),
+            ]
+        )
+    )
+    assert rows and all("rect" not in row for row in rows)
+
+
+def _plan_next_to_placed(placed, x_frac):
+    from app.services.overlay_generation import occupied_intervals
+
+    existing = occupied_intervals(dict(media_overlays=[placed]))
+    notices: list[str] = []
+    rows = materialize_overlays(
+        proposal(x_frac=x_frac, start_s=1.0, end_s=3.0),
+        evidence(),
+        [],
+        duration_s=8,
+        prompt="",
+        existing_overlays=existing,
+        notices=notices,
+    )
+    return rows, notices
+
+
+def test_a_new_picture_can_go_beside_one_already_placed():
+    rows, notices = _plan_next_to_placed(_placed_card(), x_frac=0.75)
+    assert len(rows) == 1 and notices == []
+
+
+def test_a_new_picture_on_top_of_one_already_placed_is_skipped():
+    rows, notices = _plan_next_to_placed(_placed_card(), x_frac=0.3)
+    assert rows == [] and notices
+
+
+def test_a_fullscreen_placed_card_still_blocks_the_moment():
+    rows, notices = _plan_next_to_placed(_placed_card(display_mode="fullscreen"), x_frac=0.75)
+    assert rows == [] and notices
+
+
+def test_a_picture_held_for_one_word_gets_a_readable_hold():
+    rows = materialize_overlays(
+        proposal(start_s=1.0, end_s=1.4), evidence(), [], duration_s=8, prompt=""
+    )
+    assert [(r.start_s, r.end_s) for r in rows] == [(1.25, 3.75)]
+
+
+def test_text_keeps_the_length_the_model_gave_it():
+    rows = materialize_overlays(
+        proposal(kind="text", text="10", prompt="", start_s=1.0, end_s=1.4),
+        evidence(),
+        [],
+        duration_s=8,
+        prompt="",
+    )
+    assert [(r.start_s, r.end_s) for r in rows] == [(1.25, 1.4)]
+
+
+def test_the_hold_never_runs_past_the_video_or_into_a_blocking_overlay():
+    rows = materialize_overlays(
+        proposal(start_s=1.0, end_s=1.4),
+        evidence(),
+        [],
+        duration_s=8,
+        prompt="",
+        existing_overlays=[dict(start_s=2.0, end_s=4.0)],
+    )
+    assert [(r.start_s, r.end_s) for r in rows] == [(1.25, 1.4)]
+
+
+def test_a_picture_placed_by_the_phone_leaves_room_beside_it():
+    from app.services.overlay_generation import occupied_intervals
+
+    placed = dict(
+        id="p",
+        kind="media",
+        start_s=1.0,
+        end_s=3.0,
+        x_frac=0.25,
+        y_frac=0.5,
+        scale=0.35,
+    )
+    existing = occupied_intervals(dict(visual_blocks=[placed]))
+    assert existing[0]["rect"][0] < 0.25 < existing[0]["rect"][2]
+    beside = materialize_overlays(
+        proposal(x_frac=0.75, start_s=1.0, end_s=3.0),
+        evidence(),
+        [],
+        duration_s=8,
+        prompt="",
+        existing_overlays=existing,
+    )
+    assert len(beside) == 1
+    with pytest.raises(ValueError, match="overlap"):
+        materialize_overlays(
+            proposal(x_frac=0.3, start_s=1.0, end_s=3.0),
+            evidence(),
+            [],
+            duration_s=8,
+            prompt="",
+            existing_overlays=existing,
+        )
+
+
+def test_a_full_frame_visual_block_still_blocks_the_moment():
+    from app.services.overlay_generation import occupied_intervals
+
+    block = dict(id="b", kind="montage", start_s=1.0, end_s=3.0)
+    existing = occupied_intervals(dict(visual_blocks=[block]))
+    assert "rect" not in existing[0]
+    with pytest.raises(ValueError, match="overlap"):
+        materialize_overlays(
+            proposal(x_frac=0.75, start_s=1.0, end_s=3.0),
+            evidence(),
+            [],
+            duration_s=8,
+            prompt="",
+            existing_overlays=existing,
+        )
+
+
+def _plain_edit(slots, *, variant_changes=None, candidates=None, saved_slots=None):
+    import uuid
+    from types import SimpleNamespace
+
+    from app.services.overlay_generation import OverlayPlanRequest
+
+    variant = {
+        **dict(variant_id="talking", render_generation_id="g1", duration_s=10),
+        **(variant_changes or {}),
+    }
+    if saved_slots:
+        variant["user_timeline"] = {"slots": saved_slots}
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        mode="content_plan",
+        assembly_plan={"variants": [variant]},
+        all_candidates=candidates or {},
+    )
+    body = OverlayPlanRequest(
+        job_id=job.id,
+        variant_id=variant["variant_id"],
+        base_generation="g1",
+        document_fingerprint="f",
+        mode="automatic",
+        prompt="",
+        editor_snapshot={
+            "editor_payload": {"base_generation": "g1", "sections": {"timeline_slots": slots}}
+        },
+    )
+    item = SimpleNamespace(clip_assignments=[], voiceover_gcs_path="items/live-recording.m4a")
+    return job, variant, item, body
+
+
+TRANSCRIPT = [
+    dict(word="fresh", start_s=1.0, end_s=1.4),
+    dict(word="coffee", start_s=1.4, end_s=2.0),
+    dict(word="today.", start_s=2.0, end_s=2.5),
+]
+
+
+def _speech(job, variant, item, body):
+    from app.services.overlay_generation import plan_context
+
+    return [r for r in plan_context(job, variant, item, body, []).evidence if r["kind"] == "speech"]
+
+
+def test_a_stored_transcript_gives_speech_to_an_edit_with_no_word_timed_captions():
+    job, variant, item, body = _plain_edit(
+        _slots(5, 5), variant_changes=dict(overlay_transcript=TRANSCRIPT), saved_slots=_slots(5, 5)
+    )
+    speech = _speech(job, variant, item, body)
+    assert speech and speech[0]["words"][1] == dict(quote="coffee", start_s=1.4, end_s=2.0)
+
+
+def test_a_stored_transcript_is_not_trusted_once_the_clips_were_re_cut():
+    job, variant, item, body = _plain_edit(
+        _slots(4, 6), variant_changes=dict(overlay_transcript=TRANSCRIPT), saved_slots=_slots(5, 5)
+    )
+    assert _speech(job, variant, item, body) == []
+
+
+def test_a_malformed_stored_transcript_means_no_speech_not_an_error():
+    job, variant, item, body = _plain_edit(
+        _slots(5, 5),
+        variant_changes=dict(overlay_transcript=[dict(word="x")]),
+        saved_slots=_slots(5, 5),
+    )
+    assert _speech(job, variant, item, body) == []
+
+
+def test_cloud_voiceover_montage_uses_the_pinned_narration_not_the_live_recording(monkeypatch):
+    from app.pipeline.transcribe import Word
+    from app.services import overlay_generation
+
+    asked = []
+
+    def fake_words(path):
+        asked.append(path)
+        return [Word(text="coffee", start_s=1.0, end_s=1.6, confidence=0.9)]
+
+    monkeypatch.setattr(overlay_generation, "voiceover_words", fake_words)
+    job, variant, item, body = _plain_edit(
+        _slots(5, 5),
+        variant_changes=dict(variant_id="voiceover_only", mix=1.0),
+        candidates=dict(voiceover_gcs_path="jobs/pinned-narration.m4a"),
+    )
+    assert _speech(job, variant, item, body)
+    assert asked == ["jobs/pinned-narration.m4a"]

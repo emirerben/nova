@@ -119,6 +119,7 @@ from app.kria.narration_notes import (
     with_note,
 )
 from app.kria.order_replacement import OrderReplacementProof
+from app.kria.paid_call_scope import paid_call_request_id
 from app.kria.reply_language import current_reply_language, say
 from app.kria.strategy_policy import (
     RefusedStrategy,
@@ -209,6 +210,7 @@ from app.services.creative_copy_decisions import (
     question_message,
     wording_question,
 )
+from app.services.creator_capabilities import insert_clip_candidates
 from app.services.creator_model_comparison import configure_creator_agent
 from app.services.creator_sessions import (
     creator_context,
@@ -2835,12 +2837,14 @@ async def _call_main_creator(
 ) -> MainCreatorOutput:
     from app.services.thought_summaries import current_thought_publisher  # noqa: PLC0415
 
+    request_id = paid_call_request_id(thread_id)
+
     def _run_agent():  # noqa: ANN202 - inferred MainCreatorOutput
         deadline = turn_deadline.get()
         return configure_creator_agent(MainCreatorAgent(default_client()), "main_creator").run(
             inputs.agent_input,
             ctx=RunContext(
-                request_id=str(thread_id),
+                request_id=request_id,
                 creator_id=str(creator_id),
                 plan_item_id=str(item_id) if item_id else None,
                 creator_agent_session_id=(
@@ -2902,6 +2906,13 @@ def _extractor_retry_allowed(exc: TerminalError) -> bool:
     )
 
 
+def _insert_clips_open(inputs: _CreatorInputs) -> bool:
+    """Parent KRI-1151: can this item pause the creator's take for one of its clips right now?
+    The brief extractor is taught the ask only then (the same gate as the creator prompt)."""
+    manifest = getattr(inputs.agent_input, "capability_manifest", None)
+    return manifest is not None and bool(insert_clip_candidates(manifest))
+
+
 async def _call_brief_extractor(
     inputs: _CreatorInputs,
     *,
@@ -2920,6 +2931,7 @@ async def _call_brief_extractor(
         conversation=inputs.agent_input.conversation,
         current_brief=prior_brief,
         require_request_scope=True,
+        insert_clips_open=_insert_clips_open(inputs),
     )
 
     def _run_agent(request_id: str):  # noqa: ANN202 - inferred BriefExtractionOutput
@@ -2940,7 +2952,7 @@ async def _call_brief_extractor(
         )
 
     try:
-        return await asyncio.to_thread(_run_agent, str(thread_id))
+        return await asyncio.to_thread(_run_agent, paid_call_request_id(thread_id))
     except (ProviderOutcomeUnknownError, ProviderQuotaExceededError, AiBudgetExceededError):
         # A spend cap is not a reading failure: the turn fails with its own code (A1).
         raise
@@ -2952,7 +2964,9 @@ async def _call_brief_extractor(
         try:
             # A distinct request id: the paid-call reservation key is stable per request id
             # and attempt number, so the retry must not collide with the failed run's.
-            return await asyncio.to_thread(_run_agent, f"{thread_id}:extractor-retry")
+            return await asyncio.to_thread(
+                _run_agent, paid_call_request_id(thread_id, "extractor-retry")
+            )
         except (ProviderOutcomeUnknownError, ProviderQuotaExceededError, AiBudgetExceededError):
             raise
         except TerminalError as retry_exc:
@@ -3082,7 +3096,14 @@ async def _rerun_after_stale_refusal(
             replace(
                 inputs,
                 agent_input=inputs.agent_input.model_copy(
-                    update={"server_note": ask_refusals.correction_note(capability)}
+                    update={
+                        "server_note": ask_refusals.correction_note(
+                            capability,
+                            inserts_open=bool(
+                                insert_clip_candidates(inputs.agent_input.capability_manifest)
+                            ),
+                        )
+                    }
                 ),
             ),
             thread_id=thread_id,
@@ -3745,7 +3766,7 @@ async def _plan_turn_clip_intents(
         # KRI-1076: the plan item makes the planner's and resolver's agent_run rows
         # (their input and answer) land, so a missed match can be read afterwards.
         run_context=RunContext(
-            request_id=str(thread_id),
+            request_id=paid_call_request_id(thread_id),
             creator_id=str(creator_id),
             plan_item_id=str(item_id),
         ),

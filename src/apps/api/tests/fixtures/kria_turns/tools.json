@@ -1704,7 +1704,7 @@
         },
         "EditorCommitSpeakerBackground": {
           "additionalProperties": false,
-          "description": "Editor Save section for the Talk-to-camera background (KRI-1117).\n\nThe wire is the same ``{media_id, kind, source_start_s}`` the editor document carries:\nthe media id names a visual in this item's pool, never a path (the server pins the\nexact bytes). Sent as an object to set it, as an explicit ``null`` to clear it.",
+          "description": "Editor Save section for the Talk-to-camera background (KRI-1117).\n\nThe wire is the same ``{media_id, kind, source_start_s}`` the editor document carries:\nthe media id names a visual in this item's pool, never a path (the server pins the\nexact bytes). Sent as an object to set it, as an explicit ``null`` to clear it.\n\nKRI-1162: ``windows`` (1..40 timed backgrounds over the fill) and ``speaker_frame`` are\noptional and omitted from the dump while unused, so an old-shape Save dumps exactly as it\ndid and still equals the stored document.",
           "properties": {
             "kind": {
               "enum": [
@@ -1727,6 +1727,34 @@
               "minimum": 0.0,
               "title": "Source Start S",
               "type": "number"
+            },
+            "speaker_frame": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EditorCommitSpeakerFrame"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "windows": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/EditorCommitSpeakerBackgroundWindow"
+                  },
+                  "maxItems": 40,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Windows"
             }
           },
           "required": [
@@ -1734,6 +1762,85 @@
             "kind"
           ],
           "title": "EditorCommitSpeakerBackground",
+          "type": "object"
+        },
+        "EditorCommitSpeakerBackgroundWindow": {
+          "additionalProperties": false,
+          "description": "One timed background of the Save section (KRI-1162): a pool visual shown from\n``start_s`` to ``end_s`` (the edit's timeline). Order, overlap and the 0.5 s minimum are\nchecked by `_validate_speaker_background_section` so they answer with their own code.",
+          "properties": {
+            "end_s": {
+              "maximum": 1800.0,
+              "minimum": 0.0,
+              "title": "End S",
+              "type": "number"
+            },
+            "kind": {
+              "enum": [
+                "image",
+                "video"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "media_id": {
+              "maxLength": 160,
+              "minLength": 1,
+              "pattern": "^\\S+$",
+              "title": "Media Id",
+              "type": "string"
+            },
+            "source_start_s": {
+              "default": 0.0,
+              "maximum": 1800.0,
+              "minimum": 0.0,
+              "title": "Source Start S",
+              "type": "number"
+            },
+            "start_s": {
+              "maximum": 1800.0,
+              "minimum": 0.0,
+              "title": "Start S",
+              "type": "number"
+            }
+          },
+          "required": [
+            "media_id",
+            "kind",
+            "start_s",
+            "end_s"
+          ],
+          "title": "EditorCommitSpeakerBackgroundWindow",
+          "type": "object"
+        },
+        "EditorCommitSpeakerFrame": {
+          "additionalProperties": false,
+          "description": "Where the matted speaker is drawn (KRI-1162): the document's ``speaker_frame``. The app\nwrites it from a named corner preset; the server never takes a corner name on the wire.",
+          "properties": {
+            "width_fraction": {
+              "maximum": 1.0,
+              "minimum": 0.2,
+              "title": "Width Fraction",
+              "type": "number"
+            },
+            "x_fraction": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "X Fraction",
+              "type": "number"
+            },
+            "y_fraction": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Y Fraction",
+              "type": "number"
+            }
+          },
+          "required": [
+            "width_fraction",
+            "x_fraction",
+            "y_fraction"
+          ],
+          "title": "EditorCommitSpeakerFrame",
           "type": "object"
         },
         "EditorCommitUserSong": {

@@ -7,10 +7,10 @@ import XCTest
 final class SpeakerBackgroundTests: XCTestCase {
     private struct Case { let name: String; let layer: Data; let normalized: Data? }
 
-    private func cases(_ key: String) throws -> [Case] {
+    private func cases(_ key: String, file: String = "v1") throws -> [Case] {
         var url = URL(fileURLWithPath: #filePath)
         for _ in 0..<8 { url.deleteLastPathComponent() }
-        let data = try Data(contentsOf: url.appendingPathComponent("tests/fixtures/speaker-background-parity/v1.json"))
+        let data = try Data(contentsOf: url.appendingPathComponent("tests/fixtures/speaker-background-parity/\(file).json"))
         let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         return try XCTUnwrap(root[key] as? [[String: Any]]).map { item in
             Case(name: item["name"] as! String,
@@ -35,6 +35,73 @@ final class SpeakerBackgroundTests: XCTestCase {
         for item in invalid {
             XCTAssertThrowsError(try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: item.layer), item.name)
         }
+    }
+
+    // MARK: - KRI-1162 wire (v2.json: timed windows + speaker_frame)
+
+    func testSharedFixtureV2ValidLayersDecodeToTheNormalizedForm() throws {
+        let valid = try cases("valid", file: "v2")
+        XCTAssertGreaterThanOrEqual(valid.count, 4)
+        for item in valid {
+            let layer = try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: item.layer)
+            XCTAssertEqual(layer, try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: XCTUnwrap(item.normalized)), item.name)
+            try layer.validate()
+            // The normalized form re-encodes to itself: nothing the decoder defaulted is lost or invented.
+            let rewritten = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(layer)) as? NSDictionary)
+            XCTAssertEqual(rewritten, try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(item.normalized)) as? NSDictionary), item.name)
+        }
+    }
+
+    func testSharedFixtureV2InvalidLayersAreRejected() throws {
+        let invalid = try cases("invalid", file: "v2")
+        XCTAssertGreaterThanOrEqual(invalid.count, 15)
+        for item in invalid {
+            XCTAssertThrowsError(try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: item.layer), item.name)
+        }
+    }
+
+    func testNullWindowsAndFrameReadAsAbsent() throws {
+        let layer = try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: Data(
+            #"{"asset_id":"a","media_kind":"image","windows":null,"speaker_frame":null}"#.utf8))
+        XCTAssertNil(layer.windows)
+        XCTAssertNil(layer.speakerFrame)
+        XCTAssertEqual(layer, SpeakerBackgroundLayer(assetID: "a", mediaKind: .image))
+    }
+
+    /// S28: the compositor picks THE window containing the time, so out-of-order or overlapping windows
+    /// are refused at decode, while windows that merely touch are fine.
+    func testWindowsMustBeSortedAndDisjoint() throws {
+        func window(_ id: String, _ start: Double, _ end: Double) -> SpeakerBackgroundWindow {
+            SpeakerBackgroundWindow(assetID: id, mediaKind: .image, start: start, end: end)
+        }
+        func layer(_ windows: [SpeakerBackgroundWindow]) -> SpeakerBackgroundLayer {
+            SpeakerBackgroundLayer(assetID: "fill", mediaKind: .image, windows: windows)
+        }
+        XCTAssertNoThrow(try layer([window("a", 0, 2), window("b", 2, 4), window("c", 5, 6)]).validate(), "touching and gapped windows are valid")
+        XCTAssertThrowsError(try layer([window("a", 0, 2), window("b", 1.9, 4)]).validate(), "overlap")
+        XCTAssertThrowsError(try layer([window("b", 2, 4), window("a", 0, 2)]).validate(), "unsorted")
+        XCTAssertThrowsError(try layer([]).validate(), "an empty list is never written")
+        XCTAssertThrowsError(try layer((0..<41).map { window("w\($0)", Double($0), Double($0) + 1) }).validate(), "41 windows")
+        XCTAssertNoThrow(try layer((0..<40).map { window("w\($0)", Double($0), Double($0) + 1) }).validate(), "40 windows")
+        XCTAssertThrowsError(try window("a", 1, 1.4).validate(), "shorter than 0.5 s")
+        XCTAssertNoThrow(try window("a", 1, 1.5).validate())
+        XCTAssertThrowsError(try SpeakerBackgroundWindow(assetID: "a", mediaKind: .image, sourceStart: 1, start: 0, end: 2).validate(), "a photo has no source start")
+        XCTAssertNoThrow(try SpeakerBackgroundWindow(assetID: "a", mediaKind: .video, sourceStart: 1, start: 0, end: 2).validate())
+        XCTAssertThrowsError(try SpeakerFrame(widthFraction: 0.19, xFraction: 0.5, yFraction: 0.5).validate())
+        XCTAssertNoThrow(try SpeakerFrame(widthFraction: 0.2, xFraction: 0, yFraction: 1).validate())
+    }
+
+    /// A layer without the new keys encodes exactly as the first cut did, so every old recipe keeps its digest.
+    func testLayerWithoutTheNewKeysEncodesAsBefore() throws {
+        let layer = SpeakerBackgroundLayer(assetID: "visual-9f", mediaKind: .image)
+        let wire = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(layer)) as? NSDictionary)
+        XCTAssertEqual(wire, ["asset_id": "visual-9f", "media_kind": "image", "source_start": 0.0, "loop": true, "subject_track_id": "subtitled"] as NSDictionary)
+        let timed = SpeakerBackgroundLayer(assetID: "visual-9f", mediaKind: .image,
+                                           windows: [SpeakerBackgroundWindow(assetID: "w", mediaKind: .video, sourceStart: 1.5, start: 1, end: 3)],
+                                           speakerFrame: SpeakerFrame(widthFraction: 0.42, xFraction: 0.76, yFraction: 0.8))
+        let timedWire = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(timed)) as? [String: Any])
+        XCTAssertEqual(Set(timedWire.keys), ["asset_id", "media_kind", "source_start", "loop", "subject_track_id", "windows", "speaker_frame"])
+        XCTAssertEqual(try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: RecipeJSON.encoder().encode(timed)), timed)
     }
 
     func testLayerRoundTripsOnTheSnakeCaseWire() throws {
@@ -95,6 +162,37 @@ final class SpeakerBackgroundTests: XCTestCase {
         let decision = CapabilityNegotiator().decide(for: recipe)
         XCTAssertEqual(decision.route, .cloud)
         XCTAssertTrue(decision.missingCapabilities.contains(.speakerBackground))
+    }
+
+    /// A recipe with windows or a frame derives `speakerBackgroundWindows` on top of `speakerBackground`;
+    /// one with neither does not.
+    func testWindowsAndFrameDeriveTheWindowsCapability() throws {
+        var object = try recipeObject()
+        let plain = try decode(object)
+        XCTAssertTrue(plain.effectiveCapabilities.contains(.speakerBackground))
+        XCTAssertFalse(plain.effectiveCapabilities.contains(.speakerBackgroundWindows))
+        let window: [String: Any] = ["asset_id": "media-1", "media_kind": "image", "start": 0, "end": 4]
+        let frame: [String: Any] = ["width_fraction": 0.42, "x_fraction": 0.76, "y_fraction": 0.8]
+        for extra in [["windows": [window]], ["speaker_frame": frame], ["windows": [window], "speaker_frame": frame]] as [[String: Any]] {
+            object["speaker_background"] = ["asset_id": "media-1", "media_kind": "image"].merging(extra) { $1 }
+            let recipe = try decode(object)
+            try recipe.validate()
+            XCTAssertTrue(recipe.effectiveCapabilities.isSuperset(of: [.speakerBackground, .speakerBackgroundWindows]), "\(extra.keys)")
+            XCTAssertEqual(try decode(JSONSerialization.jsonObject(with: RecipeJSON.encode(recipe)) as! [String: Any]), recipe)
+            let decision = CapabilityNegotiator().decide(for: recipe)
+            XCTAssertEqual(decision.route, .cloud)
+            XCTAssertTrue(decision.missingCapabilities.contains(.speakerBackgroundWindows))
+        }
+    }
+
+    /// Every window names a matching-kind visual of the manifest, as the fill does.
+    func testWindowMustNameAMatchingVisualsAsset() throws {
+        var object = try recipeObject()
+        for window in [["asset_id": "media-1", "media_kind": "video", "start": 0, "end": 4],
+                       ["asset_id": "visual-missing", "media_kind": "image", "start": 0, "end": 4]] as [[String: Any]] {
+            object["speaker_background"] = ["asset_id": "media-1", "media_kind": "image", "windows": [window]] as [String: Any]
+            XCTAssertThrowsError(try decode(object).validate(), "\(window)")
+        }
     }
 
     func testUnknownKeyInsideTheLayerRejectsTheRecipe() throws {
@@ -162,6 +260,32 @@ final class SpeakerBackgroundTests: XCTestCase {
         let once = try await backgroundFrames(SpeakerTestBackground(url: video, kind: .video, sourceStart: 0.5, loop: false), at: times, directory: directory)
         for (frame, (time, expected)) in zip(once, zip(times, [2, 3, 3, 3, 3])) {
             XCTAssertTrue(isColor(frame.rgb(fx: 0.5, fy: 0.5), quarters[expected]), "unlooped background at \(time) s: \(frame.rgb(fx: 0.5, fy: 0.5))")
+        }
+    }
+
+    /// S30: a 1 s video window inside a 4 s edit loops inside its window from `source_start`, and the fill
+    /// shows before and after it. Quarters: red, black, blue, white; the window plays the blue and white
+    /// quarters over and over from 1.0 s to 3.0 s.
+    @MainActor func testShortVideoWindowLoopsInsideItsWindow() async throws {
+        useSpeakerSegmenter(self, GreenPersonSegmenter())
+        let directory = try speakerTestDirectory(self)
+        let quarters = [CGColor(red: 1, green: 0, blue: 0, alpha: 1), CGColor(red: 0, green: 0, blue: 0, alpha: 1),
+                        CGColor(red: 0, green: 0, blue: 1, alpha: 1), CGColor(red: 1, green: 1, blue: 1, alpha: 1)]
+        let video = try await writeSpeakerTestVideo(directory: directory, name: "quarters", size: (120, 200), seconds: 1) { context, index in
+            context.setFillColor(quarters[min(3, Int(Double(index) / 30 / 0.25))])
+            context.fill(CGRect(x: 0, y: 0, width: 120, height: 200))
+        }
+        let gray = CGColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1)
+        let fill = try solidSpeakerTestImage(directory: directory, name: "fill", color: gray)
+        let room = try await writeEmptyRoomClip(directory: directory, size: (120, 200), seconds: 4)
+        let scene = try speakerRecipe(canvas: canvas, speaker: room, duration: 4, background: SpeakerTestBackground(url: fill),
+                                      windows: [SpeakerTestWindow(url: video, kind: .video, sourceStart: 0.5, start: 1, end: 3)])
+        // (time, expected): the fill outside the window; inside it blue, white, blue, blue, white.
+        let expectations: [(Double, CGColor)] = [(0.5, gray), (1.1, quarters[2]), (1.35, quarters[3]), (1.6, quarters[2]),
+                                                 (2.1, quarters[2]), (2.85, quarters[3]), (3.5, gray)]
+        for (time, expected) in expectations {
+            let frame = try await previewFrame(scene.recipe, urls: scene.urls, at: time)
+            XCTAssertTrue(isColor(frame.rgb(fx: 0.5, fy: 0.5), expected), "window background at \(time) s: \(frame.rgb(fx: 0.5, fy: 0.5))")
         }
     }
 

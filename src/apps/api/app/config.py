@@ -304,6 +304,18 @@ class Settings(BaseSettings):
     # PHONE_TALKING_MENTION_CUTAWAYS_ENABLED=true --app nova-video` + restart api + worker, Fly
     # only (no Vercel twin); rollback with `=false` the same way.
     phone_talking_mention_cutaways_enabled: bool = False
+    # Parent KRI-1151 (insert a clip while the take is paused). With this on, a multi-clip phone
+    # Talking edit whose approved strategy carries `insert_clips` ("after I say X, show this clip
+    # with its own sound") switches the picture to that clip of the creator's own footage, plays
+    # its audio, and resumes his take exactly where it stopped: the video grows by the clip's
+    # length and every caption, text, card, effect and cutaway after the point moves later by it
+    # (`app.pipeline.phone_talking_inserts`). Recipe-only: the device already plays a different
+    # clip between two segments of the take, so no new capability or protocol. A clip that
+    # cannot be placed (phrase never said, hook/tail, too long, already in use) is not used and
+    # the `phone_insert_clips` receipt says why. False (default): byte-identical to before.
+    # Apply: `fly secrets set PHONE_TALKING_INSERT_CLIPS_ENABLED=true --app nova-video` + restart
+    # api + worker, Fly only (no Vercel twin); rollback with `=false` the same way.
+    phone_talking_insert_clips_enabled: bool = False
     # KRI-183 (video Visuals as PiP): when this flag AND
     # `phone_rollout.phone_subtitled_overlays_supported()` hold AND
     # "visualVideos" is in `phone_render_verified_features` -- i.e.
@@ -866,6 +878,16 @@ class Settings(BaseSettings):
     # docs/pipelines/speaker-background.md.
     speaker_background_enabled: bool = False
     speaker_background_min_client_protocol: int = 27
+    # KRI-1162: timed background ``windows`` and a ``speaker_frame`` (the speaker small in a
+    # corner) on the same lane. No new kill switch: SPEAKER_BACKGROUND_ENABLED stays the one
+    # switch; the device-parity gate is the verified token `speakerBackgroundWindows` in
+    # PHONE_RENDER_VERIFIED_FEATURES plus an app build declaring `X-Kria-Client-Protocol`
+    # >= 32 (29 is unused; 30 is the card-tilt build, KRI-1141; 31 the media-backdrop
+    # build, KRI-1139). Below either, the compile
+    # keeps the fill background and strips the windows and the frame (trace
+    # `speaker_background_windows_phone_fallback`). Design:
+    # docs/reviews/speaker-background-windows-failure-modes.md.
+    speaker_background_windows_min_client_protocol: int = 32
     # KRI-1134: tilt a clip or photo to any angle (`transform.rotation_degrees`, clockwise on
     # screen) with a blank, colour or blurred backdrop behind it (`TimelineClip.backdrop`),
     # drawn ON DEVICE by `KriaMediaEngine`. Capability `clipTilt` (derived from the clips). The
@@ -894,10 +916,10 @@ class Settings(BaseSettings):
     media_backdrop_min_client_protocol: int = 31
     # KRI-1170: a tilt's `zoom` (media scaled 0.5..3x about the canvas centre before it turns).
     # Not a second master flag: slide zoom is offered only while `media_tilt_enabled` is on and
-    # to a build declaring protocol >= this value (32: the first build that decodes and
+    # to a build declaring protocol >= this value (33: the first build that decodes and
     # round-trips `zoom`). A save carrying a zoomed tilt from an older build, or one that would
     # overwrite a stored zoom, answers 426 `client_update_required` (`slide_tilt_zoom`).
-    media_tilt_zoom_min_client_protocol: int = 32
+    media_tilt_zoom_min_client_protocol: int = 33
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,
@@ -2417,6 +2439,8 @@ class Settings(BaseSettings):
     token_encryption_key: str = ""
 
     native_notifications_enabled: bool = False
+    # Empty (default) = every account once `native_notifications_enabled` is on; a non-empty
+    # list restricts delivery to exactly those accounts. The enabled flag is the kill switch.
     native_notifications_allowed_owner_ids: list[UUID] = Field(default_factory=list)
     native_notifications_apns_environment: Literal["sandbox", "production"] = "sandbox"
     native_notifications_apns_topic: str | None = None

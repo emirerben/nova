@@ -1204,7 +1204,10 @@ def test_trial_scope_removal_blocks_discovery_and_pending_admission(journey):
     assert sender.calls == []
 
 
-def test_configured_runtime_drives_real_auth_registration_and_fake_http2_once(journey, monkeypatch):
+@pytest.mark.parametrize("scope", ["trial_owner", "empty_means_everyone"])
+def test_configured_runtime_drives_real_auth_registration_and_fake_http2_once(
+    journey, monkeypatch, scope
+):
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import ec
 
@@ -1220,7 +1223,9 @@ def test_configured_runtime_drives_real_auth_registration_and_fake_http2_once(jo
     ).decode()
     for name, value in {
         "native_notifications_enabled": True,
-        "native_notifications_allowed_owner_ids": [journey.owner],
+        "native_notifications_allowed_owner_ids": (
+            [journey.owner] if scope == "trial_owner" else []
+        ),
         "native_notifications_apns_environment": "sandbox",
         "native_notifications_apns_topic": "com.example.kria",
         "native_notifications_apns_team_id": "TEAM123456",

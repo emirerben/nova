@@ -23,6 +23,7 @@ from app.kria.brief_checks import (
     _has_checker,
     _wants_source_sound_kept,
     build_receipts,
+    defers_caption_words_to_phone_render,
     defers_text_to_phone,
     plan_facts_from_editor_payload,
     plan_facts_from_strategy,
@@ -466,6 +467,19 @@ def assess_readiness(
                 tr="Seçilen fikrin düzeni veya kaynakları değişti. Fikri yeniden gözden geçir.",
             )
     ids = [m.media_id for m in manifest.media] if manifest else []
+    # KRI-1161: the draft turn tells its facts a phone Talking draft is one
+    # (`defers_caption_words_to_phone_render`), so an ask outside what that edit draws is a checked
+    # refusal there (`_talking_honest_receipt`). Readiness must read the same facts, or the same
+    # requirement is `not_possible` in the reply and `unverified` (approvable, hidden) here.
+    talking_edit_format = strategy.get("edit_format") or (
+        manifest.edit_format if manifest else None
+    )
+    talking_writer = defers_caption_words_to_phone_render(
+        creator_id=creator_id,
+        edit_format=talking_edit_format,
+        audio_strategy=strategy.get("audio_strategy"),
+        clip_paths=media.get("clip_paths") or (),
+    )
     facts = (
         plan_facts_from_editor_payload(editor_payload, editor_text_diff)
         if editor_payload is not None
@@ -480,6 +494,8 @@ def assess_readiness(
             phone_text=defers_text_to_phone(
                 creator_id=creator_id, clip_paths=media.get("clip_paths") or ()
             ),
+            phone_talking=talking_writer and talking_edit_format in {"subtitled", "talking_head"},
+            caption_words_at_render=talking_writer,
         )
     )
     if editor_payload is None and facts.ordering_basis is None:

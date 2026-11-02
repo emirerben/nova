@@ -458,7 +458,7 @@ import XCTest
         XCTAssertTrue(eventually { previewValue().contains(kept) }, "undo brings the turn back: \(previewValue())")
     }
 
-    /// KRI-1170: the Zoom slider is offered only with `slide_post_tilt_zoom` (a protocol-32 build), moves the photo live, is kept by a
+    /// KRI-1170: the Zoom slider is offered only with `slide_post_tilt_zoom` (a protocol-33 build), moves the photo live, is kept by a
     /// save on that slide only, and Reset puts the zoom back along with the angle.
     func testTiltZoomShowsOnlyWithItsCapabilityAndSurvivesSaveAndReset() throws {
         let plain = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1", "KRIA_SLIDE_POST_TILT": "1"])

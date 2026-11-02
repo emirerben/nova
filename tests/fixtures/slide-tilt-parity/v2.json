@@ -4,7 +4,7 @@
   "caps": {
     "zoom_min": 0.5,
     "zoom_max": 3.0,
-    "protocol": 32
+    "protocol": 33
   },
   "cases": [
     {

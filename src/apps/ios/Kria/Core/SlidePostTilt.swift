@@ -11,9 +11,9 @@ import KriaMediaEngine
 /// media). It is a SIBLING of `framing` in `SlidePostEdits`: a build that predates it leaves the key out and the
 /// server's "missing means keep" rule protects the stored value. Upright at zoom 1 is stored as no tilt at all.
 ///
-/// `zoom` (KRI-1170, protocol 32) scales the media about the canvas centre BEFORE it turns: 1 is as framed, 0.5 half
+/// `zoom` (KRI-1170, protocol 33) scales the media about the canvas centre BEFORE it turns: 1 is as framed, 0.5 half
 /// size over the backdrop, 3 three times closer. It is left out of the encoded tilt at 1, so a tilt stored before zoom
-/// existed round-trips byte for byte; a build below 32 does not know the key and the server answers it 426.
+/// existed round-trips byte for byte; a build below 33 does not know the key and the server answers it 426.
 struct SlidePostTilt: Codable, Equatable, Sendable {
     static let maxDegrees = 180.0
     static let minZoom = 0.5
