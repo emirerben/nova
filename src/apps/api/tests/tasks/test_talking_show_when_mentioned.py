@@ -72,6 +72,7 @@ def _run(
     sound: bool = False,
     brief: CreativeBrief | None = None,
     clips: list[dict] | None = None,
+    analysis_order: tuple[int, ...] = (3, 4, 1, 2, 0),
 ):
     clips = CLIPS if clips is None else clips
     bindings = {c["media_id"]: _binding(c["media_id"], duration_s=c["duration_s"]) for c in clips}
@@ -97,7 +98,7 @@ def _run(
     monkeypatch.setattr(gb.settings, "phone_clip_sound_windows_enabled", sound)
     monkeypatch.setattr(gb.settings, "phone_talking_cutaway_sound_enabled", sound)
     # The worker saw the clips in the order their analyses finished, not the upload order.
-    finished = [clips[3], clips[4], clips[1], clips[2], clips[0]]
+    finished = [clips[i] for i in analysis_order]
     by_id = {c["media_id"]: c for c in clips}
     path_of = {c["clip_id"]: f"/tmp/{c['clip_id'].split('/')[1]}.mp4" for c in clips}
     clip_of_path = {path: cid for cid, path in path_of.items()}
@@ -388,3 +389,60 @@ def test_a_full_screen_ask_naming_a_pool_photo_changes_nothing(monkeypatch):
     receipt = variant[gb.PHONE_TALKING_MULTI_CLIP_FIELD]
     assert len(receipt["speaker_media_ids"]) == 4
     assert "mention_cutaways" not in receipt
+
+
+def test_two_clips_that_speak_to_camera_stay_in_upload_order_though_analysis_finished_later(
+    monkeypatch,
+):
+    # The worker saw the analyses finish as stadium, congress, creator... : the creator's take
+    # still leads the main track, then the other speaking clip, as uploaded.
+    second = next(c for c in CLIPS if c["clip_id"] == "files/smba6yqy3adx")
+    clips = [
+        {**c, "meta": {**c["meta"], "speaks_to_camera": True}} if c is second else c for c in CLIPS
+    ]
+    _j, recipe, variant = _run(monkeypatch, mention=True, clips=clips)
+    receipt = variant[gb.PHONE_TALKING_MULTI_CLIP_FIELD]
+    assert receipt["speaker_media_ids"] == [CREATOR, second["media_id"]]
+    assert [c.source_asset_id for c in _tracks(recipe)["subtitled"].clips] == [
+        CREATOR,
+        second["media_id"],
+    ]
+
+
+def test_clips_no_mention_places_follow_upload_order_whatever_order_analyses_finished(
+    monkeypatch,
+):
+    # Upload order puts the congress talk before the drone shot. Whichever analysis finished
+    # first, the spread clips keep that order.
+    upload = [c["media_id"] for c in CLIPS]
+    assert upload.index(CONGRESS_TALK) < upload.index(STADIUM)
+    for order in ((3, 4, 1, 2, 0), (4, 3, 1, 2, 0)):
+        _j, recipe, _v = _run(monkeypatch, mention=True, analysis_order=order)
+        windows = _cutaway_windows(recipe)
+        assert windows[CONGRESS_TALK][0] < windows[STADIUM][0], order
+
+
+def _notes(mention_cutaways: dict) -> list[str]:
+    from app.services.nova_steps import _mention_cutaway_notes
+
+    return _mention_cutaway_notes(mention_cutaways)
+
+
+def test_a_clip_with_no_room_at_its_mention_is_not_told_as_an_unmatched_mention():
+    notes = _notes(
+        {
+            "placements": [
+                {"basis": "spread", "reason": "no_room_at_mention"},
+                {"basis": "spread", "reason": "no_mention_found"},
+            ]
+        }
+    )
+    assert notes == [
+        "Couldn't tell where you mention 1 other clip, so I spread it across the video",
+        "There wasn't room next to where you mention 1 clip, so I spread it across the video",
+    ]
+
+
+def test_no_sound_note_when_no_clip_was_placed_to_play_it():
+    sound = {"asked": True, "applied": False, "reason": "sound_not_enabled"}
+    assert _notes({"placements": [], "sound": sound}) == []
