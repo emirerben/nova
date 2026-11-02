@@ -1038,6 +1038,14 @@ then spread mechanically, never at a mention.
   --app nova-video` + restart api + worker (Fly only, no Vercel twin, no app build: recipe-only, no
   new protocol). Rollback: `=false` the same way. To hear the talks' own audio also set
   `PHONE_TALKING_CUTAWAY_SOUND_ENABLED` and `PHONE_CLIP_SOUND_WINDOWS_ENABLED` (above).
+- **Planner knowledge**: the chat planner (Main Creator, prompt v109) is taught this lane only
+  while `creator_capabilities.talking_footage_cutaways(manifest)` is open (the gates above plus
+  2+ own clips on a phone Talking edit), so a flag-off prompt is byte-identical. It says the creator's voice is
+  muted under a clip that plays its sound, and that the clip is an overlay, not an insert that
+  pauses the take. A refusal-shaped `ask_user` code (`unsupported_*`, `cannot_*`) against that
+  open lane and a live full-screen / clip-sound-on ask gets ONE corrective re-run with
+  `MainCreatorInput.server_note` (`app.kria.ask_refusals`), then the model's answer stands
+  (`kria_ask_refusal_rechecked` log line). Origin: prod thread 6fa36e51, turn 7aa16b1a.
 - **Known gaps**: a creator take the analysis marks not-to-camera next to another person's clip
   marked to-camera is read the other way round under a global ask; the signal is the display fact plus the clip analysis; a creator who says "when I
   mention them" without a full-screen word gets today's behavior (a typed "show when mentioned" fact

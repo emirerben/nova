@@ -112,6 +112,18 @@ def _prompt(manifest, **extra: Any) -> str:
     return MainCreatorAgent(None).render_prompt(_agent_input(manifest, **extra))
 
 
+def _flat(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _section(manifest, *, ending_open: bool = True) -> str:
+    from app.agents.main_creator import _talking_cutaways_section
+
+    found = capabilities.talking_footage_cutaways(manifest)
+    assert found is not None
+    return _talking_cutaways_section(found, ending_open=ending_open)
+
+
 def _brief(*, only: tuple[str, ...] = ("r1", "r2", "r3", "r4")) -> CreativeBrief:
     reqs = [BriefRequirement(**r) for r in THREAD["brief"]["requirements"] if r["id"] in only]
     return CreativeBrief(version=2, requirements=reqs)
@@ -142,7 +154,7 @@ def test_f5_each_gate_opens_only_its_own_part(monkeypatch, mention, sound, expec
     found = capabilities.talking_footage_cutaways(manifest)
 
     assert (None if found is None else (found.mention, found.sound)) == expected
-    prompt = _prompt(manifest)
+    prompt = _flat(_prompt(manifest))
     assert (SECTION_MARK in prompt) is (expected is not None)
     if expected is not None:
         assert ("voice is muted" in prompt) is expected[1]
@@ -191,14 +203,14 @@ def test_f2_flag_off_bytes_are_the_prompt_without_the_section(monkeypatch):
     _gates(monkeypatch)
     manifest = _manifest()
     on = _prompt(manifest)
+    section = _section(manifest)
     monkeypatch.setattr(settings, "phone_talking_mention_cutaways_enabled", False)
     monkeypatch.setattr(settings, "phone_talking_cutaway_sound_enabled", False)
     off = _prompt(manifest)
 
     assert SECTION_MARK not in off
-    start = on.index("\n" + SECTION_MARK)
-    end = on.index("\n", on.index("Say in `summary`", start))
-    assert on[:start] + on[end:] == off
+    assert on.count("\n" + section) == 1
+    assert on.replace("\n" + section, "", 1) == off
 
 
 # ---------------------------------------------------------------- F3, F4: what it teaches
@@ -206,7 +218,10 @@ def test_f2_flag_off_bytes_are_the_prompt_without_the_section(monkeypatch):
 
 def test_f3_the_section_maps_the_incident_phrasings_and_forbids_the_refusal(monkeypatch):
     _gates(monkeypatch)
-    section = _prompt(_manifest()).split(SECTION_MARK, 1)[1].split("\n\n", 1)[0]
+    manifest = _manifest()
+    section = _section(manifest)
+    assert section in _prompt(manifest)
+    section = _flat(section)
 
     for phrase in ("when I talk about them", "in between my speech", "use their audio"):
         assert phrase in section
@@ -219,7 +234,7 @@ def test_f3_the_section_maps_the_incident_phrasings_and_forbids_the_refusal(monk
 
 def test_f4_the_section_says_the_creators_voice_is_muted_under_a_clip_with_sound(monkeypatch):
     _gates(monkeypatch)
-    section = _prompt(_manifest()).split(SECTION_MARK, 1)[1].split("\n\n", 1)[0]
+    section = _flat(_section(_manifest()))
 
     assert "voice is muted" in section
     assert "not heard" in section
@@ -358,18 +373,30 @@ async def test_f6_the_incident_turn_is_rerun_not_shown(monkeypatch):
     assert result.plan.mode == "act"
 
 
-async def test_f7_a_second_refusal_is_not_shown_and_does_not_loop(monkeypatch):
+async def test_f7_the_rerun_is_bounded_and_its_answer_stands(monkeypatch):
     _gates(monkeypatch)
     manifest = _manifest()
-    rerun = AsyncMock(return_value=_refusal_output("still_unsupported"))
+    second = _refusal_output("still_unsupported")
+    second.action.question = "The part I still cannot do is the 3D globe. Skip it?"
+    rerun = AsyncMock(return_value=second)
+    monkeypatch.setattr(planner, "_call_main_creator", rerun)
+
+    result = await _turn(monkeypatch, _refusal_output(), manifest, _brief())
+
+    assert rerun.await_count == 1  # no loop: told once, then the model's own answer is shown
+    assert "3D globe" in _said(result)
+
+
+async def test_f7_a_failed_rerun_keeps_the_original_answer(monkeypatch):
+    _gates(monkeypatch)
+    manifest = _manifest()
+    rerun = AsyncMock(side_effect=RuntimeError("planning failed"))
     monkeypatch.setattr(planner, "_call_main_creator", rerun)
 
     result = await _turn(monkeypatch, _refusal_output(), manifest, _brief())
 
     assert rerun.await_count == 1
-    said = _said(result)
-    assert "Montage" not in said and "can't intercut" not in said
-    assert "couldn't turn that into a plan" in said  # the honest recovery, not a limit claim
+    assert "Montage" in _said(result)  # fail open: the creator still gets a question
 
 
 async def test_f6_a_plain_question_never_pays_for_a_rerun(monkeypatch):
@@ -446,3 +473,34 @@ def test_f9_the_finished_receipt_says_the_voice_is_muted(monkeypatch):
 
     assert receipt.status == "met"
     assert "voice" in receipt.reason and "muted" in receipt.reason
+
+
+# ---------------------------------------------------------------- the replay fixture
+
+
+_GOLDEN = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "agent_evals"
+    / "main_creator"
+    / "kri1151_talking_cutaways_show_when_mentioned.json"
+)
+
+
+def test_the_replay_fixture_renders_the_lane_and_answers_without_a_refusal(monkeypatch):
+    from app.agents.main_creator import MAIN_CREATOR_PROMPT_VERSION
+
+    fixture = json.loads(_GOLDEN.read_text(encoding="utf-8"))
+    assert fixture["prompt_version"] == MAIN_CREATOR_PROMPT_VERSION
+    assert fixture["meta"]["source"] == "hand_authored_golden"  # no live capture was possible
+    agent_input = MainCreatorInput.model_validate(fixture["input"])
+    assert agent_input.user_message == REQUEST
+
+    _gates(monkeypatch)
+    prompt = MainCreatorAgent(None).render_prompt(agent_input)
+    assert SECTION_MARK in prompt
+
+    action = fixture["output"]["action"]
+    assert action["kind"] == "propose_strategy"
+    assert action["strategy"]["edit_format"] == "subtitled"
+    assert "muted" in action["summary"] and "voice" in action["summary"]

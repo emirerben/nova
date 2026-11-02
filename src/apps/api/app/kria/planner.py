@@ -61,7 +61,8 @@ from app.agents.main_creator import (
     MainCreatorOutput,
 )
 from app.config import settings
-from app.kria import voiceover_script
+from app.kria import ask_refusals, voiceover_script
+from app.kria.ask_refusals import stale_capability_refusal
 from app.kria.brief import (
     BriefCoverageError,
     BriefUpdate,
@@ -3066,6 +3067,30 @@ async def _plan_from_creator_output(
     wording question while the clip checks run, so a clip picker they end on is asked in
     the same reply instead of one full re-plan later.
     """
+    capability = stale_capability_refusal(output.action, manifest, effective_brief)
+    if capability is not None:
+        # The model declined an ask the server's own gates say this edit builds (thread
+        # 6fa36e51): one corrective re-run, then its answer stands.
+        log.info(
+            "kria_ask_refusal_rechecked",
+            thread_id=str(thread_id),
+            capability=capability,
+            reason_code=str(output.action.reason_code)[:80],
+        )
+        try:
+            output = await _call_main_creator(
+                replace(
+                    inputs,
+                    agent_input=inputs.agent_input.model_copy(
+                        update={"server_note": ask_refusals.correction_note(capability)}
+                    ),
+                ),
+                thread_id=thread_id,
+                creator_id=creator_id,
+                item_id=item_id,
+            )
+        except (RuntimeError, ValidationError):
+            log.warning("kria_ask_refusal_rerun_failed", thread_id=str(thread_id), exc_info=True)
     if isinstance(output.action, DraftVoiceoverScript):
         return await _plan_voiceover_script(
             db,
