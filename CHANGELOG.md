@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.4.0] - 2026-11-02
+
+### Changed
+- feat(ios): a zoom slider in the clip Tilt sheet, render, Save and chat, protocol 32 (KRI-1169) (#2066) <!-- release-pr: 2066 -->
+
 ## [0.84.3.0] - 2026-11-02
 
 ### Changed
