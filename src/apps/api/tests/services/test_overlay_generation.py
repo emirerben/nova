@@ -1002,3 +1002,22 @@ def test_provider_quota_exhaustion_is_not_hidden_as_a_retry_message(monkeypatch)
     agent.run.side_effect = ProviderQuotaExceededError()
     with pytest.raises(ProviderQuotaExceededError):
         _plan_with_agent(monkeypatch, agent)
+
+
+@pytest.mark.parametrize("stray", ["N/A", "none", "foreign-asset-id"])
+def test_stray_asset_id_on_a_generated_row_is_dropped_not_fatal(stray):
+    rows = materialize_overlays(
+        proposal(asset_id=stray), evidence(), [], duration_s=8, prompt="kahve dediğimde"
+    )
+    assert len(rows) == 1 and rows[0].asset_id is None
+
+
+def test_library_row_still_cannot_use_an_unowned_asset():
+    with pytest.raises(ValueError, match="library"):
+        materialize_overlays(
+            proposal(kind="library_asset", asset_id="foreign", prompt=""),
+            evidence(),
+            [],
+            duration_s=8,
+            prompt="",
+        )

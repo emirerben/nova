@@ -360,8 +360,6 @@ def materialize_overlays(
             asset = by_asset[row.asset_id]
             if asset["kind"] != "image":
                 raise ValueError("Choose a still image for this overlay.")
-        elif row.asset_id:
-            raise ValueError("Only library overlays may reference an existing asset.")
         if row.kind == "image":
             if not row.prompt.strip() or row.text:
                 raise ValueError(
@@ -369,7 +367,10 @@ def materialize_overlays(
                 )
         if row.kind == "text" and not row.text.strip():
             raise ValueError("A text overlay needs readable text.")
-        result.append(PlannedOverlay(**{**row.model_dump(exclude={"depicts"}), "start_s": start}))
+        planned = row.model_dump(exclude={"depicts"})
+        if row.kind != "library_asset":
+            planned["asset_id"] = None
+        result.append(PlannedOverlay(**{**planned, "start_s": start}))
     return result
 
 
