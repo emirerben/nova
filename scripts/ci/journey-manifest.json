@@ -1139,6 +1139,18 @@
       ]
     },
     {
+      "id": "kri-1151-talking-insert-clip",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_phone_talking_inserts.py tests/tasks/test_talking_insert_clip.py tests/routes/test_phone_talking_insert_commit.py tests/kria/test_insert_clip_planner.py",
+      "paths": [
+        "src/apps/api/app/pipeline/phone_talking_inserts.py",
+        "src/apps/api/tests/kria/test_insert_clip_planner.py",
+        "src/apps/api/tests/pipeline/test_phone_talking_inserts.py",
+        "src/apps/api/tests/routes/test_phone_talking_insert_commit.py",
+        "src/apps/api/tests/tasks/test_talking_insert_clip.py"
+      ]
+    },
+    {
       "id": "kri-841-talking-ending-clip",
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri841_talking_ending_clip.py tests/kria/test_kri841_ending_clip_ask.py tests/pipeline/test_phone_subtitled_plan.py tests/services/test_phone_subtitled_editor.py tests/routes/test_admin_plan_item_phone_lanes.py",
