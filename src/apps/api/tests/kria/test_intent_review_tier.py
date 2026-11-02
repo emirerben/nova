@@ -103,6 +103,7 @@ def test_every_flag_is_documented_where_operators_look():
     env = (root / ".env.example").read_text(encoding="utf-8")
     claude = (root / "CLAUDE.md").read_text(encoding="utf-8")
     runbook = (root / "docs/runbooks/kria-intent-review.md").read_text(encoding="utf-8")
+    rollout = (root / "docs/runbooks/intent-review-rollout.md").read_text(encoding="utf-8")
     names = sorted(
         field.upper()
         for field in Settings.model_fields
@@ -112,7 +113,8 @@ def test_every_flag_is_documented_where_operators_look():
     assert "KRIA_INTENT_REVIEW_EVIDENCE_QUEUE" in names
     for name in names:
         assert f"{name}=" in env, name
-        assert name in runbook, name
+        assert name in runbook and name in rollout, name
     assert (
-        "KRIA_INTENT_REVIEW_ENABLED" in claude and "docs/runbooks/kria-intent-review.md" in claude
+        "KRIA_INTENT_REVIEW_ENABLED" in claude
+        and "docs/runbooks/intent-review-rollout.md" in claude
     )
