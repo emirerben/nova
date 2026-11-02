@@ -892,6 +892,13 @@ class Settings(BaseSettings):
     # first build that decodes a media backdrop). A pinned recipe that already carries one
     # answers 426 `client_update_required` (`clip_backdrop_media`) to an older build.
     media_backdrop_min_client_protocol: int = 31
+    # KRI-1169: a clip's tilt zoom (`tilt.zoom` on the row, 0.5..3, carried in the recipe's
+    # `transform.scale`). Not a second master flag: it follows `media_tilt_enabled` and needs a
+    # build declaring protocol >= this value (32: the first build whose strict tilt row decodes
+    # `zoom`). The recipe needs no gate (older renderers already honour `transform.scale`); an
+    # older build whose Save would drop a stored zoom answers 426 `client_update_required`
+    # (`tilt_zoom`), and a new zoom while the gate is closed is a 422 `clip_tilt_zoom_unavailable`.
+    media_tilt_zoom_min_client_protocol: int = 32
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,

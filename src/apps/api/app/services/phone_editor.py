@@ -47,6 +47,7 @@ from app.pipeline.phone_recipe_shared import (
     PhoneNarrationBed,
     PhoneSongBed,
     apply_landscape_fit,
+    clip_tilt_zoom,
     timeline_end_s,
     with_drawings,
 )
@@ -2027,7 +2028,8 @@ def _previous_clip_tilts(recipe: Any) -> dict[str, dict]:
     for track in recipe.tracks:
         if track.kind == "video" and track.id in FIT_VIDEO_TRACK_IDS:
             for clip in track.clips:
-                if (tilt := row_tilt_from_clip(clip)) is not None:
+                zoom = clip_tilt_zoom(recipe, clip)
+                if (tilt := row_tilt_from_clip(clip, zoom=zoom)) is not None:
                     tilts[clip.id] = tilt
     return tilts
 

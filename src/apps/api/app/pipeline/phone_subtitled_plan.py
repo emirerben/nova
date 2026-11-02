@@ -462,7 +462,9 @@ def compile_phone_subtitled_plan(
         seg_duration = seg_end - seg_start
         if seg_duration <= 0:
             continue
-        tilt_patch, backdrop = clip_tilt_fields({"tilt": (clip_tilts or {}).get(f"clip-{index}")})
+        tilt_patch, backdrop = clip_tilt_fields(
+            {"tilt": (clip_tilts or {}).get(f"clip-{index}")}, fit_scale=speaker_transform.scale
+        )
         main_clips.append(
             TimelineClip(
                 id=f"clip-{index}",
@@ -506,7 +508,10 @@ def compile_phone_subtitled_plan(
         if extra_duration <= 0:
             continue
         extra_id = f"speaker-{extra_index + 1}"
-        tilt_patch, backdrop = clip_tilt_fields({"tilt": (clip_tilts or {}).get(extra_id)})
+        extra_transform = fit_transform(extra_width, extra_height, canvas, landscape_fit)
+        tilt_patch, backdrop = clip_tilt_fields(
+            {"tilt": (clip_tilts or {}).get(extra_id)}, fit_scale=extra_transform.scale
+        )
         main_clips.append(
             TimelineClip(
                 id=extra_id,
@@ -515,9 +520,7 @@ def compile_phone_subtitled_plan(
                 source_duration=extra_duration,
                 timeline_start=cursor,
                 rate=1.0,
-                transform=fit_transform(
-                    extra_width, extra_height, canvas, landscape_fit
-                ).model_copy(update=tilt_patch),
+                transform=extra_transform.model_copy(update=tilt_patch),
                 backdrop=backdrop,
             )
         )

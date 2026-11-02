@@ -20,6 +20,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.kria.clip_tilt import MAX_ZOOM, MIN_ZOOM
 from app.kria.clip_tilt_row import parse_row_tilt
 from app.kria.portable_drawing import compile_drawing_layers
 from app.kria.recipes import (
@@ -146,38 +147,106 @@ def display_dims(original: Any) -> tuple[int, int]:
 FIT_VIDEO_TRACK_IDS: frozenset[str] = frozenset({"subtitled", "montage", "story"})
 
 
+def _recipe_clip_dims(
+    recipe_assets: Mapping[str, Any], asset_id: str
+) -> tuple[float, float] | None:
+    """Display (width, height) of a recipe asset, or None for one with no natural size."""
+    asset = recipe_assets.get(asset_id)
+    if asset is None or asset.natural_size is None:
+        return None
+    size = asset.natural_size
+    if int(asset.orientation_degrees) % 360 in (90, 270):
+        return size.height, size.width
+    return size.width, size.height
+
+
+def letterbox_scale(dims: tuple[float, float] | None, canvas: Canvas) -> float:
+    """The ``transform.scale`` ``"fit"`` gives a source of these display dims: 1 unless it is a
+    landscape source on a portrait canvas (or its dims are unknown)."""
+    if dims is None or canvas.height <= canvas.width:
+        return 1.0
+    return fit_transform(dims[0], dims[1], canvas, "fit").scale
+
+
+def split_clip_scale(scale: float, letterbox: float) -> tuple[float, float]:
+    """``(framing scale, tilt zoom)`` whose product is a clip's ``transform.scale`` (KRI-1169).
+
+    A tilt zoom (0.5..3, hundredths) rides ``transform.scale`` on top of the clip's own
+    framing scale, which is ``letterbox`` or 1. Only a zoom that is a clean hundredth over one
+    of the two framings is read as one, so a letterboxed clip and a zoomed one never mix up.
+    A scale equal to either framing is read as unzoomed first (every recipe from before the
+    zoom, and the rare source whose letterbox scale times a zoom equals 1, stay as they were).
+    A scale that fits neither is a plain framing scale with no zoom.
+    """
+    if scale == 1.0 or scale == letterbox:
+        return scale, 1.0
+    for base in dict.fromkeys((letterbox, 1.0)):
+        zoom = scale / base
+        if MIN_ZOOM <= round(zoom, 6) <= MAX_ZOOM and abs(zoom * 100 - round(zoom * 100)) < 1e-4:
+            return base, round(zoom, 2)
+    return scale, 1.0
+
+
+def clip_tilt_zoom(recipe: EditRecipeV2, clip: TimelineClip) -> float:
+    """The tilt zoom a recipe clip carries: its ``transform.scale`` over its letterbox scale."""
+    dims = _recipe_clip_dims({asset.id: asset for asset in recipe.assets}, clip.source_asset_id)
+    return split_clip_scale(clip.transform.scale, letterbox_scale(dims, recipe.canvas))[1]
+
+
 def landscape_fit_from_recipe(recipe: EditRecipeV2) -> Literal["fill", "fit"]:
     """Inverse of the compilers' ``landscape_fit`` -> main-track transform
     projection (KRI-283, KRI-285): ``"fit"`` when ANY clip of a fit-capable
-    main video track (``FIT_VIDEO_TRACK_IDS``) is scaled below 1, else
+    main video track (``FIT_VIDEO_TRACK_IDS``) is letterboxed, else
     ``"fill"``. Lets an editor Save / re-cut re-derive the letterbox from the
     previously pinned recipe, like ``keep_segments``.
+
+    A tilt zoom also lives in ``transform.scale`` (KRI-1169), so a clip counts as
+    letterboxed only when its source is landscape on a portrait canvas and its scale is
+    the letterbox scale (times a zoom); a source with no known size falls back to
+    ``scale < 1``.
 
     Caveat: a recipe whose clips are ALL portrait/square compiled with
     ``"fit"`` is indistinguishable from ``"fill"`` (every transform is the
     identity), so callers that persist ``variant["landscape_fit"]`` should
     prefer it over this inference.
     """
+    recipe_assets = {asset.id: asset for asset in recipe.assets}
     for track in recipe.tracks:
         if track.kind == "video" and track.id in FIT_VIDEO_TRACK_IDS:
-            if any(clip.transform.scale < 1 for clip in track.clips):
-                return "fit"
+            for clip in track.clips:
+                dims = _recipe_clip_dims(recipe_assets, clip.source_asset_id)
+                if dims is None:
+                    if clip.transform.scale < 1:
+                        return "fit"
+                    continue
+                letterbox = letterbox_scale(dims, recipe.canvas)
+                if letterbox < 1 and split_clip_scale(clip.transform.scale, letterbox)[0] == (
+                    letterbox
+                ):
+                    return "fit"
     return "fill"
 
 
-def clip_tilt_fields(row: Any) -> tuple[dict[str, float], ClipBackdrop | None]:
+def clip_tilt_fields(
+    row: Any, *, fit_scale: float = 1.0
+) -> tuple[dict[str, float], ClipBackdrop | None]:
     """What a row's ``tilt`` (KRI-1136) adds to its clip: ``(transform_patch, backdrop)``.
 
     ``row`` is the editor row (a mapping) or anything with a ``tilt`` attribute. The patch
     holds ``rotation_degrees`` (clockwise, the recipe's own sign) only when the clip is
     turned, and ``backdrop`` is ``None`` for a blank one, so an untilted clip compiles to
-    exactly what it did before. Every phone writer applies this; none reads ``tilt`` itself.
+    exactly what it did before. A zoom (KRI-1169) is ``scale`` in the patch: the clip's own
+    framing scale, ``fit_scale`` (its letterbox or face-fill scale, 1 by default), times the
+    zoom, so it composes with a letterbox instead of replacing it. Present only while the zoom
+    is not 1. Every phone writer applies this; none reads ``tilt`` itself.
     """
     raw = row.get("tilt") if isinstance(row, Mapping) else getattr(row, "tilt", None)
     tilt = parse_row_tilt(raw)
     if tilt is None:
         return {}, None
     patch = {"rotation_degrees": tilt.rotation_deg} if tilt.rotation_deg != 0 else {}
+    if tilt.zoom != 1:
+        patch["scale"] = fit_scale * tilt.zoom
     return patch, tilt.backdrop
 
 
@@ -275,6 +344,8 @@ def apply_landscape_fit(
     - Source dimensions come from ``bindings`` (``PhoneSourceBinding`` with an
       ``original`` descriptor, matched by ``media_id`` == asset id) and fall
       back to the recipe's own ``MediaAsset.natural_size``/orientation.
+    - A tilt zoom (KRI-1169) is part of ``transform.scale``: the clip keeps its zoom and only
+      the letterbox part of the scale changes (``split_clip_scale``).
     - Returns ``recipe`` itself when nothing changes (byte-identical).
     """
     canvas = recipe.canvas
@@ -289,13 +360,7 @@ def apply_landscape_fit(
         original = originals.get(asset_id)
         if original is not None and original.width and original.height:
             return display_dims(original)
-        asset = recipe_assets.get(asset_id)
-        if asset is None or asset.natural_size is None:
-            return None
-        size = asset.natural_size
-        if int(asset.orientation_degrees) % 360 in (90, 270):
-            return size.height, size.width
-        return size.width, size.height
+        return _recipe_clip_dims(recipe_assets, asset_id)
 
     changed = False
     tracks = []
@@ -310,6 +375,9 @@ def apply_landscape_fit(
                 clips.append(clip)
                 continue
             scale = fit_transform(dims[0], dims[1], canvas, fit).scale
+            _, zoom = split_clip_scale(clip.transform.scale, letterbox_scale(dims, canvas))
+            if zoom != 1:
+                scale *= zoom
             if scale == clip.transform.scale:
                 clips.append(clip)
                 continue

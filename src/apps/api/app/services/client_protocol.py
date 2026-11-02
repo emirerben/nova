@@ -33,6 +33,10 @@ CARD_TILT_PROTOCOL = 30
 # capability).
 CLIP_BACKDROP_MEDIA_PROTOCOL = 31
 
+# The first build that decodes a clip tilt row's `zoom` (KRI-1169). An older build reads the
+# row's unknown key as no tilt and would erase the zoom on its next Save.
+TILT_ZOOM_PROTOCOL = 32
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()
