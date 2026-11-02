@@ -1087,7 +1087,7 @@ def test_a_real_overlap_is_not_nudged_away():
 def test_nudge_keeps_a_usable_duration():
     with pytest.raises(ValueError, match="overlap"):
         materialize_overlays(
-            proposal(start_s=1.0, end_s=1.4),
+            proposal(kind="text", text="10", prompt="", start_s=1.0, end_s=1.4),
             evidence(),
             [],
             duration_s=8,
@@ -1206,3 +1206,84 @@ def test_a_new_picture_on_top_of_one_already_placed_is_skipped():
 def test_a_fullscreen_placed_card_still_blocks_the_moment():
     rows, notices = _plan_next_to_placed(_placed_card(display_mode="fullscreen"), x_frac=0.75)
     assert rows == [] and notices
+
+
+def test_a_picture_held_for_one_word_gets_a_readable_hold():
+    rows = materialize_overlays(
+        proposal(start_s=1.0, end_s=1.4), evidence(), [], duration_s=8, prompt=""
+    )
+    assert [(r.start_s, r.end_s) for r in rows] == [(1.25, 3.75)]
+
+
+def test_text_keeps_the_length_the_model_gave_it():
+    rows = materialize_overlays(
+        proposal(kind="text", text="10", prompt="", start_s=1.0, end_s=1.4),
+        evidence(),
+        [],
+        duration_s=8,
+        prompt="",
+    )
+    assert [(r.start_s, r.end_s) for r in rows] == [(1.25, 1.4)]
+
+
+def test_the_hold_never_runs_past_the_video_or_into_a_blocking_overlay():
+    rows = materialize_overlays(
+        proposal(start_s=1.0, end_s=1.4),
+        evidence(),
+        [],
+        duration_s=8,
+        prompt="",
+        existing_overlays=[dict(start_s=2.0, end_s=4.0)],
+    )
+    assert [(r.start_s, r.end_s) for r in rows] == [(1.25, 1.4)]
+
+
+def test_a_picture_placed_by_the_phone_leaves_room_beside_it():
+    from app.services.overlay_generation import occupied_intervals
+
+    placed = dict(
+        id="p",
+        kind="media",
+        start_s=1.0,
+        end_s=3.0,
+        x_frac=0.25,
+        y_frac=0.5,
+        scale=0.35,
+    )
+    existing = occupied_intervals(dict(visual_blocks=[placed]))
+    assert existing[0]["rect"][0] < 0.25 < existing[0]["rect"][2]
+    beside = materialize_overlays(
+        proposal(x_frac=0.75, start_s=1.0, end_s=3.0),
+        evidence(),
+        [],
+        duration_s=8,
+        prompt="",
+        existing_overlays=existing,
+    )
+    assert len(beside) == 1
+    with pytest.raises(ValueError, match="overlap"):
+        materialize_overlays(
+            proposal(x_frac=0.3, start_s=1.0, end_s=3.0),
+            evidence(),
+            [],
+            duration_s=8,
+            prompt="",
+            existing_overlays=existing,
+        )
+
+
+def test_a_full_frame_visual_block_still_blocks_the_moment():
+    from app.services.overlay_generation import occupied_intervals
+
+    block = dict(id="b", kind="montage", start_s=1.0, end_s=3.0)
+    existing = occupied_intervals(dict(visual_blocks=[block]))
+    assert "rect" not in existing[0]
+    with pytest.raises(ValueError, match="overlap"):
+        materialize_overlays(
+            proposal(x_frac=0.75, start_s=1.0, end_s=3.0),
+            evidence(),
+            [],
+            duration_s=8,
+            prompt="",
+            existing_overlays=existing,
+        )

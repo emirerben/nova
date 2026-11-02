@@ -291,6 +291,9 @@ BRAND_NOTICE = (
 )
 
 
+PICTURE_MIN_HOLD_S = 1.5
+PICTURE_HOLD_S = 2.5
+HOLD_GAP_S = 0.05
 NUDGE_MAX_S = 0.25
 NUDGE_MIN_REMAINING_S = 0.5
 
@@ -327,19 +330,32 @@ def _image_rect(row) -> tuple[float, float, float, float] | None:
     return _card_rect(row.x_frac, row.y_frac, row.scale)
 
 
-def _placed_card_rect(row: dict) -> list[float] | None:
-    """Box of an already placed floating picture card, or None (full-screen, unreadable)."""
-    from app.agents._schemas.media_overlay import MediaOverlay
+def _placed_card_rect(row: dict, lane: str) -> list[float] | None:
+    """Box of an already placed floating picture, or None (full-frame, full-screen, unreadable).
 
+    The phone stores an accepted overlay picture as a visual block carrying its own x_frac,
+    y_frac and scale; older floating cards live in the media-overlay lane."""
     try:
-        card = MediaOverlay.model_construct(**row)
-        x, y = card.resolved_xy_frac()
-        values = (x, y, card.scale)
-        if card.display_mode != "pip" or not all(
-            isinstance(v, (int, float)) and math.isfinite(v) for v in values
+        if lane == "visual_blocks":
+            if row.get("kind") != "media":
+                return None
+            x, y, scale = row.get("x_frac"), row.get("y_frac"), row.get("scale")
+        elif lane == "media_overlays":
+            from app.agents._schemas.media_overlay import MediaOverlay
+
+            card = MediaOverlay.model_construct(**row)
+            if card.display_mode != "pip":
+                return None
+            (x, y), scale = card.resolved_xy_frac(), card.scale
+        else:
+            return None
+        values = (x, y, scale)
+        if not all(
+            isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+            for v in values
         ):
             return None
-        return list(_card_rect(x, y, card.scale))
+        return list(_card_rect(x, y, scale))
     except Exception:  # noqa: BLE001 - an unreadable row simply stays time-exclusive
         return None
 
@@ -415,18 +431,38 @@ def materialize_overlays(
                 "Choose a footage interval on one side."
             )
         rect = _image_rect(row)
-        start = _after_leading_overlap(
-            start, row.end_s, [(b, e) for b, e, other in occupied if _rects_collide(rect, other)]
-        )
-        if any(
-            start < end and row.end_s > begin and _rects_collide(rect, other)
-            for begin, end, other in occupied
-        ):
+        ends = [row.end_s]
+        if rect is not None and row.end_s - start < PICTURE_MIN_HOLD_S:
+            # A picture held for one spoken word is a flash; give it a readable hold when it fits.
+            next_start = min(
+                (
+                    other.start_s
+                    for other in raw.overlays
+                    if other is not row
+                    and other.start_s > row.start_s
+                    and _rects_collide(rect, _image_rect(other))
+                ),
+                default=duration_s,
+            )
+            held = min(start + PICTURE_HOLD_S, duration_s, next_start - HOLD_GAP_S)
+            if held > row.end_s:
+                ends.insert(0, held)
+        placed = None
+        for end in ends:
+            if insertion_base is not None and start < insertion_base <= end:
+                continue
+            blockers = [(b, e) for b, e, other in occupied if _rects_collide(rect, other)]
+            begin = _after_leading_overlap(start, end, blockers)
+            if not any(begin < e and end > b for b, e in blockers):
+                placed = (begin, end)
+                break
+        if placed is None:
             if notices is None:
                 raise ValueError(OVERLAP_NOTICE)
             if OVERLAP_NOTICE not in notices:
                 notices.append(OVERLAP_NOTICE)
             return None
+        start, end = placed
         if row.kind == "library_asset":
             if row.asset_id not in by_asset:
                 raise ValueError("Choose an available visual from this video's library.")
@@ -443,8 +479,8 @@ def materialize_overlays(
         planned = row.model_dump(exclude={"depicts"})
         if row.kind != "library_asset":
             planned["asset_id"] = None
-        occupied.append((start, row.end_s, rect))
-        return PlannedOverlay(**{**planned, "start_s": start})
+        occupied.append((start, end, rect))
+        return PlannedOverlay(**{**planned, "start_s": start, "end_s": end})
 
     for row in raw.overlays:
         if (
@@ -571,7 +607,7 @@ def occupied_intervals(variant: dict, duration_s: float | None = None) -> list[d
                 and 0 <= start < end
             ):
                 interval = dict(id=str(row.get("id") or ""), kind=lane, start_s=start, end_s=end)
-                rect = _placed_card_rect(row) if lane == "media_overlays" else None
+                rect = _placed_card_rect(row, lane)
                 if rect is not None:
                     interval["rect"] = rect
                 intervals.append(interval)
