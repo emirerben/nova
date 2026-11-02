@@ -252,7 +252,12 @@ def place_inserts(
 
 
 def insert_rows(inserts: Sequence[PhoneInsert]) -> list[dict[str, Any]]:
-    """Creator-safe rows (ids and seconds) of inserts on the FINAL timeline, in play order."""
+    """Creator-safe rows (ids and seconds) of inserts on the FINAL timeline, in play order.
+
+    This is the variant receipt the iPhone editor rebuilds its preview from
+    (`NativePhoneTalkingSource.inserts`): ``at_take_s`` is where the take pauses on the TAKE
+    timeline (the speech with no insert counted), ``duration_s`` the clip's length, ``volume`` its
+    level (0 = asked silent); ``start_s``/``end_s`` are where it plays on the final video."""
     rows: list[dict[str, Any]] = []
     shift = 0.0
     for insert in sorted(inserts, key=lambda i: i.at_take_s):
@@ -263,8 +268,10 @@ def insert_rows(inserts: Sequence[PhoneInsert]) -> list[dict[str, Any]]:
                 "media_id": insert.binding.media_id,
                 "start_s": round(start, 3),
                 "end_s": round(start + length, 3),
-                "at_take_s": round(insert.at_take_s, 3),
+                "at_take_s": round(insert.at_take_s, 6),
+                "duration_s": round(length, 6),
                 "keep_audio": insert.keep_audio,
+                "volume": 1 if insert.keep_audio else 0,
             }
         )
         shift += length
