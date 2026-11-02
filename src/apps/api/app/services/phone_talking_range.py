@@ -17,6 +17,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.pipeline.phone_talking_inserts import PHONE_INSERT_CLIPS_FIELD
 from app.pipeline.speech_cut_state import reproject_authored_speech_records
 from app.schemas.editor_window import (
     EDITOR_MIN_CLIP_S,
@@ -66,7 +67,11 @@ def talking_range_reason(job: Any, variant: dict) -> str | None:
     """
     from app.routes.generative_jobs import editor_deletion_timeline  # noqa: PLC0415
 
-    if variant.get("phone_talking_multi_clip"):
+    if variant.get("phone_talking_multi_clip") or (variant.get(PHONE_INSERT_CLIPS_FIELD) or {}).get(
+        "placed"
+    ):
+        # A paused take (parent KRI-1151) is always a several-clip edit; Range moves windows of
+        # ONE clip and cannot say where the clip inserted into them goes.
         return REASON_MULTI_CLIP
     rows = editor_deletion_timeline(job, variant)
     if not rows:

@@ -44,6 +44,7 @@ from app.services.phone_sources import PhoneSourceBinding
 
 __all__ = [
     "HOOK_FREE_S",
+    "PHONE_INSERT_CLIPS_FIELD",
     "MAX_INSERTS",
     "MAX_INSERT_S",
     "MIN_GAP_S",
@@ -59,6 +60,8 @@ __all__ = [
     "warp_for_inserts",
 ]
 
+# The variant receipt of what the worker placed (`{"placed": [...], "dropped": [...]}`).
+PHONE_INSERT_CLIPS_FIELD = "phone_insert_clips"
 MAX_INSERTS = MAX_INSERT_CLIPS
 # A longer clip is not an insert, it is a second video: refused rather than trimmed.
 MAX_INSERT_S = 60.0
