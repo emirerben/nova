@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.111.0] - 2026-11-02
+
+### Fixed
+- fix(overlays): start just after a title an overlay only clips by a hair (KRI-1142) (#2061) <!-- release-pr: 2061 -->
+
 ## [0.83.110.0] - 2026-11-02
 
 ### Fixed
