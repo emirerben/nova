@@ -61,6 +61,13 @@ def test_main_creator_eval(
         flat = " ".join(prompt.split())
         for needle in contains:
             assert needle in flat, needle
+        for needle in fixture.meta.get("prompt_excludes") or []:
+            assert needle not in flat, needle
+        if fixture.meta.get("cutaway_before_insert"):
+            # Both planner lanes open: the cutaway section comes first in the shared slot.
+            assert prompt.index("CLIPS SHOWN FULL SCREEN OVER THE TALK") < prompt.index(
+                "A CLIP PLAYED IN THE MIDDLE OF THE TALK"
+            )
 
     if fixture.meta.get("forbids_ask_user") or fixture.meta.get("voice_muted_said"):
         # KRI-1151 (thread 6fa36e51): the answer to the incident request proposes the edit, never
@@ -72,6 +79,20 @@ def test_main_creator_eval(
         if fixture.meta.get("voice_muted_said"):
             assert action["kind"] == "propose_strategy"
             assert "muted" in action["summary"] or "kapalı" in action["summary"]
+
+    if fixture.meta.get("forbids_insert_clips") or fixture.meta.get("insert_strategy"):
+        # Parent KRI-1151: "show it where I talk about it (use their audio)" is the full-screen
+        # cutaway lane and never an insert; only an explicit pause ask sets `insert_clips`.
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        inserts = action["strategy"].get("insert_clips") or []
+        if fixture.meta.get("forbids_insert_clips"):
+            assert not inserts
+        for want in fixture.meta.get("insert_strategy") or []:
+            assert [(row["media_id"], row["at_phrase"]) for row in inserts] == [
+                (want["media_id"], want["at_phrase"])
+            ]
 
     copy_meta = fixture.meta.get("creative_copy_decision")
     if copy_meta:

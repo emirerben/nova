@@ -298,11 +298,16 @@
       "talking_multi_clip_enabled": true,
       "phone_talking_mention_cutaways_enabled": true,
       "phone_talking_cutaway_sound_enabled": true,
-      "phone_clip_sound_windows_enabled": true
+      "phone_clip_sound_windows_enabled": true,
+      "phone_talking_insert_clips_enabled": false
     },
     "prompt_contains": [
       "CLIPS SHOWN FULL SCREEN OVER THE TALK",
       "voice is muted"
+    ],
+    "prompt_excludes": [
+      "A CLIP PLAYED IN THE MIDDLE OF THE TALK",
+      "insert_clips"
     ]
   }
 }
