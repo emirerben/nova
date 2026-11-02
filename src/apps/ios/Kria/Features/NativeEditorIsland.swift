@@ -14,6 +14,8 @@ enum NativeEditorIslandMetrics {
     static let islandHorizontalPadding: CGFloat = 8
     static let toolSpacing: CGFloat = 2
     static let toolWidth: CGFloat = 76
+    /// The narrowest a rail tool may get before the rail scrolls instead of squeezing it (DESIGN.md: 44pt targets).
+    static let minToolWidth: CGFloat = 64
     static let toolHeight: CGFloat = 54
     static let contextHeight: CGFloat = 52
     static let stackSpacing: CGFloat = 8
@@ -23,6 +25,31 @@ enum NativeEditorIslandMetrics {
     /// Extra breathing room above the island's own frame so the last lane of
     /// a scrolled timeline doesn't feel like it's touching the capsule.
     private static let breathingGap: CGFloat = 8
+
+    /// How the tool rail lays its tools out in a rail `railWidth` wide.
+    struct ToolRailLayout: Equatable {
+        let itemWidth: CGFloat
+        /// False when every tool fits at a comfortable width; true when the rail scrolls.
+        let scrolls: Bool
+        /// Tools that show whole at rest. When the rail scrolls the next one is cut in half.
+        let wholeItemsVisible: Int
+    }
+
+    /// Tools keep a comfortable width and the rail scrolls rather than squeezing them. When they cannot all fit,
+    /// the width is chosen so the viewport ends in the middle of a tool, the way iOS tab strips hint at more.
+    static func toolRailLayout(toolCount: Int, railWidth: CGFloat) -> ToolRailLayout {
+        guard toolCount > 0 else { return ToolRailLayout(itemWidth: toolWidth, scrolls: false, wholeItemsVisible: 0) }
+        let count = CGFloat(toolCount)
+        let fitWidth = (railWidth - 2 * islandHorizontalPadding - (count - 1) * toolSpacing) / count
+        if fitWidth >= minToolWidth {
+            return ToolRailLayout(itemWidth: min(toolWidth, fitWidth), scrolls: false, wholeItemsVisible: toolCount)
+        }
+        func peekWidth(whole: Int) -> CGFloat {
+            (railWidth - islandHorizontalPadding - CGFloat(whole) * toolSpacing) / (CGFloat(whole) + 0.5)
+        }
+        let whole = stride(from: toolCount - 1, through: 1, by: -1).first { peekWidth(whole: $0) >= minToolWidth } ?? 1
+        return ToolRailLayout(itemWidth: max(44, peekWidth(whole: whole)), scrolls: true, wholeItemsVisible: whole)
+    }
 
     /// How much bottom clearance the timeline's scrollable content needs so
     /// its last lane can always scroll clear of the floating island.
