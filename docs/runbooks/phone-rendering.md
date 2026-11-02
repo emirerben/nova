@@ -992,24 +992,40 @@ window with the speaker muted under it.
 plays while the take is PAUSED, then the take resumes at the second it stopped. Nothing he said
 is lost and the video grows by the clip's length.
 
-- **Strategy**: `insert_clips: [{media_id, at_phrase | at_s, keep_audio}]` (at most 3, exactly one
-  of the two positions, one of the item's OWN footage clips; a Visuals video is refused for now).
-  Model-hidden like `ending_clip`; the Main Creator prompt teaches it (v109) only where
-  `creator_capabilities.insert_clip_candidates(manifest)` is non-empty (rollout open, 2+ own
-  clips). The shared brief records the ask as a `style` requirement with `facts.insert_clip` (+
-  `insert_at_phrase` / `insert_at_s`, `keep_audio`; brief extractor v46). The server repair
-  (`repair_creator_insert_clips`) drops what the phone cannot play with a plain notice.
+- **Strategy**: `insert_clips: [{media_id, at_phrase | at_s, keep_audio}]` (at most 3 play; up to
+  8 rows parse so a 4th and beyond get the named notice "a talk can pause for at most three clips"
+  instead of vanishing; exactly one of the two positions; one of the item's OWN footage clips, a
+  Visuals video is refused for now). Model-hidden like `ending_clip`. **Prompt gating**: the
+  creator prompt's insert section AND the shared brief paragraph (brief extractor v46, creator v109)
+  are added only where `creator_capabilities.insert_clip_candidates(manifest)` is non-empty (rollout
+  open, 2+ own clips); the planner tells the brief extractor through
+  `BriefExtractionInput.insert_clips_open`. With the rollout closed both prompts are byte-identical
+  to before inserts existed (pinned by `PRE_CHANGE_PROMPT_SHA` and
+  `test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inserts`). **Ask
+  routing**: only an explicit pause / stop / in-the-middle-while-I-wait ask is an insert; "show it
+  when I mention X" (the talk keeps running), with or without "use their audio", is the existing
+  show-when-mentioned / cutaway-sound ask (`triggers`), never `insert_clip`. The brief records the
+  insert as a `style` requirement with `facts.insert_clip` (+ `insert_at_phrase` / `insert_at_s`,
+  `keep_audio`). The server repair (`repair_creator_insert_clips`) drops what the phone cannot play
+  with a plain notice.
 - **Data shape**: one number per insert, `PhoneInsert.at_take_s`, a position on the TAKE timeline
   (the first speaker's seconds with no insert counted). `compile_phone_subtitled_plan(inserts=)`
   splits the take there and emits a main-track clip `insert-<n>` (volume 1, or 0 for a silent
   ask, which declares `audioMix`). Everything the compiler is given stays on the FINAL timeline;
   `phone_talking_inserts.warp_for_inserts` moves captions, text rows, cards, effects and cutaways
   onto it first. A window that spans the point is split around it (a video card resumes where it
-  stopped), so nothing is drawn over the inserted clip. Recipe-only: the engine already plays a
+  stopped), so nothing is drawn over the inserted clip. A caption whose words are all on one side
+  of the point plays there once (never a copy on both sides); a text row split by the point keeps
+  only parts of at least 0.3 s (the longer side when both are short). Every speaker time in the
+  insert path sits on a microsecond grid, so a no-op Save recompiles the recipe bit for bit.
+  Recipe-only: the engine already plays a
   different clip between two clips of one source; no capability, no protocol, no app build.
 - **Placement** (`place_inserts`, in `_run_phone_subtitled_job` after the captions are final): a
-  phrase is found in his words (`ground_excerpt`, fuzzy for Whisper drift) and the insert waits for
-  the end of that caption or the next pause of 0.25 s within 2.5 s, never inside a word. Refused,
+  phrase is found in what he SAID (the spoken words on the take timeline, never the caption words:
+  translated captions and words left out of the captions do not hide a phrase or invent a pause)
+  (`ground_excerpt`, fuzzy for Whisper drift) and the insert waits for the end of that caption or the
+  next pause of 0.25 s within 2.5 s, never inside a word. A point within 0.1 s of a speech-cleanup
+  seam moves onto it (no sliver of speech beside the clip). Refused,
   with the clip left out of the video and said in the receipt: `phrase_not_found` (also a phrase
   inside a region speech cleanup cut out; no guess), `in_hook_window` (first 2.5 s),
   `in_tail_window` (last second), `too_close_to_previous` (< 2 s from another insert),
@@ -1018,15 +1034,37 @@ is lost and the video grows by the clip's length.
   `talking_multi_off` / `only_clip` (no other clip to play). The clip is taken out of the
   speakers and the footage cutaways before they are scheduled; cutaways keep clear of the point.
 - **Receipt**: `variants[i].phone_insert_clips = {placed: [{media_id, start_s, end_s, at_take_s,
-  keep_audio, basis: phrase|second, snap: cue_end|pause|word_end|exact}], dropped: [{media_id,
-  reason}]}` (only with the flag on and an ask). The brief check (`_check_insert_clip`) reads it:
-  met only when every asked clip plays, partial when some do, not possible with the reason.
+  duration_s, keep_audio, volume, basis: phrase|second, snap:
+  cue_end|pause|word_end|exact|seam}], dropped: [{media_id, reason}]}` (only with the flag on and an
+  ask). `start_s`/`end_s` are where the clip plays on the final video; `at_take_s` (6 decimals) is
+  where the take pauses on the TAKE timeline. The brief check (`_check_insert_clip`) reads it: met
+  only when every asked clip plays, partial when some do, not possible with the reason. **The iPhone
+  editor preview is rebuilt from this receipt**, not from the recipe: add fields here, never
+  rename, and old builds ignore what they do not read.
 - **Editor**: Save reads the insert back from the pinned recipe (`inserts_from_recipe`, ids
   `insert-<n>`) whatever the flag says now, and compiles the saved rows (already final-timeline
-  seconds) around it, so a caption or text edit neither drops nor shifts it. Range stays closed
-  (`talking_range_multi_clip`). Known gaps: the inserted clip's own speech is not captioned; the
-  editor's timeline strip does not draw the insert; clip delete / trim / silence-cut edits do not
-  know about it (they are closed on multi-clip Talking edits today).
+  seconds) around it, so a caption or text edit neither drops nor shifts it. The protected-text
+  receipt (KRI-827) is compared on the take without the insert splits, so a Save does not mark
+  "no text on the object" stale because of an insert. Range stays closed
+  (`talking_range_multi_clip`). **Preview (iPhone)**: `NativePhoneTalkingSource.inserts` reads
+  the receipt above and `hydrate(..., inserts:)` splits the take at `at_take_s` (a position on the
+  cut timeline: the kept segments after speech cleanup, in order), plays the inserted clip whole
+  (its own sound, or muted when `keep_audio` is false) and resumes the take; captions, text and
+  cutaway windows are already final-timeline seconds. No receipt (an old render, the flag off)
+  keeps the preview exactly as it was; a receipt the app cannot draw (clip not in the source pool,
+  a speaker, a malformed row) falls back to the finished MP4. Known gaps: the inserted clip's own
+  speech is not captioned; the editor's timeline STRIP does not draw the inserted clip as its own
+  segment (the preview does; the strip is closed on Talking edits); clip delete / trim /
+  silence-cut edits do not know about it (closed on multi-clip Talking edits today); text that
+  spans the point shows on both sides of it, so a whole-video corner text is two rows around the
+  clip and an opening title's entrance plays again after it.
+- **Known limits** (left as they are on purpose): the phrase match is Whisper-fuzzy and does not
+  treat a Turkish suffix after an apostrophe ("İstanbul'a") as the bare name; `at_s` is a second of
+  the TAKE (speech cleanup already applied), which a creator watching the uncut clip may not mean;
+  an extra speaker's words are not searched for the phrase (refused as `phrase_not_found`); the
+  planner may keep an insert the worker then drops when a speaker background is set
+  (`speaker_background` in the receipt); the text-style lookups run on the take timeline before the
+  warp, so none read a final-timeline second.
 - **Gate / apply**: `phone_rollout.phone_talking_insert_clips_supported()` = the flag +
   `TALKING_MULTI_CLIP_ENABLED` (with its verified features) + `audioMix` verified. Apply: `fly
   secrets set PHONE_TALKING_INSERT_CLIPS_ENABLED=true --app nova-video` + restart api + worker (Fly
