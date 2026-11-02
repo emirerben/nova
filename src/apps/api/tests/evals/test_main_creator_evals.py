@@ -11,6 +11,21 @@ AGENT_DIR = "main_creator"
 FIXTURE_PATHS = discover_fixtures(AGENT_DIR)
 
 
+def _apply_fixture_settings(monkeypatch, meta: dict) -> None:
+    """A fixture whose prompt depends on server settings (a lane taught only while its gates are
+    open) says which: ``meta.prod_profile`` starts from the production flag set, and
+    ``meta.settings`` overrides single flags on top. Without it the harness runs the defaults,
+    where those gates are closed and the rendered prompt silently lacks the section."""
+    from app.config import settings
+
+    if meta.get("prod_profile"):
+        from tests._prod_profile import apply_prod_profile
+
+        apply_prod_profile(monkeypatch)
+    for name, value in (meta.get("settings") or {}).items():
+        monkeypatch.setattr(settings, name, value)
+
+
 @pytest.mark.parametrize("fixture_path", FIXTURE_PATHS, ids=lambda path: path.stem)
 def test_main_creator_eval(
     fixture_path: Path,
@@ -20,8 +35,10 @@ def test_main_creator_eval(
     live_model_client,
     live_input_normalizer,
     shadow_prompts_dir,
+    monkeypatch,
 ) -> None:
     fixture = load_fixture(fixture_path)
+    _apply_fixture_settings(monkeypatch, fixture.meta)
     judge = judge_for(fixture.agent) if with_judge else None
     result = run_eval(
         fixture,
@@ -31,6 +48,30 @@ def test_main_creator_eval(
         live_input_normalizer=live_input_normalizer,
     )
     assert result.passed, f"{result.summary()}: {result.structural_failures}"
+
+    contains = fixture.meta.get("prompt_contains")
+    if contains:
+        # The cassette ignores the prompt, so the replay proves the fixture's settings really
+        # open the section the model is meant to answer from.
+        from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
+
+        prompt = MainCreatorAgent(None).render_prompt(
+            MainCreatorInput.model_validate(fixture.input)
+        )
+        flat = " ".join(prompt.split())
+        for needle in contains:
+            assert needle in flat, needle
+
+    if fixture.meta.get("forbids_ask_user") or fixture.meta.get("voice_muted_said"):
+        # KRI-1151 (thread 6fa36e51): the answer to the incident request proposes the edit, never
+        # an `ask_user` refusal, and tells the creator their voice is muted under a clip with sound.
+        assert result.output is not None
+        action = result.output["action"]
+        if fixture.meta.get("forbids_ask_user"):
+            assert action["kind"] != "ask_user"
+        if fixture.meta.get("voice_muted_said"):
+            assert action["kind"] == "propose_strategy"
+            assert "muted" in action["summary"] or "kapalı" in action["summary"]
 
     copy_meta = fixture.meta.get("creative_copy_decision")
     if copy_meta:
