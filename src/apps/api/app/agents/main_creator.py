@@ -192,7 +192,8 @@ log = structlog.get_logger()
 # taught only where `insert_clip_candidates(manifest)` is non-empty, and the shared brief records
 # it as an `insert_clip` fact (brief_extractor v46 shares the section). The cutaway section
 # says an insert exists only as `insert_clips` while that lane is open.
-# A clip shown while the talk keeps running is recorded as `display_mode` / `clip_sound`, never `triggers`.
+# A clip shown while the talk keeps running is recorded as `display_mode` / `clip_sound`, never
+# `triggers`.
 MAIN_CREATOR_PROMPT_VERSION = "2026-11-02-v110"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
