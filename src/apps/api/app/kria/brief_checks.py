@@ -6513,7 +6513,7 @@ def _talking_muted_cutaway_receipt(
     clip is what the edit already does. Everything else (clip sound on, the whole video, a
     clip that speaks, a position or a named line) returns None and keeps its plain decline.
     """
-    from app.pipeline.clip_sound_toggle import _media_match  # noqa: PLC0415
+    from app.pipeline.phone_talking_cutaway_sound import _media_match  # noqa: PLC0415
 
     target = ask.target
     if (
