@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.110.0] - 2026-11-02
+
+### Fixed
+- chore(media): log why an image generation was rejected (KRI-1142) (#2062) <!-- release-pr: 2062 -->
+
 ## [0.83.109.0] - 2026-11-02
 
 ### Changed
