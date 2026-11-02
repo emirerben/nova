@@ -72,11 +72,13 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # sha256 of what origin/main (d58637f63 + #2055/#2059, creator v109) renders for the same input
 # with the manifest line removed (its item id and capability order are random per run): the
 # closed-gate prompt of this branch must not drift from main's bytes.
+# Re-pinned for KRI-1162 (PR #2045): the brief section always teaches the `speaker_background`
+# requirement fact (KRI-1161 honesty); removing that one sentence reproduces the values above.
 MAIN_PROMPT_SHA = {
-    "neither": "3e4c34416da710a2ce0e21cc2ed1717685382236cf505f25ebe52eec677538c8",
-    (True, True): "2bcfab4ad250e8c5b53261ea3a2c7d1455e2c60a0ae7e68aad48603bce955fb5",
-    (True, False): "863f8d53707861feaf994843f1a2935bee37da0570be7cbf67991da84281f82b",
-    (False, True): "874e2e7538ab59d1b20296efa2a23e1b5edbe47f386bd6b2bb89396c0730115f",
+    "neither": "c2561f26717a07e4b78e04230b0f6f5b0379b50b2ed8ae8692cc43bb7c20f363",
+    (True, True): "db38b12111d8b1ca36b8892dda30dfbecfe067261dabd2708ffb809ca527827e",
+    (True, False): "ac163aeb2227e9064407773271b947205a6f972689fdbc24258e056f9b4e2c72",
+    (False, True): "91f530051d3a2889f5c57e182a616dee0b775953460703f513adbb2fff7ce4b8",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (

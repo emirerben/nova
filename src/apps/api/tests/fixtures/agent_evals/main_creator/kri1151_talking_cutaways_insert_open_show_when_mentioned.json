@@ -1,6 +1,6 @@
 {
   "agent": "nova.creator.main",
-  "prompt_version": "2026-11-02-v110",
+  "prompt_version": "2026-11-02-v111",
   "input": {
     "user_message": "Show the related parts of the talks when I talk about them. Place them in between my speech. Show the talks in full screen and use their audio. Place the stadium full screen when I talk but keep my audio",
     "creator_request": "Show the related parts of the talks when I talk about them. Place them in between my speech. Show the talks in full screen and use their audio. Place the stadium full screen when I talk but keep my audio",

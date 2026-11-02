@@ -245,7 +245,7 @@ def test_the_planner_is_taught_the_field_only_while_the_rollout_is_open(monkeypa
     from app.agents.main_creator import MAIN_CREATOR_PROMPT_VERSION, _insert_clip_section
 
     section = _insert_clip_section(cutaways_open=False)
-    assert MAIN_CREATOR_PROMPT_VERSION.endswith("-v110")
+    assert MAIN_CREATOR_PROMPT_VERSION.endswith("-v111")
     _open(monkeypatch, insert=True)
     manifest = _julio_manifest()
     open_prompt = _render_prompt(manifest)
@@ -405,7 +405,10 @@ def _extractor_prompt(**kw) -> str:
 
 
 # sha256 of the shared brief section at origin/main before the insert paragraph existed.
-_BRIEF_SECTION_BEFORE_INSERTS = "a3798035e169f3aeff144526a6d8f9bf3f044b0d0985267fb1547831f17a4386"
+# KRI-1162 (PR #2045) adds the `speaker_background` requirement fact to the brief
+# section (KRI-1161); without that sentence the digest is
+# a3798035e169f3aeff144526a6d8f9bf3f044b0d0985267fb1547831f17a4386.
+_BRIEF_SECTION_BEFORE_INSERTS = "90ef88660728fd8938da0de42c9874b73d52e25664c5633a6c8b2fd63066a718"
 
 
 def test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inserts():

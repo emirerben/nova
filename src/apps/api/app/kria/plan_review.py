@@ -108,6 +108,9 @@ SECTION_OPS: dict[str, frozenset[str]] = {
             "set_carousel_moment",
             "set_background",
             "remove_background",
+            "set_background_sequence",
+            "set_speaker_frame",
+            "clear_speaker_frame",
         }
     ),
 }
@@ -162,7 +165,18 @@ SECTION_FAMILIES: dict[str, frozenset[str]] = {
     "music": frozenset({"music"}),
     "sfx": frozenset({"sfx"}),
     "overlays": frozenset({"overlay", "visual_media", "text", "motion", "visual"}),
-    "look": frozenset({"style", "text", "effect", "clip", "caption", "carousel", "background"}),
+    "look": frozenset(
+        {
+            "style",
+            "text",
+            "effect",
+            "clip",
+            "caption",
+            "carousel",
+            "background",
+            "background_windows",
+        }
+    ),
 }
 
 # EditorCommitRequest fields -> owning section(s). `text_elements` and `caption_meta` are

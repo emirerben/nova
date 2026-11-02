@@ -273,6 +273,9 @@ MediaCapability = Literal[
     # Talk-to-camera green screen: `speaker_background` (V2 recipe), a photo or looping
     # video composited behind the speaker clip's Vision person mask on device.
     "speakerBackground",
+    # KRI-1162: the same lane with timed `windows` and/or a `speaker_frame` (the matted
+    # speaker scaled into a corner). Derived from the layer; gated by its own verified token.
+    "speakerBackgroundWindows",
     # A tilted clip (`transform.rotation_degrees != 0`) and/or a `backdrop` under a main-track
     # clip, drawn on device by `KriaMediaEngine`'s compositor (KRI-1134).
     "clipTilt",

@@ -280,6 +280,14 @@ _KNOWN_TR: dict[str, str] = {
     SPEAKER_BACKGROUND_NOTICES["kind_off"]: (
         "Bunu arka plan yapamadım: bu iPhone onu henüz arkanda çizemiyor."
     ),
+    SPEAKER_BACKGROUND_NOTICES["windows_unavailable"]: (
+        "Arka planları değiştirip seni köşede küçük gösteremedim: iPhone uygulaman henüz arka "
+        "plan değiştiremiyor. Bütün video boyunca arkanda tek bir arka plan duruyor."
+    ),
+    SPEAKER_BACKGROUND_NOTICES["sequence_not_found"]: (
+        "Değişen arka plan için söylediğin bazı fotoğraf ya da videoları bulamadım; onları "
+        "çıkardım."
+    ),
     SPEAKER_BACKGROUND_NOT_ALSO_A_POP_IN_NOTICE: (
         "Arkandaki fotoğraf ya da video sadece arka plan, söylediğin bir kelimede ayrıca çıkmıyor."
     ),
