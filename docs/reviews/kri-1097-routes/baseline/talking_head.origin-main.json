@@ -1,0 +1,1035 @@
+{
+  "fixture": "talking_head",
+  "route": "talking_head",
+  "mode": "offline",
+  "source": {
+    "kind": "recorded",
+    "what": "Prod Kria thread, approved draft and its render (origin/main ff5f2adbe).",
+    "captured": "2026-11-01 via read-only admin GETs (saved copies, no network now)",
+    "recorded": [
+      "creator messages up to the approved draft (thread events)",
+      "the planner's post-parse strategy and summary (turns plan intents[].arguments)",
+      "the Creative Brief bound to the job (assembly_plan.creator_brief_binding)",
+      "clip analyses, durations, audio (media_snapshot.clip_assignments)",
+      "the draft card prod showed and what the render did (prod_outcome)"
+    ],
+    "reconstructed": [
+      "the approval card is assembled offline from the real pure functions the draft turn calls (scripts/kria/score_route.py approval_card); the DB-bound turn body is not run",
+      "phone source bindings: synthetic proxy paths (score_route.media_rows)",
+      "capability manifest (score_route.manifest)",
+      "strategy.title_animation = \"pop\" and brief r6 (style, global, facts.animation = \"pop\", \"animate the big text in\") are NOT in the recording. They give the fixture an animation ask, the render target of the Talking lane (L2); the recorded request asked for a big \"1810\" without naming motion."
+    ],
+    "redacted": [
+      "user, thread, item, job, turn and draft ids",
+      "storage paths and signed URLs",
+      "library asset ids (now asset-synthetic-NN)",
+      "file names and content hashes",
+      "media ids (now analysis-proxy-talking_head-NN)"
+    ],
+    "see": "tests/fixtures/kria_replay/talking_head/README.md"
+  },
+  "network_attempts_blocked": 0,
+  "registry": false,
+  "pre_registry": true,
+  "passed": 0,
+  "failed": 11,
+  "all_green": false,
+  "by_kind": {
+    "route": {
+      "passed": 0,
+      "failed": 1
+    },
+    "disclosed_ok": {
+      "passed": 0,
+      "failed": 5
+    },
+    "honored": {
+      "passed": 0,
+      "failed": 2
+    },
+    "gate": {
+      "passed": 0,
+      "failed": 3
+    }
+  },
+  "inconclusive": [
+    "10.claims",
+    "10.lines",
+    "10.entry",
+    "10"
+  ],
+  "lane_targets": {
+    "4.title_animation": {
+      "lane": "L2",
+      "kind": "honored",
+      "why": "the planned title animation reaches the Talking title rows"
+    },
+    "5.r6": {
+      "lane": "L2",
+      "kind": "honored",
+      "why": "animate the big text in: the animation ask reaches the title rows"
+    }
+  },
+  "expected_red": [
+    "4.title_animation",
+    "5.r6"
+  ],
+  "unexpected_red": [
+    "1",
+    "2.direction",
+    "2.pacing",
+    "2.story_structure",
+    "2.title_animation",
+    "3.r6",
+    "10.claims",
+    "10.lines",
+    "10.entry"
+  ],
+  "unexpected_green": [],
+  "missing_targets": [],
+  "not_graded": {
+    "r1": "start/end at spoken lines: judged by the Talking writer's cut receipts at render (prod: end_cut not_found, the take ran to the end); not a strategy field the route table owns",
+    "r2": "keep every language as spoken: judged by the render's caption-language receipt (prod captioned the English in Turkish); outside the route registry",
+    "r3": "big 1810 text at the spoken word: a spoken-text cue the Talking writer places at render (prod placed it at 18.975 s)",
+    "r4": "Casa Rosada photo full screen at a spoken phrase: offline the reconstructed manifest has no reaction_beats capability or library photo, so the draft check declines it ('pop-ins aren't available'); prod showed Done and the render dropped it (never_heard). A replay artifact either way, and not a route-table field",
+    "r5": "vertical with his face in frame: judged by the render's speaker framing (prod letterboxed, no_face); outside the route registry",
+    "caption_style": "auto, the schema default: the planner chose no caption style",
+    "target_duration_s": "40 s is the planner's own target; the creator stated no length"
+  },
+  "exclusions": {
+    "count": 5,
+    "fields": [],
+    "asks": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5"
+    ],
+    "unexplained": []
+  },
+  "report_only": [
+    10
+  ],
+  "controls_ok": true,
+  "negative_controls": [
+    {
+      "name": "2 a card that names the pace without its registry line must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 the card's pacing registry line must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 a render recipe that meets the field must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 an undecided receipt must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a typed decline before approval must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a checked met receipt must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 a recipe value that is not the asked animation must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 a recipe value that is the asked animation must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 a boolean where a value belongs must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 a length 50% off the asked one must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 a length within 10% of the asked one must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 clip holds inside the asked pace's hold bounds must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 clip holds outside the asked pace's hold bounds must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "lane targets: a render target the fixture stopped grading must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: another field's card line does not disclose this one must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: the field's own card line must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a line on the English card the Turkish card lacks must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: an opposite-meaning free-text line naming the field must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a line with another code (not the route's table) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a line whose code is not the one the table gives the field must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 on_card: a recorded line the reply does not carry is not on the card must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: a length ask with only another field's line must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: a length ask with the length registry line must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: a length ask with an opposite-meaning free-text line must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 on_card: a line the compact card line names is on the card must PASS",
+      "expected_pass": true,
+      "got_pass": null,
+      "ok": null,
+      "detail": "pre-registry code: no compact line or registry declines"
+    },
+    {
+      "name": "2 decline controls",
+      "expected_pass": true,
+      "got_pass": null,
+      "ok": null,
+      "detail": "pre-registry code: no compact line or registry declines"
+    },
+    {
+      "name": "10 an assembly step's target_duration_s is not a strategy read must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "def other_objects(step, view, row):",
+        "    if step.in_s is None or step.target_duration_s is None:",
+        "        return None",
+        "    plan = {\"target_duration_s\": 3}",
+        "    seconds = row[\"target_duration_s\"]",
+        "    target = view.target_duration_s",
+        "    return plan, seconds, target"
+      ]
+    },
+    {
+      "name": "10 strategy.get('target_duration_s') is a strategy read must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a carrier that is free text is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a carrier in a file that does not exist must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a function that only names the field is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a class that names the field is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a function in the route's own files that reads the field must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read through a converted strategy (typed = _strategy(s)) must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read through a helper that returns the key it is given must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read that decides a refusal must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read of a similarly named field is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read off a local dict named like a strategy (not the parameter) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read that is only logged must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a helper that removes the field is not a read must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 deleting the field is not a read must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 the schema class CreativeStrategy is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "pre-registry code: no table to gate"
+    },
+    {
+      "name": "10 a function in another route's file is not this route's carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "pre-registry code: no table to gate"
+    },
+    {
+      "name": "10 a route that lists another route's reader file must be flagged",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "pre-registry code: no table to gate"
+    },
+    {
+      "name": "10 a new unconsumed field must be flagged",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "pre-registry code: no table to gate"
+    },
+    {
+      "name": "10 an Applied claim with no reader must be flagged",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "pre-registry code: no table to gate"
+    },
+    {
+      "name": "10 an Applied claim read only as step.<field> must be flagged",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "pre-registry code: no table to gate"
+    },
+    {
+      "name": "10 an Applied claim with a free-text carrier must be flagged",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "pre-registry code: no table to gate"
+    },
+    {
+      "name": "10.lines a line reworded to say it is applied must be flagged",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "pre-registry code: no table to gate"
+    },
+    {
+      "name": "replay contract: an honest module over an honest entry must PASS",
+      "expected_pass": true,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a constant recipe that never calls the entry must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a route helper that reads the plan (not the render entry) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: an entry fed a plan the module wrote, not the fixture's, must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that reads the plan itself (.get) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that copies the plan (dict()) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that compares the plan (==) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that iterates the asks must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that probes an attribute of the plan (.value) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that feeds a route helper's reading of the plan into the entry must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that hands the route a function of its own must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that hashes the plan (static rules off) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that deep-copies the plan (static rules off) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that calls the entry twice must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that reads the lane switch (static rules off) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that hands the switch to a route helper (static rules off) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: a module that counts its runs must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: an entry that ignores the lane switch must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: an entry that follows only two of the animations must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: an entry that reads only the plan field (ignores the typed ask) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: an entry that reads only the typed ask (ignores the plan field) must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: an entry whose pace follows only when an animation is asked must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay contract: an entry whose helper follows the ask but whose recipe hard-codes the entrance must FAIL",
+      "expected_pass": false,
+      "got_pass": null,
+      "ok": null,
+      "detail": "no lane switch on this code"
+    },
+    {
+      "name": "replay: no route replay, so no render claim to control",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "replay": {
+    "source": null,
+    "honored": {},
+    "controls": [],
+    "valid": true,
+    "recipe": null
+  },
+  "card": {
+    "en": {
+      "route": null,
+      "lines_shown": false,
+      "reply": "- Partly: Start and end at specific spoken lines (I'll keep your take from “Okay, I'll translate it to Turkish” to right after “the government of the whole country”, if I find those lines)\n- Partly: Big text on screen for a moment when he first says 1810 (\"1810\") (I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear)\n- Couldn't: Show the Casa Rosada photo full screen for about two seconds when he mentions the other side of the square (Photo and sound pop-ins timed to your words aren't available for this edit yet)\nHave a look at these in the video:\n- Keep every language as it was spoken with no translation\n- Make the horizontal video vertical and keep his face in frame (I'll check the framing on the finished video)\n- animate the big text in",
+      "changes": [
+        "Balanced pacing",
+        "Subtitled format"
+      ],
+      "receipts": [
+        {
+          "requirement_id": "r1",
+          "brief_version": null,
+          "generation_id": null,
+          "status": "partial",
+          "verification": "checked",
+          "stage": "checked",
+          "target_media_ids": [],
+          "reason": "I'll keep your take from “Okay, I'll translate it to Turkish” to right after “the government of the whole country”, if I find those lines",
+          "inferred": [],
+          "inferred_labels": []
+        },
+        {
+          "requirement_id": "r2",
+          "brief_version": null,
+          "generation_id": null,
+          "status": "partial",
+          "verification": "unchecked",
+          "stage": "understood",
+          "target_media_ids": [],
+          "reason": "I can't check the captions on this draft yet.",
+          "inferred": [],
+          "inferred_labels": []
+        },
+        {
+          "requirement_id": "r3",
+          "brief_version": null,
+          "generation_id": null,
+          "status": "partial",
+          "verification": "checked",
+          "stage": "checked",
+          "target_media_ids": [],
+          "reason": "I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear",
+          "inferred": [],
+          "inferred_labels": []
+        },
+        {
+          "requirement_id": "r4",
+          "brief_version": null,
+          "generation_id": null,
+          "status": "not_possible",
+          "verification": "checked",
+          "stage": "checked",
+          "target_media_ids": [],
+          "reason": "Photo and sound pop-ins timed to your words aren't available for this edit yet.",
+          "inferred": [],
+          "inferred_labels": []
+        },
+        {
+          "requirement_id": "r5",
+          "brief_version": null,
+          "generation_id": null,
+          "status": "partial",
+          "verification": "unchecked",
+          "stage": "understood",
+          "target_media_ids": [],
+          "reason": "I'll check the framing on the finished video.",
+          "inferred": [],
+          "inferred_labels": []
+        },
+        {
+          "requirement_id": "r6",
+          "brief_version": null,
+          "generation_id": null,
+          "status": "partial",
+          "verification": "unchecked",
+          "stage": "understood",
+          "target_media_ids": [],
+          "reason": "I can't verify this one automatically yet.",
+          "inferred": [],
+          "inferred_labels": []
+        }
+      ],
+      "not_applied": [],
+      "declines": []
+    },
+    "tr": {
+      "route": null,
+      "lines_shown": false,
+      "reply": "- Kısmen: Start and end at specific spoken lines (Çekiminin “Okay, I'll translate it to Turkish” cümlesinden “the government of the whole country” cümlesinin hemen sonrasına kadar olan kısmını korurum, bu cümleleri bulursam)\n- Kısmen: Big text on screen for a moment when he first says 1810 (\"1810\") (Çekiminde o kelimeyi söylediğin anda yazıyı gösteririm; kelimeyi duymazsam yazı çıkmaz)\n- Yapamadım: Show the Casa Rosada photo full screen for about two seconds when he mentions the other side of the square (Sözlerine göre çıkan fotoğraf ve ses efektleri bu düzenleme için henüz yok)\nBunlara videoda bir göz at:\n- Keep every language as it was spoken with no translation\n- Make the horizontal video vertical and keep his face in frame (Kadrajı video hazır olunca kontrol edeceğim)\n- animate the big text in",
+      "changes": [
+        "Tempo: Dengeli",
+        "Format: Altyazılı"
+      ],
+      "receipts": [
+        {
+          "requirement_id": "r1",
+          "brief_version": null,
+          "generation_id": null,
+          "status": "partial",
+          "verification": "checked",
+          "stage": "checked",
+          "target_media_ids": [],
+          "reason": "Çekiminin “Okay, I'll translate it to Turkish” cümlesinden “the government of the whole country” cümlesinin hemen sonrasına kadar olan kısmını korurum, bu cümleleri bulursam",
+          "inferred": [],
+          "inferred_labels": []
+        },
+        {
+          "requirement_id": "r2",
+          "brief_version": null,
+          "generation_id": null,
+          "status": "partial",
+          "verification": "unchecked",
+          "stage": "understood",
+          "target_media_ids": [],
+          "reason": "Bu taslaktaki altyazıları henüz kontrol edemiyorum.",
+          "inferred": [],
+          "inferred_labels": []
+        },
+        {
+          "requirement_id": "r3",
+          "brief_version": null,
+          "generation_id": null,
+          "status": "partial",
+          "verification": "checked",
+          "stage": "checked",
+          "target_media_ids": [],
+          "reason": "Çekiminde o kelimeyi söylediğin anda yazıyı gösteririm; kelimeyi duymazsam yazı çıkmaz",
+          "inferred": [],
+          "inferred_labels": []
+        },
+        {
+          "requirement_id": "r4",
+          "brief_version": null,
+          "generation_id": null,
+          "status": "not_possible",
+          "verification": "checked",
+          "stage": "checked",
+          "target_media_ids": [],
+          "reason": "Sözlerine göre çıkan fotoğraf ve ses efektleri bu düzenleme için henüz yok.",
+          "inferred": [],
+          "inferred_labels": []
+        },
+        {
+          "requirement_id": "r5",
+          "brief_version": null,
+          "generation_id": null,
+          "status": "partial",
+          "verification": "unchecked",
+          "stage": "understood",
+          "target_media_ids": [],
+          "reason": "Kadrajı video hazır olunca kontrol edeceğim.",
+          "inferred": [],
+          "inferred_labels": []
+        },
+        {
+          "requirement_id": "r6",
+          "brief_version": null,
+          "generation_id": null,
+          "status": "partial",
+          "verification": "unchecked",
+          "stage": "understood",
+          "target_media_ids": [],
+          "reason": "Bunu henüz otomatik olarak doğrulayamıyorum.",
+          "inferred": [],
+          "inferred_labels": []
+        }
+      ],
+      "not_applied": [],
+      "declines": []
+    }
+  },
+  "checks": [
+    {
+      "id": 1,
+      "name": "route: the draft resolves to the route that renders it",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the draft card reads the None table, but 'talking_head' renders it"
+      ],
+      "evidence": {
+        "fixture_route": "talking_head",
+        "card_route": null,
+        "lines_shown": false
+      },
+      "kind": "route"
+    },
+    {
+      "id": "2.direction",
+      "name": "direction: honored in the render or disclosed before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose direction='native'; no render recipe applies it and the card carries no registry line or route decline for it in ['en', 'tr']"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied": false,
+        "disclosed_on_card": false,
+        "disclosed_by_language": {
+          "en": false,
+          "tr": false
+        },
+        "value": "native",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.pacing",
+      "name": "pacing: honored in the render or disclosed before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose pacing='balanced'; no render recipe applies it and the card carries no registry line or route decline for it in ['en', 'tr']"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied": false,
+        "disclosed_on_card": false,
+        "disclosed_by_language": {
+          "en": false,
+          "tr": false
+        },
+        "value": "balanced",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.story_structure",
+      "name": "story_structure: honored in the render or disclosed before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose story_structure=['Start on the requested spoken line', \"Show '1810' text when spoken\", 'Pop the Casa Rosada photo full-screen when triggered', 'End after the requested final line']; no render recipe applies it and the card carries no registry line or route decline for it in ['en', 'tr']"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied": false,
+        "disclosed_on_card": false,
+        "disclosed_by_language": {
+          "en": false,
+          "tr": false
+        },
+        "value": [
+          "Start on the requested spoken line",
+          "Show '1810' text when spoken",
+          "Pop the Casa Rosada photo full-screen when triggered",
+          "End after the requested final line"
+        ],
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.title_animation",
+      "name": "title_animation: honored in the render or disclosed before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose title_animation='pop'; no render recipe applies it and the card carries no registry line or route decline for it in ['en', 'tr']"
+      ],
+      "evidence": {
+        "pass": false,
+        "applied": false,
+        "disclosed_on_card": false,
+        "disclosed_by_language": {
+          "en": false,
+          "tr": false
+        },
+        "value": "pop",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "3.r6",
+      "name": "r6: the ask is honored or declined before approval",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "'animate the big text in' has receipt {'status': 'partial', 'verification': 'unchecked', 'reason': \"I can't verify this one automatically yet.\"}: neither met nor a typed decline in ['en', 'tr']"
+      ],
+      "evidence": {
+        "pass": false,
+        "met": false,
+        "declined_before_approval": false,
+        "disclosed_on_card": false,
+        "card_line": null,
+        "honored_at_render": false,
+        "receipt": {
+          "status": "partial",
+          "verification": "unchecked",
+          "reason": "I can't verify this one automatically yet."
+        },
+        "by_language": {
+          "en": false,
+          "tr": false
+        },
+        "requirement": {
+          "id": "r6",
+          "kind": "style",
+          "scope": "global",
+          "literal": null,
+          "description": "animate the big text in",
+          "facts": {
+            "animation": "pop"
+          },
+          "source_turn_id": "synthetic-turn",
+          "status": "open"
+        }
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "4.title_animation",
+      "name": "title_animation: applied in the render (lane target)",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the plan chose title_animation='pop'; no render replay for this route (scripts/kria/route_replays/talking_head.py): only the render's recipe can show it applied"
+      ],
+      "evidence": {
+        "recipe_key": "title_animation",
+        "applied_at_render": false,
+        "render_evidence": null
+      },
+      "kind": "honored"
+    },
+    {
+      "id": "5.r6",
+      "name": "r6: honored in the render (lane target)",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "'animate the big text in'; no render replay for this route (scripts/kria/route_replays/talking_head.py): only the render's recipe can show it applied"
+      ],
+      "evidence": {
+        "recipe_key": "title_animation",
+        "applied_at_render": false,
+        "render_evidence": null
+      },
+      "kind": "honored"
+    },
+    {
+      "id": "10.claims",
+      "name": "registry claims: every field the table marks applied is read by the route's code",
+      "pass": false,
+      "verdict": "INCONCLUSIVE",
+      "why_it_fails": [
+        "no route registry on this code: the gate reads the route's table"
+      ],
+      "evidence": {},
+      "kind": "gate"
+    },
+    {
+      "id": "10.lines",
+      "name": "card lines: the route's lines and their typed codes equal the recorded golden",
+      "pass": false,
+      "verdict": "INCONCLUSIVE",
+      "why_it_fails": [
+        "no route registry on this code: the gate reads the route's table"
+      ],
+      "evidence": {},
+      "kind": "gate"
+    },
+    {
+      "id": "10.entry",
+      "name": "render entry: the table names the function the route's job runner renders from",
+      "pass": false,
+      "verdict": "INCONCLUSIVE",
+      "why_it_fails": [
+        "no route registry on this code: the gate reads the route's table"
+      ],
+      "evidence": {},
+      "kind": "gate"
+    },
+    {
+      "id": 10,
+      "name": "consumer gate (REPORT ONLY): fields the route ignores and the card does not disclose",
+      "pass": false,
+      "verdict": "INCONCLUSIVE",
+      "why_it_fails": [
+        "no route registry on this code: the gate reads the route's table"
+      ],
+      "evidence": {},
+      "report_only": true,
+      "kind": "report"
+    }
+  ]
+}

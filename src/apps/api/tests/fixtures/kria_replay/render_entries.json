@@ -1,0 +1,176 @@
+{
+  "about": "KRI-1097 wave 2: the render entry each route table names (RENDER_ENTRY), its parameters and its recipe paths, pinned beside the production job runner that renders from it. Grader-owned: scripts/kria/score_route.py (gate 10.pin) and tests/kria/test_render_entry_pins.py fail unless the table's entry and recipe equal the pin, the entry's parameters are the pinned ones (a lane may add only strategy, requirements or brief, to pass the plan in), the runner imports the entry from its module (or defines it in its own file), calls it with the job's own plan in each of those plan parameters and uses what it returns, and the worker module (tasks/generative_build.py) calls the runner. A lane that moves its entry, a recipe path or any other parameter edits this file in the same commit, by hand: the diff is what review reads.",
+  "routes": {
+    "unified_montage": {
+      "runner": "tasks/generative_build.py:_plan_phone_unified_montage",
+      "entry": "pipeline/unified_montage.py:plan_unified_montage",
+      "params": [
+        "clips",
+        "view",
+        "*",
+        "strategy",
+        "clip_intents_enabled",
+        "font_covers",
+        "creator_order",
+        "visuals",
+        "song_beats",
+        "song_lines",
+        "song_duration_s",
+        "song_plan_item_id",
+        "song_generation",
+        "output_orientation",
+        "output_orientation_reason",
+        "creator_duration_proven",
+        "approved_length_plan",
+        "speech_order",
+        "freeze_frames",
+        "clip_speed",
+        "text_bend",
+        "clip_numbers"
+      ],
+      "recipe": {
+        "title_animation": "snapshot.title_animation",
+        "pace": "snapshot.pace",
+        "length_s": "duration_s"
+      }
+    },
+    "voiceover_montage": {
+      "runner": "tasks/generative_build.py:_run_phone_voiceover_montage_job",
+      "entry": "pipeline/phone_voiceover_montage_plan.py:compile_phone_voiceover_montage_plan",
+      "params": [
+        "decision",
+        "bindings",
+        "*",
+        "music",
+        "narration",
+        "target_lufs",
+        "resolved_text_elements",
+        "source_audio_media_ids",
+        "visuals",
+        "timed_cards",
+        "clip_tilts"
+      ],
+      "recipe": {
+        "title_animation": "text_layers[id^=intro-].animation_phases.entrance",
+        "pace": "tracks[kind=video].clips[].source_duration",
+        "length_s": "duration"
+      }
+    },
+    "talking_head": {
+      "runner": "tasks/generative_build.py:_run_phone_subtitled_job",
+      "entry": "pipeline/phone_subtitled_plan.py:compile_phone_subtitled_plan",
+      "params": [
+        "bindings",
+        "*",
+        "caption_cues",
+        "caption_style",
+        "visuals",
+        "lanes",
+        "duck_sfx_under_speech",
+        "cut_plan",
+        "keep_segments",
+        "caption_look",
+        "cutaways",
+        "landscape_fit",
+        "text_elements",
+        "text_elements_user_edited",
+        "speaker_position_x",
+        "additional_speakers",
+        "output_orientation",
+        "clip_tilts"
+      ],
+      "recipe": {
+        "title_animation": "text_layers[id^=text-].animation_phases.entrance",
+        "length_s": "duration"
+      }
+    },
+    "narrated": {
+      "runner": "tasks/generative_build.py:_run_phone_narrated_job",
+      "entry": "pipeline/phone_narrated_plan.py:compile_phone_narrated_plan",
+      "params": [
+        "steps",
+        "bindings",
+        "narration",
+        "*",
+        "voiceover_duration_s",
+        "mix",
+        "caption_cues",
+        "caption_style",
+        "orientation",
+        "target_lufs",
+        "duck_footage_bed",
+        "caption_look",
+        "lanes",
+        "visuals",
+        "opening_title",
+        "opening_title_end_s",
+        "source_audio_media_ids",
+        "resolved_text_elements",
+        "under_voice_media_ids",
+        "voice_tail"
+      ],
+      "recipe": {
+        "title_animation": "text_layers[id^=title-].animation_phases.entrance",
+        "length_s": "duration"
+      }
+    },
+    "lipsync_song": {
+      "runner": "tasks/generative_build.py:_plan_phone_user_song_core",
+      "entry": "pipeline/lipsync_montage.py:plan_lipsync_montage",
+      "params": [
+        "clips",
+        "alignment",
+        "song_analysis",
+        "view",
+        "strategy",
+        "confirmed_order",
+        "*",
+        "plan_item_id",
+        "font_covers",
+        "output_orientation",
+        "output_orientation_reason",
+        "creator_choices",
+        "freeze_frames"
+      ],
+      "recipe": {
+        "title_animation": "snapshot.title_animation",
+        "pace": "snapshot.pace",
+        "length_s": "duration_s"
+      }
+    },
+    "speech_excerpt": {
+      "runner": "services/phone_speech_montage_job.py:run_phone_speech_montage_job",
+      "entry": "pipeline/phone_speech_montage_plan.py:compile_phone_speech_montage_plan",
+      "params": [
+        "sections",
+        "broll",
+        "*",
+        "music",
+        "target_lufs",
+        "opening_title",
+        "opening_title_hold_s",
+        "clip_labels",
+        "pinned_texts",
+        "pinned_font_family"
+      ],
+      "recipe": {
+        "length_s": "0.duration"
+      }
+    },
+    "slide_post": {
+      "runner": "tasks/generative_build.py:_run_slide_post_job",
+      "entry": "tasks/generative_build.py:_build_slide_post_result",
+      "params": [
+        "job_id",
+        "*",
+        "ordered_assets",
+        "platform_profile",
+        "cover_index",
+        "caption",
+        "render_trace_id",
+        "aspect"
+      ],
+      "recipe": {}
+    }
+  }
+}

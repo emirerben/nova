@@ -99,9 +99,14 @@ from app.kria.reply_language import (
 )
 from app.kria.route_disclosure import (
     UNIFIED_MONTAGE,
+    Disclosure,
     card_disclosures,
     card_text,
+    card_text_within,
+    decoupled_from_readiness,
+    draft_route,
     planned_card_length,
+    requirements_with_route_declines,
     with_route_declines,
 )
 from app.kria.select_asks import exclusion_facts, only_video_ask
@@ -1088,11 +1093,22 @@ def _simpler_version_offer(
     return sentence, question
 
 
-def _fit_reply(body: str, tail: str) -> str:
+def _fit_reply(
+    body: str,
+    tail: str,
+    *,
+    notice: str | None = None,
+    disclosures: Sequence[Disclosure] = (),
+) -> str:
     """``body``, then ``tail`` on its own line, within the turn plan's response limit. The
     tail (what is held back, what the simpler version leaves out, the question) stays whole;
-    the receipt lines above it are shortened first."""
+    the receipt lines above it are shortened first. The route heads-up (``notice``, the end of
+    ``body``) keeps whole sentences and names the ones that do not fit on its compact line."""
     room = _MAX_TURN_RESPONSE_CHARS - len(tail) - 1
+    if notice and len(body) > room and body.endswith(notice):
+        head = body[: -len(notice)].rstrip("\n")
+        fitted = card_text_within(disclosures, room - len(head) - 1)
+        body = f"{head}\n{fitted}" if head else fitted
     if len(body) > room:
         body = body[: max(0, room - 1)].rstrip() + "…"
     return f"{body}\n{tail}"
@@ -2002,14 +2018,14 @@ def _complete_draft_turn(
                             creator_id=thread.creator_id,
                         ),
                     )
+                    # The pinned length plan the card reads (its length, a story's holds).
+                    _card_media = (
+                        planned.media_snapshot
+                        if planned.media_snapshot is not None
+                        else _draft_media(item)
+                    )
                     if facts.phone_montage and settings.kria_route_disclosure_enabled:
-                        route_name = UNIFIED_MONTAGE
                         # The length on the draft is the length the plan renders.
-                        _card_media = (
-                            planned.media_snapshot
-                            if planned.media_snapshot is not None
-                            else _draft_media(item)
-                        )
                         # Research prepared for the planner's strategy is pinned to its digest
                         # (`research_preview.basis_digest`), so that strategy stays as planned.
                         # A length the creator stated (message, brief, answer) is theirs.
@@ -2024,7 +2040,7 @@ def _complete_draft_turn(
                             None
                             if planned.prepared_research is not None or _stated is not None
                             else planned_card_length(
-                                document.strategy or {}, _card_media, route=route_name
+                                document.strategy or {}, _card_media, route=UNIFIED_MONTAGE
                             )
                         )
                         if _card_length is not None:
@@ -2037,6 +2053,16 @@ def _complete_draft_turn(
                                 }
                             )
                             snapshot, snapshot_hash = canonical_snapshot(document)
+                    # The route this draft renders through, so the card reads that route's
+                    # table (`route_capabilities`); registry off: the unified montage only.
+                    route_name = draft_route(
+                        creator_id=thread.creator_id,
+                        edit_format=(document.strategy or {}).get("edit_format")
+                        or item.edit_format,
+                        strategy=document.strategy,
+                        clip_paths=item.clip_gcs_paths or (),
+                        phone_montage=facts.phone_montage,
+                    )
                     checked = brief.live()
                     # KRI-190: the unified montage planner writes the per-clip text,
                     # order and title at render time and reports on them then. Judging
@@ -2137,15 +2163,28 @@ def _complete_draft_turn(
                     facts = replace(facts, anaphora_rows=compiled.diff.changed_text_ids())
                     checked = [req for req in brief.live() if req.source_turn_id == str(turn.id)]
                 editor_turn = apply_intent.tool_name == "draft.apply_editor_ops"
-                if checked:
+                # An ask the route cannot do is declined on this card even where the draft
+                # check leaves it to the render (registry on: every account).
+                answered = (
+                    requirements_with_route_declines(
+                        checked, brief.live(), document.strategy, route=route_name
+                    )
+                    if route_name is not None and not readiness_required and not editor_turn
+                    else checked
+                )
+                if answered:
                     bound_writer = settings.brief_binding_for(thread.creator_id)
-                    receipts = build_receipts(
-                        checked,
-                        facts,
-                        include_unchecked=editor_turn or bound_writer or facts.phone_talking,
-                        # Listing unchecked asks must not switch on the strict order verdicts
-                        # of a creator whose writer is not brief-bound.
-                        strict_order=bound_writer,
+                    receipts = (
+                        build_receipts(
+                            checked,
+                            facts,
+                            include_unchecked=editor_turn or bound_writer or facts.phone_talking,
+                            # Listing unchecked asks must not switch on the strict order
+                            # verdicts of a creator whose writer is not brief-bound.
+                            strict_order=bound_writer,
+                        )
+                        if checked
+                        else []
                     )
                     if phone_blockers:
                         from app.services.phone_montage_preflight import (  # noqa: PLC0415
@@ -2163,10 +2202,14 @@ def _complete_draft_turn(
                         else receipt
                         for receipt in receipts
                     ]
-                    if route_name is not None and readiness_required and not editor_turn:
+                    if (
+                        route_name is not None
+                        and (readiness_required or decoupled_from_readiness())
+                        and not editor_turn
+                    ):
                         # An ask the render route does not read is answered plainly now.
                         receipts = with_route_declines(
-                            receipts, checked, document.strategy, route=route_name
+                            receipts, answered, document.strategy, route=route_name
                         )
                     bound = False
                     if editor_turn and not compiled.diff.unavailable:
@@ -2206,10 +2249,16 @@ def _complete_draft_turn(
                         if not editor_turn and not readiness_required and not facts.phone_talking:
                             receipts = [r for r in receipts if r.verification != "unchecked"]
                         reply_text = reply_from_receipts(
-                            CreativeBrief(version=brief.version, requirements=checked),
+                            CreativeBrief(version=brief.version, requirements=answered),
                             receipts,
                             summary=arguments.summary,
                             notices=planned.policy_notices,
+                            # Outside readiness a route decline follows the planner's
+                            # summary instead of replacing it (registry on).
+                            declines_after_summary=route_name is not None
+                            and not readiness_required
+                            and not editor_turn
+                            and decoupled_from_readiness(),
                         )
                     requirement_receipts = [r.model_dump(mode="json") for r in receipts]
                 elif editor_turn:
@@ -2226,7 +2275,11 @@ def _complete_draft_turn(
             from app.kria import research_preview  # noqa: PLC0415
 
             reply_text = f"{reply_text}\n{research_preview.preview_lines(draft_research.prepared)}"
-        if route_name is not None and brief is not None and readiness_required:
+        if (
+            route_name is not None
+            and brief is not None
+            and (readiness_required or decoupled_from_readiness())
+        ):
             route_disclosures = card_disclosures(
                 brief.live(),
                 document.strategy,
@@ -2697,7 +2750,10 @@ def _complete_draft_turn(
                 turn_value="question",
                 choice_question=simpler_question,
                 response=_fit_reply(
-                    reply_text, " ".join(part for part in (draft_state, leaves_out, ask) if part)
+                    reply_text,
+                    " ".join(part for part in (draft_state, leaves_out, ask) if part),
+                    notice=route_notice,
+                    disclosures=route_disclosures,
                 ),
             )
             completed = _complete_response_turn(
