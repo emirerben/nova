@@ -2556,8 +2556,8 @@ def _analyze_clips_with_cache(
     )
 
     # Re-align analyzed metas back to their original indices.
-    # _analyze_clips_parallel returns metas in completion order with clip_path
-    # set, so we use the path → original-index map to slot them back.
+    # _analyze_clips_parallel returns only the misses, with clip_path set, so
+    # we use the path → original-index map to slot them back among the hits.
     path_to_orig_idx = {miss_paths[k]: orig_i for k, orig_i in enumerate(miss_indices)}
     path_to_hash = {miss_paths[k]: hashes[orig_i] for k, orig_i in enumerate(miss_indices)}
     for meta in miss_metas:
@@ -2592,10 +2592,13 @@ def _analyze_clips_parallel_indexed(
 ) -> tuple[list[tuple[int, ClipMeta]], list[int]]:
     """Analyze clips in parallel while retaining their authoritative input slots.
 
-    Returns ``(successful_records, failed_slots)``. Successful records retain
-    completion order for byte-compatible downstream behavior, but each carries
-    the original input index so identity-aware callers never infer ownership
-    from completion order, a path basename, or a Gemini matcher id.
+    Returns ``(successful_records, failed_slots)``. Successful records are
+    sorted by input slot, never by completion order: Gemini calls finish in a
+    racy order, and callers that read clips by position (the Talking spine,
+    the music matcher's greedy assignment) must see the order the creator
+    uploaded them in. Each record also carries its input index so
+    identity-aware callers never infer ownership from a path basename or a
+    Gemini matcher id.
     Per-clip failures are logged but don't raise — caller applies threshold.
     probe_map is used in the Whisper fallback path to get clip duration without
     a second FFprobe call.
@@ -2776,6 +2779,8 @@ def _analyze_clips_parallel_indexed(
             else:
                 failed_slots.append(source_slot)
 
+    clip_metas.sort(key=lambda record: record[0])
+    failed_slots.sort()
     return clip_metas, failed_slots
 
 
@@ -2789,7 +2794,7 @@ def _analyze_clips_parallel(
     creator_id: str | None = None,
     record_sub_phases: bool = False,
 ) -> tuple[list[ClipMeta], int]:
-    """Compatibility wrapper returning completion-ordered metadata + count."""
+    """Compatibility wrapper returning input-ordered metadata + count."""
 
     indexed, failed_slots = _analyze_clips_parallel_indexed(
         file_refs,
