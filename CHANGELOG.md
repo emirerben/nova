@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.117.0] - 2026-11-02
+
+### Fixed
+- fix(media): a logo keeps its own lettering (KRI-1142) (#2069) <!-- release-pr: 2069 -->
+
 ## [0.83.116.0] - 2026-11-02
 
 ### Changed
