@@ -33,7 +33,7 @@ from app.services.apns import (
 
 @dataclass(frozen=True)
 class _ProviderInput:
-    allowed_owner_ids: frozenset[UUID]
+    allowed_owner_ids: frozenset[UUID] | None
     environment: str
     topic: str | None
     team_id: str | None
@@ -43,7 +43,8 @@ class _ProviderInput:
 
 @dataclass(frozen=True)
 class APNsProviderConfiguration:
-    allowed_owner_ids: frozenset[UUID]
+    # None = every account (an empty NATIVE_NOTIFICATIONS_ALLOWED_OWNER_IDS).
+    allowed_owner_ids: frozenset[UUID] | None
     environment: Environment
     topic: str
     team_id: str
@@ -54,8 +55,7 @@ class APNsProviderConfiguration:
 @lru_cache(maxsize=1)
 def _parse_configuration(raw: _ProviderInput) -> APNsProviderConfiguration:
     if (
-        not raw.allowed_owner_ids
-        or raw.environment not in {"sandbox", "production"}
+        raw.environment not in {"sandbox", "production"}
         or not raw.topic
         or len(raw.topic) > 255
         or not re.fullmatch(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+", raw.topic)
@@ -83,7 +83,7 @@ def notification_configuration() -> APNsProviderConfiguration | None:
         Fernet(settings.token_encryption_key.encode())
         return _parse_configuration(
             _ProviderInput(
-                frozenset(settings.native_notifications_allowed_owner_ids),
+                frozenset(settings.native_notifications_allowed_owner_ids) or None,
                 settings.native_notifications_apns_environment,
                 settings.native_notifications_apns_topic,
                 settings.native_notifications_apns_team_id,
