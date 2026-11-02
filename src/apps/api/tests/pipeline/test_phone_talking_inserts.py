@@ -680,3 +680,30 @@ def test_a_save_round_trip_of_awkward_numbers_is_byte_identical():
         )
         differing += again.model_dump_json() != first.model_dump_json()
     assert differing == 0
+
+
+# --- text rows split around an insert keep a minimum part (review of #2058, minor f) --------
+
+
+def _rows_around(row, at=10.0, dur=6.0):
+    return warp_for_inserts((_insert(at=at, dur=dur),), cues=[], text_rows=[row]).text_rows
+
+
+def test_a_text_row_that_barely_reaches_into_either_side_is_not_split_into_a_flicker():
+    started_just_before = {"id": "t", "text": "x", "start_s": 9.8, "end_s": 14.0}
+    (only,) = _rows_around(started_just_before)
+    # The 0.2 s head is not worth a layer: the row plays once, after the insert, whole.
+    assert (only["start_s"], only["end_s"]) == (pytest.approx(16.0), pytest.approx(20.0))
+    ends_just_after = {"id": "t", "text": "x", "start_s": 6.0, "end_s": 10.2}
+    (only,) = _rows_around(ends_just_after)
+    assert (only["start_s"], only["end_s"]) == (6.0, pytest.approx(10.0))
+    wide = {"id": "t", "text": "x", "start_s": 6.0, "end_s": 14.0}
+    head, tail = _rows_around(wide)
+    assert (head["end_s"], tail["start_s"]) == (10.0, pytest.approx(16.0))
+
+
+def test_a_row_shorter_than_two_parts_keeps_its_longer_side_once():
+    brief = {"id": "t", "text": "x", "start_s": 9.8, "end_s": 10.4}
+    rows = _rows_around(brief)
+    assert len(rows) == 1
+    assert rows[0]["start_s"] != rows[0]["end_s"]
