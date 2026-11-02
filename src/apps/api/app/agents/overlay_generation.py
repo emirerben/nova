@@ -71,7 +71,7 @@ class OverlayGenerationAgent(Agent[OverlayPlanInput, OverlayPlanOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.editor.overlay_generation",
         prompt_id="overlay_generation",
-        prompt_version="2026-11-02.3",
+        prompt_version="2026-11-02.4",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -110,9 +110,12 @@ class OverlayGenerationAgent(Agent[OverlayPlanInput, OverlayPlanOutput]):
             "Never copy a raw output timestamp from the prompt into a base-time field. "
             "Keep each overlay within the cited source window for visual evidence, and "
             "within video bounds. "
-            "Image means a generated illustration/photo without lettering. Use text for "
-            "numbers, prices, "
-            "rank badges and any readable words. For a named brand, team or organisation "
+            "Image means a generated illustration/photo with no added captions or titles. Use "
+            "text for numbers, prices, "
+            "rank badges and any readable words. The one exception is a named brand, team or "
+            "organisation mark: its own lettering (wordmark, crest text) is part of the mark, so "
+            "describe the full official mark including that lettering and never write 'without "
+            "text' for it. For a named brand, team or organisation "
             "mark, prefer a matching owned library asset; otherwise propose an image row that "
             "names the entity exactly as the creator said it, never a different entity, and the "
             "creator reviews the result before it is used. Every image row must set "
