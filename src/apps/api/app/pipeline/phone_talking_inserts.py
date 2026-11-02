@@ -411,8 +411,8 @@ def warp_for_inserts(
     Inputs are never mutated. With no inserts the very same objects come back.
     """
     if not inserts:
-        return WarpedTimeline(list(cues), list(text_rows), lanes, tuple(cutaways))
-    cue_list, rows, cut_list = list(cues), list(text_rows), list(cutaways)
+        return WarpedTimeline(list(cues or []), list(text_rows or []), lanes, tuple(cutaways or ()))
+    cue_list, rows, cut_list = list(cues or []), list(text_rows or []), list(cutaways or ())
     for point, length in _steps(inserts):
         cue_list = _warp_cues(cue_list, point, length)
         rows = _warp_rows(rows, point, length)
