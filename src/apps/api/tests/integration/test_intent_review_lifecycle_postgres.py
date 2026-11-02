@@ -85,6 +85,19 @@ from tests.services.test_openai_vision_transport import HttpError, Sdk, response
 
 SCHEMA = {"type": "object", "properties": {}, "additionalProperties": False}
 
+# The fake provider reports 9100 input (32 cached), 700 output (400 of it reasoning) tokens.
+# gpt-6.1-sol bills $2/M input, $0.10/M cached input, $10/M output; reasoning is inside output.
+SETTLED_USD = (9100 - 32) * 2e-6 + 32 * 0.10e-6 + 700 * 10e-6
+SETTLED_USAGE_JSON = {
+    "tokens_in": 9100,
+    "tokens_out": 700,
+    "tokens_thoughts": 0,
+    "tokens_cached": 32,
+    "tokens_tool": 0,
+    "token_details": {"reasoning_tokens": 400, "output_tokens_inclusive": 700},
+    "_budget_capability": "intent_review",
+}
+
 
 class Crash(BaseException):
     """A worker killed mid-flight: nothing in the code under test may catch it."""
@@ -238,7 +251,7 @@ def ledger():
                 text(
                     "SELECT idempotency_key, status, provider, usage_purpose, release_canary_id, "
                     "creator_id, estimated_cost_usd, settled_cost_usd, requested_model, "
-                    "provider_request_id FROM ai_cost_reservations "
+                    "provider_request_id, usage_json FROM ai_cost_reservations "
                     "WHERE feature = 'intent_review' ORDER BY created_at"
                 )
             )
@@ -357,7 +370,8 @@ async def test_one_call_with_provenance_and_a_settled_ledger_row(
         "reasoning_tokens": 400,
         "cached_tokens": 32,
     }
-    assert 0 < provenance["settled_usd"] < provenance["reserved_usd"] <= 0.10
+    assert provenance["settled_usd"] == pytest.approx(SETTLED_USD, abs=1e-6)
+    assert provenance["settled_usd"] < provenance["reserved_usd"] <= 0.10
     assert provenance["price_version"] == costs.PRICE_VERSION
     (entry,) = ledger()
     assert entry["status"] == "settled" and entry["provider"] == "openai"
@@ -365,7 +379,8 @@ async def test_one_call_with_provenance_and_a_settled_ledger_row(
     assert entry["usage_purpose"] == "customer"
     assert str(entry["creator_id"]) == str(row.owner_id)
     assert provenance["reservation"]["id"] and entry["provider_request_id"] == "resp_1"
-    assert float(entry["settled_cost_usd"]) == pytest.approx(provenance["settled_usd"])
+    assert float(entry["settled_cost_usd"]) == pytest.approx(SETTLED_USD, abs=1e-6)
+    assert entry["usage_json"] == SETTLED_USAGE_JSON
     # The text-only P3 invariant is untouched: only the transport records visual input.
     assert row.result["review_model_received_visual_input"] is False
     assert bundle.review_model_received_visual_input is False
@@ -1086,10 +1101,10 @@ async def test_crash_after_the_response_is_stored_settles_from_the_stored_usage(
     row = review_row(rid)
     assert (row.status, row.reason) == ("unavailable", "disposition_unavailable")
     (entry,) = ledger()
-    assert entry["status"] == "settled" and float(entry["settled_cost_usd"]) > 0
-    assert row.review["provenance"]["settled_usd"] == pytest.approx(
-        float(entry["settled_cost_usd"])
-    )
+    assert entry["status"] == "settled"
+    assert float(entry["settled_cost_usd"]) == pytest.approx(SETTLED_USD, abs=1e-6)
+    assert entry["usage_json"] == SETTLED_USAGE_JSON
+    assert row.review["provenance"]["settled_usd"] == pytest.approx(SETTLED_USD, abs=1e-6)
     assert len(provider.calls) == 1
 
 
