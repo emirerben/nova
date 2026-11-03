@@ -2,7 +2,7 @@
 
 Status: **preregistered, not run.** Nothing in this document has spent money. The zero-cost dry run has been run; the paid pilot and the paid full run have not, and neither starts without the owner's explicit approval of the numbers below.
 
-Preregistration digest: 9711b1f26a9c860d991a219c3901b6db7a1690c5b45d4ddf84bb28484ca00884
+Preregistration digest: 0a1227e9dbfce48615343dcceb02e692a0d7ba138cf0010f94d79df238b71835
 
 The digest freezes the model, prompt, schema, price version, caps, cases, footage definition, predicates, estimates and the reviewers the scorer is tested against. `python -m app.cli.qualify_intent_review` recomputes it on every run and refuses to execute unless this line matches. Changing anything below the digest line that the digest covers is a new preregistration: new digest, new run ids, new approval.
 
@@ -24,8 +24,8 @@ What it can and cannot show:
 | --- | --- |
 | Model | `gpt-6.1-sol` (`VISION_MODEL`, `app/agents/_openai_vision.py`) |
 | Request | Responses API, 5 or 6 inline JPEG frames at 360x640 with `detail: high`, strict JSON schema closed over the issued aliases, `reasoning.effort: low`, `max_output_tokens: 2500`, `store: false`, no SDK retries, 60 s timeout |
-| Prompt | `intent_review_v2` (`prompts/intent_review.txt`), built by `build_review` from the frozen brief, draft and contract |
-| Price | $2 per million input tokens, $10 per million output tokens, `multi-provider-2026-11-02.v6` (`app/services/ai_cost_control.py`). Cross-checked with `gstack-eval-plan arms --arms gpt-6.1-sol --input-tokens 16446 --output-tokens 2500`: $0.0579, the same figure. Both read the same published rate; neither was checked against OpenAI's pricing page in this session. |
+| Prompt | `intent_review_v3` (`prompts/intent_review.txt`), built by `build_review` from the frozen brief, draft and contract |
+| Price | $2 per million input tokens, $10 per million output tokens, `multi-provider-2026-11-02.v6` (`app/services/ai_cost_control.py`). Cross-checked with `gstack-eval-plan arms --arms gpt-6.1-sol --input-tokens 16446 --output-tokens 2500`: $0.0582, the same figure. Both read the same published rate; neither was checked against OpenAI's pricing page in this session. |
 | Not verified | That this model accepts image input. The transport is proven only against a fake SDK object (`tests/services/test_openai_vision_transport.py`). The first priced call, pilot item 1, is the live proof; a 4xx there releases the reservation and ends the run at the cost of nothing. |
 
 ## Cases
@@ -80,7 +80,7 @@ One paid arm, because the model is fixed by the decision being made. The zero-co
 
 | Arm | Settings | Per item |
 | --- | --- | --- |
-| `gpt-6.1-sol` | as under Model | $0.0579 at 5 frames (16,446 estimated input tokens), $0.0639 at 6 frames (19,456), each with 2,500 output tokens reserved |
+| `gpt-6.1-sol` | as under Model | $0.0582 at 5 frames (16,607 estimated input tokens), $0.0642 at 6 frames (19,618), each with 2,500 output tokens reserved |
 
 The estimate is the repo's reservation estimator: images are priced at a 3,000-token floor each and the full output cap is reserved. It is a ceiling for admission, not a forecast. The pilot calibrates it (`settled_over_estimate`).
 
@@ -140,27 +140,27 @@ From `python -m app.cli.qualify_intent_review` (the dry run, 2026-11-03). Estima
 
 ```text
 stage  item                               frames   in_tok  out_tok   est_usd   cum_usd
-pilot  correct_edit#1                          5   16,446    2,500    0.0579    0.0579
-pilot  wrong_content_control#1                 5   16,446    2,500    0.0579    0.1158
-pilot  timing_miss_control#1                   6   19,456    2,500    0.0639    0.1797
-full   wrong_wording_control#1                 5   16,446    2,500    0.0579    0.2376
-full   wrong_content_injection_decoy#1         5   16,446    2,500    0.0579    0.2955
-full   correct_edit#2                          5   16,446    2,500    0.0579    0.3534
-full   wrong_content_control#2                 5   16,446    2,500    0.0579    0.4113
-full   wrong_wording_control#2                 5   16,446    2,500    0.0579    0.4692
-full   timing_miss_control#2                   6   19,456    2,500    0.0639    0.5331
-full   wrong_content_injection_decoy#2         5   16,446    2,500    0.0579    0.5910
-SPEND_TOTAL: pilot=$0.1797 full=$0.4113 all=$0.5910
+pilot  correct_edit#1                          5   16,607    2,500    0.0582    0.0582
+pilot  wrong_content_control#1                 5   16,607    2,500    0.0582    0.1164
+pilot  timing_miss_control#1                   6   19,618    2,500    0.0642    0.1807
+full   wrong_wording_control#1                 5   16,607    2,500    0.0582    0.2389
+full   wrong_content_injection_decoy#1         5   16,607    2,500    0.0582    0.2971
+full   correct_edit#2                          5   16,607    2,500    0.0582    0.3553
+full   wrong_content_control#2                 5   16,607    2,500    0.0582    0.4135
+full   wrong_wording_control#2                 5   16,607    2,500    0.0582    0.4717
+full   timing_miss_control#2                   6   19,618    2,500    0.0642    0.5360
+full   wrong_content_injection_decoy#2         5   16,607    2,500    0.0582    0.5942
+SPEND_TOTAL: pilot=$0.1807 full=$0.4135 all=$0.5942
 CAPS: per_call=$0.10 per_run=$2.00 total=$5.00 headroom_total=$4.4090 headroom_per_run=$1.5887
 ```
 
 | Run | Items | Estimate | Suggested approved maximum | Hard cap |
 | --- | --- | --- | --- | --- |
-| `iqual-<tag>-pilot` | 3 | $0.1797 | $0.25 | $2.00 per run |
-| `iqual-<tag>-full` | 7 | $0.4113 | $0.50 | $2.00 per run |
-| Both | 10 | $0.5910 | | $5.00 in total, across every run on this machine |
+| `iqual-<tag>-pilot` | 3 | $0.1807 | $0.25 | $2.00 per run |
+| `iqual-<tag>-full` | 7 | $0.4135 | $0.50 | $2.00 per run |
+| Both | 10 | $0.5942 | | $5.00 in total, across every run on this machine |
 
-The suggested maximums leave about 40% and 20% headroom over the estimates and stay far under both caps. The pilot is chosen as the three most informative calls: the false-alarm control, the missing-content control and the timing control, which is the likeliest to miss. The wording control and the injection decoy run in the full stage. The pilot also reports `PILOT_PROJECTION`: mean settled cost per call with a 95% band (Student's t, 2 degrees of freedom), extrapolated to the full run, next to the hard ceiling. Under any outcome the full run's ceiling is $0.4113.
+The suggested maximums leave about 40% and 20% headroom over the estimates and stay far under both caps. The pilot is chosen as the three most informative calls: the false-alarm control, the missing-content control and the timing control, which is the likeliest to miss. The wording control and the injection decoy run in the full stage. The pilot also reports `PILOT_PROJECTION`: mean settled cost per call with a 95% band (Student's t, 2 degrees of freedom), extrapolated to the full run, next to the hard ceiling. Under any outcome the full run's ceiling is $0.4135.
 
 ## Pilot, then approval
 
@@ -168,6 +168,20 @@ The suggested maximums leave about 40% and 20% headroom over the estimates and s
 2. The owner approves the pilot id and maximum. Run the pilot.
 3. Read the pilot's `report.json`, its spend table and `PILOT_PROJECTION`. A pilot that missed a bar stops here. Otherwise the owner approves the full id and maximum, citing the projection.
 4. Run the full stage. The harness prints `QUALIFICATION: pass` only when both stages passed every predicate.
+
+## Pilot 1 (prompt `intent_review_v2`): failed, superseded by this preregistration
+
+Run `iqual-1103a-pilot`, 2026-11-03, 3 calls, $0.0185 settled of $0.1797 estimated, no void reply, no provider error.
+
+| Case | Verdict |
+| --- | --- |
+| `correct_edit#1` | pass |
+| `wrong_content_control#1` | pass |
+| `timing_miss_control#1` | **fail** (`d.flagged`, `d.eligible`, `d.fit_only`, `d.shadow_stays_shadow`, `d.receipt`) |
+
+On the timing miss the model returned `met` at high confidence for the title and cited only `f0` and `f1`, where the title is still visible. It never used the frame centred on the title's span (`f3`, 4.55 s), where the title is gone. The prompt named that frame but did not say what to do when the text is absent from it. The full stage was not run, per the pilot-before-full gate.
+
+`intent_review_v3` adds one rule: a text requirement is unmet when the frame centred on its span shows no text there, whatever the other frames show. That is a prompt change, so this is a new preregistration: new digest above, new run ids (use a new `<tag>`), new approval. The v2 spend ($0.0185) stays in the journal against the $5 total.
 
 ## Commands to execute later
 
@@ -186,11 +200,11 @@ export AI_USAGE_ENVIRONMENT=development \
 # 1. Zero cost. The default mode; writes .intent-review-qualification/ (gitignored).
 .venv/bin/python -m app.cli.qualify_intent_review
 
-# 2. After the owner approves the pilot (estimate $0.1797). Pick a unique <tag>.
+# 2. After the owner approves the pilot (estimate $0.1807). Pick a unique <tag>.
 INTENT_REVIEW_QUALIFICATION_RUN_ID=iqual-<tag>-pilot INTENT_REVIEW_QUALIFICATION_MAX_USD=0.25 \
   .venv/bin/python -m app.cli.qualify_intent_review --execute --stage pilot
 
-# 3. After the owner reads the pilot and approves the full run (estimate $0.4113).
+# 3. After the owner reads the pilot and approves the full run (estimate $0.4135).
 INTENT_REVIEW_QUALIFICATION_RUN_ID=iqual-<tag>-full INTENT_REVIEW_QUALIFICATION_MAX_USD=0.50 \
   .venv/bin/python -m app.cli.qualify_intent_review --execute --stage full
 ```
