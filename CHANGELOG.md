@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.16.0] - 2026-11-03
+
+### Changed
+- fix(kria): honest restart-cut promise + one retake predicate, ready to enable consented retakes (KRI-1176) (#2090) <!-- release-pr: 2090 -->
+
 ## [0.84.15.0] - 2026-11-03
 
 ### Changed
