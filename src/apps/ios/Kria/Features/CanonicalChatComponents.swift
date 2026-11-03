@@ -767,6 +767,9 @@ private struct FootageThumbnail: View {
 }
 
 struct DirectionStage: View {
+    /// Where a silent video sends the creator: back to the camera, or to a different file.
+    var recordAgain: (() -> Void)? = nil
+    var chooseAnother: (() -> Void)? = nil
     let approval: ApprovalSnapshot
     let format: CreationFormat?
     /// The v2 thread's `speech_cleanup` projection (`CreationThread.speechCleanup`).
@@ -881,11 +884,7 @@ struct DirectionStage: View {
                 .buttonStyle(CanonicalSecondaryButtonStyle())
                 .disabled(isBusy)
         case .noSpeech:
-            Text("We couldn’t hear any speech in this video.")
-                .font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.zinc)
-                .accessibilityIdentifier("speech-cleanup-no-speech")
-            Text("Record it again or choose a different video, then try once more.")
-                .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+            NoSpeechRecoveryCard(recordAgain: recordAgain, chooseAnother: chooseAnother)
         case .failed:
             Text("The speech check couldn’t finish.")
                 .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)

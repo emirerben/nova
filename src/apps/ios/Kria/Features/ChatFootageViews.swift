@@ -97,6 +97,9 @@ struct ChatAttachMenu {
     var upload: (FootageSourceKind) -> Void
     var addScript: (() -> Void)?
     var addVoiceover: (() -> Void)?
+    /// Only where the server offers them for this format.
+    var addSong: (() -> Void)?
+    var addOverlays: (() -> Void)?
 }
 
 /// The floating tray over the composer (Paper S3.05): Record, Upload, then optional script and voiceover. Upload
@@ -129,6 +132,12 @@ struct ChatAttachTray: View {
                 }
                 if let addVoiceover = menu.addVoiceover {
                     row("mic.fill", "Add voiceover", "Record, upload or AI voice", id: "attach-voiceover") { close(); addVoiceover() }
+                }
+                if let addSong = menu.addSong {
+                    row("music.note", "Add song", "Cut to a song or lip-sync", id: "attach-song") { close(); addSong() }
+                }
+                if let addOverlays = menu.addOverlays {
+                    row("square.on.square", "Add overlays", "Photos and clips for context", id: "attach-overlays") { close(); addOverlays() }
                 }
                 if let reason = menu.disabledReason {
                     Text(reason).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
@@ -165,5 +174,29 @@ struct ChatAttachTray: View {
         }
         .buttonStyle(.plain).disabled(!enabled).opacity(enabled ? 1 : 0.4)
         .accessibilityLabel("\(title), \(detail)").accessibilityIdentifier(id)
+    }
+}
+
+/// The video has no audible speech (Paper S3.15): say so once, then offer both ways forward side by side.
+struct NoSpeechRecoveryCard: View {
+    var recordAgain: (() -> Void)?
+    var chooseAnother: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            KriaNoticeCard(tone: .failure, title: "We couldn’t hear any speech in this video",
+                           message: "Record it again or choose a different video.")
+                .accessibilityIdentifier("speech-cleanup-no-speech")
+            if recordAgain != nil || chooseAnother != nil {
+                KriaSourceRow(options: [
+                    recordAgain.map { action in
+                        KriaSourceOption(id: "record-again", symbol: KriaSourceOption.recordSymbol, title: "Record again", identifier: "no-speech-record", action: action)
+                    },
+                    chooseAnother.map { action in
+                        KriaSourceOption(id: "upload-another", symbol: KriaSourceOption.uploadSymbol, title: "Upload another", identifier: "no-speech-upload", action: action)
+                    }
+                ].compactMap { $0 }, layout: .compact)
+            }
+        }
     }
 }

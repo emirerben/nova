@@ -9,6 +9,8 @@ enum AttachmentLaunch: Equatable {
     case record
     case recordWithScript
     case voiceover
+    /// Open a later step directly (song, overlays).
+    case step(AttachmentStep)
     /// The "Upload from" list over the sheet.
     case chooseSource
     case source(FootageSourceKind)
@@ -293,6 +295,7 @@ struct AttachmentSheet: View {
                 case .record: openCamera(withScript: false)
                 case .recordWithScript: openCamera(withScript: true)
                 case .voiceover: step = .voiceover; role = .voiceover
+                case .step(let target): if steps.contains(target) { step = target; role = target.role }
                 case .chooseSource: pickerLaunch = .sources
                 case .source(let kind): pickerLaunch = kind
                 case nil: break

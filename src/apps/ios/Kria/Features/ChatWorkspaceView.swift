@@ -1801,7 +1801,9 @@ private struct CreationWorkspaceView: View {
             record: selectedFormat?.usesVisualPool == true ? nil : { openAttachments(launch: .record) },
             upload: { openAttachments(launch: .source($0)) },
             addScript: selectedFormat == .talkingToCamera ? { openAttachments(launch: .recordWithScript) } : nil,
-            addVoiceover: selectedFormat == .narrated ? { openAttachments(launch: .voiceover) } : nil
+            addVoiceover: selectedFormat == .narrated ? { openAttachments(launch: .voiceover) } : nil,
+            addSong: capabilities?.songUploadEnabled == true && selectedFormat?.runsAsMontage == true ? { openAttachments(launch: .step(.song)) } : nil,
+            addOverlays: capabilities?.visualsEnabled == true && selectedFormat?.usesVisualPool == false ? { openAttachments(launch: .step(.overlays)) } : nil
         )
     }
 
@@ -1869,6 +1871,8 @@ private struct CreationWorkspaceView: View {
         case .direction:
             if let approval {
                 DirectionStage(
+                    recordAgain: canAttachMedia ? { openAttachments(launch: .record) } : nil,
+                    chooseAnother: canAttachMedia ? { openAttachments(launch: .chooseSource) } : nil,
                     approval: approval,
                     format: selectedFormat,
                     speechCleanup: approval.retryOfExecutionID == nil ? fullThread?.speechCleanup : nil,
@@ -1888,6 +1892,8 @@ private struct CreationWorkspaceView: View {
                 .id("approval-\(approval.id)")
             } else if let thread = fullThread {
                 CreationConfirmationStage(
+                    recordAgain: canAttachMedia ? { openAttachments(launch: .record) } : nil,
+                    chooseAnother: canAttachMedia ? { openAttachments(launch: .chooseSource) } : nil,
                     thread: thread,
                     isBusy: isActing || isSending || pendingUploadCount > 0,
                     responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
@@ -1988,6 +1994,8 @@ private struct CreationWorkspaceView: View {
         case .failed:
             if failedWorkspacePresentation == .legacyCreationConfirmation, let thread = fullThread {
                 CreationConfirmationStage(
+                    recordAgain: canAttachMedia ? { openAttachments(launch: .record) } : nil,
+                    chooseAnother: canAttachMedia ? { openAttachments(launch: .chooseSource) } : nil,
                     thread: thread,
                     isBusy: isActing || isSending || pendingUploadCount > 0,
                     responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
