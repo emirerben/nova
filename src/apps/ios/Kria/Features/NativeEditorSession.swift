@@ -3614,7 +3614,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             // through and build a fresh composition so the canvas comes back
             // to the live edit — otherwise every later edit lands off-screen
             // while the user keeps watching the stale cloud render (KRI-110).
-            NativePreviewDiagnostics.record("preview-rebuild", fields: [
+            NativePreviewDiagnostics.note("preview-rebuild", fields: [
                 "documentChanged": previewBuiltDocument.map { $0 != baseline ? "1" : "0" } ?? "first"])
             if let preview = sourcePreview, player?.currentItem === preview.preview.playerItem,
                updatePreviewInPlace(preview, program: program) {
@@ -3679,7 +3679,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     private func updatePreviewInPlace(_ preview: LivePreviewComposition, program: NativeEditorRenderProgram) -> Bool {
         do {
             try preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs)
-            NativePreviewDiagnostics.record("preview-updated-in-place")
+            NativePreviewDiagnostics.note("preview-updated-in-place")
             return true
         } catch {
             // Every build records why an edit took the full rebuild (a feature id, never content).
@@ -8530,7 +8530,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         playbackStateObserver?.invalidate()
         itemStatusObserver?.invalidate()
         if let itemFailureObserver { NotificationCenter.default.removeObserver(itemFailureObserver) }
-        NativePreviewDiagnostics.record("player-replaced", fields: [
+        NativePreviewDiagnostics.note("player-replaced", fields: [
             "was": player == nil ? "none" : player === finishedRenderPlayer ? "finished" : "live",
             "playing": isPlaying ? "1" : "0"])
         // SwiftUI may retain the outgoing VideoPlayer after this replacement.

@@ -87,6 +87,30 @@ import XCTest
         XCTAssertTrue(isNear(center, room), "the speaker stays in the middle, got \(center)")
     }
 
+    /// The editor's Download and Share route exports the compiled preview recipe through the real exporter
+    /// (`exportDisplayedSourcePreview`), so an unsaved edit leaves the phone with the background it shows.
+    func testExportingTheCompiledPreviewRecipeDrawsTheBackground() async throws {
+        useSegmenter(CenterBoxSegmenter())
+        let scene = try await scene()
+        let live = try await LivePreviewComposition(recipe: scene.recipe, assetURLs: scene.urls)
+        let snapshot = live.exportSnapshot()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("export-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        let movie = directory.appendingPathComponent("current-preview.mp4")
+        let checkpoint = try await AVFoundationLocalExporter(
+            stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none
+        ).export(recipe: snapshot.recipe, assetURLs: snapshot.assetURLs, outputURL: movie)
+        XCTAssertEqual(checkpoint.status, .completed)
+
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: movie))
+        generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+        let image = try await generator.image(at: CMTime(seconds: 1, preferredTimescale: 600)).image
+        let corner = pixel(image, fx: 0.04, fy: 0.04), center = pixel(image, fx: 0.5, fy: 0.5)
+        XCTAssertTrue(isNear(corner, backdrop), "the exported corner is the background, got \(corner)")
+        XCTAssertTrue(isNear(center, room), "the exported speaker stays in the middle, got \(center)")
+    }
+
     /// An editor update that changes nothing about the background (a caption keystroke, a chat draft) stays in
     /// place and keeps both the background and the trace of the composition it belongs to.
     func testAnInPlaceUpdateKeepsTheBackgroundAndItsTrace() async throws {

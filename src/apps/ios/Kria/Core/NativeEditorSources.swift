@@ -943,10 +943,16 @@ extension KriaAPI {
 /// Bounded device diagnostics; no URLs, tokens, content, or raw errors.
 enum NativePreviewDiagnostics {
     private static let lock = NSLock()
-    static func record(_ stage: String, fields: [String: String] = [:]) {
+    /// Tests point the file somewhere private.
+    nonisolated(unsafe) static var directoryOverride: URL?
+    /// A routine event (a rebuild, an in-place update, a player replaced). Placeholder: still writes the file.
+    static func note(_ stage: String, fields: [String: String] = [:]) {
+        record(stage, fields: fields)
+    }
+    static func record(_ stage: String, fields: [String: String] = [:], attachRoutine: Bool = false) {
         lock.lock()
         defer { lock.unlock() }
-        guard let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
+        guard let root = directoryOverride ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
         let url = root.appendingPathComponent("native-preview-diagnostics.json")
         var events = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode([[String: String]].self, from: $0) } ?? []
         events.append(fields.merging(["stage": stage, "time": ISO8601DateFormatter().string(from: Date())]) { _, value in value })
