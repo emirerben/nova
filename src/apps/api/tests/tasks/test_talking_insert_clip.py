@@ -112,25 +112,27 @@ def test_flag_off_the_recipe_is_byte_identical_and_the_receipt_says_why(monkeypa
     assert gb.PHONE_INSERT_CLIPS_FIELD not in variant
 
 
-def test_a_phrase_the_creator_never_says_is_left_out_when_nothing_he_says_is_about_the_clip(
+def test_a_phrase_he_never_says_with_the_check_down_is_still_placed_at_a_labelled_guess(
     monkeypatch,
 ):
     from app.agents._runtime import TransientError
     from tests.agents.test_talking_insert_sentence import _Recorded
 
-    # The meaning check cannot run either, so nothing places the clip: said, not guessed.
+    # The meaning check cannot run either: the clip is not left out (the creator's own request
+    # never fails on a default), it plays at a labelled guess and the receipt says which.
     client = _Recorded(TransientError("provider down"))
     monkeypatch.setattr("app.services.phone_insert_topic_picker.default_client", lambda: client)
     strategy = {"insert_clips": [{"media_id": CONGRESS_TALK, "at_phrase": "uzay mekiği"}]}
     _job, recipe, variant = _run(
         monkeypatch, mention=True, strategy=strategy, settings_overrides=FLAG
     )
-    assert CONGRESS_TALK not in {c.source_asset_id for t in recipe.tracks for c in t.clips}
+    assert CONGRESS_TALK in {c.source_asset_id for t in recipe.tracks for c in t.clips}
     receipt = variant[gb.PHONE_INSERT_CLIPS_FIELD]
-    assert receipt["placed"] == []
-    assert receipt["dropped"] == [{"media_id": CONGRESS_TALK, "reason": "phrase_not_found"}]
-    assert recipe.duration == pytest.approx(TAKE_S)
-    assert [c.source_asset_id for c in _tracks(recipe)["subtitled"].clips] == [CREATOR]
+    assert receipt["dropped"] == []
+    (row,) = receipt["placed"]
+    assert row["fallback"] == "phrase_not_found"
+    assert row["via"] in ("keyword", "guess") and row["why"] == "check_unavailable"
+    assert row["snap"] == "sentence_end"
 
 
 def test_range_is_closed_on_an_edit_with_an_insert(monkeypatch):

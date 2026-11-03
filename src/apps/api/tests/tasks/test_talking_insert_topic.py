@@ -526,3 +526,32 @@ def test_a_retried_render_reuses_the_first_attempts_answer_instead_of_falling_to
     assert drops == []
     assert {row["via"] for row in info.values()} == {"meaning"}
     assert dead.prompts == []
+
+
+# --- the approved length: the last clips that do not fit are left out and named --------------
+
+
+def test_clips_that_would_break_the_approved_length_are_left_out_last_first_and_named(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        gb,
+        "_ending_over_length_limit",
+        lambda _snapshot, *, talk_s, ending_s: talk_s + ending_s > TAKE_S + 30.0,
+    )
+    _job, recipe, variant = _go(
+        monkeypatch,
+        brief=_overlay_the_rest(),
+        strategy=_explicit(
+            {"media_id": FINAL_TALK, "at_s": 20.0},
+            {"media_id": ALLOCATE_TALK, "at_s": 40.0},
+            {"media_id": CONGRESS_TALK, "at_s": 60.0},
+        ),
+    )
+    receipt = variant[gb.PHONE_INSERT_CLIPS_FIELD]
+    assert {row["media_id"] for row in receipt["placed"]} == {FINAL_TALK, ALLOCATE_TALK}
+    (dropped,) = receipt["dropped"]
+    assert (dropped["media_id"], dropped["reason"]) == (CONGRESS_TALK, "over_length_limit")
+    assert dropped["would_be_s"] == pytest.approx(TAKE_S + 43.0, abs=0.1)
+    assert CONGRESS_TALK not in {c.source_asset_id for t in recipe.tracks for c in t.clips}
+    assert recipe.duration == pytest.approx(TAKE_S + 28.0)

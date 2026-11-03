@@ -4745,7 +4745,7 @@ def _insert_dropped_line(row: InsertClipFact) -> str:
             )
             if code == "no_matching_sentence"
             else say(
-                en=f"I didn't hear the words you named for {ref} and nothing you say is about it, "
+                en=f"I didn't hear you say the words you named for {ref} and nothing you say is about it, "
                 "so I left it out",
                 tr=f"{ref} için söylediğin sözleri duymadım ve anlattığın hiçbir şey ona uymuyor, "
                 "o yüzden dışarıda bıraktım",
