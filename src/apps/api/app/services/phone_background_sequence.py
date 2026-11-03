@@ -14,7 +14,8 @@ then remaps to exactly the output span laid out here. ``words`` are the spoken w
 ORIGINAL take's time (the worker's ``raw_words``, the same transcript reaction beats ground
 against); a phrase heard only inside a removed span is not heard in the kept take.
 
-Rules (the contract in ``docs/reviews/speaker-background-windows-failure-modes.md``):
+Rules (the contract in ``docs/reviews/speaker-background-windows-failure-modes.md``).
+Rotation and mixed (an entry has no ``spoken_phrase``, or no phrase is heard at all):
 
 * an entry with a ``spoken_phrase`` starts at the first loose-text match of it in the kept take
   and ends at the earliest of the next window's start and ``hold_s`` (else ``cadence_s``) later;
@@ -24,6 +25,23 @@ Rules (the contract in ``docs/reviews/speaker-background-windows-failure-modes.m
 * when every entry is anchored the gaps keep the fill background;
 * windows are at least ``MIN_WINDOW_S`` long, never past the take end (S39), at most
   ``MAX_WINDOWS``; a sequence that would need more is stretched to a longer cadence.
+
+On the word (every entry has a ``spoken_phrase`` and one is heard, KRI-1175, S46-S56):
+
+* the visual is on screen while it is talked about, in the order of the talk: a phrase never
+  heard gets no window (``phrase_not_heard``); words heard within ``MIN_WINDOW_S`` of the
+  previous one are one mention, whose entries follow each other from its first word;
+* an entry stays ``hold_s`` (else ``cadence_s``), but the last entry before the next mention
+  holds until it; its ``hold_s`` ends it early and the fill shows in between, unless that gap
+  would be a sliver (under ``MIN_WINDOW_S``), which the window absorbs;
+* entries that cannot all fit before the next mention (or the take end) share it equally; those
+  that would get under ``MIN_WINDOW_S`` get no window (``window_too_short``);
+* the first window opens the video (from 0 s) unless it has ``hold_s``; a lead-in under
+  ``MIN_WINDOW_S`` is absorbed either way, a longer one keeps the fill;
+* once every visual was shown, those without ``hold_s`` take turns every ``cadence_s``, in the
+  order they were first shown, to the take end (a leftover sliver joins the window before it
+  unless that one has ``hold_s``; with no such visual the fill shows); the ``MAX_WINDOWS``
+  stretch is that cadence only.
 """
 
 from __future__ import annotations
@@ -163,6 +181,132 @@ def _fill_gap(
     return cursor
 
 
+def _seat_mention(
+    members: Sequence[SequenceEntry],
+    start: float,
+    end: float,
+    *,
+    cadence_s: float,
+    more_follow: bool,
+    notes: list[dict],
+) -> list[OutputWindow]:
+    """Windows for the entries of one mention, back to back from ``start`` inside ``[start, end)``.
+
+    ``end`` is the next mention (``more_follow``) or the take end. Each member stays ``hold_s``
+    (else a cadence) while the span allows; before another mention the last one holds until it.
+    Members that do not fit share the span equally, and those that would get under
+    ``MIN_WINDOW_S`` are dropped with a note.
+    """
+    wants = [member.hold_s or cadence_s for member in members]
+    span = end - start
+    # Before another mention the last member needs room for a window; at the take end, its length.
+    needed = sum(wants[:-1]) + (MIN_WINDOW_S if more_follow else wants[-1])
+    if needed > span + _EPS:
+        count = len(members)
+        if span / count < MIN_WINDOW_S - _EPS:
+            count = max(1, int(span / MIN_WINDOW_S + 1e-9))
+        for member in members[count:]:
+            notes.append(
+                {"lane": "background", "window": member.index, "reason": "window_too_short"}
+            )
+        share = span / count
+        shared = [
+            OutputWindow(member.index, start + position * share, start + (position + 1) * share)
+            for position, member in enumerate(members[:count])
+        ]
+        shared[-1] = OutputWindow(shared[-1].index, shared[-1].start_s, end)
+        return shared
+    placed: list[OutputWindow] = []
+    t = start
+    for member, want in zip(members[:-1], wants[:-1], strict=True):
+        placed.append(OutputWindow(member.index, t, t + want))
+        t += want
+    last = members[-1]
+    if not more_follow:
+        stop = min(t + wants[-1], end)
+    elif last.hold_s and end - (t + last.hold_s) >= MIN_WINDOW_S - _EPS:
+        # The fill shows between an explicit hold and the next mention, unless that is a sliver.
+        stop = t + last.hold_s
+    else:
+        stop = end
+    placed.append(OutputWindow(last.index, t, stop))
+    return placed
+
+
+def _lay_out_on_the_word(
+    entries: Sequence[SequenceEntry],
+    anchors: dict[int, float],
+    notes: list[dict],
+    *,
+    cadence_s: float,
+    take_s: float,
+) -> SequenceLayout:
+    """Every entry has a phrase and one is heard: each visual sits on the words that name it."""
+    by_index = {entry.index: entry for entry in entries}
+    mentions: list[list[tuple[float, int]]] = []
+    for at, idx in sorted((at, idx) for idx, at in anchors.items()):
+        # Words heard less than MIN_WINDOW_S after the previous one chain into the same mention.
+        if mentions and at - mentions[-1][-1][0] <= MIN_WINDOW_S + _EPS:
+            mentions[-1].append((at, idx))
+        else:
+            mentions.append([(at, idx)])
+    head: list[OutputWindow] = []
+    for position, mention in enumerate(mentions):
+        more_follow = position + 1 < len(mentions)
+        head.extend(
+            _seat_mention(
+                [by_index[idx] for _at, idx in mention],
+                mention[0][0],
+                mentions[position + 1][0][0] if more_follow else take_s,
+                cadence_s=cadence_s,
+                more_follow=more_follow,
+                notes=notes,
+            )
+        )
+    # Lead-in: the talk opens on its first visual; a held first window keeps the fill before it
+    # unless that would be a sliver.
+    first = head[0]
+    if not by_index[first.index].hold_s or first.start_s < MIN_WINDOW_S - _EPS:
+        head[0] = OutputWindow(first.index, 0.0, first.end_s)
+
+    # Tail: every mention is behind us, so the visuals shown without an explicit hold take turns
+    # in the order they were first shown, starting after the one on screen.
+    shown: list[int] = []
+    for window in head:
+        if window.index not in shown:
+            shown.append(window.index)
+    cycle = [idx for idx in shown if not by_index[idx].hold_s]
+    cursor = 1 if cycle and cycle[0] == head[-1].index else 0
+    tail_start = head[-1].end_s
+    tail_s = take_s - tail_start
+    current = cadence_s
+    while True:
+        windows = list(head)
+        last = windows[-1]
+        sliver = tail_s < max(MIN_WINDOW_S, current / 2.0) - _EPS
+        # A held last window keeps its asked length unless the rest would flash under the minimum.
+        held_last = bool(by_index[last.index].hold_s) and tail_s >= MIN_WINDOW_S - _EPS
+        if cycle == [last.index] or (sliver and not held_last):
+            windows[-1] = OutputWindow(last.index, last.start_s, take_s)
+        elif not sliver:
+            _fill_gap(tail_start, take_s, cycle, cursor, current, windows)
+        # Only the tail cadence stretches; a tail with a single window cannot shrink further.
+        if len(windows) <= MAX_WINDOWS or len(windows) - len(head) <= 1 or current >= tail_s:
+            break
+        current = min(current * _STRETCH, tail_s)
+    if len(windows) > MAX_WINDOWS:
+        windows = windows[:MAX_WINDOWS]
+    if current != cadence_s:
+        notes.append({"lane": "background", "reason": "cadence_stretched"})
+    unique_notes = list({tuple(sorted(note.items())): note for note in notes}.values())
+    return SequenceLayout(
+        windows=tuple(sorted(windows, key=lambda window: window.start_s)),
+        notes=tuple(unique_notes),
+        cadence_s=current,
+        anchored=frozenset(anchors),
+    )
+
+
 def lay_out(
     entries: Sequence[SequenceEntry],
     *,
@@ -187,6 +331,8 @@ def lay_out(
             )
         else:
             anchors[entry.index] = at
+    if anchors and all(entry.spoken_phrase for entry in entries):
+        return _lay_out_on_the_word(entries, anchors, notes, cadence_s=cadence_s, take_s=take_s)
     by_index = {entry.index: entry for entry in entries}
     cycle = [e.index for e in entries if e.index not in anchors]
 

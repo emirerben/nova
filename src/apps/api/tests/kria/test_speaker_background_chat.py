@@ -393,7 +393,7 @@ def test_a_closed_gate_prompt_is_byte_identical_to_one_with_no_background_suppor
 def test_the_prompt_version_is_bumped_for_the_new_field():
     from app.agents.main_creator import MAIN_CREATOR_PROMPT_VERSION
 
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-03-v112"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-03-v114"
 
 
 # ----------------------------------------------------------- KRI-1162: several backgrounds
@@ -493,6 +493,27 @@ def test_the_windows_paragraph_is_taught_only_with_the_windows_capability(monkey
     assert _SPEAKER_BACKGROUND_WINDOWS_PROMPT_SECTION not in single
     monkeypatch.setattr(settings, "speaker_background_enabled", False)
     assert "SEVERAL BACKGROUNDS" not in _render_prompt(_manifest())
+
+
+def test_the_windows_paragraph_puts_each_visual_on_the_words_that_name_it():
+    """KRI-1175 (prod "Green 3"): the section quoted the creator's "whichever photo or video I'm
+    talking about" and then told the planner to leave `spoken_phrase` out unless a photo was
+    paired with words, so it wrote a rotation in filename order. The ask now means a phrase on
+    every entry from the take's own words; a plain rotation keeps the list order."""
+    from app.agents.main_creator import _SPEAKER_BACKGROUND_WINDOWS_PROMPT_SECTION
+
+    taught = " ".join(_SPEAKER_BACKGROUND_WINDOWS_PROMPT_SECTION.split())
+    assert "otherwise leave it out and the photos take turns in the order listed" not in taught
+    assert "whichever photo or video I'm talking about" in taught
+    for rule in (
+        "every entry",  # all phrased = laid out on the word
+        "spoken_phrase",
+        "same spoken_phrase",  # two visuals of one thing share the mention
+        "never talk",  # a visual nobody talks about is left out ...
+        "summary",  # ... and named in the reply
+        "take turns in the order listed",  # a plain rotation is unchanged
+    ):
+        assert rule in taught, rule
 
 
 def test_sequence_entries_outside_the_pool_are_dropped_with_a_receipt(monkeypatch):

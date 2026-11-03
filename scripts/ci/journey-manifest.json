@@ -2998,7 +2998,7 @@
     {
       "id": "kri-1162-speaker-background-windows",
       "needs_native": true,
-      "api_tests": "tests/kria/test_speaker_background_windows.py tests/routes/test_speaker_background_windows_editor.py tests/kria/test_brief_checks_speaker_background.py tests/kria/test_speaker_background_chat.py tests/tasks/test_speaker_background_strategy_worker.py tests/routes/test_speaker_background_chat_ops.py tests/kria/test_editor_capability_parity.py tests/evals/test_edit_copilot_evals.py",
+      "api_tests": "tests/kria/test_speaker_background_windows.py tests/routes/test_speaker_background_windows_editor.py tests/kria/test_brief_checks_speaker_background.py tests/kria/test_speaker_background_chat.py tests/tasks/test_speaker_background_strategy_worker.py tests/tasks/test_speaker_background_on_the_word.py tests/routes/test_speaker_background_chat_ops.py tests/kria/test_editor_capability_parity.py tests/evals/test_edit_copilot_evals.py",
       "xctests": [
         "KriaTests/SpeakerBackgroundEditorTests/testTheLaneIsNotAnUnsupportedLaneAndAnUnreadableOneIs",
         "KriaTests/SpeakerBackgroundEditorTests/testTheLaneDecodesAndASnapshotWithoutItIsUntouched",
@@ -3019,6 +3019,8 @@
       ],
       "paths": [
         "src/apps/api/app/services/phone_background_sequence.py",
+        "src/apps/api/tests/tasks/test_speaker_background_on_the_word.py",
+        "src/apps/api/tests/fixtures/green3_9bad2d75_backgrounds_on_word.json",
         "src/apps/api/prompts/edit_copilot_ops/speaker_background_windows.txt",
         "src/apps/api/tests/kria/test_speaker_background_windows.py",
         "src/apps/api/tests/routes/test_speaker_background_windows_editor.py",
