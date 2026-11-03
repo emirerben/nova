@@ -255,6 +255,7 @@ import XCTest
     ///   KRIA_TALK_BENCH_SECONDS    = recording length, default 10
     ///   KRIA_TALK_BENCH_IDLE_SECONDS = idle preview length before Record, default 6
     ///   KRIA_TALK_BENCH_REVIEW_TIMEOUT = seconds to wait from Stop to Review (the bake runs in between), default 240
+    ///   KRIA_TALK_BENCH_LIVE_OLD   = all | comma list of fresh, input, async, video: those live-preview levers run their old behaviour
     ///   KRIA_TALK_BENCH_USE_TAKE   = 1 also taps "Use take" (needs a backend that accepts the upload; the fixture does not)
     func testTalkBenchTake() throws {
         #if targetEnvironment(simulator)
@@ -280,9 +281,10 @@ import XCTest
             allow.tap()
             return true
         }
-        let app = launchTalking(bench: ["KRIA_TALK_BENCH": "1", "KRIA_TALK_BENCH_BACKGROUND": background,
-                                        "KRIA_TALK_BENCH_CINEMATIC": cinematicWanted ? "1" : "0"],
-                                speakerBackground: background != "none")
+        var benchEnvironment = ["KRIA_TALK_BENCH": "1", "KRIA_TALK_BENCH_BACKGROUND": background,
+                                "KRIA_TALK_BENCH_CINEMATIC": cinematicWanted ? "1" : "0"]
+        if let old = environment["KRIA_TALK_BENCH_LIVE_OLD"], !old.isEmpty { benchEnvironment["KRIA_TALK_BENCH_LIVE_OLD"] = old }
+        let app = launchTalking(bench: benchEnvironment, speakerBackground: background != "none")
         defer { removeUIInterruptionMonitor(removePermissionMonitor) }
 
         app.buttons["teleprompter-open"].tap()

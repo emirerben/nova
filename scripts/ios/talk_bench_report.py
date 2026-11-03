@@ -27,7 +27,7 @@ from pathlib import Path
 # The first seconds of the idle window include camera start-up and the first Vision model load.
 IDLE_WARMUP_MS = 2000
 # `talk.live.*` series are sliced into the three windows the test produces.
-WINDOWED_SERIES = ["talk.live.consume", "talk.live.segment", "talk.live.render", "talk.live.captureToLayer"]
+WINDOWED_SERIES = ["talk.live.consume", "talk.live.segment", "talk.live.render", "talk.live.captureToLayer", "talk.live.maskOffset"]
 WINDOWED_COUNTERS = ["talk.live.delivered", "talk.live.presented", "talk.live.dropped"]
 # One value per run, the first time the interval appears in the run.
 ONE_SHOT = [
@@ -52,6 +52,8 @@ NOTES = {
                          "Budget at 30 fps is 33.3 ms.",
     "talk.live.captureToLayer": "Sample PTS (host clock) to the moment the layer contents were set. A lower bound on what the creator "
                                 "sees: compositor and panel scan-out come after it.",
+    "talk.live.maskOffset": "Capture time of the frame on screen minus capture time of the frame its mask was computed from. 0 when "
+                            "segmentation runs on the display path; about 33 ms is one frame of trailing edge.",
     "talk.stop.finalize": "Stop request to AVCaptureMovieFileOutput's didFinishRecording callback (the file closing).",
     "talk.stop.finishRecording": "Callback to Review-ready: validation + Cinematic bake + audio level measurement + track count.",
     "talk.hash": "Attributed to the enclosing phase by start/end containment; see hash_in_*.",
