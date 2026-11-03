@@ -233,9 +233,10 @@ enum NativePhoneTalkingSource {
 
     /// Inserted clips from the receipt's `placed` rows, sorted by where the take pauses. `[]` when the variant
     /// has no receipt (an old render, the flag off) or it placed nothing, so those previews are unchanged. Nil
-    /// when any row is malformed, names a clip that is not in the pool or is a speaker, repeats a clip, or
-    /// pauses the take at the same moment as another: a preview that dropped one would be a different video from
-    /// the finished MP4, so the caller falls back to the MP4 instead.
+    /// when any row is malformed, names a clip that is not in the pool or is a speaker, or repeats a clip: a
+    /// preview that dropped one would be a different video from the finished MP4, so the caller falls back to
+    /// the MP4 instead. A pause at second 0 (before any speech) is valid, and clips paused at the same instant
+    /// stay in row order, which is the order they play.
     static func inserts(variant: [String: JSONValue], pool: NativeEditorSourcePool, speakerIndices: [Int]) -> [Insert]? {
         guard let receiptValue = variant[insertReceiptField] else { return [] }
         guard let receipt = receiptValue.objectValue else { return nil }
@@ -245,15 +246,18 @@ enum NativePhoneTalkingSource {
         for row in rows {
             guard let fields = row.objectValue, let mediaID = fields["media_id"]?.stringValue,
                   let at = fields["at_take_s"]?.numberValue, let duration = fields["duration_s"]?.numberValue,
-                  at.isFinite, duration.isFinite, at > 0, duration > 0,
+                  at.isFinite, duration.isFinite, at >= 0, duration > 0,
                   let clip = pool.clips.first(where: { $0.nativeSource?.mediaID == mediaID }),
                   !speakerIndices.contains(clip.clipIndex), !result.contains(where: { $0.clipIndex == clip.clipIndex }) else { return nil }
             let keepAudio = fields["keep_audio"]?.boolValue ?? ((fields["volume"]?.numberValue ?? 1) != 0)
             result.append(Insert(clipIndex: clip.clipIndex, atTake: at, duration: duration, keepAudio: keepAudio))
         }
-        result.sort { $0.atTake < $1.atTake }
-        for (previous, next) in zip(result, result.dropFirst()) where next.atTake - previous.atTake < 1e-6 { return nil }
-        return result
+        return stablySorted(result)
+    }
+
+    /// By pause point; clips at one instant keep the order they came in (`sorted` does not promise that).
+    private static func stablySorted(_ inserts: [Insert]) -> [Insert] {
+        inserts.enumerated().sorted { ($0.element.atTake, $0.offset) < ($1.element.atTake, $1.offset) }.map(\.element)
     }
 
     /// Source-pool cutaways from the receipt's `cutaways` rows
@@ -387,13 +391,24 @@ enum NativePhoneTalkingSource {
     }
 
     /// The first speaker's kept segments with the inserted clips between them. Each insert's point is a second
-    /// of the take (kept seconds, in order): inside a segment it splits it, on a seam it sits between two.
+    /// of the take (kept seconds, in order): inside a segment it splits it, on a seam it sits between two, at 0
+    /// it plays before the take and at its end after it. Clips at one instant play one after another in the
+    /// order given, with no speaker piece between them. A point a hair past the end (the persisted seconds
+    /// are rounded to milliseconds) is the end.
     private static func takePieces(kept: [(start: Double, end: Double)], speaker: Speaker, inserts: [PlacedInsert]) throws -> [Piece] {
         let epsilon = 1e-6
+        let roundingSlack = 0.05
         let takeLength = kept.reduce(0) { $0 + ($1.end - $1.start) }
-        var queue = inserts.sorted { $0.insert.atTake < $1.insert.atTake }
-        guard queue.allSatisfy({ $0.insert.atTake > epsilon && $0.insert.atTake < takeLength - epsilon && $0.sourceDuration.isFinite
+        var queue = inserts.enumerated().sorted { ($0.element.insert.atTake, $0.offset) < ($1.element.insert.atTake, $1.offset) }.map(\.element)
+        guard queue.allSatisfy({ $0.insert.atTake >= 0 && $0.insert.atTake <= takeLength + roundingSlack && $0.sourceDuration.isFinite
             && $0.sourceDuration > 0 && $0.insert.duration > 0 }) else { throw RecipeError.invalidTimeline }
+        queue = queue.map { entry in
+            guard entry.insert.atTake > takeLength else { return entry }
+            var clamped = entry
+            clamped.insert = Insert(clipIndex: entry.insert.clipIndex, atTake: takeLength, duration: entry.insert.duration,
+                                    keepAudio: entry.insert.keepAudio)
+            return clamped
+        }
         func placed(_ entry: PlacedInsert) -> Piece {
             // The server laid the clip out at `duration`; the file may be a hair shorter, never longer.
             Piece(clipIndex: entry.insert.clipIndex, start: 0, end: min(entry.insert.duration, entry.sourceDuration),
@@ -415,7 +430,7 @@ enum NativePhoneTalkingSource {
             }
             pieces.append(Piece(clipIndex: speaker.clipIndex, start: start, end: start + remaining, sourceDuration: speaker.duration))
             cursor += remaining
-            if let next = queue.first, abs(next.insert.atTake - cursor) <= epsilon {
+            while let next = queue.first, abs(next.insert.atTake - cursor) <= epsilon {
                 pieces.append(placed(next))
                 queue.removeFirst()
             }

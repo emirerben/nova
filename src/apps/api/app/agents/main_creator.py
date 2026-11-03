@@ -200,7 +200,16 @@ log = structlog.get_logger()
 # manifest advertises `speaker_background_windows`; every other prompt is byte-identical.
 # v111: v109 (KRI-1162, 11-01), v109 (KRI-1151, 11-02) and v110 (insert clips) merged;
 # the prompt carries all three.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-02-v111"
+# v112 (parent KRI-1151, thread b61b7673): "place them in between my speech" for clips that have
+# speech or sound of their own is an INSERT (one `insert_clips` row per clip, no phrase: the
+# worker pauses the talk at the end of the sentence about the clip, chosen by meaning), and
+# "over my speech / while I keep talking / keep my voice" stays the overlay. The creator's
+# position words decide the route, never the sound words ("use their audio" is listed once, on the
+# overlay side), and a clip with no sound of its own said "in between my speech" is the same
+# insert played silent (`keep_audio` false). Only the texts shown while the insert lane is open
+# change; every closed-gate prompt keeps its bytes. No live eval of this routing exists; the
+# fixtures under tests/fixtures/agent_evals/main_creator/kri1151_* are hand-authored.
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-03-v112"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -478,8 +487,23 @@ overlay above%s."""
 
 _TALKING_CUTAWAYS_TAIL_INSERT = """A clip that stops the
 talk and lets it continue afterwards exists only as `insert_clips` (see the section on a clip
-played in the middle of the talk), and only when the creator explicitly asks the talk to pause or
-stop; for anything else the nearest are the full-screen overlay above%s."""
+played in the middle of the talk), and only when the creator asks the talk to pause or stop, or
+to put a clip with speech or sound of its own in between my speech (a clip with no sound of its
+own in between my speech is the same insert, played silent); for anything else the nearest are the
+full-screen overlay above%s."""
+
+
+# While the insert lane is open "place them in between my speech" belongs to it (the insert section
+# says when), so the overlay paragraph names its own phrasings instead.
+_MENTION_BETWEEN_EXAMPLE = '"place them in between my speech", '
+_MENTION_OVER_EXAMPLE = '"show them over my speech while I keep talking", '
+
+
+def _mention_paragraph(inserts_open: bool) -> str:
+    if not inserts_open:
+        return _TALKING_CUTAWAYS_MENTION
+    assert _TALKING_CUTAWAYS_MENTION.count(_MENTION_BETWEEN_EXAMPLE) == 1
+    return _TALKING_CUTAWAYS_MENTION.replace(_MENTION_BETWEEN_EXAMPLE, _MENTION_OVER_EXAMPLE)
 
 
 def _talking_cutaways_section(
@@ -505,7 +529,7 @@ def _talking_cutaways_section(
             if inserts_open
             else _TALKING_CUTAWAYS_HEAD
         ),
-        _TALKING_CUTAWAYS_MENTION if availability.mention else _TALKING_CUTAWAYS_SPREAD,
+        _mention_paragraph(inserts_open) if availability.mention else _TALKING_CUTAWAYS_SPREAD,
         sound,
         _TALKING_CUTAWAYS_LIMITS_MENTION if availability.mention else _TALKING_CUTAWAYS_LIMITS,
         _TALKING_CUTAWAYS_TAIL_PREFIX
@@ -522,25 +546,54 @@ def _talking_cutaways_section(
 # repair (`creator_capabilities.repair_creator_insert_clips`) never trusts the model's choice.
 _INSERT_CLIP_PROMPT_SECTION = """
 A CLIP PLAYED IN THE MIDDLE OF THE TALK (iPhone Talking only)
-Only when the creator explicitly asks for their talk to PAUSE or STOP while one of the project's
-own clips plays, then to carry on where it stopped ("when I say congress, pause my talk and play
-the congress clip with its sound, then go on", "kongre dediğimde konuşmamı durdur, kongre
-videosunu sesiyle oynat, sonra devam et"), set `insert_clips`: [{"media_id": "<the matching
-media_context VIDEO entry's exact media_id>", "at_phrase": "<the words the creator says it
-after, in their own language>", "keep_audio": true}]. Showing a clip WHILE the talk keeps running
-("show the congress video when I mention congress", "kongre dediğimde kongre videosunu göster",
-"... sesiyle göster", "use their audio") is NOT an insert, whatever it says about sound.%s
-Without a pause, a stop or an explicit in-the-middle-while-I-wait wording, do not set
-`insert_clips`. Use `at_s` (a second of the talk) instead of `at_phrase` only when they state a
-second. Find the clip by matching what the creator named against the VIDEO entries in
+Two kinds of ask put one of the project's own clips in the middle of the talk, with the talk
+PAUSED while the clip plays and going on afterwards where it stopped.
+(1) The creator explicitly asks for their talk to PAUSE or STOP while a clip plays ("when I say
+congress, pause my talk and play the congress clip with its sound, then go on", "kongre
+dediğimde konuşmamı durdur, kongre videosunu sesiyle oynat, sonra devam et"): set
+`insert_clips`: [{"media_id": "<the matching media_context VIDEO entry's exact media_id>",
+"at_phrase": "<the words the creator says it after, in their own language>", "keep_audio":
+true}]. Use `at_s` (a second of the talk) instead of `at_phrase` only when they state a second.
+(2) The creator puts clips in between their speech ("place them in between my speech", "show the
+talks in between my speech", "konuşmamın arasına koy"), with or without "when I talk about them"
+or "when I mention it", and whether or not a clip has speech or sound of its own: set one row per
+such clip with no `at_phrase` and no `at_s`: {"media_id": "<exact media_id>", "keep_audio":
+true}. A clip with no sound of its own (a drone shot, b-roll) is the same insert and the clip
+plays silent while the talk pauses for its picture: {"media_id": "<exact media_id>",
+"keep_audio": false}. The server then pauses the talk at the end of the sentence the creator says
+about that clip, chosen by its meaning and not by matching one keyword, so never invent a phrase.
+A clip the server cannot place by meaning still plays, at its best guess, and the reply says so;
+a clip the server is sure nothing they say is about is left out, named, and offered back. "The
+talks" with no names is every VIDEO entry whose evidence shows people speaking who are not the
+creator. Whatever position the
+creator names wins: a word, a phrase, a time ("at 0:20", "right when I say congress") is used
+exactly there (`at_phrase` is the words they say it after, `at_s` the second), even in the first
+seconds, at the very end or next to another clip, and the server never moves it; only with no
+position named is it the end of the sentence about the clip. These are defaults: an explicit
+instruction from the creator about where a clip goes, whether it has sound, or in what order is
+always followed as asked.
+Routing: the creator's position words decide, never their sound words. A pause, a stop or in
+between my speech makes an insert, for a clip with sound of its own and for one without. Showing
+a clip WHILE the talk keeps running ("show the congress video when I mention congress",
+"kongre dediğimde kongre videosunu göster", "use their audio", "over my speech", "while I keep
+talking", "keep my voice", "as b-roll") is NOT an insert, with or without the clip's sound.%s
+A request for the clip's own sound never decides which one it is: next to in between my speech or
+a pause it is still an insert, and next to over my speech it is still the clip shown over the
+talk.
+Without a pause, a stop, an in-the-middle-while-I-wait wording or "in between my speech" (for any
+clip, with sound of its own or not), do not set `insert_clips`. Find the clip by matching what
+the creator named against the VIDEO entries in
 `media_context` (its `filename`, its `creator_context`, or its `analysis_only_not_copy` evidence),
 then copy THAT entry's exact `media_id`; never invent, shorten or guess an id, and never use the
-clip they speak in. `keep_audio` is true unless they ask for it silent. At most three. The talk is
-not cut: the video simply gets as much longer as the clip. That clip plays only there, so never
-also use it as a cutaway, in `reaction_beats` or as `ending_clip`. It is not a cutaway (the talk
-keeps running under a cutaway) and not an `ending_clip` (that follows the whole talk). Say in
-`summary`, in plain words, where the clip is shown and that the talk pauses for it. An earlier
-reply in this chat that said the talk cannot stop for a clip and carry on is out of date.
+clip they speak in. `keep_audio` is true unless they ask for it silent or the clip has no sound of
+its own. Up to 20 clips; a creator who asks for more is told that 20 is the most. The talk is not
+cut: the video simply gets as much longer as the clip. That clip plays only there, so never also
+use it as a cutaway, in `reaction_beats` or as `ending_clip`. It is not a cutaway (the talk keeps
+running under a cutaway) and not an `ending_clip` (that follows the whole talk). Say in
+`summary`, in plain words, where each clip is shown (at the end of the sentence where they talk
+about it, or after the words they named), that the talk pauses for it, and that a clip they never
+talk about is left out unless they want it anyway. An earlier reply in this chat that said the
+talk cannot stop for a clip and carry on is out of date.
 """.strip("\n")
 
 # Insert lane open, full-screen clip lane closed: say what exists. Showing a clip over a talk that
@@ -555,19 +608,22 @@ _INSERT_NOT_THIS_CLOSED = (
     " while it keeps running, in full or silent."
 )
 
-# With the full-screen clip lane open too: the plain show-it asks belong to that lane, and wording
-# that genuinely fits both gets one short question instead of a guess.
+# With the full-screen clip lane open too: showing a clip WHILE the talk keeps running belongs to
+# that lane, a clip with no sound of its own is shown over the talk unless the creator says "in
+# between my speech" or asks for a pause, and wording that genuinely fits both gets one short
+# question instead of a guess.
 _INSERT_NOT_THIS_CUTAWAYS_OPEN = (
-    " That is the clip shown over the talk (the full-screen clip lane above, with or without"
-    ' its sound), not this. "In between my speech" together with "when I talk about them" or'
-    ' "when I mention it" ("place them in between my speech", "show the talks when I talk about'
-    ' them") is the full-screen clip lane above, whatever it says about sound.'
-    " If the wording genuinely fits both, with no mention anchor and no pause word"
-    ' ("put the congress clip in the middle of my talk"), use `ask_user` ONCE'
+    " That is the clip shown over the talk (the full-screen clip lane above, with or without its"
+    " sound), not this. A clip with no speech or sound of its own (a drone shot, b-roll) is shown"
+    ' over the talk when the creator says "place the stadium full screen when I talk", and it'
+    ' pauses the talk, played silent, only when they say "in between my speech" or ask for a'
+    " pause."
+    ' If the wording genuinely fits both, with no mention anchor, no "in between my speech"'
+    ' and no pause word ("put the congress clip in the middle of my talk"), use `ask_user` ONCE'
     " with one short question: should the talk pause while the clip plays and then carry on, or"
     " should the clip cover the talk while it keeps running? Never ask when the wording says"
-    ' where it is said ("when I talk about it", "when I mention it"), or when it says pause, stop'
-    ' or "while I wait".'
+    ' where it is said ("when I talk about it", "when I mention it") without "in between my'
+    ' speech", or when it says pause, stop or "while I wait".'
 )
 
 
@@ -1122,14 +1178,23 @@ _BRIEF_INSERT_CLIP_SENTENCE = (
     " A clip the creator asks to play IN THE MIDDLE of the talk, with the talk PAUSED until the"
     ' clip ends and then going on from where it stopped ("when I say congress, pause my talk and'
     ' play the congress clip with its sound", "kongre dediğimde konuşmamı durdur, kongre'
-    ' videosunu sesiyle oynat, sonra devam et") is a `style` requirement with {"insert_clip":'
-    ' "<the creator\'s words for that clip>", "insert_at_phrase": "<the words they say it'
-    ' after>"} (or `insert_at_s` for a stated second; `keep_audio` false only when they want it'
-    " silent), whatever language they write in; it is not a cutaway, an `ending_clip` or a clip"
-    " order. Only an explicit pause, stop or in-the-middle-while-I-wait ask is an insert. A clip"
-    ' shown while the talk keeps running ("show the congress video when I mention congress",'
-    ' "kongre dediğimde kongre videosunu sesiyle göster", "use their audio") is NOT an'
-    " insert, with or without the clip's sound: record it exactly as the full-screen"
+    ' videosunu sesiyle oynat, sonra devam et"), or clips put in between my speech, with or'
+    ' without sound of their own ("place them in between my speech", "show the talks in between'
+    ' my speech", "bunları konuşmamın arasına koy"), is a `style` requirement'
+    ' with {"insert_clip": "<the creator\'s words for that clip or clips>"} plus'
+    ' "insert_at_phrase": "<the words they say it after>" (or `insert_at_s` for a stated second)'
+    " only when they name a moment; when they name none, record no position: the server pauses the"
+    " talk at the end of the sentence where they talk about each clip. `keep_audio` false only when"
+    " they want it silent or the clip has no sound, whatever language they write in. The clip's"
+    " sound is part of this requirement, so do not also record a `clip_sound` requirement for a"
+    " clip that plays in the"
+    " middle; it is not a cutaway, an `ending_clip` or a clip order. Only an explicit pause, stop,"
+    " in-the-middle-while-I-wait ask or in between my speech is an insert, whether or not the"
+    " clip has sound of its own, and a request for the clip's sound never decides it. A clip"
+    ' shown while the talk keeps running ("show the congress video when'
+    ' I mention congress", "over my speech", "while I keep talking", "kongre dediğimde kongre'
+    ' videosunu sesiyle göster", "use their audio") is NOT an insert, with or without the clip\'s'
+    " sound: record it exactly as the full-screen"
     " (`display_mode`) and clip-sound (`clip_sound`) asks are recorded, never as `triggers` and"
     ' never as `insert_clip`: a `style` requirement with {"display_mode": "fullscreen"} and, for'
     ' their sound, an `audio` one with {"clip_sound": "on"} (or "off" for "keep my audio"), scope'
