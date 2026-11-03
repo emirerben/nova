@@ -11,6 +11,8 @@ import XCTest
 @MainActor final class SpeakerBackgroundLivePreviewTests: XCTestCase {
     private let room = UIColor(red: 1, green: 0, blue: 1, alpha: 1)
     private let backdrop = UIColor(red: 0, green: 0, blue: 1, alpha: 1)
+    private let green = UIColor(red: 0, green: 1, blue: 0, alpha: 1)
+    private let yellow = UIColor(red: 1, green: 1, blue: 0, alpha: 1)
 
     /// A centred rectangle is "the person"; everything else is the room.
     private final class CenterBoxSegmenter: NativePersonSegmenting {
@@ -33,7 +35,12 @@ import XCTest
         let urls: [String: URL]
     }
 
-    private func scene(seconds: Double = 3) async throws -> Scene {
+    /// A timed background of the Green 3 shape: a pool photo of one colour that takes the fill's place from `start` to `end`.
+    private typealias TimedBackground = (mediaID: String, color: UIColor, start: Double, end: Double)
+
+    /// A speaker clip of `seconds` over the blue fill. `windows` add timed pool photos behind the speaker and
+    /// `speakerFrame` draws the speaker small; with neither it is the plain full-size, fill-only edit.
+    private func scene(seconds: Double = 3, windows: [TimedBackground] = [], speakerFrame: EditorSpeakerFrame? = nil) async throws -> Scene {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
@@ -41,9 +48,7 @@ import XCTest
         let speaker = directory.appendingPathComponent("speaker.mp4")
         try await writeSolidVideo(speaker, color: room, seconds: seconds)
         let picture = directory.appendingPathComponent("background.png")
-        try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).image { context in
-            backdrop.setFill(); context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
-        }.pngData()).write(to: picture)
+        try writeSolidPicture(backdrop, to: picture)
 
         let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original",
             asset: MediaAsset(id: "local", relativePath: "speaker.mp4", fingerprint: try SHA256Fingerprinter().fingerprint(file: speaker), duration: seconds),
@@ -52,16 +57,42 @@ import XCTest
             asset: MediaAsset(id: EditorSpeakerBackground.assetID(forMediaID: "1a2b"), relativePath: "background.png",
                               fingerprint: try SHA256Fingerprinter().fingerprint(file: picture)),
             url: picture, visualGeneration: "7")
+        var mediaSources = [EditorSpeakerBackground.sourceKey(forMediaID: "1a2b"): background]
+        var blocks: [EditorSpeakerBackgroundWindow] = []
+        for (index, window) in windows.enumerated() {
+            let file = directory.appendingPathComponent("window-\(index).png")
+            try writeSolidPicture(window.color, to: file)
+            mediaSources[EditorSpeakerBackground.sourceKey(forMediaID: window.mediaID)] = ResolvedEditorSource(
+                clipIndex: -1, mediaID: window.mediaID,
+                asset: MediaAsset(id: EditorSpeakerBackground.assetID(forMediaID: window.mediaID), relativePath: "window-\(index).png",
+                                  fingerprint: try SHA256Fingerprinter().fingerprint(file: file)),
+                url: file, visualGeneration: "7")
+            blocks.append(EditorSpeakerBackgroundWindow(localID: EditorSpeakerBackground.localID(index), mediaID: window.mediaID,
+                                                        kind: .image, startS: window.start, endS: window.end))
+        }
         var document = EditorDocument(clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: seconds)])
-        document.speakerBackground = EditorSpeakerBackground(mediaID: "1a2b", kind: .image)
+        document.speakerBackground = EditorSpeakerBackground(mediaID: "1a2b", kind: .image, windows: blocks, speakerFrame: speakerFrame)
         let clipID = UUID()
         let clip = EditorClip(id: clipID, assetID: clipID, sourceClipIndex: 0, start: 0, end: seconds, trimIn: 0, trimOut: seconds,
                               sourceDuration: seconds, slotID: "slot")
         let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
         let program = try compiler.compile(document: document, clips: [clip], items: [], sources: [0: source],
-                                           mediaSources: [EditorSpeakerBackground.sourceKey(forMediaID: "1a2b"): background])
+                                           mediaSources: mediaSources)
         return Scene(recipe: program.recipe, urls: program.assetURLs)
     }
+
+    /// The Green 3 edit (KRI-1179): a 4 s speaker over the blue fill, a green window for the first 1.5 s, a yellow one
+    /// for the next 1.5 s (the last second is uncovered, so the fill shows), and the speaker drawn small bottom-right.
+    private func greenThreeScene() async throws -> Scene {
+        try await scene(seconds: 4, windows: [(greenThreeWindowIDs[0], green, 0, 1.5), (greenThreeWindowIDs[1], yellow, 1.5, 3.0)],
+                        speakerFrame: EditorSpeakerFrame.preset("small_bottom_right"))
+    }
+
+    /// Pool media ids of the two windows (the fill is "1a2b").
+    private let greenThreeWindowIDs = ["3c4d", "5e6f"]
+
+    /// What must be behind the speaker at each sampled second of the Green 3 edit.
+    private var greenThreeFrames: [(time: Double, background: UIColor)] { [(0.75, green), (2.25, yellow), (3.5, backdrop)] }
 
     /// The editor names its speaker track after the background's `subjectTrackID`; the engine cuts out only the
     /// clips of that track, so any other name draws the edit with no background at all and no error.
@@ -93,15 +124,7 @@ import XCTest
         useSegmenter(CenterBoxSegmenter())
         let scene = try await scene()
         let live = try await LivePreviewComposition(recipe: scene.recipe, assetURLs: scene.urls)
-        let snapshot = live.exportSnapshot()
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("export-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
-        let movie = directory.appendingPathComponent("current-preview.mp4")
-        let checkpoint = try await AVFoundationLocalExporter(
-            stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none
-        ).export(recipe: snapshot.recipe, assetURLs: snapshot.assetURLs, outputURL: movie)
-        XCTAssertEqual(checkpoint.status, .completed)
+        let movie = try await exportLikeDownload(live)
 
         let generator = AVAssetImageGenerator(asset: AVURLAsset(url: movie))
         generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
@@ -109,6 +132,43 @@ import XCTest
         let corner = pixel(image, fx: 0.04, fy: 0.04), center = pixel(image, fx: 0.5, fy: 0.5)
         XCTAssertTrue(isNear(corner, backdrop), "the exported corner is the background, got \(corner)")
         XCTAssertTrue(isNear(center, room), "the exported speaker stays in the middle, got \(center)")
+    }
+
+    /// The Green 3 shape (KRI-1179: a fill, timed windows and a `small_bottom_right` speaker). The creator opens such an
+    /// edit and the editor preview must show each background in its own seconds with the speaker small in the corner,
+    /// not the room with a full-size speaker. Each moment is checked by three pixels: the top-left corner is that
+    /// moment's background, the canvas middle is that background too (the speaker is not full size), and the corner
+    /// frame holds the speaker.
+    func testTheEditorPreviewOfACornerSpeakerWithTimedBackgroundsShowsEachBackground() async throws {
+        useSegmenter(CenterBoxSegmenter())
+        let scene = try await greenThreeScene()
+        try assertGreenThreeStructure(of: scene)
+
+        let live = try await LivePreviewComposition(recipe: scene.recipe, assetURLs: scene.urls)
+        let generator = AVAssetImageGenerator(asset: live.preview.playerItem.asset)
+        generator.videoComposition = live.preview.playerItem.videoComposition
+        generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+        for frame in greenThreeFrames {
+            let image = try await generator.image(at: CMTime(seconds: frame.time, preferredTimescale: 600)).image
+            assertCornerSpeaker(image, at: frame.time, over: frame.background, in: "preview")
+        }
+    }
+
+    /// The same Green 3 edit (KRI-1179) leaving through the editor's Download and Share route: the exported movie
+    /// keeps the timed backgrounds and the small corner speaker the preview shows.
+    func testExportingTheEditorPreviewOfACornerSpeakerWithTimedBackgroundsDrawsThem() async throws {
+        useSegmenter(CenterBoxSegmenter())
+        let scene = try await greenThreeScene()
+        try assertGreenThreeStructure(of: scene)
+
+        let live = try await LivePreviewComposition(recipe: scene.recipe, assetURLs: scene.urls)
+        let movie = try await exportLikeDownload(live)
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: movie))
+        generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+        for frame in greenThreeFrames {
+            let image = try await generator.image(at: CMTime(seconds: frame.time, preferredTimescale: 600)).image
+            assertCornerSpeaker(image, at: frame.time, over: frame.background, in: "export")
+        }
     }
 
     /// An editor update that changes nothing about the background (a caption keystroke, a chat draft) stays in
@@ -218,6 +278,61 @@ import XCTest
     }
 
     // MARK: - Helpers
+
+    /// The compiled Green 3 recipe is bound the way the engine needs: the speaker track is named after the layer, both windows
+    /// and the corner frame survived `EditorSpeakerBackground.layer`, and the fill and every window have bytes in the recipe.
+    private func assertGreenThreeStructure(of scene: Scene, file: StaticString = #filePath, line: UInt = #line) throws {
+        let layer = try XCTUnwrap(scene.recipe.speakerBackground, "the recipe has a background layer", file: file, line: line)
+        XCTAssertTrue(scene.recipe.tracks.contains { $0.id == layer.subjectTrackID && $0.kind == .video },
+                      "tracks: \(scene.recipe.tracks.map(\.id)), background bound to \(layer.subjectTrackID)", file: file, line: line)
+        XCTAssertFalse(AVPlayerPreviewComposer.speakerClipIDs(in: scene.recipe).isEmpty, "no clip would be cut out", file: file, line: line)
+        XCTAssertEqual(layer.windows?.count, 2, "both windows reach the layer", file: file, line: line)
+        XCTAssertEqual(layer.windows?.map(\.assetID), greenThreeWindowIDs.map(EditorSpeakerBackground.assetID(forMediaID:)),
+                       "each window names its own photo", file: file, line: line)
+        XCTAssertEqual(layer.windows?.map(\.start), [0, 1.5], "window starts", file: file, line: line)
+        XCTAssertEqual(layer.windows?.map(\.end), [1.5, 3.0], "window ends", file: file, line: line)
+        XCTAssertEqual(layer.speakerFrame, SpeakerFrame(widthFraction: 0.42, xFraction: 0.76, yFraction: 0.80),
+                       "the corner frame reaches the layer", file: file, line: line)
+        let manifestIDs = Set((scene.recipe.assetManifest?.assets ?? []).map(\.id))
+        for assetID in [layer.assetID] + (layer.windows ?? []).map(\.assetID) {
+            XCTAssertNotNil(scene.urls[assetID], "\(assetID) has no file in assetURLs", file: file, line: line)
+            XCTAssertTrue(scene.recipe.assets.contains { $0.id == assetID }, "\(assetID) is not in the recipe's assets", file: file, line: line)
+            XCTAssertTrue(manifestIDs.contains(assetID), "\(assetID) is not in the recipe's asset manifest", file: file, line: line)
+        }
+    }
+
+    /// One Green 3 frame: the top-left corner and the canvas middle both show `background` (so the speaker is not full
+    /// size), and the matted speaker, magenta room colour, is drawn in the `small_bottom_right` frame.
+    /// (0.76, 0.80) is that frame's centre, and the centred person box of `CenterBoxSegmenter` (the middle half of the
+    /// canvas, cut out at full size and only then scaled by 0.42 and moved into the frame, `RecipeVideoCompositor.framed`)
+    /// has its own centre there, with 0.1 of the canvas to spare on every side, so no mask edge or encode blur reaches it.
+    private func assertCornerSpeaker(_ image: CGImage, at time: Double, over background: UIColor, in name: String,
+                                     file: StaticString = #filePath, line: UInt = #line) {
+        let corner = pixel(image, fx: 0.04, fy: 0.04), middle = pixel(image, fx: 0.5, fy: 0.5), speaker = pixel(image, fx: 0.76, fy: 0.80)
+        XCTAssertTrue(isNear(corner, background), "\(name) at \(time) s: the top-left corner is that second's background, got \(corner)", file: file, line: line)
+        XCTAssertTrue(isNear(middle, background), "\(name) at \(time) s: the middle is the background, so the speaker is small, got \(middle)", file: file, line: line)
+        XCTAssertTrue(isNear(speaker, room), "\(name) at \(time) s: the speaker is drawn bottom-right, got \(speaker)", file: file, line: line)
+    }
+
+    /// What the editor's Download and Share route exports: the live preview's frozen recipe through the real exporter.
+    private func exportLikeDownload(_ live: LivePreviewComposition) async throws -> URL {
+        let snapshot = live.exportSnapshot()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("export-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        let movie = directory.appendingPathComponent("current-preview.mp4")
+        let checkpoint = try await AVFoundationLocalExporter(
+            stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none
+        ).export(recipe: snapshot.recipe, assetURLs: snapshot.assetURLs, outputURL: movie)
+        XCTAssertEqual(checkpoint.status, .completed)
+        return movie
+    }
+
+    private func writeSolidPicture(_ color: UIColor, to url: URL) throws {
+        try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).image { context in
+            color.setFill(); context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+        }.pngData()).write(to: url)
+    }
 
     private func pixel(_ image: CGImage, fx: Double, fy: Double) -> [Int] {
         var bytes = [UInt8](repeating: 0, count: 4)
