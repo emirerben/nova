@@ -282,3 +282,18 @@ def test_capture_result_requires_consistent_status():
         CaptureResult(status="ready")
     with pytest.raises(ValidationError):
         CaptureResult(status="unavailable")
+
+
+def test_dispatch_settings_preserve_actual_job_strategy_independently_of_approval(rows):
+    import json
+
+    rows.job.all_candidates = {
+        "creator_strategy": {"target_duration_s": 3, "opening_title": "Keep words"}
+    }
+    packet = build_render_review_context(rows, verified_artifact=receipt(rows)).packet
+    assert json.loads(packet.dispatch_settings_json) == {
+        "target_duration_s": 3,
+        "opening_title": "Keep words",
+    }
+    rows.job.all_candidates["creator_strategy"]["target_duration_s"] = 20
+    assert json.loads(packet.dispatch_settings_json)["target_duration_s"] == 3

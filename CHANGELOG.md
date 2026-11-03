@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.18.0] - 2026-11-03
+
+### Fixed
+- fix(kria): green-screen backgrounds land on the words that name them (KRI-1175) (#2091) <!-- release-pr: 2091 -->
+
+## [0.84.17.0] - 2026-11-03
+
+### Changed
+- test(ios): pin the editor preview of a corner speaker with timed backgrounds (KRI-1179) (#2087) <!-- release-pr: 2087 -->
+
+## [0.84.16.0] - 2026-11-03
+
+### Changed
+- fix(kria): honest restart-cut promise + one retake predicate, ready to enable consented retakes (KRI-1176) (#2090) <!-- release-pr: 2090 -->
+
+## [0.84.15.0] - 2026-11-03
+
+### Changed
+- feat(kria): send review frames to OpenAI under a reserved, capped budget (KRI-1171) (#2077) <!-- release-pr: 2077 -->
+
+## [0.84.14.0] - 2026-11-03
+
+### Changed
+- feat(kria): admit one review per published generation and extract bounded frame evidence (KRI-1171) (#2076) <!-- release-pr: 2076 -->
+
 ## [0.84.13.0] - 2026-11-03
 
 ### Changed

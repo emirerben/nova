@@ -12,7 +12,7 @@ import hashlib
 import json
 import math
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -32,11 +32,16 @@ from app.config import settings
 
 log = structlog.get_logger()
 
-PRICE_VERSION = "multi-provider-2026-10-19.v5"
+PRICE_VERSION = "multi-provider-2026-11-02.v6"
 DEFAULT_MAX_OUTPUT_TOKENS = 8_192
 _IMAGE_TILE_SIZE_PX = 768
 _IMAGE_TOKENS_PER_TILE = 258
 _IMAGE_TOKEN_FLOOR = 2_000
+# OpenAI bills image input as 32px patches at an inferred 1.2x for gpt-6.1-sol (undocumented);
+# every image reserves at least this many tokens, which also bounds the 2,500-patch cap.
+_OPENAI_IMAGE_PATCH_PX = 32
+_OPENAI_IMAGE_PATCH_MULTIPLIER = 1.2
+_OPENAI_IMAGE_TOKEN_CEILING = 3_000
 _COUNTED_STATUSES = ("reserved", "provider_started", "settled", "unknown")
 _TEST_PURPOSES = frozenset({"live_eval", "provider_smoke"})
 _EXPERIMENT_PURPOSES = frozenset(
@@ -45,6 +50,8 @@ _EXPERIMENT_PURPOSES = frozenset(
 _OPTIONAL_PURPOSES = frozenset({"optional_background", "style_vision"})
 # KRI-756: ledger feature name of the suggestion-chip wording agent (nova.chat.suggester).
 _SUGGESTER_FEATURE = "chip_suggester"
+# KRI-1171: ledger feature name of the paid intent review.
+_INTENT_REVIEW_FEATURE = "intent_review"
 _CANARY_PURPOSES = frozenset({"release_canary", "internal_canary"})
 
 # Standard paid-tier USD per one million tokens, verified against the official
@@ -232,6 +239,22 @@ def calculate_cost_usd(model: str, usage: UsageMeter) -> float:
     return float(cost.quantize(Decimal("0.000001")))
 
 
+def _openai_image_tokens(count: int, dims: Sequence[tuple[int, int]] | None) -> int:
+    known = list(dims or ())
+    tokens = sum(
+        max(
+            math.ceil(
+                math.ceil(max(1, int(width)) / _OPENAI_IMAGE_PATCH_PX)
+                * math.ceil(max(1, int(height)) / _OPENAI_IMAGE_PATCH_PX)
+                * _OPENAI_IMAGE_PATCH_MULTIPLIER
+            ),
+            _OPENAI_IMAGE_TOKEN_CEILING,
+        )
+        for width, height in known
+    )
+    return tokens + max(0, max(1, int(count)) - len(known)) * _OPENAI_IMAGE_TOKEN_CEILING
+
+
 def estimate_call_cost_usd(
     *,
     model: str,
@@ -242,6 +265,7 @@ def estimate_call_cost_usd(
     media_count: int = 1,
     media_width_px: int | None = None,
     media_height_px: int | None = None,
+    media_dims: Sequence[tuple[int, int]] | None = None,
 ) -> float:
     """Conservative preflight estimate from the media actually sent."""
 
@@ -260,6 +284,10 @@ def estimate_call_cost_usd(
         elif media_mime.startswith("audio/"):
             duration = max(0.1, float(media_duration_s)) if media_duration_s is not None else 600.0
             media_tokens = int(duration * 40)
+        elif media_mime.startswith("image/") and _is_openai_model(model):
+            media_tokens = _openai_image_tokens(
+                len(media_dims) if media_dims else media_count, media_dims
+            )
         elif media_mime.startswith("image/"):
             # Gemini tokenizes larger images in tiles. Preserve the historical
             # 2k/image floor for small thumbnails while allowing callers that
@@ -298,6 +326,12 @@ def estimate_call_cost_usd(
         ),
     )
     return max(0.000001, estimate)
+
+
+def _is_openai_model(model: str) -> bool:
+    from app.agents._text_providers import paid_provider  # noqa: PLC0415
+
+    return paid_provider(model) == "openai"
 
 
 def effective_max_output_tokens(max_output_tokens: int | None) -> int:
@@ -393,6 +427,16 @@ def _resolve_creator(
             {"id": str(session_id)},
         ).scalar_one_or_none()
     return creator_id, job_id, session_id
+
+
+def is_internal_creator(creator_id: uuid.UUID | str | None) -> bool:
+    """Does this account hold an active internal grant (and so need canary attribution)?"""
+
+    from app.database import sync_engine  # noqa: PLC0415
+
+    parsed = _uuid_or_none(str(creator_id)) if creator_id else None
+    with sync_engine.connect() as conn:
+        return _is_internal(conn, parsed)
 
 
 def _is_internal(conn: Any, creator_id: uuid.UUID | None) -> bool:
@@ -627,11 +671,15 @@ _GENERATED_CAPABILITIES = {
     "generated_image_edit": "image",
     "generated_narration": "narration",
 }
+_FEATURE_CAPABILITIES = {"intent_review": "intent_review"}
+_ALWAYS_ENFORCED_CAPABILITIES = frozenset({"image", "narration", "intent_review"})
 _CREDIT_PROVIDERS = frozenset({"openai", "anthropic"})
 
 
 def _credit_capability(request: PaidCallRequest) -> str | None:
-    inferred = _GENERATED_CAPABILITIES.get(request.feature)
+    inferred = _GENERATED_CAPABILITIES.get(request.feature) or _FEATURE_CAPABILITIES.get(
+        request.feature
+    )
     if (
         inferred is None
         and (request.ctx.usage_purpose or "").strip().lower() in _TEST_PURPOSES
@@ -641,10 +689,10 @@ def _credit_capability(request: PaidCallRequest) -> str | None:
         inferred = "evaluation"
     capability = request.capability or inferred
     if capability is not None and (
-        capability not in {"image", "narration", "evaluation"}
+        capability not in {"image", "narration", "evaluation", "intent_review"}
         or (inferred is not None and capability != inferred)
         or request.provider not in _CREDIT_PROVIDERS
-        or (capability in {"image", "narration"} and request.provider != "openai")
+        or (capability in {"image", "narration", "intent_review"} and request.provider != "openai")
     ):
         raise AiCostControlPolicyError(scope="credit:capability", reason="invalid_capability")
     if capability in {"image", "narration"}:
@@ -690,6 +738,7 @@ def _credit_spend(
               AND (:capability IS NULL OR
                    CASE WHEN feature IN ('generated_image', 'generated_image_edit') THEN 'image'
                         WHEN feature = 'generated_narration' THEN 'narration'
+                        WHEN feature = 'intent_review' THEN 'intent_review'
                         WHEN usage_purpose IN ('live_eval', 'provider_smoke') AND
                              ((provider = 'openai' AND requested_model = 'gpt-6.1-sol') OR
                               (provider = 'anthropic' AND requested_model = 'claude-sonnet-5-5'))
@@ -709,7 +758,7 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
     """
 
     capability = _credit_capability(request)
-    if not settings.ai_cost_control_enabled and capability not in {"image", "narration"}:
+    if not settings.ai_cost_control_enabled and capability not in _ALWAYS_ENFORCED_CAPABILITIES:
         return None
     if not math.isfinite(request.estimated_cost_usd) or request.estimated_cost_usd < 0:
         raise AiCostControlPolicyError(scope="credit:estimate", reason="invalid_cost_estimate")
@@ -849,6 +898,8 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                 scopes.append(f"director:{creator_id}:{now.date().isoformat()}")
             if request.feature == _SUGGESTER_FEATURE and creator_id is not None:
                 scopes.append(f"suggester:{creator_id}:{now.date().isoformat()}")
+            if request.feature == _INTENT_REVIEW_FEATURE and creator_id is not None:
+                scopes.append(f"intent_review:{creator_id}:{now.date().isoformat()}")
             if test_run_id:
                 scopes.append(f"test_run:{test_run_id}")
             for scope in sorted(scopes):
@@ -1040,6 +1091,29 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                 if used >= settings.kria_suggester_daily_limit_per_user:
                     _reject(
                         scope="chip_suggester:user_day",
+                        reset_at=_next_day(now),
+                        cached_behavior_available=request.cached_behavior_available,
+                    )
+
+            if request.feature == _INTENT_REVIEW_FEATURE and creator_id is not None:
+                used = int(
+                    conn.execute(
+                        text(
+                            "SELECT COUNT(*) FROM ai_cost_reservations "
+                            "WHERE creator_id = :creator_id AND feature = :feature "
+                            "AND created_at >= :day_start "
+                            "AND status IN ('reserved','provider_started','settled','unknown')"
+                        ),
+                        {
+                            "creator_id": str(creator_id),
+                            "feature": _INTENT_REVIEW_FEATURE,
+                            "day_start": datetime(now.year, now.month, now.day, tzinfo=UTC),
+                        },
+                    ).scalar_one()
+                )
+                if used >= settings.kria_intent_review_daily_limit_per_user:
+                    _reject(
+                        scope="intent_review:user_day",
                         reset_at=_next_day(now),
                         cached_behavior_available=request.cached_behavior_available,
                     )
@@ -1275,6 +1349,56 @@ def _transition_reservation(
             target_status=status,
             error_type=type(exc).__name__,
         )
+
+
+def reservation_for_key(idempotency_key: str) -> tuple[ReservationReceipt, str] | None:
+    """Rebuild the receipt and ledger status of a prior reservation for crash recovery."""
+
+    from app.database import sync_engine  # noqa: PLC0415
+
+    with sync_engine.connect() as conn:
+        row = (
+            conn.execute(
+                text(
+                    "SELECT id, status, environment, usage_purpose, feature, requested_model, "
+                    "estimated_cost_usd, price_version FROM ai_cost_reservations "
+                    "WHERE idempotency_key = :key"
+                ),
+                {"key": idempotency_key},
+            )
+            .mappings()
+            .one_or_none()
+        )
+    if row is None:
+        return None
+    return (
+        ReservationReceipt(
+            id=uuid.UUID(str(row["id"])),
+            environment=row["environment"],
+            usage_purpose=row["usage_purpose"],
+            feature=row["feature"],
+            requested_model=row["requested_model"],
+            estimated_cost_usd=float(row["estimated_cost_usd"]),
+            price_version=row["price_version"],
+        ),
+        row["status"],
+    )
+
+
+def settled_cost_for_key(idempotency_key: str) -> float | None:
+    """The cost the ledger booked for a settled reservation; None until it settles."""
+
+    from app.database import sync_engine  # noqa: PLC0415
+
+    with sync_engine.connect() as conn:
+        value = conn.execute(
+            text(
+                "SELECT settled_cost_usd FROM ai_cost_reservations "
+                "WHERE idempotency_key = :key AND status = 'settled'"
+            ),
+            {"key": idempotency_key},
+        ).scalar_one_or_none()
+    return None if value is None else float(value)
 
 
 def release_paid_call(receipt: ReservationReceipt | None) -> None:
