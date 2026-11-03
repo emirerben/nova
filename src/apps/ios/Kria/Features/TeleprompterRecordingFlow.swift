@@ -419,6 +419,7 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
                 preview.setBackground(provider)
                 self.livePreview = preview
                 self.camera.setLiveFrameConsumer(preview)
+                Perf.count("talk.live.backgroundAttached")
             } catch is CancellationError {
             } catch {
                 guard let self, self.background?.reference == choice.reference else { return }
