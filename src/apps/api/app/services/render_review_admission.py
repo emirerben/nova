@@ -246,6 +246,9 @@ def _recover_admission_demands(deadline=None):
                 ):
                     _set_admission_marker(execution, status="stale")
                     db.commit()
+            except SoftTimeLimitExceeded:
+                db.rollback()
+                raise
             except Exception:
                 # Database outages retain the demand; the next bounded scan can retry.
                 db.rollback()

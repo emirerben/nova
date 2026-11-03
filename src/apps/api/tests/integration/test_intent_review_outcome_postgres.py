@@ -227,7 +227,6 @@ async def test_wrong_footage_is_a_suggestion_and_the_draft_is_untouched(
 async def test_a_misspelt_title_is_a_candidate_but_a_review_tier_never_repairs_it(
     approved_publication, real_builder, monkeypatch
 ):
-    monkeypatch.setattr(settings, "kria_intent_review_repair_enabled", True)
     rid = await ready(approved_publication, monkeypatch)
     assert review_row(rid).tier == "review"
     edit_packet(rid, draft_edit(lambda element: element.update(text="Bef0re")))

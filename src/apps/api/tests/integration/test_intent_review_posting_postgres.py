@@ -294,10 +294,10 @@ async def test_a_wording_doubt_posts_its_receipt_first_and_then_one_question(
     assert (receipt.event_type, question.event_type) == ("assistant_response", "assistant_question")
     assert receipt.sequence < question.sequence
     assert question.content == (
-        "The text on screen doesn't match what you asked for. Want me to change it?"
+        'The text on screen doesn\'t match what you asked for. Want me to change it to "Before"?'
     )
-    assert question.payload["options"] == ["Change it", "Keep it"]
-    assert question.payload["recommended_option"] == "Change it"
+    assert question.payload["options"] == ['Change it to "Before"', "Keep it"]
+    assert question.payload["recommended_option"] == 'Change it to "Before"'
     row = review_row(rid)
     assert (row.receipt_event_id, row.question_event_id) == (receipt.id, question.id)
     assert posted_decision(rid) == {"needs_confirmation": "posted"}
@@ -393,7 +393,7 @@ async def test_an_abandoned_repair_posts_nothing(drifted, repair_on, monkeypatch
 
     end_the_approval("denied")(rid)
     seen = seen_ids(thread)
-    repair.recover_repair_staged()
+    await asyncio.to_thread(repair.recover_repair_staged)
     assert review_row(rid).status == "repair_abandoned"
     assert flow.recover_intent_reviews() >= 0
     assert reviewer_posts(thread, seen) == []
