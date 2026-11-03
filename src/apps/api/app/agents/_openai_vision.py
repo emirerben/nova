@@ -45,7 +45,7 @@ class VisionResult:
     model_used: str | None = None
 
 
-def _validate_frames(frames: Sequence[bytes]) -> None:
+def validate_frames(frames: Sequence[bytes]) -> None:
     if not 1 <= len(frames) <= MAX_IMAGES:
         raise TerminalError("media review requires one to six frames")
     for frame in frames:
@@ -90,7 +90,7 @@ class OpenAIVisionClient:
         *,
         timeout_s: float = DEFAULT_TIMEOUT_S,
     ) -> VisionResult:
-        _validate_frames(frames)
+        validate_frames(frames)
         content: list[dict[str, Any]] = [{"type": "input_text", "text": prompt}]
         content.extend(
             {

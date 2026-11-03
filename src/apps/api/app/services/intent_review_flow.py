@@ -31,8 +31,13 @@ import structlog
 from sqlalchemy import func, literal, null, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 
-from app.agents._openai_vision import MAX_IMAGE_BYTES, MAX_IMAGES, VISION_MODEL, OpenAIVisionClient
-from app.agents._runtime import RunContext
+from app.agents._openai_vision import (
+    MAX_IMAGES,
+    VISION_MODEL,
+    OpenAIVisionClient,
+    validate_frames,
+)
+from app.agents._runtime import RunContext, TerminalError
 from app.config import settings
 from app.database import sync_session
 from app.kria.intent_review_tier import intent_review_tier, lower_tier, tier_rank
@@ -61,7 +66,6 @@ RECOVERY_LEASE_S = 60
 REPUBLISH_AFTER_S = 30
 MAX_REVIEW_ATTEMPTS = 2
 MAX_RAW_OUTPUT_CHARS = 16_384
-_JPEG_SOI = b"\xff\xd8\xff"
 _URLSAFE = str.maketrans("-_", "+/")
 _OWNERSHIP_REASONS = frozenset(
     {"authority_changed", "approved_binding_missing_or_changed", "authority_missing"}
@@ -324,11 +328,13 @@ def decode_frames(claim: Claim) -> list[FrameView]:
             width, height = int(frame["width"]), int(frame["height"])
         except (KeyError, TypeError, ValueError, AttributeError, binascii.Error):
             raise _Unusable("media_corrupt") from None
-        if not data.startswith(_JPEG_SOI) or len(data) > MAX_IMAGE_BYTES:
-            raise _Unusable("media_corrupt")
         if not (1 <= width <= 640 and 1 <= height <= 640):
             raise _Unusable("media_corrupt")
         decoded.append((data, frame))
+    try:
+        validate_frames([data for data, _ in decoded])
+    except TerminalError:
+        raise _Unusable("media_corrupt") from None
     views = []
     for index, (data, frame) in enumerate(decoded):
         digest = hashlib.sha256(data).hexdigest()
