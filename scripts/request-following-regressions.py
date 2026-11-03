@@ -41,6 +41,8 @@ SUITES = (
     "tests/evals/test_intent_review_evals.py",
     "tests/kria/test_intent_review_copy.py",
     "tests/integration/test_intent_review_posting_postgres.py",
+    "tests/kria/test_intent_review_qualification.py",
+    "tests/integration/test_intent_review_qualification_postgres.py",
 )
 CLAIM = (
     "Deterministic regression execution and recorded-evidence checks only. "

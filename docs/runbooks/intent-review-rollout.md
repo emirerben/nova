@@ -62,13 +62,7 @@ Never reuse `CREDIT_QUALITY_REVIEW_*`. Those flags gate the Anthropic online jud
    FROM creator_generation_reviews ORDER BY created_at DESC LIMIT 20;
    ```
    Rows reach `evidence_ready` within a minute. `unavailable` with `artifact_or_decoder_unavailable` or `media_corrupt` is a decoder or storage problem, not a review problem.
-2. **Qualify the model on real frames.** Needs the owner's explicit approval: at most $2 per approved run id and $5 in total. This change authorises no spend and none has been run. The preregistered cases are one real render and four frozen-context variants, each run twice:
-   - correct edit: `no_findings`, at least one `met`, no high-confidence `unmet`;
-   - wrong footage (a `select` ask describing footage that is not there): `suggestion` with valid evidence frames and **no repair**;
-   - wrong wording (a creator-confirmed text that differs from the draft): a `restore_exact_text` disposition, and staging it on Postgres changes exactly the one element's text, byte for byte, inside the allowed paths;
-   - timing (a text span that outlives the video): a `fit_text_to_duration` disposition whose staged span ends at least 0.3 s before the video does;
-   - an audio ask in the brief is never issued and no receipt claims it.
-   Stop on any `invalid_output`, any repair on the wrong-footage case, or any call that settles above $0.10. Record the settled cost per call (it calibrates the image token estimate) and the latency p50 and p95. The recorded replies replace the hand-written `raw_text` of the golden fixtures.
+2. **Qualify the model on real frames.** Needs the owner's explicit approval: at most $2 per approved run id and $5 in total. This change authorises no spend and none has been run. The preregistration (model, cases, predicates, bars, decoys, stop rules, spend table, exact commands, what to inspect) is [the qualification](../reviews/intent-review/QUALIFICATION.md); the harness is `python -m app.cli.qualify_intent_review`, zero cost by default and refusing to call a provider without `--execute`, an approved run id and maximum, and a pinned preregistration digest. A three-call pilot gates the seven-call full run. Four controls on generated footage, each twice: a correct edit (no findings), wrong footage (flagged, no repair), a wording drift with nothing confirmed (a question, never a rewrite) and a title window that outlives the video (the one eligible fit), plus an in-frame injection decoy. Stop on any void reply, any provider outcome other than ok, or any call that settles above $0.10. The recorded replies replace the hand-written `raw_text` of the golden fixtures.
 3. **Paid review.** Step 3, operator account only. Read the receipts in the app and the rows (`review` holds the catalog, the stored reply, the findings, the disposition and the provenance). Check the ledger:
    ```sql
    SELECT status, estimated_cost_usd, settled_cost_usd, usage_purpose, release_canary_id

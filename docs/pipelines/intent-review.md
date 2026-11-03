@@ -80,5 +80,6 @@ A follow-up review of a repaired render (`parent_review_id` set) is capped at ti
 | Posting on the real thread: once, quiet-thread rules, crash sweep, settlement, brief isolation | `tests/integration/test_intent_review_posting_postgres.py` |
 | Judged outcomes, repair, lifecycle | `tests/integration/test_intent_review_{outcome,repair,lifecycle}_postgres.py` |
 | Structure of the model's replies | `tests/evals/test_intent_review_evals.py` (free replay; detection is proven only by the live qualification run) |
+| The paid qualification run's harness: spend table, gates, scorer, execute path against the cost ledger | `tests/kria/test_intent_review_qualification.py`, `tests/integration/test_intent_review_qualification_postgres.py`; preregistration [`QUALIFICATION.md`](../reviews/intent-review/QUALIFICATION.md) |
 
 Run on a scratch database: `bash scripts/dev/test-db.sh`, then `cd src/apps/api && pytest tests/kria/test_intent_review_copy.py tests/integration/test_intent_review_posting_postgres.py`. The Linux-only frame decoder is qualified by `request-following-regressions.yml`.
