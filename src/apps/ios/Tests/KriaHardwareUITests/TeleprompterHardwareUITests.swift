@@ -247,6 +247,7 @@ import XCTest
     ///   KRIA_TALK_BENCH_BACKGROUND = none | photo | video
     ///   KRIA_TALK_BENCH_CINEMATIC  = 0 | 1
     ///   KRIA_TALK_BENCH_SECONDS    = recording length, default 10
+    ///   KRIA_TALK_BENCH_IDLE_SECONDS = idle preview length before Record, default 6
     ///   KRIA_TALK_BENCH_USE_TAKE   = 1 also taps "Use take" (needs a backend that accepts the upload; the fixture does not)
     func testTalkBenchTake() throws {
         #if targetEnvironment(simulator)
@@ -259,6 +260,7 @@ import XCTest
         let background = environment["KRIA_TALK_BENCH_BACKGROUND"] ?? "none"
         let cinematicWanted = environment["KRIA_TALK_BENCH_CINEMATIC"] == "1"
         let seconds = TimeInterval(environment["KRIA_TALK_BENCH_SECONDS"] ?? "") ?? 10
+        let idleSeconds = TimeInterval(environment["KRIA_TALK_BENCH_IDLE_SECONDS"] ?? "") ?? 6
         XCTAssertTrue(["none", "photo", "video"].contains(background), "KRIA_TALK_BENCH_BACKGROUND is none, photo or video.")
 
         let app = launchTalking(bench: ["KRIA_TALK_BENCH": "1", "KRIA_TALK_BENCH_BACKGROUND": background,
@@ -296,7 +298,7 @@ import XCTest
             XCTAssertTrue(live.waitForExistence(timeout: 30), "The \(background) background should be drawing behind the camera.")
         }
         // Idle preview: the part of the live path that runs before any recording starts.
-        wait(seconds: 6)
+        wait(seconds: idleSeconds)
 
         record.tap()
         let stop = app.buttons["teleprompter-stop-recording"]
