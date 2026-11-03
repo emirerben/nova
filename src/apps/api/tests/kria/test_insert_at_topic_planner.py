@@ -150,7 +150,8 @@ def test_t3_in_between_my_speech_for_a_clip_with_its_own_sound_is_an_insert_at_t
     assert "no `at_phrase` and no `at_s`" in insert
     assert "end of the sentence the creator says about that clip" in insert
     assert "chosen by its meaning" in insert
-    assert "left out and reported" in insert
+    assert "still plays, at its best guess" in insert
+    assert "left out, named, and offered back" in insert
     assert "whatever it says about sound" not in insert
     assert "is the full-screen clip lane above, whatever" not in insert
 

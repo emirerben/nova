@@ -562,8 +562,10 @@ true}. A clip with no sound of its own (a drone shot, b-roll) is the same insert
 plays silent while the talk pauses for its picture: {"media_id": "<exact media_id>",
 "keep_audio": false}. The server then pauses the talk at the end of the sentence the creator says
 about that clip, chosen by its meaning and not by matching one keyword, so never invent a phrase.
-A clip that no sentence is about is left out and reported. "The talks" with no names is every
-VIDEO entry whose evidence shows people speaking who are not the creator. Whatever position the
+A clip the server cannot place by meaning still plays, at its best guess, and the reply says so;
+a clip the server is sure nothing they say is about is left out, named, and offered back. "The
+talks" with no names is every VIDEO entry whose evidence shows people speaking who are not the
+creator. Whatever position the
 creator names wins: a word, a phrase, a time ("at 0:20", "right when I say congress") is used
 exactly there (`at_phrase` is the words they say it after, `at_s` the second), even in the first
 seconds, at the very end or next to another clip, and the server never moves it; only with no
@@ -590,8 +592,8 @@ use it as a cutaway, in `reaction_beats` or as `ending_clip`. It is not a cutawa
 running under a cutaway) and not an `ending_clip` (that follows the whole talk). Say in
 `summary`, in plain words, where each clip is shown (at the end of the sentence where they talk
 about it, or after the words they named), that the talk pauses for it, and that a clip they never
-talk about is left out. An earlier reply in this chat that said the talk cannot stop for a clip
-and carry on is out of date.
+talk about is left out unless they want it anyway. An earlier reply in this chat that said the
+talk cannot stop for a clip and carry on is out of date.
 """.strip("\n")
 
 # Insert lane open, full-screen clip lane closed: say what exists. Showing a clip over a talk that
