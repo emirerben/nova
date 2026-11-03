@@ -291,5 +291,14 @@ def test_without_a_caption_ask_the_first_draft_is_byte_identical(monkeypatch):
             "phone_text_style",
         )
     }
-    assert fields == _NO_ASK_GOLDEN
+    # The measured x is font-raster dependent (macOS 0.102546 vs CI Linux 0.102467): every
+    # other field is exact, the fractions within a pixel.
+    style, golden_style = fields.pop("caption_editor_style"), _NO_ASK_GOLDEN["caption_editor_style"]
+    assert fields == {k: v for k, v in _NO_ASK_GOLDEN.items() if k != "caption_editor_style"}
+    assert style.keys() == golden_style.keys()
+    assert {k: v for k, v in style.items() if not k.endswith("_frac")} == {
+        k: v for k, v in golden_style.items() if not k.endswith("_frac")
+    }
+    for key in ("position_x_frac", "position_y_frac", "max_width_frac"):
+        assert style[key] == pytest.approx(golden_style[key], abs=1 / 1080), key
     assert "caption_look_receipt" not in variant
