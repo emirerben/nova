@@ -275,7 +275,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         var speaker = CIImage(color: .clear).cropped(to: instruction.canvas)
         for layer in speakers { speaker = try composeVideoLayer(layer, onto: speaker, instruction: instruction, request: request, time: time) }
         let key = speakers.map { $0.clipID ?? String($0.trackID ?? -1) }.joined(separator: "|")
-        switch matte.answer(for: speaker, at: time, canvas: instruction.canvas, clipKey: key) {
+        switch matte.answer(for: speaker, at: time, canvas: instruction.canvas, clipKey: key, backgroundStaysDrawn: instruction.speakerFrame != nil) {
         case .cutout(let mask):
             try compose(background)
             // The mask was computed on the full-size speaker layer; only then is the cut-out moved into its frame (S27).

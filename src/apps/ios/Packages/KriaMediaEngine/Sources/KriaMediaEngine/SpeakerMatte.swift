@@ -87,7 +87,9 @@ final class SpeakerMatte: @unchecked Sendable {
     }
 
     /// `speaker` is the speaker layer alone, after its transform, over a transparent canvas.
-    func answer(for speaker: CIImage, at time: Double, canvas: CGRect, clipKey: String) -> Answer {
+    /// `backgroundStaysDrawn`: the caller draws the background under an `.original` answer too (a corner speaker),
+    /// which the trace must not count as a hidden background.
+    func answer(for speaker: CIImage, at time: Double, canvas: CGRect, clipKey: String, backgroundStaysDrawn: Bool = false) -> Answer {
         lock.lock(); defer { lock.unlock() }
         // A cut to another speaker clip or a seek must never inherit the previous silhouette (S7).
         let cutToAnotherClip = clipKey != self.clipKey
@@ -99,11 +101,11 @@ final class SpeakerMatte: @unchecked Sendable {
         lastTime = time
         let index = config.maskRate.map { Int((time * $0 + 0.001).rounded(.down)) }
         if let index, let tick, tick.index == index {
-            trace.record(tick.outcome, at: time)
+            trace.record(tick.outcome, at: time, backgroundDrawn: backgroundStaysDrawn)
             return tick.answer
         }
         let (answer, outcome) = segment(speaker, at: time, canvas: canvas)
-        trace.record(outcome, at: time)
+        trace.record(outcome, at: time, backgroundDrawn: backgroundStaysDrawn)
         if let index { tick = (index, answer, outcome) }
         return answer
     }

@@ -3684,7 +3684,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         } catch {
             // Every build records why an edit took the full rebuild (a feature id, never content).
             NativePreviewDiagnostics.record("live-update-refused", fields: [
-                "feature": (error as? NativePreviewFeatureError)?.feature ?? String(describing: type(of: error))])
+                "feature": (error as? NativePreviewFeatureError)?.feature ?? String(describing: type(of: error))], attachRoutine: true)
             #if DEBUG
             NativePreviewDiagnostics.failure("live-update-refused", error: error)
             #endif
@@ -3694,10 +3694,19 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     /// The Talk-to-camera background is on screen only if the matte answers for it. Report, once per composition,
     /// an edit that has a background but no clip to cut it out of, and a run of frames the matte could not answer.
+    nonisolated private static var runsOnSimulator: Bool {
+        #if targetEnvironment(simulator)
+        true
+        #else
+        false
+        #endif
+    }
+
     private func watchSpeakerBackground(of preview: LivePreviewComposition) {
         guard let trace = preview.speakerTrace else { return }
         if trace.snapshot().speakerClips == 0 { reportSpeakerBackgroundHidden(.noSpeakerClip, snapshot: trace.snapshot()) }
         trace.onDegraded = { [weak self] snapshot in
+            guard NativePreviewDiagnostics.shouldReportHiddenRun(snapshot, onSimulator: Self.runsOnSimulator) else { return }
             Task { @MainActor [weak self] in self?.reportSpeakerBackgroundHidden(.hiddenRun, snapshot: snapshot) }
         }
     }
@@ -8218,8 +8227,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// rebuild is not a failure.
     private func reportPreviewFailure(_ error: Error) {
         if error is CancellationError || error is NativeEditorPlaybackFailure { return }
-        var report = NativePreviewDiagnostics.previewFailure(error: error, sourceState: sourcePreviewStateLabel)
-        report.trace = sourcePreview?.speakerTrace?.snapshot().summary
+        let report = NativePreviewDiagnostics.previewFailure(error: error, sourceState: sourcePreviewStateLabel)
         guard let api, let jobID else { return }
         Task { try? await api.reportPlaybackFailure(jobID: jobID, report: report) }
     }
@@ -8227,7 +8235,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     private func failSourcePreview(_ error: Error, reloadsLatestOnConflict: Bool = true) {
         NativePreviewDiagnostics.record("finished-render-fallback", fields: [
             "error": String(((error as NSError).domain + ".\((error as NSError).code)").prefix(80)),
-            "finishedCurrent": finishedRenderIsCurrent ? "1" : "0"])
+            "finishedCurrent": finishedRenderIsCurrent ? "1" : "0"], attachRoutine: true)
         reportPreviewFailure(error)
         sourcePreviewFailureIsPermanent = Self.isPermanentSourcePreviewFailure(error)
         let finishedWasCurrent = finishedRenderIsCurrent
@@ -8401,7 +8409,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         failureHandledItem = item
         let kind: PlaybackFailureReport.PlayerKind = failedPlayer === finishedRenderPlayer ? .finished : .live
         var report = NativePreviewDiagnostics.playerItemFailure(kind: kind, error: error, sourceState: sourcePreviewStateLabel)
-        if kind == .live { report.trace = sourcePreview?.speakerTrace?.snapshot().summary }
+        if kind == .live { report.trace = sourcePreview?.speakerTrace(forFailedItem: item)?.snapshot().summary }
         if let api, let jobID {
             Task { try? await api.reportPlaybackFailure(jobID: jobID, report: report) }
         }

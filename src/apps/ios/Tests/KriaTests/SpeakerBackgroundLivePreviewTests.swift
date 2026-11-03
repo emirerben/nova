@@ -134,6 +134,9 @@ import XCTest
     /// preview for real past six seconds on an AVPlayer, applies an unrelated editor update mid-playback (the
     /// in-place path every caption keystroke and chat draft takes), and samples the frames the player shows: every
     /// one has the background, the player item is never replaced, and the trace saw no frame without it.
+    /// Real time on purpose (about 7 s): the in-place update while an AVPlayer is rendering is the path the creator hit,
+    /// and sampling a composition with an image generator does not exercise a playing player. The frame-exact checks
+    /// above are the deterministic ones.
     func testPlayingPastSixSecondsKeepsTheBackgroundOnEveryFrame() async throws {
         useSegmenter(CenterBoxSegmenter())
         let scene = try await scene(seconds: 8)
@@ -172,22 +175,46 @@ import XCTest
         XCTAssertGreaterThan(snapshot.counts["cutout"] ?? 0, 30, snapshot.summary)
     }
 
-    /// The report that reaches the server names why the background was not drawn, by fixed labels and counts only.
-    func testTheHiddenBackgroundReportCarriesOnlyFixedLabelsAndCounts() throws {
-        let trace = SpeakerBackgroundTrace()
-        trace.noteBuilt(speakerClips: 0)
-        for index in 0..<3 { trace.record(.noSpeakerLayer, at: Double(index)) }
+    /// The report that reaches the server for the original bug (a speaker track the background is not bound to) is built
+    /// from a real composition's trace and carries only what the server's `trace` pattern allows.
+    func testTheHiddenBackgroundReportOfAMisnamedTrackCarriesOnlyFixedLabelsAndCounts() async throws {
+        useSegmenter(CenterBoxSegmenter())
+        let scene = try await scene()
+        var misnamed = scene.recipe
+        misnamed.tracks[0].id = "video"
+        let live = try await LivePreviewComposition(recipe: misnamed, assetURLs: scene.urls)
+        let generator = AVAssetImageGenerator(asset: live.preview.playerItem.asset)
+        generator.videoComposition = live.preview.playerItem.videoComposition
+        generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+        for step in 0..<3 { _ = try await generator.image(at: CMTime(seconds: 0.5 + Double(step) / 30, preferredTimescale: 600)) }
+
+        let trace = try XCTUnwrap(live.speakerTrace)
+        XCTAssertEqual(trace.snapshot().speakerClips, 0, "nothing could be cut out")
         let report = NativePreviewDiagnostics.speakerBackgroundHidden(.noSpeakerClip, snapshot: trace.snapshot(), sourceState: "ready")
         XCTAssertEqual(report.errorDomain, "preview.speaker_background.no_speaker_clip")
-        XCTAssertEqual(report.errorCode, 3, "the longest run of frames without the background")
+        XCTAssertEqual(report.errorCode, trace.snapshot().longestHiddenRun)
+        XCTAssertGreaterThanOrEqual(report.errorCode, 3, "every sampled frame was drawn without the background")
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(report)) as? [String: Any])
         let line = try XCTUnwrap(json["trace"] as? String)
-        XCTAssertTrue(line.hasPrefix("clips=0 hidden_run=3 no_speaker_layer=3"), line)
+        XCTAssertTrue(line.hasPrefix("clips=0 hidden_run="), line)
+        XCTAssertTrue(line.contains("no_speaker_layer="), line)
         XCTAssertLessThanOrEqual(line.count, 600)
+        XCTAssertNotNil(line.range(of: "^[a-z0-9_.=@: -]*$", options: .regularExpression), "fixed labels and counts only: \(line)")
 
         let plain = NativePreviewDiagnostics.previewFailure(error: MediaEngineError.exportFailed, sourceState: "ready")
         let wire = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(plain)) as? [String: Any])
         XCTAssertNil(wire["trace"], "a report without a trace is byte-identical to before")
+    }
+
+    /// A failure is explained by the trace of the composition that failed, never by another one the editor still holds.
+    func testOnlyTheCompositionsOwnFailedItemCarriesItsTrace() async throws {
+        useSegmenter(CenterBoxSegmenter())
+        let scene = try await scene()
+        let live = try await LivePreviewComposition(recipe: scene.recipe, assetURLs: scene.urls)
+        let other = try await LivePreviewComposition(recipe: scene.recipe, assetURLs: scene.urls)
+        XCTAssertTrue(live.speakerTrace(forFailedItem: live.preview.playerItem) === live.speakerTrace)
+        XCTAssertNil(live.speakerTrace(forFailedItem: other.preview.playerItem), "another composition's item")
+        XCTAssertNil(live.speakerTrace(forFailedItem: nil), "a failure that produced no item")
     }
 
     // MARK: - Helpers

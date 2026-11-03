@@ -29,6 +29,13 @@ public struct LivePreviewExportSnapshot: Sendable {
     /// in-place updates, so the trace covers the whole life of the composition.
     public var speakerTrace: SpeakerBackgroundTrace? { preview.speakerTrace }
 
+    /// The trace, but only for a failure of this composition's own player item: a failure of any other item (or of
+    /// a build that never produced a composition) has nothing to say about how this one drew its background.
+    public func speakerTrace(forFailedItem item: AVPlayerItem?) -> SpeakerBackgroundTrace? {
+        guard let item, item === preview.playerItem else { return nil }
+        return preview.speakerTrace
+    }
+
     /// Freeze the inputs that own the visible composition before an async export.
     /// Later editor mutations update this object but cannot change the snapshot.
     public func exportSnapshot() -> LivePreviewExportSnapshot {
@@ -207,10 +214,12 @@ public struct LivePreviewExportSnapshot: Sendable {
                 throw NativePreviewFeatureError("LivePreviewComposition-still-tilt")
             }
         }
-        guard next.audio == recipe.audio, withoutVisuals(recipe.tracks) == withoutVisuals(next.tracks) else { throw NativePreviewFeatureError("LivePreviewComposition-79") }
         // Any speaker-background change (asset, source start, loop, subject track, added or removed) re-inserts
-        // the background track, so it always takes the full rebuild.
+        // the background track, so it always takes the full rebuild. Checked before the tracks: the editor names its
+        // speaker track after the background, so a changed background also changes a track id, and the refusal
+        // should name the background.
         guard next.speakerBackground == recipe.speakerBackground else { throw NativePreviewFeatureError("LivePreviewComposition-speaker-background") }
+        guard next.audio == recipe.audio, withoutVisuals(recipe.tracks) == withoutVisuals(next.tracks) else { throw NativePreviewFeatureError("LivePreviewComposition-79") }
         if next.visualFills.contains(where: { $0.kind == .blurPrevious }), recipe.cameraPulses != next.cameraPulses {
             throw NativePreviewFeatureError("LivePreviewComposition-81")
         }

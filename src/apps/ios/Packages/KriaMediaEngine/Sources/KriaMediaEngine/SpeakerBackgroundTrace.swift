@@ -28,10 +28,12 @@ public final class SpeakerBackgroundTrace: @unchecked Sendable {
         /// nothing can be cut out and the frame is drawn without it.
         case noSpeakerLayer = "no_speaker_layer"
 
-        /// True for the outcomes in which the creator does not see the background.
+        /// True for the outcomes in which the creator does not see the background. A build with no segmenter at all
+        /// (`original.no_segmenter`) is an environment, not a frame that failed, so it is counted and labelled but
+        /// never grows the hidden run that gets reported.
         var hidesBackground: Bool {
             switch self {
-            case .originalNoSegmenter, .originalError, .originalUnreadable, .originalCoverage, .noSpeakerLayer: true
+            case .originalError, .originalUnreadable, .originalCoverage, .noSpeakerLayer: true
             default: false
             }
         }
@@ -103,8 +105,9 @@ public final class SpeakerBackgroundTrace: @unchecked Sendable {
         return speakerClips == 0
     }
 
-    /// Counts one frame. `at` is the edit time of the frame.
-    func record(_ outcome: Outcome, at time: Double) {
+    /// Counts one frame. `at` is the edit time of the frame. `backgroundDrawn` says the compositor drew the background
+    /// anyway (a corner speaker with no mask is drawn small over it), so the frame is not a hidden one.
+    func record(_ outcome: Outcome, at time: Double, backgroundDrawn: Bool = false) {
         var notify: (handler: @Sendable (Snapshot) -> Void, snapshot: Snapshot)?
         lock.lock()
         counts[outcome, default: 0] += 1
@@ -116,7 +119,7 @@ public final class SpeakerBackgroundTrace: @unchecked Sendable {
             if ring.count > Self.ringSize { ring.removeFirst(ring.count - Self.ringSize) }
             last = outcome
         }
-        if outcome.hidesBackground {
+        if outcome.hidesBackground, !backgroundDrawn {
             hiddenRun += 1
             longestHiddenRun = max(longestHiddenRun, hiddenRun)
         } else if outcome != .clearedClip, outcome != .clearedGap {
