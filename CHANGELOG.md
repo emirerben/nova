@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.9.0] - 2026-11-03
+
+### Fixed
+- fix(kria): the editor preview draws a Talk-to-camera background again (#2084) <!-- release-pr: 2084 -->
+
 ## [0.84.8.0] - 2026-11-03
 
 ### Fixed
