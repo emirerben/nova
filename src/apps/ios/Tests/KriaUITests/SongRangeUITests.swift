@@ -6,7 +6,7 @@ import XCTest
 final class SongRangeUITests: XCTestCase {
     private func launch(songRange: String) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_SONG_RANGE"] = songRange

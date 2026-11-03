@@ -226,6 +226,8 @@ func mergedWhatKriaChanged(creatorAgent: [String: JSONValue]?) -> [String] {
 }
 
 struct CreationConfirmationStage: View {
+    var recordAgain: (() -> Void)? = nil
+    var chooseAnother: (() -> Void)? = nil
     let thread: CreationThread
     let isBusy: Bool
     var responseStartedAt: Date? = nil
@@ -388,9 +390,7 @@ struct CreationConfirmationStage: View {
             ProgressView("Checking speech…")
         case "failed" where analysis["error"]?.objectValue?["code"]?.stringValue == "no_speech_track":
             // KRI-653: nothing audible. Cleanup cannot help and rendering without it only captions silence.
-            Text("We couldn’t hear any speech in this video.").font(KriaFont.body(13).weight(.semibold))
-            Text("Record it again or choose a different video, then try once more.")
-                .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+            NoSpeechRecoveryCard(recordAgain: recordAgain, chooseAnother: chooseAnother)
         case "failed":
             Text("The speech check couldn’t finish.")
             Button("Retry speech check") { action("retry_speech_cleanup", payload) }.disabled(isBusy)

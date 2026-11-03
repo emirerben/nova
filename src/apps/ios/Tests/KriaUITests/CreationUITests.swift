@@ -33,7 +33,7 @@ final class CreationUITests: XCTestCase {
     func testOpenEditorInsideTheEditorsKriaSheetReturnsToTheEditor() {
         // The perf fixture's seeded chats end on a finished render the editor can really open.
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach", "-perf-reset"]
         app.launchEnvironment = [
             "KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_SEED_THREADS": "3", "KRIA_CHAT_LONG_HISTORY": "12",
             "KRIA_EDITOR_FIXTURE": "1", "UI_TEST_REDUCE_MOTION": "1",
@@ -64,7 +64,7 @@ final class CreationUITests: XCTestCase {
     /// editor's Kria sheet when they tap "Open editor". The tap must still close the sheet.
     func testOpenEditorInsideTheEditorsKriaSheetWithKeyboardOpenReturnsToTheEditor() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach", "-perf-reset"]
         app.launchEnvironment = [
             "KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_SEED_THREADS": "3", "KRIA_CHAT_LONG_HISTORY": "12",
             "KRIA_EDITOR_FIXTURE": "1", "UI_TEST_REDUCE_MOTION": "1",
@@ -172,7 +172,7 @@ final class CreationUITests: XCTestCase {
     /// Dragging a text-selection handle sideways moves the handle. The projects drawer's own drag used to claim it.
     func testDraggingASelectionHandleInTheComposerDoesNotOpenTheDrawer() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launch()
         createFreshChat(in: app)
@@ -196,7 +196,7 @@ final class CreationUITests: XCTestCase {
 
     func testLaunchEntersChatFirstWorkspace() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launch()
         // Exercise creation on every run, even when a prior project restores.
@@ -265,7 +265,7 @@ final class CreationUITests: XCTestCase {
     func testGalleryPickIsReadFromPhotosAndReachesUpload() {
         let app = XCUIApplication()
         app.resetAuthorizationStatus(for: .photos)
-        app.launchArguments = ["-ui-testing-chat", "-ui-testing-seed-photo-video", "-ui-testing-seed-photo-videos"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach", "-ui-testing-seed-photo-video", "-ui-testing-seed-photo-videos"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launch()
         createFreshChat(in: app)
@@ -283,7 +283,7 @@ final class CreationUITests: XCTestCase {
         }
         let monitor = addUIInterruptionMonitor(withDescription: "Photos access", handler: allowFullAccess)
         defer { removeUIInterruptionMonitor(monitor) }
-        let photos = app.buttons["Choose from Photos"]
+        let photos = app.buttons["upload-source-photos"]
         XCTAssertTrue(photos.waitForExistence(timeout: 3))
         photos.tap()
         let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
@@ -293,12 +293,10 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(tile0.waitForExistence(timeout: 40), app.debugDescription)
         XCTAssertTrue(tile2.exists)
         let count = app.staticTexts["gallery-count"]
-        // Apple's picker stays one tap away from the in-app gallery (and back).
-        app.buttons["gallery-toggle-picker"].tap()
-        XCTAssertTrue(app.scrollViews["photosView_content_scroll_view"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["photos-picker-done"].exists)
-        app.buttons["gallery-toggle-picker"].tap()
-        XCTAssertTrue(tile0.waitForExistence(timeout: 15), "the toggle returns to the in-app gallery")
+        // The gallery leads with a Record cell and a Files switch; Add stays disabled until something is picked.
+        XCTAssertTrue(app.buttons["gallery-record"].exists)
+        XCTAssertTrue(app.buttons["gallery-files"].exists)
+        XCTAssertFalse(app.buttons["photos-picker-done"].isEnabled)
         // Slide across three tiles: all selected, numbered in touch order.
         tile0.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             .press(
@@ -343,7 +341,7 @@ final class CreationUITests: XCTestCase {
     func testLibraryPickerReturnsToChatByDoneAndBySinglePick() {
         let app = XCUIApplication()
         app.resetAuthorizationStatus(for: .photos)
-        app.launchArguments = ["-ui-testing-chat", "-ui-testing-seed-photo-video", "-ui-testing-apple-photo-picker"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach", "-ui-testing-seed-photo-video", "-ui-testing-apple-photo-picker"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launchEnvironment["KRIA_CHAT_TALKING_MAX_CLIPS"] = "1"
         app.launch()
@@ -365,7 +363,7 @@ final class CreationUITests: XCTestCase {
         }
         let monitor = addUIInterruptionMonitor(withDescription: "Photos access", handler: allowFullAccess)
         defer { removeUIInterruptionMonitor(monitor) }
-        let photos = app.buttons["Choose from Photos"]
+        let photos = app.buttons["upload-source-photos"]
         XCTAssertTrue(photos.waitForExistence(timeout: 3))
         photos.tap()
         let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
@@ -373,9 +371,16 @@ final class CreationUITests: XCTestCase {
 
         let done = app.buttons["photos-picker-done"]
         XCTAssertTrue(done.waitForExistence(timeout: 10))
-        done.tap()
-        XCTAssertTrue(photos.waitForExistence(timeout: 5), "Done returns to Add media")
+        // Add stays disabled until something is picked, so leaving with nothing is Cancel.
+        XCTAssertFalse(done.isEnabled)
+        app.staticTexts["Choose footage"].firstMatch.swipeDown(velocity: .fast)
+        let upload = app.buttons["source-upload"]
+        XCTAssertTrue(upload.waitForExistence(timeout: 5), "Done returns to Add media")
+        let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: upload)
+        XCTAssertEqual(XCTWaiter.wait(for: [hittable], timeout: 10), .completed)
 
+        upload.tap()
+        XCTAssertTrue(photos.waitForExistence(timeout: 5))
         photos.tap()
         XCTAssertTrue(done.waitForExistence(timeout: 10))
         let video = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Video'")).firstMatch
@@ -401,7 +406,7 @@ final class CreationUITests: XCTestCase {
         // This offline chat fixture does not implement upload reservations. The
         // imported asset must still be retained as a named, dismissible failure;
         // closing the picker alone would also pass if the selection were lost.
-        XCTAssertTrue(app.staticTexts["footage-upload-failures-message"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@", "won\u{2019}t be sent", "couldn\u{2019}t be")).firstMatch.waitForExistence(timeout: 10))
         chooseVideos.tap()
         XCTAssertTrue(photos.waitForExistence(timeout: 3))
         let selectedClipFailure = app.staticTexts.matching(
@@ -424,7 +429,7 @@ final class CreationUITests: XCTestCase {
     func testTalkingToCameraPicksThreeVideos() {
         let app = XCUIApplication()
         app.resetAuthorizationStatus(for: .photos)
-        app.launchArguments = ["-ui-testing-chat", "-ui-testing-seed-photo-video", "-ui-testing-seed-photo-videos"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach", "-ui-testing-seed-photo-video", "-ui-testing-seed-photo-videos"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launch()
         createFreshChat(in: app)
@@ -434,7 +439,7 @@ final class CreationUITests: XCTestCase {
         card.tap()
         XCTAssertTrue(app.staticTexts["Choose the video of you talking, plus any clips to show while you talk."].waitForExistence(timeout: 5),
                       app.debugDescription)
-        XCTAssertTrue(app.staticTexts["MP4, MOV · up to 10 clips"].exists)
+        XCTAssertTrue(app.staticTexts["Up to 10 clips"].exists)
         let chooseVideos = app.buttons["choose-videos"]
         XCTAssertTrue(chooseVideos.waitForExistence(timeout: 5))
         chooseVideos.tap()
@@ -446,7 +451,7 @@ final class CreationUITests: XCTestCase {
         }
         let monitor = addUIInterruptionMonitor(withDescription: "Photos access", handler: allowFullAccess)
         defer { removeUIInterruptionMonitor(monitor) }
-        let photos = app.buttons["Choose from Photos"]
+        let photos = app.buttons["upload-source-photos"]
         XCTAssertTrue(photos.waitForExistence(timeout: 3))
         photos.tap()
         let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
@@ -471,7 +476,7 @@ final class CreationUITests: XCTestCase {
         let reachedUpload = app.staticTexts["The data couldn\u{2019}t be read because it isn\u{2019}t in the correct format."]
         XCTAssertTrue(reachedUpload.waitForExistence(timeout: 25), app.debugDescription)
         if app.buttons["attachment-done"].exists { app.buttons["attachment-done"].tap() }
-        let failures = app.staticTexts["footage-upload-failures-message"]
+        let failures = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@", "won\u{2019}t be sent", "couldn\u{2019}t be")).firstMatch
         XCTAssertTrue(failures.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(eventually(timeout: 10) { failures.label.hasPrefix("3 files") }, failures.label)
     }
@@ -479,7 +484,7 @@ final class CreationUITests: XCTestCase {
     func testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes() {
         for runtime in ["v1", "v2"] {
             let app = XCUIApplication()
-            app.launchArguments = ["-ui-testing-chat"]
+            app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
             app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = runtime
             app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
             app.launch()
@@ -502,7 +507,7 @@ final class CreationUITests: XCTestCase {
     private func createWithVideoShape(runtime: String, offered: Bool, expect: String, choose: [String] = [],
                                       file: StaticString = #filePath, line: UInt = #line) {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = runtime
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
@@ -559,7 +564,7 @@ final class CreationUITests: XCTestCase {
     /// guessed, and can start correcting one with a single tap.
     func testReceiptChipsAndGuessedNamesStartACorrection() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_BRIEF"] = "1"
@@ -643,7 +648,7 @@ final class CreationUITests: XCTestCase {
     /// server text replaces them on stop, and the result is an ordinary sendable message.
     func testDictationShowsLiveWordsThenServerTextAndIsSendable() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launchEnvironment["KRIA_VOICE_DICTATION"] = "1"
         app.launch()
@@ -676,7 +681,7 @@ final class CreationUITests: XCTestCase {
 
     func testClipsOnlySubmissionUsesSuggestAnEdit() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launch()
@@ -696,7 +701,7 @@ final class CreationUITests: XCTestCase {
     /// says it will be left out, Send stays enabled, and sending clears it.
     func testUnreadableAttachmentDoesNotBlockSend() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_UPLOAD_FAILURE"] = "1"
@@ -704,10 +709,10 @@ final class CreationUITests: XCTestCase {
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
 
-        let banner = app.staticTexts["footage-upload-failures-message"]
+        let banner = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@", "won\u{2019}t be sent", "couldn\u{2019}t be")).firstMatch
         XCTAssertTrue(banner.waitForExistence(timeout: 8))
         XCTAssertEqual(banner.label, "1 file couldn’t be read and won’t be sent")
-        XCTAssertTrue(app.buttons["footage-upload-failures-dismiss"].exists)
+        XCTAssertTrue(app.buttons["Dismiss"].exists)
 
         let send = app.buttons["Send clips"]
         XCTAssertTrue(send.waitForExistence(timeout: 5))
@@ -722,7 +727,7 @@ final class CreationUITests: XCTestCase {
     /// is not "in progress": Send stays enabled, and the banner says what happened, not "couldn't be read".
     func testFailedUploadWithRecordDoesNotBlockSendAndOffersRetry() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_UPLOAD_FAILURE"] = "record"
@@ -730,11 +735,11 @@ final class CreationUITests: XCTestCase {
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
 
-        let banner = app.staticTexts["footage-upload-failures-message"]
+        let banner = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@", "won\u{2019}t be sent", "couldn\u{2019}t be")).firstMatch
         XCTAssertTrue(banner.waitForExistence(timeout: 8))
         XCTAssertEqual(banner.label, "1 file didn’t upload and won’t be sent unless you retry")
         XCTAssertFalse(banner.label.contains("read"))
-        XCTAssertTrue(app.buttons["footage-upload-failures-retry"].exists)
+        XCTAssertTrue(app.buttons["Retry"].exists)
 
         let send = app.buttons["Send clips"]
         XCTAssertTrue(send.waitForExistence(timeout: 5))
@@ -745,7 +750,7 @@ final class CreationUITests: XCTestCase {
 
     func testIncomingResponseDoesNotPullReaderFromScrolledHistory() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_LONG_HISTORY"] = "1"
@@ -825,7 +830,7 @@ final class CreationUITests: XCTestCase {
     /// lands below the fold.
     func testCleanUpSpeechApprovalShowsTheRenderStageAndKeepsTheConversationInView() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_SPEECH_CLEANUP"] = "choice"
@@ -892,7 +897,7 @@ final class CreationUITests: XCTestCase {
 
     func testTypedPromptAppearsBetweenMediaReceiptAndAssistantResponse() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launch()
@@ -925,7 +930,7 @@ final class CreationUITests: XCTestCase {
     /// (none has a cached thumbnail, so every tile uses the placeholder + "Clip N" fallback).
     private func launchClipQuestionFixture(capability: String) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_CLIP_QUESTION"] = capability
@@ -942,7 +947,7 @@ final class CreationUITests: XCTestCase {
     /// suggestions). `thumbs` seeds cached posters for the first 24 so both tile states show.
     private func launchRealShapeHistory(thumbs: Bool = false, question: String = "history") -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_CLIP_QUESTION"] = question
         if thumbs { app.launchEnvironment["KRIA_CHAT_CLIP_THUMBS"] = "1" }
@@ -1288,7 +1293,7 @@ final class CreationUITests: XCTestCase {
 
     private func launchReplyFixture(_ mode: String) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_REPLY_FIXTURE"] = mode
@@ -1412,7 +1417,7 @@ final class CreationUITests: XCTestCase {
 
     private func launchQuestionBatchFixture() -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_QUESTION_BATCH"] = "1"
@@ -1480,7 +1485,7 @@ final class CreationUITests: XCTestCase {
 
     private func launchChoiceQuestionFixture(capability: String) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_CHOICE_QUESTION"] = capability
@@ -1519,7 +1524,7 @@ final class CreationUITests: XCTestCase {
 
     func testSlowDirectionAndPreJobFailureNeverReturnToUploading() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_SLOW_CREATION"] = "1"
@@ -1614,7 +1619,7 @@ final class CreationUITests: XCTestCase {
 
     func testExpiredApprovalCannotStartGeneration() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_EXPIRED_APPROVAL"] = "1"
@@ -1630,7 +1635,7 @@ final class CreationUITests: XCTestCase {
 
     func testUnavailableCapabilitiesShowRetryInsteadOfDeadFormatCards() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launch()
         createFreshChat(in: app)
         // The unconfigured fixture answers every request with HTTP 503: the
@@ -1647,7 +1652,7 @@ final class CreationUITests: XCTestCase {
     /// format cards work misses the 5s budget (the budget leaves room for a slow CI accessibility query).
     func testNewChatShowsUsableFormatsWithoutWaitingForMoreReads() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_SLOW_READS"] = "1"
         app.launch()
@@ -1670,7 +1675,7 @@ final class CreationUITests: XCTestCase {
     /// sheet opens on the song step with the lip-sync subtitle (the song leads a lip-sync).
     func testLipsyncCardIsFarRightAndOpensTheSheetOnTheSong() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_LIPSYNC"] = "1"
         app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
@@ -1699,7 +1704,7 @@ final class CreationUITests: XCTestCase {
 
     func testTappingOutsideComposerDismissesKeyboardWithoutBlockingFirstTap() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launch()
         createFreshChat(in: app)
@@ -1775,7 +1780,7 @@ final class CreationUITests: XCTestCase {
     /// `KRIA_SUGGESTION_CHIPS` and still pins the fixed chips.
     func testPendingServerSuggestionChipsShowOnlyTheDefaultEdit() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment = ["KRIA_CHAT_CREATION_FLOW": "v1", "KRIA_CHAT_FIXTURE_MEDIA": "1",
                                  "KRIA_SUGGESTION_CHIPS": "1", "KRIA_SUGGESTION_CHIPS_PENDING": "hold"]
         app.launch()
@@ -1791,7 +1796,7 @@ final class CreationUITests: XCTestCase {
 
     func testServerSuggestionChipsSendOnTapAndReplaceFixedChips() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_SUGGESTION_CHIPS"] = "1"
@@ -1845,7 +1850,7 @@ final class CreationUITests: XCTestCase {
     /// `message`; a typed message carries none. The stub echoes what it received.
     func testServerSuggestionChipTapNamesTheOfferedChipOnTheTurn() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_SUGGESTION_CHIPS"] = "1"
@@ -1893,7 +1898,7 @@ final class CreationUITests: XCTestCase {
     /// Runtime-v1 chat with one fixture clip, stopped at the confirmation card.
     private func launchConfirmationFixture(_ environment: [String: String]) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment.merge(environment) { _, new in new }
@@ -1954,7 +1959,7 @@ final class CreationUITests: XCTestCase {
         thoughts: String? = nil
     ) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         if capability { app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS"] = "1" }
@@ -2424,7 +2429,7 @@ final class CreationUITests: XCTestCase {
 
     func testSubmittedMessageAppearsWhileSendPreflightIsStillWaiting() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach", "-perf-reset"]
         app.launchEnvironment = ["KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_SUGGESTION_CHIPS_ECHO": "1", "KRIA_CHAT_SEED_THREADS": "3", "KRIA_PERF_DISK_STORE": "1", "KRIA_CHAT_LONG_HISTORY": "12",
                                  "KRIA_SLIDE_POST_CAPS": "slow"]
         app.launch()
@@ -2457,7 +2462,7 @@ final class CreationUITests: XCTestCase {
 
     func testPendingSubmissionStatusStaysVisibleWithKeyboardOpenAndClosed() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment = ["KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_SUGGESTION_CHIPS_ECHO": "1",
                                  "KRIA_CHAT_FIXTURE_MEDIA": "1", "KRIA_CHAT_SEND_DELAY": "15"]
         app.launch()
@@ -2495,7 +2500,7 @@ final class CreationUITests: XCTestCase {
 
     func testUnconfirmedSubmissionSurvivesAppRelaunch() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach", "-perf-reset"]
         app.launchEnvironment = ["KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_SUGGESTION_CHIPS_ECHO": "1", "KRIA_CHAT_SEED_THREADS": "3", "KRIA_PERF_DISK_STORE": "1",
                                  "KRIA_CHAT_LONG_HISTORY": "12", "KRIA_CHAT_SEND_FAILURE": "offline"]
         app.launch()
@@ -2537,7 +2542,7 @@ final class CreationUITests: XCTestCase {
 
     func testReopenedChatSharesTheLiveSendAndReceivesItsRejectedDraft() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach", "-perf-reset"]
         app.launchEnvironment = ["KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_SEED_THREADS": "3",
                                  "KRIA_PERF_DISK_STORE": "1", "KRIA_CHAT_LONG_HISTORY": "12",
                                  "KRIA_CHAT_SEND_FAILURE": "reject", "KRIA_CHAT_SEND_DELAY": "20"]
@@ -2569,7 +2574,7 @@ final class CreationUITests: XCTestCase {
 
     func testEditorChatDraftPersistsWhenReturningToTheMainChat() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach", "-perf-reset"]
         app.launchEnvironment = ["KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_SEED_THREADS": "3",
                                  "KRIA_PERF_DISK_STORE": "1", "KRIA_CHAT_LONG_HISTORY": "12",
                                  "KRIA_EDITOR_FIXTURE": "1", "UI_TEST_REDUCE_MOTION": "1"]
@@ -2641,7 +2646,7 @@ final class CreationUITests: XCTestCase {
 
     private func checkSendFailure(_ mode: String) {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment = ["KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_SUGGESTION_CHIPS_ECHO": "1", "KRIA_CHAT_FIXTURE_MEDIA": "1",
                                  "KRIA_CHAT_SEND_FAILURE": mode]
         app.launch()
