@@ -27,7 +27,7 @@
 # install with a launch error), and uninstalls the app: a run leaves a 60-80 MB take in the app's container and 7 runs
 # filled the phone until the next install failed with "Insufficient storage". The uninstall also resets the Cinematic
 # preference, which persists per device, so every run starts from the same state. An install or launch failure is
-# retried up to --retries times; a test that ran and failed is retried only with --retry-failed-runs. The transport
+# retried up to --retries times (--resume keeps the good runs already in the label's folder); a test that ran and failed is retried only with --retry-failed-runs. The transport
 # (wired or localNetwork) is logged in each run's status.json, because an install over Wi-Fi is slower and flakier.
 #
 # THERMAL. A phone that starts a run at "serious" or "critical" is throttled: the same take cost 42 s to build a 10 s test video
@@ -57,6 +57,7 @@ LABEL=""
 SKIP_BUILD=0
 COOLDOWN_MAX=900
 RETRIES=2
+RESUME=0
 TEST_RETRIES=0
 DRY_RUN=0
 USE_TAKE=0
@@ -75,6 +76,7 @@ while [[ $# -gt 0 ]]; do
     --label) LABEL="$2"; shift 2 ;;
     --skip-build) SKIP_BUILD=1; shift ;;
     --retries) RETRIES="$2"; shift 2 ;;
+    --resume) RESUME=1; shift ;;
     --cooldown-max) COOLDOWN_MAX="$2"; shift 2 ;;
     --retry-failed-runs) TEST_RETRIES="$2"; shift 2 ;;
     --use-take) USE_TAKE=1; shift ;;
@@ -293,6 +295,10 @@ for run in $(seq 1 "$RUNS"); do
   for scenario in "${SCENARIO_LIST[@]}"; do
     read -r background cinematic < <(scenario_env "$scenario")
     run_dir="$RUN_ROOT/$scenario--run$run"
+    if [[ "$RESUME" -eq 1 && -f "$run_dir/summary.json" ]] && grep -q '"xcodebuild_exit": 0' "$run_dir/status.json" 2>/dev/null; then
+      echo "talk-bench: $scenario run $run/$RUNS already good, kept"
+      continue
+    fi
     rm -rf "$run_dir"
     mkdir -p "$run_dir"
     echo "talk-bench: $scenario run $run/$RUNS"

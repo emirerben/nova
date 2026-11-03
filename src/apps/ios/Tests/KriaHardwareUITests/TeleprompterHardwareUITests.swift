@@ -273,15 +273,16 @@ import XCTest
         let idleSeconds = TimeInterval(environment["KRIA_TALK_BENCH_IDLE_SECONDS"] ?? "") ?? 6
         XCTAssertTrue(["none", "photo", "video"].contains(background), "KRIA_TALK_BENCH_BACKGROUND is none, photo or video.")
 
-        let app = launchTalking(bench: ["KRIA_TALK_BENCH": "1", "KRIA_TALK_BENCH_BACKGROUND": background,
-                                        "KRIA_TALK_BENCH_CINEMATIC": cinematicWanted ? "1" : "0"],
-                                speakerBackground: background != "none")
-        let removePermissionMonitor = addUIInterruptionMonitor(withDescription: "Kria camera or microphone permission") { alert in
-            let allow = alert.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ OR label == %@", "Allow", "OK")).firstMatch
-            guard allow.exists else { return false }
+        // A freshly installed app asks for more than camera and microphone (Photos add-only, in the phone's own language), and the
+        // alert covers the screen until something taps it, so the monitor goes in before the first launch.
+        let removePermissionMonitor = addUIInterruptionMonitor(withDescription: "Kria permission prompt") { [self] alert in
+            guard let allow = alert.buttons.allElementsBoundByIndex.first(where: { isAffirmativePermissionAction($0.label) }) else { return false }
             allow.tap()
             return true
         }
+        let app = launchTalking(bench: ["KRIA_TALK_BENCH": "1", "KRIA_TALK_BENCH_BACKGROUND": background,
+                                        "KRIA_TALK_BENCH_CINEMATIC": cinematicWanted ? "1" : "0"],
+                                speakerBackground: background != "none")
         defer { removeUIInterruptionMonitor(removePermissionMonitor) }
 
         app.buttons["teleprompter-open"].tap()
@@ -390,6 +391,10 @@ import XCTest
         // Do not set KRIA_TELEPROMPTER_CAMERA_UNAVAILABLE or the review fixture here: this
         // test exercises the device's real camera/microphone path.
         app.launch()
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        for _ in 0..<2 where springboard.alerts.firstMatch.waitForExistence(timeout: 4) {
+            springboard.alerts.firstMatch.buttons.allElementsBoundByIndex.first { isAffirmativePermissionAction($0.label) }?.tap()
+        }
         XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 20))
         app.buttons["Open projects"].tap()
         let newChat = app.buttons["drawer-new-chat"]
