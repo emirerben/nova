@@ -15,6 +15,9 @@ from app.kria.portable_visual import VisualCanvasFill
 from app.kria.recipes import EditRecipeV1
 from app.kria.render_assets import RenderAssetManifest, VisualRenderAsset
 
+# The longest timeline the device engine builds (seconds): `EditRecipeV2` refuses a longer one.
+MAX_TIMELINE_S = 1800
+
 
 class EditRecipeV2(EditRecipeV1):
     """V2 assets are opaque aliases backed by an immutable source manifest.
@@ -51,8 +54,8 @@ class EditRecipeV2(EditRecipeV1):
 
     @model_validator(mode="after")
     def validate_asset_manifest(self) -> EditRecipeV2:
-        if self.duration > 1800 or any(
-            clip.source_start > 1800 for track in self.tracks for clip in track.clips
+        if self.duration > MAX_TIMELINE_S or any(
+            clip.source_start > MAX_TIMELINE_S for track in self.tracks for clip in track.clips
         ):
             raise ValueError("portable timeline exceeds the device time budget")
         if len({fill.id for fill in self.visual_fills}) != len(self.visual_fills) or any(

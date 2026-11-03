@@ -697,7 +697,9 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "insert_clips[].at_s",
         "insert_clips[].keep_audio",
         note=(
-            "Parent KRI-1151: kept or dropped by creator_capabilities.repair_creator_insert_clips; "
+            "Parent KRI-1151: kept or dropped by creator_capabilities.repair_creator_insert_clips "
+            "(a row with no at_phrase and no at_s is placed at the end of the sentence about the "
+            "clip, chosen by meaning); "
             "the phone Talking worker pauses the take for each clip "
             "(app.pipeline.phone_talking_inserts) and records variant['phone_insert_clips'], "
             "which the brief receipts judge. The contract itself does not verify placement"

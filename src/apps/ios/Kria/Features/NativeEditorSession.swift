@@ -105,6 +105,11 @@ struct NativeEditorTemporaryVideo: Sendable {
             timelineItemsCache = nil
             timelineClipsCache = nil
             timelineProjectionCache = nil
+            // Assigning an equal document (a reload that found nothing new, a hydrate that changed nothing) changes
+            // nothing the preview shows. Rebuilding for it cancelled an in-flight build and re-prepared a playing
+            // item, which the creator sees as a hitch. State that is not in the document (a staged chat draft, the
+            // pending text) schedules its own rebuild through its own explicit call, not through this observer.
+            guard document != oldValue else { return }
             // KRI-432: a song volume change on a settled preview is applied to the player, not rebuilt.
             if liveSongVolumeActive, sourcePreviewSettled, let built = previewBuiltDocument,
                Self.differsOnlyBySongVolume(document, built) {
@@ -3610,6 +3615,8 @@ struct NativeEditorTemporaryVideo: Sendable {
             // through and build a fresh composition so the canvas comes back
             // to the live edit — otherwise every later edit lands off-screen
             // while the user keeps watching the stale cloud render (KRI-110).
+            NativePreviewDiagnostics.note("preview-rebuild", fields: [
+                "documentChanged": previewBuiltDocument.map { $0 != baseline ? "1" : "0" } ?? "first"])
             if let preview = sourcePreview, player?.currentItem === preview.preview.playerItem,
                updatePreviewInPlace(preview, program: program) {
                 liveSongVolumeActive = liveVolume
@@ -3627,17 +3634,41 @@ struct NativeEditorTemporaryVideo: Sendable {
             #endif
             let preview = try await LivePreviewComposition(recipe: program.recipe, assetURLs: program.assetURLs, branding: .standard)
             guard sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
+            // The finished render is playing: ready the live item on its own player first, so the swap below is not
+            // a pause, a detach, a seek and a resume in front of the creator's eyes.
+            var warmed: (player: AVPlayer, time: TimeInterval)?
+            if isPlaying, player != nil, player === finishedRenderPlayer {
+                let target = currentTime
+                if let candidate = await Self.prerolledPlayer(for: preview.preview.playerItem, at: target) { warmed = (candidate, target) }
+                guard sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else {
+                    warmed?.player.replaceCurrentItem(with: nil)
+                    return
+                }
+            }
             let latestTime = currentTime
             let resumePlayback = isPlaying
+            var adopted: AVPlayer?
+            if let warmed {
+                // The creator paused or scrubbed while it warmed, or it took long enough to be far behind: the plain path.
+                if resumePlayback, abs(latestTime - warmed.time) <= Self.warmHandoffMaxDrift { adopted = warmed.player }
+                else { warmed.player.replaceCurrentItem(with: nil) }
+                NativePreviewDiagnostics.note("live-handoff", fields: [
+                    "prerolled": "1", "adopted": adopted == nil ? "0" : "1",
+                    "driftMs": String(Int(abs(latestTime - warmed.time) * 1000))])
+            }
             sourcePreview = preview
-            installPlayer(item: preview.preview.playerItem, preferredDuration: TimelineMath.totalDuration(of: program.recipe))
+            installPlayer(item: preview.preview.playerItem, preferredDuration: TimelineMath.totalDuration(of: program.recipe), adopting: adopted)
+            watchSpeakerBackground(of: preview)
             liveSongVolumeActive = liveVolume
             previewBuiltDocument = baseline
             applyLiveSongVolume()
             sourcePreviewState = .ready
             sourcePreviewSettledSequence = sequence
             if resumePlayback {
-                player?.seek(to: CMTime(seconds: min(latestTime, max(0, playbackDuration - 1.0 / 600)), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in })
+                // An adopted player already sits at `warmed.time`, decoded and prerolled; seeking it again would undo that.
+                if adopted == nil {
+                    player?.seek(to: CMTime(seconds: min(latestTime, max(0, playbackDuration - 1.0 / 600)), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in })
+                }
                 activatePreviewAudio()
                 player?.play()
             } else {
@@ -3672,13 +3703,42 @@ struct NativeEditorTemporaryVideo: Sendable {
     private func updatePreviewInPlace(_ preview: LivePreviewComposition, program: NativeEditorRenderProgram) -> Bool {
         do {
             try preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs)
+            NativePreviewDiagnostics.note("preview-updated-in-place")
             return true
         } catch {
+            // Every build records why an edit took the full rebuild (a feature id, never content).
+            NativePreviewDiagnostics.record("live-update-refused", fields: [
+                "feature": (error as? NativePreviewFeatureError)?.feature ?? String(describing: type(of: error))], attachRoutine: true)
             #if DEBUG
             NativePreviewDiagnostics.failure("live-update-refused", error: error)
             #endif
             return false
         }
+    }
+
+    /// The Talk-to-camera background is on screen only if the matte answers for it. Report, once per composition,
+    /// an edit that has a background but no clip to cut it out of, and a run of frames the matte could not answer.
+    nonisolated private static var runsOnSimulator: Bool {
+        #if targetEnvironment(simulator)
+        true
+        #else
+        false
+        #endif
+    }
+
+    private func watchSpeakerBackground(of preview: LivePreviewComposition) {
+        guard let trace = preview.speakerTrace else { return }
+        if trace.snapshot().speakerClips == 0 { reportSpeakerBackgroundHidden(.noSpeakerClip, snapshot: trace.snapshot()) }
+        trace.onDegraded = { [weak self] snapshot in
+            guard NativePreviewDiagnostics.shouldReportHiddenRun(snapshot, onSimulator: Self.runsOnSimulator) else { return }
+            Task { @MainActor [weak self] in self?.reportSpeakerBackgroundHidden(.hiddenRun, snapshot: snapshot) }
+        }
+    }
+
+    private func reportSpeakerBackgroundHidden(_ reason: NativePreviewDiagnostics.SpeakerBackgroundReason, snapshot: SpeakerBackgroundTrace.Snapshot) {
+        let report = NativePreviewDiagnostics.speakerBackgroundHidden(reason, snapshot: snapshot, sourceState: sourcePreviewStateLabel)
+        guard let api, let jobID else { return }
+        Task { try? await api.reportPlaybackFailure(jobID: jobID, report: report) }
     }
 
     func previewSelectionBounds(for selection: EditorSelection, at time: Double) -> TextSelectionBounds? {
@@ -8219,6 +8279,9 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func failSourcePreview(_ error: Error, reloadsLatestOnConflict: Bool = true) {
+        NativePreviewDiagnostics.record("finished-render-fallback", fields: [
+            "error": String(((error as NSError).domain + ".\((error as NSError).code)").prefix(80)),
+            "finishedCurrent": finishedRenderIsCurrent ? "1" : "0"], attachRoutine: true)
         reportPreviewFailure(error)
         sourcePreviewFailureIsPermanent = Self.isPermanentSourcePreviewFailure(error)
         let finishedWasCurrent = finishedRenderIsCurrent
@@ -8391,7 +8454,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         guard let failedPlayer = player, failedPlayer.currentItem === item, failureHandledItem !== item else { return }
         failureHandledItem = item
         let kind: PlaybackFailureReport.PlayerKind = failedPlayer === finishedRenderPlayer ? .finished : .live
-        let report = NativePreviewDiagnostics.playerItemFailure(kind: kind, error: error, sourceState: sourcePreviewStateLabel)
+        var report = NativePreviewDiagnostics.playerItemFailure(kind: kind, error: error, sourceState: sourcePreviewStateLabel)
+        if kind == .live { report.trace = sourcePreview?.speakerTrace(forFailedItem: item)?.snapshot().summary }
         if let api, let jobID {
             Task { try? await api.reportPlaybackFailure(jobID: jobID, report: report) }
         }
@@ -8503,7 +8567,29 @@ struct NativeEditorTemporaryVideo: Sendable {
         reinstallFinishedRender(url: playableDeviceOutputURL ?? finishedRenderURL, preferredDuration: finishedRenderDuration)
     }
 
-    private func installPlayer(item: AVPlayerItem, preferredDuration: TimeInterval? = nil) {
+    /// How far playback may have moved on while a live item warmed before that player is still adopted.
+    nonisolated private static let warmHandoffMaxDrift: TimeInterval = 0.35
+
+    /// A player holding `item`, seeked to `time` with zero tolerance and prerolled to play at rate 1, or nil when it
+    /// could not get there in about two seconds (the caller then takes the plain swap). Nothing is playing on it.
+    private static func prerolledPlayer(for item: AVPlayerItem, at time: TimeInterval) async -> AVPlayer? {
+        let candidate = AVPlayer(playerItem: item)
+        candidate.automaticallyWaitsToMinimizeStalling = false
+        var waited = 0
+        while candidate.status != .readyToPlay {
+            waited += 1
+            if candidate.status == .failed || Task.isCancelled || waited > 100 { candidate.replaceCurrentItem(with: nil); return nil }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        guard await candidate.seek(to: CMTime(seconds: max(0, time), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero),
+              await candidate.preroll(atRate: 1) else {
+            candidate.replaceCurrentItem(with: nil)
+            return nil
+        }
+        return candidate
+    }
+
+    private func installPlayer(item: AVPlayerItem, preferredDuration: TimeInterval? = nil, adopting prerolled: AVPlayer? = nil) {
         playbackSeekTarget = nil
         cancelScrubFrames()
         seekRecoveryTask?.cancel()
@@ -8520,11 +8606,14 @@ struct NativeEditorTemporaryVideo: Sendable {
         playbackStateObserver?.invalidate()
         itemStatusObserver?.invalidate()
         if let itemFailureObserver { NotificationCenter.default.removeObserver(itemFailureObserver) }
+        NativePreviewDiagnostics.note("player-replaced", fields: [
+            "was": player == nil ? "none" : player === finishedRenderPlayer ? "finished" : "live",
+            "playing": isPlaying ? "1" : "0"])
         // SwiftUI may retain the outgoing VideoPlayer after this replacement.
         // Stop and detach it first so its audio cannot outlive the visible player.
         player?.pause()
         player?.replaceCurrentItem(with: nil)
-        let next = AVPlayer(playerItem: item)
+        let next = prerolled ?? AVPlayer(playerItem: item)
         player = next
         observingPlayer = next
         playbackStateObserver = next.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self, weak next] _, _ in

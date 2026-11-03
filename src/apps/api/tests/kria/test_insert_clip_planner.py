@@ -80,19 +80,23 @@ def test_the_strategy_round_trips_insert_clips_and_drops_malformed_rows():
             {"media_id": "x", "at_phrase": "a", "at_s": 3},
         ],
     )
-    assert [c.media_id for c in strategy.insert_clips] == [FOOTAGE_C]
+    # A row with no position is the sentence-about-the-clip form and is kept; a row with two
+    # positions is the one dropped.
+    assert [c.media_id for c in strategy.insert_clips] == [FOOTAGE_C, FOOTAGE_B]
     dumped = strategy.model_dump(mode="json", exclude_none=True)
     assert dumped["insert_clips"] == [
-        {"media_id": FOOTAGE_C, "at_phrase": "congress", "keep_audio": True}
+        {"media_id": FOOTAGE_C, "at_phrase": "congress", "keep_audio": True},
+        {"media_id": FOOTAGE_B, "keep_audio": True},
     ]
     assert CreativeStrategy.model_validate(dumped) == strategy
     # More than the cap parse (so the repair can name each extra one), they are not cut here.
     many = CreativeStrategy(
-        edit_format="subtitled", insert_clips=[_insert(f"m{i}") for i in range(9)]
+        edit_format="subtitled",
+        insert_clips=[_insert(f"m{i}") for i in range(MAX_INSERT_CLIPS + 4)],
     )
     assert len(many.insert_clips) > MAX_INSERT_CLIPS
     with pytest.raises(ValueError):
-        InsertClip(media_id=FOOTAGE_C)  # needs exactly one of at_phrase / at_s
+        InsertClip(media_id=FOOTAGE_C, at_phrase="a", at_s=3)  # at most one position
 
 
 def test_a_strategy_without_insert_clips_serializes_and_hashes_exactly_as_before():
@@ -303,7 +307,7 @@ def test_a_draft_is_met_only_when_the_repaired_strategy_keeps_the_insert(monkeyp
     _open(monkeypatch)
     manifest = _julio_manifest()
     kept = _facts_for_draft(_strategy(manifest, insert_clips=[_insert()]), manifest)
-    assert kept.insert_clips == (InsertClipFact("planned"),)
+    assert kept.insert_clips == (InsertClipFact("planned", anchor="phrase"),)
     assert _verdict(kept).status == "met"
     none = _facts_for_draft(_strategy(manifest), manifest)
     assert _verdict(none).status == "not_possible"
@@ -313,7 +317,9 @@ def test_a_draft_is_met_only_when_the_repaired_strategy_keeps_the_insert(monkeyp
     assert closed.status == "not_possible" and "available yet" in closed.reason
     off = _facts_for_draft(_strategy(manifest, insert_clips=[_insert()]), manifest)
     verdict = _verdict(off)
-    assert off.insert_clips == (InsertClipFact("dropped", reason="insert_clips_off"),)
+    assert off.insert_clips == (
+        InsertClipFact("dropped", reason="insert_clips_off", anchor="phrase"),
+    )
     assert verdict.status == "not_possible"
     assert "available yet" in verdict.reason
 
@@ -517,17 +523,32 @@ def test_only_an_explicit_pause_is_an_insert_show_it_when_i_mention_it_is_not():
         assert "pause" in text.lower()
 
 
-def test_a_fourth_insert_is_dropped_with_a_named_notice_not_silently(monkeypatch):
+def test_the_limit_is_the_engines_and_both_copies_of_it_agree():
+    from app.pipeline.phone_subtitled_plan import MAX_INSERT_CLIPS as ENGINE_MAX
+
+    assert ENGINE_MAX == MAX_INSERT_CLIPS == 20
+
+
+def test_a_fourth_insert_is_kept_and_only_one_past_the_engine_limit_is_dropped_by_name(
+    monkeypatch,
+):
     _open(monkeypatch)
-    ids = [f"clip-{i}.mp4" for i in range(5)]
+    ids = [f"clip-{i}.mp4" for i in range(MAX_INSERT_CLIPS + 3)]
     manifest = _manifest([{"media_id": m, "kind": "video", "duration_s": 5.0} for m in ids])
     strategy = _strategy(
         manifest, insert_clips=[_insert(m, at_phrase=f"word {i}") for i, m in enumerate(ids[1:])]
     )
     repaired, notices = _repair(manifest, strategy)
-    assert [c.media_id for c in repaired.insert_clips] == ids[1:4]
-    assert notices == [capabilities.INSERT_CLIP_NOTICES["too_many"]]
-    assert capabilities.insert_clips_problems(manifest, strategy) == [None, None, None, "too_many"]
+    assert [c.media_id for c in repaired.insert_clips] == ids[1 : MAX_INSERT_CLIPS + 1]
+    assert notices == [capabilities.INSERT_CLIP_NOTICES["too_many"]] * 2
+    assert "20" in capabilities.INSERT_CLIP_NOTICES["too_many"]
+    problems = capabilities.insert_clips_problems(manifest, strategy)
+    assert problems == [None] * MAX_INSERT_CLIPS + ["too_many"] * 2
     facts = _facts_for_draft(strategy, manifest)
-    assert [row.reason for row in facts.insert_clips if row.status == "dropped"] == ["too_many"]
+    assert [row.reason for row in facts.insert_clips if row.status == "dropped"] == ["too_many"] * 2
     assert _verdict(facts).status == "partial"
+    four = _strategy(
+        manifest, insert_clips=[_insert(m, at_phrase=f"word {i}") for i, m in enumerate(ids[1:5])]
+    )
+    kept, none = _repair(manifest, four)
+    assert len(kept.insert_clips) == 4 and none == []

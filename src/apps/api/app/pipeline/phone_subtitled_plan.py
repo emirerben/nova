@@ -70,7 +70,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.kria.portable_speaker_background import (
     SpeakerBackgroundLayer,
@@ -88,7 +88,7 @@ from app.kria.recipes import (
     TimelineClip,
     TimelineTrack,
 )
-from app.kria.recipes_v2 import EditRecipeV2
+from app.kria.recipes_v2 import MAX_TIMELINE_S, EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest
 from app.pipeline.canvas import LANDSCAPE
 from app.pipeline.phone_captions import (
@@ -220,10 +220,14 @@ class PhoneCutaway(BaseModel):
         return self
 
 
-# Parent KRI-1151: the most clips a Talking edit pauses its take for.
-MAX_INSERT_CLIPS = 3
+# Parent KRI-1151: the most clips a Talking edit pauses its take for. Not a taste limit: it is the
+# size the planner, the sentence check and the recipe are built and tested for, and it is stated
+# to the creator when an ask goes past it.
+MAX_INSERT_CLIPS = 20
 INSERT_CLIP_PREFIX = "insert-"
-_INSERT_EPS_S = 1e-6
+# The microsecond grid drifts by a fraction of a microsecond per segment; a piece shorter than
+# this is that drift, never speech.
+_GRID_TOL_S = 1e-4
 # A speaker clip beside an insert shorter than this (one frame at 30 fps) is not worth playing.
 _MIN_SPEAKER_PIECE_S = 1 / 30
 
@@ -237,7 +241,7 @@ class PhoneInsert(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
     binding: PhoneSourceBinding
-    at_take_s: float = Field(gt=0, le=1800)
+    at_take_s: float = Field(ge=0, le=1800)
     keep_audio: bool = True
 
 
@@ -559,9 +563,9 @@ def compile_phone_subtitled_plan(
         while True:
             # An insert inside this segment splits it: the take plays up to the insert point,
             # the insert plays, and the rest of the segment resumes from the second it stopped.
-            if insert_queue and insert_queue[0].at_take_s < take_cursor + remaining - _INSERT_EPS_S:
+            if insert_queue and insert_queue[0].at_take_s < take_cursor + remaining - _GRID_TOL_S:
                 before = grid(insert_queue[0].at_take_s - take_cursor)
-                if before > _INSERT_EPS_S:
+                if before > _GRID_TOL_S:
                     main_clips.append(
                         _speaker_piece(
                             f"clip-{index + id_offset}",
@@ -594,8 +598,12 @@ def compile_phone_subtitled_plan(
             cursor = grid(cursor + remaining)
             take_cursor = grid(take_cursor + remaining)
             break
-        if insert_queue and abs(insert_queue[0].at_take_s - take_cursor) <= _INSERT_EPS_S:
+        while insert_queue and abs(insert_queue[0].at_take_s - take_cursor) <= _GRID_TOL_S:
             _emit_insert(insert_queue.pop(0))
+    # Whatever is left sits at the end of the take (the validation guarantees no point is past
+    # it): the grid's rounding must never strand one.
+    while insert_queue:
+        _emit_insert(insert_queue.pop(0))
     seen_speakers = {binding.media_id} | {i.binding.media_id for i in ordered_inserts}
     for extra_index, extra in enumerate(additional_speakers):
         extra_original = extra.original
@@ -858,18 +866,35 @@ def compile_phone_subtitled_plan(
         except Exception as exc:  # noqa: BLE001 - untrusted lane content
             raise _lane_error("background", str(exc), capability="speakerBackground") from exc
 
-    return EditRecipeV2(
-        canvas=canvas,
-        assets=list(assets.values()),
-        asset_manifest=RenderAssetManifest(assets=tuple(manifest.values())),
-        tracks=tracks,
-        text_layers=layers,
-        audio=AudioMixRecipe(original_volume=1.0, mute_windows=mute_windows),
-        required_capabilities=required_capabilities,
-        # `None` is omitted from the recipe wire, so a recipe without a background
-        # keeps its exact bytes and digest.
-        speaker_background=speaker_background,
-    )
+    try:
+        return EditRecipeV2(
+            canvas=canvas,
+            assets=list(assets.values()),
+            asset_manifest=RenderAssetManifest(assets=tuple(manifest.values())),
+            tracks=tracks,
+            text_layers=layers,
+            audio=AudioMixRecipe(original_volume=1.0, mute_windows=mute_windows),
+            required_capabilities=required_capabilities,
+            # `None` is omitted from the recipe wire, so a recipe without a background
+            # keeps its exact bytes and digest.
+            speaker_background=speaker_background,
+        )
+    except ValidationError as exc:
+        # A recipe the device refuses is a plan defect, said in words: left as a pydantic error
+        # it was read as our bug, retried, and ended as a generic failure nobody explained.
+        if any("time budget" in str(error.get("msg", "")) for error in exc.errors()):
+            end_s = max(
+                (c.timeline_start + c.source_duration / c.rate for t in tracks for c in t.clips),
+                default=0.0,
+            )
+            raise UnsupportedPhonePlan(
+                f"the finished video would be {end_s / 60:.0f} minutes long and the iPhone builds "
+                f"at most {MAX_TIMELINE_S // 60} minutes"
+            ) from exc
+        raise UnsupportedPhonePlan(
+            "the edit is not a recipe the iPhone can build: "
+            + "; ".join(str(error.get("msg", "")) for error in exc.errors()[:3])
+        ) from exc
 
 
 def _speaker_piece(
@@ -906,8 +931,12 @@ def _validated_inserts(
 ) -> tuple[PhoneInsert, ...]:
     """``inserts`` in take order, or `UnsupportedPhonePlan` naming what cannot be played.
 
-    A point within `_MIN_SPEAKER_PIECE_S` of a cut seam in the take moves onto the seam: the
-    other way it would leave a speaker clip of a few milliseconds beside the insert."""
+    Only what the engine cannot play is refused: too many, a clip that plays twice or is not a
+    video or is over five minutes, a point outside the take. A point at the very start or end of
+    the take, next to another insert or at the same instant as one is played as asked (clips
+    at one instant play one after the other, in the order given). A point within
+    `_MIN_SPEAKER_PIECE_S` of a cut seam in the take moves onto the seam: the other way it would
+    leave a speaker clip of a few milliseconds beside the insert."""
     if not inserts:
         return ()
     if len(inserts) > MAX_INSERT_CLIPS:
@@ -916,7 +945,6 @@ def _validated_inserts(
         )
     ordered = tuple(sorted(inserts, key=lambda i: i.at_take_s))
     seen = {speaker_media_id, *extra_media_ids}
-    previous = 0.0
     for insert in ordered:
         original = insert.binding.original
         if insert.binding.media_id in seen:
@@ -926,12 +954,20 @@ def _validated_inserts(
             raise UnsupportedPhonePlan("an inserted Talking clip must be a video")
         if original.duration_s <= 0 or original.duration_s > _MAX_CLIP_DURATION_S:
             raise UnsupportedPhonePlan("an inserted Talking clip must be at most 5 minutes")
-        if insert.at_take_s <= _INSERT_EPS_S or insert.at_take_s >= take_s - _INSERT_EPS_S:
-            raise UnsupportedPhonePlan("an insert must fall inside the take, not at its edges")
-        if insert.at_take_s - previous <= _INSERT_EPS_S:
-            raise UnsupportedPhonePlan("two inserts cannot pause the take at the same moment")
-        previous = insert.at_take_s
-    return tuple(_onto_seam(insert, seams) for insert in ordered)
+        if insert.at_take_s > take_s + _MIN_SPEAKER_PIECE_S:
+            raise UnsupportedPhonePlan("an insert must fall inside the take")
+    # The start and the end of the take are seams too: a point a hair from either leaves no
+    # speaker clip of a few milliseconds before or after the insert.
+    edges = (0.0, *seams, take_s)
+    snapped = [_onto_seam(insert, edges) for insert in ordered]
+    # Two points closer than one frame are one instant (they play one after the other), so
+    # no speaker clip of a few milliseconds sits between them.
+    out: list[PhoneInsert] = []
+    for insert in snapped:
+        if out and 0 < insert.at_take_s - out[-1].at_take_s < _MIN_SPEAKER_PIECE_S:
+            insert = insert.model_copy(update={"at_take_s": out[-1].at_take_s})
+        out.append(insert)
+    return tuple(out)
 
 
 def take_seams(keep_segments: Sequence[tuple[float, float]]) -> list[float]:

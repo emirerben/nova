@@ -913,7 +913,9 @@ enum NativeEditorRenderError: Error, Equatable {
             let under = video.filter { $0.volume > 0 && $0.timelineStart < window.end && $0.timelineStart + $0.duration > window.start }.map(\.id)
             if !under.isEmpty, muteWindows.count < 100 { muteWindows.append(AudioMuteWindow(start: window.start, end: window.end, clipIDs: under)) }
         }
-        // KRI-1118: the Talk-to-camera background is one engine layer plus a pinned pool-visual asset.
+        // KRI-1118: the Talk-to-camera background is one engine layer plus a pinned pool-visual asset. The engine cuts
+        // out only the clips of the track the layer names (`subjectTrackID`), so the speaker track below carries
+        // that name; under any other name the preview drew the room with no background and no error.
         var speakerBackground: SpeakerBackgroundLayer?
         if let background = document.speakerBackground {
             let layer = background.layer
@@ -949,7 +951,7 @@ enum NativeEditorRenderError: Error, Equatable {
         // Past the cap `recipe.validate()` would throw a bare `invalidTimeline`, which reads as a transient failure.
         guard text.count <= Self.maxTextLayers else { throw NativeEditorRenderError.tooManyTextLayers }
         var recipe = KriaMediaEngine.EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: canvas,
-            assets: assets.values.sorted { $0.id < $1.id }, tracks: [TimelineTrack(id: "video", kind: .video, clips: video)] + (overlays.isEmpty ? [] : [TimelineTrack(id: "overlays", kind: .overlay, clips: overlays)]) + audioTracks,
+            assets: assets.values.sorted { $0.id < $1.id }, tracks: [TimelineTrack(id: speakerBackground?.subjectTrackID ?? "video", kind: .video, clips: video)] + (overlays.isEmpty ? [] : [TimelineTrack(id: "overlays", kind: .overlay, clips: overlays)]) + audioTracks,
             audio: AudioMixRecipe(originalVolume: originalGain, muteWindows: muteWindows),
             assetManifest: RenderAssetManifest(assets: references.values.sorted { $0.id < $1.id }), textLayers: text, cameraPulses: cameraPulses, motionScenes: motionProgram, visualFills: visualFills, speakerBackground: speakerBackground)
         // KRI-589: drawings follow the timeline the cuts left them (the projected window), then take the

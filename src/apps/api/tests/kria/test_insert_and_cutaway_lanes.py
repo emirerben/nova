@@ -52,7 +52,6 @@ from app.kria.ask_refusals import stale_capability_refusal
 from app.services import creator_capabilities as capabilities
 from tests.kria.test_planner_knows_talking_cutaways import (
     INCIDENT_CODE,
-    REQUEST,
     SECTION_MARK,
     THREAD,
     _brief,
@@ -145,7 +144,10 @@ def test_l2_the_cutaway_section_stops_denying_the_insert_when_it_exists(monkeypa
 
     assert TAIL_CLOSED_INSERT not in flat
     assert TAIL_OPEN_INSERT in flat
-    assert "only when the creator explicitly asks the talk to pause or stop" in flat
+    assert (
+        "only when the creator asks the talk to pause or stop, or to put a clip with speech or "
+        "sound of its own in between my speech"
+    ) in flat
 
 
 def test_l3_one_clarifying_question_is_allowed_only_when_both_lanes_exist(monkeypatch):
@@ -196,16 +198,20 @@ def test_l4_each_lane_is_open_on_its_own_gate(monkeypatch):
 # ---------------------------------------------------------------- L5: routing
 
 
-def test_l5_show_it_when_i_mention_it_is_a_cutaway_and_only_a_pause_is_an_insert(monkeypatch):
+def test_l5_show_it_when_i_mention_it_is_a_cutaway_and_a_pause_or_in_between_is_an_insert(
+    monkeypatch,
+):
     manifest = _lanes(monkeypatch, cutaways=True, inserts=True)
     flat = _flat(_prompt(manifest))
     insert = flat[flat.index(INSERT_MARK) :]
 
     for ask in ("show the congress video when I mention congress", "use their audio"):
         assert ask in insert
-    assert "is NOT an insert, whatever it says about sound" in insert
+    assert "is NOT an insert, with or without the clip's sound" in insert
     assert "the clip shown over the talk" in insert
-    assert "Without a pause, a stop or an explicit in-the-middle-while-I-wait wording" in insert
+    assert (
+        'Without a pause, a stop, an in-the-middle-while-I-wait wording or "in between my speech"'
+    ) in insert
     # The cutaway section keeps the user's prod phrasing on its own side.
     cutaway = flat[flat.index(SECTION_MARK) : flat.index(INSERT_MARK)]
     for ask in ("show the talks when I talk about them", "use their audio"):
@@ -400,7 +406,9 @@ def test_m1_the_triggers_rule_for_photos_and_sounds_timed_to_a_word_is_untouched
 def test_m1_the_prod_request_brief_shape_is_what_the_both_lanes_golden_carries(monkeypatch):
     fixture = json.loads(BRIEF_FIXTURE.read_text(encoding="utf-8"))
     assert fixture["input"]["brief_enabled"] is True
-    assert fixture["input"]["user_message"] == REQUEST
+    # The thread's own message: it has no "in between my speech" (the wording that adds it is
+    # the insert fixtures `kri1151_insert_between_speech_*.json`).
+    assert fixture["input"]["user_message"] == THREAD["creator_request"]
     updates = fixture["output"]["brief_updates"]
     prod = {r["id"]: r for r in THREAD["brief"]["requirements"]}
 
@@ -444,17 +452,19 @@ def test_m2_the_ask_once_example_does_not_paraphrase_the_prod_request(monkeypatc
 
     assert "in the middle of my talk with its sound" not in insert
     assert '("put the congress clip in the middle of my talk")' in insert
-    assert "no mention anchor and no pause word" in insert
+    assert "no mention anchor" in insert and "and no pause word" in insert
 
 
-def test_m2_in_between_my_speech_with_a_mention_is_named_as_the_cutaway_lane(monkeypatch):
+def test_m2_in_between_my_speech_with_a_mention_is_named_as_the_insert_lane(monkeypatch):
     manifest = _lanes(monkeypatch, cutaways=True, inserts=True)
     flat = _flat(_prompt(manifest))
     insert = flat[flat.index(INSERT_MARK) :]
 
     assert '"place them in between my speech"' in insert
     assert "when I talk about them" in insert
-    assert "is the full-screen clip lane above" in insert
+    assert "end of the sentence the creator says about that clip" in insert
+    # ... while "over my speech" and a clip with no sound of its own stay with the overlay lane.
+    assert "is the clip shown over the talk (the full-screen clip lane above" in insert
     # The cutaway opening only allows its one question for wording with no anchor and no pause.
     cutaway = flat[flat.index(SECTION_MARK) : flat.index(INSERT_MARK)]
     assert "the single exception is ONE short question when the wording has no spoken anchor" in (
@@ -470,7 +480,7 @@ def test_m2_the_pause_form_still_routes_to_insert_clips(monkeypatch):
 
     assert "pause my talk and play the congress clip with its sound, then go on" in insert
     assert "set `insert_clips`" in insert
-    assert "Without a pause, a stop or an explicit in-the-middle-while-I-wait wording" in insert
+    assert "Without a pause, a stop, an in-the-middle-while-I-wait wording" in insert
 
 
 # ---- M3: the guard and the insert section ----

@@ -374,6 +374,20 @@ class InsertClipFact:
 
     status: str
     reason: str | None = None
+    # "topic" (no phrase or second: the pause is the end of the sentence about the clip, so a
+    # draft cannot know it will be placed), "phrase" or "second"; None when unknown.
+    anchor: str | None = None
+    # What the render did that the creator should be told (`_INSERT_NOTES`): the defaults an
+    # explicit ask overrode ("overrode:*"), what moved a position he did not name
+    # ("adjusted:*"), a fallback ("fallback:*", "via:keyword").
+    notes: tuple[str, ...] = ()
+    # The name the app shows for the clip ("IMG_7382"), when the render knew it.
+    name: str | None = None
+    # For a clip left out because nothing he says is about it: the sentence that fits it best
+    # (the reply offers to put the clip after it), and for one left out for length the length
+    # the video would have reached with it.
+    after_text: str | None = None
+    would_be_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -814,10 +828,12 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
         ending = EndingClipFact("dropped", reason=ending_clip_problem(manifest, parsed))
     # Parent KRI-1151: each asked insert, kept or dropped with the repair's reason.
     insert_facts = tuple(
-        InsertClipFact("dropped", reason=problem)
+        InsertClipFact("dropped", reason=problem, anchor=_insert_anchor(row))
         if problem is not None
-        else InsertClipFact("planned")
-        for problem in insert_clips_problems(manifest, repaired)
+        else InsertClipFact("planned", anchor=_insert_anchor(row))
+        for row, problem in zip(
+            repaired.insert_clips or (), insert_clips_problems(manifest, repaired), strict=True
+        )
     )
     if not insert_facts:
         # Nothing was asked of the plan: while the rollout is closed the planner is not taught
@@ -857,6 +873,13 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
         "insert_clips": insert_facts,
         "insert_clips_known": True,
     }
+
+
+def _insert_anchor(row: Any) -> str:
+    """How an `insert_clips` row names its moment (see `InsertClipFact.anchor`)."""
+    if getattr(row, "at_phrase", None):
+        return "phrase"
+    return "second" if getattr(row, "at_s", None) is not None else "topic"
 
 
 def _frame_preset_name(frame: object) -> str | None:
@@ -2502,18 +2525,49 @@ def _insert_clip_receipt_facts(receipt: object) -> tuple[InsertClipFact, ...]:
     """The worker's ``phone_insert_clips`` receipt as facts (empty when there is none)."""
     if not isinstance(receipt, Mapping):
         return ()
+
+    def text(row: Mapping[str, Any], key: str) -> str | None:
+        value = row.get(key)
+        return value if isinstance(value, str) and value else None
+
     applied = [
-        InsertClipFact("applied") for row in receipt.get("placed") or [] if isinstance(row, Mapping)
+        InsertClipFact(
+            "applied",
+            anchor=text(row, "basis"),
+            notes=_insert_receipt_notes(row),
+            name=text(row, "name"),
+        )
+        for row in receipt.get("placed") or []
+        if isinstance(row, Mapping)
     ]
     dropped = [
         InsertClipFact(
             "dropped",
-            reason=row.get("reason") if isinstance(row.get("reason"), str) else None,
+            reason=text(row, "reason"),
+            name=text(row, "name"),
+            after_text=text(row, "after_text"),
+            would_be_s=float(row["would_be_s"])
+            if isinstance(row.get("would_be_s"), int | float)
+            else None,
         )
         for row in receipt.get("dropped") or []
         if isinstance(row, Mapping)
     ]
     return tuple([*applied, *dropped])
+
+
+def _insert_receipt_notes(row: Mapping[str, Any]) -> tuple[str, ...]:
+    """The receipt row's notes for the creator, as stable codes (see `_INSERT_NOTES`)."""
+    notes = [f"overrode:{code}" for code in row.get("overrode") or [] if isinstance(code, str)]
+    if isinstance(row.get("adjusted"), str):
+        notes.append(f"adjusted:{row['adjusted']}")
+    if isinstance(row.get("fallback"), str):
+        notes.append(f"fallback:{row['fallback']}")
+    if row.get("via") in ("keyword", "guess"):
+        # A row from before `why` existed was a keyword fallback for an unavailable check.
+        why = row.get("why") if isinstance(row.get("why"), str) else "check_unavailable"
+        notes.append(f"{row['via']}:{why}")
+    return tuple(notes)
 
 
 def _talking_footage_ids(variant: Mapping[str, Any]) -> tuple[str, ...] | None:
@@ -4586,28 +4640,53 @@ def _insert_clip_why(code: str | None) -> str:
             tr="O klip iki kez istendi, bir kez oynar",
         ),
         "phrase_not_found": say(
-            en="I didn't hear you say that in your talk, so I didn't guess where it goes",
-            tr="Konuşmanda bunu söylediğini duymadım, nereye gideceğini tahmin etmedim",
+            en=(
+                "I didn't hear you say that in your talk, and nothing you say is about the "
+                "clip, so I left it out"
+            ),
+            tr=(
+                "Konuşmanda bunu söylediğini duymadım ve anlattığın hiçbir şey klibe uymuyor, "
+                "o yüzden dışarıda bıraktım"
+            ),
         ),
         "in_hook_window": say(
             en="That moment is in the first seconds, which stay on you",
             tr="O an ilk saniyelerde; o saniyeler sende kalır",
         ),
         "in_tail_window": say(
-            en="That moment is at the very end of your talk",
-            tr="O an konuşmanın en sonunda",
+            en=(
+                "The sentence it belongs to is the last thing you say, so there is nowhere to "
+                "pause after it"
+            ),
+            tr=("Ait olduğu cümle söylediğin son şey, arkasından durabileceğim bir yer yok"),
+        ),
+        "no_matching_sentence": say(
+            en="None of what you say is about it, so I left it out",
+            tr="Anlattığın hiçbir şey onunla ilgili değil, o yüzden dışarıda bıraktım",
+        ),
+        "no_speech": say(
+            en="There is nothing said in your talk to place it after",
+            tr="Konuşmanda onu arkasına koyabileceğim bir cümle yok",
+        ),
+        "over_length_limit": say(
+            en="Adding it would make the video longer than the length you asked for",
+            tr="Eklersem video istediğin süreden uzun olur",
+        ),
+        "over_device_budget": say(
+            en="The video would be longer than the 30 minutes your iPhone can build",
+            tr="Video, iPhone'unun hazırlayabildiği 30 dakikadan uzun olurdu",
         ),
         "too_close_to_previous": say(
             en="It would sit too close to the previous clip you asked to play",
             tr="İstediğin önceki klibe çok yakın olurdu",
         ),
         "too_long": say(
-            en="That clip is too long to play in the middle of your talk",
-            tr="Bu klip konuşmanın ortasında oynatmak için çok uzun",
+            en="That clip is over 5 minutes, the longest a clip in your video can be",
+            tr="Bu klip 5 dakikadan uzun, videodaki bir klip en fazla bu kadar olabilir",
         ),
         "too_many": say(
-            en="That is more clips than I can play in one talk",
-            tr="Bir konuşmada oynatabileceğimden fazla klip",
+            en="A talk can pause for at most 20 clips, and that is more than that",
+            tr="Bir konuşma en fazla 20 klip için durabilir, bu ondan fazla",
         ),
         "speaker_background": say(
             en="A picture behind you is on, which would also cut out the clip",
@@ -4620,11 +4699,181 @@ def _insert_clip_why(code: str | None) -> str:
     )
 
 
+# What the render did with a position, in the creator's words (the codes come from the worker's
+# `phone_insert_clips` receipt, `_insert_receipt_notes`). ``{clip}`` is "the IMG_7382 clip" /
+# "one clip" (`_clip_ref`).
+_GUESS_ASK = (
+    "tell me where it should go",
+    "nereye gitmesi gerektiğini söyle",
+)
+_BY_WORDS_EN = (
+    "I couldn't tell by meaning which sentence {clip} is about, so I matched it by its words"
+)
+_BY_WORDS_TR = (
+    "{clip} için hangi cümlenin ilgili olduğunu anlamdan çıkaramadım, kelimelerinden eşledim"
+)
+_GUESS_EN = "I couldn't tell which sentence {clip} is about, so it plays at my best guess"
+_GUESS_TR = "{clip} için hangi cümlenin ilgili olduğunu çıkaramadım, en iyi tahminimde oynuyor"
+_INSERT_NOTES: dict[str, tuple[str, str]] = {
+    "overrode:hook_window": (
+        "{clip} plays in the first seconds, as you asked",
+        "{clip} ilk saniyelerde oynuyor, istediğin gibi",
+    ),
+    "overrode:tail_window": (
+        "{clip} plays at the very end of your talk, as you asked",
+        "{clip} konuşmanın en sonunda oynuyor, istediğin gibi",
+    ),
+    "overrode:near_another_clip": (
+        "{clip} plays right next to another, as you asked",
+        "{clip} başka bir klibin hemen yanında oynuyor, istediğin gibi",
+    ),
+    "overrode:mid_word": (
+        "{clip} cuts into your talk in the middle of a word, as you asked",
+        "{clip} konuşmanı bir kelimenin ortasında kesiyor, istediğin gibi",
+    ),
+    "adjusted:hook_window": (
+        "the sentence {clip} belongs to ends in the first seconds, so it plays after the next one",
+        "{clip} için ilgili cümle ilk saniyelerde bitiyor, o yüzden bir sonrakinden sonra oynuyor",
+    ),
+    "adjusted:near_another_clip": (
+        "{clip} plays right after another clip about the same part",
+        "{clip}, aynı kısımla ilgili başka bir klibin hemen ardından oynuyor",
+    ),
+    "adjusted:take_end": (
+        "the time you gave for {clip} is past the end of your talk, so it plays at the very end",
+        "{clip} için verdiğin zaman konuşmanın bitişinden sonra, o yüzden en sonda oynuyor",
+    ),
+    "fallback:phrase_not_found": (
+        "I didn't hear you say the words you named for {clip}, so it plays where you talk about it",
+        "{clip} için söylediğin sözleri duymadım, o yüzden onu anlattığın yerde oynatıyorum",
+    ),
+    "keyword:check_unavailable": (
+        "I matched {clip} to your sentences by their words, the meaning check was unavailable",
+        "{clip} klibini cümlelerinle kelimelerinden eşledim, anlam kontrolü çalışmadı",
+    ),
+    "keyword:unclear": (_BY_WORDS_EN, _BY_WORDS_TR),
+    "keyword:invalid_answer": (_BY_WORDS_EN, _BY_WORDS_TR),
+    "keyword:low_confidence": (_BY_WORDS_EN, _BY_WORDS_TR),
+    "guess:check_unavailable": (_GUESS_EN, _GUESS_TR),
+    "guess:unclear": (_GUESS_EN, _GUESS_TR),
+    "guess:invalid_answer": (_GUESS_EN, _GUESS_TR),
+    "guess:low_confidence": (_GUESS_EN, _GUESS_TR),
+    "guess:no_facts": (
+        "I had nothing to go on for {clip}, so it plays spread across your talk",
+        "{clip} hakkında elimde bir şey yoktu, konuşmana yayarak oynatıyorum",
+    ),
+}
+# A receipt line is cut at 300 characters.
+_RECEIPT_ROOM = 285
+
+
+def _clip_ref(name: str | None) -> str:
+    if name:
+        return say(en=f"the {name} clip", tr=f"{name} klibi")
+    return say(en="one clip", tr="bir klip")
+
+
+def _sentence_case(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
+def _MORE() -> str:  # noqa: N802 - a localized constant
+    return say(en="; and more", tr="; ve daha fazlası")
+
+
+def _end_sentence(text: str) -> str:
+    return text if text.endswith((".", "?", "!")) else text + "."
+
+
+def _fit_parts(parts: Sequence[str], room: int = _RECEIPT_ROOM) -> str:
+    """``parts`` joined by "; ", cut at the last whole part that fits with "and more" after it,
+    so a line is never cut mid-word."""
+    text = "; ".join(parts)
+    if len(text) <= room:
+        return text
+    more = _MORE()
+    kept: list[str] = []
+    for part in parts:
+        if len("; ".join([*kept, part])) + len(more) > room:
+            break
+        kept.append(part)
+    return "; ".join(kept) + more if kept else parts[0][: room - len(more)] + more
+
+
+def _insert_notes_parts(rows: Sequence[InsertClipFact]) -> list[str]:
+    """One sentence per (clip, note), each naming its clip; the same sentence once."""
+    parts: list[str] = []
+    for row in rows:
+        for code in row.notes:
+            if code not in _INSERT_NOTES:
+                continue
+            text = say(en=_INSERT_NOTES[code][0], tr=_INSERT_NOTES[code][1]).replace(
+                "{clip}", _clip_ref(row.name)
+            )
+            if text not in parts:
+                parts.append(text)
+    return parts
+
+
+def _insert_notes_text(rows: Sequence[InsertClipFact]) -> str | None:
+    parts = _insert_notes_parts(rows)
+    return _sentence_case(_fit_parts(parts)) if parts else None
+
+
+def _insert_dropped_line(row: InsertClipFact) -> str:
+    """Why one clip is not in the video, naming it, and for a clip nothing he says is about, the
+    offer to put it after the sentence that fits it best anyway."""
+    code = row.reason
+    ref = _clip_ref(row.name)
+    if code in ("no_matching_sentence", "phrase_not_found"):
+        head = (
+            say(
+                en=f"You never talk about {ref}, so I left it out",
+                tr=f"{ref} hakkında hiç konuşmuyorsun, o yüzden dışarıda bıraktım",
+            )
+            if code == "no_matching_sentence"
+            else say(
+                en=f"I didn't hear you say the words you named for {ref} and nothing you "
+                "say is about it, so I left it out",
+                tr=f"{ref} için söylediğin sözleri duymadım ve anlattığın hiçbir şey ona uymuyor, "
+                "o yüzden dışarıda bıraktım",
+            )
+        )
+        if row.after_text:
+            ask = say(
+                en=f'Put {ref} after "{row.after_text}" anyway?',
+                tr=f'{ref} yine de "{row.after_text}" cümlesinden sonra koyayım mı?',
+            )
+        else:
+            ask = say(en="Tell me where it should go", tr="Nereye koyayım, söyle")
+        return f"{head}. {ask}"
+    if code == "over_device_budget" and row.would_be_s:
+        minutes = round(row.would_be_s / 60)
+        return say(
+            en=f"{_sentence_case(ref)} would make the video {minutes} minutes long and your "
+            "iPhone builds at most 30, so I left it out",
+            tr=f"{_sentence_case(ref)} videoyu {minutes} dakikaya çıkarırdı, iPhone'un en fazla "
+            "30 dakika hazırlar, o yüzden dışarıda bıraktım",
+        )
+    why = _insert_clip_why(code)
+    if row.name:
+        return f"{row.name}: {why}"
+    return why
+
+
+def _insert_dropped_why(dropped: list[InsertClipFact]) -> str:
+    """Every clip left out, each named with its own reason."""
+    return _fit_parts([_insert_dropped_line(row) for row in dropped])
+
+
 def _check_insert_clip(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Does the edit pause the creator's take for the clip(s) he asked for?
 
     A draft judges the repaired strategy, the finished video the worker's own
     `phone_insert_clips` receipt; "Done" is never read off the strategy once a render exists.
+    A clip placed "in between my speech" (no phrase) is placed by what he says, which only the
+    render knows: a draft says it is met only with that condition spelled out, and the finished
+    video counts the clips that played and names why each missing one did not.
     """
     if not facts.insert_clips_known:
         return _receipt(req, "partial", _NO_CHECKER)
@@ -4651,19 +4900,43 @@ def _check_insert_clip(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
             + ".",
         )
     if dropped and not ok:
-        return _receipt(req, "not_possible", _insert_clip_why(dropped[0].reason) + ".")
+        return _receipt(req, "not_possible", _end_sentence(_insert_dropped_why(dropped)))
     if dropped:
+        head = say(
+            en=f"{len(ok)} of {len(rows)} of those clips play in your talk: ",
+            tr=f"O kliplerin {len(rows)} taneden {len(ok)} tanesi konuşmanda oynuyor: ",
+        )
+        # The clips left out come first, each named; what happened to the ones that DID play
+        # follows when it fits.
+        lines = [_insert_dropped_line(row) for row in dropped]
+        room = _RECEIPT_ROOM - len(head)
+        text = _fit_parts(lines, room)
+        if not text.endswith(_MORE()):
+            for note in _insert_notes_parts(ok):
+                if len("; ".join([text, note])) > room:
+                    break
+                text = f"{text}; {note}"
+        return _receipt(req, "partial", head + _end_sentence(text))
+    if not rendered and any(row.anchor == "topic" for row in ok):
         return _receipt(
             req,
-            "partial",
+            "met",
             say(
-                en="Some of those clips play in your talk, not all: ",
-                tr="O kliplerin bazıları konuşmanda oynuyor, hepsi değil: ",
-            )
-            + _insert_clip_why(dropped[0].reason)
-            + ".",
+                en=(
+                    "Each clip plays in a pause of your talk, at the end of the sentence where "
+                    "you talk about it. If I can't tell which sentence a clip is about it "
+                    "still plays, at my best guess, and I'll say so. A clip you surely never "
+                    "talk about is left out, I'll name it and offer to put it in anyway"
+                ),
+                tr=(
+                    "Her klip konuşmanda, onu anlattığın cümlenin sonunda bir duraklamada "
+                    "oynar. Hangi cümlenin ilgili olduğunu çıkaramazsam yine de en iyi "
+                    "tahminimde oynar ve bunu söylerim. Kesinlikle hakkında konuşmadığın klip "
+                    "dışarıda kalır, adını söyler ve yine de koymayı öneririm"
+                ),
+            ),
         )
-    return _receipt(req, "met", None)
+    return _receipt(req, "met", _insert_notes_text(ok))
 
 
 # The volume under which a video that is "at the end" is still muted (the recipe holds 0.0).
@@ -7197,7 +7470,30 @@ def _draft_talking_cutaway_sound(
         return _receipt(req, "not_possible", _toggle_missed(ask, row))
     if ask.state == "off":
         return _receipt(req, "met", _toggle_summary(ask))
-    return _receipt(req, "met", _talking_cutaway_sound_on())
+    return _receipt(req, "met", _talking_cutaway_sound_draft())
+
+
+def _talking_cutaway_sound_draft() -> str:
+    """The draft's promise for a clip-sound "on" ask over the footage cutaways: honest per clip.
+    Where the clips are placed at a mention, the render silences a clip no mention matches
+    (the creator's voice is never muted at an arbitrary moment), so "Done" for all of them
+    would be false for that clip (thread b61b7673: 2 of 3 talks sounded)."""
+    from app.services.phone_rollout import phone_talking_mention_cutaways_supported  # noqa: PLC0415
+
+    if not phone_talking_mention_cutaways_supported():
+        return _talking_cutaway_sound_on()
+    return say(
+        en=(
+            "Clips shown full screen where you talk about them play their own sound, with your "
+            "voice muted under them. A clip nothing you say matches stays silent, and I'll tell "
+            "you which"
+        ),
+        tr=(
+            "Hakkında konuştuğun yerde tam ekran gösterilen klipler kendi sesiyle çalar, senin "
+            "sesin altta kapalı kalır. Anlattığın hiçbir şeyle eşleşmeyen klip sessiz kalır, "
+            "hangisi olduğunu söylerim"
+        ),
+    )
 
 
 def _talking_cutaway_sound_on() -> str:
@@ -11348,6 +11644,10 @@ def text_sequence_shown(req: BriefRequirement, facts: PlanFacts) -> bool:
 def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if req.kind == "text_sequence" and compose_unmet_with_ops():
         return _check_text_sequence(req, facts)
+    if _insert_clip_fact(req) and facts.edit_format in _TALKING_FORMATS:
+        # Parent KRI-1151: the typed `insert_clip` fact is the ask, whatever words its description
+        # uses ("... in full screen ..." must not send it to the framing check).
+        return _check_insert_clip(req, facts)
     if wants_engine_noise_reduction(req):
         # This owns only the explicit engine-noise request.  Bed/mix controls keep their
         # existing checker and cannot be satisfied by a noise filter.
