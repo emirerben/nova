@@ -7548,6 +7548,14 @@ def _approved_generation_requirements_review(
         )
     # KRI-942: clip sound on/off asks are judged on the recipe the phone renders now.
     facts = _with_clip_sound_toggles(job, variant, facts, brief_binding=raw)
+    # KRI-1189: a restart ask with no retake cut says "didn't find" only where this render's
+    # cleanup could have cut one, read the same way as the finished-render note below.
+    facts = dataclasses.replace(
+        facts,
+        speech_cleanup_retake_possible=_cleanup_note_retake_cut_possible(
+            (job.assembly_plan or {}).get("speech_cleanup_contract")
+        ),
+    )
     if any(req.order_replacement is not None for req in live.values()):
         from app.kria.order_replacement_receipts import with_verified_order_execution
 

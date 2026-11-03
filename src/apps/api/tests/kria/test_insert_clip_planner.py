@@ -249,7 +249,7 @@ def test_the_planner_is_taught_the_field_only_while_the_rollout_is_open(monkeypa
     from app.agents.main_creator import MAIN_CREATOR_PROMPT_VERSION, _insert_clip_section
 
     section = _insert_clip_section(cutaways_open=False)
-    assert MAIN_CREATOR_PROMPT_VERSION.endswith("-v116")
+    assert MAIN_CREATOR_PROMPT_VERSION.endswith("-v117")
     _open(monkeypatch, insert=True)
     manifest = _julio_manifest()
     open_prompt = _render_prompt(manifest)
@@ -417,7 +417,9 @@ def _extractor_prompt(**kw) -> str:
 # KRI-1177 / KRI-1164 (creator v113) adds the caption look facts and `audio_intent: no_music`;
 # without those two passages the digest is
 # 90ef88660728fd8938da0de42c9874b73d52e25664c5633a6c8b2fd63066a718.
-_BRIEF_SECTION_BEFORE_INSERTS = "7eda3337971e0813aa1c84b1e79c04eb4e9e0e5082167c6189feb60ec93b97b5"
+# KRI-1189 (creator v117) teaches `cut_restarts` in the cleanup sentence; with v116's sentence the
+# digest is 7eda3337971e0813aa1c84b1e79c04eb4e9e0e5082167c6189feb60ec93b97b5.
+_BRIEF_SECTION_BEFORE_INSERTS = "9f64fa70c78ca55e5c5fbf906bbcd463d1d4964c17b02843b7188f590a85440a"
 
 
 def test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inserts():

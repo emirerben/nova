@@ -76,11 +76,13 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # Re-pinned for KRI-1177 / KRI-1164 (creator v113): the brief section also teaches the caption
 # look facts and `audio_intent: no_music`; removing exactly those two passages reproduces the
 # values above.
+# Re-pinned for KRI-1189 (creator v117): the brief section's cleanup sentence teaches
+# `cut_restarts`; restoring v116's sentence reproduces 87126862 / c9d68e98 / e83242e4 / 00392b4c.
 MAIN_PROMPT_SHA = {
-    "neither": "87126862b960488fd27e6c95649f1d1ded42832c9c3f2d5676f08d4ccc58bbe0",
-    (True, True): "c9d68e988f721956001b9abf140e5b5adb16a2089f091e13cb98022cdf27df11",
-    (True, False): "e83242e4acb1caf9a72261dee03f0b42bfa5a2945a60af141ab83c1d22cb6522",
-    (False, True): "00392b4cb7c0368a2579ca2f0f2198f39c76500fdd17ca7e50a59318b3d5c6f7",
+    "neither": "e442b680d967898d3bd39de0b9e49df9fb0fb9419b7dd648c9253ba10b84ae58",
+    (True, True): "1004a3917e7d0e8bf8ce535b3b391a72040808954e7fad2459fb152e737a063e",
+    (True, False): "e11a0e9b09d3c653420b45658bfda246e0f15ac5fe5cc30b11f8ac97e0212062",
+    (False, True): "b41741e380534631a6f82005f93084634af3b26bd9635a5bd0c9f99738a98aef",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (
