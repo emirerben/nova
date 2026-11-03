@@ -51,6 +51,8 @@ from tests.kria.test_runtime_postgres_integration import _seed_runtime_project
 from tests.routes.test_phone_editor_commit import phone_job
 from tests.services.test_render_review_evidence import local_video  # noqa: F401
 
+pytestmark = pytest.mark.usefixtures("release_abandoned_db_connections")
+
 
 @pytest.fixture
 async def approved_publication(monkeypatch):
