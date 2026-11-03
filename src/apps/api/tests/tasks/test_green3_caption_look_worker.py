@@ -83,11 +83,16 @@ R4 = BriefRequirement(
 SEQUENCE = [f"asset-{COTOPAXI}", f"asset-{OBLEA}", f"asset-{BITE}"]
 
 
-def _green3_job(monkeypatch, requirements, *, request=GREEN3_PROMPT, stamp=True):
+def _green3_job(monkeypatch, requirements, *, request=GREEN3_PROMPT, stamp=True, faces=()):
     monkeypatch.setattr(settings, "phone_text_styling_enabled", True)
     monkeypatch.setattr(gb.settings, "subtitled_caption_correction_enabled", False)
+
     # No source proxy to sample faces / contrast from (the harness take is not on disk).
-    monkeypatch.setattr(styling, "_ensure_generation_environment", lambda canvas: None)
+    # `faces` stands in for the sampled face regions (prod Green 3 sampled five).
+    def environment(canvas):
+        styling._POLICY.get()["_face_boxes"] = [dict(face) for face in faces]
+
+    monkeypatch.setattr(styling, "_ensure_generation_environment", environment)
     job = _windows_job(monkeypatch, SEQUENCE, cadence_s=4.0, speaker_frame="small_bottom_right")
     job.all_candidates["creator_request"] = request
     brief = CreativeBrief(version=1, requirements=list(requirements)) if requirements else None
@@ -164,6 +169,7 @@ def test_green3_first_draft_draws_the_captions_the_creator_asked_for(monkeypatch
         "color": "#FFFFFF",
         "position": "middle",
         "case": "lower",
+        "position_y_frac": 0.5,
         "over_face": False,
     }
 
@@ -220,6 +226,27 @@ def test_an_asked_spot_on_the_corner_speaker_is_kept_and_said(monkeypatch):
     assert receipt.status == "met", receipt
     assert "at the bottom right" in receipt.reason
     assert "over you in the corner" in receipt.reason
+
+
+def test_an_asked_spot_over_a_face_is_kept_and_said(monkeypatch):
+    """F14 with faces sampled, as prod always does: the spot stays and the review says why."""
+    face = {"start_s": 0.0, "end_s": 30.0, "box": (0.30, 0.40, 0.70, 0.62), "kind": "face"}
+    job = _green3_job(monkeypatch, [R1, R3, R4], faces=[face])
+    gb._run_generative_job(str(job.id))
+    variant = job.assembly_plan["variants"][0]
+
+    style = variant["caption_editor_style"]
+    assert (style["alignment"], style["position_y_frac"]) == ("center", pytest.approx(0.5))
+    assert variant["caption_size_px"] == 52
+    assert variant["caption_look_receipt"]["over_face"] is True
+    (receipt,) = build_receipts(
+        [R3], plan_facts_from_phone_variant(variant), include_unchecked=True
+    )
+    assert receipt.status == "met", receipt
+    assert receipt.reason == (
+        "Captions are small, white, lowercase and in the middle; "
+        "they cover a face in places, as you asked."
+    )
 
 
 # ------------------------------------------------------------ no ask: nothing else changes

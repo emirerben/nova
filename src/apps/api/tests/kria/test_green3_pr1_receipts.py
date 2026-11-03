@@ -173,7 +173,17 @@ def test_green3_prompt_parses_to_the_captions_ask_not_the_speakers_corner():
             ("caption", {"position": "middle"}),
         ),
         ("At the bottom right, add captions", ("caption", {"position": "bottom_right"})),
-        # A colour about something else is not the captions' colour.
+        # The creator's first person about the captions, a sentence later (code review).
+        (
+            "Captions in white. I'd like them in the middle",
+            ("caption", {"position": "middle", "color": "#FFFFFF"}),
+        ),
+        (
+            "I'm small at the bottom right. Captions in the middle",
+            ("caption", {"position": "middle"}),
+        ),
+        # A colour about something else is not the text's colour (code review: was None).
+        ("Make the title yellow and the background red", ("title", {"color": "#FFFF00"})),
         ("Captions in the middle on a white background", ("caption", {"position": "middle"})),
         # Turkish: "subtitles small, white, in the middle; I'm small at the bottom left".
         (
@@ -427,6 +437,52 @@ def test_green3_finished_video_counts_distinct_photos_not_windows():
     assert receipt.reason == (
         "5 photos or videos take turns behind you; you're small at the bottom right."
     )
+
+
+def _drawn_variant(**changes):
+    """A finished Green 3 variant as the writer leaves it with the typed look drawn."""
+    variant = _variant(
+        caption_cues=[{"text": "kervan celebrated its 10th year", "start_s": 0.0, "end_s": 2.0}],
+        caption_size_px=52,
+        caption_text_color="#FFFFFF",
+        caption_editor_style={
+            "alignment": "center",
+            "position_x_frac": 0.5,
+            "position_y_frac": 0.5,
+        },
+        caption_look_receipt={
+            **LOOK_DICT,
+            "size_px": 52,
+            "position_y_frac": 0.5,
+            "over_face": False,
+        },
+    )
+    variant.update(changes)
+    return variant
+
+
+LOOK_DICT = {"size": "small", "position": "middle", "color": "#FFFFFF", "case": "lower"}
+
+
+def test_a_finished_video_carrying_the_look_is_met():
+    receipt = _one(R3, plan_facts_from_phone_variant(_drawn_variant()))
+    assert receipt.status == "met", receipt
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        # A KRI-827 mark (or an editor drag) moved the block off the asked spot.
+        {"caption_editor_style": {"alignment": "center", "position_y_frac": 0.7}},
+        {"caption_text_color": "#FFFF00"},
+        {"caption_size_px": 78},
+        {"caption_cues": [{"text": "Kervan celebrated", "start_s": 0.0, "end_s": 2.0}]},
+    ],
+)
+def test_a_finished_video_that_lost_the_look_is_not_met(changes):
+    receipt = _one(R3, plan_facts_from_phone_variant(_drawn_variant(**changes)))
+    assert receipt.status == "partial", receipt
+    assert receipt.reason == "The captions no longer look the way you asked."
 
 
 def test_an_editor_saved_background_counts_distinct_media():

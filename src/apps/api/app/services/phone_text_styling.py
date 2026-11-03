@@ -540,6 +540,8 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
         policy["_caption_look_receipt"] = {
             **ask.as_dict(),
             "size_px": resolved.text_size_px,
+            # Where the block was drawn, so a later move (a KRI-827 mark, an editor Save) is seen.
+            "position_y_frac": round(float(resolved.position_y_frac), 5),
             "over_face": over_face,
         }
     policy["caption_look"] = resolved

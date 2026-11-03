@@ -795,6 +795,7 @@ class PlanFacts:
     caption_size_px: int | None = None
     caption_text_color: str | None = None
     caption_alignment: str | None = None
+    caption_y_frac: float | None = None
     # KRI-1164: a finished phone render that plays music under the video (a smart music bed, or
     # a track mixed in rather than only recommended). False = none recorded.
     music_in_render: bool = False
@@ -2827,6 +2828,9 @@ def _caption_look_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
     alignment = style.get("alignment") if isinstance(style, Mapping) else None
     if isinstance(alignment, str) and alignment:
         facts["caption_alignment"] = alignment
+    y_frac = _finite_number(style.get("position_y_frac")) if isinstance(style, Mapping) else None
+    if y_frac is not None:
+        facts["caption_y_frac"] = y_frac
     return facts
 
 
@@ -6957,6 +6961,11 @@ def _caption_look_kept(ask: CaptionLookAsk, facts: PlanFacts) -> bool | None:
             unknown = True
         elif facts.caption_alignment != caption_alignment(ask.position):
             return False
+        drawn_y = _finite_number(receipt.get("position_y_frac"))
+        if drawn_y is not None and facts.caption_y_frac is not None:
+            # Same side but moved up or down (a KRI-827 mark, an editor drag) is not the spot.
+            if abs(facts.caption_y_frac - drawn_y) > 0.02:
+                return False
     if ask.case is not None:
         if receipt.get("case") != ask.case:
             return False

@@ -85,9 +85,9 @@ _TEXT_SUBJECT = re.compile(
     r"|altyaz[ıi]|başl[ıi]k|yaz[ıi]|etiket"
 )
 _OTHER_SUBJECT = re.compile(
-    r"\b(?:me|myself|i|my face|the speaker|ben|beni|benim|bana)\b"
-    r"|\b(?:photo|picture|image|video|clip|card|logo|sticker)\w*"
-    r"|\b(?:fotoğraf|resim|resm|video|kart)"
+    r"\b(?:me|myself|i'm|i am|my face|the speaker|ben|beni|benim|bana)\b"
+    r"|\b(?:photo|picture|image|video|clip|card|logo|sticker|background|backdrop)\w*"
+    r"|\b(?:fotoğraf|resim|resm|video|kart|arka plan)"
 )
 # A colour word before one of these paints something else, not the text.
 _NOT_TEXT_COLOUR = "background|outline|stroke|shadow|box|card|frame|bar|logo|arka plan"
@@ -97,8 +97,11 @@ def _text_scope(text: str) -> str:
     """The parts of a message about on-screen text: a place or colour counts only there.
 
     Sentences split into segments (commas, colons, "and"); a segment naming no subject
-    follows the subject before it, or the first one after it. A quoted string is text."""
+    follows the subject before it, or the first one after it, and a sentence naming none
+    follows the last one ("Captions in white. I'd like them in the middle"). A quoted string
+    is text."""
     scope = []
+    carried = None
     text = re.sub(r'"[^"]*"|“[^”]*”', " text ", text)
     for sentence in re.split(r"[.!?;…]+(?=\s|$)|\n", text):
         segments = re.split(r"[,:]|\s(?:and|ve|but|ama)\s", sentence)
@@ -110,11 +113,12 @@ def _text_scope(text: str) -> str:
             else None
             for part in segments
         ]
-        kind = next((k for k in kinds if k), None)
+        kind = next((k for k in kinds if k), carried)
         for part, own in zip(segments, kinds, strict=True):
             kind = own or kind
             if kind == "text":
                 scope.append(part)
+        carried = kind
     return ", ".join(scope)
 
 

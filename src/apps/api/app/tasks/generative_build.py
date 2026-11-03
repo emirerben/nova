@@ -13499,6 +13499,9 @@ def _run_phone_narrated_job(
                 # KRI-961: the creator's spellings (quoted asks + the approved brief's list),
                 # applied last as Talking does (KRI-793), so "Olloda bife" reads "ojo de bife".
                 cues = _apply_creator_spellings(cues, _caption_glossary(snapshot, all_candidates))
+                # KRI-1177: this writer draws the typed caption look too, so the asked case is
+                # the cue text here as well (else its receipt reads as a look later changed).
+                cues = generation_caption_cues(cues, language=detected_lang)
 
             # KRI-533: what the worker pinned, and the receipts it can judge from it
             # (a first/last clip, a clip-group timing, the caption language). Like the
