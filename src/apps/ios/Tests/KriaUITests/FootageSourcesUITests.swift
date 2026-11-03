@@ -70,6 +70,13 @@ import XCTest
         app.buttons["teleprompter-cancel-countdown"].tap()
     }
 
+    func testScriptRowOpensTheCameraWithTheScriptSheetFirst() {
+        let app = launchTalking(cameraReady: true, legacyAttach: true)
+        app.buttons["Attach footage"].tap()
+        app.buttons["teleprompter-open"].tap()
+        XCTAssertTrue(app.textViews["teleprompter-script-editor"].waitForExistence(timeout: 15))
+    }
+
     func testRefusedCameraOffersSettingsAndUpload() {
         let app = launchTalking()
         app.buttons["chat-attach"].tap()

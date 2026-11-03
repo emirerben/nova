@@ -50,6 +50,7 @@ struct KriaCaptureButton: View {
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.4)
         .accessibilityLabel(isRecording ? "Stop recording" : "Record")
         .accessibilityIdentifier(isRecording ? "teleprompter-stop-recording" : "teleprompter-record")
@@ -208,9 +209,9 @@ struct TeleprompterScriptSheet: View {
         guard !trimmed.isEmpty else { return "Your words scroll over the camera while you record." }
         let words = script.readingUnitCount
         let seconds = Int(ceil(script.estimatedReadTime))
-        let duration = seconds < 60 ? "\(seconds) seconds"
+        let duration = seconds < 60 ? "\(seconds) \(seconds == 1 ? "second" : "seconds")"
             : "\(seconds / 60) minute\(seconds / 60 == 1 ? "" : "s")" + (seconds % 60 == 0 ? "" : " \(seconds % 60) seconds")
-        let base = "\(words) words, about \(duration) at \(script.wordsPerMinute) words per minute."
+        let base = "\(words) \(words == 1 ? "word" : "words"), about \(duration) at \(script.wordsPerMinute) words per minute."
         return words > 90 ? base + " Scroll to read the rest." : base
     }
 
@@ -366,4 +367,27 @@ private struct ReviewPlayerSurface: UIViewRepresentable {
         return view
     }
     func updateUIView(_ uiView: View, context: Context) { uiView.playerLayer.player = player }
+}
+
+
+/// The script sheet shown before the camera opens (from the Add media Script row or the composer's Add script). It
+/// edits the same saved draft the camera reads, so the words are waiting when the camera opens.
+struct TeleprompterScriptEntrySheet: View {
+    let accountID: String
+    let projectID: UUID
+    /// `true` = "Use script", `false` = "Record without a script".
+    let finish: (Bool) -> Void
+    @StateObject private var script = TeleprompterScript()
+    @State private var store: TeleprompterStore?
+
+    var body: some View {
+        TeleprompterScriptSheet(script: script, save: { try? store?.save(draft: script.draft) },
+                                useScript: { try? store?.save(draft: script.draft); finish(true) },
+                                skip: { finish(false) })
+            .onAppear {
+                let store = TeleprompterStore(accountID: accountID, projectID: projectID)
+                self.store = store
+                if let draft = try? store.loadDraft() { script.draft = draft }
+            }
+    }
 }

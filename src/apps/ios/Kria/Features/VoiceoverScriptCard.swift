@@ -39,6 +39,7 @@ struct VoiceoverScriptCard: View {
             tone: .warning,
             title: script.turkish ? "Kaydetmeden önce kontrol et" : "Check before recording",
             message: script.needsCheck.map { "“\($0.phrase)”" + ($0.reason.map { ": \($0)" } ?? "") }.joined(separator: "\n"))
+            .accessibilityElement(children: .combine)
             .accessibilityIdentifier("voiceover-script-checks")
     }
 

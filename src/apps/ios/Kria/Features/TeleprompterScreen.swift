@@ -9,8 +9,8 @@ struct TeleprompterScreen: View {
     let intakeState: (TeleprompterTakeManifest) async -> TeleprompterIntakeResult?
     /// Leaves the camera for the upload sources. Nil hides every Upload control on the camera.
     let onUpload: (() -> Void)?
-    /// Opens the script sheet first (a script row or card sent the creator here to write one).
-    let opensScript: Bool
+    /// The creator already wrote a script in the script sheet and chose to use it.
+    let startsWithScript: Bool
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -32,16 +32,20 @@ struct TeleprompterScreen: View {
          speakerBackgroundEnabled: Bool = false,
          backgroundIntake: BackgroundIntake? = nil,
          backgroundStatement: BackgroundStatement? = nil,
-         opensScript: Bool = false,
+         startsWithScript: Bool = false,
          onUpload: (() -> Void)? = nil,
          reportDiagnostic: @escaping (RecorderDiagnosticReport) -> Void = { _ in }) {
-        _flow = StateObject(wrappedValue: TeleprompterRecordingFlow(
-            accountID: accountID, projectID: projectID, speakerBackgroundEnabled: speakerBackgroundEnabled,
-            backgroundIntake: backgroundIntake, backgroundStatement: backgroundStatement,
-            reportDiagnostic: reportDiagnostic))
+        _flow = StateObject(wrappedValue: {
+            let flow = TeleprompterRecordingFlow(
+                accountID: accountID, projectID: projectID, speakerBackgroundEnabled: speakerBackgroundEnabled,
+                backgroundIntake: backgroundIntake, backgroundStatement: backgroundStatement,
+                reportDiagnostic: reportDiagnostic)
+            flow.useScript = startsWithScript
+            return flow
+        }())
         self.admissionMessage = admissionMessage; self.intake = intake; self.intakeState = intakeState
         self.onUpload = onUpload
-        self.opensScript = opensScript
+        self.startsWithScript = startsWithScript
     }
 
     var body: some View {
@@ -55,8 +59,8 @@ struct TeleprompterScreen: View {
         .kriaPage()
         .interactiveDismissDisabled(flow.captureBusy || flow.usingTake)
         .task {
-            if opensScript { flow.showsScriptSheet = true }
             await flow.load()
+            await flow.prepareCameraIfNeeded()
             // A statement the last opening could not make is retried here.
             await flow.syncBackgroundStatement()
             while !Task.isCancelled {
@@ -123,14 +127,8 @@ struct TeleprompterScreen: View {
                 if flow.stage == .countdown {
                     KriaCountdownDisc(value: flow.countdown) { flow.cancelCountdown() }
                 }
-                if let message = flow.camera.error, !flow.captureBusy {
-                    CameraAccessCard(kind: flow.camera.errorKind, message: message,
-                                     openSettings: { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } },
-                                     retry: { Task { await flow.camera.prepare() } },
-                                     upload: onUpload.map { upload in { leaveForUpload(upload) } })
-                        // With a script on, the reading window and controls stay put and the card sits under them.
-                        .frame(maxHeight: .infinity, alignment: flow.useScript ? .bottom : .center)
-                        .padding(.bottom, flow.useScript ? bottomInset + 8 : 0)
+                if let message = flow.camera.error, !flow.captureBusy, !flow.useScript {
+                    accessCard(message)
                 }
             }
             .onAppear { readingCanvas = canvas }
@@ -142,6 +140,13 @@ struct TeleprompterScreen: View {
 
     /// A refused camera shows the access card alone, unless a script is on: then the reading window stays.
     private var showsControls: Bool { flow.camera.error == nil || flow.useScript }
+
+    private func accessCard(_ message: String) -> some View {
+        CameraAccessCard(kind: flow.camera.errorKind, message: message,
+                         openSettings: { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } },
+                         retry: { Task { await flow.camera.prepare() } },
+                         upload: onUpload.map { upload in { leaveForUpload(upload) } })
+    }
 
     private var topRow: some View {
         ZStack {
@@ -187,6 +192,11 @@ struct TeleprompterScreen: View {
 
     @ViewBuilder private var cameraBottom: some View {
         VStack(spacing: 12) {
+            // With a script on, the reading window and controls stay put and the card sits above them, scrollable.
+            if let message = flow.camera.error, !flow.captureBusy, flow.useScript {
+                ScrollView { accessCard(message) }
+                    .frame(maxHeight: dynamicTypeSize.isAccessibilitySize ? 210 : 190)
+            }
             if let error = flow.error { errorText(error).padding(.horizontal, 16) }
             if let note = flow.backgroundNote {
                 Text(note).kriaType(.label).foregroundStyle(Color.white)
@@ -215,31 +225,8 @@ struct TeleprompterScreen: View {
 
     /// Speed, the place in the script and the prompter switch. Only while a script is on.
     private var scriptStatusRow: some View {
-        VStack(spacing: 8) {
-            if manualScrolling {
-                HStack(spacing: 8) {
-                    KriaCameraCapsule(title: "Previous line", identifier: "teleprompter-action-previous line") { flow.script.backLine() }
-                    KriaCameraCapsule(title: "Next line", identifier: "teleprompter-action-next line") { flow.script.nextLine() }
-                }
-                if !UIAccessibility.isVoiceOverRunning {
-                    KriaCameraCapsule(title: "Use steady scrolling", identifier: "teleprompter-steady") { allowsAutomaticScroll = true }
-                }
-            }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    KriaCameraCapsule(title: "Speed · \(flow.script.wordsPerMinute) wpm", identifier: "teleprompter-speed") { showsSpeedSheet = true }
-                    TeleprompterProgressChip(script: flow.script)
-                    if !manualScrolling {
-                        KriaCameraCapsule(title: flow.script.isPlaying ? "Stop prompter" : "Start prompter",
-                                          identifier: "teleprompter-pause-text") {
-                            if flow.script.isPlaying { flow.script.pause() } else { flow.script.resume() }
-                        }
-                    }
-                }
-                .padding(.horizontal, 16)
-            }
-            .accessibilityIdentifier("teleprompter-capture-options")
-        }
+        TeleprompterScriptStatusRow(script: flow.script, manual: manualScrolling,
+                                    useSteady: { allowsAutomaticScroll = true }, openSpeed: { showsSpeedSheet = true })
     }
 
     /// Upload thumbnail | capture | flip. While a take is running only the capture control stays.
@@ -249,7 +236,11 @@ struct TeleprompterScreen: View {
         return HStack {
             Group {
                 if idle, let onUpload {
-                    KriaCameraUploadButton { leaveForUpload(onUpload) }
+                    if dynamicTypeSize.isAccessibilitySize {
+                        KriaCameraIconButton(symbol: KriaSourceOption.uploadSymbol, label: "Upload", identifier: "camera-upload") { leaveForUpload(onUpload) }
+                    } else {
+                        KriaCameraUploadButton { leaveForUpload(onUpload) }
+                    }
                 } else { Color.clear.frame(height: 44) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -708,5 +699,49 @@ private struct TeleprompterSpeedSheet: View {
             if script.hasEnded { Text("End of script").kriaType(.label).foregroundStyle(KriaColor.mutedInk) }
         }
         .padding(24).frame(maxWidth: .infinity, alignment: .topLeading).background(KriaColor.paper)
+    }
+}
+
+
+/// Reads the script itself, so the pace and the prompter switch redraw as it changes (the flow does not republish it).
+private struct TeleprompterScriptStatusRow: View {
+    @ViewBuilder private var chips: some View {
+        KriaCameraCapsule(title: "Speed · \(script.wordsPerMinute) wpm", identifier: "teleprompter-speed", action: openSpeed)
+        TeleprompterProgressChip(script: script)
+        if !manual {
+            KriaCameraCapsule(title: script.isPlaying ? "Stop prompter" : "Start prompter", identifier: "teleprompter-pause-text") {
+                if script.isPlaying { script.pause() } else { script.resume() }
+            }
+        }
+    }
+
+    @ObservedObject var script: TeleprompterScript
+    let manual: Bool
+    let useSteady: () -> Void
+    let openSpeed: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if manual {
+                HStack(spacing: 8) {
+                    KriaCameraCapsule(title: "Previous line", identifier: "teleprompter-action-previous line") { script.backLine() }
+                    KriaCameraCapsule(title: "Next line", identifier: "teleprompter-action-next line") { script.nextLine() }
+                }
+                if !UIAccessibility.isVoiceOverRunning {
+                    KriaCameraCapsule(title: "Use steady scrolling", identifier: "teleprompter-steady", action: useSteady)
+                }
+            }
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(spacing: 8) { chips }
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) { chips }.padding(.horizontal, 16)
+                    }
+                    .accessibilityIdentifier("teleprompter-capture-options")
+                }
+            }
+        }
     }
 }

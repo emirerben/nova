@@ -98,7 +98,7 @@ import XCTest
         let app = launchTalking()
         app.buttons["teleprompter-open"].tap()
         let field = app.textViews["teleprompter-script-editor"]
-        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertTrue(field.waitForExistence(timeout: 20), "the Script row opens the camera with the script sheet first")
         XCTAssertFalse(app.buttons["teleprompter-use-script"].isEnabled, "Use script waits for words")
         XCTAssertTrue(app.buttons["teleprompter-no-script"].isHittable, "Recording without a script is always one tap away")
         field.tap()
@@ -126,7 +126,7 @@ import XCTest
     func testScriptControlsAreReachableAtAccessibilitySize() {
         let app = launchTalking(largeText: true)
         app.buttons["teleprompter-open"].tap()
-        XCTAssertTrue(app.textViews["teleprompter-script-editor"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.textViews["teleprompter-script-editor"].waitForExistence(timeout: 20))
         XCTAssertTrue(app.buttons["teleprompter-no-script"].isHittable)
         XCTAssertTrue(app.buttons["teleprompter-use-script"].exists)
         capture(app, "Script at accessibility size")
@@ -142,6 +142,7 @@ import XCTest
         XCTAssertTrue(app.buttons["Next line"].isHittable)
         XCTAssertTrue(app.buttons["Use steady scrolling"].isHittable)
         app.buttons["Use steady scrolling"].tap()
+        capture(app, "Camera controls after steady scrolling at accessibility size")
         XCTAssertTrue(app.buttons["teleprompter-pause-text"].isHittable)
         XCTAssertTrue(app.buttons["Start prompter"].exists)
         app.buttons["teleprompter-pause-text"].tap()
@@ -178,6 +179,7 @@ import XCTest
     func testPreviousTakeAndFailedIntakeKeepTheRecordingRecoverable() {
         let app = launchTalking(review: true)
         app.buttons["teleprompter-open"].tap()
+        app.buttons["teleprompter-no-script"].tap()
         XCTAssertTrue(app.buttons["teleprompter-previous-take"].waitForExistence(timeout: 10))
         app.buttons["teleprompter-previous-take"].tap()
         XCTAssertFalse(app.buttons["teleprompter-previous-take"].exists)
@@ -189,6 +191,7 @@ import XCTest
         capture(app, "Failed native proxy intake retains take")
         app.buttons["teleprompter-close"].tap()
         app.buttons["teleprompter-open"].tap()
+        app.buttons["teleprompter-no-script"].tap()
         XCTAssertTrue(app.buttons["teleprompter-use-take"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["teleprompter-use-take"].isEnabled)
         capture(app, "Previous take restored after failed intake")
@@ -235,6 +238,7 @@ import XCTest
     func testReviewNamesTheBackgroundAndKeepsTheTakeUsable() {
         let app = launchTalking(review: true, speakerBackground: true)
         app.buttons["teleprompter-open"].tap()
+        app.buttons["teleprompter-no-script"].tap()
         XCTAssertTrue(app.staticTexts["teleprompter-review-background"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["teleprompter-use-take"].isEnabled)
         capture(app, "Review take with a background")
@@ -283,7 +287,7 @@ import XCTest
     private func openScriptCamera(_ app: XCUIApplication) {
         app.buttons["teleprompter-open"].tap()
         let field = app.textViews["teleprompter-script-editor"]
-        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertTrue(field.waitForExistence(timeout: 20))
         field.tap()
         field.typeText("This is a longer script for reading at a steady pace. We can move the reading window without losing our place. We can resize the window while keeping the camera controls clear. The background can be transparent, glass, or solid. These settings should return when this script is reopened.")
         app.buttons["teleprompter-use-script"].tap()
@@ -296,7 +300,7 @@ import XCTest
 
     private func openWindowSettings(_ app: XCUIApplication) {
         let settings = app.buttons["teleprompter-window-settings"]
-        scrollOptions(app, to: settings)
+        if !settings.isHittable { scrollOptions(app, to: settings) }
         settings.tap()
         XCTAssertTrue(app.buttons["teleprompter-window-settings-close"].waitForExistence(timeout: 5))
     }

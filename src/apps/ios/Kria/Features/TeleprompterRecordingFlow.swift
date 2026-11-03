@@ -158,17 +158,19 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
             pendingTake = takes.last { $0.slot == .pending }
             selectedTake = takes.last { $0.slot == .candidate } ?? pendingTake
             queueAccepted = selectedTake?.status == .attaching
-            if selectedTake != nil { stage = .review }
-            else {
-                stage = .camera
-                await camera.prepare()
-            }
+            if selectedTake != nil { stage = .review } else { stage = .camera }
         } catch { self.error = "Couldn’t restore the saved script or take. Your local files are still kept. \(error.localizedDescription)" }
     }
 
     @discardableResult func persistDraft() -> Bool {
         do { try store.save(draft: script.draft); return true }
         catch { self.error = "Couldn’t save your script. Free some storage and try again. \(error.localizedDescription)"; return false }
+    }
+
+    /// Opens the camera on first appearance when no saved take is waiting for review.
+    func prepareCameraIfNeeded() async {
+        guard stage == .camera, camera.phase == .idle else { return }
+        await camera.prepare()
     }
 
     func openCamera() async {

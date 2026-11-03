@@ -68,7 +68,9 @@ struct AttachmentSheet: View {
     @State private var uploadingSong = false
     @State private var songUploadError: String?
     @State private var showsTeleprompter = false
-    @State private var cameraOpensScript = false
+    @State private var cameraStartsWithScript = false
+    @State private var showsScriptEntry = false
+    @State private var openCameraAfterScript = false
     @State private var uploadAfterCamera = false
     @State private var pickerLaunch: FootageSourceKind?
     @State private var voiceoverPickerLaunch: FootageSourceKind?
@@ -258,6 +260,18 @@ struct AttachmentSheet: View {
                     }
                 }
             }
+            .sheet(isPresented: $showsScriptEntry, onDismiss: {
+                // The camera waits for the script sheet to finish closing.
+                if openCameraAfterScript { openCameraAfterScript = false; showsTeleprompter = true }
+            }) {
+                if let accountID = auth.localStorageIdentity {
+                    TeleprompterScriptEntrySheet(accountID: accountID, projectID: projectID) { useScript in
+                        cameraStartsWithScript = useScript
+                        openCameraAfterScript = true
+                        showsScriptEntry = false
+                    }
+                }
+            }
             .fullScreenCover(isPresented: $showsTeleprompter, onDismiss: {
                 Task { await refresh() }
                 if uploadAfterCamera {
@@ -273,7 +287,7 @@ struct AttachmentSheet: View {
                         speakerBackgroundEnabled: speakerBackgroundAvailable,
                         backgroundIntake: useCameraBackground,
                         backgroundStatement: stateSpeakerBackground,
-                        opensScript: cameraOpensScript,
+                        startsWithScript: cameraStartsWithScript,
                         onUpload: { uploadAfterCamera = true },
                         reportDiagnostic: { report in Task { try? await model.api.reportRecorderDiagnostic(report) } })
                         .environment(\.dynamicTypeSize, dynamicTypeSize)
@@ -293,7 +307,7 @@ struct AttachmentSheet: View {
                 launched = true
                 switch launch {
                 case .record: openCamera(withScript: false)
-                case .recordWithScript: openCamera(withScript: true)
+                case .recordWithScript: showsScriptEntry = true
                 case .voiceover: step = .voiceover; role = .voiceover
                 case .step(let target): if steps.contains(target) { step = target; role = target.role }
                 case .chooseSource: pickerLaunch = .sources
@@ -404,7 +418,7 @@ struct AttachmentSheet: View {
                               launchSource: $pickerLaunch)
                 .id(AttachmentStep.footage)
             if isTalkingToCamera, auth.localStorageIdentity != nil {
-                Button { openCamera(withScript: true) } label: {
+                Button { showsScriptEntry = true } label: {
                     HStack(spacing: 12) {
                         Image(systemName: "text.alignleft").font(.system(size: 18)).foregroundStyle(KriaColor.ink)
                             .frame(width: 40, height: 40).background(KriaColor.paper, in: Circle())
@@ -427,8 +441,9 @@ struct AttachmentSheet: View {
 
     private func openCamera(withScript: Bool) {
         guard auth.localStorageIdentity != nil else { return }
-        cameraOpensScript = withScript
-        showsTeleprompter = true
+        cameraStartsWithScript = withScript
+        // The cover reads `cameraStartsWithScript` when it is built, so let that change land first.
+        Task { @MainActor in showsTeleprompter = true }
     }
 
     private func teleprompterAdmission(_ take: TeleprompterTakeManifest?) -> String? {
