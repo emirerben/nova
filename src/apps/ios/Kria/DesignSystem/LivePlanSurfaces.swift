@@ -158,20 +158,20 @@ struct KriaCheckShape: Shape {
     }
 }
 
-/// The yellow check disc that marks a decided section (24pt in a row, 26pt in an expanded card).
-/// `dash` reads "Not used" for a skipped section.
+/// The one "done" mark: a green check on successSoft (24pt in a row, 26pt in an expanded card, 16/20 in
+/// receipts and the step rail). `dash` reads "Not used" for a skipped section.
 struct KriaCheckDisc: View {
     var size: CGFloat = 24
     var dash = false
 
     var body: some View {
         ZStack {
-            Circle().fill(dash ? KriaColor.fill : KriaColor.butter)
+            Circle().fill(dash ? KriaColor.fill : KriaColor.successSoft)
             if dash {
                 Capsule().fill(KriaColor.zinc).frame(width: size * 0.4, height: 2)
             } else {
                 KriaCheckShape()
-                    .stroke(KriaColor.ink, style: StrokeStyle(lineWidth: max(1.6, size * 0.075), lineCap: .round, lineJoin: .round))
+                    .stroke(KriaColor.success, style: StrokeStyle(lineWidth: max(1.6, size * 0.085), lineCap: .round, lineJoin: .round))
                     .frame(width: size * 0.5, height: size * 0.5)
             }
         }
