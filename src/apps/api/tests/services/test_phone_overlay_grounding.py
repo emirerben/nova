@@ -1088,9 +1088,9 @@ def _generated_beer() -> dict:
 
 
 TURKISH_WORDS = [
-    _word("Alkol", 48.24, 48.68),
-    _word("satışı", 48.68, 49.10),
-    _word("yasaklanıyor", 49.10, 49.9),
+    _word("Kahve", 12.0, 12.4),
+    _word("fiyatları", 12.4, 12.9),
+    _word("artıyor", 12.9, 13.5),
 ]
 
 
