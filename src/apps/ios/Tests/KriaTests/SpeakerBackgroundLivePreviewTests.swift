@@ -294,7 +294,10 @@ import XCTest
         XCTAssertEqual(layer.speakerFrame, SpeakerFrame(widthFraction: 0.42, xFraction: 0.76, yFraction: 0.80),
                        "the corner frame reaches the layer", file: file, line: line)
         let manifestIDs = Set((scene.recipe.assetManifest?.assets ?? []).map(\.id))
-        for assetID in [layer.assetID] + (layer.windows ?? []).map(\.assetID) {
+        // `compactMap`: KRI-1173 (#2088) makes the fill's asset id optional (a colour fill has none); this fill is a picture.
+        let fillIDs = [layer.assetID].compactMap { $0 }
+        XCTAssertEqual(fillIDs, [EditorSpeakerBackground.assetID(forMediaID: "1a2b")], "the picture fill reaches the layer", file: file, line: line)
+        for assetID in fillIDs + (layer.windows ?? []).map(\.assetID) {
             XCTAssertNotNil(scene.urls[assetID], "\(assetID) has no file in assetURLs", file: file, line: line)
             XCTAssertTrue(scene.recipe.assets.contains { $0.id == assetID }, "\(assetID) is not in the recipe's assets", file: file, line: line)
             XCTAssertTrue(manifestIDs.contains(assetID), "\(assetID) is not in the recipe's asset manifest", file: file, line: line)
