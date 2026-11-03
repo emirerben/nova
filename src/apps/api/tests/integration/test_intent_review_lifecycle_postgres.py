@@ -85,6 +85,8 @@ from tests.kria.test_render_review_admission_postgres import (  # noqa: F401
 )
 from tests.services.test_openai_vision_transport import HttpError, Sdk, response
 
+pytestmark = pytest.mark.usefixtures("release_abandoned_db_connections")
+
 SCHEMA = {"type": "object", "properties": {}, "additionalProperties": False}
 
 # The fake provider reports 9100 input (32 cached), 700 output (400 of it reasoning) tokens.
