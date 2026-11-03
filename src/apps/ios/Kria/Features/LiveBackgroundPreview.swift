@@ -161,7 +161,7 @@ struct LiveBackgroundStatistics: Equatable, Sendable {
     var framesMatted = 0
     /// Frames drawn without a matte because Vision threw or no background was ready (S25).
     var framesRaw = 0
-    /// Frames not drawn at all because the first mask of the session has not arrived yet (the screen keeps its last picture).
+    /// Frames not drawn at all because the mask for them is still being computed (the screen keeps its last picture).
     var framesAwaitingMask = 0
     /// How many frames older than the picture drawn last the mask under it was (0 when matting is on the display path).
     var lastMaskOffsetFrames: Int?
@@ -207,8 +207,9 @@ final class LiveBackgroundPreview: NSObject, LiveFrameConsumer, @unchecked Senda
         let mirrored: Bool
     }
 
-    /// A mask older than this is not trusted: the person has moved on and the old outline would be a ghost.
-    private static let maxMaskAge = 0.5
+    /// The oldest mask worn over a newer picture, in seconds: two frames at 30 fps and a little jitter. The offset is never
+    /// below one frame (the mask comes from the frame before), and past two a moving hand is visibly out of its outline.
+    private static let maxMaskOffset = 0.075
 
     /// False where there is no Metal device: the screen then keeps the plain camera preview.
     var isAvailable: Bool { queue != nil }
@@ -313,38 +314,43 @@ final class LiveBackgroundPreview: NSObject, LiveFrameConsumer, @unchecked Senda
         case mask(CVPixelBuffer, offsetFrames: Int, offsetMilliseconds: Double)
         /// No mask: the camera frame alone, because there is no background yet or segmentation failed (S25).
         case raw
-        /// The first mask of this session is still being computed.
+        /// The mask in flight is not ready and the one before it is too old to wear: hold the last picture.
         case awaiting
     }
 
-    /// The camera frame is drawn at once with the newest mask that fits it, and this frame is segmented in the background
-    /// when nothing else is. The mask returned is from this frame or an earlier one, and says how much earlier.
+    /// The camera frame is drawn at once with the newest mask that fits it when that mask is at most `maxMaskOffset` older,
+    /// and this frame is segmented in the background when nothing else is. A mask any older would be a visible ghost (the
+    /// leading edge of a hand cut off, the trailing edge showing the room), so then the frame is segmented before it is
+    /// drawn, as the previous path did, unless a segmentation is already running: that one is waited for by holding the picture.
     private func newestMatte(for frame: CVPixelBuffer, index: Int, mirrored: Bool, capturedAt: Double?) -> Matte {
-        lock.lock()
-        let startSegmentation = !segmenting
-        if startSegmentation { segmenting = true }
-        let startedIn = generation
-        let newest = newestMask, failed = segmentationFailed
-        lock.unlock()
         let size = CGSize(width: CVPixelBufferGetWidth(frame), height: CVPixelBufferGetHeight(frame))
-        if startSegmentation {
-            segmentationQueue.async { [self] in
-                let buffer = Perf.measure("talk.live.segment") { try? segmenter.mask(for: frame) }
-                lock.lock()
-                segmenting = false
-                if generation == startedIn {
-                    newestMask = buffer.map { SegmentedMask(buffer: $0, frameIndex: index, capturedAt: capturedAt, frameSize: size, mirrored: mirrored) }
-                    segmentationFailed = buffer == nil
-                }
-                lock.unlock()
-            }
+        lock.lock()
+        let busy = segmenting, startedIn = generation, failed = segmentationFailed
+        var usable: (mask: SegmentedMask, frames: Int, milliseconds: Double)?
+        if let newest = newestMask, newest.frameSize == size, newest.mirrored == mirrored {
+            let frames = index - newest.frameIndex
+            let milliseconds = capturedAt.flatMap { now in newest.capturedAt.map { max(0, (now - $0) * 1000) } } ?? Double(frames) * 1000 / 30
+            if milliseconds / 1000 <= Self.maxMaskOffset { usable = (newest, frames, milliseconds) }
         }
-        guard let newest else { return failed ? .raw : .awaiting }
-        guard newest.frameSize == size, newest.mirrored == mirrored else { return .awaiting }
-        let frames = index - newest.frameIndex
-        let milliseconds = capturedAt.flatMap { now in newest.capturedAt.map { max(0, (now - $0) * 1000) } } ?? Double(frames) * 1000 / 30
-        guard milliseconds / 1000 <= Self.maxMaskAge else { return .raw }
-        return .mask(newest.buffer, offsetFrames: frames, offsetMilliseconds: milliseconds)
+        if !busy { segmenting = true }
+        lock.unlock()
+        if let usable {
+            if !busy { segmentationQueue.async { [self] in _ = segment(frame, index: index, size: size, mirrored: mirrored, capturedAt: capturedAt, startedIn: startedIn) } }
+            return .mask(usable.mask.buffer, offsetFrames: usable.frames, offsetMilliseconds: usable.milliseconds)
+        }
+        if busy { return failed ? .raw : .awaiting }
+        return segmentationQueue.sync { segment(frame, index: index, size: size, mirrored: mirrored, capturedAt: capturedAt, startedIn: startedIn) }.map { .mask($0.buffer, offsetFrames: 0, offsetMilliseconds: 0) } ?? .raw
+    }
+
+    /// Segments `frame` on the calling thread and keeps the mask for later frames unless the session stopped meanwhile.
+    private func segment(_ frame: CVPixelBuffer, index: Int, size: CGSize, mirrored: Bool, capturedAt: Double?, startedIn: Int) -> SegmentedMask? {
+        let buffer = Perf.measure("talk.live.segment") { try? segmenter.mask(for: frame) }
+        let fresh = buffer.map { SegmentedMask(buffer: $0, frameIndex: index, capturedAt: capturedAt, frameSize: size, mirrored: mirrored) }
+        lock.lock()
+        segmenting = false
+        if generation == startedIn { newestMask = fresh; segmentationFailed = fresh == nil }
+        lock.unlock()
+        return fresh
     }
 
     /// Blocks until the segmentation in flight, if any, has finished. For tests.

@@ -228,8 +228,8 @@ import XCTest
                 for _ in 0..<100 where flow.livePreview == nil { try await Task.sleep(for: .milliseconds(20)) }
                 let preview = try XCTUnwrap(flow.livePreview, "the background loaded and the live preview is on")
                 for _ in 0..<10 { preview.consume(solidFrame(), mirrored: true); preview.waitForSegmentation() }
-                XCTAssertEqual(preview.statistics.framesRaw, 9, "every frame after the first answer fell back to the raw camera")
-                XCTAssertEqual(preview.statistics.framesAwaitingMask, 1, "the first frame waited for its answer")
+                XCTAssertEqual(preview.statistics.framesRaw, 10, "every frame fell back to the raw camera")
+                XCTAssertEqual(preview.statistics.framesAwaitingMask, 0, "a failing segmenter never holds the picture")
                 XCTAssertEqual(preview.statistics.framesMatted, 0)
             }
             flow.stage = .recording
