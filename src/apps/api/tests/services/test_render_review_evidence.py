@@ -340,6 +340,23 @@ def test_linux_process_output_is_capped():
         )
 
 
+def test_a_busy_user_with_many_processes_still_gets_its_frames(local_video):
+    assert evidence._resource_limits_supported(), "Requires non-root Linux hard-limit qualification"
+    basis, _, _ = local_video
+    idle = [subprocess.Popen(["sleep", "120"]) for _ in range(140)]
+    try:
+        result = evidence.obtain_render_review_evidence(
+            basis, limits=evidence.EvidenceLimits(frame_count=2)
+        )
+    finally:
+        for child in idle:
+            child.kill()
+        for child in idle:
+            child.wait()
+    assert result.status == "ready", result.reason
+    assert len(result.bundle.frames) == 2
+
+
 def test_linux_decoder_memory_allocation_is_refused():
     assert evidence._resource_limits_supported(), "Requires non-root Linux hard-limit qualification"
     with pytest.raises(subprocess.CalledProcessError) as refused:

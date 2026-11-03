@@ -51,12 +51,22 @@ _LIMITED_DECODER = """
 import os, resource, sys
 if sys.platform != "linux" or os.geteuid() == 0:
     sys.exit(125)
+def user_tasks():
+    uid = os.geteuid()
+    total = 0
+    try:
+        for entry in os.scandir("/proc"):
+            if entry.name.isdigit() and entry.stat().st_uid == uid:
+                total += len(os.listdir("/proc/" + entry.name + "/task"))
+    except OSError:
+        pass
+    return total
 limits = (
     (resource.RLIMIT_AS, 1024 * 1024 * 1024),
     (resource.RLIMIT_CPU, 15),
     (resource.RLIMIT_FSIZE, 1024 * 1024),
     (resource.RLIMIT_NOFILE, 32),
-    (resource.RLIMIT_NPROC, 128),
+    (resource.RLIMIT_NPROC, max(128, user_tasks() + 64)),
     (resource.RLIMIT_CORE, 0),
 )
 try:
