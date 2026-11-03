@@ -70,7 +70,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.kria.portable_speaker_background import (
     SpeakerBackgroundLayer,
@@ -88,7 +88,7 @@ from app.kria.recipes import (
     TimelineClip,
     TimelineTrack,
 )
-from app.kria.recipes_v2 import EditRecipeV2
+from app.kria.recipes_v2 import MAX_TIMELINE_S, EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest
 from app.pipeline.canvas import LANDSCAPE
 from app.pipeline.phone_captions import (
@@ -866,18 +866,35 @@ def compile_phone_subtitled_plan(
         except Exception as exc:  # noqa: BLE001 - untrusted lane content
             raise _lane_error("background", str(exc), capability="speakerBackground") from exc
 
-    return EditRecipeV2(
-        canvas=canvas,
-        assets=list(assets.values()),
-        asset_manifest=RenderAssetManifest(assets=tuple(manifest.values())),
-        tracks=tracks,
-        text_layers=layers,
-        audio=AudioMixRecipe(original_volume=1.0, mute_windows=mute_windows),
-        required_capabilities=required_capabilities,
-        # `None` is omitted from the recipe wire, so a recipe without a background
-        # keeps its exact bytes and digest.
-        speaker_background=speaker_background,
-    )
+    try:
+        return EditRecipeV2(
+            canvas=canvas,
+            assets=list(assets.values()),
+            asset_manifest=RenderAssetManifest(assets=tuple(manifest.values())),
+            tracks=tracks,
+            text_layers=layers,
+            audio=AudioMixRecipe(original_volume=1.0, mute_windows=mute_windows),
+            required_capabilities=required_capabilities,
+            # `None` is omitted from the recipe wire, so a recipe without a background
+            # keeps its exact bytes and digest.
+            speaker_background=speaker_background,
+        )
+    except ValidationError as exc:
+        # A recipe the device refuses is a plan defect, said in words: left as a pydantic error
+        # it was read as our bug, retried, and ended as a generic failure nobody explained.
+        if any("time budget" in str(error.get("msg", "")) for error in exc.errors()):
+            end_s = max(
+                (c.timeline_start + c.source_duration / c.rate for t in tracks for c in t.clips),
+                default=0.0,
+            )
+            raise UnsupportedPhonePlan(
+                f"the finished video would be {end_s / 60:.0f} minutes long and the iPhone builds "
+                f"at most {MAX_TIMELINE_S // 60} minutes"
+            ) from exc
+        raise UnsupportedPhonePlan(
+            "the edit is not a recipe the iPhone can build: "
+            + "; ".join(str(error.get("msg", "")) for error in exc.errors()[:3])
+        ) from exc
 
 
 def _speaker_piece(

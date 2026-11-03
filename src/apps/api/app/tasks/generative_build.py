@@ -7877,6 +7877,29 @@ def _strategy_insert_asks(all_candidates: dict) -> list[Any]:
     return asks[: MAX_INSERTS + 10]
 
 
+def _insert_clip_names(job_id: str, bindings: Sequence[Any]) -> dict[str, str]:
+    """``{media_id: the name the app shows}`` ("IMG_7382") for the creator's clips, so the reply
+    can say which clip it means. Best effort: a missing name means the reply says "one clip"."""
+    from app.services.clip_file_names import clip_display_name  # noqa: PLC0415
+
+    try:
+        _user, assignments, _brief = _load_unified_montage_inputs(job_id)
+        by_path = {str(row.get("gcs_path")): row for row in assignments}
+        names = {
+            b.media_id: name
+            for b in bindings
+            if (name := clip_display_name((by_path.get(b.proxy_path) or {}).get("source_filename")))
+        }
+    except Exception:  # noqa: BLE001 - a name is a courtesy, never a reason to fail a render
+        log.warning("insert_clip_names_unavailable", job_id=job_id, exc_info=True)
+        return {}
+    return names
+
+
+def _name_of(names: Mapping[str, str], media_id: str) -> dict[str, str]:
+    return {"name": names[media_id]} if media_id in names else {}
+
+
 def _insert_clip_facts(
     ask_media_ids: Sequence[str],
     *,
@@ -7902,6 +7925,18 @@ def _insert_clip_facts(
         own = " ".join(
             str(getattr(word, "text", "")) for word in getattr(transcripts.get(cid), "words", [])
         )
+        if not any(
+            str(value or "").strip()
+            for value in (
+                meta.clip_summary,
+                meta.transcript,
+                own,
+                meta.detected_subject,
+                meta.activity,
+                meta.hook_text,
+            )
+        ):
+            continue  # an analysis that says nothing: the same as no analysis (no facts)
         out[media_id] = SentenceClip(
             key="c0",
             summary=str(meta.clip_summary or "")[:600],
@@ -7913,6 +7948,23 @@ def _insert_clip_facts(
             props=[str(p)[:60] for p in (meta.clip_props or [])[:8]],
         )
     return out
+
+
+def _insert_pick_scope() -> tuple[str, str | None]:
+    """``(retry_scope, execution_id)`` for the sentence check's paid-call key: "" on a task's
+    first attempt, ``"r<n>"`` on its n-th retry, and the delivery's Celery task id. A retried
+    render is the same delivery with the same prompt, which the ledger would refuse as a replay;
+    the retry scope makes it a new logical call, and the stored answer (see
+    `app.services.insert_pick_checkpoint`) means it usually need not pay at all."""
+    retries = _TASK_RETRIES.get()
+    scope = f"r{retries}" if retries else ""
+    try:
+        from celery import current_task  # noqa: PLC0415
+
+        execution = str(getattr(current_task.request, "id", "") or "") or None
+    except Exception:  # noqa: BLE001 - Celery is optional in lightweight tests
+        execution = None
+    return scope, execution
 
 
 def _resolve_insert_topics(
@@ -7931,8 +7983,10 @@ def _resolve_insert_topics(
     Returns ``(asks, drops, info)``: ``asks`` has each resolved topic ask as an exact `at_s`
     (best fits first, so two clips on one sentence give it to the better fit), phrase / second
     asks untouched and a topic ask for a clip already in use left for `place_inserts` to refuse;
-    ``drops`` is a receipt row per clip the talk has no sentence for (and why); ``info`` is the
-    per-clip receipt detail (how it was chosen)."""
+    ``drops`` is a receipt row per clip left out (only when the check is SURE nothing he says is
+    about it, or he said nothing) with the sentence that fits it best; ``info`` is the per-clip
+    receipt detail (how it was chosen, and why not by meaning when it was not).
+    """
     from dataclasses import replace as _replace  # noqa: PLC0415
     from types import SimpleNamespace  # noqa: PLC0415
 
@@ -7974,81 +8028,98 @@ def _resolve_insert_topics(
         for w in spoken_words
     ]
     sentences = split_sentences(words, take_s)
-    if not sentences:
-        resolutions = resolve_topics(ids, [], picks={}, keyword_end_s={}, take_s=take_s)
-    else:
+    no_facts = [media_id for media_id in ids if media_id not in clip_facts]
+    keys_by_clip = {
+        media_id: clip_keys(
+            [
+                facts.summary,
+                facts.transcript,
+                facts.subject,
+                facts.hook_text,
+                *facts.brands,
+                *facts.props,
+            ]
+        )
+        for media_id in ids
+        if (facts := clip_facts.get(media_id)) is not None
+    }
+    keyword_end: dict[str, float] = {}
+    picks = None
+    if sentences:
         keyword_clips = [
-            FootageClip(
-                media_id,
-                footage_s=1.0,
-                keys=clip_keys(
-                    [
-                        facts.summary,
-                        facts.transcript,
-                        facts.subject,
-                        facts.hook_text,
-                        *facts.brands,
-                        *facts.props,
-                    ]
-                ),
-            )
-            for media_id in ids
-            if (facts := clip_facts.get(media_id)) is not None
+            FootageClip(media_id, footage_s=1.0, keys=keys)
+            for media_id, keys in keys_by_clip.items()
         ]
         keyword_end = {
             media_id: window[2]
             for media_id, window in keyword_mentions(keyword_clips, words=words).items()
         }
-        picks = None
-        if settings.phone_talking_insert_meaning_enabled:
+        if settings.phone_talking_insert_meaning_enabled and keys_by_clip:
+            scope, execution = _insert_pick_scope()
             picks = pick_topic_sentences(
                 {m: clip_facts[m] for m in ids if m in clip_facts},
                 sentences,
                 language=language,
                 job_id=job_id,
+                retry_scope=scope,
+                execution_id=execution,
             )
-        resolutions = resolve_topics(
-            ids, sentences, picks=picks, keyword_end_s=keyword_end, take_s=take_s
-        )
+    resolutions = resolve_topics(
+        ids,
+        sentences,
+        picks=picks,
+        keyword_end_s=keyword_end,
+        take_s=take_s,
+        clip_keys=keys_by_clip,
+        no_facts=no_facts,
+    )
     by_media = {r.media_id: r for r in resolutions}
     fallbacks = {a.media_id for a in topic if a.fallback}
-    drops = [
-        {
+    drops = []
+    for r in resolutions:
+        if r.point_s is not None:
+            continue
+        reason = r.reason or NO_MATCHING_SENTENCE
+        row: dict[str, Any] = {
             "media_id": r.media_id,
             "reason": "phrase_not_found"
-            if r.media_id in fallbacks
-            else r.reason or NO_MATCHING_SENTENCE,
+            if r.media_id in fallbacks and reason == NO_MATCHING_SENTENCE
+            else reason,
         }
-        for r in resolutions
-        if r.point_s is None
-    ]
+        if r.nearest is not None and 1 <= r.nearest <= len(sentences):
+            near = sentences[r.nearest - 1]
+            row["after_s"] = near.end_s
+            row["after_text"] = near.text[:60]
+        drops.append(row)
     info = {
         r.media_id: {
             "via": r.via,
             "sentence_first": r.first,
             "sentence_last": r.last,
             **({"confidence": r.confidence} if r.confidence else {}),
+            **({"why": r.why} if r.why else {}),
         }
         for r in resolutions
         if r.point_s is not None
     }
     rank = {"high": 0, "medium": 1, "low": 2}
+    via_rank = {"meaning": 0, "keyword": 1, "guess": 2}
     resolved: list[Any] = []
     seen: set[str] = set()
     for ask in asks:
-        row = by_media.get(ask.media_id)
-        if not ask.at_topic or ask.media_id in in_use or row is None or ask.media_id in seen:
+        row_ = by_media.get(ask.media_id)
+        if not ask.at_topic or ask.media_id in in_use or row_ is None or ask.media_id in seen:
             resolved.append(ask)  # `place_inserts` refuses an unresolved one by name
             continue
         seen.add(ask.media_id)
-        if row.point_s is not None:
+        if row_.point_s is not None:
             resolved.append(
                 _replace(
                     ask,
-                    at_s=row.point_s,
+                    at_s=row_.point_s,
                     basis="topic",
                     at_topic=False,
-                    adjusted=row.adjusted,
+                    adjusted=row_.adjusted,
                 )
             )
     # Explicit phrases and seconds are placed first, then the best-fitting sentence choices, so
@@ -8056,7 +8127,7 @@ def _resolve_insert_topics(
     resolved.sort(
         key=lambda a: (
             a.basis == "topic",
-            info.get(a.media_id, {}).get("via") == "keyword",
+            via_rank.get(info.get(a.media_id, {}).get("via") or "meaning", 0),
             rank.get(info.get(a.media_id, {}).get("confidence", "medium"), 1),
         )
     )
@@ -9065,6 +9136,7 @@ def _run_phone_subtitled_job(
             insert_in_use: set[str] = set()
             insert_drops: list[dict[str, Any]] = []
             inserts: tuple = ()
+            insert_total_s = 0.0
             insert_basis: dict[str, dict[str, Any]] = {}
             if talking_multi:
                 talking_roles, talking_transcripts = _classify_phone_talking_clips(
@@ -9970,6 +10042,20 @@ def _run_phone_subtitled_job(
                     for p in placements
                     if p.insert is None
                 )
+                # The device builds at most MAX_TIMELINE_S, and the pin declines a video past the
+                # length the creator approved: the last clips that do not fit are left out and
+                # named, never a render that fails whole.
+                from app.pipeline.phone_talking_inserts import fit_inserts  # noqa: PLC0415
+
+                inserts, over_budget = fit_inserts(
+                    inserts,
+                    base_s=talking_timeline_s,
+                    over_limit=lambda base, added: _ending_over_length_limit(
+                        snapshot, talk_s=base, ending_s=added
+                    ),
+                )
+                insert_drops.extend(over_budget)
+                insert_total_s = sum(float(i.binding.original.duration_s) for i in inserts)
                 insert_basis = {
                     p.insert.binding.media_id: {
                         "basis": p.basis,
@@ -10714,7 +10800,7 @@ def _run_phone_subtitled_job(
                         else:
                             if ending_clip is strategy_ending_lane and _ending_over_length_limit(
                                 snapshot,
-                                talk_s=talking_timeline_s,
+                                talk_s=talking_timeline_s + insert_total_s,
                                 ending_s=sum(
                                     max(0.0, float(v.duration_s or 0.0) - ending_clip.trim_start_s)
                                     for v in ending_visuals
@@ -11114,12 +11200,20 @@ def _run_phone_subtitled_job(
                             placement["end_s"] = (
                                 shift_time(placement["end_s"] - 1e-3, inserts) + 1e-3
                             )
+                insert_names = _insert_clip_names(job_id, bindings)
                 insert_receipt = {
                     "placed": [
-                        {**row, **insert_basis.get(row["media_id"], {})}
+                        {
+                            **row,
+                            **insert_basis.get(row["media_id"], {}),
+                            **_name_of(insert_names, row["media_id"]),
+                        }
                         for row in insert_rows(inserts)
                     ],
-                    "dropped": list(insert_drops),
+                    "dropped": [
+                        {**drop, **_name_of(insert_names, drop["media_id"])}
+                        for drop in insert_drops
+                    ],
                 }
 
             from app.pipeline.explicit_speech_audio import (  # noqa: PLC0415
@@ -29178,7 +29272,7 @@ def _narrated_storyboard_plan(
                         understanding.get("summary") or getattr(meta, "hook_text", "") or ""
                     )[:500],
                     subject=str(getattr(meta, "detected_subject", "") or "")[:240],
-                    transcript=str(meta.transcript or "")[:500],
+                    transcript=str(getattr(meta, "transcript", "") or "")[:500],
                     content_type=str(understanding.get("content_type") or "broll"),
                     duration_s=float(clip_durations_s.get(clip_id, 0.0) or 0.0) or None,
                     best_moments=[

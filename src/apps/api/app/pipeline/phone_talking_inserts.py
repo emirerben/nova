@@ -15,9 +15,13 @@ timeline (the first speaker's seconds with no insert counted). Three pure steps 
    exactly there, even in the first seconds, in the last second, in the middle of a word or
    beside another clip. The heuristics (stay off the first 2.5 s and the last second, keep
    2 s between clips, never inside a word) only choose a position where he named none, and the
-   placement says which of them an explicit ask overrode. A clip is refused only when it cannot
-   physically play: missing, not a video, over five minutes, already the take, or past the
-   engine's `MAX_INSERTS`.
+   placement says which of them an explicit ask overrode. A default (the end of the sentence
+   about a clip) is never moved earlier, never into the middle of its sentence and never next
+   to another clip: it waits half the silence after the sentence (at most 0.2 s) so his last
+   word is not clipped, and two clips about one part play at one instant, in order. A clip
+   is refused only when it cannot physically play: missing, not a video, over five minutes,
+   already the take, or past the engine's `MAX_INSERTS`. One that would take the finished video
+   past the device's limit (`fit_inserts`) is left out, last ones first, and named.
 2. `warp_for_inserts` moves everything expressed on the take timeline (captions, text rows,
    cards, effects, cutaways) onto the final timeline: whatever starts at or after an insert
    moves later by its length, and a window that spans the point is split around it, so
@@ -32,11 +36,11 @@ was. Facts only decide timing; the inserted clip's words are never drawn as text
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from app.kria.recipes_v2 import EditRecipeV2
+from app.kria.recipes_v2 import MAX_TIMELINE_S, EditRecipeV2
 from app.pipeline.phone_subtitled_plan import (
     INSERT_CLIP_PREFIX,
     MAX_INSERT_CLIPS,
@@ -53,10 +57,13 @@ __all__ = [
     "MAX_INSERT_S",
     "MIN_GAP_S",
     "TAIL_FREE_S",
+    "DROP_OVER_DEVICE_BUDGET",
+    "DROP_OVER_LENGTH_LIMIT",
     "InsertAsk",
     "InsertPlacement",
     "phrase_end_s",
     "WarpedTimeline",
+    "fit_inserts",
     "insert_blocked_windows",
     "insert_rows",
     "inserts_from_recipe",
@@ -128,7 +135,6 @@ OVERRODE_NEAR_OTHER = "near_another_clip"
 OVERRODE_MID_WORD = "mid_word"
 # ... and what can move a position the creator did not name (InsertPlacement.adjusted).
 ADJUSTED_HOOK = "hook_window"
-ADJUSTED_TAIL = "tail_window"
 ADJUSTED_JOINED = "near_another_clip"
 ADJUSTED_TAKE_END = "take_end"
 
@@ -159,6 +165,19 @@ def _take_words(words: Sequence[Any], take_s: float) -> list[dict]:
         if _field(w, "start_s") < take_s - _EPS
     ]
     return sorted(rows, key=lambda w: w["start_s"])
+
+
+# A default pause lets the speaker's last word finish into the silence that follows it.
+_HOLD_MAX_S = 0.2
+
+
+def _silence_hold_s(point: float, speech: Sequence[dict], take_s: float) -> float:
+    """How far past ``point`` (the end of a sentence he spoke) a DEFAULT pause waits so his last
+    word is not clipped: half the silence before the next word, at most `_HOLD_MAX_S`. Zero when
+    the next word starts right away. An explicit position is never held: it is exact."""
+    following = next((w["start_s"] for w in speech if w["start_s"] >= point - _EPS), None)
+    gap = (take_s if following is None else following) - point
+    return max(0.0, min(gap / 2, _HOLD_MAX_S))
 
 
 def phrase_end_s(phrase: str, words: Sequence[Any], take_s: float) -> float | None:
@@ -230,6 +249,8 @@ def place_inserts(
         elif ask.at_s is not None:
             basis, point = ask.basis or "second", float(ask.at_s)
             snap = "exact" if explicit else "sentence_end"
+            if not explicit:
+                point += _silence_hold_s(point, speech, take_s)
         else:
             out.append(refuse(ask, "no_position"))
             continue
@@ -259,11 +280,15 @@ def place_inserts(
                 w["start_s"] + _EPS < point < w["end_s"] - _EPS for w in speech
             ):
                 overrode.append(OVERRODE_MID_WORD)
-        elif near is not None:
-            # A point chosen by meaning that lands within a couple of seconds of a clip already
-            # placed would leave a few words between two long breaks: it plays right after that
-            # clip instead (clips at one instant play one after the other).
-            point, adjusted = near.at_take_s, ADJUSTED_JOINED
+        elif (
+            adjusted is None
+            and near is not None
+            and any(abs(point - o.at_take_s) <= _EPS for o in placed)
+        ):
+            # Two clips about the same part: the second plays right after the first, at the
+            # same instant. A point chosen by meaning is never moved to sit by another clip: it
+            # stays at the end of its own sentence.
+            adjusted = ADJUSTED_JOINED
         insert = PhoneInsert(binding=binding, at_take_s=point, keep_audio=ask.keep_audio)
         placed.append(insert)
         used.add(ask.media_id)
@@ -279,6 +304,48 @@ def place_inserts(
             )
         )
     return out
+
+
+DROP_OVER_DEVICE_BUDGET = "over_device_budget"
+DROP_OVER_LENGTH_LIMIT = "over_length_limit"
+
+
+def fit_inserts(
+    inserts: Sequence[PhoneInsert],
+    *,
+    base_s: float,
+    over_limit: Callable[[float, float], bool] | None = None,
+    limit_s: float = MAX_TIMELINE_S,
+) -> tuple[tuple[PhoneInsert, ...], list[dict[str, Any]]]:
+    """The inserts that fit, and one row per insert left out.
+
+    The finished video is the talk (``base_s``, every speaker and the ending on the take) plus
+    every insert, and the device builds at most ``limit_s`` seconds. Past it the LAST inserts
+    (latest on the take) are dropped one at a time, each named with the length the video would
+    have reached with it (``would_be_s``): a recipe over the limit fails the whole render, which
+    costs the creator more than the clips. ``over_limit(base_s, inserts_s)`` is the creator's
+    approved length (True when adding the inserts breaks it although the talk alone does not);
+    it is asked the same way for the ending clip.
+    """
+    kept = sorted(inserts, key=lambda i: i.at_take_s)
+    dropped: list[dict[str, Any]] = []
+    while kept:
+        added = sum(float(i.binding.original.duration_s) for i in kept)
+        if base_s + added > limit_s:
+            reason = DROP_OVER_DEVICE_BUDGET
+        elif over_limit is not None and over_limit(base_s, added):
+            reason = DROP_OVER_LENGTH_LIMIT
+        else:
+            break
+        last = kept.pop()
+        dropped.append(
+            {
+                "media_id": last.binding.media_id,
+                "reason": reason,
+                "would_be_s": round(base_s + added, 1),
+            }
+        )
+    return tuple(kept), dropped
 
 
 def insert_rows(inserts: Sequence[PhoneInsert]) -> list[dict[str, Any]]:
