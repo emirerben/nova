@@ -998,6 +998,23 @@ enum NativePreviewDiagnostics {
         record("preview-failure-reported", fields: ["domain": report.errorDomain, "code": String(report.errorCode), "state": sourceState])
         return report
     }
+    /// A Talk-to-camera background that is not on screen although the edit has one: no clip to cut out, or a run
+    /// of frames the matte could not answer. Same report shape and endpoint as a player-item failure; `reason` is
+    /// one of the fixed labels below and `trace` carries only fixed labels and counts.
+    enum SpeakerBackgroundReason: String { case noSpeakerClip = "no_speaker_clip", hiddenRun = "hidden_run" }
+    static func speakerBackgroundHidden(_ reason: SpeakerBackgroundReason, snapshot: SpeakerBackgroundTrace.Snapshot,
+                                        sourceState: String) -> PlaybackFailureReport {
+        let report = PlaybackFailureReport(
+            playerKind: .live,
+            errorDomain: "preview.speaker_background." + reason.rawValue,
+            errorCode: snapshot.longestHiddenRun,
+            underlyingDomain: nil, underlyingCode: nil,
+            sourceState: String(sourceState.prefix(32)),
+            appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+            trace: snapshot.summary)
+        record("speaker-background-hidden", fields: ["reason": reason.rawValue, "state": sourceState, "trace": snapshot.summary])
+        return report
+    }
     #if DEBUG
     static func failure(_ stage: String, error: Error) {
         var fields = ["type": String(describing: type(of: error)), "domain": (error as NSError).domain, "code": String((error as NSError).code)]

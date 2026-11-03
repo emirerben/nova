@@ -89,6 +89,55 @@ final class SpeakerBackgroundCompositionTests: XCTestCase {
         }
     }
 
+    /// The trace tells a bug report apart: an edit whose background names a track that has no clips reports
+    /// zero speaker clips and `no_speaker_layer` frames, instead of silently drawing the room.
+    @MainActor func testABackgroundBoundToAMissingTrackIsTraced() async throws {
+        useSpeakerSegmenter(self, GreenPersonSegmenter())
+        let directory = try speakerTestDirectory(self)
+        let speaker = try await writeSpeakerClip(directory: directory, size: (canvas.width, canvas.height), seconds: 2)
+        let scene = try speakerRecipe(canvas: canvas, speaker: speaker, duration: 2,
+                                      background: SpeakerTestBackground(url: try solidSpeakerTestImage(directory: directory)))
+        var misnamed = scene.recipe
+        misnamed.tracks[0].id = "video"
+        for (recipe, expectedClips) in [(scene.recipe, 1), (misnamed, 0)] {
+            let live = try await LivePreviewComposition(recipe: recipe, assetURLs: scene.urls)
+            let trace = try XCTUnwrap(live.speakerTrace)
+            XCTAssertEqual(trace.snapshot().speakerClips, expectedClips)
+            let generator = AVAssetImageGenerator(asset: live.preview.playerItem.asset)
+            generator.videoComposition = live.preview.playerItem.videoComposition
+            generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+            _ = try await generator.image(at: CMTime(seconds: 1, preferredTimescale: 600))
+            let counts = trace.snapshot().counts
+            XCTAssertEqual(counts["no_speaker_layer"] ?? 0 > 0, expectedClips == 0, "\(counts)")
+            XCTAssertEqual(counts["cutout"] ?? 0 > 0, expectedClips == 1, "\(counts)")
+        }
+    }
+
+    /// The ending clip plays with no speaker on screen, by design (S12). That is not a background that failed to
+    /// draw, so it never counts toward the hidden run that gets reported.
+    @MainActor func testTheEndingClipIsNotCountedAsAHiddenBackground() async throws {
+        useSpeakerSegmenter(self, GreenPersonSegmenter())
+        let directory = try speakerTestDirectory(self)
+        let speaker = try await writeSpeakerClip(directory: directory, size: (canvas.width, canvas.height), seconds: 2)
+        let ending = try await writeSpeakerTestVideo(directory: directory, name: "ending", size: (canvas.width, canvas.height), seconds: 1) { context, _ in
+            context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 120, height: 200))
+        }
+        let scene = try speakerRecipe(canvas: canvas, speaker: speaker, duration: 2,
+                                      background: SpeakerTestBackground(url: try solidSpeakerTestImage(directory: directory)),
+                                      endingClip: TimelineClip(id: "ending", sourceAssetID: "visual-ending", sourceDuration: 1, timelineStart: 2, volume: 0),
+                                      visuals: ["visual-ending": (ending, .video)])
+        let live = try await LivePreviewComposition(recipe: scene.recipe, assetURLs: scene.urls)
+        let generator = AVAssetImageGenerator(asset: live.preview.playerItem.asset)
+        generator.videoComposition = live.preview.playerItem.videoComposition
+        generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+        for seconds in [1.0, 2.5] { _ = try await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600)) }
+        let snapshot = try XCTUnwrap(live.speakerTrace).snapshot()
+        XCTAssertEqual(snapshot.speakerClips, 1)
+        XCTAssertNil(snapshot.counts["no_speaker_layer"], snapshot.summary)
+        XCTAssertEqual(snapshot.longestHiddenRun, 0)
+    }
+
     /// Any change to the background (source start, loop, removal) is refused in place, so the editor
     /// takes the full rebuild that re-inserts the background track.
     @MainActor func testBackgroundChangeTakesTheFullRebuild() async throws {

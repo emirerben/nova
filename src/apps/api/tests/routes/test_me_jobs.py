@@ -1516,6 +1516,38 @@ def test_playback_diagnostics_rejects_bad_id_and_invalid_body() -> None:
     db.execute.assert_not_awaited()
 
 
+def test_playback_diagnostics_carries_the_speaker_background_trace() -> None:
+    """A vanished Talk-to-camera background is explained by the trace the app attaches."""
+    user = _user()
+    job_id = uuid.uuid4()
+    db = _db([_scalar(job_id)])
+    _override(user, db)
+    trace = "clips=1 hidden_run=60 cutout=412 original.error=60 @8.0s:original.error"
+    domain = "preview.speaker_background.hidden_run"
+    body = {**_PLAYBACK_DIAGNOSTIC, "error_domain": domain, "trace": trace}
+
+    with structlog.testing.capture_logs() as logs:
+        response = client.post(_diagnostics_url(job_id), json=body)
+
+    assert response.status_code == 204
+    events = [entry for entry in logs if entry["event"] == "editor_playback_failed"]
+    assert events[0]["trace"] == trace
+
+
+def test_playback_diagnostics_without_a_trace_is_unchanged_and_the_trace_is_bounded() -> None:
+    user = _user()
+    db = _db([_scalar(uuid.uuid4())])
+    _override(user, db)
+    url = _diagnostics_url(uuid.uuid4())
+
+    with structlog.testing.capture_logs() as logs:
+        assert client.post(url, json=_PLAYBACK_DIAGNOSTIC).status_code == 204
+    events = [entry for entry in logs if entry["event"] == "editor_playback_failed"]
+    assert events[0]["trace"] is None
+    too_long = {**_PLAYBACK_DIAGNOSTIC, "trace": "x" * 601}
+    assert client.post(url, json=too_long).status_code == 422
+
+
 _RECORDER_DIAGNOSTIC = {
     "kind": "take_silent",
     "audio_category": "playAndRecord",

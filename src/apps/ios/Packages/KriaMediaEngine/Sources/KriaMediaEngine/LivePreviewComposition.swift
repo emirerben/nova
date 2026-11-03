@@ -25,6 +25,10 @@ public struct LivePreviewExportSnapshot: Sendable {
         self.preview = try await AVPlayerPreviewComposer(branding: branding).makePreview(recipe: recipe, assetURLs: assetURLs)
     }
 
+    /// How this composition draws its Talk-to-camera background (nil without one). The matte is kept across
+    /// in-place updates, so the trace covers the whole life of the composition.
+    public var speakerTrace: SpeakerBackgroundTrace? { preview.speakerTrace }
+
     /// Freeze the inputs that own the visible composition before an async export.
     /// Later editor mutations update this object but cannot change the snapshot.
     public func exportSnapshot() -> LivePreviewExportSnapshot {

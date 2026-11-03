@@ -28,6 +28,8 @@ public struct PreviewComposition: @unchecked Sendable {
     /// Playback stays at the mixed level (AVAudioMix cannot boost).
     var loudnessTargetLUFS: Double?
     public let playerItem: AVPlayerItem
+    /// How this composition drew its Talk-to-camera background; nil when the recipe has none.
+    public internal(set) var speakerTrace: SpeakerBackgroundTrace?
     public init(description: CompositionDescription, playerItem: AVPlayerItem) { self.description = description; self.playerItem = playerItem }
 #else
     public init(description: CompositionDescription) { self.description = description }
@@ -471,6 +473,7 @@ public struct PreviewComposition: @unchecked Sendable {
         let subjectMatte = recipe.textLayers.contains(where: { $0.behindSubject == true }) ? NativeSubjectMatte() : nil
         // Speaker background: one matte per composition, shared by the player and the exporter (S15).
         let speakerMatte = recipe.speakerBackground == nil ? nil : SpeakerMatte()
+        speakerMatte?.trace.noteBuilt(speakerClips: speakerClipIDs.count)
         // Instructions must span the whole asset: when the asset outlasts them AVPlayer renders no
         // video at all (audio over black, no error), while scrubbing and export stay correct.
         let covered = max(brandedTotal, composition.duration.seconds)
@@ -489,6 +492,7 @@ public struct PreviewComposition: @unchecked Sendable {
         item.audioMix = audioMix
         var result = PreviewComposition(description: CompositionDescription(duration: brandedTotal, canvas: recipe.canvas, hasVideo: true, hasAudio: !audioParameters.isEmpty), playerItem: item)
         result.loudnessTargetLUFS = recipe.audio.targetLUFS
+        result.speakerTrace = speakerMatte?.trace
         return result
     }
 

@@ -102,7 +102,7 @@ final class SpeakerMatteTests: XCTestCase {
         XCTAssertEqual(segmenter.calls, 15)
     }
 
-    /// S3: a throwing frame holds the last good mask for the grace window, then the frame renders
+    /// S3: a throwing frame holds the last good mask for the grace window (1.5 s), then the frame renders
     /// without the background. Never a missing speaker, never an exception.
     func testErrorHoldsLastGoodMask() throws {
         let matte = SpeakerMatte(segmenter: ScriptedSegmenter { [leftHalf] call in
@@ -110,11 +110,11 @@ final class SpeakerMatteTests: XCTestCase {
             throw MediaEngineError.exportFailed
         })
         XCTAssertEqual(try alpha(matte.answer(for: speaker, at: 1, canvas: canvas, clipKey: "clip-0"), at: [(20, 100), (100, 100)]), [255, 0])
-        for index in 1...14 {
+        for index in 1...44 {
             let held = matte.answer(for: speaker, at: 1 + Double(index) * frame, canvas: canvas, clipKey: "clip-0")
             XCTAssertEqual(try alpha(held, at: [(20, 100), (100, 100)]), [255, 0], "frame \(index) holds the last good mask")
         }
-        for index in 16...20 {
+        for index in 46...50 {
             XCTAssertTrue(isOriginal(matte.answer(for: speaker, at: 1 + Double(index) * frame, canvas: canvas, clipKey: "clip-0")),
                           "frame \(index) is past the \(SpeakerMatteConfig.shipping.holdGrace) s grace: original footage")
         }
@@ -179,6 +179,88 @@ final class SpeakerMatteTests: XCTestCase {
         XCTAssertTrue(isOriginal(matte.answer(for: speaker, at: 1.45, canvas: canvas, clipKey: "clip-0")))
     }
 
+    // MARK: - The trace: why a frame lost its background, readable from a bug report
+
+    private func play(_ matte: SpeakerMatte, frames: Range<Int>, from start: Double = 1, clipKey: String = "clip-0") {
+        for index in frames { _ = matte.answer(for: speaker, at: start + Double(index) * frame, canvas: canvas, clipKey: clipKey) }
+    }
+
+    /// Every frame is counted under the reason it was answered: a good mask, a held one (by what failed) or the original.
+    func testTheTraceCountsEachAnswerUnderItsReason() {
+        let matte = SpeakerMatte(segmenter: ScriptedSegmenter { [leftHalf] call in
+            if call == 0 { return leftHalf }
+            throw MediaEngineError.exportFailed
+        })
+        play(matte, frames: 0..<60)
+        let counts = matte.trace.snapshot().counts
+        XCTAssertEqual(counts["cutout"], 1)
+        XCTAssertEqual(counts["held.error"], 45, "the 1.5 s the last good mask stands in")
+        XCTAssertEqual(counts["original.error"], 14, "then the room shows, by the reason it does")
+        XCTAssertNil(counts["held.coverage"])
+        XCTAssertEqual(matte.trace.snapshot().events.map(\.label), ["cutout", "held.error", "original.error"], "only changes of outcome are kept")
+
+        let swallowed = SpeakerMatte(segmenter: ScriptedSegmenter(map: speakerConfidence(120, 200, columns: 0..<120)))
+        play(swallowed, frames: 0..<3)
+        XCTAssertEqual(swallowed.trace.snapshot().counts["original.coverage"], 3)
+        let missing = SpeakerMatte(segmenter: nil)
+        play(missing, frames: 0..<3)
+        XCTAssertEqual(missing.trace.snapshot().counts["original.no_segmenter"], 3)
+        let unreadable = SpeakerMatte(segmenter: ScriptedSegmenter(map: nil))
+        play(unreadable, frames: 0..<3)
+        XCTAssertEqual(unreadable.trace.snapshot().counts["original.unreadable"], 3)
+    }
+
+    /// A held mask that is dropped is recorded as dropped, by the reason: a cut to another clip, or a jump in time.
+    func testTheTraceNamesAJumpThatDroppedAHeldMask() {
+        let matte = SpeakerMatte(segmenter: ScriptedSegmenter { [leftHalf] call in
+            if call == 0 { return leftHalf }
+            throw MediaEngineError.exportFailed
+        })
+        play(matte, frames: 0..<2)
+        _ = matte.answer(for: speaker, at: 1.5, canvas: canvas, clipKey: "clip-0")
+        _ = matte.answer(for: speaker, at: 1.5 + frame, canvas: canvas, clipKey: "clip-1")
+        let counts = matte.trace.snapshot().counts
+        XCTAssertEqual(counts["cleared.gap"], 1)
+        XCTAssertNil(counts["cleared.clip"], "the held mask was already gone at the cut, so there is nothing more to report")
+    }
+
+    func testTheTraceReportsAClipChangeThatDroppedAHeldMask() {
+        let matte = SpeakerMatte(segmenter: ScriptedSegmenter { [leftHalf] call in
+            if call == 0 { return leftHalf }
+            throw MediaEngineError.exportFailed
+        })
+        play(matte, frames: 0..<2)
+        _ = matte.answer(for: speaker, at: 1 + 2 * frame, canvas: canvas, clipKey: "clip-1")
+        XCTAssertEqual(matte.trace.snapshot().counts["cleared.clip"], 1)
+    }
+
+    /// A run of frames without the background is the failure the creator sees. It is flagged once, after about
+    /// two seconds of video, and a good frame in between starts the count again.
+    func testADegradedRunIsReportedOnceAfterSixtyHiddenFrames() {
+        let matte = SpeakerMatte(segmenter: ScriptedSegmenter { _ in throw MediaEngineError.exportFailed })
+        let reports = Locked<[SpeakerBackgroundTrace.Snapshot]>([])
+        matte.trace.onDegraded = { snapshot in reports.mutate { $0.append(snapshot) } }
+        play(matte, frames: 0..<59)
+        XCTAssertTrue(reports.value.isEmpty, "59 frames is still a stutter")
+        play(matte, frames: 59..<120)
+        XCTAssertEqual(reports.value.count, 1, "fired once, not per frame")
+        XCTAssertEqual(reports.value.first?.counts["original.error"], 60)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(reports.value.first).summary.count, SpeakerBackgroundTrace.Snapshot.summaryLimit)
+    }
+
+    func testAGoodFrameRestartsTheDegradedCount() {
+        let matte = SpeakerMatte(segmenter: ScriptedSegmenter { [leftHalf] call in
+            if call == 59 { return leftHalf }
+            throw MediaEngineError.exportFailed
+        })
+        let fired = Locked(false)
+        matte.trace.onDegraded = { _ in fired.mutate { $0 = true } }
+        play(matte, frames: 0..<150)
+        XCTAssertFalse(fired.value, "59 hidden frames, one good, 45 held, then 45 hidden: no run reached 60")
+        play(matte, frames: 150..<170)
+        XCTAssertTrue(fired.value, "60 hidden frames since the good one")
+    }
+
     /// The real Vision path on a real talking-head frame (`Fixtures/speaker-matte-talking.jpg`, a frame of
     /// `src/apps/web/public/plan/type-posters/talking.mp4`), at both qualities the device may ship: the face
     /// is kept, the wall goes, the edge is soft, and the mask is Vision's own buffer, not a downsampled copy.
@@ -212,6 +294,14 @@ final class SpeakerMatteTests: XCTestCase {
             XCTAssertGreaterThan(soft, 500, "\(name): the silhouette has a soft edge")
         }
     }
+}
+
+final class Locked<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Value
+    init(_ value: Value) { stored = value }
+    var value: Value { lock.lock(); defer { lock.unlock() }; return stored }
+    func mutate(_ change: (inout Value) -> Void) { lock.lock(); change(&stored); lock.unlock() }
 }
 
 private extension SubjectConfidenceMap {

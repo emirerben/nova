@@ -33,30 +33,30 @@ import XCTest
         let urls: [String: URL]
     }
 
-    private func scene() async throws -> Scene {
+    private func scene(seconds: Double = 3) async throws -> Scene {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
 
         let speaker = directory.appendingPathComponent("speaker.mp4")
-        try await writeSolidVideo(speaker, color: room, seconds: 3)
+        try await writeSolidVideo(speaker, color: room, seconds: seconds)
         let picture = directory.appendingPathComponent("background.png")
         try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).image { context in
             backdrop.setFill(); context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
         }.pngData()).write(to: picture)
 
         let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original",
-            asset: MediaAsset(id: "local", relativePath: "speaker.mp4", fingerprint: try SHA256Fingerprinter().fingerprint(file: speaker), duration: 3),
+            asset: MediaAsset(id: "local", relativePath: "speaker.mp4", fingerprint: try SHA256Fingerprinter().fingerprint(file: speaker), duration: seconds),
             url: speaker)
         let background = ResolvedEditorSource(clipIndex: -1, mediaID: "1a2b",
             asset: MediaAsset(id: EditorSpeakerBackground.assetID(forMediaID: "1a2b"), relativePath: "background.png",
                               fingerprint: try SHA256Fingerprinter().fingerprint(file: picture)),
             url: picture, visualGeneration: "7")
-        var document = EditorDocument(clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: 3)])
+        var document = EditorDocument(clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: seconds)])
         document.speakerBackground = EditorSpeakerBackground(mediaID: "1a2b", kind: .image)
         let clipID = UUID()
-        let clip = EditorClip(id: clipID, assetID: clipID, sourceClipIndex: 0, start: 0, end: 3, trimIn: 0, trimOut: 3,
-                              sourceDuration: 3, slotID: "slot")
+        let clip = EditorClip(id: clipID, assetID: clipID, sourceClipIndex: 0, start: 0, end: seconds, trimIn: 0, trimOut: seconds,
+                              sourceDuration: seconds, slotID: "slot")
         let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
         let program = try compiler.compile(document: document, clips: [clip], items: [], sources: [0: source],
                                            mediaSources: [EditorSpeakerBackground.sourceKey(forMediaID: "1a2b"): background])
@@ -87,6 +87,85 @@ import XCTest
         XCTAssertTrue(isNear(center, room), "the speaker stays in the middle, got \(center)")
     }
 
+    /// An editor update that changes nothing about the background (a caption keystroke, a chat draft) stays in
+    /// place and keeps both the background and the trace of the composition it belongs to.
+    func testAnInPlaceUpdateKeepsTheBackgroundAndItsTrace() async throws {
+        useSegmenter(CenterBoxSegmenter())
+        let scene = try await scene()
+        let live = try await LivePreviewComposition(recipe: scene.recipe, assetURLs: scene.urls)
+        let trace = try XCTUnwrap(live.speakerTrace)
+        XCTAssertEqual(trace.snapshot().speakerClips, 1)
+        try live.updateText(recipe: scene.recipe, assetURLs: scene.urls)
+        XCTAssertTrue(live.speakerTrace === trace, "the matte, and so its trace, carry over")
+        let generator = AVAssetImageGenerator(asset: live.preview.playerItem.asset)
+        generator.videoComposition = live.preview.playerItem.videoComposition
+        generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+        let image = try await generator.image(at: CMTime(seconds: 1, preferredTimescale: 600)).image
+        XCTAssertTrue(isNear(pixel(image, fx: 0.04, fy: 0.04), backdrop), "the corner is still the background")
+        XCTAssertGreaterThan(trace.snapshot().counts["cutout"] ?? 0, 0)
+        XCTAssertNil(trace.snapshot().counts["no_speaker_layer"])
+    }
+
+    /// The creator's report: the background was there for the first seconds and gone after about four. Plays the live
+    /// preview for real past six seconds on an AVPlayer, applies an unrelated editor update mid-playback (the
+    /// in-place path every caption keystroke and chat draft takes), and samples the frames the player shows: every
+    /// one has the background, the player item is never replaced, and the trace saw no frame without it.
+    func testPlayingPastSixSecondsKeepsTheBackgroundOnEveryFrame() async throws {
+        useSegmenter(CenterBoxSegmenter())
+        let scene = try await scene(seconds: 8)
+        let live = try await LivePreviewComposition(recipe: scene.recipe, assetURLs: scene.urls)
+        let item = live.preview.playerItem
+        let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+        item.add(output)
+        let player = AVPlayer(playerItem: item)
+        player.isMuted = true
+        player.play()
+        defer { player.pause() }
+
+        var samples: [(time: Double, corner: [Int], center: [Int])] = []
+        var updated = false
+        let deadline = Date().addingTimeInterval(40)
+        while Date() < deadline, player.currentTime().seconds < 6.5 {
+            try await Task.sleep(for: .milliseconds(60))
+            let now = player.currentTime().seconds
+            if !updated, now > 2 {
+                try live.updateText(recipe: scene.recipe, assetURLs: scene.urls)
+                updated = true
+            }
+            let time = item.currentTime()
+            guard output.hasNewPixelBuffer(forItemTime: time), let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) else { continue }
+            samples.append((now, bgraPixel(buffer, fx: 0.04, fy: 0.04), bgraPixel(buffer, fx: 0.5, fy: 0.5)))
+        }
+        XCTAssertTrue(updated, "playback got past two seconds")
+        XCTAssertGreaterThan(player.currentTime().seconds, 6, "and past six")
+        XCTAssertTrue(player.currentItem === item, "the player item was never replaced")
+        XCTAssertGreaterThan(samples.filter { $0.time > 4.5 }.count, 5, "frames after the fourth second were sampled")
+        let wrong = samples.filter { !isNear($0.corner, backdrop) || !isNear($0.center, room) }
+        XCTAssertTrue(wrong.isEmpty, "frames without the background: \(wrong.prefix(5).map { ($0.time, $0.corner) })")
+        let snapshot = try XCTUnwrap(live.speakerTrace).snapshot()
+        XCTAssertEqual(snapshot.longestHiddenRun, 0, snapshot.summary)
+        XCTAssertNil(snapshot.counts["original.error"], snapshot.summary)
+        XCTAssertGreaterThan(snapshot.counts["cutout"] ?? 0, 30, snapshot.summary)
+    }
+
+    /// The report that reaches the server names why the background was not drawn, by fixed labels and counts only.
+    func testTheHiddenBackgroundReportCarriesOnlyFixedLabelsAndCounts() throws {
+        let trace = SpeakerBackgroundTrace()
+        trace.noteBuilt(speakerClips: 0)
+        for index in 0..<3 { trace.record(.noSpeakerLayer, at: Double(index)) }
+        let report = NativePreviewDiagnostics.speakerBackgroundHidden(.noSpeakerClip, snapshot: trace.snapshot(), sourceState: "ready")
+        XCTAssertEqual(report.errorDomain, "preview.speaker_background.no_speaker_clip")
+        XCTAssertEqual(report.errorCode, 3, "the longest run of frames without the background")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(report)) as? [String: Any])
+        let line = try XCTUnwrap(json["trace"] as? String)
+        XCTAssertTrue(line.hasPrefix("clips=0 hidden_run=3 no_speaker_layer=3"), line)
+        XCTAssertLessThanOrEqual(line.count, 600)
+
+        let plain = NativePreviewDiagnostics.previewFailure(error: MediaEngineError.exportFailed, sourceState: "ready")
+        let wire = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(plain)) as? [String: Any])
+        XCTAssertNil(wire["trace"], "a report without a trace is byte-identical to before")
+    }
+
     // MARK: - Helpers
 
     private func pixel(_ image: CGImage, fx: Double, fy: Double) -> [Int] {
@@ -96,6 +175,15 @@ import XCTest
         let x = Double(image.width) * fx, y = Double(image.height) * fy
         context.draw(image, in: CGRect(x: -x, y: y - Double(image.height) + 1, width: Double(image.width), height: Double(image.height)))
         return bytes.prefix(3).map(Int.init)
+    }
+
+    private func bgraPixel(_ buffer: CVPixelBuffer, fx: Double, fy: Double) -> [Int] {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly); defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer)?.assumingMemoryBound(to: UInt8.self) else { return [-999, -999, -999] }
+        let x = min(CVPixelBufferGetWidth(buffer) - 1, Int(fx * Double(CVPixelBufferGetWidth(buffer))))
+        let y = min(CVPixelBufferGetHeight(buffer) - 1, Int(fy * Double(CVPixelBufferGetHeight(buffer))))
+        let offset = y * CVPixelBufferGetBytesPerRow(buffer) + x * 4
+        return [Int(base[offset + 2]), Int(base[offset + 1]), Int(base[offset])]
     }
 
     private func isNear(_ pixel: [Int], _ color: UIColor, tolerance: Int = 70) -> Bool {

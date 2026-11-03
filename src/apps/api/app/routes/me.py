@@ -928,6 +928,9 @@ class LibraryPlaybackDiagnostic(BaseModel):
     underlying_code: int | None = None
     source_state: str = Field(max_length=32)
     app_build: str | None = Field(default=None, max_length=32)
+    # A Talk-to-camera edit's account of how its background was drawn: fixed labels and counts
+    # only (``clips=1 hidden_run=0 cutout=412 ...``), so a vanished background can be explained.
+    trace: str | None = Field(default=None, max_length=600)
 
 
 class RecorderDiagnostic(BaseModel):

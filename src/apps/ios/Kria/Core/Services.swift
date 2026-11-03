@@ -2363,10 +2363,13 @@ struct PlaybackFailureReport: Encodable, Equatable, Sendable {
     let underlyingCode: Int?
     let sourceState: String
     let appBuild: String?
+    /// Fixed labels and counts describing how a Talk-to-camera background was drawn
+    /// (`SpeakerBackgroundTrace.Snapshot.summary`); absent from the wire when the edit has none.
+    var trace: String? = nil
     enum CodingKeys: String, CodingKey {
         case playerKind = "player_kind", errorDomain = "error_domain", errorCode = "error_code"
         case underlyingDomain = "underlying_domain", underlyingCode = "underlying_code"
-        case sourceState = "source_state", appBuild = "app_build"
+        case sourceState = "source_state", appBuild = "app_build", trace
     }
 }
 private struct PlaybackResponse: Decodable { let videoURL: String; enum CodingKeys: String, CodingKey { case videoURL = "video_url" } }

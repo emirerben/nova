@@ -105,6 +105,10 @@ struct NativeEditorTemporaryVideo: Sendable {
             timelineItemsCache = nil
             timelineClipsCache = nil
             timelineProjectionCache = nil
+            // Assigning an equal document (a reload that found nothing new, a staged draft already applied, a
+            // hydrate that changed nothing) changes nothing the preview shows. Rebuilding for it cancelled an
+            // in-flight build and re-prepared a playing item, which the creator sees as a hitch.
+            guard document != oldValue else { return }
             // KRI-432: a song volume change on a settled preview is applied to the player, not rebuilt.
             if liveSongVolumeActive, sourcePreviewSettled, let built = previewBuiltDocument,
                Self.differsOnlyBySongVolume(document, built) {
@@ -3610,6 +3614,8 @@ struct NativeEditorTemporaryVideo: Sendable {
             // through and build a fresh composition so the canvas comes back
             // to the live edit — otherwise every later edit lands off-screen
             // while the user keeps watching the stale cloud render (KRI-110).
+            NativePreviewDiagnostics.record("preview-rebuild", fields: [
+                "documentChanged": previewBuiltDocument.map { $0 != baseline ? "1" : "0" } ?? "first"])
             if let preview = sourcePreview, player?.currentItem === preview.preview.playerItem,
                updatePreviewInPlace(preview, program: program) {
                 liveSongVolumeActive = liveVolume
@@ -3631,6 +3637,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             let resumePlayback = isPlaying
             sourcePreview = preview
             installPlayer(item: preview.preview.playerItem, preferredDuration: TimelineMath.totalDuration(of: program.recipe))
+            watchSpeakerBackground(of: preview)
             liveSongVolumeActive = liveVolume
             previewBuiltDocument = baseline
             applyLiveSongVolume()
@@ -3672,13 +3679,33 @@ struct NativeEditorTemporaryVideo: Sendable {
     private func updatePreviewInPlace(_ preview: LivePreviewComposition, program: NativeEditorRenderProgram) -> Bool {
         do {
             try preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs)
+            NativePreviewDiagnostics.record("preview-updated-in-place")
             return true
         } catch {
+            // Every build records why an edit took the full rebuild (a feature id, never content).
+            NativePreviewDiagnostics.record("live-update-refused", fields: [
+                "feature": (error as? NativePreviewFeatureError)?.feature ?? String(describing: type(of: error))])
             #if DEBUG
             NativePreviewDiagnostics.failure("live-update-refused", error: error)
             #endif
             return false
         }
+    }
+
+    /// The Talk-to-camera background is on screen only if the matte answers for it. Report, once per composition,
+    /// an edit that has a background but no clip to cut it out of, and a run of frames the matte could not answer.
+    private func watchSpeakerBackground(of preview: LivePreviewComposition) {
+        guard let trace = preview.speakerTrace else { return }
+        if trace.snapshot().speakerClips == 0 { reportSpeakerBackgroundHidden(.noSpeakerClip, snapshot: trace.snapshot()) }
+        trace.onDegraded = { [weak self] snapshot in
+            Task { @MainActor [weak self] in self?.reportSpeakerBackgroundHidden(.hiddenRun, snapshot: snapshot) }
+        }
+    }
+
+    private func reportSpeakerBackgroundHidden(_ reason: NativePreviewDiagnostics.SpeakerBackgroundReason, snapshot: SpeakerBackgroundTrace.Snapshot) {
+        let report = NativePreviewDiagnostics.speakerBackgroundHidden(reason, snapshot: snapshot, sourceState: sourcePreviewStateLabel)
+        guard let api, let jobID else { return }
+        Task { try? await api.reportPlaybackFailure(jobID: jobID, report: report) }
     }
 
     func previewSelectionBounds(for selection: EditorSelection, at time: Double) -> TextSelectionBounds? {
@@ -8191,12 +8218,16 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// rebuild is not a failure.
     private func reportPreviewFailure(_ error: Error) {
         if error is CancellationError || error is NativeEditorPlaybackFailure { return }
-        let report = NativePreviewDiagnostics.previewFailure(error: error, sourceState: sourcePreviewStateLabel)
+        var report = NativePreviewDiagnostics.previewFailure(error: error, sourceState: sourcePreviewStateLabel)
+        report.trace = sourcePreview?.speakerTrace?.snapshot().summary
         guard let api, let jobID else { return }
         Task { try? await api.reportPlaybackFailure(jobID: jobID, report: report) }
     }
 
     private func failSourcePreview(_ error: Error, reloadsLatestOnConflict: Bool = true) {
+        NativePreviewDiagnostics.record("finished-render-fallback", fields: [
+            "error": String(((error as NSError).domain + ".\((error as NSError).code)").prefix(80)),
+            "finishedCurrent": finishedRenderIsCurrent ? "1" : "0"])
         reportPreviewFailure(error)
         sourcePreviewFailureIsPermanent = Self.isPermanentSourcePreviewFailure(error)
         let finishedWasCurrent = finishedRenderIsCurrent
@@ -8369,7 +8400,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         guard let failedPlayer = player, failedPlayer.currentItem === item, failureHandledItem !== item else { return }
         failureHandledItem = item
         let kind: PlaybackFailureReport.PlayerKind = failedPlayer === finishedRenderPlayer ? .finished : .live
-        let report = NativePreviewDiagnostics.playerItemFailure(kind: kind, error: error, sourceState: sourcePreviewStateLabel)
+        var report = NativePreviewDiagnostics.playerItemFailure(kind: kind, error: error, sourceState: sourcePreviewStateLabel)
+        if kind == .live { report.trace = sourcePreview?.speakerTrace?.snapshot().summary }
         if let api, let jobID {
             Task { try? await api.reportPlaybackFailure(jobID: jobID, report: report) }
         }
@@ -8498,6 +8530,9 @@ struct NativeEditorTemporaryVideo: Sendable {
         playbackStateObserver?.invalidate()
         itemStatusObserver?.invalidate()
         if let itemFailureObserver { NotificationCenter.default.removeObserver(itemFailureObserver) }
+        NativePreviewDiagnostics.record("player-replaced", fields: [
+            "was": player == nil ? "none" : player === finishedRenderPlayer ? "finished" : "live",
+            "playing": isPlaying ? "1" : "0"])
         // SwiftUI may retain the outgoing VideoPlayer after this replacement.
         // Stop and detach it first so its audio cannot outlive the visible player.
         player?.pause()
