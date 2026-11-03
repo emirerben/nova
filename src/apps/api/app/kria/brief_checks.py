@@ -4288,6 +4288,16 @@ _SBC_UNAVAILABLE = "Putting a plain colour behind you isn't available on your iP
 _SBC_APP_TOO_OLD = "Your iPhone app is too old to put a plain colour behind you; update it first"
 _SBC_NOT_PLANNED = "This draft doesn't put a plain colour behind you"
 _SBC_NOT_DRAWN = "The finished video doesn't have a plain colour behind you"
+# KRI-1173 review: the changing-backgrounds part of a colour ask, judged like the photo / video
+# one. The first is a format limit; the creator can act on the other two.
+_SBC_NO_SWITCHING = (
+    "The plain colour stays behind you the whole time; your iPhone can't switch backgrounds yet"
+)
+_SBC_NO_CHANGE = "The plain colour stays behind you the whole time; nothing changes over it"
+_SBC_NOTHING_TO_SWITCH = (
+    "The plain colour stays behind you the whole time; no photos or videos are attached to take "
+    "turns over it. Attach them in Visuals"
+)
 _SB_FORMAT_LIMITS: tuple[str, ...] = (
     _SB_NOT_TALKING,
     _SB_UNAVAILABLE,
@@ -4298,6 +4308,7 @@ _SB_FORMAT_LIMITS: tuple[str, ...] = (
     _SB_NO_SWITCHING,
     _SB_FULL_SIZE,
     _SB_ONLY_ONE_ATTACHED,
+    _SBC_NO_SWITCHING,
 )
 
 
@@ -4345,11 +4356,53 @@ def _sb(text: str, suffix: str = ".") -> str:
     return say(en=text + suffix, tr=_REASON_TR[text] + suffix)
 
 
+def _colour_extras_shortfalls(
+    req: BriefRequirement, fact: SpeakerBackgroundFact, *, rendered: bool
+) -> list[str]:
+    """What a colour ask's corner (``speaker_small``) and changing backgrounds
+    (``background_changes``) parts are missing, judged the way the photo / video ask judges them
+    in `_check_speaker_background`, in colour wording."""
+    out: list[str] = []
+    if _asks_changing_backgrounds(req) and fact.window_count == 0:
+        if fact.pool_count == 0:
+            out.append(_sb(_SBC_NOTHING_TO_SWITCH))
+        elif not rendered and not fact.windows_open:
+            out.append(_sb(_SBC_NO_SWITCHING))
+        else:
+            out.append(_sb(_SBC_NO_CHANGE))
+    elif fact.asked_windows > fact.window_count > 0 and not rendered:
+        out.append(
+            say(
+                en=(
+                    f"Only {fact.window_count} of your {fact.asked_windows} photos or videos "
+                    "take turns over the colour; I couldn't use the rest."
+                ),
+                tr=(
+                    f"{fact.asked_windows} fotoğraf ya da videodan yalnızca {fact.window_count} "
+                    "tanesi rengin üstünde sırayla değişiyor; gerisini kullanamadım."
+                ),
+            )
+        )
+    if _asks_small_speaker(req) and fact.frame is None:
+        if not rendered and not fact.windows_open:
+            out.append(_sb(_SB_FULL_SIZE))
+        else:
+            out.append(
+                say(
+                    en="You stay full size, not small in a corner.",
+                    tr="Tam boyutta kalıyorsun, köşede küçük değilsin.",
+                )
+            )
+    return out
+
+
 def _check_background_color(
     req: BriefRequirement, fact: SpeakerBackgroundFact, ask: str, *, rendered: bool
 ) -> RequirementReceipt:
     """A plain colour behind the speaker (KRI-1173, S58): met when the plan / video holds the
-    colour, else a refusal that names the part and the reason. Never "attach photos first"."""
+    colour AND every corner / changing-backgrounds part asked beside it, else a refusal or a
+    partial that names each missing part and the reason. "Attach photos first" never answers the
+    colour itself (it needs no pool); only the changing part may ask for photos to switch to."""
     from app.agents._schemas.reaction_beats import normalise_background_color  # noqa: PLC0415
 
     if fact.status == "unavailable":
@@ -4364,15 +4417,20 @@ def _check_background_color(
             return _receipt(req, "not_possible", _sb(_SBC_UNAVAILABLE))
         return _receipt(req, "not_possible", _sb(_SBC_NOT_DRAWN if rendered else _SBC_NOT_PLANNED))
     asked_hex = normalise_background_color(ask)
+    # KRI-1173 review: the colour is one part of the ask. A corner or changing backgrounds asked
+    # beside it are judged too, and every shortfall is named (never "met" with the speaker still
+    # full size, never one shortfall hiding another).
+    shortfalls: list[str] = []
     if asked_hex is not None and asked_hex != fact.color:
-        return _receipt(
-            req,
-            "partial",
+        shortfalls.append(
             say(
                 en=f"The plain colour behind you is {fact.color}, not the {ask} you asked for.",
                 tr=f"Arkandaki düz renk {fact.color}; istediğin {ask} değil.",
-            ),
+            )
         )
+    shortfalls += _colour_extras_shortfalls(req, fact, rendered=rendered)
+    if shortfalls:
+        return _receipt(req, "partial", " ".join(shortfalls))
     label = ask if asked_hex is None or asked_hex != ask.upper() else fact.color
     en = f"A plain {label} background sits behind you for the whole video"
     tr = f"Bütün video boyunca arkanda düz {label} bir arka plan duruyor"
@@ -5757,6 +5815,14 @@ _REASON_TR: dict[str, str] = {
     _SBC_APP_TOO_OLD: "iPhone uygulaman arkana düz renk koymak için çok eski; önce güncelle",
     _SBC_NOT_PLANNED: "Bu taslak arkana düz renk koymuyor",
     _SBC_NOT_DRAWN: "Biten videoda arkanda düz renk yok",
+    _SBC_NO_SWITCHING: (
+        "Düz renk bütün video boyunca arkanda kalıyor; iPhone'un henüz arka planı değiştiremiyor"
+    ),
+    _SBC_NO_CHANGE: "Düz renk bütün video boyunca arkanda kalıyor; üstünde hiçbir şey değişmiyor",
+    _SBC_NOTHING_TO_SWITCH: (
+        "Düz renk bütün video boyunca arkanda kalıyor; üstünde sırayla değişecek fotoğraf ya da "
+        "video ekli değil. Onları Visuals'a ekle"
+    ),
 }
 
 

@@ -217,10 +217,10 @@ log = structlog.get_logger()
 # with the speaker_background_windows capability); every other prompt keeps its bytes. v113 is used
 # by unmerged branches (PR #2089, KRI-1173).
 # v118 (KRI-1173; v115-v117 are held by #2089 and #2092): a plain colour behind the speaker.
-# `background_media` takes `color` ("#RRGGBB") instead of `media_id`, taught in one extra paragraph only where the manifest advertises
-# `speaker_background_color`; the shared brief section records `background_color` beside
-# `speaker_background` (brief_extractor v53 shares it). Every other creator prompt is
-# byte-identical.
+# `background_media` takes `color` ("#RRGGBB") instead of `media_id`, taught in one extra
+# paragraph only where the manifest advertises `speaker_background_color`; the shared brief
+# section records `background_color` beside `speaker_background` (brief_extractor v53 shares
+# it). Every other creator prompt is byte-identical.
 MAIN_CREATOR_PROMPT_VERSION = "2026-11-03-v118"
 
 # Prior chat messages the model sees. Callers must bound their history to this:

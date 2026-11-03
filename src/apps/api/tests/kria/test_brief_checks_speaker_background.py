@@ -630,3 +630,110 @@ def test_readiness_approves_a_planned_colour_without_any_attached_media(monkeypa
     )
     (row,) = report["requirements"]
     assert row["disposition"] == "executable", row
+
+
+# ------------------------- KRI-1173 review (Emir, PR #2088): the colour verdict combines checks
+#
+# `_check_speaker_background` used to return the colour verdict before it looked at the corner
+# (`speaker_small`) and the changing backgrounds (`background_changes`), so "a green background,
+# me small at the bottom right" was called met with the speaker still full size. Ways it fails:
+#  e. colour + corner asked, the plan keeps the speaker full size -> called met;
+#  f. colour + changing backgrounds asked, the plan has no windows over the colour -> called met;
+#  g. fewer windows than the creator's photos over the colour -> called met;
+#  h. a wrong colour hides a missing corner (only one of the two shortfalls is named);
+#  i. the fix breaks the plain colour ask (still met, still never "Attach ... in Visuals").
+
+
+def test_colour_with_a_corner_the_plan_keeps_full_size_is_partial(monkeypatch):
+    _open_colour(monkeypatch)
+    _open_windows(monkeypatch)
+    facts = _draft_facts(_manifest(), background_media={"color": "#00FF00"})
+    receipt = _receipt(_colour_req("green", speaker_small=True), facts)
+    assert receipt.status == "partial"
+    assert "full size" in receipt.reason and "corner" in receipt.reason
+
+
+def test_colour_with_a_corner_the_iphone_cannot_draw_is_a_named_format_limit(monkeypatch):
+    _open_colour(monkeypatch)  # the windows token (which carries the corner) is NOT verified
+    facts = _draft_facts(
+        _manifest(),
+        background_media={"color": "#00FF00", "speaker_frame": "small_bottom_right"},
+    )
+    receipt = _receipt(_colour_req("green", speaker_small=True), facts)
+    assert receipt.status == "partial"
+    assert "full size" in receipt.reason and "can't do that yet" in receipt.reason
+    assert is_format_limit(receipt.reason)
+
+
+def test_colour_with_changing_backgrounds_but_no_windows_is_partial(monkeypatch):
+    _open_colour(monkeypatch)
+    _open_windows(monkeypatch)
+    facts = _draft_facts(_manifest(PHOTO, OTHER), background_media={"color": "#00FF00"})
+    receipt = _receipt(_colour_req("green", background_changes=True), facts)
+    assert receipt.status == "partial"
+    assert "plain colour stays behind you" in receipt.reason
+
+
+def test_colour_with_changing_backgrounds_and_nothing_attached_names_what_to_attach(monkeypatch):
+    _open_colour(monkeypatch)
+    _open_windows(monkeypatch)
+    facts = _draft_facts(_manifest(), background_media={"color": "#00FF00"})
+    receipt = _receipt(_colour_req("green", background_changes=True), facts)
+    assert receipt.status == "partial"
+    assert "plain colour stays behind you" in receipt.reason
+    assert "no photos or videos" in receipt.reason
+    assert not is_format_limit(receipt.reason)
+
+
+def test_colour_with_changing_backgrounds_the_iphone_cannot_switch_is_a_format_limit(monkeypatch):
+    _open_colour(monkeypatch)  # windows token closed: the repair drops the sequence
+    facts = _draft_facts(
+        _manifest(PHOTO, OTHER),
+        background_media={
+            "color": "#00FF00",
+            "sequence": [{"media_id": PHOTO}, {"media_id": OTHER}],
+        },
+    )
+    receipt = _receipt(_colour_req("green", background_changes=True), facts)
+    assert receipt.status == "partial"
+    assert "can't switch backgrounds yet" in receipt.reason
+    assert is_format_limit(receipt.reason)
+
+
+def test_colour_with_both_asks_met_is_met(monkeypatch):
+    _open_colour(monkeypatch)
+    _open_windows(monkeypatch)
+    facts = _draft_facts(
+        _manifest(PHOTO, OTHER),
+        background_media={
+            "color": "#00FF00",
+            "sequence": [{"media_id": PHOTO}, {"media_id": OTHER}],
+            "speaker_frame": "small_bottom_right",
+        },
+    )
+    receipt = _receipt(_colour_req("green", speaker_small=True, background_changes=True), facts)
+    assert receipt.status == "met"
+    assert "2 photos or videos take turns over it" in receipt.reason
+    assert "small at the bottom right" in receipt.reason
+
+
+def test_a_wrong_colour_and_a_missing_corner_are_both_named(monkeypatch):
+    _open_colour(monkeypatch)
+    _open_windows(monkeypatch)
+    facts = _draft_facts(_manifest(), background_media={"color": "#FFFFFF"})
+    receipt = _receipt(_colour_req("green", speaker_small=True), facts)
+    assert receipt.status == "partial"
+    assert "#FFFFFF" in receipt.reason and "green" in receipt.reason
+    assert "full size" in receipt.reason
+
+
+def test_a_finished_colour_video_without_the_corner_is_partial():
+    facts = plan_facts_from_phone_variant(
+        _variant(
+            speaker_background={"kind": "color", "color": "#00FF00"},
+            phone_lane_receipt={"applied": ["background"], "dropped": []},
+        )
+    )
+    receipt = _receipt(_colour_req("green", speaker_small=True), facts)
+    assert receipt.status == "partial"
+    assert "full size" in receipt.reason

@@ -72,8 +72,8 @@ from app.pipeline.prompt_loader import load_prompt
 # v49 (generated-image grounding): the extractor records "the <generated image> when I say W" as a
 # typed `triggers` ask, and says which videos that does NOT cover (the creator's own footage
 # clips). Extractor-only section; the shared brief section is untouched.
-# v53 (KRI-1173; v50-v52 are held by #2089 and #2092): the shared brief section also records `background_color` on a plain-colour
-# background ask.
+# v53 (KRI-1173; v50-v52 are held by #2089 and #2092): the shared brief section also records
+# `background_color` on a plain-colour background ask.
 BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-03-v53"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
