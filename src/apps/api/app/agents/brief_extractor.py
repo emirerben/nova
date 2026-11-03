@@ -129,7 +129,7 @@ _NARROW_BRIEF_SECTION += _STYLE_INTENT_SECTION
 _GENERATED_IMAGE_SECTION = """
 When the creator asks for an image you generated for them, a photo or sticker they added in
 this chat, or a Visuals video (a short video added as a Visual, not one of their filmed clips) to
-show on a spoken word ("the beer image when I say alkol", "alkol dediğimde bira görselini
+show on a spoken word ("the coffee image when I say kahve", "kahve dediğimde kahve görselini
 göster"), ALWAYS record it as a `style` requirement carrying {"triggers": ["<the spoken word,
 exactly as the creator wrote it, never translated>"]}, plus "display_mode" ("fullscreen" or
 "pip") only when they said which. Describe the image in `description` in the creator's own words

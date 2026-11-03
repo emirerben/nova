@@ -542,41 +542,87 @@ def _overlay_miss_sentence(label: str, reason: str | None) -> str:
     "Couldn't place ..." sentence (no invented cause).
     """
     if reason in _OVERLAY_MISS_REASON_VIDEO_UNSUPPORTED:
-        return f'"{label}" is a video, which can\'t be a card on your iPhone yet'
+        return say(
+            en=f'"{label}" is a video, which can\'t be a card on your iPhone yet',
+            tr=f'"{label}" bir video; iPhone\'da henüz kart olarak gösterilemiyor',
+        )
     if reason in _OVERLAY_MISS_REASON_NO_SAFE_SPOT:
-        return f'No room to show "{label}" without covering a face or the captions'
+        return say(
+            en=f'No room to show "{label}" without covering a face or the captions',
+            tr=f'"{label}" için yüzü veya altyazıları kapatmayacak bir yer yoktu',
+        )
     if reason in _OVERLAY_MISS_REASON_OVERLAP:
-        return f'"{label}" overlapped another visual, so it was skipped'
+        return say(
+            en=f'"{label}" overlapped another visual, so it was skipped',
+            tr=f'"{label}" başka bir görselle çakıştığı için atlandı',
+        )
     if reason in _OVERLAY_MISS_REASON_CROWDED:
-        return f'Skipped "{label}" to keep the edit from getting crowded'
+        return say(
+            en=f'Skipped "{label}" to keep the edit from getting crowded',
+            tr=f'Kurgu kalabalıklaşmasın diye "{label}" atlandı',
+        )
     if reason in _OVERLAY_MISS_REASON_TOO_SHORT:
-        return f'"{label}" had too little time on screen to show'
+        return say(
+            en=f'"{label}" had too little time on screen to show',
+            tr=f'"{label}" ekranda gösterilmek için çok kısa kaldı',
+        )
     if reason in _OVERLAY_MISS_REASON_NO_TIMELINE_ROOM:
-        return f'There wasn\'t enough room in the video to show "{label}" full screen'
+        return say(
+            en=f'There wasn\'t enough room in the video to show "{label}" full screen',
+            tr=f'"{label}" görselini tam ekran göstermek için videoda yeterli yer yoktu',
+        )
     if reason in _OVERLAY_MISS_REASON_PIPELINE_ERROR or (
         isinstance(reason, str) and reason.startswith("error")
     ):
-        return f'Couldn\'t add "{label}" to the phone render'
+        return say(
+            en=f'Couldn\'t add "{label}" to the phone render',
+            tr=f'"{label}" iPhone\'daki kurguya eklenemedi',
+        )
     if reason in _OVERLAY_MISS_REASON_NO_SPOKEN_MATCH:
-        return f'Couldn\'t find a spoken moment for "{label}"'
+        return say(
+            en=f'Couldn\'t find a spoken moment for "{label}"',
+            tr=f'"{label}" için konuşmanda uygun bir an bulamadım',
+        )
     # Unknown/empty reasons never claim a cause we can't back up.
-    return f'Couldn\'t place "{label}"'
+    return say(en=f'Couldn\'t place "{label}"', tr=f'"{label}" yerleştirilemedi')
 
 
 def _generated_image_miss_sentence(label: str, reason: str | None) -> str:
     """The miss sentence for an image the creator made in Kria: it names the image by its
-    title, says why in plain words and, when the words never lined up, what to tell Kria.
-    Other causes keep the shared sentence, so no cause is claimed that the receipt cannot back."""
-    if reason in _OVERLAY_MISS_REASON_NO_SPOKEN_MATCH:
+    title and says why in plain words. Other causes keep the shared sentence, so no cause is
+    claimed that the receipt cannot back.
+
+    `hook_window` means the only fitting moment was in the opening seconds, which stay clear,
+    so it never says there was no spoken moment. The offer to place the image on a named word
+    is made only where a typed "image when I say W" ask is honoured (reaction beats)."""
+    if reason == "hook_window":
         return say(
             en=(
-                f'The image you made, "{label}", has no spoken moment in this video yet. '
-                "Tell me which word it should appear on and I'll place it there"
+                f'The image you made, "{label}", only fit in the opening seconds, '
+                "which I keep clear"
             ),
             tr=(
-                f'Videoda, oluşturduğun "{label}" görseli için konuşmandan uygun bir an '
-                "bulamadım. Hangi kelimede çıkmasını istediğini söylersen oraya koyarım"
+                f'Oluşturduğun "{label}" görseli yalnızca ilk saniyelere uyuyordu; '
+                "açılışı boş bırakıyorum"
             ),
+        )
+    if reason in _OVERLAY_MISS_REASON_NO_SPOKEN_MATCH:
+        from app.services import phone_rollout  # noqa: PLC0415 - rollout imports this module
+
+        if phone_rollout.phone_subtitled_reaction_beats_supported():
+            return say(
+                en=(
+                    f'The image you made, "{label}", has no spoken moment in this video yet. '
+                    "Tell me which word it should appear on and I'll place it there"
+                ),
+                tr=(
+                    f'Videoda, oluşturduğun "{label}" görseli için konuşmandan uygun bir an '
+                    "bulamadım. Hangi kelimede çıkmasını istediğini söylersen oraya koyarım"
+                ),
+            )
+        return say(
+            en=f'The image you made, "{label}", has no spoken moment in this video',
+            tr=(f'Videoda, oluşturduğun "{label}" görseli için konuşmandan uygun bir an bulamadım'),
         )
     return _overlay_miss_sentence(label, reason)
 
@@ -606,7 +652,12 @@ def render_notes_from_overlay_receipt(receipt: dict[str, Any] | None) -> list[st
     if matcher in ("manual", None):
         return []
     if matcher == "failed":
-        return ["Couldn't check your Visuals for card moments this time"]
+        return [
+            say(
+                en="Couldn't check your Visuals for card moments this time",
+                tr="Bu sefer görsellerin için kart anlarını kontrol edemedim",
+            )
+        ]
 
     placed = receipt.get("placed")
     placed_n = len(placed) if isinstance(placed, list) else 0
@@ -625,26 +676,58 @@ def render_notes_from_overlay_receipt(receipt: dict[str, Any] | None) -> list[st
             if isinstance(row, dict) and row.get("display") == "fullscreen"
         )
         card_n = placed_n - full_n
-        parts = [f"{full_n} full screen"] if full_n else []
-        if card_n:
-            parts.append(f"{card_n} as {'a card' if card_n == 1 else 'cards'}")
         total = placed_n + len(unplaced_entries)
         noun = "Visual" if (total if unplaced_entries else placed_n) == 1 else "Visuals"
-        lead = (
+        en_parts = [f"{full_n} full screen"] if full_n else []
+        tr_parts = [f"{full_n} tam ekran"] if full_n else []
+        if card_n:
+            en_parts.append(f"{card_n} as {'a card' if card_n == 1 else 'cards'}")
+            tr_parts.append(f"{card_n} kart olarak")
+        en_lead = (
             f"Showed {placed_n} of {total} {noun}"
             if unplaced_entries
             else f"{placed_n} {noun} shown"
         )
-        notes.append(f"{lead}: {', '.join(parts)}" if parts else lead)
+        tr_lead = (
+            f"{total} görselden {placed_n} tanesi gösterildi"
+            if unplaced_entries
+            else f"{placed_n} görsel gösterildi"
+        )
+        notes.append(
+            say(
+                en=f"{en_lead}: {', '.join(en_parts)}" if en_parts else en_lead,
+                tr=f"{tr_lead}: {', '.join(tr_parts)}" if tr_parts else tr_lead,
+            )
+        )
     elif unplaced_entries:
-        where = "full screen" if fullscreen else "as cards"
-        notes.append(f"Showed {placed_n} of {placed_n + len(unplaced_entries)} Visuals {where}")
+        total = placed_n + len(unplaced_entries)
+        notes.append(
+            say(
+                en=f"Showed {placed_n} of {total} Visuals "
+                + ("full screen" if fullscreen else "as cards"),
+                tr=f"{total} görselden {placed_n} tanesi "
+                + ("tam ekran" if fullscreen else "kart olarak")
+                + " gösterildi",
+            )
+        )
     elif placed_n == 1:
-        notes.append("1 Visual shown full screen" if fullscreen else "1 Visual shown as a card")
-    elif fullscreen:
-        notes.append(f"{placed_n} Visuals shown full screen")
+        notes.append(
+            say(
+                en="1 Visual shown full screen" if fullscreen else "1 Visual shown as a card",
+                tr="1 görsel tam ekran gösterildi"
+                if fullscreen
+                else "1 görsel kart olarak gösterildi",
+            )
+        )
     else:
-        notes.append(f"{placed_n} Visuals shown as cards")
+        notes.append(
+            say(
+                en=f"{placed_n} Visuals shown " + ("full screen" if fullscreen else "as cards"),
+                tr=f"{placed_n} görsel "
+                + ("tam ekran" if fullscreen else "kart olarak")
+                + " gösterildi",
+            )
+        )
     for entry in unplaced_entries[:_MAX_MISSED_DETAIL_LINES]:
         label = entry.get("label") if isinstance(entry, dict) else None
         if isinstance(label, str) and label:
