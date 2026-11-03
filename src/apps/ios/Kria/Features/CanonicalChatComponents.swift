@@ -216,6 +216,12 @@ struct ChatMessageRow: View {
     /// KRI-815: how to present `message.voiceoverScript`. nil (old server, flag off, no script) = the reply text,
     /// which holds the script too.
     var voiceoverScriptMode: VoiceoverScriptCardMode? = nil
+    /// "Type my own" on a choice card: hands the creator the composer for this question; nil hides the row.
+    var answerOwn: (() -> Void)? = nil
+    /// The creator is typing their own answer, so every answer block is disabled.
+    var isAnsweringOwn = false
+    /// KRI-802: undoes the held choice of a reply that also asks for clips.
+    var changeHeldChoice: (() -> Void)? = nil
 
     /// With the script card shown, the reply text drops the script it ends with (the card holds it).
     private var shownContent: String {
@@ -279,7 +285,7 @@ struct ChatMessageRow: View {
                     )
                 }
                 if !message.replyOptions.isEmpty, let replyOptionsMode {
-                    ReplyOptionChips(options: message.replyOptions, mode: replyOptionsMode)
+                    ReplyOptionRows(options: message.replyOptions, mode: replyOptionsMode)
                 }
                 if questionBatch != nil { choiceCard }
                 if let question = message.clipQuestion, let clipSelectionMode {
@@ -329,7 +335,9 @@ struct ChatMessageRow: View {
     @ViewBuilder private var choiceCard: some View {
         if let question = message.choiceQuestion, let choiceQuestionMode {
             ChoiceQuestionCard(question: question, mode: choiceQuestionMode,
-                               heldKey: questionBatch?.choice?.optionKey, note: questionBatch?.choiceNote)
+                               heldKey: questionBatch?.choice?.optionKey, note: questionBatch?.choiceNote,
+                               changeHeld: questionBatch?.choice != nil ? changeHeldChoice : nil,
+                               typeMyOwn: answerOwn, isTyping: isAnsweringOwn, allowsDecide: questionBatch == nil)
                 .id(question.questionID)
         }
     }
@@ -1106,7 +1114,7 @@ struct ReadyStage: View {
             // KRI-769: no chips to offer (capability on, set empty or still loading) = no dangling question either.
             if serverSuggestions.map({ !$0.isEmpty }) ?? true {
                 Text("What would you like to change?")
-                    .font(KriaFont.body(13).weight(.medium))
+                    .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
             }
 
             if let serverSuggestions {
@@ -1117,7 +1125,7 @@ struct ReadyStage: View {
                         .accessibilityIdentifier("ready-suggestions")
                 }
             } else {
-                HStack(spacing: 8) {
+                PlanChipFlow(spacing: 8) {
                     PromptChip(text: "Try a stronger opening", action: suggest)
                     PromptChip(text: "Make it warmer", action: suggest)
                 }
@@ -1142,151 +1150,56 @@ private struct PromptChip: View {
     let text: String
     let action: (String) -> Void
     var body: some View {
-        Button { action(text) } label: {
-            Text(text)
-                .font(KriaFont.body(11).weight(.medium))
-                .foregroundStyle(KriaColor.ink)
-                .padding(.horizontal, 11)
-                .frame(minHeight: 44)
-                .overlay(Capsule().stroke(KriaColor.border, lineWidth: 1))
-                // Make the whole outlined chip the tap target explicitly instead of
-                // relying on the stroke overlay's hit area under a plain style.
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Use suggestion: \(text)")
+        KriaAnswerChip(title: text) { action(text) }
+            .accessibilityLabel("Use suggestion: \(text)")
     }
 }
 
-/// Tappable, exact-string reply choices for a clarifying question (e.g. the
-/// all-media capacity preflight). Unlike `PromptChip`, option text is a full
-/// sentence, so each choice wraps onto its own row instead of a fixed-width
-/// capsule.
+/// Tappable, exact-string reply choices for a clarifying question (e.g. the all-media capacity preflight).
+/// Each choice is a full-width answer block, one under the other, so a full sentence wraps and the block grows.
 struct QuestionOptionsRow: View {
     let options: [String]
     let recommendedOption: String?
     let select: (String) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(options, id: \.self) { option in
-                QuestionOptionButton(
-                    text: option,
-                    isRecommended: option == recommendedOption,
-                    action: { select(option) }
-                )
-            }
-        }
+        KriaAnswerStack(
+            options: options.map { KriaAnswerOption(id: $0, title: $0, isRecommended: $0 == recommendedOption) },
+            select: { select($0.id) }
+        )
         .padding(.top, 2)
     }
 }
 
-struct QuestionOptionButton: View {
-    let text: String
-    let isRecommended: Bool
-    var detail: String? = nil
-    var isDisabled = false
-    /// KRI-802: tapped and held (it goes out with the reply's other answer).
-    var isSelected = false
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 4) {
-                    if isRecommended {
-                        Text("RECOMMENDED")
-                            .font(KriaFont.body(10).weight(.semibold))
-                            .tracking(0.4)
-                            .foregroundStyle(KriaColor.success)
-                    }
-                    Text(text)
-                        .font(KriaFont.body(13).weight(.medium))
-                        .foregroundStyle(KriaColor.ink)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let detail {
-                        Text(detail)
-                            .font(KriaFont.body(12))
-                            .foregroundStyle(KriaColor.mutedInk)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(KriaColor.success)
-                        .accessibilityHidden(true)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .frame(minHeight: 44)
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(isSelected ? KriaColor.ink : KriaColor.border, lineWidth: isSelected ? 1.5 : 1))
-            // A plain-style button only takes taps on drawn pixels, which left
-            // the chip's blank interior dead; the whole outlined chip is the target.
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .disabled(isDisabled)
-        .opacity(isDisabled ? 0.55 : 1)
-        .accessibilityLabel(isRecommended ? "\(text) (recommended)" : text)
-        .accessibilityValue(isSelected ? "Selected" : "")
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-}
-
-/// Newest-unanswered-question state for `ReplyOptionChips`. History rows get no mode, so they draw no chips.
+/// Newest-unanswered-question state for `ReplyOptionRows`. History rows get no mode, so they draw no answers.
 struct ReplyOptionsMode {
     /// Sends the tapped label as a normal user message (plain text, no structured answer).
     let select: (String) -> Void
-    /// "Other…": puts the creator in the composer; nothing is sent.
+    /// "Type my own": puts the creator in the composer; nothing is sent.
     let other: () -> Void
+    /// The tapped answer is on its way (its message is pending); the card stays open until the send lands.
+    var isSending = false
+    /// The answer whose message is pending, when it is one of the offered labels.
+    var pendingOption: String?
+    /// The creator is typing their own answer, so the blocks are disabled.
+    var isTyping = false
 }
 
-/// A filled capsule: no stroke, Inter, 44pt tap height. Shared by the reply-option chips so the style
-/// lives in one place (the outlined `PromptChip` predates the no-borders rule and is left alone).
+/// A filled capsule for a SUGGESTION, never for a question's answer (those are `KriaAnswerStack` blocks).
+/// A thin wrapper over `KriaAnswerChip` that keeps the call shape the suggestion rows use.
 struct KriaFilledChip: View {
     let text: String
-    var systemImage: String? = nil
-    var foreground: Color = KriaColor.ink
     /// KRI-756: one muted line under the label (footage evidence). Hidden when nil.
     var caption: String? = nil
-    /// KRI-756: the lead chip of a set (the stock "let Kria cut it" move): butter fill, semibold.
+    /// KRI-756: the lead chip of a set (the stock "let Kria cut it" move) carries the quiet "Recommended" tag.
     var isPrimary = false
+    var state: KriaAnswerState = .idle
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(text)
-                        .font(KriaFont.body(13).weight(isPrimary ? .semibold : .medium))
-                        .multilineTextAlignment(.leading)
-                    if let caption {
-                        Text(caption)
-                            .font(KriaFont.body(11))
-                            .foregroundStyle(foreground.opacity(0.62))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                }
-                if let systemImage {
-                    Image(systemName: systemImage).font(.system(size: 11, weight: .semibold))
-                }
-            }
-            .foregroundStyle(foreground)
-            .padding(.horizontal, 14)
-            .padding(.vertical, caption == nil ? 0 : 6)
-            .frame(minHeight: 44)
-            .background(isPrimary ? KriaColor.butter : KriaColor.fill)
-            .clipShape(Capsule())
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(caption.map { "\(text), \($0)" } ?? text)
+        KriaAnswerChip(title: text, caption: caption, state: state, isRecommended: isPrimary, action: action)
+            .accessibilityLabel(caption.map { "\(text), \($0)" } ?? text)
+            .accessibilityValue(isPrimary ? "Recommended" : "")
     }
 }
 
@@ -1295,6 +1208,8 @@ struct KriaFilledChip: View {
 /// `default_edit` chip is the primary one.
 struct SuggestionChipRow: View {
     let chips: [SuggestionChip]
+    /// The chip whose message is on its way: it shows a spinner while the others dim.
+    var sendingID: String? = nil
     let send: (SuggestionChip) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -1302,7 +1217,10 @@ struct SuggestionChipRow: View {
         if !chips.isEmpty {
             PlanChipFlow(spacing: 8) {
                 ForEach(Array(chips.enumerated()), id: \.element.id) { index, chip in
-                    KriaFilledChip(text: chip.label, caption: chip.why, isPrimary: chip.isDefaultEdit) { send(chip) }
+                    KriaFilledChip(text: chip.label, caption: chip.why, isPrimary: chip.isDefaultEdit,
+                                   state: sendingID == chip.id ? .sending : .idle) { send(chip) }
+                        .opacity(sendingID != nil && sendingID != chip.id ? 0.4 : 1)
+                        .disabled(sendingID != nil)
                         .accessibilityIdentifier("suggestion-chip-\(index)")
                         .accessibilityHint("Sends this to Kria")
                 }
@@ -1315,20 +1233,18 @@ struct SuggestionChipRow: View {
     }
 }
 
-/// The offered answers of a clarifying question as tappable chips, plus "Other…" to type a different one.
-struct ReplyOptionChips: View {
+/// The offered answers of a clarifying question as stacked answer blocks, plus "Type my own".
+struct ReplyOptionRows: View {
     let options: [String]
     let mode: ReplyOptionsMode
 
     var body: some View {
-        PlanChipFlow(spacing: 8) {
-            ForEach(Array(options.enumerated()), id: \.offset) { index, option in
-                KriaFilledChip(text: option) { mode.select(option) }
-                    .accessibilityIdentifier("reply-option-\(index)")
-            }
-            KriaFilledChip(text: "Other…", systemImage: "pencil", foreground: KriaColor.mutedInk, action: mode.other)
-                .accessibilityIdentifier("reply-option-other")
-        }
+        KriaAnswerStack(
+            options: options.enumerated().map { KriaAnswerOption(id: $0.element, title: $0.element, identifier: "reply-option-\($0.offset)") },
+            isSending: mode.isSending, pendingID: mode.pendingOption, isLocked: mode.isTyping,
+            typeMyOwn: mode.other,
+            select: { mode.select($0.id) }
+        )
         .padding(.top, 2)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("reply-options")
@@ -1530,6 +1446,9 @@ struct ChatComposer: View {
     var canSendWithoutText = false
     var blocksSubmission = false
     var placeholder = "Tell Kria what you want…"
+    /// The question the creator is answering in their own words. Shown as a capsule above the field.
+    var answering: String? = nil
+    var cancelAnswering: () -> Void = {}
     var isFocused: FocusState<Bool>.Binding
     /// KRI-742: pass a controller (only when the server advertises `voice_dictation`) to show the mic.
     var dictation: DictationController? = nil
@@ -1545,7 +1464,40 @@ struct ChatComposer: View {
             && !ChatSubmission.isBareCorrectionStub(text) && !dictationIsBusy
     }
 
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 30, style: .continuous) }
+
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let answering { answeringCapsule(answering) }
+            field
+        }
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: dictation?.phase)
+        .onDisappear { dictation?.cancel() }
+    }
+
+    /// Just the question, with no prefix; it wraps to two lines and the whole capsule stays at least 44pt.
+    private func answeringCapsule(_ question: String) -> some View {
+        HStack(alignment: .center, spacing: 0) {
+            Text(question)
+                .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                .lineLimit(2).multilineTextAlignment(.leading)
+                .padding(.leading, 16).padding(.vertical, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: cancelAnswering) {
+                Image(systemName: "xmark").font(.system(size: 13, weight: .semibold)).foregroundStyle(KriaColor.ink)
+                    .frame(width: 44, height: 44).contentShape(Rectangle())
+            }
+            .accessibilityLabel("Stop answering this question")
+            .accessibilityIdentifier("chat-answering-cancel")
+        }
+        .frame(minHeight: 44)
+        .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("chat-answering")
+    }
+
+    private var field: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let notice = dictation?.notice {
                 Text(notice)
@@ -1586,10 +1538,9 @@ struct ChatComposer: View {
                     .accessibilityIdentifier("chat-send-message")
             }
         }
-        .padding(7).kriaFloatingSurface(RoundedRectangle(cornerRadius: 30, style: .continuous))
-        .padding(.horizontal, 14).padding(.vertical, 12)
-        .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: dictation?.phase)
-        .onDisappear { dictation?.cancel() }
+        .padding(7).kriaFloatingSurface(shape)
+        .background(answering != nil ? KriaColor.selectionSoft : Color.clear, in: shape)
+        .tint(answering != nil ? KriaColor.sky : nil)
     }
 
     private func toggleDictation(_ dictation: DictationController) {

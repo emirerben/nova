@@ -75,7 +75,7 @@ struct KriaButtonStyle: ButtonStyle {
     private func fill(pressed: Bool, live: Bool) -> Color {
         switch role {
         case .primary:
-            live ? (pressed ? KriaColor.butterPressed : KriaColor.butter) : KriaColor.fill
+            live ? (pressed ? KriaColor.butterPressed : KriaColor.butter) : (onFill ? KriaColor.fillPressed : KriaColor.fill)
         case .secondary:
             if onFill { live ? (pressed ? KriaColor.fillPressed : KriaColor.paper) : KriaColor.paper.opacity(0.6) }
             else { live ? (pressed ? KriaColor.fillPressed : KriaColor.fill) : KriaColor.fill }

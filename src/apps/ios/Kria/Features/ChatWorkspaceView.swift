@@ -554,6 +554,11 @@ private struct CreationWorkspaceView: View {
     /// KRI-802: answers held for a reply that asks a choice card and a clip picker together, by message id. Both go
     /// out on one turn once both are in.
     @State private var questionBatches: [String: QuestionBatch] = [:]
+    /// The question the creator chose to answer in their own words ("Type my own"): shown above the composer
+    /// while they type, and the answer blocks are disabled meanwhile.
+    @State private var answeringQuestion: String?
+    /// The suggestion chip whose message is on its way (it shows a spinner while the others dim).
+    @State private var sendingSuggestionID: String?
     /// KRI-588: song-range questions the server has said are closed (409 `song_range_stale`), and the server's
     /// reason for refusing the last range, shown on that question's card.
     @State private var closedSongRangeQuestions: Set<String> = []
@@ -1060,7 +1065,10 @@ private struct CreationWorkspaceView: View {
                            objectMarkMode: objectMarkMode(for: message),
                            momentOrderMode: momentOrderMode(for: message),
                            replyOptionsMode: replyOptionsMode(for: message),
-                           voiceoverScriptMode: voiceoverScriptMode(for: message))
+                           voiceoverScriptMode: voiceoverScriptMode(for: message),
+                           answerOwn: { startAnsweringOwn(message) },
+                           isAnsweringOwn: answeringQuestion != nil && composerFocused,
+                           changeHeldChoice: { questionBatches[message.id]?.releaseChoice() })
                 .id(entry.id)
             if let operationID = message.memoryOperationID {
                 SavedTextPreferenceUndo(operationID: operationID, api: model.api)
@@ -1253,10 +1261,12 @@ private struct CreationWorkspaceView: View {
         guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return nil }
         let later = messages[(index + 1)...]
         if let answer = later.first(where: { $0.role == .user }) {
+            // The answer's message is still pending: the card stays open so a refused send reopens it with a reason.
+            if answer.isPending { return .active(isSending: true) { _, _ in } }
             let chosen = answeredChoices[question.questionID].flatMap { question.option(key: $0.optionKey)?.label }
             return .answered(summary: chosen ?? answer.content)
         }
-        guard !later.contains(where: { $0.choiceQuestion != nil }) else { return nil }
+        guard !later.contains(where: { $0.choiceQuestion != nil }) else { return .superseded }
         return .active(isSending: isSending || isActing || isThinking) { submission, text in
             if asksTogether(message) {
                 holdBatchAnswer(for: message) { $0.hold(choice: submission, text: text) }
@@ -1323,8 +1333,9 @@ private struct CreationWorkspaceView: View {
         Task { await send(message: ready.message, clipSelection: ready.clips, choiceSelection: ready.choice) }
     }
 
-    /// Chips for a plain `assistant_response` question, interactive only on the newest question that no later
-    /// user message has answered. Anything later (an answer, a newer question) removes them from history.
+    /// Answer blocks for a plain `assistant_response` question, interactive on the newest question that no later
+    /// user message has answered. A later message that is still pending keeps them open (the tapped one spins);
+    /// anything later that landed (an answer, a newer question) removes them from history.
     private func replyOptionsMode(for message: ChatTranscriptMessage) -> ReplyOptionsMode? {
         guard transcriptIsFresh, !message.replyOptions.isEmpty else { return nil }
         let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
@@ -1332,14 +1343,21 @@ private struct CreationWorkspaceView: View {
         }
         guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return nil }
         let later = messages[(index + 1)...]
-        guard !later.contains(where: { $0.role == .user || !$0.replyOptions.isEmpty || !$0.options.isEmpty }) else { return nil }
+        guard !later.contains(where: { ($0.role == .user && !$0.isPending) || !$0.replyOptions.isEmpty || !$0.options.isEmpty }) else { return nil }
+        let pending = later.first(where: { $0.role == .user && $0.isPending })
         return ReplyOptionsMode(
             select: { option in Task { await send(message: option) } },
-            other: {
-                // Nothing is sent and nothing typed is lost: the creator writes their own answer.
-                composerFocused = true
-            }
+            other: { startAnsweringOwn(message) },
+            isSending: pending != nil,
+            pendingOption: pending.flatMap { pending in message.replyOptions.first { $0 == pending.content } },
+            isTyping: answeringQuestion != nil && composerFocused
         )
+    }
+
+    /// "Type my own": the composer takes focus, names the question above it, and nothing is sent.
+    private func startAnsweringOwn(_ message: ChatTranscriptMessage) {
+        answeringQuestion = message.displayedContent
+        composerFocused = true
     }
 
     private func mediaReceipts(_ entries: [ChatTimelineEntry]) -> some View {
@@ -1759,7 +1777,7 @@ private struct CreationWorkspaceView: View {
                 // KRI-756: the first-prompt chips sit just above the composer, not inside the scrolling transcript.
                 let firstPromptChips = suggestionChips(for: .firstPrompt)
                 if !firstPromptChips.isEmpty {
-                    SuggestionChipRow(chips: firstPromptChips) { sendSuggestion($0) }
+                    SuggestionChipRow(chips: firstPromptChips, sendingID: sendingSuggestionID) { sendSuggestion($0) }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
                         .background(KriaColor.paper)
@@ -1772,7 +1790,9 @@ private struct CreationWorkspaceView: View {
                     canSendWithoutText: readyMediaCount > 0,
                     // be99a3f12 (origin/main): a failed attach never blocks Send.
                     blocksSubmission: isThinking || sendReceipt != nil || pendingUploadCount > 0,
-                    placeholder: readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…",
+                    placeholder: answeringQuestion != nil ? "Type your answer" : (readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…"),
+                    answering: answeringQuestion,
+                    cancelAnswering: { answeringQuestion = nil },
                     isFocused: $composerFocused,
                     dictation: dictationForComposer,
                     dictationTerms: dictationContextTerms,
@@ -2131,7 +2151,11 @@ private struct CreationWorkspaceView: View {
     private func sendSuggestion(_ chip: SuggestionChip) {
         guard !isSending, !isActing, !isThinking else { return }
         let tap = suggestionSet?.setID.map { SuggestionTap(setID: $0, chipID: chip.id) }
-        Task { await send(message: chip.message, suggestion: tap, keepsDraft: true) }
+        sendingSuggestionID = chip.id
+        Task {
+            await send(message: chip.message, suggestion: tap, keepsDraft: true)
+            sendingSuggestionID = nil
+        }
     }
 
     private func send(message submittedMessage: String? = nil, clipSelection: ClipSelectionSubmission? = nil, songOrder: SongOrderSubmission? = nil, choiceSelection: ChoiceSelectionSubmission? = nil, songRange: SongRangeAnswer? = nil, suggestion: SuggestionTap? = nil, protectedRegion: ProtectedRegionAnswer? = nil, markQuestionID: String? = nil, momentOrder: MomentOrderAnswer? = nil, keepsDraft: Bool = false, retrying: ChatSendReceipt? = nil) async {
@@ -2194,6 +2218,7 @@ private struct CreationWorkspaceView: View {
             }
         }
         if !keepsDraft && retrying == nil { prompt = "" }
+        if retrying == nil { answeringQuestion = nil }
         scrollRequest += 1
         // Edits staged from a chat draft already live in the server's draft head;
         // committing them here would render on every send. Only real local edits flush.

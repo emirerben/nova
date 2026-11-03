@@ -315,8 +315,8 @@ struct MomentOrderStrings {
 
     var title: String { say("Show me your moments", "Anlarını göster") }
     var hint: String {
-        say("Put them in the order you want. For each one, show me where it is, tell me it isn’t in your clips, or let me pick.",
-            "İstediğin sıraya koy. Her biri için yerini göster, kliplerinde olmadığını söyle ya da benim seçmeme izin ver.")
+        say("Drag to reorder. Then tell me where each one is.",
+            "Sürükleyerek sırala. Sonra her birinin yerini söyle.")
     }
     var point: String { say("Show where", "Yerini göster") }
     var skip: String { say("Not in my clips", "Kliplerimde yok") }
@@ -341,14 +341,21 @@ struct MomentOrderStrings {
             "Kutuyu ana sürükle. Uzatmak ya da kısaltmak için bir kenarını sürükle.")
     }
     var couldNotLoad: String { say("Couldn’t load this clip.", "Bu klip yüklenemedi.") }
+    func reorder(_ words: String) -> String { say("Reorder \(words)", "\(words) sırasını değiştir") }
     func moveUp(_ words: String) -> String { say("Move \(words) up", "\(words) yukarı taşı") }
     func moveDown(_ words: String) -> String { say("Move \(words) down", "\(words) aşağı taşı") }
+
+    /// The creator's pointed window is the one Kria found itself.
+    func isFound(_ moment: MomentOrderQuestion.Moment, choice: MomentChoice?) -> Bool {
+        guard case .point(let window)? = choice, moment.status == .grounded || moment.status == .answered,
+              let found = moment.found else { return false }
+        return abs(found.start - window.start) < 0.01 && abs(found.end - window.end) < 0.01
+    }
 
     func status(_ moment: MomentOrderQuestion.Moment, choice: MomentChoice?) -> String {
         switch choice {
         case .point(let window)?:
-            if moment.status == .grounded || moment.status == .answered, let found = moment.found,
-               abs(found.start - window.start) < 0.01, abs(found.end - window.end) < 0.01 {
+            if isFound(moment, choice: choice) {
                 return say("Found it at \(window.label)", "\(window.label) arasında buldum")
             }
             return say("You picked \(window.label)", "Seçtiğin yer: \(window.label)")

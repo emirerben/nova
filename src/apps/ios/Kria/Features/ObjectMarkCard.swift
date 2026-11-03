@@ -35,17 +35,10 @@ struct ObjectMarkCard: View {
     var body: some View {
         switch mode {
         case .answered(let summary):
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(KriaColor.success)
-                    .accessibilityHidden(true)
-                Text(summary)
-                    .font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(minHeight: 44, alignment: .leading)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(summary)
-            .accessibilityIdentifier("object-mark-answered")
+            KriaAnsweredReceipt(text: summary)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(summary)
+                .accessibilityIdentifier("object-mark-answered")
         case .active(let isSending, let problem, let submit):
             ObjectMarkActiveCard(question: question, projectID: projectID, isSending: isSending, problem: problem, submit: submit)
         }
@@ -80,35 +73,38 @@ private struct ObjectMarkActiveCard: View {
         ProtectedRegionAnswer(label: question.label, mediaID: mediaID, sourceTimeS: time, rect: rect)
     }
 
+    private var frameIsReady: Bool { frameImage != nil && loadedKey == frameKey }
+    private var isLoadingFrame: Bool { localURL != nil && !frameIsReady }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Draw a box around the \(question.label) on the clip where it's in view while you talk.")
-                .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                .fixedSize(horizontal: false, vertical: true)
+        KriaQuestionCard(title: "Draw a box around the \(question.label)",
+                         helper: "Pick a moment where it’s in view while you talk.") {
             if question.mediaIDs.count > 1 { clipPicker }
             frameArea
             if duration > 0.2, localURL != nil {
-                Slider(value: $time, in: 0...duration) { Text("Moment") }
-                    .accessibilityLabel("Moment in the clip")
-                    .accessibilityValue(String(format: "%.1f seconds", time))
-                    .accessibilityIdentifier("object-mark-time")
-                    .disabled(isSending)
+                HStack(spacing: 12) {
+                    Text(Self.readout(time))
+                        .kriaType(.label).monospacedDigit().foregroundStyle(KriaColor.ink)
+                        .frame(minWidth: 44, alignment: .leading)
+                        .accessibilityHidden(true)
+                    Slider(value: $time, in: 0...duration) { Text("Moment") }
+                        .tint(KriaColor.ink)
+                        .accessibilityLabel("Moment in the clip")
+                        .accessibilityValue(String(format: "%.1f seconds", time))
+                        .accessibilityIdentifier("object-mark-time")
+                        .disabled(isSending)
+                }
             }
             if let problem, !problemSeen {
-                Text(problem)
-                    .font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("object-mark-error")
+                KriaInlineFailure(text: problem).accessibilityIdentifier("object-mark-error")
             }
             Button(question.actionTitle) { submit(answer) }
-                .buttonStyle(KriaPrimaryButtonStyle(minHeight: 44))
-                .frame(maxWidth: .infinity)
+                .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true, onFill: true, isLoading: isSending))
                 // The box is sent with `time`: only once that moment's frame is the one on screen.
-                .disabled(isSending || frameImage == nil || loadedKey != frameKey)
+                .disabled(isSending || !frameIsReady)
+                .kriaDisabledReason(isLoadingFrame ? "Wait for the frame to load." : nil)
                 .accessibilityIdentifier("object-mark-send")
         }
-        .padding(14)
-        .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .excludesDrawerGesture()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("object-mark-card")
@@ -118,37 +114,48 @@ private struct ObjectMarkActiveCard: View {
         .task(id: frameKey) { await loadFrame() }
     }
 
+    /// 0:04.2, on the same clock as the slider.
+    private static func readout(_ seconds: Double) -> String {
+        let tenths = Int((max(0, seconds) * 10).rounded())
+        return String(format: "%d:%02d.%d", tenths / 600, (tenths / 10) % 60, tenths % 10)
+    }
+
     private var clipPicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(Array(question.mediaIDs.enumerated()), id: \.offset) { index, _ in
-                    Button("Clip \(index + 1)") {
-                        guard index != mediaIndex else { return }
-                        mediaIndex = index
-                        time = 0
-                        frameImage = nil
-                    }
-                    .font(KriaFont.body(13).weight(.semibold))
-                    .foregroundStyle(index == mediaIndex ? Color.white : KriaColor.ink)
-                    .padding(.horizontal, 14)
-                    .frame(minHeight: 44)
-                    .background(index == mediaIndex ? KriaColor.ink : KriaColor.fill, in: Capsule())
-                    .accessibilityAddTraits(index == mediaIndex ? .isSelected : [])
-                    .accessibilityIdentifier("object-mark-clip-\(index + 1)")
-                    .disabled(isSending)
+        HStack(spacing: 8) {
+            ForEach(Array(question.mediaIDs.enumerated()), id: \.offset) { index, _ in
+                let selected = index == mediaIndex
+                Button {
+                    guard !selected else { return }
+                    mediaIndex = index
+                    time = 0
+                    frameImage = nil
+                } label: {
+                    Text("Clip \(index + 1)").kriaType(.button)
+                        .foregroundStyle(selected ? KriaColor.paper : KriaColor.ink)
+                        .padding(.horizontal, 20).padding(.vertical, 8)
+                        .frame(minHeight: 44)
+                        .background(selected ? KriaColor.ink : KriaColor.paper, in: Capsule())
+                        .contentShape(Capsule())
                 }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+                .accessibilityIdentifier("object-mark-clip-\(index + 1)")
+                .disabled(isSending)
             }
+            Spacer(minLength: 0)
         }
     }
 
     @ViewBuilder private var frameArea: some View {
         if localURL == nil {
             Text(question.mediaIDs.count > 1
-                 ? "This clip isn't on this iPhone. Pick another clip."
-                 : "This clip isn't on this iPhone, so it can't be marked here.")
-                .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                .frame(maxWidth: .infinity, minHeight: 120)
-                .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                 ? "This clip isn’t on this iPhone. Pick another clip."
+                 : "This clip isn’t on this iPhone, so it can’t be marked here.")
+                .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+                .frame(maxWidth: .infinity, minHeight: 80)
+                .background(KriaColor.paper, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .accessibilityIdentifier("object-mark-missing")
         } else {
             GeometryReader { proxy in
@@ -162,12 +169,19 @@ private struct ObjectMarkActiveCard: View {
                             .offset(x: drawn.minX, y: drawn.minY)
                             .accessibilityHidden(true)
                         markOverlay(in: drawn)
-                    } else {
-                        ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    if !frameIsReady && image == nil {
+                        HStack(spacing: 8) {
+                            KriaSpinner(size: 20)
+                            Text("Loading the frame…").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(KriaColor.paper, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
                 }
             }
             .frame(height: 300)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("object-mark-frame")
         }
@@ -175,9 +189,9 @@ private struct ObjectMarkActiveCard: View {
 
     @ViewBuilder private func markOverlay(in drawn: CGRect) -> some View {
         let box = KriaCropGeometry.viewRect(rect, in: drawn)
-        RoundedRectangle(cornerRadius: 6, style: .continuous)
-            .fill(Color.white.opacity(0.12))
-            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Color.white, lineWidth: 2))
+        Rectangle()
+            .fill(Color.white.opacity(0.001))
+            .overlay(Rectangle().stroke(Color.white, lineWidth: 2))
             .shadow(color: .black.opacity(0.35), radius: 2)
             .frame(width: box.width, height: box.height)
             .offset(x: box.minX, y: box.minY)
@@ -196,26 +210,33 @@ private struct ObjectMarkActiveCard: View {
             .accessibilityLabel("The \(question.label)")
             .accessibilityValue(answer.box.map { String(format: "%.4f", $0) }.joined(separator: ","))
             .accessibilityIdentifier("object-mark-rect")
-        Circle()
-            .fill(Color.white)
-            .overlay(Circle().stroke(KriaColor.ink, lineWidth: 2))
+        ForEach(KriaCropGeometry.Corner.allCases, id: \.self) { corner in handle(corner, box: box, drawn: drawn) }
+    }
+
+    /// A 22pt white disc with a soft ring, in a 44pt hit area centred on the box corner.
+    private func handle(_ corner: KriaCropGeometry.Corner, box: CGRect, drawn: CGRect) -> some View {
+        let leading = corner == .topLeading || corner == .bottomLeading
+        let top = corner == .topLeading || corner == .topTrailing
+        return Circle().fill(Color.white)
             .frame(width: 22, height: 22)
+            .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
             .frame(width: 44, height: 44)
+            .background(Circle().fill(Color.white.opacity(0.3)).frame(width: 44, height: 44))
             .contentShape(Rectangle())
-            .offset(x: box.maxX - 22, y: box.maxY - 22)
+            .offset(x: (leading ? box.minX : box.maxX) - 22, y: (top ? box.minY : box.maxY) - 22)
             .gesture(
                 DragGesture(minimumDistance: 1)
                     .onChanged { value in
                         let start = resizeStart ?? rect
                         resizeStart = start
-                        rect = KriaCropGeometry.resized(start, corner: .bottomTrailing,
+                        rect = KriaCropGeometry.resized(start, corner: corner,
                                                         dx: value.translation.width / max(drawn.width, 1),
                                                         dy: value.translation.height / max(drawn.height, 1))
                     }
                     .onEnded { _ in resizeStart = nil }
             )
             .accessibilityLabel("Resize the box")
-            .accessibilityIdentifier("object-mark-resize")
+            .accessibilityIdentifier(corner == .bottomTrailing ? "object-mark-resize" : "object-mark-resize-\(corner)")
     }
 
     private func loadDuration() async {
