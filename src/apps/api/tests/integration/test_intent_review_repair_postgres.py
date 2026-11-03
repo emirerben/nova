@@ -962,12 +962,13 @@ async def test_a_repair_the_creator_turned_down_is_never_staged_again(
     assert (row.status, row.reason) == settled
 
     later = a_later_review_of_the_same_drift(rid)
-    count, seen = len(drafts(thread)), {e.id for e in events(thread)}
+    staging = (INTENT_REPAIR_EVENT, "draft_applied", "approval_requested")
+    count, seen = len(drafts(thread)), {e.id for e in events(thread, *staging)}
     assert await run_async(later, Provider(COPY_MISMATCH)) == "suggestion"
     follow = review_row(later)
     assert [s["why"] for s in follow.review["disposition"]["suggestions"]] == ["protected"]
     assert follow.repair_draft_id is None and len(drafts(thread)) == count
-    assert {e.id for e in events(thread)} == seen
+    assert {e.id for e in events(thread, *staging)} == seen
 
 
 def declined_for(rid):
@@ -1560,6 +1561,7 @@ async def test_a_refused_publish_of_the_turn_the_undo_promoted_cannot_strand_the
             [finding("R1", "met", frames=["f0"], confidence="low"), R2_MET],
             ("repair_unverified", "not_confirmed"),
             False,
+            two_requirements,
             id="a_low_confidence_pass_on_the_target_is_a_guess_not_a_fix",
         ),
         pytest.param(
@@ -1571,6 +1573,7 @@ async def test_a_refused_publish_of_the_turn_the_undo_promoted_cannot_strand_the
             ],
             ("repair_unverified", "rereview_unavailable"),
             False,
+            two_requirements,
             id="a_follow_up_whose_passes_are_all_guesses_confirms_nothing",
         ),
     ],

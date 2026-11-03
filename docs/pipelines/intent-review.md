@@ -39,12 +39,12 @@ render ready (observer)
 | --- | --- |
 | `no_findings` | One receipt: "I checked the finished video against your request. Everything I could see matches." If anything was withheld (audio) or could not be judged from stills, the headline names the limit instead. One `met` row per ask judged `met` at medium or high confidence; a low-confidence `met` is a guess and gets no row. A low-confidence `unmet` is a doubt, so the all-clear headline is never used: the receipt says something may not match and carries a `partial` row for it. |
 | `suggestion` | One receipt: something may not match, nothing was changed. One `partial` row per doubtful ask; the optional fix is named only when it is still a sensible offer. |
-| `needs_confirmation` | The suggestion receipt, then one `assistant_question` with the options "Change it to \"<the creator's words>\"" / "Keep it". The question and the first option name the exact words, because a tap is an ordinary user message the planner reads on its own; the reviewer stages nothing. |
-| `repair_staged` | The repair turn's own card (`draft_applied` with Undo, then `approval_requested`), then one receipt saying the fix is waiting for approval. Never a question. |
-| `repair_verified` | One receipt: the fix worked, checked again; the fix line in the past tense; Undo still available. Every targeted ask must be `met` in the follow-up review at medium or high confidence; a low-confidence `met` leaves the repair `repair_unverified`. |
+| `needs_confirmation` | The suggestion receipt, then one `assistant_question` with the options "Change it to \"<the creator's words>\"" / "Keep it". The question and the first option name the exact words, because a tap is an ordinary user message the planner reads on its own; words that one line cannot hold whole (over 60 characters, several lines, repeated spaces) are never shortened or reflowed, so the question and options fall back to the plain "Change it" / "Keep it". The reviewer stages nothing. |
+| `repair_staged` | The repair turn's own card (`draft_applied` with Undo, then `approval_requested`), then one receipt saying the fix (or, for two or three, the fixes) is waiting for approval. Never a question. |
+| `repair_verified` | One receipt: the fix worked, checked again; the fix line in the past tense; Undo still available. Every targeted ask must be `met` in the follow-up review at medium or high confidence; a low-confidence `met` leaves the repair `repair_unverified`. Posted only while the repair is still the creator's current draft (otherwise `skipped:head_moved`), because "you can still undo it" would undo their newer work. |
 | `repair_unverified` | One receipt: the fix is in the new video but could not be confirmed; never says "checked". |
 | `repair_reverted(worse)` | One receipt: the draft was undone, the video still shows the fix, ask to render the previous version. Never claims the old video is back. |
-| `repair_reverted(worse_head_moved)` | One message: the creator's newer edits are untouched; the fix can be undone from its card. |
+| `repair_reverted(worse_head_moved)` | One message: the creator's newer edits are untouched. It does not point at the fix's card, whose Undo no longer applies. |
 | everything else | Nothing. The deterministic post-render receipt stands. |
 
 The events are the types old app builds already render: `assistant_response` (receipts), `assistant_question`, and the repair turn's `draft_applied` / `approval_requested`. A receipt row is a `RequirementReceipt` (`status` `met` or `partial`, the brief requirement's own id, `verification` and `stage` `checked`, stamped with the brief version and the render generation it judged), with `reply_lead` and `also_changed` next to it. No iOS change was needed. The reviewer's receipts carry `turn_value: "intent_review"` and are skipped by `GET brief`: the deterministic ledger alone decides what a requirement shows.
@@ -54,10 +54,11 @@ The events are the types old app builds already render: `assistant_response` (re
 An informational receipt is posted only if all of these are still true at the moment of writing, under the thread lock:
 
 - the reviewed render is still the creator's current video (the input digest still holds);
-- the creator has not spoken since the render, no turn is in flight and no other approval is pending (a new event would move the thread revision under a turn that is planning and throw it back to plan again);
+- the creator has not spoken since the render;
+- no turn is in flight and no other approval is pending (a new event would move the thread revision under a turn that is planning and throw it back to plan again). This only defers the post: nothing is recorded and the beat sweep retries while the outcome is recent;
 - the review is still switched on for that creator.
 
-Otherwise nothing is posted and the decision is recorded in `review.posting[<status>] = "skipped:<why>"`. A revert that undid the creator's draft is the one post that does not wait for a quiet thread: it explains a change that already happened.
+Otherwise nothing is posted and the final decision is recorded in `review.posting[<status>] = "skipped:<why>"`. A revert that undid the creator's draft is the one post that does not wait for a quiet thread: it explains a change that already happened.
 
 Posting is idempotent per status: events carry the client id `intent-review:<review>:<status>:<receipt|question>`, the decision is recorded in `review.posting`, `receipt_event_id` / `question_event_id` hold the latest ids, and the posters serialise on the thread and then the review row (never waiting for the row while holding the thread). A crash between the terminal state and the post is repaired by the beat sweep, which posts recent unposted outcomes (30 minutes; 6 hours for a revert).
 

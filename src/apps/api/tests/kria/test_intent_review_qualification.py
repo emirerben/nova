@@ -245,6 +245,24 @@ REFUSALS = {
         {"database_url": "postgresql://u:p@db.internal:5432/ledger"},
         {},
     ),
+    "remote_host_in_the_query": (
+        "local_database",
+        {},
+        {"database_url": "postgresql://u:p@/ledger?host=db.prod.internal"},
+        {},
+    ),
+    "remote_hostaddr_in_the_query": (
+        "local_database",
+        {},
+        {"database_url": "postgresql://u:p@localhost/ledger?hostaddr=10.1.2.3"},
+        {},
+    ),
+    "remote_host_from_the_libpq_environment": (
+        "local_database",
+        {"PGHOST": "db.prod.internal"},
+        {"database_url": "postgresql://u:p@/ledger"},
+        {},
+    ),
     "no_api_key": ("api_key_present", {}, {"openai_api_key": ""}, {}),
     "capability_budget_too_small": (
         "capability_budgets",
@@ -412,6 +430,40 @@ def test_the_journal_does_not_move_with_the_working_directory_or_the_output_dire
     assert cli.journal_path({}) == here and here.is_absolute()
     assert cli.journal_path({cli.JOURNAL_ENV: str(tmp_path / "j.json")}) == tmp_path / "j.json"
     assert cli.DEFAULT_OUT.is_absolute()
+
+
+def test_every_checkout_of_this_machine_shares_one_journal(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    first_checkout = tmp_path / "worktree-a" / "src" / "apps" / "api"
+    second_checkout = tmp_path / "worktree-b" / "src" / "apps" / "api"
+    monkeypatch.setattr(cli, "API_ROOT", first_checkout)
+    monkeypatch.setattr(cli, "DEFAULT_OUT", first_checkout / ".intent-review-qualification")
+    in_first = cli.journal_path({})
+    monkeypatch.setattr(cli, "API_ROOT", second_checkout)
+    monkeypatch.setattr(cli, "DEFAULT_OUT", second_checkout / ".intent-review-qualification")
+    assert cli.journal_path({}) == in_first
+    assert tmp_path / "home" in in_first.parents
+
+
+@pytest.mark.parametrize(
+    "url,env,local",
+    [
+        ("postgresql://u@localhost/ledger", {}, True),
+        ("postgresql://u@127.0.0.1:5432/ledger", {}, True),
+        ("postgresql://u@/ledger", {}, True),
+        ("postgresql://u@/ledger?host=/var/run/postgresql", {}, True),
+        ("postgresql://u@/ledger", {"PGHOST": "localhost"}, True),
+        ("postgresql://u@db.internal/ledger", {}, False),
+        ("postgresql://u@/ledger?host=db.internal", {}, False),
+        ("postgresql://u@/ledger?host=localhost,db.internal", {}, False),
+        ("postgresql://u@localhost/ledger?hostaddr=10.0.0.5", {}, False),
+        ("postgresql://u@/ledger", {"PGHOST": "db.internal"}, False),
+        ("postgresql://u@/ledger", {"PGHOSTADDR": "10.0.0.5"}, False),
+        ("not a url", {}, False),
+    ],
+)
+def test_a_database_is_local_only_where_the_driver_would_really_connect(url, env, local):
+    assert cli.database_is_local(url, env) is local
 
 
 def test_a_second_execute_cannot_start_while_one_holds_the_spend_lock(tmp_path):

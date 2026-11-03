@@ -9,7 +9,9 @@ sweep posts while the outcome is recent.
 A receipt is informational. It is posted only when the chat is quiet: the reviewed render is
 still the creator's current video, the creator has not spoken since it, no turn is in flight (an
 event would move the thread revision under a turn that is planning and throw it back to plan
-again), and the review is still switched on. A revert that changed the creator's draft is
+again), and the review is still switched on. A turn in flight only defers the post (the sweep
+retries while the outcome is recent); a creator who moved on, or edited past a fix that is
+announced with "you can still undo it", ends it. A revert that changed the creator's draft is
 different: it explains a state change, so it is posted whatever the chat is doing.
 """
 
@@ -32,10 +34,10 @@ from app.models import (
     CreationThread,
     CreationThreadEvent,
     CreatorAgentExecution,
+    CreatorEditDraft,
     CreatorGenerationReview,
 )
-from app.services.intent_review_flow import check_authority
-from app.services.intent_review_repair_flow import thread_busy
+from app.services.intent_review_fence import check_authority, thread_busy
 from app.services.pipeline_trace import pipeline_trace_for, record_pipeline_event
 
 log = structlog.get_logger()
@@ -44,6 +46,7 @@ SWEEP_STATUSES = POSTABLE_STATUSES
 STATE_CHANGING = frozenset({"repair_reverted"})
 INFORMATIONAL = POSTABLE_STATUSES - STATE_CHANGING
 SETTLED = frozenset({"repair_verified", "repair_unverified", "repair_reverted"})
+FIX_IN_NEW_VIDEO = frozenset({"repair_verified", "repair_unverified"})
 POST_WINDOW = timedelta(minutes=30)
 STATE_CHANGE_WINDOW = timedelta(hours=6)
 SWEEP_LIMIT = 50
@@ -124,6 +127,12 @@ def _follow_up(db, row: CreatorGenerationReview) -> CreatorGenerationReview | No
     child_id = ((row.review or {}).get("comparison") or {}).get("child_review_id")
     child = db.get(CreatorGenerationReview, child_id) if child_id else None
     return child if child is not None and child.parent_review_id == row.id else None
+
+
+def _repair_is_head(db, row: CreatorGenerationReview) -> bool:
+    """Is the repair still the creator's current draft, so that Undo would undo the fix?"""
+    draft = db.get(CreatorEditDraft, row.repair_draft_id) if row.repair_draft_id else None
+    return bool(draft is not None and draft.is_head)
 
 
 def _reference_time(db, row: CreatorGenerationReview, child) -> datetime | None:
@@ -213,7 +222,10 @@ def _post(review_id) -> tuple[str, dict[str, Any] | None]:
             if since is None or _creator_spoke_since(db, thread.id, since):
                 return _skip(db, row, "creator_moved_on"), None
             if thread_busy(db, thread.id, own_approval_is_pending=status == "repair_staged"):
-                return _skip(db, row, "thread_busy"), None
+                db.rollback()
+                return "busy", None
+            if status in FIX_IN_NEW_VIDEO and not _repair_is_head(db, row):
+                return _skip(db, row, "head_moved"), None
         try:
             posts = compose_posts(
                 review_id=str(row.id),

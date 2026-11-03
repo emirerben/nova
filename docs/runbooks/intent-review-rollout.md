@@ -13,6 +13,8 @@ Everything ships dark: every flag below defaults off, so merging changes nothing
 | `KRIA_INTENT_REVIEW_REPAIR_ENABLED` | `false` | Staging one reversible repair draft that the creator approves or undoes. Nothing renders without their Approve tap. | `PAID` |
 | `KRIA_INTENT_REVIEW_USER_IDS` | `[]` | Who is admitted. `[]` admits nobody, `["*"]` everyone. | |
 | `KRIA_INTENT_REVIEW_MAX_USD` | `0.10` | Per-review ceiling, `0 < x <= 0.25`, stamped on the row at admission. | |
+| `KRIA_INTENT_REVIEW_DAILY_LIMIT_PER_USER` | `20` | Paid reviews per creator per UTC day, counted in the cost ledger. The 21st ends `exhausted(budget_user_day)` with no call; `0` blocks every review. | |
+| `KRIA_INTENT_REVIEW_EVIDENCE_QUEUE` | `celery` | Celery queue for frame extraction. `fly.toml` pins `autoplace-jobs` (the 4 GB worker); never `agent-control` or `maintenance`. | |
 | `KRIA_INTENT_REVIEW_CANARY_ID` | empty | The `release_canary_id` the ledger requires for an internal account. Empty: an internal account's review ends `unavailable(canary_unattributed)` and makes no call. | |
 | `AI_OPENAI_INTENT_REVIEW_BUDGET_USD` | `0` | Monthly ledger capability, inside `AI_OPENAI_MONTHLY_BUDGET_USD`. `0` rejects every reserve. Target in production: `50`. | |
 
@@ -25,7 +27,7 @@ The legacy Gemini quality review is retired for a runtime-v2 thread only once th
 ## Before the first flag
 
 1. The stack is merged and deployed with every flag off. Migrations `0130` (the row) and `0131` (the lifecycle) ran at release. `GET https://nova-video.fly.dev/health` is green.
-2. Decide where `tasks.prepare_generation_review` runs, **before** `KRIA_INTENT_REVIEW_ENABLED` goes on in production. It downloads up to 256 MB and runs ffmpeg, and the only worker that consumes its `agent-control` queue today is `light` (1 GB, concurrency 2, embedded Beat), a machine class that has run out of memory on a full MP4 in `/tmp` before. `tasks.review_generation_intent` itself is light (the frames come from the row; nothing is downloaded).
+2. Confirm where `tasks.prepare_generation_review` runs. It downloads up to 256 MB and runs ffmpeg, so `KRIA_INTENT_REVIEW_EVIDENCE_QUEUE` routes it: `fly.toml` pins `autoplace-jobs`, consumed by the 4 GB worker, and `tests/test_render_review_routes.py` pins that it never lands on `agent-control` or `maintenance`, which the 1 GB `light` machine (concurrency 2, embedded Beat) consumes. Nothing needs deciding; check that the deployed worker's `-Q` list includes `autoplace-jobs`. `tasks.review_generation_intent` itself is light (the frames come from the row; nothing is downloaded) and runs on `agent-control`.
 3. Open the Linear issue `Rollout: KRIA_INTENT_REVIEW` in the project. It stays open until the flags are on and verified.
 4. A native speaker has read the Turkish copy in `app/kria/intent_review_copy.py`. Not done at the time of writing. The copy this change added beyond the product spec's table (the lead of the staged-repair receipt and the revert wording that does not name a button) needs the same read.
 
@@ -79,7 +81,7 @@ Never reuse `CREDIT_QUALITY_REVIEW_*`. Those flags gate the Anthropic online jud
 ## Watching it
 
 - `creator_generation_reviews.status` / `reason` counts, per day. Terminal statuses: `unavailable`, `stale`, `exhausted`, `review_unknown`, `no_findings`, `suggestion`, `needs_confirmation`, `repair_verified`, `repair_unverified`, `repair_reverted`, `repair_abandoned`.
-- What was shown: `receipt_event_id` and `question_event_id` on the row, `review.posting` (`posted`, or `skipped:<why>` with `why` one of `stale`, `creator_moved_on`, `thread_busy`, `tier_off`, `thread_changed`, `unchecked`, `nothing_to_say`). A high rate of `creator_moved_on` is expected: creators often react before the review lands, and then the deterministic post-render receipt stands alone.
+- What was shown: `receipt_event_id` and `question_event_id` on the row, `review.posting` (`posted`, or `skipped:<why>` with `why` one of `stale`, `creator_moved_on`, `head_moved`, `tier_off`, `thread_changed`, `unchecked`, `nothing_to_say`; a busy thread records nothing and the sweep retries for 30 minutes). A high rate of `creator_moved_on` is expected: creators often react before the review lands, and then the deterministic post-render receipt stands alone.
 - The admin job-debug view (`/admin/jobs/{id}`): the agent run `nova.kria.intent_review` and the `intent_review` pipeline events (`outcome`, `posted`, `render_fidelity`).
 - Held unknown liabilities count against every cap until the month rolls over, so a burst of `review_unknown` shows up as `exhausted(budget_monthly)` for later reviews. See the cost section of [the operating runbook](kria-intent-review.md).
 

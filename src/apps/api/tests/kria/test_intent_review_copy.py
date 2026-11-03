@@ -536,6 +536,35 @@ def test_the_question_names_the_words_so_a_bare_tap_authorises_exactly_that(lang
     assert question.payload["recommended_option"] == change
 
 
+@pytest.mark.parametrize(
+    "literal",
+    [
+        "A hook the creator dictated word for word that runs well past what a button can hold",
+        "First line of the sequence\nSecond line of the sequence",
+        "Two  spaces  kept",
+    ],
+    ids=["too_long", "several_lines", "inner_spaces"],
+)
+def test_a_literal_that_cannot_be_quoted_whole_is_never_offered_as_a_rewrite(literal):
+    cat = catalog(
+        IssuedRequirement(
+            requirement_id="R1", brief_id="r1", kind="text", label="title", literal=literal
+        ),
+        requirement("R2", "r2", "select"),
+    )
+    rev = review(
+        cat,
+        [finding("R1", "unmet", "copy_mismatch"), finding("R2")],
+        disposition("needs_confirmation", question="R1"),
+    )
+    _, question = posts("needs_confirmation", "reviewed", rev)
+    assert question.payload["options"] == ["Change it", "Keep it"]
+    assert "…" not in question.content and literal.strip() not in question.content
+    assert question.content == (
+        "The text on screen doesn't match what you asked for. Want me to change it?"
+    )
+
+
 def test_a_staged_repair_posts_a_receipt_and_never_a_question():
     cat = catalog(requirement("R1", "r1"), requirement("R2", "r2", "select"), candidates=[RESTORE])
     rev = review(
@@ -555,6 +584,33 @@ def test_a_staged_repair_posts_a_receipt_and_never_a_question():
     assert rows(post)["r1"]["status"] == "partial"
     assert rows(post)["r1"]["reason"] == "Fix waiting for your approval."
     assert rows(post)["r2"]["reason"] == "Checked in the video."
+
+
+@pytest.mark.parametrize(
+    ("language", "lead_text"),
+    [
+        (
+            None,
+            "I checked the finished video against your request. A few things didn't match, "
+            "and fixes are waiting for your approval.",
+        ),
+        (
+            "tr",
+            "Bitmiş videoyu isteğinle karşılaştırdım. Birkaç şey uyuşmadı ve düzeltmeler "
+            "onayını bekliyor.",
+        ),
+    ],
+)
+def test_the_staged_receipt_counts_the_fixes_it_staged(language, lead_text):
+    cat = catalog(requirement("R1", "r1"), requirement("R2", "r2"), candidates=[RESTORE, FIT])
+    rev = review(
+        cat,
+        [finding("R1", "unmet", "copy_mismatch"), finding("R2", "unmet", "text_cut_off")],
+        disposition("repair", repairs=["c-restore", "c-fit"]),
+        repair={"targeted_brief_ids": ["r1", "r2"], "candidate_ids": ["c-restore", "c-fit"]},
+    )
+    (post,) = posts("repair_staged", "awaiting_approval", rev, language=language)
+    assert lead(post) == lead_text
 
 
 # --- a settled repair (31, 32) ------------------------------------------------------------
@@ -604,8 +660,7 @@ def test_a_reverted_repair_says_the_draft_was_undone_and_the_video_still_shows_t
 def test_a_revert_over_newer_edits_claims_no_undo_and_no_rows():
     (post,) = posts("repair_reverted", "worse_head_moved", PARENT, child=FOLLOW_UP)
     assert post.content == (
-        "The fix may have made the video worse. Your newer edits are untouched; you can undo "
-        "the fix from its card."
+        "The fix may have made the video worse. Your newer edits are untouched."
     )
     assert "requirement_receipts" not in post.payload and "also_changed" not in post.payload
     assert "undid" not in post.content

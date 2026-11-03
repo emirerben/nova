@@ -52,7 +52,9 @@ from app.models import (
     CreatorGenerationReview,
 )
 from app.services.creator_render_contract import CreatorRenderContract
-from app.services.intent_review_flow import _lock_row, _now, check_authority, finish_row
+from app.services.intent_review_fence import check_authority, thread_busy
+from app.services.intent_review_flow import _lock_row, _now, finish_row
+from app.services.intent_review_post import post_intent_review_outcome
 from app.services.phone_rollout import stamped_client_protocol
 
 log = structlog.get_logger()
@@ -75,7 +77,6 @@ TERMINAL = frozenset(
         "repair_abandoned",
     }
 )
-IN_FLIGHT_TURNS = ("pending", "queued", "planning", "executing", "observing")
 UNAPPROVED_REASONS = frozenset({"approval_rejected", "approval_expired", "unapproved_timeout"})
 _DRAFTED_TURNS = frozenset({"awaiting_approval", "executing", "observing", "completed"})
 _QUESTION_OR_SUGGESTION = ("suggestion", "needs_confirmation")
@@ -127,30 +128,6 @@ def _head(db, rows) -> CreatorEditDraft | None:
             CreatorEditDraft.item_id == rows.item.id,
             CreatorEditDraft.variant_key == str(rows.session.target_variant_id or "initial"),
             CreatorEditDraft.is_head.is_(True),
-        )
-    )
-
-
-def thread_busy(db, thread_id, *, own_approval_is_pending: bool = False) -> bool:
-    """A turn in flight, or the creator mid-decision on an approval that is not the caller's own."""
-    if db.scalar(
-        select(func.count())
-        .select_from(CreatorAgentTurn)
-        .where(
-            CreatorAgentTurn.thread_id == thread_id, CreatorAgentTurn.status.in_(IN_FLIGHT_TURNS)
-        )
-    ):
-        return True
-    if own_approval_is_pending:
-        return False
-    return bool(
-        db.scalar(
-            select(func.count())
-            .select_from(CreatorAgentApproval)
-            .where(
-                CreatorAgentApproval.thread_id == thread_id,
-                CreatorAgentApproval.status == "pending",
-            )
         )
     )
 
@@ -773,13 +750,6 @@ def _verdict_on_repair(parent: CreatorGenerationReview, child: CreatorGeneration
     return _Verdict("repair_unverified", "not_confirmed", comparison)
 
 
-def _tell_the_creator(review_id) -> None:
-    """The settlement is already durable; posting it never undoes it and the sweep retries it."""
-    from app.services.intent_review_post import post_intent_review_outcome
-
-    post_intent_review_outcome(review_id)
-
-
 def settle_parent_from_child(child_id) -> str | None:
     """Close the parent of a finished follow-up review. No-op for anything else; idempotent.
 
@@ -801,7 +771,7 @@ def settle_parent_from_child(child_id) -> str | None:
         parent.lease_token = parent.lease_until = None
         db.commit()
     _dispatch(verdict.successor)
-    _tell_the_creator(parent_id)
+    post_intent_review_outcome(parent_id)
     return verdict.status
 
 
@@ -917,6 +887,6 @@ def recover_repair_staged(limit: int = 25) -> int:
         elif unreviewed:
             closed = _close_parent(parent_id, "repair_unverified", "no_rereview") != "ignored"
             if closed:
-                _tell_the_creator(parent_id)
+                post_intent_review_outcome(parent_id)
             handled += closed
     return handled

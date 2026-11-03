@@ -191,7 +191,7 @@ def _original(status: str, stamp: _Stamp, review: Mapping[str, Any]) -> list[Pos
     if status == "repair_staged":
         for alias in _repaired_aliases(review, catalog, disposition):
             reasons[alias] = ("partial", reason_fix_staged())
-        lead, question = headline_staged(), None
+        lead, question = headline_staged(len(disposition.repair_candidate_ids)), None
     else:
         lead = headline_suggestion()
         question = asked if status == "needs_confirmation" else None

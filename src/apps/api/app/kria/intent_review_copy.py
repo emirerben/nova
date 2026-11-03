@@ -170,7 +170,18 @@ def headline_suggestion() -> str:
     )
 
 
-def headline_staged() -> str:
+def headline_staged(count: int = 1) -> str:
+    if count > 1:
+        return say(
+            en=(
+                "I checked the finished video against your request. A few things didn't match, "
+                "and fixes are waiting for your approval."
+            ),
+            tr=(
+                "Bitmiş videoyu isteğinle karşılaştırdım. Birkaç şey uyuşmadı ve düzeltmeler "
+                "onayını bekliyor."
+            ),
+        )
     return say(
         en=(
             "I checked the finished video against your request. One thing didn't match, and a "
@@ -187,11 +198,14 @@ MAX_QUOTED_CHARS = 60
 
 
 def _quoted(literal: str | None) -> str | None:
-    words = " ".join((literal or "").split())
-    if not words:
+    """The creator's words in quotes, or None when one line cannot hold them exactly.
+
+    A tap on "Change it to ..." authorises those words, so they are never shortened or
+    reflowed: a literal that is too long or spans lines gets the plain wording instead.
+    """
+    words = (literal or "").strip()
+    if not words or len(words) > MAX_QUOTED_CHARS or words != " ".join(words.split()):
         return None
-    if len(words) > MAX_QUOTED_CHARS:
-        words = words[: MAX_QUOTED_CHARS - 1].rstrip() + "…"
     return f'"{words}"'
 
 
@@ -256,14 +270,8 @@ def headline_reverted() -> str:
 
 def headline_reverted_over_newer_edits() -> str:
     return say(
-        en=(
-            "The fix may have made the video worse. Your newer edits are untouched; you can "
-            "undo the fix from its card."
-        ),
-        tr=(
-            "Düzeltme videoyu kötüleştirmiş olabilir. Yeni düzenlemelerine dokunmadım; "
-            "düzeltmeyi kendi kartından geri alabilirsin."
-        ),
+        en="The fix may have made the video worse. Your newer edits are untouched.",
+        tr=("Düzeltme videoyu kötüleştirmiş olabilir. Yeni düzenlemelerine dokunmadım."),
     )
 
 

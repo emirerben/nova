@@ -395,7 +395,7 @@ def _timing_flagged(j: Judgement) -> str | None:
     if (
         finding
         and finding.verdict == "unmet"
-        and finding.defect_kind in {"text_cut_off", "text_missing"}
+        and finding.defect_kind == "text_cut_off"
         and finding.confidence == "high"
     ):
         return None
@@ -526,7 +526,7 @@ _TIMING = (
     Predicate(
         "d.flagged",
         "detection",
-        "The title is reported unmet, text_cut_off or text_missing, at high confidence.",
+        "The title is reported unmet, text_cut_off, at high confidence.",
         _timing_flagged,
     ),
     Predicate(
@@ -940,7 +940,7 @@ def perfect_reply(built: BuiltCase) -> str:
         )
     return _reply(
         [
-            _finding(alias["b1"], "unmet", "text_missing", anchor),
+            _finding(alias["b1"], "unmet", "text_cut_off", anchor),
             _finding(alias["b2"], "met", None, first),
         ]
     )

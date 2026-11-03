@@ -57,7 +57,7 @@ API_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUT = API_ROOT / ".intent-review-qualification"
 DOC_PATH = ("docs", "reviews", "intent-review", "QUALIFICATION.md")
 _DIGEST_LINE = re.compile(r"^Preregistration digest:\s*`?([0-9a-f]{64})`?\s*$", re.MULTILINE)
-_LOCAL_HOSTS = frozenset({None, "", "localhost", "127.0.0.1", "::1"})
+_LOCAL_HOSTS = frozenset({"", "localhost", "127.0.0.1", "::1"})
 EXIT_REFUSED = 3
 
 
@@ -65,9 +65,13 @@ EXIT_REFUSED = 3
 
 
 def journal_path(env: Mapping[str, str]) -> Path:
-    """One journal per machine: independent of the working directory and of `--out`."""
+    """One journal per machine: independent of the checkout, the working directory and `--out`."""
     override = env.get(JOURNAL_ENV)
-    return Path(override) if override else DEFAULT_OUT / "spend.json"
+    return (
+        Path(override)
+        if override
+        else Path.home() / ".nova" / "intent-review-qualification" / "spend.json"
+    )
 
 
 class Journal:
@@ -184,27 +188,43 @@ class Gate:
     detail: str
 
 
+def database_is_local(url: str, env: Mapping[str, str]) -> bool:
+    """True only if every host the driver would try is this machine.
+
+    libpq takes a host from the URL, from `?host=` and `?hostaddr=`, and from PGHOST and
+    PGHOSTADDR when the URL names none, so the URL's authority alone proves nothing.
+    """
+    try:
+        parsed = make_url(url)
+    except Exception:  # noqa: BLE001
+        return False
+    named: list[str] = [parsed.host] if parsed.host else []
+    for key in ("host", "hostaddr"):
+        value = parsed.query.get(key)
+        named += [value] if isinstance(value, str) else list(value or ())
+    if not named:
+        named = [env.get("PGHOSTADDR") or env.get("PGHOST") or ""]
+    hosts = [part.strip() for entry in named for part in entry.split(",")]
+    return all(host in _LOCAL_HOSTS or host.startswith("/") for host in hosts)
+
+
 @dataclass(frozen=True)
 class Environment:
     run_id: str | None
     max_usd: str | None
     ai_environment: str
-    database_host: str | None
+    database_is_local: bool
     has_api_key: bool
     intent_budget_usd: float
     monthly_budget_usd: float
 
 
 def load_environment(env: Mapping[str, str]) -> Environment:
-    try:
-        host = make_url(settings.database_url).host
-    except Exception:  # noqa: BLE001
-        host = "unparseable"
     return Environment(
         run_id=env.get(RUN_ID_ENV) or None,
         max_usd=env.get(MAX_USD_ENV) or None,
         ai_environment=settings.ai_usage_environment,
-        database_host=host,
+        database_is_local=database_is_local(settings.database_url, env),
         has_api_key=bool(settings.openai_api_key),
         intent_budget_usd=settings.ai_openai_intent_review_budget_usd,
         monthly_budget_usd=settings.ai_openai_monthly_budget_usd,
@@ -340,11 +360,9 @@ def check_gates(
         ),
         Gate(
             "local_database",
-            environment.database_host in _LOCAL_HOSTS
-            or str(environment.database_host).startswith("/"),
+            environment.database_is_local,
             "the ledger database is on this machine"
-            if environment.database_host in _LOCAL_HOSTS
-            or str(environment.database_host).startswith("/")
+            if environment.database_is_local
             else "DATABASE_URL must point at a local scratch database",
         ),
         Gate(

@@ -95,6 +95,7 @@ from tests.integration.test_intent_review_repair_postgres import (  # noqa: F401
     R1_MET,
     R1_UNMET,
     R2_MET,
+    R2_TITLE_UNMET,
     R2_UNMET,
     a_message_arrives,
     approve_the_repair,
@@ -106,6 +107,7 @@ from tests.integration.test_intent_review_repair_postgres import (  # noqa: F401
     settle_in_a_worker,
     staged_and_rendered,
     two_requirements,
+    two_title_requirements,
     unsettled_follow_up,
 )
 from tests.kria.test_render_review_admission_postgres import approved_publication  # noqa: F401
@@ -586,12 +588,23 @@ async def test_a_turn_in_flight_is_never_thrown_back_to_planning_by_a_receipt(
             .order_by(CreatorAgentTurn.created_at.desc())
         )
         turn.status = active
+        turn_id = turn.id
         db.commit()
     seen, revision = seen_ids(thread), thread_revision(thread)
-    assert posting.post_intent_review_outcome(rid) == "skipped"
+    assert posting.post_intent_review_outcome(rid) == "busy"
     silent(thread, seen, rid)
     assert thread_revision(thread) == revision
-    assert posted_decision(rid) == {"no_findings": "skipped:thread_busy"}
+    assert posted_decision(rid) == {}
+    assert posting.post_unposted_outcomes() == 0
+    silent(thread, seen, rid)
+
+    with sync_session() as db:
+        db.get(CreatorAgentTurn, turn_id).status = "completed"
+        db.commit()
+    assert posting.post_unposted_outcomes() == 1
+    (post,) = reviewer_posts(thread, seen)
+    assert posted_decision(rid) == {"no_findings": "posted"}
+    assert review_row(rid).receipt_event_id == post.id
 
 
 @pytest.mark.asyncio
@@ -652,6 +665,28 @@ async def test_an_unconfirmed_repair_posts_the_honest_sentence_with_its_fix_line
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "follow_up,settled",
+    [
+        (Provider(reply(finding("R1", frames=["f0"]))), "repair_verified"),
+        (Provider(HttpError(400)), "repair_unverified"),
+    ],
+    ids=["verified", "unverified"],
+)
+async def test_a_settled_fix_is_not_announced_once_the_creator_edited_past_it(
+    drifted, repair_on, monkeypatch, follow_up, settled
+):
+    _, thread, _, _ = drifted
+    rid, child = await staged_and_rendered(drifted, monkeypatch)
+    make_head_move(thread)
+    seen = seen_ids(thread)
+    await run_async(child, follow_up)
+    assert review_row(rid).status == settled
+    assert reviewer_posts(thread, seen) == []
+    assert posted_decision(rid)[settled] == "skipped:head_moved"
+
+
+@pytest.mark.asyncio
 async def test_a_follow_up_that_only_guesses_the_target_is_met_never_reports_the_fix_as_worked(
     drifted, repair_on, monkeypatch
 ):
@@ -707,7 +742,11 @@ async def test_a_worse_repair_posts_after_its_undo_is_durable_and_never_claims_t
 ):
     _, thread, _, _ = drifted
     rid, child = await unsettled_follow_up(
-        drifted, monkeypatch, [R1_UNMET, R2_MET], [R1_MET, R2_UNMET]
+        drifted,
+        monkeypatch,
+        [R1_UNMET, R2_MET],
+        [R1_MET, R2_TITLE_UNMET],
+        second=two_title_requirements,
     )
     seen = seen_ids(thread)
     assert await settle_in_a_worker(child) == "repair_reverted"
@@ -731,7 +770,11 @@ async def test_a_worse_repair_is_reported_even_to_a_creator_who_has_moved_on(
 ):
     _, thread, _, _ = drifted
     rid, child = await unsettled_follow_up(
-        drifted, monkeypatch, [R1_UNMET, R2_MET], [R1_MET, R2_UNMET]
+        drifted,
+        monkeypatch,
+        [R1_UNMET, R2_MET],
+        [R1_MET, R2_TITLE_UNMET],
+        second=two_title_requirements,
     )
     a_message_arrives(thread)
     seen = seen_ids(thread)
@@ -747,19 +790,17 @@ async def test_a_worse_repair_over_newer_edits_says_it_touched_nothing(
 ):
     _, thread, job_id, _ = drifted
     rid = await ready(drifted, monkeypatch)
-    edit_packet(rid, two_requirements)
+    edit_packet(rid, two_title_requirements)
     staged = reply(
         finding("R1", "unmet", "copy_mismatch", ["f0"]), finding("R2", "met", frames=["f1"])
     )
     assert await run_async(rid, Provider(staged)) == "repair_staged"
     claim, _, _, proof = await approve_the_repair(drifted, rid, monkeypatch)
     child = await ready((claim, thread, job_id, proof), monkeypatch)
-    edit_packet(child, two_requirements)
+    edit_packet(child, two_title_requirements)
     make_head_move(thread)
     seen = seen_ids(thread)
-    worse = reply(
-        finding("R1", "met", frames=["f0"]), finding("R2", "unmet", "wrong_content", ["f1"])
-    )
+    worse = reply(finding("R1", "met", frames=["f0"]), R2_TITLE_UNMET)
     assert await run_async(child, Provider(worse)) == "suggestion"
     (post,) = reviewer_posts(thread, seen)
     assert post.content.startswith("The fix may have made the video worse.")
