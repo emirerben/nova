@@ -211,3 +211,25 @@ def test_research_preview_time_limits_under_visibility_timeout() -> None:
 
     assert (soft, hard) == (170, 200)
     assert soft <= hard < visibility_timeout
+
+
+def test_generation_review_tasks_stay_under_their_lease_and_the_visibility_timeout() -> None:
+    """The intent review is a lease holder: its hard limit must end before the 180 s lease
+    does, so a killed task is always recovered from the ledger rather than still running."""
+    visibility_timeout = _extract_visibility_timeout(_read_source("app/worker.py"))
+    source = _read_source("app/tasks/render_review.py")
+    evidence = _extract_celery_task_decorator(source, "tasks.prepare_generation_review")
+    review = _extract_celery_task_decorator(source, "tasks.review_generation_intent")
+
+    assert (
+        _extract_limit_kwarg(evidence, "soft_time_limit"),
+        _extract_limit_kwarg(evidence, "time_limit"),
+    ) == (105, 115)
+    assert (
+        _extract_limit_kwarg(review, "soft_time_limit"),
+        _extract_limit_kwarg(review, "time_limit"),
+    ) == (150, 170)
+    assert 170 < 180 < visibility_timeout
+    assert '"tasks.review_generation_intent": {"queue": "agent-control"}' in _read_source(
+        "app/worker.py"
+    )

@@ -209,7 +209,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED` — default `true` (KRI-20). Bed resolver only returns a creator-selected treatment; never auto-matches. `false` = pre-fix.
 - `SOUND_EFFECTS_ENABLED` / `MEDIA_OVERLAYS_ENABLED` — default **`false`**; gate SFX/overlay lane routes (404 off). **Dual-flag trap:** `NEXT_PUBLIC_` twins; web on + API off ⇒ saves 404. Fly first, then Vercel. Detail: DECISIONS.md "CLAUDE.md flag detail".
 - `MEDIA_OVERLAY_ALPHA_ENABLED` — defaults **`false`**. When true, transparent image pip cards keep alpha; off is byte-identical JPEG flatten. Apply: fly secret + worker restart.
-- `FULLSCREEN_CUTAWAYS_ENABLED` — default **`false`**; AI fullscreen branch. Dual-flag with `NEXT_PUBLIC_FULLSCREEN_CUTAWAYS_ENABLED`: **Fly first, then Vercel** (new web + OLD api bakes manual fullscreen as pip). Rollback = `MEDIA_OVERLAYS_ENABLED`. Guards: `tests/test_overlay_fullscreen_rules.py`, `tests/test_media_overlay_command.py`; plans/009.
+- `FULLSCREEN_CUTAWAYS_ENABLED` — default **`false`**; AI fullscreen branch. Dual-flag with `NEXT_PUBLIC_FULLSCREEN_CUTAWAYS_ENABLED`: **Fly first, then Vercel**. Rollback = `MEDIA_OVERLAYS_ENABLED`. Guards: `tests/test_overlay_fullscreen_rules.py`, `tests/test_media_overlay_command.py`; plans/009.
 - `SUBTITLED_TEXT_LANE_ENABLED` — default **`false`**; text burns onto the caption-free base first, captions last (`_compose_subtitled_final`); fast-reburns mint a NEW GCS key. Dual-flag `NEXT_PUBLIC_SUBTITLED_TEXT_LANE_ENABLED`; Fly first, then Vercel; restart api + worker. Internals: `docs/pipelines/generative.md`.
 - `SUBTITLED_ARCHETYPE_ENABLED` — **ON in prod** (code default `false`); off ⇒ montage. Dual-flag `NEXT_PUBLIC_SUBTITLED_ENABLED` (Vercel, build-time inlined ⇒ `vercel --prod`). Companions: `SUBTITLED_CAPTION_CORRECTION_ENABLED`, `CAPTION_CORRECTION_MODEL`. Rollback + detail: DECISIONS.md "CLAUDE.md flag detail".
 - `NARRATED_SELF_NARRATION_ENABLED` — default **`false`**; narrated items without a voiceover use the footage's own audio. SOLE gate, bypasses the archetype flags. Twin `NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED`; Fly first. Guards: `tests/tasks/test_generative_dispatch.py`. Detail: DECISIONS.md "CLAUDE.md flag detail".
@@ -219,6 +219,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `SILENCE_CUT_ENABLED` / `RETAKE_CUT_ENABLED` — default `false`; speech paths only, fail-open. **"cleanup cut a word" is a guard bug, not this lever.** Runbook: `docs/runbooks/chat-speech-cleanup-rollout.md` (fingerprint levers: DECISIONS.md "CLAUDE.md flag detail"); pins `test_silence_cut*.py`; plans/010/019/021.
 - `PHONE_TALKING_HEAD_RENDERING_ENABLED` — default `false`. 2+-clip self-narration renders on the phone (speaker clip + muted cutaways). `docs/reviews/kri-132/phone-format-matrix.md`.
 - `USER_SONG_MONTAGE_ENABLED` — default `true` (KRI-374). Creator song montages; off hides `media.song` + refuses `user_song`. Needs `musicBed`+`audioMix` verified. Apply: fly secret `…=false` (api+worker) + restart; `phone-rendering.md`. Same for `SONG_CAPTIONS_ENABLED` (lyrics) and `SONG_CAPTIONS_AVAILABLE_BY_DEFAULT` (unasked = hidden).
+- `KRIA_INTENT_REVIEW_ENABLED` / `_PAID_ENABLED` / `_REPAIR_ENABLED` / `_USER_IDS` — off / `[]`: paid frame review (KRI-1171); tier decided only in `kria/intent_review_tier.py`. `docs/runbooks/kria-intent-review.md`.
 - `CAPTION_ANIMATION_ENABLED` — default `true` (KRI-1007): caption entrance/exit/loop (protocol 24, `authoredText`); off = old captions. `phone-rendering.md`.
 - `SPEAKER_BACKGROUND_ENABLED` — default **`false`**; `speakerBackground` + protocol ≥27; windows: `speakerBackgroundWindows` + ≥32. `docs/pipelines/speaker-background.md`.
 - `MEDIA_TILT_ENABLED` — default **`false`** (KRI-1134). Clip tilt + backdrop; needs `clipTilt` verified + protocol ≥28. phone-rendering.md.
@@ -276,10 +277,6 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - CORS: `ALLOWED_ORIGINS` env var — JSON array format
 
 ### Custom deploy hooks
-- Pre-merge: none
-- Deploy trigger (API): **Fly Deploy** (push or manual rerun)
-- Deploy trigger (Frontend): push to `main` (Vercel auto-deploy) or `cd src/apps/web && vercel --prod`
-- Deploy status (API): `fly status --app nova-video`
 - Health check (API): https://nova-video.fly.dev/health
 
 ### Fly.io Secrets (set via `fly secrets set`)

@@ -8,6 +8,8 @@ The adapter validates owner/path, recipe identity, published attempt, exact stor
 
 The decoder controls (pixel, timestamp and provenance, corrupt and replaced media, memory refusal, bounded stdout/stderr, file-size and process timeout) need a nonroot Linux process. They run in the free-regression workflow (`scripts/request-following-regressions.py` lists `tests/services/test_render_review_evidence.py`) with replay and test credentials only. On macOS the same tests fail closed with `resource_limits_unavailable`, so a Mac result never qualifies the decoder.
 
+Frame sampling (render-review-frames-v2): up to six frames. Up to four are anchored on the middle of on-screen text spans taken from the frozen recipe (wording the creator asked for first, then titles, then other text) because uniform midpoints miss text shown for a couple of seconds in a long video. Uniform midpoints fill the remainder and skip any within 0.5 s of an anchor. `FrameEvidence.anchor_ref` names the text layer. See `docs/runbooks/kria-intent-review.md`.
+
 ## Boundaries
 
 - **Where it runs.** `tasks.prepare_generation_review` downloads up to 256 MB into RAM-backed `/tmp` and runs ffmpeg, so it is routed by `KRIA_INTENT_REVIEW_EVIDENCE_QUEUE` (fly.toml pins `autoplace-jobs`, consumed by the 4 GB worker). It must never use `agent-control` or `maintenance`: the 1 GB `light` machine hosts Beat and turns. `tests/test_render_review_routes.py` pins this.

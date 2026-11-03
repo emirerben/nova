@@ -17,6 +17,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -4756,14 +4757,77 @@ class CreatorGenerationReview(Base):
     last_publish_attempt_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    tier: Mapped[str] = mapped_column(Text, nullable=False, default="evidence")
+    max_usd: Mapped[float | None] = mapped_column(Numeric(6, 4), nullable=True)
+    evidence_ready_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    review_attempts: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    paid_call_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    parent_review_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_generation_reviews.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    repair_draft_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creator_edit_drafts.id", ondelete="CASCADE"), nullable=True
+    )
+    repair_render_execution_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_executions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    repair_staged_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    receipt_event_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    question_event_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
     )
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending','running','evidence_ready','unavailable','stale','exhausted')",
+            "status IN ('pending','running','evidence_ready','unavailable','stale','exhausted',"
+            "'reviewing','review_unknown','no_findings','suggestion','needs_confirmation',"
+            "'repair_staged','repair_verified','repair_unverified','repair_reverted',"
+            "'repair_abandoned')",
             name="ck_generation_review_status",
+        ),
+        UniqueConstraint("paid_call_key", name="uq_generation_review_paid_call_key"),
+        UniqueConstraint("parent_review_id", name="uq_generation_review_parent"),
+        UniqueConstraint(
+            "repair_render_execution_id", name="uq_generation_review_repair_execution"
+        ),
+        CheckConstraint("tier IN ('evidence','review','repair')", name="ck_generation_review_tier"),
+        CheckConstraint(
+            "max_usd IS NULL OR (max_usd > 0 AND max_usd <= 0.25)",
+            name="ck_generation_review_max_usd",
+        ),
+        CheckConstraint(
+            "review_attempts >= 0 AND review_attempts <= 2",
+            name="ck_generation_review_review_attempts",
+        ),
+        CheckConstraint(
+            "review IS NULL OR octet_length(review::text) <= 131072",
+            name="ck_generation_review_review_size",
+        ),
+        CheckConstraint(
+            "status NOT IN ('unavailable','stale','exhausted','review_unknown','no_findings',"
+            "'suggestion','needs_confirmation','repair_verified','repair_unverified',"
+            "'repair_reverted','repair_abandoned') OR reason IS NOT NULL",
+            name="ck_generation_review_terminal_reason",
+        ),
+        CheckConstraint(
+            "status <> 'reviewing' OR (lease_token IS NOT NULL AND lease_until IS NOT NULL "
+            "AND paid_call_key IS NOT NULL)",
+            name="ck_generation_review_reviewing_lease",
+        ),
+        CheckConstraint(
+            "status !~ '^repair_' OR repair_draft_id IS NOT NULL",
+            name="ck_generation_review_repair_draft",
+        ),
+        Index(
+            "ix_generation_review_repair_staged",
+            "repair_staged_at",
+            postgresql_where=text("status = 'repair_staged'"),
         ),
         CheckConstraint("attempts >= 0 AND attempts <= 3", name="ck_generation_review_attempts"),
         CheckConstraint(

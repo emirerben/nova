@@ -64,6 +64,12 @@ from app.services.generated_image_grounding import (
     is_generated,
     with_generated_grounding,
 )
+from app.services.intent_review_legacy import (
+    LEGACY_REVIEW_RETIRED,
+    OBSERVER_WINDOW,
+    legacy_review_retired,
+    retirement_probe,
+)
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
 from app.services.phone_destination import (
     has_native_device_only_intent,
@@ -1045,7 +1051,7 @@ def compile_active_plan(
 # generic failure line is held back only this window: past it (observer never posts: v2 turned
 # off after dispatch, a stuck turn, the sweep's 50-row cap) the line is posted so a failure
 # is never lost (this branch has already moved the session to `failed`).
-OBSERVER_FAILURE_WINDOW = timedelta(minutes=5)
+OBSERVER_FAILURE_WINDOW = OBSERVER_WINDOW
 
 
 async def _failure_settled_by_observer(
@@ -1158,7 +1164,7 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
         # feedback receipts and must not be republished indefinitely.
         retryable_review_enqueue = pending_review.get("status") == "unavailable" and (
             pending_review.get("dispatch_status") == "failed"
-            or pending_review.get("error_code") == "review_enqueue_failed"
+            or pending_review.get("error_code") in {"review_enqueue_failed", LEGACY_REVIEW_RETIRED}
         )
         if not retryable_review_enqueue:
             return False
@@ -1464,16 +1470,18 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
             review_enabled and settings.main_creator_agent_quality_review_enabled
         )
         if quality_review_enabled and settings.kria_intent_review_enabled:
-            canonical_runtime = await db.scalar(
-                select(CreationThread.id)
-                .where(
-                    CreationThread.active_creator_agent_session_id == session.id,
-                    CreationThread.runtime_version == 2,
+            probe = (
+                await db.execute(
+                    retirement_probe(
+                        session.id,
+                        job_id=job.id,
+                        variant_id=session.target_variant_id,
+                        generation_id=session.target_generation_id,
+                    )
                 )
-                .limit(1)
-            )
-            if canonical_runtime is not None:
-                return True
+            ).first()
+            if legacy_review_retired(probe):
+                return pending_review.get("error_code") != LEGACY_REVIEW_RETIRED
         if quality_review_enabled and session.target_variant_id and session.target_generation_id:
             from app.tasks.creator_quality_review import (  # noqa: PLC0415
                 queue_creator_quality_review,

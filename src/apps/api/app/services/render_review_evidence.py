@@ -20,6 +20,7 @@ import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Sequence
 from functools import partial
 from pathlib import Path
 from typing import Literal
@@ -112,13 +113,28 @@ class ReviewBasis(FrozenModel):
     publication_proof_json: str
 
 
+MAX_ANCHORS = 4
+ANCHOR_MIN_GAP_S = 0.5
+ANCHOR_EDGE_S = 0.1
+
+
 class EvidenceLimits(FrozenModel):
-    frame_count: int = Field(default=4, ge=1, le=6)
+    frame_count: int = Field(default=6, ge=1, le=6)
+    anchor_times_s: tuple[float, ...] = Field(default=(), max_length=MAX_ANCHORS)
+    anchor_refs: tuple[str, ...] = Field(default=(), max_length=MAX_ANCHORS)
     max_artifact_bytes: int = Field(default=256 * 1024 * 1024, ge=1, le=256 * 1024 * 1024)
     max_frame_bytes: int = Field(default=128 * 1024, ge=1, le=128 * 1024)
     max_total_frame_bytes: int = Field(default=1024 * 1024, ge=1, le=1024 * 1024)
     max_side: int = Field(default=640, ge=32, le=640)
     timeout_s: float = Field(default=90, gt=0, le=90)
+
+    @model_validator(mode="after")
+    def anchors_are_labelled(self):
+        if len(self.anchor_refs) != len(self.anchor_times_s) or any(
+            not math.isfinite(t) or t < 0 for t in self.anchor_times_s
+        ):
+            raise ValueError("Each anchor needs one finite non-negative time and one reference")
+        return self
 
 
 class FrameEvidence(FrozenModel):
@@ -130,7 +146,8 @@ class FrameEvidence(FrozenModel):
     width: int = Field(ge=1, le=640)
     height: int = Field(ge=1, le=640)
     decoder_version: str
-    extraction_version: Literal["render-review-frames-v1"] = "render-review-frames-v1"
+    anchor_ref: str | None = Field(default=None, max_length=200)
+    extraction_version: Literal["render-review-frames-v2"] = "render-review-frames-v2"
 
     @model_validator(mode="after")
     def bytes_match(self):
@@ -278,6 +295,71 @@ def _run(arguments: list[str], deadline: float) -> subprocess.CompletedProcess:
             child.wait()
 
 
+_CAPTION_EFFECTS = frozenset({"karaoke-line", "lyric-line", "caption-pop"})
+
+
+def _fold(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
+def text_anchor_plan(
+    recipe: dict, literals: Sequence[str] = ()
+) -> tuple[tuple[float, ...], tuple[str, ...]]:
+    """Midpoints of the on-screen text spans worth a frame, most important first.
+
+    Layers carrying a creator-dictated literal come first, then titles, then other text, with
+    per-word caption layers last. At most `MAX_ANCHORS` are returned.
+    """
+    wanted = [fold for fold in (_fold(literal) for literal in literals) if fold]
+    ranked: list[tuple[int, float, float, str]] = []
+    for layer in recipe.get("text_layers") or []:
+        try:
+            start, end, identifier = float(layer["start"]), float(layer["end"]), str(layer["id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not (math.isfinite(start) and math.isfinite(end)) or end <= start:
+            continue
+        text = _fold(" ".join(str(run.get("text", "")) for run in layer.get("runs") or []))
+        if any(literal in text for literal in wanted if text):
+            group = 0
+        elif identifier.startswith("title-"):
+            group = 1
+        elif layer.get("karaoke") is not None or layer.get("effect") in _CAPTION_EFFECTS:
+            group = 3
+        else:
+            group = 2
+        ranked.append((group, start, (start + end) / 2, identifier))
+    ranked.sort()
+    chosen = ranked[:MAX_ANCHORS]
+    return tuple(item[2] for item in chosen), tuple(item[3] for item in chosen)
+
+
+def plan_frame_times(duration: float, limits: EvidenceLimits) -> list[tuple[float, str | None]]:
+    """Anchored frames first (short on-screen text is missed by uniform sampling), then fill.
+
+    Anchors come in priority order, so a later anchor within `ANCHOR_MIN_GAP_S` of a kept one
+    is merged into it. Uniform midpoints that land that close to an anchor are skipped.
+    """
+    low = min(ANCHOR_EDGE_S, duration / 2)
+    high = max(low, duration - ANCHOR_EDGE_S)
+    anchors: list[tuple[float, str | None]] = []
+    for time_s, reference in zip(limits.anchor_times_s, limits.anchor_refs, strict=True):
+        clamped = min(max(time_s, low), high)
+        if len(anchors) < min(MAX_ANCHORS, limits.frame_count) and all(
+            abs(clamped - kept) >= ANCHOR_MIN_GAP_S for kept, _ in anchors
+        ):
+            anchors.append((clamped, reference))
+    fill = limits.frame_count - len(anchors)
+    uniform = [
+        (duration * (index + 0.5) / fill, None)
+        for index in range(fill)
+        if all(
+            abs(duration * (index + 0.5) / fill - kept) >= ANCHOR_MIN_GAP_S for kept, _ in anchors
+        )
+    ]
+    return sorted([*anchors, *uniform], key=lambda item: item[0])
+
+
 def _frames(local: Path, artifact_sha: str, limits: EvidenceLimits, deadline: float):
     info = json.loads(
         _run(
@@ -311,8 +393,7 @@ def _frames(local: Path, artifact_sha: str, limits: EvidenceLimits, deadline: fl
     version = _run(["ffmpeg", "-version"], deadline).stdout.decode().splitlines()[0][:300]
     frames = []
     total = 0
-    for index in range(limits.frame_count):
-        requested = duration * (index + 0.5) / limits.frame_count
+    for index, (requested, anchor_ref) in enumerate(plan_frame_times(duration, limits)):
         output = local.parent / f"frame-{index}.jpg"
         # select keeps source presentation timestamps; showinfo reports the actual
         # selected decoded frame, rather than pretending the requested time was exact.
@@ -384,6 +465,7 @@ def _frames(local: Path, artifact_sha: str, limits: EvidenceLimits, deadline: fl
                 width=frame_width,
                 height=frame_height,
                 decoder_version=version,
+                anchor_ref=anchor_ref,
             )
         )
         _remaining(deadline)
@@ -459,7 +541,7 @@ def obtain_render_review_evidence(
                 start_s=frame.timestamp_s,
                 end_s=frame.timestamp_s,
                 source="direct_frame",
-                observer="render-review-frames-v1",
+                observer="render-review-frames-v2",
                 observation=f"Decoded frame at {frame.timestamp_s:g}s; "
                 f"image SHA256 {frame.image_sha256}. "
                 "No semantic or audio inspection has been performed.",
