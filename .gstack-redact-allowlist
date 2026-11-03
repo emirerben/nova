@@ -1,3 +1,6 @@
 postgresql://test:test@localhost
 # Synthetic rejected artifact URL in scripts/ci/test_pr_evidence.py; no real credential.
 https://user:secret@github.com
+# Synthetic database URLs in tests/kria/test_intent_review_qualification.py: a sentinel password that must never reach output, and a remote host the harness must refuse; no real credential.
+postgresql://qual:db-password-sentinel@localhost:5432
+postgresql://u:p@db.internal:5432
