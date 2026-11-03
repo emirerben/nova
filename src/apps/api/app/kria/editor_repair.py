@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import time
 import uuid
@@ -17,6 +16,8 @@ from app.database import sync_session
 from app.kria.brief import apply_updates, load_latest_brief_sync
 from app.kria.contracts import KriaTurnPlan
 from app.kria.reply_language import say
+from app.kria.review_canon import canonical_json as _json
+from app.kria.review_canon import digest as _digest
 from app.models import (
     ContentPlan,
     CreationThread,
@@ -43,14 +44,6 @@ COMPLETION_RESERVE_S = 5.0
 
 _TIMING = frozenset({"retime_text_sequence", "set_total_duration"})
 _DISCARDABLE = frozenset({"rewrite_text", "remove_texts", "add_text"})
-
-
-def _json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
-
-
-def _digest(value: Any) -> str:
-    return hashlib.sha256(_json(value).encode()).hexdigest()
 
 
 def candidate_operations(planned: PlannedKriaTurn) -> list[dict] | None:

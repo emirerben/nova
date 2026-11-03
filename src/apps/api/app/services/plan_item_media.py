@@ -71,7 +71,7 @@ def current_detector_policy() -> str:
             # Retake detection changes an explicit-consent cut list. Its
             # switch must therefore retire ready analyses and request consent
             # again instead of silently reusing a pause/filler-only snapshot.
-            f"retakes={'enabled' if _speech_cleanup_retakes_enabled() else 'disabled'}",
+            f"retakes={'enabled' if speech_cleanup_retakes_enabled() else 'disabled'}",
             # The filler check moves and drops filler cuts for identical media; its switch must
             # retire analyses made under the other setting.
             f"filler-check={'enabled' if settings.speech_cleanup_filler_check_enabled else 'off'}",
@@ -79,8 +79,12 @@ def current_detector_policy() -> str:
     )
 
 
-def _speech_cleanup_retakes_enabled() -> bool:
-    """Keep consented preflight retakes fenced from legacy auto-cut rollout."""
+def speech_cleanup_retakes_enabled() -> bool:
+    """Keep consented preflight retakes fenced from legacy auto-cut rollout.
+
+    The one reading of the two levers: the detector policy, the engine run and the
+    finished-render note all ask here (KRI-1176).
+    """
 
     from app.config import settings  # noqa: PLC0415
 

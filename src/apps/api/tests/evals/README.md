@@ -47,7 +47,7 @@ pytest tests/evals/test_narrated_storyboard_evals.py -v --with-judge
 | `nova.audio.template_recipe` (audio_template) | ✓ | `rubrics/audio_template.md` | exported | `MusicTrack.recipe_cached` |
 | `nova.audio.song_classifier` | ✓ | `rubrics/song_classifier.md` | exported + hand-authored golden | `MusicTrack.ai_labels` |
 | `nova.audio.music_matcher` | ✓ | `rubrics/music_matcher.md` | hand-authored golden only (not persisted) | — |
-| `nova.audio.retake_detector` | ✓ | `rubrics/retake_detector.md` | hand-authored golden only (spans not persisted); incl. TR/EN restarts + negative fixtures gated by `meta.expect_empty` | — |
+| `nova.audio.retake_detector` | ✓ | `rubrics/retake_detector.md` | hand-authored golden only (spans not persisted); incl. TR/EN restarts + negative fixtures gated by `meta.expect_empty`. KRI-1176 precision set: 2 restarts on real prod words (`meta.must_cut`/`must_keep`, gated by `test_positive_fixtures_cut_only_the_abandoned_take`) + 8 restart-free negatives sliced from recorded word lists (EN/TR/ES, `meta.source_fixture`). Every `raw_text` is a hand-authored expected answer, not a live capture | — |
 | `nova.creator.main` | ✓ | `rubrics/main_creator.md` | hand-authored golden + exported | — |
 | `nova.compose.sfx_placement` | ✓ | `rubrics/sfx_placement.md` | hand-authored golden (visual moments) | — |
 | `nova.compose.narrated_storyboard` | ✓ | `rubrics/narrated_storyboard.md` | hand-authored sports, non-sports, and adversarial golden fixtures | `Job.assembly_plan.variants[].narrated_storyboard` |

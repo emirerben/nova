@@ -210,12 +210,18 @@ log = structlog.get_logger()
 # insert played silent (`keep_audio` false). Only the texts shown while the insert lane is open
 # change; every closed-gate prompt keeps its bytes. No live eval of this routing exists; the
 # fixtures under tests/fixtures/agent_evals/main_creator/kri1151_* are hand-authored.
-# v113 (KRI-1173): a plain colour behind the speaker. `background_media` takes `color` ("#RRGGBB")
-# instead of `media_id`, taught in one extra paragraph only where the manifest advertises
+# v114 (KRI-1175, prod "Green 3"): "whichever photo or video I'm talking about" gives every
+# background_media.sequence entry a spoken_phrase from the take's own words (spoken order; one
+# phrase for two visuals of one thing; a visual never talked about is left out and named in
+# summary), so the worker lays them out on the words. Only the windows section changes (shown only
+# with the speaker_background_windows capability); every other prompt keeps its bytes. v113 is used
+# by unmerged branches (PR #2089, KRI-1173).
+# v118 (KRI-1173; v115-v117 are held by #2089 and #2092): a plain colour behind the speaker.
+# `background_media` takes `color` ("#RRGGBB") instead of `media_id`, taught in one extra paragraph only where the manifest advertises
 # `speaker_background_color`; the shared brief section records `background_color` beside
-# `speaker_background` (brief_extractor v50 shares it). Every other creator prompt is
+# `speaker_background` (brief_extractor v53 shares it). Every other creator prompt is
 # byte-identical.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-03-v113"
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-03-v118"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -690,16 +696,25 @@ photo or video I'm talking about, changing every 3-5 seconds", "her konuştuğum
 dursun"), extend `background_media` with `sequence`: an ordered list of up to 40 objects
 {"media_id": "<exact media_context IMAGE or VIDEO media_id>", "spoken_phrase": "<the words they
 say when this one should appear, in their language, optional>", "hold_s": <seconds, optional>}.
-Use `spoken_phrase` only when the creator says which photo goes with which words ("the beach
-photo when I say beach"); otherwise leave it out and the photos take turns in the order listed.
-Without a stated rhythm they change every 4 seconds; set `cadence_s` (2 to 10) when the creator
-names one ("every 3 seconds", "5 saniyede bir"), and use the midpoint of a range ("3-5 seconds"
-= 4). List each photo or video once unless the creator wants repeats; the list repeats by itself
-until the talk ends. Copy exact `media_id`s from `media_context`, never invent one, never use the
-speaker's own clips. With a `sequence`, `background_media.media_id` is the FILL shown wherever no
-window covers the time: use the first entry's id unless the creator names a different fill.
-`speaker_frame` places the speaker (cut out of their own background) as a small picture over the
-backgrounds: "small_bottom_right", "small_bottom_left", "small_top_right" or "small_top_left"
+When the creator wants each photo or video to show while they talk about it ("whichever photo or
+video I'm talking about", "when I mention it", "hangi fotoğraftan bahsediyorsam o arkamda
+olsun"), give every entry a `spoken_phrase`: the few words from THIS take that name what it shows,
+copied as spoken from the speaker clip's timed `segments` (or transcript) in
+`analysis_only_not_copy` (e.g. "the night market", "her new tablet", "drones"). List the entries
+in the order those words are spoken; each one shows on its words and stays until the next. Two
+photos or videos of the same thing get the same spoken_phrase and play one after the other in the
+order listed. Leave out any photo or video they never talk about and name it in `summary` ("I left
+out the lunch photo: you don't talk about it"). When the creator pairs only some photos with words
+("the beach photo when I say beach"), give only those a `spoken_phrase`. Otherwise (a plain
+rotation such as "change every 3 seconds") leave it out and the photos take turns in the order
+listed. Without a stated rhythm they change every 4 seconds; set `cadence_s` (2 to 10) when the
+creator names one ("every 3 seconds", "5 saniyede bir"), and use the midpoint of a range ("3-5
+seconds" = 4). List each photo or video once unless the creator wants repeats; the list repeats by
+itself until the talk ends. Copy exact `media_id`s from `media_context`, never invent one, never
+use the speaker's own clips. With a `sequence`, `background_media.media_id` is the FILL shown
+wherever no window covers the time: use the first entry's id unless the creator names a different
+fill. `speaker_frame` places the speaker (cut out of their own background) as a small picture over
+the backgrounds: "small_bottom_right", "small_bottom_left", "small_top_right" or "small_top_left"
 ("me small at the bottom right" = "small_bottom_right"). Leave it out, or "full", to keep the
 speaker full-screen. Pick only these names, never numbers. If no photo or video is attached to
 use, leave `background_media` out rather than guess an id. Say in `summary`, in plain words, how

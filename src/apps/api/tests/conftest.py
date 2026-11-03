@@ -4,6 +4,7 @@ app/config.py instantiates Settings() at module load — required fields must
 be present in the environment at collection time, not just at test runtime.
 """
 
+import gc
 import os
 import sys
 
@@ -67,6 +68,52 @@ def _fresh_async_engine_pool() -> None:
     database = sys.modules.get("app.database")
     if database is not None:
         database.engine.sync_engine.dispose(close=False)
+
+
+@pytest.fixture
+def release_abandoned_db_connections():
+    """Close, after the test, the asyncpg connections the pool swap above only abandons.
+
+    ``dispose(close=False)`` leaves them open until the garbage collector finalizes them,
+    so a file whose tests each open several (the intent-review suites) piles up well past
+    Postgres's default 100 connections across four xdist workers
+    (``TooManyConnectionsError``). Opt in with ``pytestmark = pytest.mark.usefixtures(...)``;
+    a collection per test is too slow to run for every DB-backed test.
+    """
+
+    yield
+    gc.collect()
+
+
+@pytest.fixture
+def exclusive_intent_review_ledger():
+    """Hold one cross-worker lock while a test owns the shared ``intent_review`` ledger rows.
+
+    Several suites count or delete every ``ai_cost_reservations`` row whose feature is
+    ``intent_review``. On one xdist database that is shared state: another worker's cleanup
+    removes this test's reservations mid-run (or its rows inflate this test's spend), so a
+    budget assertion fails depending on scheduling. A session-level advisory lock on its own
+    connection serializes the suites that opt in with ``pytestmark``.
+    """
+
+    db_url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
+    engine = create_engine(db_url, pool_pre_ping=True)
+    connection = None
+    try:
+        connection = engine.connect()
+        connection.execute(text("SELECT pg_advisory_lock(:key)"), {"key": 2026110301})
+    except OperationalError as exc:
+        if connection is not None:
+            connection.close()
+        engine.dispose()
+        pytest.skip(f"Postgres not reachable for the intent_review ledger lock: {exc!r}")
+    try:
+        yield
+    finally:
+        try:
+            connection.close()
+        finally:
+            engine.dispose()
 
 
 @pytest.fixture(autouse=True)
