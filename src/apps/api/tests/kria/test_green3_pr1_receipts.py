@@ -384,6 +384,19 @@ def test_green3_prod_brief_no_longer_lists_the_cleanup_under_leaves_out(monkeypa
     assert report["ready"] is False
 
 
+def test_a_pauses_only_cleanup_ask_is_approvable():
+    """C1 without the restart words: the Clean up speech choice alone is never "left out".
+
+    The Green 3 r2 cases above also name the restarted sentence; KRI-1176 (PR 3) words that part
+    "stays in" while the retake path is off, which rightly holds it. This one pins KRI-1178 on
+    the cleanup choice alone."""
+    ask = _r("r2", "style", "Cut the long pauses.", {"speech_cleanup": True})
+    rows, report = _readiness([ask], _manifest())
+    assert rows["r2"]["disposition"] == "unverified", rows["r2"]
+    assert rows["r2"]["reason"].startswith("If Clean up speech is offered when you approve")
+    assert report["ready"] is True
+
+
 def test_a_line_the_render_cannot_find_still_holds_the_draft():
     """C2: with no recorded line to cut, "the sentence I restarted" may stay in the video."""
     ask = _r(
