@@ -89,6 +89,7 @@ from app.models import (
     Job,
 )
 from app.services import intent_review_flow as flow
+from app.services import intent_review_prompt as prompt
 from app.services import intent_review_repair_flow as repair
 from tests.integration.test_intent_review_lifecycle_postgres import (  # noqa: F401
     Crash,
@@ -126,7 +127,7 @@ TEXT_CUT_OFF = reply(finding("R1", "unmet", "text_cut_off", ["f1"]))
 
 @pytest.fixture
 def repair_on(paid, monkeypatch):
-    monkeypatch.setattr(flow, "_PROMPT_BUILDER", None)
+    monkeypatch.setattr(flow, "build_review", prompt.build_review)
     monkeypatch.setattr(settings, "kria_intent_review_repair_enabled", True)
     monkeypatch.setattr(tier, "_CODE_TIER_CEILING", "repair")
     return paid
@@ -832,14 +833,111 @@ def let_a_day_pass(rid):
 async def test_a_repair_the_creator_walks_away_from_is_abandoned_with_the_right_reason(
     drifted, repair_on, monkeypatch, act, reason
 ):
+    _, thread, _, _ = drifted
     rid = await ready(drifted, monkeypatch)
     assert await run_async(rid, Provider(COPY_MISMATCH)) == "repair_staged"
     assert repair.recover_repair_staged() == 0
     act(rid)
-    assert repair.recover_repair_staged() == 1
+    assert await asyncio.to_thread(repair.recover_repair_staged) == 1
     row = review_row(rid)
     assert (row.status, row.reason) == ("repair_abandoned", reason)
     assert repair.recover_repair_staged() == 0
+    head = drafts(thread)[-1]
+    unapproved = reason in {"approval_rejected", "approval_expired", "unapproved_timeout"}
+    assert head.is_head
+    assert title_of(head)["text"] == (DRIFTED_TITLE if unapproved else "Before")
+    assert len(events(thread, "draft_undone")) == (1 if unapproved else 0)
+
+
+@pytest.mark.asyncio
+async def test_an_unapproved_repair_does_not_survive_into_the_creators_next_edit(
+    drifted, repair_on, monkeypatch
+):
+    _, thread, _, _ = drifted
+    rid = await ready(drifted, monkeypatch)
+    assert await run_async(rid, Provider(COPY_MISMATCH)) == "repair_staged"
+    end_the_approval("denied")(rid)
+    await asyncio.to_thread(repair.recover_repair_staged)
+    with sync_session() as db:
+        staged = db.get(CreatorEditDraft, review_row(rid).repair_draft_id)
+        head = db.scalar(
+            select(CreatorEditDraft).where(
+                CreatorEditDraft.item_id == staged.item_id,
+                CreatorEditDraft.variant_key == staged.variant_key,
+                CreatorEditDraft.is_head.is_(True),
+            )
+        )
+    assert head.id != staged.id
+    assert title_of(head)["text"] == DRIFTED_TITLE
+
+
+@pytest.mark.asyncio
+async def test_a_follow_up_that_only_reads_an_old_defect_louder_does_not_undo_a_fix(
+    drifted, repair_on, monkeypatch
+):
+    _, thread, job_id, _ = drifted
+    rid = await ready(drifted, monkeypatch)
+    edit_packet(rid, two_requirements)
+    unverifiable_r2 = finding("R2", "unverifiable")
+    assert (
+        await run_async(
+            rid, Provider(reply(finding("R1", "unmet", "copy_mismatch", ["f0"]), unverifiable_r2))
+        )
+        == "repair_staged"
+    )
+    claim, _, _, proof = await approve_the_repair(drifted, rid, monkeypatch)
+    child = await ready((claim, thread, job_id, proof), monkeypatch)
+    edit_packet(child, two_requirements)
+    staged = drafts(thread)[-1]
+    noisy = reply(R1_MET, R2_UNMET)
+    assert await run_async(child, Provider(noisy)) == "suggestion"
+    parent = review_row(rid)
+    assert (parent.status, parent.reason) == ("repair_verified", "fixed")
+    assert events(thread, "draft_undone") == []
+    assert drafts(thread)[-1].id == staged.id
+
+
+@pytest.mark.asyncio
+async def test_a_follow_up_admitted_without_a_paid_tier_settles_the_staged_repair(
+    drifted, repair_on, monkeypatch
+):
+    rid, child = await staged_and_rendered(drifted, monkeypatch)
+    edit_row(child, tier="evidence")
+    assert repair.recover_repair_staged() == 1
+    parent = review_row(rid)
+    assert (parent.status, parent.reason) == ("repair_unverified", "rereview_unavailable")
+    follow_up = review_row(child)
+    assert (follow_up.status, follow_up.reason) == ("unavailable", "paid_disabled")
+    assert repair.recover_repair_staged() == 0
+
+
+@pytest.mark.asyncio
+async def test_a_soft_time_limit_during_staging_is_left_to_lease_recovery_not_protected(
+    drifted, repair_on, monkeypatch
+):
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    from app.tasks import kria_runtime
+
+    _, thread, _, _ = drifted
+    rid = await ready(drifted, monkeypatch)
+    count = len(drafts(thread))
+
+    def out_of_time(*args, **kwargs):
+        raise SoftTimeLimitExceeded()
+
+    real = kria_runtime._complete_draft_turn
+    monkeypatch.setattr(kria_runtime, "_complete_draft_turn", out_of_time)
+    with pytest.raises(SoftTimeLimitExceeded):
+        await run_async(rid, Provider(COPY_MISMATCH))
+    stranded = review_row(rid)
+    assert stranded.status == "reviewing" and stranded.repair_draft_id is None
+    monkeypatch.setattr(kria_runtime, "_complete_draft_turn", real)
+    expire_lease(rid)
+    assert flow.run_intent_review(rid) == "suggestion"
+    row = review_row(rid)
+    assert [s["why"] for s in row.review["disposition"]["suggestions"]] == ["thread_busy"]
+    assert len(drafts(thread)) == count
 
 
 @pytest.mark.asyncio

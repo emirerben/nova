@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from typing import Any, NamedTuple
 
 import structlog
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -74,14 +75,8 @@ TERMINAL = frozenset(
         "repair_abandoned",
     }
 )
-_BUSY_TURNS = (
-    "pending",
-    "queued",
-    "planning",
-    "executing",
-    "awaiting_approval",
-    "observing",
-)
+IN_FLIGHT_TURNS = ("pending", "queued", "planning", "executing", "observing")
+UNAPPROVED_REASONS = frozenset({"approval_rejected", "approval_expired", "unapproved_timeout"})
 _DRAFTED_TURNS = frozenset({"awaiting_approval", "executing", "observing", "completed"})
 _QUESTION_OR_SUGGESTION = ("suggestion", "needs_confirmation")
 
@@ -136,24 +131,28 @@ def _head(db, rows) -> CreatorEditDraft | None:
     )
 
 
-def _thread_busy(db, rows) -> bool:
-    pending = db.scalar(
-        select(func.count())
-        .select_from(CreatorAgentApproval)
-        .where(
-            CreatorAgentApproval.thread_id == rows.thread.id,
-            CreatorAgentApproval.status == "pending",
-        )
-    )
-    active = db.scalar(
+def thread_busy(db, thread_id, *, own_approval_is_pending: bool = False) -> bool:
+    """A turn in flight, or the creator mid-decision on an approval that is not the caller's own."""
+    if db.scalar(
         select(func.count())
         .select_from(CreatorAgentTurn)
         .where(
-            CreatorAgentTurn.thread_id == rows.thread.id,
-            CreatorAgentTurn.status.in_(_BUSY_TURNS),
+            CreatorAgentTurn.thread_id == thread_id, CreatorAgentTurn.status.in_(IN_FLIGHT_TURNS)
+        )
+    ):
+        return True
+    if own_approval_is_pending:
+        return False
+    return bool(
+        db.scalar(
+            select(func.count())
+            .select_from(CreatorAgentApproval)
+            .where(
+                CreatorAgentApproval.thread_id == thread_id,
+                CreatorAgentApproval.status == "pending",
+            )
         )
     )
-    return bool(pending or active)
 
 
 def _live_candidate_ids(db, rows, row) -> frozenset[str]:
@@ -180,7 +179,7 @@ def _live_candidate_ids(db, rows, row) -> frozenset[str]:
     return frozenset(c.candidate_id for c in catalog.candidates if c.auto)
 
 
-def repair_preconditions(db, rows, row, review: dict[str, Any]) -> RepairPreconditions:
+def repair_preconditions(db, rows, row) -> RepairPreconditions:
     """What the staging step finds under the authority locks; the first thing in the way wins."""
     head = _head(db, rows)
     draft = rows.draft
@@ -191,7 +190,7 @@ def repair_preconditions(db, rows, row, review: dict[str, Any]) -> RepairPrecond
         or head.snapshot_hash != draft.snapshot_hash
     ):
         return RepairPreconditions(blocked="head_moved")
-    if _thread_busy(db, rows):
+    if thread_busy(db, rows.thread.id):
         return RepairPreconditions(blocked="thread_busy")
     return RepairPreconditions(allowed=_live_candidate_ids(db, rows, row))
 
@@ -329,7 +328,7 @@ def _open_staging(db, first, review_id, token) -> str | _Staging:
         return "stale"
     if row.parent_review_id is not None or tier_rank(live) < tier_rank("repair"):
         return _held_back(db, row, None, tier=lower_tier(live, "review"))
-    pre = repair_preconditions(db, rows, row, review)
+    pre = repair_preconditions(db, rows, row)
     ids = repair_candidate_ids(review)
     blocked = pre.blocked or (
         "protected" if pre.allowed is not None and not set(ids) <= pre.allowed else None
@@ -455,6 +454,8 @@ def _drive(staging: _Staging) -> str:
             )
     except IntentRepairRefused as exc:
         return _abort(staging, exc.reason)
+    except SoftTimeLimitExceeded:
+        raise
     except Exception:
         log.warning(
             "intent_review_repair_turn_failed", review_id=str(staging.review_id), exc_info=True
@@ -572,10 +573,13 @@ def compare_reviews(parent: dict[str, Any], child: dict[str, Any]) -> tuple[bool
 
     parent_met = {brief for brief, f in before.items() if f["verdict"] == "met"}
     child_unmet = high(after, "unmet")
-    worse = bool(child_unmet & parent_met) or len(child_unmet) > len(high(before, "unmet"))
     targeted = set((parent.get("repair") or {}).get("targeted_brief_ids") or [])
     met_after = {brief for brief, f in after.items() if f["verdict"] == "met"}
-    return bool(targeted) and targeted <= met_after, worse
+    fixed = bool(targeted) and targeted <= met_after
+    worse = bool(child_unmet & parent_met) or (
+        not fixed and len(child_unmet) > len(high(before, "unmet"))
+    )
+    return fixed, worse
 
 
 def _undo_head(thread_id, creator_id, expected_revision: int) -> str | None:
@@ -775,6 +779,24 @@ def _render_finished_before(db, row: CreatorGenerationReview, cutoff: datetime) 
     )
 
 
+def _end_unreviewable_follow_ups(parent_id) -> None:
+    """A follow-up admitted below the review tier has evidence and will never be reviewed."""
+    with sync_session() as db:
+        stuck = list(
+            db.scalars(
+                select(CreatorGenerationReview.id).where(
+                    CreatorGenerationReview.parent_review_id == parent_id,
+                    CreatorGenerationReview.status == "evidence_ready",
+                    CreatorGenerationReview.tier == "evidence",
+                )
+            )
+        )
+    for identifier in stuck:
+        finish_row(
+            identifier, expect="evidence_ready", status="unavailable", reason="paid_disabled"
+        )
+
+
 def recover_repair_staged(limit: int = 25) -> int:
     """Settle staged repairs from their follow-up review or from how the repair draft ended."""
     now = _now()
@@ -789,6 +811,7 @@ def recover_repair_staged(limit: int = 25) -> int:
         )
     handled = 0
     for parent_id in staged:
+        _end_unreviewable_follow_ups(parent_id)
         with sync_session() as db:
             row = db.get(CreatorGenerationReview, parent_id)
             if row is None or row.status != "repair_staged":
@@ -814,7 +837,9 @@ def recover_repair_staged(limit: int = 25) -> int:
         if child_id is not None:
             handled += settle_parent_from_child(child_id) is not None
         elif reason is not None:
+            successor = revert_repair(parent_id).successor if reason in UNAPPROVED_REASONS else None
             handled += _close_parent(parent_id, "repair_abandoned", reason) != "ignored"
+            _dispatch(successor)
         elif unreviewed:
             handled += _close_parent(parent_id, "repair_unverified", "no_rereview") != "ignored"
     return handled

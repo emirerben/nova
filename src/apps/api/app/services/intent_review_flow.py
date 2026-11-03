@@ -509,7 +509,7 @@ def _judge(db, row, review: dict[str, Any], rows) -> tuple[str, str, dict[str, A
     if rows is not None and tier_rank(tier) >= tier_rank("repair"):
         from app.services.intent_review_repair_flow import repair_preconditions
 
-        preconditions = repair_preconditions(db, rows, row, review)
+        preconditions = repair_preconditions(db, rows, row)
     try:
         evaluation = evaluate_review(
             review.get("raw_output") or "",
