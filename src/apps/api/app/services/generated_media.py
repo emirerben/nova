@@ -48,6 +48,7 @@ from app.services.generated_asset_contracts import (
     image_payload,
     narration_events,
 )
+from app.services.generated_image_grounding import prompt_metadata
 from app.services.generated_media_admission import (
     admit_generated_asset,
     cleanup_expired_generated_media,
@@ -301,6 +302,17 @@ def retry_generated_storage(db, operation_id, *, owner_id, item_id):
     return operation
 
 
+def _request_metadata(body: GeneratedMediaRequest) -> dict:
+    return {
+        **{
+            k: v
+            for k, v in body.model_dump(mode="json").items()
+            if k not in {"prompt", "editable_title", "client_event_id", "capability"}
+        },
+        **prompt_metadata(body.capability, body.prompt),
+    }
+
+
 def execute_generated_media(
     db: Session, *, owner_id, item_id, body: GeneratedMediaRequest, ctx: RunContext, transport=None
 ):
@@ -351,11 +363,7 @@ def execute_generated_media(
         request_digest=digest,
         capability=body.capability,
         state="pending",
-        request_metadata={
-            k: v
-            for k, v in body.model_dump(mode="json").items()
-            if k not in {"prompt", "editable_title", "client_event_id", "capability"}
-        },
+        request_metadata=_request_metadata(body),
     )
     db.add(operation)
     db.commit()
