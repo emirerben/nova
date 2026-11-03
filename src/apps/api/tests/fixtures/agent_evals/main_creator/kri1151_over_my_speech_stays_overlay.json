@@ -336,7 +336,7 @@
    "phone_clip_sound_windows_enabled": true,
    "phone_talking_insert_clips_enabled": true
   },
-  "note": "'Over my speech while I keep talking' with 'keep my voice' is the full-screen overlay lane and NEVER an insert, even with the insert lane open and the word 'speech' in it. Hand-authored golden answer; replay does not prove the live model routes this way.",
+  "note": "'Over my speech while I keep talking' with 'keep my voice' is the full-screen overlay lane and NEVER an insert, even with the insert lane open and the word 'speech' in it. Hand-authored contract fixture, not a model recording, and no live eval of this routing exists. Hand-authored golden answer; replay does not prove the live model routes this way.",
   "prompt_contains": [
    "CLIPS SHOWN FULL SCREEN OVER THE TALK",
    "A CLIP PLAYED IN THE MIDDLE OF THE TALK",

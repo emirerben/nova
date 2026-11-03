@@ -95,9 +95,13 @@ def test_main_creator_eval(
             ]
 
     if fixture.meta.get("insert_topic_media"):
-        # Parent KRI-1151: "place them in between my speech" for clips with their own sound is one
-        # `insert_clips` row per clip with NO position (the server picks the end of the sentence
-        # about each), the stadium line stays a full-screen overlay, and the talk pauses.
+        # Parent KRI-1151: "place them in between my speech" is one `insert_clips` row per clip
+        # with NO position (the server picks the end of the sentence about each), the stadium
+        # line stays a full-screen overlay, and the talk pauses. The fixture's answer is
+        # hand-authored (`meta.source` is `hand_authored_golden`), not a model recording, and the
+        # cassette ignores the prompt: this block proves the answer shape and the brief shape
+        # parse. No live eval of this routing exists; the paid eval in tests/evals/README.md is
+        # the only thing that measures whether the model answers this way.
         assert result.output is not None
         action = result.output["action"]
         assert action["kind"] == "propose_strategy"

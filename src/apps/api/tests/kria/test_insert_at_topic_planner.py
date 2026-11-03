@@ -1,12 +1,20 @@
 """Parent KRI-1151: "Place them in between my speech" (with or without "when I talk about them")
-for clips that have speech or sound of their own is an INSERT at the end of the sentence about
-the clip, not an overlay. "Show it while I talk / over my speech / keep my voice" stays the
-overlay.
+is an INSERT at the end of the sentence about the clip, whether or not the clip has sound of its
+own; "Show it while I talk / over my speech / keep my voice" stays the overlay. The creator's
+position words decide the route, never the sound words ("use their audio").
 
 Prod thread b61b7673 (2026-11-03): the planner sent the request to the full-screen overlay by
 design (#2058: "in between my speech together with when I talk about them is the clip lane"),
 so the talk kept running and the creator was muted under each clip. The creator meant the
 opposite: "Instead of pausing my speech and giving the other one, it kept my speech going on".
+
+What this file can and cannot prove. It pins what the PROMPT tells the model and that every
+answer shape the rule asks for survives the real agent parse, repair and receipt path (the
+stubbed model answers below are written by hand, not recorded from a model). It does NOT prove the
+live model routes the ask this way: no live eval of this routing exists, and the routing
+fixtures `kri1151_insert_between_speech_*.json` and `kri1151_over_my_speech_stays_overlay.json`
+are hand-authored contract fixtures, not model recordings. Only the paid eval in
+tests/evals/README.md measures the model.
 
 Failure modes, written before the code (each is pinned below):
 
@@ -15,12 +23,20 @@ Failure modes, written before the code (each is pinned below):
  T2 the repair drops a position-less row, or keeps one the phone cannot render;
  T3 the prompt still routes "in between my speech" to the overlay, or routes "over my speech /
     while I keep talking / keep my voice" to the insert, in either lane combination;
- T4 a clip with no speech or sound of its own (the drone shot) is sent to the insert;
+ T4 a clip with no speech or sound of its own (the drone shot) is kept an overlay although the
+    creator said "in between my speech" (an explicit instruction must work), or is sent to the
+    insert without that wording;
  T5 the brief extractor records the clips as `display_mode` + `clip_sound` for the same ask;
  T6 the corrective re-run note tells the model an "in between my speech" ask is an overlay;
  T7 a draft says "Done" for a clip the render may leave out, or a finished video says "Done"
     when only some clips played, or a reason has no Turkish twin;
  T8 a closed insert gate changes a single byte of any prompt (pinned in the lanes test).
+ A  one example phrase (the prod request's "use their audio") is listed both as an insert
+    example and as a not-an-insert example, so the same words route two ways;
+ B  a silent clip said "in between my speech" stays an overlay, a hard requirement that stops the
+    creator's own instruction from working;
+ C  a model answer with no position or a silent clip is dropped or rejected by the real agent,
+    the repair or the receipt.
 """
 
 from __future__ import annotations
@@ -130,7 +146,7 @@ def test_t3_in_between_my_speech_for_a_clip_with_its_own_sound_is_an_insert_at_t
         '"when I talk about them"',
     ):
         assert wording in insert, wording
-    assert "speech or sound of their own" in insert
+    assert "whether or not a clip has speech or sound of its own" in insert
     assert "no `at_phrase` and no `at_s`" in insert
     assert "end of the sentence the creator says about that clip" in insert
     assert "chosen by its meaning" in insert
@@ -164,13 +180,14 @@ def test_t3_both_lanes_open_still_allow_exactly_one_clarifying_question_for_unan
     assert "in the middle of my talk" in insert
 
 
-def test_t4_a_clip_with_no_speech_or_sound_stays_an_overlay_even_in_between_my_speech(
+def test_t4_a_clip_with_no_sound_of_its_own_is_an_insert_only_when_he_says_between_or_pause(
     monkeypatch,
 ):
     insert = _insert_section(monkeypatch, cutaways=True)
 
     assert "no speech or sound of its own" in insert
-    assert "stays the clip shown over the talk" in insert
+    assert "pauses the talk, played silent, only when they say" in insert
+    assert "is shown over the talk when the creator says" in insert
 
 
 def test_t3_with_the_cutaways_closed_the_insert_is_still_the_only_in_between_form(monkeypatch):

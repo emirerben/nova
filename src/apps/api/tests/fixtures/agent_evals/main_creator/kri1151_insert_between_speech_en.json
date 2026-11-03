@@ -340,7 +340,7 @@
    "phone_clip_sound_windows_enabled": true,
    "phone_talking_insert_clips_enabled": true
   },
-  "note": "Prod thread b61b7673 (2026-11-03), the exact request, both planner lanes open and the brief on. 'Place them in between my speech' for talks that have their own speech and sound is the pausing insert, one row per talk with no phrase (the server picks the end of the sentence about each); the stadium line stays an overlay with the creator's voice kept. Hand-authored golden answer; the cassette ignores the prompt, so replay proves it parses, that the rendered prompt carries the routing, and the brief shape; it does NOT prove the live model routes this way (paid live eval).",
+  "note": "Prod thread b61b7673 (2026-11-03), the exact request, both planner lanes open and the brief on. 'Place them in between my speech' for talks that have their own speech and sound is the pausing insert, one row per talk with no phrase (the server picks the end of the sentence about each); the stadium line stays an overlay with the creator's voice kept. Hand-authored contract fixture, not a model recording, and no live eval of this routing exists. Hand-authored golden answer; the cassette ignores the prompt, so replay proves it parses, that the rendered prompt carries the routing, and the brief shape; it does NOT prove the live model routes this way (paid live eval).",
   "prompt_contains": [
    "CLIPS SHOWN FULL SCREEN OVER THE TALK",
    "A CLIP PLAYED IN THE MIDDLE OF THE TALK",

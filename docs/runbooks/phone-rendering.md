@@ -1076,9 +1076,10 @@ is lost and the video grows by the clip's length.
   paused after the next one (`adjusted: hook_window`), and two clips on one sentence (or within 2 s
   of each other) play one after the other (`adjusted: near_another_clip`). The creator's
   own take (the one clip analysed as speaking to camera) can never be inserted
-  (`clip_in_use`). The model call is unproven against the real model (recorded-response
-  replays only); evidence to collect after the first prod renders: the receipt's `via`,
-  `confidence`, `sentence_first/last` per clip.
+  (`clip_in_use`). The model call is unproven against the real model (the tests replay
+  hand-written stand-in answers, not recordings of the model; no live eval of it exists);
+  evidence to collect after the first prod renders: the receipt's `via`, `confidence`,
+  `sentence_first/last` per clip.
 - **Receipt**: `variants[i].phone_insert_clips = {placed: [{media_id, start_s, end_s, at_take_s,
   duration_s, keep_audio, volume, basis: phrase|second|topic, snap:
   cue_end|pause|word_end|exact|seam|sentence_end, via?: meaning|keyword, confidence?,
@@ -1128,7 +1129,9 @@ is lost and the video grows by the clip's length.
   insert section; the cutaway tail says a pausing clip "exists only as `insert_clips`" on an explicit
   pause / stop ask; one routing question allowed). Pinned by `tests/kria/test_insert_and_cutaway_lanes.py`
   (sha of what origin/main renders) and the golden fixtures `kri1151_talking_cutaways_insert_open_*`
-  (the prod request with both lanes open => cutaway, not insert) and `kri1151_talking_insert_pause_form`.
+  (the prod request with both lanes open => cutaway, not insert) and `kri1151_talking_insert_pause_form`
+  (all hand-authored contract fixtures, not model recordings: they pin the prompt and the answer
+  shape, and no live eval of the routing exists).
 - **Worker footprint**: the insert adds only pure-Python steps (`place_inserts`, `warp_for_inserts`)
   to the phone recipe compile in `_run_phone_subtitled_job` (inside `orchestrate_generative_job`,
   soft limit 1740 s); no media is read, no ffmpeg or Skia runs, the clip is one of the item's own

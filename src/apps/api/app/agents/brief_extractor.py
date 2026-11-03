@@ -66,7 +66,9 @@ from app.pipeline.prompt_loader import load_prompt
 # speaker as a `style` fact `speaker_background` (+ `background_changes`, `speaker_small`).
 # v48 (parent KRI-1151): "place them in between my speech" for clips with their own sound is an
 # `insert_clip` fact with no position (the server picks the sentence); "over my speech" stays
-# display_mode / clip_sound. Only the insert paragraph (shown while inserts are open) changes.
+# display_mode / clip_sound, and the sound words never decide the route ("use their audio" is
+# listed on the overlay side only; a clip with no sound said "in between my speech" is the same
+# insert). Only the insert paragraph (shown while inserts are open) changes.
 BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-03-v48"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
