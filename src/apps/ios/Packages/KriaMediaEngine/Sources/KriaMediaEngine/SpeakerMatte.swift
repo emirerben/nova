@@ -33,9 +33,8 @@ struct SpeakerMatteConfig: Equatable, Sendable {
     /// and a mask cross-fade ghosts a fast hand, so the shipping value is every frame (S2).
     var maskRate: Double? = nil
     /// A failed or unreliable frame keeps the last good answer this long, then renders without the
-    /// background (S3, S5). A second and a half rides out a stalled or briefly failing segmenter (memory pressure,
-    /// a thermal step-down) without the room flashing in; a cut or a seek still clears it at once (S7).
-    var holdGrace = 1.5
+    /// background (S3, S5).
+    var holdGrace = 0.5
     /// A larger time jump is a seek, never playback, and drops the held answer (S7).
     var continuityWindow = 0.25
     /// Under this person coverage nobody is in frame (S4); over the maximum the mask swallowed the frame (S5).

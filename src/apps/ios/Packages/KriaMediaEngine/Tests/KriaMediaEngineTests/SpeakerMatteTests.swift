@@ -102,7 +102,7 @@ final class SpeakerMatteTests: XCTestCase {
         XCTAssertEqual(segmenter.calls, 15)
     }
 
-    /// S3: a throwing frame holds the last good mask for the grace window (1.5 s), then the frame renders
+    /// S3: a throwing frame holds the last good mask for the grace window, then the frame renders
     /// without the background. Never a missing speaker, never an exception.
     func testErrorHoldsLastGoodMask() throws {
         let matte = SpeakerMatte(segmenter: ScriptedSegmenter { [leftHalf] call in
@@ -110,11 +110,11 @@ final class SpeakerMatteTests: XCTestCase {
             throw MediaEngineError.exportFailed
         })
         XCTAssertEqual(try alpha(matte.answer(for: speaker, at: 1, canvas: canvas, clipKey: "clip-0"), at: [(20, 100), (100, 100)]), [255, 0])
-        for index in 1...44 {
+        for index in 1...14 {
             let held = matte.answer(for: speaker, at: 1 + Double(index) * frame, canvas: canvas, clipKey: "clip-0")
             XCTAssertEqual(try alpha(held, at: [(20, 100), (100, 100)]), [255, 0], "frame \(index) holds the last good mask")
         }
-        for index in 46...50 {
+        for index in 16...20 {
             XCTAssertTrue(isOriginal(matte.answer(for: speaker, at: 1 + Double(index) * frame, canvas: canvas, clipKey: "clip-0")),
                           "frame \(index) is past the \(SpeakerMatteConfig.shipping.holdGrace) s grace: original footage")
         }
@@ -186,7 +186,7 @@ final class SpeakerMatteTests: XCTestCase {
     }
 
     /// Every frame is counted under the reason it was answered: a good mask, a held one (by what failed) or the original.
-    func testTheTraceCountsEachAnswerUnderItsReason() {
+    func testTheTraceCountsEachAnswerUnderItsReason() throws {
         let matte = SpeakerMatte(segmenter: ScriptedSegmenter { [leftHalf] call in
             if call == 0 { return leftHalf }
             throw MediaEngineError.exportFailed
@@ -194,8 +194,9 @@ final class SpeakerMatteTests: XCTestCase {
         play(matte, frames: 0..<60)
         let counts = matte.trace.snapshot().counts
         XCTAssertEqual(counts["cutout"], 1)
-        XCTAssertEqual(counts["held.error"], 45, "the 1.5 s the last good mask stands in")
-        XCTAssertEqual(counts["original.error"], 14, "then the room shows, by the reason it does")
+        let held = try XCTUnwrap(counts["held.error"])
+        XCTAssertTrue((14...15).contains(held), "the half second the last good mask stands in (the boundary frame is float-dependent): \(held)")
+        XCTAssertEqual(counts["original.error"], 59 - held, "then the room shows, by the reason it does")
         XCTAssertNil(counts["held.coverage"])
         XCTAssertEqual(matte.trace.snapshot().events.map(\.label), ["cutout", "held.error", "original.error"], "only changes of outcome are kept")
 
@@ -255,10 +256,10 @@ final class SpeakerMatteTests: XCTestCase {
         })
         let fired = Locked(false)
         matte.trace.onDegraded = { _ in fired.mutate { $0 = true } }
-        play(matte, frames: 0..<150)
-        XCTAssertFalse(fired.value, "59 hidden frames, one good, 45 held, then 45 hidden: no run reached 60")
-        play(matte, frames: 150..<170)
-        XCTAssertTrue(fired.value, "60 hidden frames since the good one")
+        play(matte, frames: 0..<120)
+        XCTAssertFalse(fired.value, "59 hidden frames, one good, about 15 held, then about 45 hidden: no run reached 60")
+        play(matte, frames: 120..<140)
+        XCTAssertTrue(fired.value, "60 hidden frames since the held mask ran out")
     }
 
     /// The real Vision path on a real talking-head frame (`Fixtures/speaker-matte-talking.jpg`, a frame of
