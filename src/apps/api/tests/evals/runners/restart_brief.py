@@ -33,14 +33,18 @@ def restart_brief_failures(updates: list[dict[str, Any]], expect: dict[str, Any]
         lines = facts.get("cut_lines") or []
         if isinstance(lines, str):
             lines = [lines]
-        req = BriefRequirement(
-            id="r1",
-            kind=update.get("kind") or "style",
-            scope=update.get("scope") or "global",
-            description=update.get("description") or "",
-            literal=update.get("literal"),
-            facts=facts,
-        )
+        try:
+            req = BriefRequirement(
+                id="r1",
+                kind=update.get("kind") or "style",
+                scope=update.get("scope") or "global",
+                description=update.get("description") or "",
+                literal=update.get("literal"),
+                facts=facts,
+            )
+        except ValueError as exc:  # a malformed live update is a failure, never a crash
+            failures.append(f"update is not a valid requirement ({exc}): {update!r}")
+            continue
         for line in lines:
             if not isinstance(line, str) or not _said_in_requirement(req, line):
                 failures.append(

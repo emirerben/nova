@@ -79,10 +79,10 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # Re-pinned for KRI-1189 (creator v117): the brief section's cleanup sentence teaches
 # `cut_restarts`; restoring v116's sentence reproduces 87126862 / c9d68e98 / e83242e4 / 00392b4c.
 MAIN_PROMPT_SHA = {
-    "neither": "e442b680d967898d3bd39de0b9e49df9fb0fb9419b7dd648c9253ba10b84ae58",
-    (True, True): "1004a3917e7d0e8bf8ce535b3b391a72040808954e7fad2459fb152e737a063e",
-    (True, False): "e11a0e9b09d3c653420b45658bfda246e0f15ac5fe5cc30b11f8ac97e0212062",
-    (False, True): "b41741e380534631a6f82005f93084634af3b26bd9635a5bd0c9f99738a98aef",
+    "neither": "b3937e63f3f427b373d5ef75fd6545a005de97de4b76d9a1327d56fcf5357722",
+    (True, True): "1c343d87ea582b6ad407d2301c1fc576f9438639aaa79ead70cf095d387c8178",
+    (True, False): "b3e40e9d94f600f6f63c808135efff5b061a826624b8c1eb5b86d9e7981c6ff8",
+    (False, True): "2b054bf4c4b4acd46f0de67252548c4f0af0cbe25e7fcb5ddc681efc2eaffd6f",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (

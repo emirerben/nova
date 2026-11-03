@@ -29,7 +29,7 @@ def test_brief_extractor_eval(fixture_path: Path, eval_mode: str, live_model_cli
         assert result.output is not None
         failures = restart_brief_failures(result.output.get("brief_updates") or [], restart)
         assert not failures, failures
-        if restart.get("cut_restarts") is False and "start over" in fixture.input["user_message"]:
+        if restart.get("cut_restarts") is False and "start over" in fixture.input["user_message"].casefold():
             # KRI-816: "start over ... from scratch" is the typed start-fresh ask instead.
             assert result.output.get("starts_fresh") is True or (
                 result.output.get("request_scope") == "rebuild"

@@ -1019,7 +1019,7 @@ cümleleri", "tekrar aldığım cümleyi") => {"speech_cleanup": true, "cut_rest
 `cut_lines` for it: never copy words from the take or its transcript into `cut_lines`, which hold
 only the creator's own words. A restart they quote or name ("the part where I restart the
 kilometer thirty sentence") is a cut line, not `cut_restarts`; "start over" about the edit or a
-clip ("start over with a clip", "make it again from scratch", "baştan başla") is no restart;
+clip ("start over with a clip", "make it again from scratch", "videoyu baştan yap") is no restart;
 cut out particular spoken words (a slip, a half question, a line, "the
 part where I say ...") => {"speech_cleanup": true, "cut_lines": ["with bread, no,"]}, one item per
 stretch in the creator's exact words, quoted or described, never translated; when they say
