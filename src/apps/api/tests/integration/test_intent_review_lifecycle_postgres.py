@@ -154,7 +154,12 @@ def no_live_openai(monkeypatch):
 
 def _clean_ledger():
     with sync_engine.begin() as db:
-        db.execute(text("DELETE FROM ai_cost_reservations WHERE feature = 'intent_review'"))
+        db.execute(
+            text(
+                "DELETE FROM ai_cost_reservations "
+                "WHERE feature IN ('intent_review', 'seeded_customer_spend')"
+            )
+        )
 
 
 @pytest.fixture
@@ -389,7 +394,7 @@ async def test_one_call_with_provenance_and_a_settled_ledger_row(
     (entry,) = ledger()
     assert entry["status"] == "settled" and entry["provider"] == "openai"
     assert entry["idempotency_key"] == row.paid_call_key
-    assert entry["usage_purpose"] == "customer"
+    assert entry["usage_purpose"] == "optional_background"
     assert str(entry["creator_id"]) == str(row.owner_id)
     assert provenance["reservation"]["id"] and entry["provider_request_id"] == "resp_1"
     assert float(entry["settled_cost_usd"]) == pytest.approx(SETTLED_USD, abs=1e-6)
@@ -967,6 +972,29 @@ async def test_internal_account_with_a_canary_id_is_booked_to_the_canary(
 
 
 @pytest.mark.asyncio
+async def test_advisory_review_yields_to_customer_work_near_the_environment_cap(
+    approved_publication, paid, monkeypatch
+):
+    rid, _, _ = await ready_review(approved_publication, monkeypatch)
+    row = review_row(rid)
+    costs.reserve_paid_call(
+        costs.PaidCallRequest(
+            idempotency_key="a-customer-render-already-booked",
+            feature="seeded_customer_spend",
+            model="gemini-3-flash",
+            estimated_cost_usd=850.0,
+            ctx=ctx_for(row),
+            provider="google",
+        )
+    )
+    provider = Provider()
+    assert await run_async(rid, provider) == "exhausted"
+    assert review_row(rid).reason == "budget_monthly"
+    assert provider.calls == []
+    assert ledger() == []
+
+
+@pytest.mark.asyncio
 async def test_outside_production_the_ledger_closes_the_gate_without_an_envelope(
     approved_publication, paid, monkeypatch
 ):
@@ -994,7 +1022,7 @@ async def test_outside_production_the_manual_qa_envelope_admits_the_call(
     provider = Provider()
     assert await run_async(rid, provider) == "unavailable"
     assert review_row(rid).reason == "disposition_unavailable"
-    assert len(provider.calls) == 1 and ledger()[0]["usage_purpose"] == "manual_qa"
+    assert len(provider.calls) == 1 and ledger()[0]["usage_purpose"] == "optional_background"
 
 
 # --- concurrency and locks (rows 16, 36) ------------------------------------------------
@@ -1354,27 +1382,132 @@ async def test_one_creator_cannot_spend_past_the_daily_review_cap(
         assert [entry["status"] for entry in ledger()] == ["reserved"]
 
 
+def _generation_of(case):
+    claim, _, job_id, _ = case
+    with sync_session() as db:
+        execution = db.get(CreatorAgentExecution, claim.execution_id)
+        return SimpleNamespace(
+            session_id=execution.session_id,
+            job_id=job_id,
+            variant_id=execution.target_variant_id,
+            generation_id=execution.result["render_generation_id"],
+        )
+
+
+def _retired(target, generation_id=None):
+    from app.services.intent_review_legacy import legacy_review_retired, retirement_probe
+
+    with sync_session() as db:
+        return legacy_review_retired(
+            db.execute(
+                retirement_probe(
+                    target.session_id,
+                    job_id=target.job_id,
+                    variant_id=target.variant_id,
+                    generation_id=generation_id or target.generation_id,
+                )
+            ).first()
+        )
+
+
 @pytest.mark.asyncio
 async def test_the_legacy_review_returns_when_the_intent_review_gave_no_verdict(
     approved_publication, paid, monkeypatch
 ):
-    from app.services.intent_review_legacy import legacy_review_retired, retirement_probe
-
-    claim, *_ = approved_publication
     rid, _, _ = await ready_review(approved_publication, monkeypatch)
-    with sync_session() as db:
-        session_id = db.get(CreatorAgentExecution, claim.execution_id).session_id
-
-    def retired():
-        with sync_session() as db:
-            return legacy_review_retired(db.execute(retirement_probe(session_id)).first())
-
-    assert retired() is True
+    target = _generation_of(approved_publication)
+    assert _retired(target) is True
     for status in ("unavailable", "exhausted", "review_unknown", "stale"):
         edit_row(rid, status=status, reason="no_verdict")
-        assert retired() is False, status
+        assert _retired(target) is False, status
     for status in ("no_findings", "suggestion", "needs_confirmation"):
         edit_row(rid, status=status, reason="verdict")
-        assert retired() is True, status
+        assert _retired(target) is True, status
     monkeypatch.setattr(settings, "kria_intent_review_paid_enabled", False)
-    assert retired() is False
+    assert _retired(target) is False
+
+
+@pytest.mark.asyncio
+async def test_another_generations_review_never_retires_the_legacy_review_of_this_one(
+    approved_publication, paid, monkeypatch
+):
+    await ready_review(approved_publication, monkeypatch)
+    target = _generation_of(approved_publication)
+    assert _retired(target) is True
+    assert _retired(target, generation_id="a-generation-with-no-intent-review") is False
+
+
+def _queue_legacy_review(case, monkeypatch):
+    """The poll that saw the ready render before the intent review's admission committed."""
+    from app.tasks import creator_quality_review as legacy
+
+    target = _generation_of(case)
+    publish = Mock()
+    monkeypatch.setattr(legacy.quality_review_creator_session, "apply_async", publish)
+    with sync_session() as db:
+        session = db.get(CreatorAgentSession, target.session_id)
+        session.phase = "awaiting_feedback"
+        session.target_job_id = target.job_id
+        session.target_variant_id = target.variant_id
+        session.target_generation_id = target.generation_id
+        session.last_review = None
+        legacy.queue_creator_quality_review(
+            session,
+            job_id=str(target.job_id),
+            variant_id=target.variant_id,
+            render_generation_id=target.generation_id,
+        )
+        db.commit()
+    publish.assert_called_once()
+    return target, publish
+
+
+def _receipt(session_id):
+    with sync_session() as db:
+        return dict(db.get(CreatorAgentSession, session_id).last_review or {})
+
+
+async def _poll(session_id):
+    from app.database import AsyncSessionLocal
+    from app.services.creator_sessions import reconcile_render_state
+
+    async with AsyncSessionLocal() as db:
+        session = await db.get(CreatorAgentSession, session_id, with_for_update=True)
+        changed = await reconcile_render_state(db, session)
+        await db.commit()
+        return changed
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_review_retired_at_claim_closes_its_receipt_and_returns_on_no_verdict(
+    approved_publication, paid, monkeypatch
+):
+    from app.tasks.creator_quality_review import claim_exact_review
+
+    monkeypatch.setattr(settings, "main_creator_agent_review_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_quality_review_enabled", True)
+    rid, _, _ = await ready_review(approved_publication, monkeypatch)
+    target, publish = _queue_legacy_review(approved_publication, monkeypatch)
+    assert _receipt(target.session_id)["dispatch_status"] == "queued"
+
+    with sync_session() as db:
+        claimed = claim_exact_review(
+            db,
+            session_id=str(target.session_id),
+            job_id=str(target.job_id),
+            variant_id=target.variant_id,
+            generation_id=target.generation_id,
+        )
+    assert claimed is None
+    receipt = _receipt(target.session_id)
+    assert receipt["status"] == "unavailable"
+    assert receipt["error_code"] == "legacy_review_retired"
+    assert receipt["dispatch_status"] != "queued"
+
+    await _poll(target.session_id)
+    publish.assert_called_once()
+
+    edit_row(rid, status="unavailable", reason="no_verdict")
+    await _poll(target.session_id)
+    assert publish.call_count == 2
+    assert _receipt(target.session_id)["dispatch_status"] == "queued"

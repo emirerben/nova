@@ -181,14 +181,12 @@ def paid_call_key_for(review_id, refs: ReviewRefs) -> str:
 
 def intent_review_run_context(row, refs: ReviewRefs) -> RunContext | None:
     """Production attribution for exactly this turn, job and session; None if unattributable."""
-    purpose = canary = None
+    purpose, canary = "optional_background", None
     if costs.is_internal_creator(row.owner_id):
         canary = settings.kria_intent_review_canary_id.strip()
         if not canary:
             return None
         purpose = "internal_canary"
-    # Everyone else stays undeclared: the ledger books production spend as `customer` and,
-    # outside production, only an undeclared purpose can use the manual-QA envelope.
     return RunContext(
         creator_id=str(row.owner_id),
         job_id=refs.job_id,

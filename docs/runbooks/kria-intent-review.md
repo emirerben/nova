@@ -19,6 +19,7 @@ A finished, published generation is checked against what the creator asked for. 
 | `KRIA_INTENT_REVIEW_MAX_USD` | `0.10` | Per-review ceiling (`0 < x <= 0.25`), stamped at admission. |
 | `KRIA_INTENT_REVIEW_CANARY_ID` | empty | `release_canary_id` the ledger requires for internal accounts. |
 | `KRIA_INTENT_REVIEW_DAILY_LIMIT_PER_USER` | `20` | Paid reviews per creator per UTC day, counted in the cost ledger (`exhausted(budget_user_day)`). `0` blocks every review. |
+| `KRIA_INTENT_REVIEW_EVIDENCE_QUEUE` | `celery` | Queue for frame extraction (see Queue placement). Production pins `autoplace-jobs` in `fly.toml`. |
 | `AI_OPENAI_INTENT_REVIEW_BUDGET_USD` | `0` | Monthly capability budget. `0` rejects every reserve. |
 
 ## Tier and code ceiling
@@ -39,6 +40,7 @@ The tier is stamped at admission. Live flags can only lower it, never raise it. 
 - Exactly one provider call per row. The ledger key is `logical_call_id(feature="intent_review", request_id="intent-review:<row id>")`, stored in `paid_call_key` (unique). There are zero provider retries.
 - Cost is reserved before any frame is sent. The worst case is about $0.08: a 24,000 character prompt (about $0.016), six frames at 3,000 tokens (about $0.036) and 2,500 output tokens (about $0.025). If the estimate is above the row's stamped `max_usd` (default $0.10) the row is `exhausted(budget_review)` and nothing is reserved.
 - Monthly cap: `AI_OPENAI_INTENT_REVIEW_BUDGET_USD`, a separate ledger capability inside `AI_OPENAI_MONTHLY_BUDGET_USD`. It is checked under the ledger's provider lock and counts reserved, started, unknown and settled spend. `0` rejects every reserve. The capability is always metered, even if `AI_COST_CONTROL_ENABLED` is off.
+- Reviews are booked as `optional_background`, so they stop at 80% of the environment's monthly cap and leave the last headroom to customer renders and plans (`exhausted(budget_monthly)`).
 - Do not reuse `CREDIT_QUALITY_REVIEW_*`. Those flags gate the Anthropic online judge and pin one approved run id with a total cap of $2.
 - An unknown provider outcome keeps its reservation as liability and is never retried. The ledger counts `unknown` spend against every cap above for the rest of the calendar month (the TTL does not release it, and `reconcile_unknown_liability` only handles development `live_eval` rows), so a burst of unknowns makes later reviews `exhausted(budget_monthly)` until the month rolls over or an operator corrects the ledger.
 - Internal accounts (an active `internal_account_grants` row) must be booked to a canary. Set `KRIA_INTENT_REVIEW_CANARY_ID` to a `release_canary_id`; spend then also counts against `AI_RELEASE_CANARY_MONTHLY_BUDGET_USD`. With it empty, an internal account's row ends `unavailable(canary_unattributed)` and no call is made.
@@ -88,7 +90,7 @@ Apply with `fly secrets set -a nova-video ...` on api and worker, then restart b
 
 ## Queue placement
 
-`tasks.review_generation_intent` is light (frames come from the row, nothing is downloaded) and routes to `agent-control`. `tasks.prepare_generation_review` downloads up to 256 MB and runs ffmpeg. The `light` machine (1 GB, concurrency 2, embedded Beat) has run out of memory on that workload before, so decide where it runs before enabling `KRIA_INTENT_REVIEW_ENABLED` in production.
+`tasks.prepare_generation_review` downloads up to 256 MB and runs ffmpeg, so `KRIA_INTENT_REVIEW_EVIDENCE_QUEUE` routes it. `fly.toml` pins `autoplace-jobs`, consumed by the 4 GB worker; the code default `celery` keeps local `dev-auto.sh` working. It must never run on `agent-control` or `maintenance`, which the 1 GB `light` machine (Beat, concurrency 2) consumes, and `tests/test_render_review_routes.py` pins that. `tasks.review_generation_intent` is light (frames come from the row, nothing is downloaded) and routes to `agent-control`. Nothing needs re-routing before enabling `KRIA_INTENT_REVIEW_ENABLED`; the variable only has to reach the api and worker machines.
 
 ## Verification
 

@@ -86,19 +86,20 @@ def test_only_a_reviewing_tier_retires_the_legacy_review_until_the_review_has_no
 def test_every_flag_is_documented_where_operators_look():
     from pathlib import Path
 
+    from app.config import Settings
+
     root = Path(__file__).resolve().parents[5]
     env = (root / ".env.example").read_text(encoding="utf-8")
     claude = (root / "CLAUDE.md").read_text(encoding="utf-8")
     runbook = (root / "docs/runbooks/kria-intent-review.md").read_text(encoding="utf-8")
-    for name in (
-        "KRIA_INTENT_REVIEW_ENABLED",
-        "KRIA_INTENT_REVIEW_PAID_ENABLED",
-        "KRIA_INTENT_REVIEW_REPAIR_ENABLED",
-        "KRIA_INTENT_REVIEW_USER_IDS",
-        "KRIA_INTENT_REVIEW_MAX_USD",
-        "KRIA_INTENT_REVIEW_CANARY_ID",
-        "AI_OPENAI_INTENT_REVIEW_BUDGET_USD",
-    ):
+    names = sorted(
+        field.upper()
+        for field in Settings.model_fields
+        if field.startswith("kria_intent_review_") or field == "ai_openai_intent_review_budget_usd"
+    )
+    assert "KRIA_INTENT_REVIEW_DAILY_LIMIT_PER_USER" in names
+    assert "KRIA_INTENT_REVIEW_EVIDENCE_QUEUE" in names
+    for name in names:
         assert f"{name}=" in env, name
         assert name in runbook, name
     assert (

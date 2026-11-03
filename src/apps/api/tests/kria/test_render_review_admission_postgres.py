@@ -9,6 +9,7 @@ export or storage verifier is replaced by a claimed end-to-end success.
 import asyncio
 import copy
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select, text
@@ -180,6 +181,7 @@ async def approved_publication(monkeypatch):
         job.assembly_plan = assembly
         job.status = "variants_ready"
         execution.status = "dispatched"
+        execution.dispatched_at = datetime.now(UTC)
         db.get(CreatorAgentTurn, execution.turn_id).status = "observing"
         proof = VerifiedArtifactReceipt(
             verification_id="synthetic-server-verifier",
