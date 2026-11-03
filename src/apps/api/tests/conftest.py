@@ -4,6 +4,7 @@ app/config.py instantiates Settings() at module load — required fields must
 be present in the environment at collection time, not just at test runtime.
 """
 
+import gc
 import os
 import sys
 
@@ -67,6 +68,21 @@ def _fresh_async_engine_pool() -> None:
     database = sys.modules.get("app.database")
     if database is not None:
         database.engine.sync_engine.dispose(close=False)
+
+
+@pytest.fixture
+def release_abandoned_db_connections():
+    """Close, after the test, the asyncpg connections the pool swap above only abandons.
+
+    ``dispose(close=False)`` leaves them open until the garbage collector finalizes them,
+    so a file whose tests each open several (the intent-review suites) piles up well past
+    Postgres's default 100 connections across four xdist workers
+    (``TooManyConnectionsError``). Opt in with ``pytestmark = pytest.mark.usefixtures(...)``;
+    a collection per test is too slow to run for every DB-backed test.
+    """
+
+    yield
+    gc.collect()
 
 
 @pytest.fixture(autouse=True)

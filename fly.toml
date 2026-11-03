@@ -22,6 +22,10 @@ kill_timeout = 300
   # Poster extraction downloads MP4s; route it to the media-capable worker.
   # Enable POSTER_ONDEMAND_REPAIR_ENABLED only after all workers are upgraded.
   POSTER_REPAIR_QUEUE = "autoplace-jobs"
+  # Intent-review evidence downloads the published MP4 and runs ffmpeg: it belongs on the
+  # worker machine, never the 1GB light machine that hosts Beat. Set before enabling
+  # KRIA_INTENT_REVIEW_ENABLED.
+  KRIA_INTENT_REVIEW_EVIDENCE_QUEUE = "autoplace-jobs"
   # Deploy the dedicated worker before switching POOL_ASSET_ANALYSIS_QUEUE via
   # a Fly secret. Initial routing deliberately remains the code default: celery.
   # Same for VISUALS_ANALYSIS_QUEUE: deploy the worker that consumes

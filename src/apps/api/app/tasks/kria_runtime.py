@@ -8030,7 +8030,20 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                     },
                 )
                 turn.observed_event_id = review.id
+                review_outbox_id = None
+                if settings.kria_intent_review_enabled:
+                    from app.services.render_review_admission import (
+                        admit_generation_review,
+                        mark_admission_demand,
+                    )
+
+                    mark_admission_demand(execution, job, session)
+                    review_outbox_id = admit_generation_review(db, execution)
                 db.commit()
+                if review_outbox_id is not None:
+                    from app.services.render_review_admission import publish_generation_review
+
+                    publish_generation_review(review_outbox_id)
                 # KRI-756: the render settled ready: word the follow-up suggestion chips for it
                 # (flag-checked, enqueue-only, never raises).
                 from app.services.suggestion_serve import enqueue_for_thread  # noqa: PLC0415
