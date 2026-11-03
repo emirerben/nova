@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents.music_matcher import _sanitize_text
+from app.config import settings
 from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
@@ -154,11 +155,22 @@ class OverlayPlacementAgent(Agent[OverlayPlacementInput, OverlayPlacementOutput]
             }
             for a in input.assets
         ]
-        for payload, asset in zip(assets_payload, input.assets, strict=True):
-            if asset.origin:
-                payload["origin"] = _sanitize_text(asset.origin)
-            if asset.generation_prompt:
-                payload["generation_prompt"] = _sanitize_text(asset.generation_prompt)
+        cross_language = settings.overlay_placement_cross_language_enabled and any(
+            a.origin for a in input.assets
+        )
+        generated_rules = ""
+        if cross_language:
+            # Only a pool with a creator-generated image loosens anything, and only for those
+            # assets; every other render (uploads, the web path, flag off) is the 1.3.0 prompt.
+            for payload, asset in zip(assets_payload, input.assets, strict=True):
+                if asset.origin:
+                    payload["origin"] = _sanitize_text(asset.origin)
+                if asset.generation_prompt:
+                    payload["generation_prompt"] = _sanitize_text(asset.generation_prompt)
+            generated_rules = "\n\n" + load_prompt(
+                "overlay_placement_generated",
+                spoken_language=_sanitize_text(input.spoken_language) or "unknown",
+            ).rstrip("\n")
         return load_prompt(
             "overlay_placement",
             words_json=json.dumps(words_payload, ensure_ascii=False),
@@ -168,7 +180,7 @@ class OverlayPlacementAgent(Agent[OverlayPlacementInput, OverlayPlacementOutput]
             ),
             duration_s=f"{input.duration_s:.1f}",
             archetype=_sanitize_text(input.archetype) or "talking_head",
-            spoken_language=_sanitize_text(input.spoken_language) or "unknown",
+            generated_image_rules=generated_rules,
         )
 
     def parse(

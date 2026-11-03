@@ -3008,9 +3008,11 @@
       "api_tests": "tests/agents/test_overlay_placement_cross_language.py tests/agents/test_brief_extractor_generated_image.py tests/services/test_generated_image_grounding.py tests/services/test_phone_overlay_grounding.py tests/services/test_generated_media_admission.py",
       "paths": [
         "src/apps/api/prompts/overlay_placement.txt",
+        "src/apps/api/prompts/overlay_placement_generated.txt",
         "src/apps/api/app/services/generated_image_grounding.py",
-        "src/apps/api/tests/fixtures/agent_evals/overlay_placement/golden/generated_image_cross_language_match.json",
-        "src/apps/api/tests/fixtures/agent_evals/overlay_placement/golden/generated_image_unrelated_control_omitted.json",
+        "src/apps/api/tests/fixtures/agent_evals/overlay_placement/golden/contract_generated_image_cross_language_match.json",
+        "src/apps/api/tests/fixtures/agent_evals/overlay_placement/golden/contract_generated_image_unrelated_control_omitted.json",
+        "src/apps/api/tests/fixtures/agent_evals/overlay_placement/golden/contract_generated_image_near_miss_controls.json",
         "src/apps/api/tests/agents/test_overlay_placement_cross_language.py",
         "src/apps/api/tests/agents/test_brief_extractor_generated_image.py",
         "src/apps/api/tests/services/test_generated_image_grounding.py"

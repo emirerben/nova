@@ -1,0 +1,132 @@
+{
+  "agent": "nova.compose.overlay_placement",
+  "prompt_version": "1.4.0",
+  "input": {
+    "words": [
+      {
+        "word": "Dün",
+        "start_s": 5.0,
+        "end_s": 5.35
+      },
+      {
+        "word": "akşam",
+        "start_s": 5.4,
+        "end_s": 5.75
+      },
+      {
+        "word": "bira",
+        "start_s": 5.8,
+        "end_s": 6.15
+      },
+      {
+        "word": "içtik",
+        "start_s": 6.2,
+        "end_s": 6.55
+      },
+      {
+        "word": "sonra",
+        "start_s": 6.6,
+        "end_s": 6.95
+      },
+      {
+        "word": "kahve",
+        "start_s": 7.0,
+        "end_s": 7.35
+      },
+      {
+        "word": "söyledik",
+        "start_s": 7.4,
+        "end_s": 7.75
+      },
+      {
+        "word": "ve",
+        "start_s": 7.8,
+        "end_s": 8.15
+      },
+      {
+        "word": "en",
+        "start_s": 8.2,
+        "end_s": 8.55
+      },
+      {
+        "word": "sonunda",
+        "start_s": 8.6,
+        "end_s": 8.95
+      },
+      {
+        "word": "şehir",
+        "start_s": 9.0,
+        "end_s": 9.35
+      },
+      {
+        "word": "turuna",
+        "start_s": 9.4,
+        "end_s": 9.75
+      },
+      {
+        "word": "çıktık",
+        "start_s": 9.8,
+        "end_s": 10.15
+      }
+    ],
+    "occupied": [],
+    "duration_s": 40.0,
+    "archetype": "talking_head",
+    "spoken_language": "tr",
+    "assets": [
+      {
+        "asset_id": "asset_wine",
+        "kind": "image",
+        "origin": "generated",
+        "user_context": "Wine",
+        "subject": "Wine",
+        "description": "Wine",
+        "on_screen_text": "",
+        "duration_s": null,
+        "aspect": 0.6667,
+        "width": 1024,
+        "height": 1536
+      },
+      {
+        "asset_id": "asset_tea",
+        "kind": "image",
+        "origin": "generated",
+        "user_context": "Tea",
+        "subject": "Tea",
+        "description": "Tea",
+        "on_screen_text": "",
+        "duration_s": null,
+        "aspect": 0.6667,
+        "width": 1024,
+        "height": 1536
+      },
+      {
+        "asset_id": "asset_map",
+        "kind": "image",
+        "origin": "generated",
+        "user_context": "Map",
+        "subject": "Map",
+        "description": "Map",
+        "on_screen_text": "",
+        "duration_s": null,
+        "aspect": 0.6667,
+        "width": 1024,
+        "height": 1536
+      }
+    ]
+  },
+  "raw_text": "{\"placements\": [], \"wishlist\": [\"Add footage of the evening city tour you mention\"]}",
+  "output": {
+    "placements": [],
+    "wishlist": [
+      "Add footage of the evening city tour you mention"
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_contract",
+    "kind": "contract",
+    "pins": "the output contract (a correct answer parses and has this shape) and the prompt content, not model behaviour",
+    "case": "Near misses stay omitted: a Wine image at 'bira' (beer), a Tea image at 'kahve' (coffee), a Map image at 'şehir' (city; a map would need 'harita').",
+    "unproven": "Recorded-response contract. The transcript and timings are synthetic. Whether the real model follows prompt 1.4.0 on this input is NOT measured here; only a live run measures it."
+  }
+}
