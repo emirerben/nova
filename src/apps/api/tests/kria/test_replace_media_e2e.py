@@ -54,6 +54,7 @@ from app.models import (
     Job,
     Persona,
     PlanItem,
+    TemporaryMediaUpload,
     User,
 )
 from app.services import phone_rollout
@@ -777,6 +778,64 @@ async def test_an_upload_that_never_finished_leaves_the_old_take_in_place(
     assert response.json()["problem"]["retryable"] is True
     assert snapshot(world) == before
     assert len(before["assignments"]) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["unreadable", "geometry", "target_gone"])
+async def test_every_upload_rejection_is_a_typed_problem_the_app_can_branch_on(
+    case, takes, object_store, tmp_path
+) -> None:
+    """The app branches on `problem.code`; a bare `{"detail": ...}` leaves it guessing between
+    'transcode again' and 'retry the same dead media id'."""
+    world = seed_world(takes)
+    api = _api(world, object_store)
+    if case == "unreadable":
+        broken = tmp_path / "broken.mp4"
+        broken.write_bytes(b"this is not a video" * 64)
+        new_id = api.upload("broken", broken)
+        expected = (422, "video_could_not_be_read")
+    elif case == "geometry":
+        off_size = tmp_path / "off_size.mp4"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=240x426:rate=30:duration=2",
+            ]
+            + ["-f", "lavfi", "-i", "sine=duration=2", "-shortest", "-c:v", "libx264"]
+            + ["-pix_fmt", "yuv420p", "-c:a", "aac", str(off_size)],
+            check=True,
+        )
+        new_id = api.upload("off_size", off_size)
+        expected = (422, "proxy_geometry_mismatch")
+    else:
+        new_id = api.upload("b", takes["b"])
+        with sync_session() as db:
+            db.add(
+                TemporaryMediaUpload(
+                    user_id=world.user_id,
+                    object_path=world.paths[new_id],
+                    purpose="creation_thread_media",
+                    status="deleted",
+                    retention_expires_at=func.now(),
+                    deleted_at=func.now(),
+                )
+            )
+            db.commit()
+        expected = (409, "upload_target_unavailable")
+    before = snapshot(world)
+
+    response = await api.replace(world.clips["a"], new_id)
+
+    assert (response.status_code, code(response)) == expected, response.text
+    problem = response.json()["problem"]
+    assert problem["retryable"] is False and problem["recovery"] == "manual"
+    assert snapshot(world) == before
 
 
 @pytest.mark.asyncio

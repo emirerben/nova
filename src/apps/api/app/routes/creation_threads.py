@@ -1194,8 +1194,15 @@ async def _probe_registered_media(
     generation: str,
     kind: str,
     proxy: AnalysisProxyDescriptor | None = None,
+    reject: Callable[..., NoReturn] | None = None,
 ) -> tuple[float, bool]:
-    """Range-probe one verified generation; never persist/log its signed URL."""
+    """Range-probe one verified generation; never persist/log its signed URL.
+
+    ``reject`` takes the same arguments as the verifier's (status, detail, cause, ``reason``
+    and log fields); the default keeps the legacy HTTP error and its log event.
+    """
+
+    reject = reject or functools.partial(_reject_media, "creation_thread.media_probe.rejected")
 
     signed_url = await asyncio.to_thread(
         storage.signed_get_url_for_generation,
@@ -1208,8 +1215,7 @@ async def _probe_registered_media(
         try:
             probe = await asyncio.to_thread(probe_video, signed_url)
         except ProbeError as exc:
-            _reject_media(
-                "creation_thread.media_probe.rejected",
+            reject(
                 422,
                 "Video could not be read",
                 cause=exc,
@@ -1225,8 +1231,7 @@ async def _probe_registered_media(
             or abs(probe.fps - proxy.frame_rate) > 0.01
             or probe.rotation_degrees != 0
         ):
-            _reject_media(
-                "creation_thread.media_probe.rejected",
+            reject(
                 422,
                 "Uploaded proxy geometry differs from its descriptor",
                 reason="proxy_geometry_mismatch",
@@ -1250,8 +1255,7 @@ async def _probe_registered_media(
     duration = await asyncio.to_thread(probe_duration, signed_url)
     has_audio = await asyncio.to_thread(probe_has_audio_stream, signed_url)
     if duration is None or duration <= 0 or not has_audio:
-        _reject_media(
-            "creation_thread.media_probe.rejected",
+        reject(
             422,
             "Narration audio could not be read",
             reason="audio_could_not_be_read",
@@ -6710,7 +6714,18 @@ async def _verify_registered_uploads(
         if library is None:
             from app.services.temporary_uploads import require_upload_available
 
-            await require_upload_available(db, user.id, expected_path)
+            try:
+                await require_upload_available(db, user.id, expected_path)
+            except HTTPException as exc:
+                reject(
+                    exc.status_code,
+                    str(exc.detail),
+                    cause=exc,
+                    reason="upload_target_unavailable",
+                    thread_id=str(thread.id),
+                    media_id=media.media_id,
+                    media_kind=media.kind,
+                )
             physical_upload_paths.append(expected_path)
         if library and library[1].role == "analysis_proxy":
             proxy_contracts[media.media_id] = MediaUploadContract.model_validate(
@@ -6783,6 +6798,7 @@ async def _verify_registered_uploads(
                     object_path=expected_path,
                     generation=generation,
                     kind=media.kind,
+                    reject=reject,
                     **({"proxy": contract.proxy} if contract else {}),
                 )
         except FileNotFoundError as exc:
@@ -6795,7 +6811,7 @@ async def _verify_registered_uploads(
                 media_id=media.media_id,
                 media_kind=media.kind,
             )
-        except HTTPException:
+        except (HTTPException, RuntimeFailure):
             raise
         except Exception as exc:
             reject(

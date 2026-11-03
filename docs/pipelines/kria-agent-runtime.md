@@ -1096,8 +1096,8 @@ kind `video`, the proxy reservation id on a device-only thread), `reason` (only 
 | Status | `problem.code` |
 | --- | --- |
 | 404 | `media_replace_unavailable`, or a thread code from `_load` (`thread_not_found`, `thread_deleted`, `thread_id_invalid`) |
-| 409 | `thread_archived`, `idempotency_key_reused`, `revision_mismatch` (carries `current_revision`), `render_in_progress`, `draft_missing`, `retake_target_missing`, `retake_target_not_speaker`, `retake_speaker_unknown`, `retake_same_source`, `source_already_attached`, `retake_source_unresolved`, `upload_not_finished` (retryable) |
-| 422 | `retake_unsupported_format`, `retake_target_not_clip`, `retake_kind_mismatch`, `retake_library_unsupported`, `retake_has_no_audio`, `invalid_media_id`, `path_mismatch`, `device_render_unsupported`, plus the verifier codes it shares with attach |
+| 409 | `thread_archived`, `idempotency_key_reused`, `revision_mismatch` (carries `current_revision`), `render_in_progress`, `draft_missing`, `retake_target_missing`, `retake_target_not_speaker`, `retake_speaker_unknown`, `retake_same_source`, `source_already_attached`, `retake_source_unresolved`, `upload_not_finished` (retryable), `upload_target_unavailable` (upload a new source), `registration_changed` (retryable) |
+| 422 | `retake_unsupported_format`, `retake_target_not_clip`, `retake_kind_mismatch`, `retake_library_unsupported`, `retake_has_no_audio`, `invalid_media_id`, `path_mismatch`, `device_render_unsupported`, `video_could_not_be_read`, `proxy_geometry_mismatch`, `proxy_verification_failed`, `proxy_kind_mismatch`, `kind_mismatch`, plus the other verifier codes it shares with attach |
 | 503 | `identity_unavailable`, `upload_verification_error`, `media_verification_error` (retryable) |
 
 Data changes: the clip row at the same index is rebuilt by the attach row builder (only `shot_id`
