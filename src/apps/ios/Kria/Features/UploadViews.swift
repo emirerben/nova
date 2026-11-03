@@ -49,6 +49,7 @@ struct FootagePickerView: View {
     /// Set by a host (a chat tile, the camera's Upload) to start one source as soon as this view is on screen.
     let launchSource: Binding<FootageSourceKind?>
     @State private var showsSources = false
+    @State private var savedUploadsToPhotos = false
     @ObservedObject private var uploads: BackgroundUploadCoordinator
     /// Upload rows say when they are waiting for a connection (KRI-294).
     @ObservedObject private var network = NetworkReachability.shared
@@ -266,7 +267,9 @@ struct FootagePickerView: View {
             title: displayTitle,
             onFilled: onPickerFilled,
             didChooseNewFootage: $photosPickerHasNewFootage,
-            onSelectionCompleted: onSelectionCompleted
+            onSelectionCompleted: onSelectionCompleted,
+            onRecord: recordAction,
+            onSwitch: { start($0) }
         ))
         .onChange(of: photoItems) { _, items in reconcile(items) }
         .fileImporter(
@@ -277,11 +280,12 @@ struct FootagePickerView: View {
         )
         .sheet(isPresented: $showingSavedUploads, onDismiss: {
             if savedUploadsAdded { savedUploadsAdded = false; onSelectionCompleted?() }
+            if savedUploadsToPhotos { savedUploadsToPhotos = false; start(.photos) }
         }) {
             SavedUploadsView(projectID: projectID, itemID: itemID, role: role, destination: destination,
-                             capacity: selectionCapacity.remaining, uploads: uploads) {
+                             capacity: selectionCapacity.remaining, uploads: uploads, onAdded: {
                 savedUploadsAdded = true
-            }
+            }, onChoosePhotos: role.isAudio ? nil : { savedUploadsToPhotos = true; showingSavedUploads = false })
         }
         .sheet(isPresented: $showsSources) {
             UploadSourcesSheet(noun: role == .visual ? "photos and videos" : "videos", offersSaved: libraryEnabled) { kind in
@@ -316,6 +320,11 @@ struct FootagePickerView: View {
                           disabledReason: selectionCapacity.remaining == 0 && destination.canUpload
                             ? "You’ve added \(FootageStageCopy.count(max(maximumClipCount, attachedClipCount), role == .visual ? "item" : "clip")), the most for this edit." : nil)
         }
+    }
+
+    private var recordAction: (() -> Void)? {
+        if case .tiles(let record, _) = controls { return record }
+        return nil
     }
 
     private func openSources() {
@@ -573,7 +582,11 @@ private struct FootagePhotosPicker: ViewModifier {
     let onFilled: (() -> Void)?
     @Binding var didChooseNewFootage: Bool
     let onSelectionCompleted: (() -> Void)?
+    /// The gallery's Record cell and its Saved uploads / Files switches. Each closes the gallery first, then runs.
+    var onRecord: (() -> Void)?
+    var onSwitch: ((FootageSourceKind) -> Void)?
     @State private var closedByFilling = false
+    @State private var afterDismiss: (() -> Void)?
 
     private func completeSelectionIfNeeded() {
         guard didChooseNewFootage else { return }
@@ -588,8 +601,13 @@ private struct FootagePhotosPicker: ViewModifier {
                 // still on screen would tear both down mid-animation.
                 if closedByFilling { closedByFilling = false; onFilled?() }
                 completeSelectionIfNeeded()
+                if let next = afterDismiss { afterDismiss = nil; next() }
             }) {
-                LibraryPhotosPickerSheet(title: title, selection: $selection, limit: limit, filter: filter, kinds: kinds) { filled in
+                LibraryPhotosPickerSheet(
+                    title: title, selection: $selection, limit: limit, filter: filter, kinds: kinds,
+                    onRecord: onRecord.map { record in { afterDismiss = record; isPresented = false } },
+                    onSwitch: onSwitch.map { switchTo in { kind in afterDismiss = { switchTo(kind) }; isPresented = false } }
+                ) { filled in
                     closedByFilling = filled
                     isPresented = false
                 }
@@ -609,44 +627,63 @@ private struct LibraryPhotosPickerSheet: View {
     let limit: Int
     let filter: PHPickerFilter
     let kinds: LibraryMediaKinds
+    let onRecord: (() -> Void)?
+    let onSwitch: ((FootageSourceKind) -> Void)?
     let close: (_ filled: Bool) -> Void
-    /// The in-app gallery (slide-to-select) is the default under full access; Apple's inline picker stays one tap away.
+    /// Only for UI tests: the system's inline picker stands in for the Kria gallery.
     @State private var usesApplePicker = ProcessInfo.processInfo.arguments.contains("-ui-testing-apple-photo-picker")
+    @State private var segment = GallerySegment.photos
+
+    private enum GallerySegment: Hashable { case photos, saved }
+
+    private var count: Int { selection.compactMap(\.itemIdentifier).count }
+    private var noun: String { kinds == .videos ? "clip" : "item" }
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            ZStack {
+                Text(title.isEmpty ? "Choose clips" : "Choose \(title.lowercased())").kriaType(.button).foregroundStyle(KriaColor.ink)
+                    .accessibilityAddTraits(.isHeader)
+                HStack {
+                    Button("Cancel") { close(false) }
+                        .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium)).accessibilityIdentifier("gallery-cancel")
+                    Spacer()
+                }
+            }
+            .padding(.horizontal, 12).frame(height: 56)
+            if onSwitch != nil {
+                HStack(spacing: 8) {
+                    KriaSegmentedControl(options: [("Photos", GallerySegment.photos), ("Saved uploads", .saved)], selection: Binding(
+                        get: { segment },
+                        set: { next in
+                            segment = next
+                            if next == .saved { onSwitch?(.savedUploads) }
+                        }), fillsWidth: true)
+                        .accessibilityIdentifier("gallery-segments")
+                    Button { onSwitch?(.files) } label: { Label("Files", systemImage: "folder") }
+                        .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium)).accessibilityIdentifier("gallery-files")
+                }
+                .padding(.horizontal, 16).padding(.bottom, 8)
+            }
             Group {
                 if usesApplePicker {
                     PhotosPicker(selection: $selection, maxSelectionCount: limit, selectionBehavior: .continuousAndOrdered,
                                  matching: filter, photoLibrary: .shared()) { EmptyView() }
                         .photosPickerStyle(.inline)
-                        .ignoresSafeArea(edges: .bottom)
                 } else {
-                    LibraryGalleryGrid(selection: $selection, limit: limit, kinds: kinds)
+                    LibraryGalleryGrid(selection: $selection, limit: limit, kinds: kinds, onRecord: onRecord)
                 }
             }
-            .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(usesApplePicker ? "Kria gallery" : "Apple's picker") { usesApplePicker.toggle() }
-                        .accessibilityIdentifier("gallery-toggle-picker")
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { close(false) }.accessibilityIdentifier("photos-picker-done")
-                }
+            VStack(spacing: 8) {
+                Text("\(count) of \(limit) selected").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                    .accessibilityIdentifier("gallery-count")
+                Button(count == 0 ? "Choose \(noun)s" : "Add \(count) \(count == 1 ? noun : noun + "s")") { close(count >= limit) }
+                    .buttonStyle(KriaButtonStyle(role: count == 0 ? .secondary : .primary, fullWidth: true))
+                    .disabled(count == 0).accessibilityIdentifier("photos-picker-done")
             }
+            .padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 12).background(KriaColor.paper)
         }
-        .onChange(of: selection) { previous, current in
-            let ids = current.compactMap(\.itemIdentifier)
-            guard PhotoPickerAutoClose.shouldClose(previous: previous.compactMap(\.itemIdentifier), current: ids, limit: limit) else { return }
-            // Long enough to see the checkmark land; the uploads were already started by the host's
-            // own `onChange`, which doesn't depend on this sheet staying open.
-            Task {
-                try? await Task.sleep(for: .milliseconds(350))
-                if selection.compactMap(\.itemIdentifier) == ids { close(true) }
-            }
-        }
+        .background(KriaColor.paper)
     }
 }
 

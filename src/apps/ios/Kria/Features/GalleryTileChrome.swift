@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The look shared by every selectable media grid (the Photos gallery and the saved-uploads grid): pick-order
-/// number or empty ring top-trailing, video length bottom-trailing, and a heavy ink frame once chosen.
+/// number or empty ring top-trailing, video length bottom-trailing, and a sky wash once chosen.
 struct GalleryTileChrome: ViewModifier {
     /// 1-based pick number; nil when not chosen.
     let number: Int?
@@ -30,9 +30,9 @@ struct GalleryTileChrome: ViewModifier {
                             .background(KriaColor.mutedInk, in: Circle())
                     } else if let number {
                         Text("\(number)")
-                            .font(KriaFont.body(12).weight(.bold)).foregroundStyle(Color.white)
-                            .frame(minWidth: 22, minHeight: 22).padding(.horizontal, 2)
-                            .background(KriaColor.ink, in: Capsule())
+                            .font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.ink)
+                            .frame(minWidth: 24, minHeight: 24).padding(.horizontal, 2)
+                            .background(KriaColor.butter, in: Capsule())
                     } else {
                         Circle().stroke(Color.white.opacity(0.9), lineWidth: 1.5).frame(width: 22, height: 22)
                             .background(Circle().fill(Color.black.opacity(0.15)))
@@ -40,7 +40,7 @@ struct GalleryTileChrome: ViewModifier {
                 }
                 .padding(5)
             }
-            .overlay { if number != nil, !isLocked { Rectangle().stroke(KriaColor.ink, lineWidth: 3) } }
+            .overlay { if number != nil, !isLocked { Rectangle().fill(KriaColor.sky.opacity(0.24)).allowsHitTesting(false) } }
             .contentShape(Rectangle())
     }
 
