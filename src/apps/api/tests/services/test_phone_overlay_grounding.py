@@ -1147,3 +1147,33 @@ def test_upload_receipts_keep_their_exact_shape(monkeypatch):
     assert result.receipt["unplaced"] == [
         {"media_id": "a1", "label": "shot.jpg", "reason": "no_spoken_match", "kind": "image"}
     ]
+
+
+def test_a_stored_generation_prompt_reaches_the_agent_input(monkeypatch):
+    asset = _generated_beer()
+    asset["analysis"] = {
+        **asset["analysis"],
+        "subject": "Beer",
+        "description": "Beer",
+        "generation_prompt": "a glass of beer on a bar",
+    }
+    _patch_assets(monkeypatch, [asset])
+    monkeypatch.setattr(pg.settings, "gemini_api_key", "fake-key", raising=False)
+    captured: dict = {}
+
+    def _fake_run(self, input, ctx=None):  # noqa: A002, ARG001
+        captured["input"] = input
+        return OverlayPlacementOutput(placements=[], wishlist=[])
+
+    monkeypatch.setattr(OverlayPlacementAgent, "run", _fake_run)
+    pg.ground_phone_subtitled_overlays(
+        _open_session,
+        job_id=str(uuid.uuid4()),
+        words=TURKISH_WORDS,
+        duration_s=60.0,
+        clip_path=None,
+        spoken_language="tr",
+    )
+    sent = captured["input"].assets[0]
+    assert sent.generation_prompt == "a glass of beer on a bar"
+    assert sent.description == "Beer"

@@ -91,3 +91,26 @@ def test_replay_control_keeps_an_unrelated_image_out():
     agent = OverlayPlacementAgent.__new__(OverlayPlacementAgent)
     inp = OverlayPlacementInput.model_validate(fx["input"])
     assert agent.parse(fx["raw_text"], inp).placements == []
+
+
+def test_a_generated_images_stored_prompt_reaches_the_model_but_an_upload_sends_none():
+    agent = OverlayPlacementAgent.__new__(OverlayPlacementAgent)
+    prompt = agent.render_prompt(
+        OverlayPlacementInput(
+            words=[{"word": "kahve", "start_s": 1.0, "end_s": 1.4}],
+            assets=[
+                PlacementAsset(
+                    asset_id="g1",
+                    origin="generated",
+                    user_context="Coffee",
+                    generation_prompt="a steaming cup on a table",
+                ),
+                PlacementAsset(asset_id="u1", user_context="Coffee"),
+            ],
+            duration_s=30.0,
+            spoken_language="tr",
+        )
+    )
+    pool = json.loads(prompt.split("## The asset pool (analyzed)\n", 1)[1].split("\n", 1)[0])
+    assert pool[0]["generation_prompt"] == "a steaming cup on a table"
+    assert "generation_prompt" not in pool[1] and "origin" not in pool[1]

@@ -167,7 +167,7 @@ def test_admitted_image_carries_prompt_text_for_autoplace(setup):
     admit_generated_asset(db, op, **owner)
     row = db.add.call_args.args[0]
     assert row.analysis["source"] == "generated"
-    assert row.analysis["subject"] == "Editable"
-    assert row.analysis["description"] == "a cold glass of beer on a pub table"
+    assert row.analysis["subject"] == row.analysis["description"] == "Editable"
+    assert row.analysis["generation_prompt"] == "a cold glass of beer on a pub table"
     assert row.user_context == "Editable"
     assert "on_screen_text" not in row.analysis
