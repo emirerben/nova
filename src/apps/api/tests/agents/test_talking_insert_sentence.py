@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 
 import pytest
+
+from app.agents._runtime import ModelClient, ModelInvocation, TransientError
 from app.agents.talking_insert_sentence import (
     MAX_SENTENCES,
     SentenceChoiceInput,
@@ -21,8 +23,6 @@ from app.agents.talking_insert_sentence import (
 )
 from app.pipeline.phone_talking_insert_topics import Sentence, TopicPick
 from app.services.phone_insert_topic_picker import pick_topic_sentences
-
-from app.agents._runtime import ModelClient, ModelInvocation, TransientError
 
 SENTENCES = [
     Sentence(1, "Fenerbahçe'ye yeni bir stat teklif edildi.", 1.0, 3.2),
