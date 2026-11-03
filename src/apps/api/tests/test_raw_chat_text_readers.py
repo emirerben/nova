@@ -173,6 +173,12 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
         "Checks pinned request identity without prose interpretation or output changes.",
         frozenset({"resolve_initial_render_authority"}),
     ),
+    "kria/intent_review_qualification.py": (
+        "content_only",
+        "Offline qualification harness: binds its own preregistered request text to a synthetic "
+        "brief to build the review cases; it reads no creator chat and decides no render.",
+        frozenset({"_packet"}),
+    ),
     "services/render_review_admission.py": (
         "carry",
         "Copies request and dispatch settings into read-only admission; no prose routing.",
