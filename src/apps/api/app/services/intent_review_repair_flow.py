@@ -19,7 +19,7 @@ from typing import Any, NamedTuple
 
 import structlog
 from celery.exceptions import SoftTimeLimitExceeded
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -155,8 +155,49 @@ def thread_busy(db, thread_id, *, own_approval_is_pending: bool = False) -> bool
     )
 
 
+DECLINED_ABANDONS = UNAPPROVED_REASONS | {"undone"}
+
+
+def decline_key(candidate: dict[str, Any]) -> str:
+    """A candidate's identity across generations: what it does to which element."""
+    return _sha(
+        candidate["kind"],
+        candidate["element_ref"],
+        json.dumps(candidate["target"], sort_keys=True),
+    )
+
+
+def declined_candidate_keys(db, session_id, review_id) -> frozenset[str]:
+    """Candidates this project's creator turned down, or the follow-up review judged worse."""
+    reviews = db.scalars(
+        select(CreatorGenerationReview.review)
+        .join(
+            CreatorAgentExecution, CreatorAgentExecution.id == CreatorGenerationReview.execution_id
+        )
+        .where(
+            CreatorAgentExecution.session_id == session_id,
+            CreatorGenerationReview.id != review_id,
+            or_(
+                CreatorGenerationReview.status == "repair_reverted",
+                and_(
+                    CreatorGenerationReview.status == "repair_abandoned",
+                    CreatorGenerationReview.reason.in_(DECLINED_ABANDONS),
+                ),
+            ),
+        )
+    )
+    keys: set[str] = set()
+    for review in reviews:
+        staged = set(((review or {}).get("repair") or {}).get("candidate_ids") or [])
+        for candidate in ((review or {}).get("catalog") or {}).get("candidates") or []:
+            if candidate["candidate_id"] in staged:
+                keys.add(decline_key(candidate))
+    return frozenset(keys)
+
+
 def _live_candidate_ids(db, rows, row) -> frozenset[str]:
-    """Candidates a rebuild from the brief as it stands now would still emit."""
+    """Candidates a rebuild from the brief as it stands now would still emit, minus any the
+    creator or the follow-up review already turned down."""
     packet = row.result["packet"]
     try:
         binding = BriefBinding.model_validate_json(packet["binding_json"])
@@ -176,7 +217,12 @@ def _live_candidate_ids(db, rows, row) -> frozenset[str]:
     except Exception:
         log.warning("intent_review_live_catalog_unavailable", review_id=str(row.id), exc_info=True)
         return frozenset()
-    return frozenset(c.candidate_id for c in catalog.candidates if c.auto)
+    declined = declined_candidate_keys(db, rows.session.id, row.id)
+    return frozenset(
+        c.candidate_id
+        for c in catalog.candidates
+        if c.auto and decline_key(c.model_dump(mode="json")) not in declined
+    )
 
 
 def repair_preconditions(db, rows, row) -> RepairPreconditions:
@@ -560,8 +606,24 @@ def _by_brief(review: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
+def _touched_briefs(parent: dict[str, Any]) -> set[str]:
+    """Requirements mapped to an element the staged repair edits."""
+    catalog = parent.get("catalog") or {}
+    staged = set((parent.get("repair") or {}).get("candidate_ids") or [])
+    elements = {
+        c["element_ref"] for c in catalog.get("candidates") or [] if c["candidate_id"] in staged
+    }
+    return {
+        item["brief_id"]
+        for item in catalog.get("requirements") or []
+        if elements & set(item.get("element_refs") or [])
+    }
+
+
 def compare_reviews(parent: dict[str, Any], child: dict[str, Any]) -> tuple[bool, bool]:
-    """(fixed, worse): did the repaired render meet what was targeted, and did it lose ground."""
+    """(fixed, worse): did the repaired render meet what was targeted, and did it lose ground on
+    a requirement the repair could have touched. Another requirement flipping on a second,
+    independent look at different frames is noise, not the repair's doing."""
     before, after = _by_brief(parent), _by_brief(child)
 
     def high(findings: dict[str, dict[str, Any]], verdict: str) -> set[str]:
@@ -571,13 +633,14 @@ def compare_reviews(parent: dict[str, Any], child: dict[str, Any]) -> tuple[bool
             if f["verdict"] == verdict and f["confidence"] == "high"
         }
 
-    parent_met = {brief for brief, f in before.items() if f["verdict"] == "met"}
-    child_unmet = high(after, "unmet")
     targeted = set((parent.get("repair") or {}).get("targeted_brief_ids") or [])
+    touched = _touched_briefs(parent) | targeted
+    parent_met = {brief for brief, f in before.items() if f["verdict"] == "met"}
+    child_unmet = high(after, "unmet") & touched
     met_after = {brief for brief, f in after.items() if f["verdict"] == "met"}
     fixed = bool(targeted) and targeted <= met_after
     worse = bool(child_unmet & parent_met) or (
-        not fixed and len(child_unmet) > len(high(before, "unmet"))
+        not fixed and len(child_unmet) > len(high(before, "unmet") & touched)
     )
     return fixed, worse
 

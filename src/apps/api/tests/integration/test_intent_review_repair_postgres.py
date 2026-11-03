@@ -40,6 +40,14 @@ Failure modes, written before the staging code (matrix row in parentheses). Each
     `fixed` needs every recorded target met, and at least one target; a low-confidence unmet
     finding is no loss; more high-confidence unmet requirements than before is a loss even
     when none of them was met before.
+  A repair the creator or the follow-up review turned down comes back (30, 31):
+    a candidate whose approval was denied, expired, timed out or undone, or that the follow-up
+    judged worse, is held back as `protected` on every later review of the same project, so a
+    declined fix is never staged twice and the creator's choice is never overridden.
+  A follow-up that blames the repair for something it never touched (31):
+    only requirements mapped to a repaired element can make a repair worse; another
+    requirement flipping to unmet on a second, independent look at different frames cannot undo
+    a fix that met its own target.
   A repair that speaks in the chat (12, 39):
     each reply the draft path would have written instead of a draft (creative-copy consent, the
     protected-mark question, the readiness question) is refused inside the transaction: the
@@ -86,6 +94,7 @@ from app.models import (
     CreatorAgentExecution,
     CreatorAgentTurn,
     CreatorEditDraft,
+    CreatorGenerationReview,
     Job,
 )
 from app.services import intent_review_flow as flow
@@ -679,23 +688,39 @@ def two_requirements(packet):
     packet["binding_json"] = BriefBinding.create(old.thread_id, brief).model_dump_json()
 
 
+def two_title_requirements(packet):
+    from app.kria.brief import CreativeBrief
+
+    old = BriefBinding.model_validate_json(packet["binding_json"])
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            *old.brief.requirements,
+            BriefRequirement(
+                id="r2", kind="text", scope="title", literal=None, description="creator ask"
+            ),
+        ],
+    )
+    packet["binding_json"] = BriefBinding.create(old.thread_id, brief).model_dump_json()
+
+
 @pytest.mark.asyncio
 async def test_a_repair_that_loses_ground_is_undone_through_its_own_draft_chain(
     drifted, repair_on, monkeypatch
 ):
     _, thread, job_id, _ = drifted
     rid = await ready(drifted, monkeypatch)
-    edit_packet(rid, two_requirements)
+    edit_packet(rid, two_title_requirements)
     parent_reply = reply(
         finding("R1", "unmet", "copy_mismatch", ["f0"]), finding("R2", "met", frames=["f1"])
     )
     assert await run_async(rid, Provider(parent_reply)) == "repair_staged"
     claim, _, _, proof = await approve_the_repair(drifted, rid, monkeypatch)
     child = await ready((claim, thread, job_id, proof), monkeypatch)
-    edit_packet(child, two_requirements)
+    edit_packet(child, two_title_requirements)
     worse = reply(
         finding("R1", "met", frames=["f0"]),
-        finding("R2", "unmet", "wrong_content", ["f1"]),
+        R2_TITLE_UNMET,
     )
     plan_before = copy.deepcopy(job_plan(job_id))
     staged = drafts(thread)[-1]
@@ -720,19 +745,19 @@ async def test_a_worse_repair_over_a_newer_edit_is_marked_but_not_undone(
 ):
     _, thread, job_id, _ = drifted
     rid = await ready(drifted, monkeypatch)
-    edit_packet(rid, two_requirements)
+    edit_packet(rid, two_title_requirements)
     parent_reply = reply(
         finding("R1", "unmet", "copy_mismatch", ["f0"]), finding("R2", "met", frames=["f1"])
     )
     assert await run_async(rid, Provider(parent_reply)) == "repair_staged"
     claim, _, _, proof = await approve_the_repair(drifted, rid, monkeypatch)
     child = await ready((claim, thread, job_id, proof), monkeypatch)
-    edit_packet(child, two_requirements)
+    edit_packet(child, two_title_requirements)
     make_head_move(thread)
     after_move = [(d.id, d.is_head) for d in drafts(thread)]
     worse = reply(
         finding("R1", "met", frames=["f0"]),
-        finding("R2", "unmet", "wrong_content", ["f1"]),
+        R2_TITLE_UNMET,
     )
     assert await run_async(child, Provider(worse)) == "suggestion"
     parent = review_row(rid)
@@ -847,6 +872,139 @@ async def test_a_repair_the_creator_walks_away_from_is_abandoned_with_the_right_
     assert head.is_head
     assert title_of(head)["text"] == (DRIFTED_TITLE if unapproved else "Before")
     assert len(events(thread, "draft_undone")) == (1 if unapproved else 0)
+
+
+def a_later_review_of_the_same_drift(rid):
+    """The creator renders again, approves the same draft, and the reviewer flags the same drift."""
+    with sync_session() as db:
+        other = db.get(CreatorGenerationReview, rid)
+        approved = db.get(
+            CreatorEditDraft, db.get(CreatorAgentExecution, other.execution_id).target_draft_id
+        )
+        for draft in db.scalars(
+            select(CreatorEditDraft).where(
+                CreatorEditDraft.item_id == approved.item_id,
+                CreatorEditDraft.variant_key == approved.variant_key,
+            )
+        ):
+            draft.is_head = False
+        db.flush()
+        approved.is_head = True
+        later = CreatorGenerationReview(
+            id=uuid.uuid4(),
+            execution_id=other.execution_id,
+            owner_id=other.owner_id,
+            review_key=str(uuid.uuid4()),
+            input_digest=other.input_digest,
+            inputs=copy.deepcopy(other.inputs),
+            status="evidence_ready",
+            attempts=1,
+            result=copy.deepcopy(other.result),
+            tier=other.tier,
+            max_usd=other.max_usd,
+            evidence_ready_at=datetime.now(UTC),
+        )
+        db.add(later)
+        db.commit()
+        return later.id
+
+
+def thread_of(rid):
+    with sync_session() as db:
+        session = db.get(
+            CreatorAgentExecution, db.get(CreatorGenerationReview, rid).execution_id
+        ).session_id
+        return db.scalar(
+            select(CreationThread.id).where(
+                CreationThread.active_creator_agent_session_id == session
+            )
+        )
+
+
+async def undo_the_repair(rid):
+    thread = thread_of(rid)
+    async with AsyncSessionLocal() as db:
+        await undo_draft(
+            db,
+            thread_id=thread,
+            creator_id=review_row(rid).owner_id,
+            expected_revision=drafts(thread)[-1].draft_revision,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "decline,settled",
+    [
+        (end_the_approval("denied"), ("repair_abandoned", "approval_rejected")),
+        (end_the_approval("expired"), ("repair_abandoned", "approval_expired")),
+        (let_a_day_pass, ("repair_abandoned", "unapproved_timeout")),
+        (undo_the_repair, ("repair_abandoned", "undone")),
+    ],
+    ids=["denied", "expired", "timed_out", "undone"],
+)
+async def test_a_repair_the_creator_turned_down_is_never_staged_again(
+    drifted, repair_on, monkeypatch, decline, settled
+):
+    _, thread, _, _ = drifted
+    rid = await ready(drifted, monkeypatch)
+    assert await run_async(rid, Provider(COPY_MISMATCH)) == "repair_staged"
+    result = decline(rid)
+    if asyncio.iscoroutine(result):
+        await result
+    await asyncio.to_thread(repair.recover_repair_staged)
+    row = review_row(rid)
+    assert (row.status, row.reason) == settled
+
+    later = a_later_review_of_the_same_drift(rid)
+    count, seen = len(drafts(thread)), {e.id for e in events(thread)}
+    assert await run_async(later, Provider(COPY_MISMATCH)) == "suggestion"
+    follow = review_row(later)
+    assert [s["why"] for s in follow.review["disposition"]["suggestions"]] == ["protected"]
+    assert follow.repair_draft_id is None and len(drafts(thread)) == count
+    assert {e.id for e in events(thread)} == seen
+
+
+def declined_for(rid):
+    with sync_session() as db:
+        session_id = db.get(
+            CreatorAgentExecution, db.get(CreatorGenerationReview, rid).execution_id
+        ).session_id
+        return repair.declined_candidate_keys(db, session_id, uuid.uuid4())
+
+
+def staged_keys(rid):
+    review = review_row(rid).review
+    staged = set(review["repair"]["candidate_ids"])
+    return {
+        repair.decline_key(c)
+        for c in review["catalog"]["candidates"]
+        if c["candidate_id"] in staged
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_repair_judged_worse_is_remembered_as_turned_down(drifted, repair_on, monkeypatch):
+    rid, child = await unsettled_follow_up(
+        drifted,
+        monkeypatch,
+        [R1_UNMET, R2_MET],
+        [R1_MET, R2_TITLE_UNMET],
+        second=two_title_requirements,
+    )
+    assert declined_for(rid) == frozenset()
+    assert await settle_in_a_worker(child) == "repair_reverted"
+    assert declined_for(rid) == staged_keys(rid) != set()
+
+
+@pytest.mark.asyncio
+async def test_a_repair_whose_render_failed_was_not_turned_down(drifted, repair_on, monkeypatch):
+    rid = await ready(drifted, monkeypatch)
+    assert await run_async(rid, Provider(COPY_MISMATCH)) == "repair_staged"
+    fail_the_render(rid)
+    await asyncio.to_thread(repair.recover_repair_staged)
+    assert (review_row(rid).status, review_row(rid).reason) == ("repair_abandoned", "render_failed")
+    assert declined_for(rid) == frozenset()
 
 
 @pytest.mark.asyncio
@@ -1183,14 +1341,17 @@ R1_UNMET = finding("R1", "unmet", "copy_mismatch", ["f0"])
 R1_MET = finding("R1", "met", frames=["f0"])
 R2_MET = finding("R2", "met", frames=["f1"])
 R2_UNMET = finding("R2", "unmet", "wrong_content", ["f1"])
+R2_TITLE_UNMET = finding("R2", "unmet", "text_obstructed", ["f1"])
 
 
-async def unsettled_follow_up(case, monkeypatch, parent_findings, child_findings, *, targets=None):
+async def unsettled_follow_up(
+    case, monkeypatch, parent_findings, child_findings, *, targets=None, second=two_requirements
+):
     """A repair staged from `parent_findings`, approved and rendered, whose follow-up review
     `child_findings` has landed but not yet been settled onto the parent."""
     _, thread, job_id, _ = case
     rid = await ready(case, monkeypatch)
-    edit_packet(rid, two_requirements)
+    edit_packet(rid, second)
     assert await run_async(rid, Provider(reply(*parent_findings))) == "repair_staged"
     if targets is not None:
         recorded = review_row(rid).review
@@ -1200,7 +1361,7 @@ async def unsettled_follow_up(case, monkeypatch, parent_findings, child_findings
         )
     claim, _, _, proof = await approve_the_repair(case, rid, monkeypatch)
     child = await ready((claim, thread, job_id, proof), monkeypatch)
-    edit_packet(child, two_requirements)
+    edit_packet(child, second)
     settle = repair.settle_parent_from_child
     monkeypatch.setattr(repair, "settle_parent_from_child", lambda child_id: None)
     await run_async(child, Provider(reply(*child_findings)))
@@ -1221,7 +1382,11 @@ async def test_two_settlers_of_one_worse_repair_undo_it_once_and_agree_on_why(
 
     _, thread, _, _ = drifted
     rid, child = await unsettled_follow_up(
-        drifted, monkeypatch, [R1_UNMET, R2_MET], [R1_MET, R2_UNMET]
+        drifted,
+        monkeypatch,
+        [R1_UNMET, R2_MET],
+        [R1_MET, R2_TITLE_UNMET],
+        second=two_title_requirements,
     )
     with ThreadPoolExecutor(2) as pool:
         results = list(pool.map(lambda _: repair.settle_parent_from_child(child), range(2)))
@@ -1237,7 +1402,11 @@ async def test_a_settler_that_dies_after_the_undo_is_finished_as_worse_not_as_he
 ):
     _, thread, _, _ = drifted
     rid, child = await unsettled_follow_up(
-        drifted, monkeypatch, [R1_UNMET, R2_MET], [R1_MET, R2_UNMET]
+        drifted,
+        monkeypatch,
+        [R1_UNMET, R2_MET],
+        [R1_MET, R2_TITLE_UNMET],
+        second=two_title_requirements,
     )
     undo = repair._undo_head
 
@@ -1271,7 +1440,11 @@ async def test_a_refused_publish_of_the_turn_the_undo_promoted_cannot_strand_the
     from app.tasks import kria_runtime
 
     rid, child = await unsettled_follow_up(
-        drifted, monkeypatch, [R1_UNMET, R2_MET], [R1_MET, R2_UNMET]
+        drifted,
+        monkeypatch,
+        [R1_UNMET, R2_MET],
+        [R1_MET, R2_TITLE_UNMET],
+        second=two_title_requirements,
     )
     undo = repair._undo_head
     monkeypatch.setattr(repair, "_undo_head", lambda *args: (undo(*args), "promoted-turn")[1])
@@ -1291,7 +1464,7 @@ async def test_a_refused_publish_of_the_turn_the_undo_promoted_cannot_strand_the
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "parent_findings,targets,child_findings,settled,undone",
+    "parent_findings,targets,child_findings,settled,undone,second",
     [
         pytest.param(
             [R1_UNMET, R2_UNMET],
@@ -1299,15 +1472,44 @@ async def test_a_refused_publish_of_the_turn_the_undo_promoted_cannot_strand_the
             [R1_MET, R2_UNMET],
             ("repair_unverified", "not_confirmed"),
             False,
+            two_requirements,
             id="one_of_two_targets_met_is_not_fixed",
         ),
         pytest.param(
             [R1_UNMET, finding("R2", "unverifiable")],
             None,
-            [R1_UNMET, R2_UNMET],
+            [R1_UNMET, R2_TITLE_UNMET],
             ("repair_reverted", "worse"),
             True,
+            two_title_requirements,
             id="more_high_confidence_unmet_than_before_is_worse_though_none_was_met",
+        ),
+        pytest.param(
+            [R1_UNMET, R2_MET],
+            None,
+            [R1_MET, R2_TITLE_UNMET],
+            ("repair_reverted", "worse"),
+            True,
+            two_title_requirements,
+            id="a_requirement_on_the_repaired_title_that_flips_unmet_is_a_loss",
+        ),
+        pytest.param(
+            [R1_UNMET, R2_MET],
+            None,
+            [R1_MET, R2_UNMET],
+            ("repair_verified", "fixed"),
+            False,
+            two_requirements,
+            id="a_requirement_the_repair_never_touched_cannot_undo_a_fix",
+        ),
+        pytest.param(
+            [R1_UNMET, finding("R2", "unverifiable")],
+            ["r1"],
+            [R1_UNMET, R2_UNMET],
+            ("repair_unverified", "not_confirmed"),
+            False,
+            two_requirements,
+            id="an_untouched_requirement_going_unmet_is_no_loss_even_when_the_target_is_not_met",
         ),
         pytest.param(
             [R1_UNMET, R2_MET],
@@ -1315,6 +1517,7 @@ async def test_a_refused_publish_of_the_turn_the_undo_promoted_cannot_strand_the
             [R1_MET, finding("R2", "unmet", "wrong_content", ["f1"], confidence="low")],
             ("repair_verified", "fixed"),
             False,
+            two_requirements,
             id="a_low_confidence_unmet_is_no_loss",
         ),
         pytest.param(
@@ -1323,16 +1526,25 @@ async def test_a_refused_publish_of_the_turn_the_undo_promoted_cannot_strand_the
             [R1_MET, R2_MET],
             ("repair_unverified", "not_confirmed"),
             False,
+            two_requirements,
             id="a_repair_with_no_recorded_target_proves_nothing",
         ),
     ],
 )
 async def test_a_repair_is_credited_or_blamed_only_as_the_follow_up_review_shows(
-    drifted, repair_on, monkeypatch, parent_findings, targets, child_findings, settled, undone
+    drifted,
+    repair_on,
+    monkeypatch,
+    parent_findings,
+    targets,
+    child_findings,
+    settled,
+    undone,
+    second,
 ):
     _, thread, _, _ = drifted
     rid, child = await unsettled_follow_up(
-        drifted, monkeypatch, parent_findings, child_findings, targets=targets
+        drifted, monkeypatch, parent_findings, child_findings, targets=targets, second=second
     )
     assert await settle_in_a_worker(child) == settled[0]
     parent = review_row(rid)
