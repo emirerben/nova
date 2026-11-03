@@ -7,6 +7,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
 
+import structlog
+
 from app.schemas.phone_text_style import (
     CAPTION_PREFERRED_FONT,
     CURATED_PHONE_FONTS,
@@ -17,6 +19,8 @@ from app.schemas.phone_text_style import (
     effective_text_rule,
     preferences_from_direction,
 )
+
+log = structlog.get_logger()
 
 PHONE_TEXT_STYLE_FIELD = "phone_text_style"
 PHONE_TEXT_STYLE_CLIENT_PROTOCOL = 10
@@ -120,14 +124,36 @@ def stamp_phone_text_style(job) -> None:
     if global_rule.get("automatic_font") is True:
         global_rule.pop("font_family", None)
     candidates = job.all_candidates or {}
-    current[PHONE_TEXT_STYLE_FIELD] = {
+    stamped = {
         "version": PHONE_TEXT_STYLE_VERSION,
         "preferences": preferences,
         "requested": requested_style(
             candidates.get("creator_strategy") or {}, str(candidates.get("creator_request") or "")
         ),
     }
+    # KRI-1177: the look the creator typed onto the brief rides beside the parsed `requested`.
+    ask = _brief_caption_ask(current)
+    if ask is not None:
+        stamped["caption_ask"] = ask.as_dict()
+    current[PHONE_TEXT_STYLE_FIELD] = stamped
     job.assembly_plan = current
+
+
+def _brief_caption_ask(container: dict):
+    """The caption look the job's pinned brief asks for (``creator_brief_binding``), or None.
+
+    An unreadable binding is "no ask": the first draft then renders exactly as before."""
+    raw_binding = container.get("creator_brief_binding")
+    if not raw_binding:
+        return None
+    from app.kria.brief_binding import BriefBinding
+    from app.kria.caption_look_ask import brief_caption_look
+
+    try:
+        return brief_caption_look(BriefBinding.model_validate(raw_binding).resolve())
+    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
+        log.warning("phone_text_style.caption_ask_binding_unreadable", error=str(exc)[:200])
+        return None
 
 
 def style_rows(
@@ -326,6 +352,16 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
     rule = effective_text_rule(
         policy.get("preferences") or {}, policy.get("requested") or {}, "caption"
     )
+    # KRI-1177: the look the creator typed onto the brief overrides the default look on the first
+    # draft -- colour, spot and size are theirs, even over a face or the corner speaker.
+    from app.kria.caption_look_ask import CAPTION_ASK_SIZE_PX, CaptionLookAsk
+
+    ask = CaptionLookAsk.from_dict(policy.get("caption_ask"))
+    if ask is not None:
+        if ask.color is not None:
+            rule["color"] = ask.color
+        if ask.position is not None:
+            rule["position"] = ask.position
     if (
         float(rule.get("stroke_width", 0)) > 12
         or not float(rule.get("stroke_width", 0)).is_integer()
@@ -391,6 +427,14 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
         max_width_frac=0.68,
         shape_text=True,
     )
+    # The asked size is drawn as given: the rows below mark it creator-authored, so the fit
+    # cascade can neither shrink nor re-fit it (a centred line used to fall to 30 px).
+    asked_px = CAPTION_ASK_SIZE_PX[ask.size] if ask is not None and ask.size is not None else None
+    spot_asked = ask is not None and ask.position is not None
+    authored = [*(["max_width_frac"] if spot_asked else []), *(["size_px"] if asked_px else [])]
+    if asked_px is not None:
+        resolved = replace(resolved, text_size_px=asked_px)
+    over_face = False
     if rule.get("position"):
         from app.schemas.text_style_intent import LABEL_ANCHORS
 
@@ -425,7 +469,10 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
                 shadow_enabled=resolved.shadow_enabled,
                 max_width_frac=0.68,
                 effect="pop-in",
-                source_params={"phone_text_style_version": 1},
+                source_params={
+                    "phone_text_style_version": 1,
+                    **({"creator_style_fields": authored} if authored else {}),
+                },
             ).model_dump(mode="json", exclude_none=True)
             for index, cue in enumerate(cues)
             if str(cue.get("text") or "").strip()
@@ -440,32 +487,36 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
             from app.pipeline.phone_captions import watermark_keepout_rect
 
             mark = watermark_keepout_rect(canvas.width, canvas.height)
+            obstacles = [
+                *(
+                    Obstacle(face["box"] if isinstance(face, dict) else face, "face")
+                    for face in policy.get("_face_boxes") or []
+                ),
+                Obstacle(
+                    (
+                        mark[0] / canvas.width,
+                        mark[1] / canvas.height,
+                        mark[2] / canvas.width,
+                        mark[3] / canvas.height,
+                    ),
+                    "watermark",
+                ),
+            ]
             _place(
                 row,
                 role="caption",
                 wanted=rule,
                 canvas=canvas,
                 block_rows=rows,
-                obstacles=[
-                    *(
-                        Obstacle(face["box"] if isinstance(face, dict) else face, "face")
-                        for face in policy.get("_face_boxes") or []
-                    ),
-                    Obstacle(
-                        (
-                            mark[0] / canvas.width,
-                            mark[1] / canvas.height,
-                            mark[2] / canvas.width,
-                            mark[3] / canvas.height,
-                        ),
-                        "watermark",
-                    ),
-                ],
-                position_fixed=position_requested(policy.get("requested"), "caption"),
+                # An asked spot has nothing to dodge: with obstacles the fit would still lift it
+                # up its corner (0.06-0.18) off a face or the watermark; the compiler clears the
+                # watermark itself and `over_face` below says what the spot covers.
+                obstacles=[] if spot_asked else obstacles,
+                position_fixed=spot_asked or position_requested(policy.get("requested"), "caption"),
             )
             resolved = replace(
                 resolved,
-                text_size_px=row["size_px"],
+                text_size_px=asked_px or row["size_px"],
                 position_x_frac=row["x_frac"],
                 position_y_frac=row["y_frac"],
                 text_anchor=row["alignment"],
@@ -483,8 +534,41 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
                     ],
                 )
                 resolved = replace(resolved, text_color=fill)
+            if ask is not None:
+                over_face = _caption_over_face(row, rows, policy.get("_face_boxes") or [], canvas)
+    if ask is not None:
+        policy["_caption_look_receipt"] = {
+            **ask.as_dict(),
+            "size_px": resolved.text_size_px,
+            "over_face": over_face,
+        }
     policy["caption_look"] = resolved
     return resolved
+
+
+def _caption_over_face(row: dict, rows: list[dict], faces: list, canvas) -> bool:
+    """True when the caption block ``row`` draws overlaps a sampled face while a cue is on."""
+    if not faces:
+        return False
+    from app.pipeline.phone_text_style import _overlap, _same_window, animation_box, measure_box
+
+    block = animation_box(row, measure_box(dict(row), canvas), canvas)
+    return any(
+        _overlap(block, face["box"] if isinstance(face, dict) else face)
+        and (not isinstance(face, dict) or any(_same_window(face, r) for r in rows))
+        for face in faces
+    )
+
+
+def generation_caption_cues(cues: list[dict], *, language: str | None = None) -> list[dict]:
+    """KRI-1177: ``cues`` in the case the creator asked for, in the cue text itself (the editor
+    shows it and a Save keeps it); ``cues`` unchanged when no case was asked."""
+    from app.kria.caption_look_ask import CaptionLookAsk, apply_caption_case
+
+    ask = CaptionLookAsk.from_dict((_POLICY.get() or {}).get("caption_ask"))
+    if ask is None or ask.case is None:
+        return cues
+    return apply_caption_case(cues, ask.case, language)
 
 
 def remember_caption_bounds(layers, *, canvas):
@@ -711,6 +795,8 @@ def generation_style_fields() -> dict:
         }
     }
     look = policy.get("caption_look")
+    if policy.get("_caption_look_receipt") is not None:
+        result["caption_look_receipt"] = copy.deepcopy(policy["_caption_look_receipt"])
     if look is not None:
         result.update(
             voiceover_caption_font=look.font_family,

@@ -141,6 +141,7 @@ from app.services.job_storage_paths import JOB_POSTER_PATH_PREFIX, owned_job_out
 from app.services.music_genre import asked_genres, genre_shortlist
 from app.services.phone_text_styling import (
     current_phone_text_policy,
+    generation_caption_cues,
     generation_style_fields,
     generation_style_rows,
     phone_text_generation,
@@ -9937,6 +9938,9 @@ def _run_phone_subtitled_job(
                 cut_plan,
                 extract_spelling_asks(_creator_request_text(all_candidates)),
             )
+            # KRI-1177: "captions lowercase" is the cue text itself, so the drawn layers, the
+            # editor and a Save all carry it.
+            cues = generation_caption_cues(cues, language=detected_lang)
 
             # The speaker's span exactly as the compiler plays it: the cleanup
             # cut, else the phone-measured clip (which can run a hair shorter
@@ -11100,6 +11104,12 @@ def _run_phone_subtitled_job(
                                 None,
                             ),
                         }
+                        if _bg.windows:
+                            # KRI-1177: the windows cycle the sequence, so the review counts the
+                            # distinct photos / videos behind the speaker, not the windows.
+                            lane_receipt["background"]["media"] = len(
+                                {w.media_id for w in _bg.windows}
+                            )
                 try:
                     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 

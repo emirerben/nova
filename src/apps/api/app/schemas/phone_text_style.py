@@ -80,6 +80,44 @@ def preferences_from_direction(typed: dict) -> dict[str, dict]:
     }
 
 
+_TEXT_SUBJECT = re.compile(
+    r"\b(?:texts?|titles?|captions?|subtitles?|labels?|lyrics?|pinned)\b"
+    r"|altyaz[ıi]|başl[ıi]k|yaz[ıi]|etiket"
+)
+_OTHER_SUBJECT = re.compile(
+    r"\b(?:me|myself|i|my face|the speaker|ben|beni|benim|bana)\b"
+    r"|\b(?:photo|picture|image|video|clip|card|logo|sticker)\w*"
+    r"|\b(?:fotoğraf|resim|resm|video|kart)"
+)
+# A colour word before one of these paints something else, not the text.
+_NOT_TEXT_COLOUR = "background|outline|stroke|shadow|box|card|frame|bar|logo|arka plan"
+
+
+def _text_scope(text: str) -> str:
+    """The parts of a message about on-screen text: a place or colour counts only there.
+
+    Sentences split into segments (commas, colons, "and"); a segment naming no subject
+    follows the subject before it, or the first one after it. A quoted string is text."""
+    scope = []
+    text = re.sub(r'"[^"]*"|“[^”]*”', " text ", text)
+    for sentence in re.split(r"[.!?;…]+(?=\s|$)|\n", text):
+        segments = re.split(r"[,:]|\s(?:and|ve|but|ama)\s", sentence)
+        kinds = [
+            "text"
+            if _TEXT_SUBJECT.search(part)
+            else "other"
+            if _OTHER_SUBJECT.search(part)
+            else None
+            for part in segments
+        ]
+        kind = next((k for k in kinds if k), None)
+        for part, own in zip(segments, kinds, strict=True):
+            kind = own or kind
+            if kind == "text":
+                scope.append(part)
+    return ", ".join(scope)
+
+
 def explicit_text_rule(instruction: str) -> tuple[str, dict] | None:
     """Only executable styling words. The caller decides durable vs local scope."""
     from app.agents._schemas.text_element import _ALLOWED_FONTS
@@ -114,6 +152,7 @@ def explicit_text_rule(instruction: str) -> tuple[str, dict] | None:
         values["stroke_width"] = 2
     if re.search(r"\b(add|use|with) (?:text )?shadows?\b", text) and "shadow_enabled" not in values:
         values["shadow_enabled"] = True
+    scoped = _text_scope(text)
     places = [
         position
         for phrase, position in (
@@ -127,8 +166,13 @@ def explicit_text_rule(instruction: str) -> tuple[str, dict] | None:
             ("top right", "top_right"),
             ("sol alt", "bottom_left"),
             ("sol üst", "top_left"),
+            ("in the middle", "middle"),
+            ("in the center", "middle"),
+            ("in the centre", "middle"),
+            ("ortada", "middle"),
+            ("ortaya", "middle"),
         )
-        if phrase in text
+        if phrase in scoped
     ]
     if len(set(places)) == 1:
         values["position"] = places[0]
@@ -155,23 +199,18 @@ def explicit_text_rule(instruction: str) -> tuple[str, dict] | None:
         elif len(fonts) == 1:
             values["font_family"] = fonts[0]
     colors = {
-        name: color
-        for name, color in (
-            ("white", "#FFFFFF"),
-            ("black", "#000000"),
-            ("yellow", "#FFFF00"),
-            ("red", "#FF0000"),
-            ("blue", "#0000FF"),
+        color
+        for words, color in (
+            ("white|beyaz", "#FFFFFF"),
+            ("black|siyah", "#000000"),
+            ("yellow|sar[ıi]", "#FFFF00"),
+            ("red|k[ıi]rm[ıi]z[ıi]", "#FF0000"),
+            ("blue|mavi", "#0000FF"),
         )
-        if re.search(
-            rf"\b{name} (?:text|titles?|captions?|labels?)\b"
-            r"|\b(?:text|titles?|captions?|labels?)\s+"
-            rf"(?:(?:should be|must be|in|are)\s+)?{name}\b",
-            text,
-        )
+        if re.search(rf"\b(?:{words})\b(?!\s+(?:{_NOT_TEXT_COLOUR}))", scoped)
     }
     if len(colors) == 1:
-        values["color"] = next(iter(colors.values()))
+        values["color"] = next(iter(colors))
     if not values:
         return None
     return role, TextStyleRule.model_validate(values).values()

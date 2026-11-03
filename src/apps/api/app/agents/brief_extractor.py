@@ -69,7 +69,10 @@ from app.pipeline.prompt_loader import load_prompt
 # display_mode / clip_sound, and the sound words never decide the route ("use their audio" is
 # listed on the overlay side only; a clip with no sound said "in between my speech" is the same
 # insert). Only the insert paragraph (shown while inserts are open) changes.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-03-v48"
+# v49 (KRI-1177 / KRI-1164, Green 3): the shared brief section records the creator's caption look
+# (`caption_size`, `caption_position`, `caption_color`, `caption_case`) and "no music" as
+# `audio_intent: no_music`; the speaker's own corner is never a caption position.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-03-v49"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")

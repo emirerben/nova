@@ -209,7 +209,10 @@ log = structlog.get_logger()
 # insert played silent (`keep_audio` false). Only the texts shown while the insert lane is open
 # change; every closed-gate prompt keeps its bytes. No live eval of this routing exists; the
 # fixtures under tests/fixtures/agent_evals/main_creator/kri1151_* are hand-authored.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-03-v112"
+# v113 (KRI-1177 / KRI-1164, Green 3): the shared brief section records the creator's caption look
+# (`caption_size`, `caption_position`, `caption_color`, `caption_case`) and "no music" as
+# `audio_intent: no_music`; the speaker's own corner is never a caption position.
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-03-v113"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -1006,7 +1009,14 @@ or places still use the order requirement's "start"/"end". Captions =>
 {"caption_language": "en"} (a two-letter code) when they name the captions' language
 ("Türkçe altyazı" => "tr"), plus {"spellings": ["Oblea de la Casa", "Merope"]} when they list
 words or names to spell a certain way in the captions, each exactly as the creator wrote it
-(never corrected or translated), plus
+(never corrected or translated), plus the look they ask the captions to have, each only when
+they say it: {"caption_size": "small"} or "large"; {"caption_position": "middle"} (or "top",
+"bottom", "top_left", "top_right", "bottom_left", "bottom_right"); {"caption_color": "#FFFFFF"}
+(a literal #RRGGBB hex: white #FFFFFF, black #000000, yellow #FFFF00, red #FF0000, blue
+#0000FF); {"caption_case": "lower"} or "upper"; "Captions small, white, lowercase, in the middle"
+=> {"captions": "on", "caption_size": "small", "caption_color": "#FFFFFF", "caption_case":
+"lower", "caption_position": "middle"}; where the creator puts themselves, a photo, a card or the
+background ("me small at the bottom right") is never a caption position, plus
 {"ask_if_unclear": "the third sauce he names"} (the creator's own words for WHICH word) when they
 say they could not make out a word and want to be asked instead of having it guessed ("I didn't
 catch the third sauce he names: if you can't tell what he says, ask me"), on the captions
@@ -1049,6 +1059,8 @@ Mute or remove the footage's own sound (camera, crowd, ambient, original audio) 
 voice is heard ("mute the crowd noise under my voice", "kamera sesini kapat") => an `audio`
 requirement with {"audio_intent": "source_muted"}; "keep it low / quieter under my voice" is
 not a mute and records no audio_intent.
+"No music" / "without music" / "müzik olmasın" / "müziksiz" => an `audio` requirement with
+{"audio_intent": "no_music"}; it never mutes the footage's own sound.
 Research, fact checking or sources for the on-screen explanations ("include sources for the
 historical facts", "research it online", "kaynakları ekle") => ONE `text` requirement, scope
 "global", the ask in `description`, with {"research": {"topic": "<a public topic, never a link or

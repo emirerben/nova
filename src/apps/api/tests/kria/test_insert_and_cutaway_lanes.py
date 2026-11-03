@@ -73,11 +73,14 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # closed-gate prompt of this branch must not drift from main's bytes.
 # Re-pinned for KRI-1162 (PR #2045): the brief section always teaches the `speaker_background`
 # requirement fact (KRI-1161 honesty); removing that one sentence reproduces the values above.
+# Re-pinned for KRI-1177 / KRI-1164 (creator v113): the brief section also teaches the caption
+# look facts and `audio_intent: no_music`; removing exactly those two passages reproduces the
+# values above.
 MAIN_PROMPT_SHA = {
-    "neither": "c2561f26717a07e4b78e04230b0f6f5b0379b50b2ed8ae8692cc43bb7c20f363",
-    (True, True): "db38b12111d8b1ca36b8892dda30dfbecfe067261dabd2708ffb809ca527827e",
-    (True, False): "ac163aeb2227e9064407773271b947205a6f972689fdbc24258e056f9b4e2c72",
-    (False, True): "91f530051d3a2889f5c57e182a616dee0b775953460703f513adbb2fff7ce4b8",
+    "neither": "87126862b960488fd27e6c95649f1d1ded42832c9c3f2d5676f08d4ccc58bbe0",
+    (True, True): "c9d68e988f721956001b9abf140e5b5adb16a2089f091e13cb98022cdf27df11",
+    (True, False): "e83242e4acb1caf9a72261dee03f0b42bfa5a2945a60af141ab83c1d22cb6522",
+    (False, True): "00392b4cb7c0368a2579ca2f0f2198f39c76500fdd17ca7e50a59318b3d5c6f7",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (
