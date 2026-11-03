@@ -213,7 +213,7 @@ log = structlog.get_logger()
 # v113 (KRI-1173): a plain colour behind the speaker. `background_media` takes `color` ("#RRGGBB")
 # instead of `media_id`, taught in one extra paragraph only where the manifest advertises
 # `speaker_background_color`; the shared brief section records `background_color` beside
-# `speaker_background` (brief_extractor v49 shares it). Every other creator prompt is
+# `speaker_background` (brief_extractor v50 shares it). Every other creator prompt is
 # byte-identical.
 MAIN_CREATOR_PROMPT_VERSION = "2026-11-03-v113"
 

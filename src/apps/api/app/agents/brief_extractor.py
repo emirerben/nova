@@ -69,9 +69,12 @@ from app.pipeline.prompt_loader import load_prompt
 # display_mode / clip_sound, and the sound words never decide the route ("use their audio" is
 # listed on the overlay side only; a clip with no sound said "in between my speech" is the same
 # insert). Only the insert paragraph (shown while inserts are open) changes.
-# v49 (KRI-1173): the shared brief section also records `background_color` on a plain-colour
+# v49 (generated-image grounding): the extractor records "the <generated image> when I say W" as a
+# typed `triggers` ask, and says which videos that does NOT cover (the creator's own footage
+# clips). Extractor-only section; the shared brief section is untouched.
+# v50 (KRI-1173): the shared brief section also records `background_color` on a plain-colour
 # background ask.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-03-v49"
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-03-v50"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
@@ -129,6 +132,26 @@ the same. "Center the title" -> {"style_intent": {"set": [{"field": "alignment",
 "center"}], "target": "title"}}.
 """)
 _NARROW_BRIEF_SECTION += _STYLE_INTENT_SECTION
+_GENERATED_IMAGE_SECTION = """
+When the creator asks for an image you generated for them, a photo or sticker they added in
+this chat, or a Visuals video (a short video added as a Visual, not one of their filmed clips) to
+show on a spoken word ("the coffee image when I say kahve", "kahve dediğimde kahve görselini
+göster"), ALWAYS record it as a `style` requirement carrying {"triggers": ["<the spoken word,
+exactly as the creator wrote it, never translated>"]}, plus "display_mode" ("fullscreen" or
+"pip") only when they said which. Describe the image in `description` in the creator's own words
+for it. Record `triggers` even when the image's title is in another language than the word; the
+server matches the word against the voice. Never drop `triggers` from such an ask while keeping
+`display_mode`: a full-screen ask without `triggers` is read as a cutaway of the creator's own
+clips. The one exception is the creator's own footage: a clip they filmed and attached
+never carries `triggers`, whatever word they name and however they place it, shown while the
+talk keeps running ("show the talks when I talk about them", "kongre dediğimde kongre videosunu
+göster", "over my speech") or put in between their speech ("put the talks in between my
+speech"). Record it exactly as the paragraphs above say for that wording (`display_mode` /
+`clip_sound` for a clip shown over the talk, the insert fact for a clip placed in between their
+speech, when that paragraph is present), because the server finds each clip's moment from what
+the clip shows.
+"""
+_NARROW_BRIEF_SECTION += _GENERATED_IMAGE_SECTION
 _NARROW_BRIEF_SECTION += """
 Every add/change update needs a non-empty `literal` or `description`, including
 timing updates that have `duration_s` in `facts`. Keep all independently requested

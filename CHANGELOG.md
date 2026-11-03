@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.11.0] - 2026-11-03
+
+### Changed
+- fix(kria): a generated image places automatically on a related spoken word in another language (#2083) <!-- release-pr: 2083 -->
+
 ## [0.84.10.0] - 2026-11-03
 
 ### Changed

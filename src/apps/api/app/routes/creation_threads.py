@@ -2183,6 +2183,14 @@ async def _duplicate(
     ).scalar_one_or_none()
 
 
+def _job_projection_in_chat_language(
+    thread: CreationThread, job: Job | None, item: Any
+) -> dict[str, Any] | None:
+    """`_job_projection` with the chat's language bound, so render notes read in it."""
+    with reply_language_for(thread_reply_language(thread)):
+        return _job_projection(job, item=item)
+
+
 def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | None:
     if job is None:
         return None
@@ -3560,7 +3568,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
         else None,
         active_job_id=str(response_active_job_id) if response_active_job_id else None,
         creator_agent=_creator_agent_projection(session, item=item),
-        job=_job_projection(job, item=item),
+        job=_job_projection_in_chat_language(thread, job, item),
         media_capabilities=media_capabilities,
         direction_receipt=direction_receipt,
         speech_cleanup=speech_cleanup,

@@ -59,6 +59,11 @@ from app.services.edit_proposal_limits import (
     edit_proposal_task_id,
     queue_for_guided_contract,
 )
+from app.services.generated_image_grounding import (
+    grounding_label,
+    is_generated,
+    with_generated_grounding,
+)
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
 from app.services.phone_destination import (
     has_native_device_only_intent,
@@ -558,11 +563,16 @@ async def resolve_item_creator_context(
         )
         analysis_ready = getattr(asset, "status", "ready") == "ready"
         analysis = asset.analysis if analysis_ready and isinstance(asset.analysis, dict) else {}
+        generated = is_generated(analysis)
+        if generated:
+            # Same derivation autoplace reads, so the planner sees the text the matcher sees.
+            analysis = with_generated_grounding(analysis, asset.user_context)
+        generated_label = grounding_label(asset.user_context, analysis) if generated else None
         context_entry: dict[str, Any] = {
             "media_id": media_id,
             "kind": kind,
             "duration_s": _positive_duration_s(asset.duration_s),
-            "creator_context": context or None,
+            "creator_context": context or generated_label,
             # KRI-178: the uploaded filename ("02_greenwood.png") is the only
             # signal that can distinguish otherwise-identical pool images
             # (e.g. reaction-beat stickers/photos) when the creator names them
@@ -571,7 +581,10 @@ async def resolve_item_creator_context(
             # `canonical_manifest_hash`, and folding the filename into it
             # would flip every in-flight thread's manifest hash and trip the
             # "Footage or capabilities changed" confirm fence for no reason.
-            "filename": _clean(getattr(asset, "source_filename", None), 160) or None,
+            # An image Kria generated is always "generated.png", which names nothing.
+            "filename": (
+                None if generated else _clean(getattr(asset, "source_filename", None), 160) or None
+            ),
             # AI evidence is clearly segregated and must never be copied to
             # on-screen text (also enforced in the main prompt).
             "analysis_only_not_copy": _chat_evidence(analysis, kind=kind),

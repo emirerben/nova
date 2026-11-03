@@ -3011,6 +3011,25 @@
       ]
     },
     {
+      "id": "generated-image-autoplace",
+      "needs_native": false,
+      "api_tests": "tests/agents/test_overlay_placement_cross_language.py tests/agents/test_brief_extractor_generated_image.py tests/services/test_generated_image_grounding.py tests/services/test_phone_overlay_grounding.py tests/services/test_generated_media_admission.py tests/routes/test_creation_threads_chat_language.py tests/tasks/test_phone_overlay_spoken_language_worker.py",
+      "paths": [
+        "src/apps/api/prompts/overlay_placement.txt",
+        "src/apps/api/prompts/overlay_placement_generated.txt",
+        "src/apps/api/app/services/generated_image_grounding.py",
+        "src/apps/api/tests/fixtures/agent_evals/overlay_placement/golden/contract_generated_image_cross_language_match.json",
+        "src/apps/api/tests/fixtures/agent_evals/overlay_placement/golden/contract_generated_image_unrelated_control_omitted.json",
+        "src/apps/api/tests/fixtures/agent_evals/overlay_placement/golden/contract_generated_image_near_miss_controls.json",
+        "src/apps/api/tests/fixtures/agent_evals/overlay_placement/golden/contract_generated_image_cross_language_mixed.json",
+        "src/apps/api/tests/fixtures/agent_evals/overlay_placement/golden/contract_upload_loose_asset_omitted.json",
+        "src/apps/api/tests/fixtures/overlay_placement_prompt_1_3_0.txt",
+        "src/apps/api/tests/agents/test_overlay_placement_cross_language.py",
+        "src/apps/api/tests/agents/test_brief_extractor_generated_image.py",
+        "src/apps/api/tests/services/test_generated_image_grounding.py"
+      ]
+    },
+    {
       "id": "kri-1173-speaker-background-color",
       "needs_native": false,
       "api_tests": "tests/kria/test_speaker_background_color.py tests/routes/test_speaker_background_color_editor.py tests/tasks/test_speaker_background_worker.py tests/kria/test_draft_projects_speaker_background.py tests/kria/test_brief_checks_speaker_background.py tests/kria/test_capability_matrix.py tests/routes/test_editor_save_code_catalog.py",
