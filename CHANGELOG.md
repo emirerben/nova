@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.18.0] - 2026-11-03
+
+### Fixed
+- fix(kria): green-screen backgrounds land on the words that name them (KRI-1175) (#2091) <!-- release-pr: 2091 -->
+
 ## [0.84.17.0] - 2026-11-03
 
 ### Changed
