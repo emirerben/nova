@@ -178,6 +178,18 @@ def test_disabled_and_budget_denied_are_unavailable(setup, monkeypatch):
     client.invoke.assert_not_called()
 
 
+@pytest.mark.parametrize("failure", [ProviderOutcomeUnknownError("expired"), RuntimeError("db")])
+def test_start_fence_failure_releases_the_reservation(setup, failure):
+    client, ctx, ledger = setup
+    ledger["mark_paid_call_started"].side_effect = failure
+    result = review.review_editor_repair(context(), run_context=ctx, client=client)
+    assert result.status == "unavailable"
+    assert result.reason == "ledger_unavailable"
+    client.invoke.assert_not_called()
+    ledger["release_paid_call"].assert_called_once()
+    ledger["mark_paid_call_unknown"].assert_not_called()
+
+
 @pytest.mark.parametrize("raw", ["not json", "{}", '{"status":"accept_candidate"}'])
 def test_malformed_response_is_unavailable_without_retry(setup, raw):
     client, ctx, ledger = setup

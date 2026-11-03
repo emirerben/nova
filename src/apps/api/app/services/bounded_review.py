@@ -121,11 +121,15 @@ def invoke_bounded_review(
                 capability="evaluation",
             )
         )
-        if receipt is None:
-            return _failed("reservation_unavailable", provenance)
-        costs.mark_paid_call_started(receipt)
     except Exception:
         return _failed("budget_denied", provenance)
+    if receipt is None:
+        return _failed("reservation_unavailable", provenance)
+    try:
+        costs.mark_paid_call_started(receipt)
+    except Exception:
+        costs.release_paid_call(receipt)
+        return _failed("ledger_unavailable", provenance)
     started = time.monotonic()
     try:
         if client is None:
