@@ -95,6 +95,7 @@ from app.services.phone_rollout import (
     phone_narrated_caption_edits_supported,
     phone_narrated_title_edits_supported,
     phone_subtitled_editor_lanes_supported,
+    phone_subtitled_editor_media_supported,
     phone_subtitled_title_supported,
     phone_talking_cutaway_sound_supported,
     phone_talking_range_supported,
@@ -1330,10 +1331,12 @@ def _compile_subtitled_editor_commit(
     range_rows = prep.get("timeline_override") if "timeline" in active_sections else None
     if range_rows is not None and not phone_talking_range_supported():
         range_rows = None
+    media_supported = phone_subtitled_editor_media_supported()
     allowed_sections = (
         _SUBTITLED_EDITOR_SECTIONS
         | (_SUBTITLED_TEXT_SECTIONS if phone_subtitled_title_supported() else frozenset())
         | (frozenset({"timeline"}) if range_rows is not None else frozenset())
+        | (frozenset({"visual_blocks"}) if media_supported else frozenset())
     )
     unsupported_sections = active_sections - allowed_sections
     if unsupported_sections:
@@ -1466,6 +1469,18 @@ def _compile_subtitled_editor_commit(
         **({"clip_tilts": tilts} if (tilts := _previous_clip_tilts(previous.recipe)) else {}),
     )
     recipe = with_drawings(recipe, variant.get("drawings"))
+    # KRI-1142: added pictures are rebuilt from the saved blocks on EVERY Talking Save, not only a
+    # Save that touches them. This compiler rebuilds the recipe from scratch, so skipping the media
+    # layer here would silently drop a picture on the next caption or sound edit. The blocks are
+    # fitted to the final cut (Range, inserts and speech cleanup all change it).
+    recipe = _talking_editor_media(
+        recipe,
+        assembly=assembly,
+        variant=variant,
+        prep=prep,
+        previous=previous.recipe,
+        media_supported=media_supported,
+    )
     # A native same-source cut normally borrows 25 ms of removed audio to
     # smooth pause cleanup. An explicit spoken-word removal must instead keep
     # its source edges closed, including on a processed-audio derivative.
@@ -1512,7 +1527,11 @@ def _compile_subtitled_editor_commit(
             recipe, receipts_by_source=processed_receipts
         )
     duck_receipt = sfx_duck_receipt(lanes, recipe)
-    validate_phone_pilot_recipe(recipe, allow_editor_media=bool(lanes.overlays or cutaways))
+    validate_phone_pilot_recipe(
+        recipe,
+        allow_editor_media=bool(lanes.overlays or cutaways)
+        or _voiceover_allows_editor_media(recipe),
+    )
     request = make_device_request(
         job_id=previous.identity.job_id,
         variant_id=variant_id,
@@ -1713,6 +1732,41 @@ def _has_editor_lanes(recipe: EditRecipeV2, variant: dict) -> bool:
     )
 
 
+def _talking_editor_media(
+    recipe: EditRecipeV2,
+    *,
+    assembly: dict,
+    variant: dict,
+    prep: dict,
+    previous: Any,
+    media_supported: bool,
+) -> EditRecipeV2:
+    """The Talking recipe with its added-picture layer recompiled from the saved blocks.
+
+    With the media rollout off, a variant that already carries pictures refuses the Save instead
+    of dropping them; one that never had any is returned untouched (byte-identical)."""
+    carries_media = (
+        _has_editor_media(previous, variant)
+        if isinstance(previous, EditRecipeV2)
+        else bool(variant.get("visual_blocks"))
+    )
+    submitted = prep.get("visual_blocks_override")
+    if not media_supported:
+        if carries_media or submitted:
+            raise ValueError("pictures aren't supported on phone Talking edits right now")
+        return recipe
+    if not carries_media and not submitted:
+        return recipe
+    return _commit_voiceover_media(
+        recipe,
+        assembly=assembly,
+        variant=variant,
+        prep=prep,
+        video_track_id="subtitled",
+        always_fit=True,
+    )
+
+
 def _has_editor_media(recipe: EditRecipeV2, variant: dict) -> bool:
     """A cut change must re-bound added photos/videos (KRI-287) too, including
     ones an earlier, shorter cut pushed past the end."""
@@ -1743,6 +1797,7 @@ def _commit_voiceover_media(
     variant: dict,
     prep: dict,
     video_track_id: str,
+    always_fit: bool = False,
 ) -> EditRecipeV2:
     """Recompile a phone Voiceover recipe's editor media layer from the saved
     ``visual_blocks`` (KRI-287), against the generation's pinned visuals plus
@@ -1752,7 +1807,7 @@ def _commit_voiceover_media(
     if blocks is None:
         blocks = variant.get("visual_blocks") or []
     blocks = list(blocks)
-    if prep["sections"].get("timeline"):
+    if always_fit or prep["sections"].get("timeline"):
         video = next(track for track in recipe.tracks if track.id == video_track_id)
         blocks = _fit_media_blocks_to_cut(blocks, timeline_end_s(video.clips))
     return replace_editor_media(
