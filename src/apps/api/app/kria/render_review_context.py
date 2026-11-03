@@ -134,6 +134,7 @@ def build_render_review_context(
     *,
     verified_artifact: VerifiedArtifactReceipt | None,
     observations: tuple[TimestampedObservation, ...] = (),
+    original_request: str | None = None,
 ) -> CaptureResult:
     if verified_artifact is None:
         return CaptureResult(status="unavailable", reason="artifact_verification_missing")
@@ -298,7 +299,7 @@ def build_render_review_context(
             variant_id=variant_id,
             requirement_generation=generation,
             published_attempt=proof.published_attempt,
-            original_request=binding.creator_request,
+            original_request=original_request or binding.creator_request,
             binding_json=binding.model_dump_json(),
             binding_digest=binding.digest,
             approved_plan_json=_json(d.snapshot_json),

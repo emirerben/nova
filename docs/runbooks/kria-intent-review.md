@@ -1,6 +1,6 @@
 # Intent review (KRI-1171)
 
-A finished, published generation is checked against what the creator asked for. This runbook covers the stages that exist today. Later stages (repair, receipts) add their own sections when they ship.
+A finished, published generation is checked against what the creator asked for. This runbook covers the stages that exist today. Later stages (receipts) add their own sections when they ship.
 
 ## What runs
 
@@ -14,7 +14,7 @@ A finished, published generation is checked against what the creator asked for. 
 | --- | --- | --- |
 | `KRIA_INTENT_REVIEW_ENABLED` | `false` | Admission and evidence. Also the kill switch for every stage. |
 | `KRIA_INTENT_REVIEW_PAID_ENABLED` | `false` | Paid frame review. A no-op without `ENABLED`. |
-| `KRIA_INTENT_REVIEW_REPAIR_ENABLED` | `false` | Repair staging (a later stage). A no-op without `PAID`. |
+| `KRIA_INTENT_REVIEW_REPAIR_ENABLED` | `false` | Repair staging. A no-op without `PAID`, and held at `review` by the code ceiling until the posting stage ships. |
 | `KRIA_INTENT_REVIEW_USER_IDS` | `[]` | `[]` admits nobody, `["*"]` everyone. |
 | `KRIA_INTENT_REVIEW_MAX_USD` | `0.10` | Per-review ceiling (`0 < x <= 0.25`), stamped at admission. |
 | `KRIA_INTENT_REVIEW_CANARY_ID` | empty | `release_canary_id` the ledger requires for internal accounts. |
@@ -31,7 +31,7 @@ A finished, published generation is checked against what the creator asked for. 
 | `off` | not enabled or not admitted | nothing |
 | `evidence` | `ENABLED` | admission and frames only |
 | `review` | `PAID`, `OPENAI_API_KEY`, `AI_OPENAI_INTENT_REVIEW_BUDGET_USD > 0`, `AI_OPENAI_MONTHLY_BUDGET_USD > 0` | one paid frame review, judged and stored in shadow (nothing is posted) |
-| `repair` | `REPAIR` | reserved for a later stage; the code ceiling keeps it at `review` today |
+| `repair` | `REPAIR` | stages one reversible repair draft for the creator to approve (code is merged; the code ceiling keeps every flag combination at `review` until the posting stage ships, and only tests lift it) |
 
 The tier is stamped at admission. Live flags can only lower it, never raise it. The legacy Gemini quality review is retired for a runtime-v2 thread only when that creator's tier is `review` or higher and the thread's newest intent review has not ended without a verdict (`unavailable`, `exhausted`, `stale`, `review_unknown`). When it has, the next reconcile hands the generation back to the legacy review. The intent review judges the creator's request against the video; it does not replace the legacy review's mechanical repairs (caption legibility, speech cuts, transition fallback), so a creator whose review reports no findings is not covered for those.
 
@@ -54,6 +54,8 @@ The tier is stamped at admission. Live flags can only lower it, never raise it. 
 | --- | --- |
 | `unavailable` | `paid_disabled`, `paid_gate_closed`, `canary_unattributed`, `frame_hash_mismatch`, `media_corrupt`, `context_too_large`, `provider_rejected`, `invalid_output`, `nothing_verifiable`, `prompt_builder_unavailable`, `ledger_unavailable`, `disposition_unavailable` |
 | `no_findings`, `suggestion`, `needs_confirmation` | `reviewed` (the server judged a valid reply) |
+| `repair_staged` (not terminal) | `awaiting_approval` |
+| `repair_verified`, `repair_unverified`, `repair_reverted`, `repair_abandoned` | see the repair stage |
 | `stale` | `generation_changed`, `ownership_changed` |
 | `exhausted` | `deadline` (claimed more than 180 s after `evidence_ready_at`), `attempts`, `budget_review`, `budget_monthly` |
 | `review_unknown` | `provider_unknown_outcome`, `response_lost` |
@@ -76,7 +78,7 @@ The tier is stamped at admission. Live flags can only lower it, never raise it. 
 - Any violation voids the whole review as `unavailable(invalid_output)`: not JSON or truncated, an extra key, more than 12 findings, two findings for one requirement, an issued requirement with no finding at all (the schema cannot force coverage, so the server does: a reply that checks one requirement and goes quiet on the rest never counts as a clean pass), an alias or frame that was not issued or sent, an unmet finding with no frame, a defect kind on a verdict that is not unmet, or a defect kind that does not fit the requirement kind (a wording defect on footage). The call is still settled at actual usage, `review.invalid_output` names the first violation, and no finding is stored. A void review never lands on `no_findings`.
 - A `met` verdict on a timing requirement is recorded as `unverifiable`: stills sample instants and cannot show how long anything stays on screen.
 - A reply that judged nothing is `unavailable(nothing_verifiable)`. A catalog with no requirement the frames can judge makes no call and reserves nothing.
-- `low` confidence is ignored (kept in `disposition.ignored`). `medium` only ever produces a suggestion. A repair needs `high`, a tier of `repair`, staging preconditions that held, and a catalog candidate that matches both the requirement and the defect kind. Until the repair stage ships, every would-be repair is stored as a suggestion with `why = tier_review`.
+- `low` confidence is ignored (kept in `disposition.ignored`). `medium` only ever produces a suggestion. A repair needs `high`, a tier of `repair`, staging preconditions that held, and a catalog candidate that matches both the requirement and the defect kind. Below the `repair` tier every would-be repair is stored as a suggestion with `why = tier_review`.
 - Wrong footage (a `select` requirement) is always a suggestion and never a question or a repair. Wording the draft already carries is a render-fidelity suggestion plus a `render_fidelity` pipeline event for engineering triage. A wording defect with no candidate becomes at most one question (`needs_confirmation`); the rest become suggestions.
 - Row status, highest wins: `repair_staged` > `needs_confirmation` > `suggestion` > `no_findings` (which needs at least one `met`).
 
@@ -94,12 +96,44 @@ A requirement finds its rows by scope (`title`, `clip:<id>`) and otherwise by th
 
 **Replay evals** (`pytest tests/evals/test_intent_review_evals.py`, free): goldens for a correct edit, wrong footage, wrong wording, wording drift with no authority, a timing miss and an audio decoy; hostile fixtures for each way a reply is voided. Replay proves the structure and the server judgment, not that the model catches anything; the goldens' hand-written `raw_text` is replaced by recorded replies in the live qualification run.
 
+## The repair stage
+
+A repair is never a model output. The disposition names catalog candidate ids (at most three); the repair stage compiles them through the same runtime-v2 draft path every creator edit uses, and the creator's Approve tap is the only authority that renders. Code: `app/kria/intent_review_repair.py` (pure: operations, fences, allow-list diff), `app/services/intent_review_repair_flow.py` (database: staging, settlement, sweeps), `app/kria/intent_review_copy.py` (wording).
+
+**Staging** (`stage_intent_repair`, idempotent):
+
+1. Under the authority locks it re-checks the input digest and the live tier, then the staging preconditions: the head draft is still the approved draft (same id, revision and hash), the thread has no pending approval and no turn in `pending`, `queued`, `planning`, `executing`, `awaiting_approval` or `observing`, and every candidate is still emitted by a catalog rebuilt from the brief as it stands now (a requirement added since the render, such as an exact timing, removes the candidate), and the creator has not already turned that fix down: a candidate (same kind, element and target) whose approval was denied, expired, timed out or undone, or that the follow-up review judged worse, is remembered for the project and held back on every later review. A failure downgrades the repair to a suggestion with `why` = `head_moved`, `thread_busy` or `protected`. The creator's newer work always wins.
+2. It writes a hidden system event (`intent_review_repair`, `client_event_id = intent-review:<review id>`, which dedupes it) and a `planning` turn on that event with a 120 s lease. The planner reads only user and assistant events, and `_claim` cancels any turn whose source is this event, so the live planner never sees it.
+3. It builds the operations from the candidates alone (`rewrite_text` with the contract text byte for byte, `set_texts_timing` inside the approved span) and runs the ordinary `_complete_draft_turn`. That one transaction re-fences the head, compiles, runs `verify_intent_repair`, inserts the draft with the approved draft as its parent (the Undo chain), writes the execution receipt (`result.intent_repair` records the candidates, the base draft and the authority `instruction_preserving_v1` / `creator_tap`), and mints the approval. The turn ends in `awaiting_approval`. Nothing renders.
+4. It sets `repair_draft_id`, `repair_render_execution_id`, `repair_staged_at` and `status = repair_staged`.
+
+`verify_intent_repair` compares the compiled text lane with the pre-edit lane by element id: only the named fields of the named elements may change, to exactly the expected values, every other row and field must be identical, and an empty diff is refused. Any refusal (and any reply the draft path would have written to the chat, such as a readiness question) raises inside the transaction, so nothing is staged and nothing reaches the chat; the review becomes a `suggestion` with `why = protected`. `preserve_text` is never set, because the compiler would drop the very text operation the repair needs.
+
+**Settlement.** The creator's approved render is admitted as an ordinary review whose `parent_review_id` is the review that staged it (found through the repair turn's source event). That follow-up review is capped at tier `review` (it can never stage a repair, so there is one repair cycle per generation: `parent_review_id` is also unique), inherits the parent's `original_request`, and is restricted to the requirements the parent issued, so the two reviews compare like with like. When it reaches a terminal state it settles the parent; the sweep (`recover_repair_staged`, every beat) is the backup.
+
+| Follow-up review | Parent becomes |
+| --- | --- |
+| not a completed review (`stale`, `unavailable`, `exhausted`, `review_unknown`) | `repair_unverified(rereview_unavailable)` |
+| worse, and the repair draft is still the head | draft undone through `undo_draft` (a new revision copied from the approved draft, never `last_good`), `repair_reverted(worse)` |
+| worse, and the repair draft was already undone (a revision with the repair draft as its parent, named by a `draft_undone` event) | no second undo, `repair_reverted(worse)` |
+| worse, head moved | `repair_reverted(worse_head_moved)`, no undo |
+| every targeted requirement met | `repair_verified(fixed)` |
+| otherwise | `repair_unverified(not_confirmed)` |
+
+The parent row stays locked while the undo runs, so two settlers cannot both decide. The undo commits on its own connection, so a settler that dies between the undo and closing the parent leaves the draft restored and the parent still `repair_staged`; the next pass (a redelivery or the sweep) finds the restored draft and closes the parent as `worse`, never as `worse_head_moved`, which means the creator's draft was left alone. A turn the undo promoted from the queue is published only after the parent is closed (a lost publish is republished by the turn reconciler).
+
+"Worse" is by requirement (brief id), counted only over requirements mapped to an element the repair edited: one the parent judged met that the follow-up judges unmet at high confidence, or, when the repair did not meet what it targeted, more high-confidence unmet requirements than the parent had. A repair that met its targets is never undone because a second, independent reading flags some other requirement (a footage ask cannot be changed by retyping a title). The comparison is stored in `review.comparison`.
+
+**Sweep** (a `repair_staged` row with no follow-up review): denied approval `repair_abandoned(approval_rejected)`; expired approval `approval_expired` (approvals live 30 minutes); a cancelled approval whose cancellation is recorded by a `draft_undone` event `undone`; render execution failed `render_failed`; approval still pending after 24 h `unapproved_timeout`; a repair that was denied, expired or timed out is undone through its draft chain (when it is still the head) so the creator's next edit does not build on wording they never approved; a follow-up admitted below the review tier is ended `unavailable(paid_disabled)` and the parent settles `repair_unverified(rereview_unavailable)`; render completed over 10 minutes ago and no follow-up review exists at all `repair_unverified(no_rereview)`.
+
+**Not verifiable offline.** Whether the planner turns a creator's plain "Render previous version" into a `render.request` after a revert has not been checked, because only a live planner call can show it. Until a live check proves it, copy that offers the tap must say "ask me to render it" instead of naming a button.
+
 ## Crash recovery
 
 `recover_intent_reviews` runs on every beat (through `reconcile_generation_reviews`).
 
 - `evidence_ready` rows at a reviewing tier older than 30 s are republished (task id `generation-review:<id>:intent`). Rows past the 180 s start deadline become `exhausted(deadline)`.
-- `reviewing` rows with an expired lease are decided from the stored response and the ledger entry for `paid_call_key`:
+- `reviewing` rows with an expired lease that already hold a repair disposition resume staging from the source event and turn (a committed draft is finished, a stranded `planning` turn is cancelled and the repair becomes a `thread_busy` suggestion). Other `reviewing` rows with an expired lease are decided from the stored response and the ledger entry for `paid_call_key`:
 
 | Ledger state | Result |
 | --- | --- |
@@ -116,6 +150,7 @@ A `provider_started` reservation is never released except on a definite 4xx. The
 
 Apply with `fly secrets set -a nova-video ...` on api and worker, then restart both.
 
+- `KRIA_INTENT_REVIEW_REPAIR_ENABLED=false`: no new staging; a repair already staged keeps waiting for the creator and still settles. A review whose disposition asked for a repair downgrades to a suggestion (`tier_review`).
 - `KRIA_INTENT_REVIEW_PAID_ENABLED=false`: rows not yet claimed become `unavailable(paid_disabled)`. Reviews in flight finish.
 - `KRIA_INTENT_REVIEW_ENABLED=false`: no admission, no evidence, no review, and the legacy review is no longer retired.
 - `AI_OPENAI_INTENT_REVIEW_BUDGET_USD=0`: every reserve is rejected and the tier drops back to `evidence`.

@@ -67,11 +67,16 @@ class Disposition(BaseModel):
     ignored: list[str] = Field(default_factory=list)
 
 
+Blocked = Literal["head_moved", "thread_busy", "protected"]
+
+
 @dataclass(frozen=True)
 class RepairPreconditions:
     """What the staging step found under lock; `blocked` names the first thing in the way."""
 
-    blocked: Literal["head_moved", "thread_busy", "protected"] | None = None
+    blocked: Blocked | None = None
+    # Candidates the live brief still allows; None means the check was not made.
+    allowed: frozenset[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -122,6 +127,13 @@ def _repair_block(finding, tier: str, preconditions: RepairPreconditions | None)
     return preconditions.blocked
 
 
+def _candidate_block(candidate, blocked: Why | None, preconditions) -> Why | None:
+    if blocked is not None:
+        return blocked
+    allowed = preconditions.allowed if preconditions is not None else None
+    return None if allowed is None or candidate.candidate_id in allowed else "protected"
+
+
 def dispose(
     findings: list[IntentFinding],
     catalog: ReviewCatalog,
@@ -153,14 +165,15 @@ def dispose(
             for candidate in automatic:
                 if candidate.candidate_id in repairs:
                     continue
-                if blocked is None and len(repairs) < MAX_REPAIR_CANDIDATES:
+                held = _candidate_block(candidate, blocked, repair_preconditions)
+                if held is None and len(repairs) < MAX_REPAIR_CANDIDATES:
                     repairs.append(candidate.candidate_id)
                 else:
                     suggestions.append(
                         Suggestion(
                             requirement_id=alias,
                             candidate_id=candidate.candidate_id,
-                            why=blocked or "repair_cap",
+                            why=held or "repair_cap",
                         )
                     )
         elif matching:

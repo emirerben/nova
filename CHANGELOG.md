@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.20.0] - 2026-11-03
+
+### Changed
+- feat(kria): stage a reversible, Approve-gated repair for safe review findings (KRI-1171) (#2079) <!-- release-pr: 2079 -->
+
 ## [0.84.19.0] - 2026-11-03
 
 ### Changed

@@ -109,6 +109,7 @@ class Claim:
     refs: ReviewRefs
     packet: dict[str, Any]
     evidence: dict[str, Any]
+    restrict_to: tuple[str, ...] | None = None
 
 
 def _now() -> datetime:
@@ -260,6 +261,8 @@ def claim_intent_review(review_id) -> Claim | str:
             row.status, row.reason = verdict
             db.commit()
             return verdict[0]
+        from app.services.intent_review_repair_flow import inherited_requirements
+
         refs = ReviewRefs(
             job_id=str(rows.job.id),
             session_id=str(rows.session.id),
@@ -281,6 +284,7 @@ def claim_intent_review(review_id) -> Claim | str:
             refs=refs,
             packet=dict(row.result["packet"]),
             evidence=dict(row.result["evidence"]),
+            restrict_to=inherited_requirements(db, row),
         )
         db.commit()
         return claim
@@ -381,6 +385,7 @@ def _call_review(claim: Claim, client: OpenAIVisionClient | None) -> str:
             claim.packet,
             frames,
             rendered_duration_s=claim.evidence.get("rendered_duration_s"),
+            **({"restrict_to": claim.restrict_to} if claim.restrict_to is not None else {}),
         )
     except NothingToReview:
         return _terminal_for_claim(claim, "unavailable", "nothing_verifiable")
@@ -489,7 +494,7 @@ def _settle_outcome(claim: Claim, result: MediaReviewResult, state: dict[str, An
     return _terminal_for_claim(claim, status, reason, patch=patch)
 
 
-def _judge(row, review: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+def _judge(db, row, review: dict[str, Any], rows) -> tuple[str, str, dict[str, Any]]:
     """Turn a stored, settled response into a terminal state; a void review never lands as clean."""
     try:
         catalog = ReviewCatalog.model_validate(review.get("catalog"))
@@ -497,12 +502,20 @@ def _judge(row, review: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
         return "unavailable", "disposition_unavailable", {}
     if review.get("raw_output_truncated"):
         return "unavailable", "invalid_output", {"invalid_output": "truncated"}
+    tier = lower_tier(row.tier, intent_review_tier(row.owner_id))
+    if row.parent_review_id is not None:
+        tier = lower_tier(tier, "review")
+    preconditions = None
+    if rows is not None and tier_rank(tier) >= tier_rank("repair"):
+        from app.services.intent_review_repair_flow import repair_preconditions
+
+        preconditions = repair_preconditions(db, rows, row)
     try:
         evaluation = evaluate_review(
             review.get("raw_output") or "",
             catalog,
-            tier=lower_tier(row.tier, intent_review_tier(row.owner_id)),
-            repair_preconditions=None,
+            tier=tier,
+            repair_preconditions=preconditions,
         )
     except InvalidReviewOutput as exc:
         return "unavailable", "invalid_output", {"invalid_output": exc.reason}
@@ -521,7 +534,7 @@ def _finish(review_id, token, *, settled: dict[str, Any] | None = None) -> str:
         first = db.get(CreatorGenerationReview, review_id)
         if first is None or first.status != "reviewing" or first.lease_token != token:
             return "ignored"
-        _, stale = check_authority(db, first)
+        rows, stale = check_authority(db, first)
         row = _lock_row(db, review_id)
         if row.status != "reviewing" or row.lease_token != token:
             return "ignored"
@@ -534,9 +547,15 @@ def _finish(review_id, token, *, settled: dict[str, Any] | None = None) -> str:
         elif provenance.get("response_status") != "completed":
             verdict = ("unavailable", "invalid_output")
         else:
-            status, reason, patch = _judge(row, review)
+            status, reason, patch = _judge(db, row, review, rows)
             review.update(patch)
             verdict = (status, reason)
+            if status == "repair_staged":
+                row.review = review
+                row.lease_token = uuid.uuid4()
+                row.lease_until = _now() + timedelta(seconds=LEASE_S)
+                db.commit()
+                return "repair_pending"
         row.review = review
         row.status, row.reason = verdict
         row.lease_token = row.lease_until = None
@@ -557,11 +576,28 @@ def run_intent_review(review_id, *, client: OpenAIVisionClient | None = None) ->
     if not isinstance(claimed, Claim):
         outcome = claimed
     else:
-        outcome = _call_review(claimed, client)
+        outcome = _stage_repair_if_pending(review_id, _call_review(claimed, client))
     if outcome != "ignored":
+        from app.services.intent_review_repair_flow import settle_parent_from_child
+
         _emit_trace(review_id, outcome)
         post_intent_review_outcome(review_id)
+        settle_parent_from_child(review_id)
     return outcome
+
+
+def _stage_repair_if_pending(review_id, outcome: str) -> str:
+    if outcome != "repair_pending":
+        return outcome
+    from app.services.intent_review_repair_flow import stage_intent_repair
+
+    with sync_session() as db:
+        token = db.scalar(
+            select(CreatorGenerationReview.lease_token).where(
+                CreatorGenerationReview.id == review_id
+            )
+        )
+    return stage_intent_repair(review_id, token=token)
 
 
 def post_intent_review_outcome(review_id) -> None:
@@ -736,11 +772,13 @@ def recover_intent_reviews(deadline: float | None = None) -> int:
             return handled
         _recover_expired(identifier)
         handled += 1
-    return handled
+    from app.services.intent_review_repair_flow import recover_repair_staged
+
+    return handled + recover_repair_staged()
 
 
 def _recover_expired(review_id) -> str:
-    outcome = _resolve_expired(review_id)
+    outcome = _stage_repair_if_pending(review_id, _resolve_expired(review_id))
     if outcome not in {"ignored", "evidence_ready"}:
         _emit_trace(review_id, outcome)
     return outcome
@@ -748,6 +786,8 @@ def _recover_expired(review_id) -> str:
 
 def _resolve_expired(review_id) -> str:
     """Resolve an abandoned lease from the stored response or the ledger, never by re-calling."""
+    from app.services.intent_review_repair_flow import stage_intent_repair, wants_staging
+
     new_token = uuid.uuid4()
     with sync_session() as db:
         row = _lock_row(db, review_id)
@@ -756,9 +796,12 @@ def _resolve_expired(review_id) -> str:
         key = row.paid_call_key
         stored = row.review or {}
         attempts = row.review_attempts
+        staging = wants_staging(row)
         row.lease_token = new_token
         row.lease_until = _now() + timedelta(seconds=RECOVERY_LEASE_S)
         db.commit()
+    if staging:
+        return stage_intent_repair(review_id, token=new_token)
     ledger = costs.reservation_for_key(key)
     if stored.get("raw_output") is not None:
         return _resume_after_response(review_id, new_token, stored, ledger, key)

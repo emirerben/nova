@@ -284,6 +284,11 @@ def admit_generation_review(db, execution):
             except (ValueError, TypeError, KeyError, AttributeError, StopIteration):
                 inputs = {"execution_id": str(execution.id), "status": "missing_authority"}
                 state, reason = "unavailable", "missing_authority"
+            from app.services.intent_review_repair_flow import repair_parent_id
+
+            parent_id = repair_parent_id(db, execution) if state == "pending" else None
+            if parent_id is not None:
+                tier = lower_tier(tier, "review")
             identity = inputs.get("basis", {})
             key = digest(
                 [
@@ -309,6 +314,7 @@ def admit_generation_review(db, execution):
                     attempts=0,
                     reason=reason,
                     tier=tier,
+                    parent_review_id=parent_id,
                     max_usd=(
                         settings.kria_intent_review_max_usd
                         if tier_rank(tier) >= tier_rank("review")
@@ -556,8 +562,13 @@ def run_generation_review(review_id):
         elif bundle is None:
             row.status, row.reason = "unavailable", reason or "evidence_unavailable"
         else:
+            from app.services.intent_review_repair_flow import inherited_request
+
             capture = build_render_review_context(
-                rows, verified_artifact=bundle.verified_artifact, observations=bundle.observations
+                rows,
+                verified_artifact=bundle.verified_artifact,
+                observations=bundle.observations,
+                original_request=inherited_request(db, row),
             )
             if capture.status == "ready":
                 row.status, row.reason = "evidence_ready", None
