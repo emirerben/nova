@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.22.0] - 2026-11-03
+
+### Changed
+- feat(kria): tell the creator what the review found, and the qualification harness (KRI-1171) (#2080) <!-- release-pr: 2080 -->
+
 ## [0.84.21.0] - 2026-11-03
 
 ### Fixed
