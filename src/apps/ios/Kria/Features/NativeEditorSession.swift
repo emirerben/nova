@@ -5372,6 +5372,28 @@ struct NativeEditorTemporaryVideo: Sendable {
         return true
     }
 
+    // MARK: Solid-colour fill (KRI-1173)
+
+    /// The Colour section exists only while the server advertises `speaker_background_color` (the colour gate is
+    /// open and this build speaks protocol 34). The media controls keep following `speaker_background`.
+    var canEditSpeakerBackgroundColor: Bool {
+        canEditSpeakerBackground && document.capabilities["speaker_background_color"]?.editable == true
+    }
+    /// `#RRGGBB` while the fill is a solid colour, else nil.
+    var speakerBackgroundColor: String? { document.speakerBackground?.color }
+
+    /// Puts a plain colour behind the speaker, replacing any current fill (photo, video or another colour). The
+    /// timed windows and the speaker frame (KRI-1162) stay as they are. `hex` is `#RRGGBB` in either case; anything
+    /// else changes nothing and returns false. Picking the colour that is already there is not an edit. One undo step.
+    @discardableResult
+    func setSpeakerBackgroundColor(hex: String) -> Bool {
+        guard canEditSpeakerBackgroundColor, let color = EditorSpeakerBackground.normalizedColor(hex) else { return false }
+        let current = document.speakerBackground
+        let value = EditorSpeakerBackground(color: color, windows: current?.windows ?? [], speakerFrame: current?.speakerFrame)
+        transactDocument(section: .speakerBackground) { $0.speakerBackground = value }
+        return true
+    }
+
     // MARK: Timed backgrounds and the speaker frame (KRI-1162)
 
     /// The window and corner controls exist only while the server advertises `speaker_background_windows` (the

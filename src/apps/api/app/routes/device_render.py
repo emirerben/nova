@@ -111,6 +111,7 @@ from app.services.phone_rollout import (
     recipe_has_tilted_card,
     single_word_text_client_supported,
     speaker_background_client_supported,
+    speaker_background_color_client_supported,
     speaker_background_windows_client_supported,
     text_behind_subject_phone_client_supported,
     text_bend_client_supported,
@@ -638,6 +639,19 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "code": "client_update_required",
             "feature": "speaker_background_windows",
             "minimum_client_protocol": settings.speaker_background_windows_min_client_protocol,
+        }
+    if (
+        getattr(recipe, "speaker_background", None) is not None
+        and recipe.speaker_background.uses_color
+        and not speaker_background_color_client_supported()
+    ):
+        # KRI-1173 (S49): an older build rejects `media_kind: "color"` / `color` (and the
+        # `speakerBackgroundColor` token) and would FAIL the job. Compile strips a colour for
+        # such a build; this covers a recipe a newer build or the worker pinned before.
+        return {
+            "code": "client_update_required",
+            "feature": "speaker_background_color",
+            "minimum_client_protocol": settings.speaker_background_color_min_client_protocol,
         }
     if not card_tilt_client_supported() and recipe_has_tilted_card(recipe):
         # KRI-1141: a build below protocol 30 decodes the `clipTilt` token a tilted card carries

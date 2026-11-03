@@ -63,7 +63,7 @@ like `ending_clip`.
 | Step | Where | What it does |
 | --- | --- | --- |
 | Advertise | `resolve_creator_manifest` | `capabilities.speaker_background` is present only on a phone Talking manifest while the media lanes and `speaker_background_supported()` hold. Closed: no key, no prompt text, identical hashes. |
-| Teach | `main_creator._SPEAKER_BACKGROUND_PROMPT_SECTION` | Appended only when the manifest advertises the lane (`MAIN_CREATOR_PROMPT_VERSION` v106). |
+| Teach | `main_creator._SPEAKER_BACKGROUND_PROMPT_SECTION` | Appended only when the manifest advertises the lane (`MAIN_CREATOR_PROMPT_VERSION` v112 at the time of writing; the version string in `agents/main_creator.py` is the truth). |
 | Repair | `creator_capabilities.repair_creator_speaker_background`, run by `compile_strategy_to_plan` | Keeps an id that is a photo or video of THIS item's pool, in the manifest's canonical `asset-<id>` spelling, drops anything else (another item's, the speaker's own clip, made up, a kind the device cannot draw, a manifest that cannot show it) with a plain `Couldn't ...` notice, and takes the photo out of every reaction beat and the closing shot. The camera pick fills in a strategy the agent left without one. |
 | Resolve | `_run_phone_subtitled_job` (`_resolve_strategy_background`) | Looks the id up in the job's ready pool, builds `SubtitledBackground`, runs `strip_unsupported_background`, and binds it like a lane-request background. A hand-written lane request's background wins (`lane_request_background_wins`). A miss is a `phone_lane_receipt.dropped` entry (`not_in_ready_pool`, `missing_generation`, `multi_clip_talking`), never a failed job. |
 | Reserve | same function | The resolved photo is excluded from the generic card / full-screen grounding (`used_media_ids`). A closed gate reserves nothing: the render equals one for a strategy that never asked. |
@@ -72,7 +72,7 @@ like `ending_clip`.
 
 `set_background {asset_id, source_start_s?}` and `remove_background` (lane
 `app/agents/editor_ops_v2/background.py`, prompt `prompts/edit_copilot_ops/speaker_background.txt`,
-`EDIT_COPILOT_PROMPT_VERSION` v97). They compile into the editor Save's `speaker_background` section.
+`EDIT_COPILOT_PROMPT_VERSION` v109 at the time of writing; see `agents/edit_copilot.py`). They compile into the editor Save's `speaker_background` section.
 
 | Piece | Rule |
 | --- | --- |
@@ -192,6 +192,73 @@ and the frame, tracing `speaker_background_windows_phone_fallback` (`reason`: `w
 doc (three photo windows + corner speaker in preview and export, a silent looping video window, a 60 s ten-window export
 within 120 s). Until then every request renders the single fill background exactly as before.
 
+## Solid-colour fill (KRI-1173)
+
+The FILL may be a flat colour instead of a pool photo or video ("fully white, fully green, another colour").
+Contract, decisions and failure modes (S46–S64): `docs/reviews/speaker-background-color-failure-modes.md`.
+Capability row: `speakerBackgroundColor`. Windows and the speaker frame still apply over a colour; windows stay
+photo/video only.
+
+| Where | Shape |
+| --- | --- |
+| Recipe (`SpeakerBackgroundLayer`) | `media_kind: "color"` + `color: "#RRGGBB"` (uppercase only, strict on the wire) and NO `asset_id` (absent, never null); `source_start` 0. A photo/video fill dumps exactly as before (`color` omitted while None, `asset_id` omitted only for a colour), so every earlier digest holds. `EditRecipeV2` needs no manifest asset for a colour and derives `speakerBackground` + `speakerBackgroundColor` (no `stillImages`/`visualVideos`). Shared fixture: `tests/fixtures/speaker-background-parity/v3.json`. |
+| Lane (`SubtitledBackground`) | `kind` gains `"color"`; `media_id`/`gcs_path`/`generation` are absent (omitted from dumps) for a colour and required otherwise; `color` is stored UPPERCASE (lowercase is accepted at this boundary only). `background_media_refs` / `background_pins` yield nothing for the fill, so nothing is pinned, bound or reserved for it (windows still are). |
+| Compile | `_compile_background` skips `_pin_background_visual` for a colour and builds the layer with `color=` and no asset id. |
+| Editor document / Save | Document `{kind: "color", color, windows?, speaker_frame?}` (no `media_id`, no `source_start_s`). `EditorCommitSpeakerBackground`: `media_id` optional, `kind` gains `color`, `color` added (any case in, uppercase stored). A colour is never pinned (`background_pin_requests` yields only its windows). 422 `speaker_background_color_disabled` (reason, while the colour gate is closed and the Save SETS one) and `speaker_background_color_invalid` (bad hex, a colour with a `media_id`, a media kind without one, a colour with a source start); clearing is never gated. 426 `client_update_required` `feature: "speaker_background_color"`, `minimum_client_protocol: 34` for a build below 34 that sets a colour, Saves a variant already carrying one, or polls a pinned recipe using one (`phone_editor.py`, `device_render.py`). `lanes_from_recipe` rebuilds a colour layer (it is never silently dropped). |
+| Capability | `editor_capabilities.speaker_background_color: true` only while the colour gate is open on a variant that may carry a background; thread capability `speaker_background_color`. |
+
+### Gates
+
+`speaker_background_color_supported()` = `speaker_background_supported()` AND `speakerBackgroundColor` in
+`PHONE_RENDER_VERIFIED_FEATURES` AND (inside an app request) protocol ≥ `speaker_background_color_min_client_protocol`
+(34; 33 is the media-tilt-zoom build). No new env flag: `SPEAKER_BACKGROUND_ENABLED` stays the one kill switch.
+`speaker_background_color_unavailable_reason()` names the first failing check: `disabled`, `token_not_verified`,
+`color_token_not_verified`, `client_protocol_below_min`.
+
+`strip_unsupported_background` order: base gate closed drops the whole lane (as always); else a colour fill with the colour
+gate closed drops the WHOLE lane too (there is no media fill to fall back to, and windows cannot exist without a fill) and
+traces `speaker_background_color_phone_fallback` (`reason`, `color`, `window_count`, `had_frame`); else the windows check runs
+as for a photo fill. The render equals one for a request that never asked: never a wrong colour.
+`validate_phone_pilot_recipe` refuses an unstripped colour recipe without the token. The worker skips the
+`stillImages`/`visualVideos` check for a colour fill (it needs only `speakerBackgroundColor`, already enforced by the strip).
+
+### Rollout
+
+`speakerBackgroundColor` joins `PHONE_RENDER_VERIFIED_FEATURES` only after the physical iPhone check in the failure-mode doc
+(white then green fill in preview and export, a colour under two photo windows, a 60 s export within 120 s). Until then every
+colour request is stripped and the creator keeps their own room. The chat entry points (strategy `background_media.color`,
+copilot `set_background_color`) are described below.
+
+### Chat
+
+- **Strategy.** `background_media` takes EXACTLY ONE of `media_id` or `color` (`reaction_beats.BackgroundMedia`; `color` is a loose
+  short string so a bad value never fails the turn's schema; no `source_start_s` with a colour). It is taught only while the
+  manifest advertises `capabilities.speaker_background_color` (`creator_capabilities.speaker_background_color_open`): a separate
+  prompt paragraph (`main_creator._SPEAKER_BACKGROUND_COLOR_PROMPT_SECTION`) so a closed colour gate leaves every creator prompt
+  byte-identical. `repair_creator_speaker_background` normalises case, a missing `#` and the named presets (EN + TR, shared with the
+  copilot in `reaction_beats.normalise_background_color`) to `#RRGGBB`; an invalid value or a closed capability drops the WHOLE
+  background with a plain `Couldn't ...` notice (`SPEAKER_BACKGROUND_NOTICES["color_invalid"|"color_unavailable"]`, Turkish twins
+  in `strategy_policy._KNOWN_TR`). The camera pick (a media pick) is never consulted for a colour. A colour keeps its `sequence`,
+  `cadence_s` and `speaker_frame` while the windows gate is open (otherwise the windows notice, colour kept); only the window
+  photos are taken out of the pop-ins, the colour reserves nothing.
+- **Worker.** `_strategy_background_request` yields `{"color": "#RRGGBB", ...}` (no `media_id`); `_resolve_strategy_background`
+  builds `SubtitledBackground(kind="color", color=...)` with no pool lookup (a colour with no sequence does not even read the pool)
+  and reserves nothing for the fill; `strip_unsupported_background` then applies. `phone_lane_receipt["background"]` gains `color`
+  for a colour fill (a media fill's receipt is unchanged).
+- **Copilot.** `set_background_color {color}` (hex in any case or a named preset) in the same `background` family as
+  `set_background`: it sets `{kind: "color", color}` and keeps the timed `windows` and `speaker_frame`; `set_background` replaces a
+  colour fill, `remove_background` clears everything, `set_background_sequence` / `set_speaker_frame` work over a colour. The
+  snapshot's `background` section gains `color_available` (and `color_reason` while closed) and `current` may be
+  `{kind: "color", color}`. While the lane is open but the colour gate is closed the op answers as an unmet request carrying
+  `color_reason` (`capability_unavailable` with that sentence in the reply notes, never the generic "can't change that"). Parity
+  group `speaker_background` maps the iOS `setSpeakerBackgroundColor` to `set_background_color`.
+- **Receipts.** The brief planner records a colour ask as `facts.speaker_background: true` plus `facts.background_color: "<hex or
+  colour as said>"` (sticky; read through facts only, never the creator's words, KRI-667). `_check_speaker_background` answers a
+  colour ask `met` ("a plain white background sits behind you ...") when the plan or finished video carries the colour,
+  `partial` when it carries a different one, and `not_possible` with a NAMED reason otherwise (not an iPhone Talking edit, token not
+  verified, app too old, or "this draft doesn't put a plain colour behind you"). "Attach the photos or videos first" is never the
+  answer to a colour ask.
+
 ## Rollback
 
 Kill switch, never a code revert: `fly secrets set SPEAKER_BACKGROUND_ENABLED=false
@@ -209,7 +276,10 @@ iPhone preview + export check), then the flag, then restart.
 (worker), `tests/routes/test_speaker_background_editor.py` (426, Save, capability,
 projection), `tests/services/test_phone_speaker_background_pin.py` and
 `tests/integration/test_speaker_background_pin_postgres.py` (S19), and the hash guard in
-`tests/schemas/test_guided_edit_revision.py`.
+`tests/schemas/test_guided_edit_revision.py`. KRI-1173 colour fill:
+`tests/kria/test_speaker_background_color.py` (wire, lane, gates, strip, compile),
+`tests/routes/test_speaker_background_color_editor.py` (426, Save, capability, projection) and the colour cases in
+`tests/tasks/test_speaker_background_worker.py`.
 
 ## Evidence
 

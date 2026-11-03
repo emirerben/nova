@@ -64,7 +64,9 @@ from app.pipeline.prompt_loader import load_prompt
 # v46 (parent KRI-1151): the shared brief section records `insert_clip` / `insert_at_phrase`.
 # v47 (KRI-1162 / KRI-1161): the shared brief section records a photo or video behind the
 # speaker as a `style` fact `speaker_background` (+ `background_changes`, `speaker_small`).
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-02-v47"
+# v48 (KRI-1173): the shared brief section also records `background_color` on a plain-colour
+# background ask.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-03-v48"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")

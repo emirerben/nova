@@ -1807,6 +1807,11 @@
             "title": "Speaker Background",
             "type": "boolean"
           },
+          "speaker_background_color": {
+            "default": false,
+            "title": "Speaker Background Color",
+            "type": "boolean"
+          },
           "suggestion_chips": {
             "default": false,
             "title": "Suggestion Chips",
@@ -3249,6 +3254,7 @@
                 "behindSubject",
                 "speakerBackground",
                 "speakerBackgroundWindows",
+                "speakerBackgroundColor",
                 "clipTilt",
                 "clipBackdropMedia",
                 "captions",
@@ -3378,6 +3384,7 @@
                 "behindSubject",
                 "speakerBackground",
                 "speakerBackgroundWindows",
+                "speakerBackgroundColor",
                 "clipTilt",
                 "clipBackdropMedia",
                 "captions",
@@ -4164,19 +4171,29 @@
       },
       "EditorCommitSpeakerBackground": {
         "additionalProperties": false,
-        "description": "Editor Save section for the Talk-to-camera background (KRI-1117).\n\nThe wire is the same ``{media_id, kind, source_start_s}`` the editor document carries:\nthe media id names a visual in this item's pool, never a path (the server pins the\nexact bytes). Sent as an object to set it, as an explicit ``null`` to clear it.\n\nKRI-1162: ``windows`` (1..40 timed backgrounds over the fill) and ``speaker_frame`` are\noptional and omitted from the dump while unused, so an old-shape Save dumps exactly as it\ndid and still equals the stored document.",
+        "description": "Editor Save section for the Talk-to-camera background (KRI-1117).\n\nThe wire is the same ``{media_id, kind, source_start_s}`` the editor document carries:\nthe media id names a visual in this item's pool, never a path (the server pins the\nexact bytes). Sent as an object to set it, as an explicit ``null`` to clear it.\n\nKRI-1162: ``windows`` (1..40 timed backgrounds over the fill) and ``speaker_frame`` are\noptional and omitted from the dump while unused, so an old-shape Save dumps exactly as it\ndid and still equals the stored document.\n\nKRI-1173: ``kind: \"color\"`` + ``color`` (``#RRGGBB``, any case in, UPPERCASE stored) is a\nsolid-colour fill: no ``media_id``, no pin, ``source_start_s`` 0 (omitted from the dump).",
         "properties": {
+          "color": {
+            "default": null,
+            "maxLength": 64,
+            "nullable": true,
+            "title": "Color",
+            "type": "string"
+          },
           "kind": {
             "enum": [
               "image",
-              "video"
+              "video",
+              "color"
             ],
             "title": "Kind",
             "type": "string"
           },
           "media_id": {
+            "default": null,
             "maxLength": 160,
             "minLength": 1,
+            "nullable": true,
             "pattern": "^\\S+$",
             "title": "Media Id",
             "type": "string"
@@ -4206,7 +4223,6 @@
           }
         },
         "required": [
-          "media_id",
           "kind"
         ],
         "title": "EditorCommitSpeakerBackground",
@@ -11201,10 +11217,19 @@
         "additionalProperties": false,
         "properties": {
           "asset_id": {
+            "default": null,
             "maxLength": 160,
             "minLength": 1,
+            "nullable": true,
             "pattern": "^\\S+$",
             "title": "Asset Id",
+            "type": "string"
+          },
+          "color": {
+            "default": null,
+            "nullable": true,
+            "pattern": "^#[0-9A-F]{6}$",
+            "title": "Color",
             "type": "string"
           },
           "loop": {
@@ -11215,7 +11240,8 @@
           "media_kind": {
             "enum": [
               "image",
-              "video"
+              "video",
+              "color"
             ],
             "title": "Media Kind",
             "type": "string"
@@ -11252,7 +11278,6 @@
           }
         },
         "required": [
-          "asset_id",
           "media_kind"
         ],
         "title": "SpeakerBackgroundLayer",

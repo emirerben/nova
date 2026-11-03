@@ -891,6 +891,15 @@ class Settings(BaseSettings):
     # `speaker_background_windows_phone_fallback`). Design:
     # docs/reviews/speaker-background-windows-failure-modes.md.
     speaker_background_windows_min_client_protocol: int = 32
+    # KRI-1173: a solid-colour FILL (`media_kind: "color"` + `color: "#RRGGBB"`, no asset) on
+    # the same lane. No new kill switch: SPEAKER_BACKGROUND_ENABLED stays the one switch; the
+    # device-parity gate is the verified token `speakerBackgroundColor` in
+    # PHONE_RENDER_VERIFIED_FEATURES plus an app build declaring `X-Kria-Client-Protocol` >= 34
+    # (33 is the media-tilt-zoom build, KRI-1169). Below either, a colour request is stripped
+    # whole (there is no media fill to fall back to; trace
+    # `speaker_background_color_phone_fallback`) and the creator keeps their own room.
+    # Design: docs/reviews/speaker-background-color-failure-modes.md.
+    speaker_background_color_min_client_protocol: int = 34
     # KRI-1134: tilt a clip or photo to any angle (`transform.rotation_degrees`, clockwise on
     # screen) with a blank, colour or blurred backdrop behind it (`TimelineClip.backdrop`),
     # drawn ON DEVICE by `KriaMediaEngine`. Capability `clipTilt` (derived from the clips). The

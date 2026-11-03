@@ -18,9 +18,12 @@ this module's.
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+
+from app.text_fold import loose_text
 
 MAX_REACTION_BEATS = 24
 
@@ -30,6 +33,46 @@ BeatVisualRole = Literal["photo", "sticker"]
 SpeakerFramePreset = Literal[
     "full", "small_bottom_right", "small_bottom_left", "small_top_right", "small_top_left"
 ]
+
+
+# KRI-1173: the colours a creator may NAME for a plain background (EN and TR), and the one
+# spelling (`#RRGGBB` uppercase) the Save, the lane and the recipe agree on. Shared by the chat
+# strategy repair and the copilot op so the two never disagree on what "green" is.
+BACKGROUND_COLOR_PRESETS: dict[str, str] = {
+    "white": "#FFFFFF",
+    "black": "#000000",
+    "green": "#00FF00",
+    "blue": "#0000FF",
+    "red": "#FF0000",
+    "yellow": "#FFFF00",
+    "grey": "#808080",
+    "gray": "#808080",
+    "beyaz": "#FFFFFF",
+    "siyah": "#000000",
+    "yeşil": "#00FF00",
+    "mavi": "#0000FF",
+    "kırmızı": "#FF0000",
+    "sarı": "#FFFF00",
+    "gri": "#808080",
+}
+_BACKGROUND_HEX = re.compile(r"^#?([0-9A-Fa-f]{6})$")
+# The presets keyed by the shared Turkish-aware loose fold (KRI-786: no private fold tables), so
+# "KIRMIZI", "Kırmızı" and ASCII-typed "kirmizi" all name red.
+_PRESET_BY_FOLD: dict[str, str] = {loose_text(k): v for k, v in BACKGROUND_COLOR_PRESETS.items()}
+
+
+def normalise_background_color(value: object) -> str | None:
+    """``#RRGGBB`` uppercase for a hex (any case, ``#`` optional) or a named preset, else None.
+
+    Short ``#RGB``, alpha hex and any other colour name are refused rather than guessed.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    match = _BACKGROUND_HEX.fullmatch(text)
+    if match is not None:
+        return "#" + match.group(1).upper()
+    return _PRESET_BY_FOLD.get(loose_text(text))
 
 
 def _clean(value: object) -> str | None:
@@ -261,11 +304,19 @@ class BackgroundMedia(BaseModel):
     speaker (``media_id`` stays the FILL shown wherever no window covers the time),
     ``cadence_s`` how long an unanchored entry stays up, ``speaker_frame`` a NAMED corner for
     the matted speaker (never geometry from the model, S37).
+
+    KRI-1173 (a plain colour): ``color`` replaces ``media_id`` -- EXACTLY ONE of the two is
+    set. It is the creator's colour as ``#RRGGBB`` (the repair also accepts the named presets
+    and any case and rewrites it to uppercase hex; anything else is dropped with a notice, so
+    the field is a loose string here and a bad value never fails the turn's schema).
+    ``source_start_s`` belongs to a media fill only; ``sequence`` / ``speaker_frame`` keep their
+    meaning (the windows play over the colour). Omitted from the dump while unused.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    media_id: str = Field(min_length=1, max_length=200)
+    media_id: str | None = Field(default=None, min_length=1, max_length=200)
+    color: str | None = Field(default=None, min_length=1, max_length=32)
     # Video only: where the looping background starts playing (a photo ignores it).
     source_start_s: float = Field(default=0.0, ge=0.0, le=1800.0, allow_inf_nan=False)
     sequence: tuple[BackgroundSequenceEntry, ...] = Field(
@@ -276,9 +327,21 @@ class BackgroundMedia(BaseModel):
     )
     speaker_frame: SpeakerFramePreset = "full"
 
+    @model_validator(mode="after")
+    def _one_fill(self) -> BackgroundMedia:
+        if (self.media_id is None) == (self.color is None):
+            raise ValueError("a background needs exactly one of media_id or color")
+        if self.color is not None and self.source_start_s != 0.0:
+            raise ValueError("a colour background has no source start")
+        return self
+
     @model_serializer(mode="wrap")
     def _omit_default_start(self, handler):  # noqa: ANN001, ANN202
         data = handler(self)
+        if data.get("media_id") is None:
+            data.pop("media_id", None)
+        if data.get("color") is None:
+            data.pop("color", None)
         if data.get("source_start_s") == 0.0:
             data.pop("source_start_s", None)
         if not data.get("sequence"):
@@ -347,6 +410,8 @@ class TimedCard(BaseModel):
 
 
 __all__ = [
+    "BACKGROUND_COLOR_PRESETS",
+    "normalise_background_color",
     "MAX_REACTION_BEATS",
     "MAX_BACKGROUND_SEQUENCE",
     "MAX_TIMED_CARDS",

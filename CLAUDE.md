@@ -195,7 +195,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `COPILOT_HONEST_REPLIES_ENABLED` — default `true` (KRI-186 kill switch); `false` ⇒ legacy chat-edit reply. Guard: `test_flag_off_is_byte_identical_to_legacy`. Apply: fly secret + restart.
 - `KRIA_COMPOSE_UNMET_WITH_OPS_ENABLED` — default `false` (KRI-1039); on ⇒ asks the ops can express are composed. Guards: `test_compose_unmet_flag_off_is_byte_identical`, `test_ios_editor_actions_have_agent_ops`.
 - `EDIT_WIDE_LOOKS_ENABLED` — off; rollout: `docs/pipelines/generative.md`.
-- `CLIP_INTENTS_ENABLED` / `CLIP_FACTS_ENABLED` — **ON in prod** (code default `false`); intents since 2026-10-01. Rollout/rollback: `docs/pipelines/clip-understanding.md`.
+- `CLIP_INTENTS_ENABLED` / `CLIP_FACTS_ENABLED` — **ON in prod** (code default `false`). Rollout/rollback: `docs/pipelines/clip-understanding.md`.
 - `CLIP_EXPOSURE_FACT_ENABLED` — default `false` (KRI-680); measured brightness in clip records. `docs/pipelines/clip-understanding.md`.
 - `EDIT_PROPOSAL_SEMANTIC_ENABLED` — `false`; requires 0107 + v8 on API/workers. See `docs/pipelines/guided-edit.md`.
 - `ORIENTATION_NORMALIZE_ENABLED` — default `true`; `false` + worker restart = `normalize_orientation` no-op.
@@ -220,7 +220,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `PHONE_TALKING_HEAD_RENDERING_ENABLED` — default `false`. 2+-clip self-narration renders on the phone (speaker clip + muted cutaways). `docs/reviews/kri-132/phone-format-matrix.md`.
 - `USER_SONG_MONTAGE_ENABLED` — default `true` (KRI-374). Creator song montages; off hides `media.song` + refuses `user_song`. Needs `musicBed`+`audioMix` verified. Apply: fly secret `…=false` (api+worker) + restart; `phone-rendering.md`. Same for `SONG_CAPTIONS_ENABLED` (lyrics) and `SONG_CAPTIONS_AVAILABLE_BY_DEFAULT` (unasked = hidden).
 - `CAPTION_ANIMATION_ENABLED` — default `true` (KRI-1007): caption entrance/exit/loop (protocol 24, `authoredText`); off = old captions. `phone-rendering.md`.
-- `SPEAKER_BACKGROUND_ENABLED` — default **`false`**; `speakerBackground` + protocol ≥27; windows: `speakerBackgroundWindows` + ≥32. `docs/pipelines/speaker-background.md`.
+- `SPEAKER_BACKGROUND_ENABLED` — default **`false`**; token/protocol: `speakerBackground` 27, `speakerBackgroundWindows` 32, `speakerBackgroundColor` 34. `docs/pipelines/speaker-background.md`.
 - `MEDIA_TILT_ENABLED` — default **`false`** (KRI-1134). Clip tilt + backdrop; needs `clipTilt` verified + protocol ≥28. phone-rendering.md.
 - `CREATOR_EDITORIAL_TASTE_ENABLED` / `_USER_IDS` — default `false` / `[]` (empty admits nobody; `["*"]` = every account; ENABLED stays the kill switch). Personalizes nothing until a creator confirms a profile. `docs/runbooks/editorial-taste-calibration.md`.
 - `SLIDE_POSTS_ENABLED` — defaults `true`. Mixed-media posts; pipelines/slide-post.md. Rollback: fly secret `…=false` + restart (api+worker). `SLIDE_POST_STICKERS_ENABLED` (protocol `8`, KRI-647): default `true`; old builds 426 on save; sticker images never slides.

@@ -357,6 +357,10 @@ class SpeakerBackgroundFact:
     windows_open: bool = False
     frame: str | None = None
     asked_frame: str | None = None
+    # KRI-1173: the plain colour (``#RRGGBB``) the plan / finished video holds as its fill, and
+    # why a colour is not available on this edit ("unavailable" | "app_too_old"; None = it is).
+    color: str | None = None
+    color_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -884,6 +888,16 @@ def _speaker_background_closed_code(manifest: ResolvedCreatorManifest) -> str:
     return "not_talking"  # a cloud or voiceover Talking render: the lane is advertised nowhere
 
 
+def _color_closed_code() -> str:
+    """Why a plain colour behind the speaker is closed while the photo / video lane is open."""
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        speaker_background_color_unavailable_reason,
+    )
+
+    reason = speaker_background_color_unavailable_reason()
+    return "app_too_old" if reason == "client_protocol_below_min" else "unavailable"
+
+
 def _speaker_background_facts(
     strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest
 ) -> dict[str, Any]:
@@ -896,6 +910,7 @@ def _speaker_background_facts(
     from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
     from app.services.creator_capabilities import (  # noqa: PLC0415
         repair_creator_speaker_background,
+        speaker_background_color_open,
         speaker_background_open,
         speaker_background_windows_open,
     )
@@ -927,6 +942,7 @@ def _speaker_background_facts(
     repaired, _notices = repair_creator_speaker_background(manifest, parsed)
     kept = repaired.background_media
     windows_open = speaker_background_windows_open(manifest)
+    color_code = None if speaker_background_color_open(manifest) else _color_closed_code()
     if kept is None:
         return {
             "speaker_background": SpeakerBackgroundFact(
@@ -935,6 +951,7 @@ def _speaker_background_facts(
                 asked_windows=asked_windows,
                 windows_open=windows_open,
                 asked_frame=asked_frame,
+                color_code=color_code,
             )
         }
     return {
@@ -947,6 +964,8 @@ def _speaker_background_facts(
             windows_open=windows_open,
             frame=kept.speaker_frame if kept.speaker_frame != "full" else None,
             asked_frame=asked_frame,
+            color=kept.color,
+            color_code=color_code,
         )
     }
 
@@ -961,15 +980,17 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
     """
     if "speaker_background" in variant:
         doc = variant["speaker_background"]
-        if not isinstance(doc, Mapping) or not doc.get("media_id"):
+        # KRI-1173: a solid-colour fill carries a ``color`` and no ``media_id``.
+        if not isinstance(doc, Mapping) or not (doc.get("media_id") or doc.get("color")):
             return SpeakerBackgroundFact("none")
         windows = doc.get("windows")
         return SpeakerBackgroundFact(
             "applied",
-            fill_id=str(doc["media_id"]),
+            fill_id=str(doc.get("media_id") or doc["color"]),
             window_count=len(windows) if isinstance(windows, list) else 0,
             windows_open=True,
             frame=_frame_preset_name(doc.get("speaker_frame")),
+            color=str(doc["color"]) if doc.get("color") and not doc.get("media_id") else None,
         )
     receipt = variant.get("phone_lane_receipt")
     if not isinstance(receipt, Mapping) or not isinstance(receipt.get("applied"), list):
@@ -986,6 +1007,7 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
         else 0,
         windows_open=True,
         frame=detail.get("speaker_frame") if isinstance(detail.get("speaker_frame"), str) else None,
+        color=detail.get("color") if isinstance(detail.get("color"), str) else None,
     )
 
 
@@ -4203,10 +4225,22 @@ _SB_NO_MEDIA = (
 _SB_NOT_PLANNED = "This draft doesn't put a photo or video behind you"
 _SB_NOT_DRAWN = "The finished video doesn't have a photo or video behind you"
 _SB_NO_CHANGE = "One photo or video stays behind you for the whole video; it doesn't change"
+# KRI-1173: a plain colour behind the speaker. The first three are format limits like the
+# photo / video ones; "attach the photos first" is never the answer to a colour ask (no pool).
+_SBC_NOT_TALKING = (
+    "Only a talking-to-camera edit made on your iPhone can put a plain colour behind you"
+)
+_SBC_UNAVAILABLE = "Putting a plain colour behind you isn't available on your iPhone yet"
+_SBC_APP_TOO_OLD = "Your iPhone app is too old to put a plain colour behind you; update it first"
+_SBC_NOT_PLANNED = "This draft doesn't put a plain colour behind you"
+_SBC_NOT_DRAWN = "The finished video doesn't have a plain colour behind you"
 _SB_FORMAT_LIMITS: tuple[str, ...] = (
     _SB_NOT_TALKING,
     _SB_UNAVAILABLE,
     _SB_APP_TOO_OLD,
+    _SBC_NOT_TALKING,
+    _SBC_UNAVAILABLE,
+    _SBC_APP_TOO_OLD,
     _SB_NO_SWITCHING,
     _SB_FULL_SIZE,
     _SB_ONLY_ONE_ATTACHED,
@@ -4221,7 +4255,17 @@ def asks_speaker_background(req: BriefRequirement) -> bool:
     never the creator's words. So "background music" / "arka plan müziği" / "no music", which
     record no such fact, can never be read as this ask.
     """
-    return bool(req.facts.get("speaker_background"))
+    # KRI-1173: a plain colour ask records `background_color` (and `speaker_background: true`).
+    return bool(req.facts.get("speaker_background")) or _asked_background_color(req) is not None
+
+
+def _asked_background_color(req: BriefRequirement) -> str | None:
+    """The colour the creator asked behind them (``facts["background_color"]``: a hex or the
+    colour as said), else None. A fact, never the creator's words (KRI-667)."""
+    value = req.facts.get("background_color")
+    if isinstance(value, str) and value.strip():
+        return " ".join(value.split())[:40]
+    return None
 
 
 def _asks_changing_backgrounds(req: BriefRequirement) -> bool:
@@ -4247,6 +4291,47 @@ def _sb(text: str, suffix: str = ".") -> str:
     return say(en=text + suffix, tr=_REASON_TR[text] + suffix)
 
 
+def _check_background_color(
+    req: BriefRequirement, fact: SpeakerBackgroundFact, ask: str, *, rendered: bool
+) -> RequirementReceipt:
+    """A plain colour behind the speaker (KRI-1173, S58): met when the plan / video holds the
+    colour, else a refusal that names the part and the reason. Never "attach photos first"."""
+    from app.agents._schemas.reaction_beats import normalise_background_color  # noqa: PLC0415
+
+    if fact.status == "unavailable":
+        reason = {"unavailable": _SBC_UNAVAILABLE, "app_too_old": _SBC_APP_TOO_OLD}.get(
+            fact.code or "", _SBC_NOT_TALKING
+        )
+        return _receipt(req, "not_possible", _sb(reason))
+    if fact.color is None:
+        if fact.color_code == "app_too_old":
+            return _receipt(req, "not_possible", _sb(_SBC_APP_TOO_OLD))
+        if fact.color_code == "unavailable":
+            return _receipt(req, "not_possible", _sb(_SBC_UNAVAILABLE))
+        return _receipt(req, "not_possible", _sb(_SBC_NOT_DRAWN if rendered else _SBC_NOT_PLANNED))
+    asked_hex = normalise_background_color(ask)
+    if asked_hex is not None and asked_hex != fact.color:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"The plain colour behind you is {fact.color}, not the {ask} you asked for.",
+                tr=f"Arkandaki düz renk {fact.color}; istediğin {ask} değil.",
+            ),
+        )
+    label = ask if asked_hex is None or asked_hex != ask.upper() else fact.color
+    en = f"A plain {label} background sits behind you for the whole video"
+    tr = f"Bütün video boyunca arkanda düz {label} bir arka plan duruyor"
+    if fact.window_count:
+        en += f"; {fact.window_count} photos or videos take turns over it"
+        tr += f"; üstünde {fact.window_count} fotoğraf ya da video sırayla değişiyor"
+    corner = _FRAME_WORDS.get(fact.frame or "")
+    if corner:
+        en += f"; you're {corner[0]}"
+        tr += f"; sen {corner[1]}sın"
+    return _receipt(req, "met", say(en=en + ".", tr=tr + "."))
+
+
 def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Is a photo or video behind the speaker, as the creator asked (KRI-1161)?
 
@@ -4258,6 +4343,9 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
     if fact is None:
         return _receipt(req, "partial", _NO_CHECKER)
     rendered = facts.rendered_variant
+    color_ask = _asked_background_color(req)
+    if color_ask is not None:
+        return _check_background_color(req, fact, color_ask, rendered=bool(rendered))
     if fact.status == "unavailable":
         reason = {"unavailable": _SB_UNAVAILABLE, "app_too_old": _SB_APP_TOO_OLD}.get(
             fact.code or "", _SB_NOT_TALKING
@@ -5388,6 +5476,14 @@ _REASON_TR: dict[str, str] = {
     _SB_NOT_PLANNED: "Bu taslak arkana fotoğraf ya da video koymuyor",
     _SB_NOT_DRAWN: "Biten videoda arkanda fotoğraf ya da video yok",
     _SB_NO_CHANGE: ("Bütün video boyunca arkanda tek bir fotoğraf ya da video duruyor; değişmiyor"),
+    # KRI-1173: a plain colour behind the speaker.
+    _SBC_NOT_TALKING: (
+        "Arkana düz renk yalnızca iPhone'da hazırlanan konuşmalı düzenlemede konabilir"
+    ),
+    _SBC_UNAVAILABLE: "Arkana düz renk koymak iPhone'unda henüz kullanılamıyor",
+    _SBC_APP_TOO_OLD: "iPhone uygulaman arkana düz renk koymak için çok eski; önce güncelle",
+    _SBC_NOT_PLANNED: "Bu taslak arkana düz renk koymuyor",
+    _SBC_NOT_DRAWN: "Biten videoda arkanda düz renk yok",
 }
 
 

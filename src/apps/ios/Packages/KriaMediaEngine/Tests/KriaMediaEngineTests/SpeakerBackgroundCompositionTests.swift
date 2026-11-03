@@ -130,6 +130,100 @@ final class SpeakerBackgroundCompositionTests: XCTestCase {
         XCTAssertTrue(isColor(frame.rgb(fx: personCenter.0, fy: personCenter.1), SpeakerColor.person))
     }
 
+    // MARK: - KRI-1173: a solid-colour fill. Rows S51-S53 in `docs/reviews/speaker-background-color-failure-modes.md`.
+
+    /// S51: the requested colour shows around the speaker, identically (within 2/255) in the preview
+    /// composition and in the exported file, and the speaker stays in front of it.
+    @MainActor func testColourFillShowsTheRequestedColourBehindTheSpeaker() async throws {
+        useSpeakerSegmenter(self, GreenPersonSegmenter())
+        let directory = try speakerTestDirectory(self)
+        let speaker = try await writeSpeakerClip(directory: directory, size: (canvas.width, canvas.height), seconds: 2)
+        // White and green sit on the channel extremes, which the Rec.709 video round trip leaves exact (2/255). A
+        // mid-tone is lifted by about 7-10/255 by that round trip in this harness (a photo fill is lifted more), the
+        // same in the preview and the export, so it is held to a wider band plus preview == export (3/255).
+        for (hex, rgb, tolerance) in [("#00FF00", [0, 255, 0], 2), ("#FFFFFF", [255, 255, 255], 2), ("#336699", [0x33, 0x66, 0x99], 16)] {
+            let scene = try speakerRecipe(canvas: canvas, speaker: speaker, duration: 2, background: nil, colorBackground: hex)
+            XCTAssertTrue(scene.recipe.effectiveCapabilities.isSuperset(of: [.speakerBackground, .speakerBackgroundColor]))
+            XCTAssertFalse(scene.recipe.effectiveCapabilities.contains(.speakerBackgroundWindows))
+            XCTAssertEqual(scene.urls.keys.sorted(), ["speaker"], "a colour needs no asset")
+            let preview = try await previewFrame(scene.recipe, urls: scene.urls, at: 1)
+            let exported = try await fileFrame(try await exportSpeakerRecipe(scene.recipe, urls: scene.urls, directory: directory, name: "colour-\(hex.dropFirst())"), at: 1)
+            for (fx, fy) in corners {
+                let a = preview.rgb(fx: fx, fy: fy), b = exported.rgb(fx: fx, fy: fy)
+                XCTAssertTrue(zip(a, b).allSatisfy { abs($0 - $1) <= 3 }, "\(hex): preview \(a) and export \(b) differ at (\(fx), \(fy))")
+            }
+            for (name, frame) in [("preview", preview), ("export", exported)] {
+                for (fx, fy) in corners + [(0.15, 0.5), (0.85, 0.5)] {
+                    let pixel = frame.rgb(fx: fx, fy: fy)
+                    XCTAssertTrue(zip(pixel, rgb).allSatisfy { abs($0 - $1) <= tolerance }, "\(hex) \(name) at (\(fx), \(fy)) is \(pixel), wanted \(rgb)")
+                }
+                // A solid person green on a green fill cannot be told apart; the other fills prove the cut-out.
+                if hex != "#00FF00" {
+                    XCTAssertTrue(isColor(frame.rgb(fx: personCenter.0, fy: personCenter.1), SpeakerColor.person), "\(hex) \(name) keeps the speaker")
+                }
+            }
+        }
+    }
+
+    /// S52: a photo window draws over a colour fill in its span (1-3 s); the colour shows before and after it.
+    @MainActor func testWindowsDrawOverAColourFill() async throws {
+        useSpeakerSegmenter(self, GreenPersonSegmenter())
+        let directory = try speakerTestDirectory(self)
+        let red = CGColor(red: 1, green: 0, blue: 0, alpha: 1)
+        let speaker = try await writeSpeakerClip(directory: directory, size: (canvas.width, canvas.height), seconds: 6)
+        let scene = try speakerRecipe(canvas: canvas, speaker: speaker, duration: 6, background: nil,
+                                      windows: [SpeakerTestWindow(url: try solidSpeakerTestImage(directory: directory, name: "a", color: red), start: 1, end: 3)],
+                                      colorBackground: "#FFFFFF")
+        XCTAssertTrue(scene.recipe.effectiveCapabilities.isSuperset(of: [.speakerBackground, .speakerBackgroundColor, .speakerBackgroundWindows]))
+        let exported = try await exportSpeakerRecipe(scene.recipe, urls: scene.urls, directory: directory)
+        for (time, expected) in [(0.5, SpeakerTestColor.white), (2.0, red), (4.0, SpeakerTestColor.white)] {
+            let preview = try await previewFrame(scene.recipe, urls: scene.urls, at: time)
+            let file = try await fileFrame(exported, at: time)
+            for (name, frame) in [("preview", preview), ("export", file)] {
+                for (fx, fy) in corners {
+                    XCTAssertTrue(isColor(frame.rgb(fx: fx, fy: fy), expected), "\(name) at \(time) s, corner (\(fx), \(fy)): \(frame.rgb(fx: fx, fy: fy))")
+                }
+                XCTAssertTrue(isColor(frame.rgb(fx: personCenter.0, fy: personCenter.1), SpeakerColor.person), "\(name) at \(time) s keeps the speaker")
+            }
+        }
+    }
+
+    /// S53 (S3 fallback): a matte that never produces a mask keeps its documented behaviour for a colour fill, as for
+    /// a photo: with no speaker frame the plain footage renders and the fill is not drawn; with a speaker frame the
+    /// plain speaker layer sits small in the frame and the colour is composed underneath. The speaker is zoomed out
+    /// (0.5x) so the area around it shows what is under the layer.
+    @MainActor func testColourFillWhenNoMaskIsProduced() async throws {
+        useSpeakerSegmenter(self, ScriptedSegmenter(map: nil))
+        let directory = try speakerTestDirectory(self)
+        let speaker = try await writeSpeakerClip(directory: directory, size: (canvas.width, canvas.height), seconds: 2)
+        let plain = try speakerRecipe(canvas: canvas, speaker: speaker, duration: 2, transform: MediaTransform(scale: 0.5),
+                                      background: nil, colorBackground: "#FFFFFF")
+        let original = try await previewFrame(plain.recipe, urls: plain.urls, at: 1)
+        for (fx, fy) in corners { XCTAssertFalse(isColor(original.rgb(fx: fx, fy: fy), SpeakerTestColor.white, tolerance: 30), "no mask, no frame: the fill is not drawn at (\(fx), \(fy))") }
+        XCTAssertTrue(isColor(original.rgb(fx: personCenter.0, fy: 0.5), SpeakerColor.person) || isColor(original.rgb(fx: 0.5, fy: 0.5), SpeakerColor.person),
+                      "the plain speaker layer is drawn: \(original.rgb(fx: 0.5, fy: 0.5))")
+
+        let framed = try speakerRecipe(canvas: canvas, speaker: speaker, duration: 2, background: nil,
+                                       speakerFrame: SpeakerFrame(widthFraction: 0.42, xFraction: 0.76, yFraction: 0.80), colorBackground: "#FFFFFF")
+        let withFrame = try await previewFrame(framed.recipe, urls: framed.urls, at: 1)
+        for (fx, fy) in corners.dropLast() + [(0.5, 0.3), (0.2, 0.7)] {
+            XCTAssertTrue(isColor(withFrame.rgb(fx: fx, fy: fy), SpeakerTestColor.white), "no mask, with a frame: the colour is underneath at (\(fx), \(fy)): \(withFrame.rgb(fx: fx, fy: fy))")
+        }
+    }
+
+    /// S51 (live preview): a colour fill survives an in-place editor update, and changing the colour takes the full rebuild.
+    @MainActor func testColourChangeTakesTheFullRebuild() async throws {
+        useSpeakerSegmenter(self, GreenPersonSegmenter())
+        let directory = try speakerTestDirectory(self)
+        let speaker = try await writeSpeakerClip(directory: directory, size: (canvas.width, canvas.height), seconds: 2)
+        let scene = try speakerRecipe(canvas: canvas, speaker: speaker, duration: 2, background: nil, colorBackground: "#FFFFFF")
+        let live = try await LivePreviewComposition(recipe: scene.recipe, assetURLs: scene.urls)
+        XCTAssertNoThrow(try live.updateText(recipe: scene.recipe), "an unchanged colour stays in place")
+        var next = scene.recipe
+        next.speakerBackground = SpeakerBackgroundLayer.color("#00FF00")
+        XCTAssertThrowsError(try live.updateText(recipe: next), "a new colour must rebuild")
+    }
+
     // MARK: - KRI-1162: timed backgrounds and the speaker frame. Rows S27-S28 in
     // `docs/reviews/speaker-background-windows-failure-modes.md`.
 

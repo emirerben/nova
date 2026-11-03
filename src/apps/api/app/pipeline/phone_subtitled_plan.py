@@ -967,18 +967,22 @@ def _compile_background(
     instead of mid-render. Every window pins its own visual with the same checks (S30);
     the same photo may fill and open (one manifest entry). Windows are clipped to
     ``timeline_duration_s`` (the compiled edit): one starting at or past it is dropped,
-    one overrunning it is shortened (S39).
+    one overrunning it is shortened (S39). KRI-1173: a colour fill pins nothing and the
+    layer carries ``color`` instead of an asset id; windows over it pin as above (S52).
     """
-    fill_asset_id = _pin_background_visual(
-        media_id=background.media_id,
-        path=background.gcs_path,
-        generation=background.generation,
-        kind=background.kind,
-        source_start_s=background.source_start_s,
-        visuals=visuals,
-        assets=assets,
-        manifest=manifest,
-    )
+    # KRI-1173: a colour fill names no pool media -- nothing to pin, no manifest entry.
+    fill_asset_id: str | None = None
+    if not background.uses_color:
+        fill_asset_id = _pin_background_visual(
+            media_id=background.media_id,
+            path=background.gcs_path,
+            generation=background.generation,
+            kind=background.kind,
+            source_start_s=background.source_start_s,
+            visuals=visuals,
+            assets=assets,
+            manifest=manifest,
+        )
     windows: list[SpeakerBackgroundWindow] = []
     for window in background.windows:
         # Pin every window first (a missing/unplayable one fails the lane even when its
@@ -1011,9 +1015,13 @@ def _compile_background(
             )
         )
     frame = background.speaker_frame
+    fill: dict[str, Any] = (
+        {"media_kind": "color", "color": background.color}
+        if background.uses_color
+        else {"asset_id": fill_asset_id, "media_kind": background.kind}
+    )
     return SpeakerBackgroundLayer(
-        asset_id=fill_asset_id,
-        media_kind=background.kind,
+        **fill,
         source_start=background.source_start_s if background.kind == "video" else 0.0,
         windows=windows or None,
         speaker_frame=(

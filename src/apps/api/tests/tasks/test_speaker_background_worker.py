@@ -117,3 +117,81 @@ def test_a_background_kind_the_device_has_not_verified_is_dropped(monkeypatch):
 
 def test_the_lane_field_name_is_unchanged():
     assert PHONE_SUBTITLED_LANES_FIELD == "_phone_subtitled_lanes_v1"
+
+
+# --- KRI-1173: a solid-colour fill (S60) ---------------------------------------------------------
+
+
+def _colour_job(monkeypatch, *, token=True, windows=None, hand_visuals_tokens=True):
+    """The same harness, with a colour fill in the persisted lane request."""
+    clear_request_context()
+    monkeypatch.setattr(settings, "speaker_background_enabled", True)
+    background = {"kind": "color", "color": "#ffffff"}
+    if windows:
+        background["windows"] = windows
+    job = _cafe_job(
+        monkeypatch,
+        beats=False,
+        overlay_display=None,
+        lane_request={**_lane_request(), "background": background},
+    )
+    ours = {"speakerBackground", "speakerBackgroundColor", "stillImages", "visualVideos"}
+    features = [f for f in gb.settings.phone_render_verified_features if f not in ours]
+    features.append("speakerBackground")
+    if token:
+        features.append("speakerBackgroundColor")
+    if hand_visuals_tokens:
+        features += ["stillImages", "visualVideos"]
+    monkeypatch.setattr(gb.settings, "phone_render_verified_features", features)
+    return job
+
+
+def test_colour_fill_reserves_nothing(monkeypatch):
+    # Neither Visuals token is verified: a colour is no pool media, so the pool-kind check
+    # (`stillImages` / `visualVideos`) must not drop it.
+    job = _colour_job(monkeypatch, hand_visuals_tokens=False)
+    gb._run_generative_job(str(job.id))
+
+    recipe = _recipe(job)
+    layer = recipe.speaker_background
+    assert (layer.media_kind, layer.color, layer.asset_id) == ("color", "#FFFFFF", None)
+    assert {"speakerBackground", "speakerBackgroundColor"} <= recipe.required_capabilities
+    variant = job.assembly_plan["variants"][0]
+    assert "background" in variant["phone_lane_receipt"]["applied"]
+    assert variant["phone_lane_receipt"]["dropped"] == []
+    # Nothing was bound or kept as a referenced receipt for it.
+    assert not job.assembly_plan.get("_phone_visuals_v1")
+
+
+def test_a_colour_under_a_photo_window_binds_only_the_window(monkeypatch):
+    row = _pool_rows([COTOPAXI])[0]
+    window = {
+        "media_id": COTOPAXI,
+        "gcs_path": row["gcs_path"],
+        "generation": "7",
+        "kind": "image",
+        "start_s": 0.0,
+        "end_s": 2.0,
+    }
+    monkeypatch.setattr(settings, "speaker_background_windows_min_client_protocol", 32)
+    job = _colour_job(monkeypatch, windows=[window])
+    gb.settings.phone_render_verified_features.append("speakerBackgroundWindows")
+    gb._run_generative_job(str(job.id))
+
+    layer = _recipe(job).speaker_background
+    assert layer.color == "#FFFFFF" and layer.asset_id is None
+    assert [w.asset_id for w in layer.windows] == [f"visual-{COTOPAXI}"]
+    assert [row["media_id"] for row in job.assembly_plan["_phone_visuals_v1"]] == [COTOPAXI]
+
+
+def test_a_colour_without_its_token_renders_what_a_request_that_never_asked_renders(
+    monkeypatch,
+):
+    asked = _colour_job(monkeypatch, token=False)
+    gb._run_generative_job(str(asked.id))
+    never_asked = _cafe_job(monkeypatch, beats=False, overlay_display=None)
+    gb._run_generative_job(str(never_asked.id))
+
+    assert _recipe(asked).speaker_background is None
+    assert _recipe(asked).model_dump_json() == _recipe(never_asked).model_dump_json()
+    assert asked.assembly_plan["variants"][0]["phone_lane_receipt"]["applied"] == []

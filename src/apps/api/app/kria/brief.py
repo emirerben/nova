@@ -598,6 +598,7 @@ STICKY_FACTS = frozenset(
         "insert_at_s",
         "keep_audio",
         "speaker_background",
+        "background_color",
         "background_changes",
         "speaker_small",
         APPROVED_COPY_FACT,

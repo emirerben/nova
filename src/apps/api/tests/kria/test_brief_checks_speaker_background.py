@@ -395,3 +395,238 @@ def test_readiness_approves_a_planned_background():
     )
     (row,) = report["requirements"]
     assert row["disposition"] == "executable", row
+
+
+def test_a_rendered_colour_fill_is_an_applied_background_not_none():
+    """KRI-1173: the rendered-fact reader keyed on `media_id` would call a colour 'nothing'."""
+    from app.kria.brief_checks import _rendered_speaker_background_fact
+
+    fact = _rendered_speaker_background_fact(
+        {"speaker_background": {"kind": "color", "color": "#FFFFFF"}}
+    )
+    assert fact.status == "applied" and fact.window_count == 0
+    assert _rendered_speaker_background_fact({"speaker_background": None}).status == "none"
+
+
+# -------------------------------------------- KRI-1173: a plain colour behind the speaker (S58)
+#
+# Ways this can fail, each pinned below:
+#  a. a colour ask is answered "Attach the photos or videos first" (it needs no pool at all);
+#  b. the colour is called met while the gate is closed / the plan holds no colour, or refused
+#     without naming WHY (token / app too old / not an iPhone Talking edit);
+#  c. the planner's colour is not remembered across turns (a sticky fact), or the ask is
+#     recognised by the creator's words instead of the recorded fact (KRI-667);
+#  d. a finished video with a colour fill is read as "nothing behind the speaker".
+
+COLOUR_FACTS = {"speaker_background": True, "background_color": "white"}
+
+
+@pytest.fixture
+def _client_context():
+    from app.services.client_protocol import clear_request_context
+
+    clear_request_context()
+    yield
+    clear_request_context()
+
+
+def _open_colour(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [*settings.phone_render_verified_features, "speakerBackgroundColor"],
+    )
+
+
+def _colour_req(said: str = "white", **extra) -> BriefRequirement:
+    return _req(
+        "a plain white background behind me",
+        facts={"speaker_background": True, "background_color": said, **extra},
+    )
+
+
+def test_the_colour_fact_is_taught_remembered_and_owns_the_ask():
+    from app.agents.main_creator import _BRIEF_PROMPT_SECTION
+    from app.kria.brief import STICKY_FACTS
+
+    assert '"background_color"' in _BRIEF_PROMPT_SECTION
+    assert "background_color" in STICKY_FACTS
+    # Recognised through the recorded fact, in any language and even without the flag beside it.
+    assert asks_speaker_background(_colour_req())
+    assert asks_speaker_background(
+        _req("arkam düz beyaz olsun", facts={"background_color": "beyaz"})
+    )
+    assert not asks_speaker_background(_req("a plain white background", kind="style", facts={}))
+
+
+def test_colour_ask_needs_no_pool(monkeypatch):
+    _open_colour(monkeypatch)
+    manifest = _manifest()  # NO photo or video attached
+    facts = _draft_facts(manifest, background_media={"color": "#FFFFFF"})
+    receipt = _receipt(_colour_req(), facts)
+
+    assert receipt.status == "met" and receipt.verification == "checked"
+    assert "plain white background sits behind you for the whole video" in receipt.reason
+    assert "Attach" not in receipt.reason and "Visuals" not in receipt.reason
+    assert is_judged(_colour_req(), receipt)
+
+
+def test_a_hex_the_creator_gave_is_met_and_a_different_colour_is_partial(monkeypatch):
+    _open_colour(monkeypatch)
+    manifest = _manifest()
+    facts = _draft_facts(manifest, background_media={"color": "#00FF00"})
+    met = _receipt(_colour_req("#00ff00"), facts)
+    assert met.status == "met" and "#00FF00" in met.reason
+    other = _receipt(_colour_req("blue"), facts)
+    assert other.status == "partial" and "#00FF00" in other.reason
+
+
+def test_a_colour_under_windows_and_a_corner_says_so(monkeypatch):
+    _open_colour(monkeypatch)
+    _open_windows(monkeypatch)
+    manifest = _manifest(PHOTO)
+    facts = _draft_facts(
+        manifest,
+        background_media={
+            "color": "#FFFFFF",
+            "sequence": [{"media_id": PHOTO}],
+            "speaker_frame": "small_bottom_right",
+        },
+    )
+    receipt = _receipt(_colour_req(), facts)
+    assert receipt.status == "met"
+    assert "1 photos or videos take turns over it" in receipt.reason
+    assert "small at the bottom right" in receipt.reason
+
+
+def test_a_colour_while_its_token_is_closed_names_the_part_and_the_reason(monkeypatch):
+    # The photo / video lane is open; the colour token is not verified.
+    manifest = _manifest()
+    facts = _draft_facts(manifest, background_media={"color": "#FFFFFF"})
+    receipt = _receipt(_colour_req(), facts)
+    assert receipt.status == "not_possible" and receipt.verification == "checked"
+    assert receipt.reason.startswith("Putting a plain colour behind you isn't available")
+    assert "Attach" not in receipt.reason
+    assert is_format_limit(receipt.reason)
+    assert not needs_creator_choice(receipt)
+
+
+def test_a_colour_asked_of_an_app_too_old_says_to_update(monkeypatch, _client_context):
+    from app.services.client_protocol import set_client_protocol
+
+    _open_colour(monkeypatch)
+    set_client_protocol(33)
+    manifest = _manifest()
+    receipt = _receipt(_colour_req(), _draft_facts(manifest, background_media={"color": "white"}))
+    assert receipt.status == "not_possible"
+    assert receipt.reason.startswith("Your iPhone app is too old to put a plain colour behind you")
+    assert is_format_limit(receipt.reason)
+
+
+def test_a_colour_on_a_montage_names_the_format(monkeypatch):
+    _open_colour(monkeypatch)
+    facts = dataclasses.replace(
+        plan_facts_from_strategy(
+            {**STRATEGY, "edit_format": "montage"},
+            clip_ids=[TAKE],
+            manifest=_manifest(edit_format="montage"),
+        ),
+        phone_talking=False,
+    )
+    receipt = _receipt(_colour_req(), facts)
+    assert receipt.status == "not_possible"
+    assert receipt.reason.startswith("Only a talking-to-camera edit made on your iPhone")
+    assert "plain colour" in receipt.reason and is_format_limit(receipt.reason)
+
+
+def test_a_draft_that_holds_no_colour_is_not_called_done_and_never_asks_for_photos(monkeypatch):
+    _open_colour(monkeypatch)
+    receipt = _receipt(_colour_req(), _draft_facts(_manifest()))
+    assert receipt.status == "not_possible"
+    assert receipt.reason.startswith("This draft doesn't put a plain colour behind you")
+    assert "Attach" not in receipt.reason
+    # A photo fill is not the colour the creator asked for either.
+    photo = _receipt(
+        _colour_req(), _draft_facts(_manifest(PHOTO), background_media={"media_id": PHOTO})
+    )
+    assert photo.status == "not_possible"
+    assert photo.reason.startswith("This draft doesn't put a plain colour behind you")
+
+
+def test_an_invalid_colour_the_repair_dropped_is_not_called_done(monkeypatch):
+    _open_colour(monkeypatch)
+    facts = _draft_facts(_manifest(), background_media={"color": "turquoise"})
+    receipt = _receipt(_colour_req("turquoise"), facts)
+    assert receipt.status == "not_possible"
+    assert receipt.reason.startswith("This draft doesn't put a plain colour behind you")
+
+
+def test_the_colour_refusals_read_in_turkish_for_a_turkish_chat(monkeypatch):
+    from app.kria.reply_language import reply_language_for
+
+    with reply_language_for("tr"):
+        closed = _receipt(
+            _colour_req("beyaz"), _draft_facts(_manifest(), background_media={"color": "white"})
+        )
+        _open_colour(monkeypatch)
+        met = _receipt(
+            _colour_req("beyaz"), _draft_facts(_manifest(), background_media={"color": "white"})
+        )
+    assert closed.status == "not_possible" and "düz renk" in closed.reason
+    assert closed.reason.isascii() is False and "Putting" not in closed.reason
+    assert met.status == "met" and "düz beyaz" in met.reason
+
+
+def test_a_finished_colour_video_is_met_and_the_receipt_carries_the_colour():
+    from app.kria.brief_checks import _rendered_speaker_background_fact
+
+    saved = plan_facts_from_phone_variant(
+        _variant(speaker_background={"kind": "color", "color": "#FFFFFF"})
+    )
+    assert _receipt(_colour_req(), saved).status == "met"
+    assert (
+        _rendered_speaker_background_fact(
+            {"speaker_background": {"kind": "color", "color": "#FFFFFF"}}
+        ).color
+        == "#FFFFFF"
+    )
+
+    rendered = plan_facts_from_phone_variant(
+        _variant(
+            phone_lane_receipt={
+                "applied": ["background"],
+                "dropped": [],
+                "background": {"color": "#FFFFFF", "windows": 0, "speaker_frame": None},
+            }
+        )
+    )
+    receipt = _receipt(_colour_req(), rendered)
+    assert receipt.status == "met" and "plain white background" in receipt.reason
+
+
+def test_a_finished_video_with_a_photo_or_nothing_is_not_a_colour_met():
+    photo = plan_facts_from_phone_variant(
+        _variant(speaker_background={"media_id": PHOTO, "kind": "image", "source_start_s": 0.0})
+    )
+    assert _receipt(_colour_req(), photo).status == "not_possible"
+    none = plan_facts_from_phone_variant(
+        _variant(phone_lane_receipt={"applied": ["overlays"], "dropped": []})
+    )
+    receipt = _receipt(_colour_req(), none)
+    assert receipt.status == "not_possible"
+    assert receipt.reason.startswith("The finished video doesn't have a plain colour")
+
+
+def test_readiness_approves_a_planned_colour_without_any_attached_media(monkeypatch):
+    _open_colour(monkeypatch)
+    manifest = _manifest()
+    brief = CreativeBrief(version=1, requirements=[_colour_req()])
+    report = assess_readiness(
+        brief,
+        {**STRATEGY, "background_media": {"color": "#FFFFFF"}},
+        media={"clip_paths": [TAKE]},
+        manifest=manifest,
+        creator_id=CREATOR,
+    )
+    (row,) = report["requirements"]
+    assert row["disposition"] == "executable", row

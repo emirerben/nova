@@ -393,7 +393,7 @@ def test_a_closed_gate_prompt_is_byte_identical_to_one_with_no_background_suppor
 def test_the_prompt_version_is_bumped_for_the_new_field():
     from app.agents.main_creator import MAIN_CREATOR_PROMPT_VERSION
 
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-02-v111"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-03-v112"
 
 
 # ----------------------------------------------------------- KRI-1162: several backgrounds
@@ -632,3 +632,251 @@ def test_window_notices_have_turkish_twins_and_a_strategy_without_windows_is_unt
     plain = _strategy(background_media={"media_id": POOL_PHOTO})
     kept, notices = _repair(_manifest(), plain)
     assert kept.background_media == plain.background_media and notices == []
+
+
+# ------------------------------------------------- KRI-1173: a plain colour behind the speaker
+#
+# Failure modes pinned here, each through the real manifest / repair / prompt / schema:
+#
+# 13. a media-only strategy dumps, hashes and schemas as before; a colour is exactly one of
+#     `media_id` / `color` (never both, never neither);
+# 14. the colour capability or its prompt paragraph appears while the colour gate is closed;
+# 15. the model writes a named colour or lowercase hex and the lane gets it unnormalised (S57), or
+#     an invalid / unavailable colour is dropped without a receipt (never a failed turn);
+# 16. the creator's camera pick (a media pick) overrides or fills in beside an asked colour;
+# 17. `placed_media` / the render contract trip over a strategy with no media_id.
+
+
+def _open_colour(monkeypatch: pytest.MonkeyPatch, *, windows: bool = False) -> None:
+    _open_windows(monkeypatch) if windows else _open_gate(monkeypatch)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [*settings.phone_render_verified_features, "speakerBackgroundColor"],
+    )
+
+
+def test_a_background_is_exactly_one_of_media_or_colour_and_omits_what_it_does_not_use():
+    from app.agents._schemas.reaction_beats import BackgroundMedia
+
+    assert BackgroundMedia(media_id=POOL_PHOTO).model_dump(mode="json") == {"media_id": POOL_PHOTO}
+    white = BackgroundMedia(color="#FFFFFF")
+    assert white.model_dump(mode="json") == {"color": "#FFFFFF"}
+    assert (
+        CreativeStrategy.model_validate(
+            _strategy(background_media={"color": "#FFFFFF"}).model_dump(
+                mode="json", exclude_none=True
+            )
+        ).background_media
+        == white
+    )
+    # The model may write any short string here; the repair normalises or drops it (S57), so a
+    # bad colour can never fail the turn's schema.
+    assert BackgroundMedia(color="white").color == "white"
+    for bad in (
+        {},
+        {"media_id": POOL_PHOTO, "color": "#FFFFFF"},
+        {"color": "#FFFFFF", "source_start_s": 2.0},
+        {"color": ""},
+        {"color": "x" * 33},
+    ):
+        with pytest.raises(ValueError):
+            BackgroundMedia(**bad)
+
+
+def test_the_render_contract_and_placed_media_know_a_strategy_without_a_media_id():
+    from app.kria.clip_scope import placed_media
+    from app.services.creator_render_contract import FIELD_MATRIX
+
+    assert "background_media.color" in FIELD_MATRIX
+    only_colour = placed_media(_strategy(background_media={"color": "#FFFFFF"}))
+    assert POOL_PHOTO not in only_colour
+    with_windows = placed_media(
+        _strategy(background_media={"color": "#FFFFFF", "sequence": [{"media_id": POOL_PHOTO}]})
+    )
+    assert POOL_PHOTO in with_windows
+
+
+def test_the_colour_capability_is_advertised_only_while_its_token_is_verified(monkeypatch):
+    _open_gate(monkeypatch)
+    base = _manifest()
+    assert capabilities.CAPABILITY_SPEAKER_BACKGROUND_COLOR not in base.capabilities
+    assert not capabilities.speaker_background_color_open(base)
+    _open_colour(monkeypatch)
+    wide = _manifest()
+    assert wide.capabilities[capabilities.CAPABILITY_SPEAKER_BACKGROUND_COLOR].available is True
+    assert capabilities.speaker_background_color_open(wide)
+    assert wide.manifest_hash != base.manifest_hash
+    montage = _manifest(edit_format="montage")
+    assert capabilities.CAPABILITY_SPEAKER_BACKGROUND_COLOR not in montage.capabilities
+    # The kill switch closes the colour with the lane it belongs to.
+    monkeypatch.setattr(settings, "speaker_background_enabled", False)
+    assert capabilities.CAPABILITY_SPEAKER_BACKGROUND_COLOR not in _manifest().capabilities
+
+
+def test_a_closed_colour_gate_leaves_the_manifest_and_the_prompt_byte_identical(monkeypatch):
+    _open_gate(monkeypatch)
+    closed_manifest = _manifest()
+    closed_prompt = _render_prompt(closed_manifest)
+    assert "PLAIN COLOUR BEHIND THE SPEAKER" not in closed_prompt
+    assert "background_color" not in closed_manifest.model_dump_json()
+    _open_colour(monkeypatch)
+    wide_prompt = _render_prompt(_manifest())
+    from app.agents.main_creator import _SPEAKER_BACKGROUND_COLOR_PROMPT_SECTION
+
+    assert wide_prompt.count(_SPEAKER_BACKGROUND_COLOR_PROMPT_SECTION) == 1
+    assert _SPEAKER_BACKGROUND_COLOR_PROMPT_SECTION not in closed_prompt
+    # Taught beside the photo / video paragraph, never instead of it, and with the presets.
+    assert "PHOTO OR VIDEO BEHIND THE SPEAKER" in wide_prompt
+    for preset in ("#FFFFFF", "#000000", "#00FF00", "#0000FF", "#FF0000", "#FFFF00", "#808080"):
+        assert preset in _SPEAKER_BACKGROUND_COLOR_PROMPT_SECTION
+    assert "SEVERAL BACKGROUNDS" not in wide_prompt  # the windows paragraph stays its own gate
+    monkeypatch.setattr(settings, "speaker_background_enabled", False)
+    assert "PLAIN COLOUR" not in _render_prompt(_manifest())
+
+
+@pytest.mark.parametrize(
+    ("said", "expected"),
+    [
+        ("#ffffff", "#FFFFFF"),
+        ("#FFFFFF", "#FFFFFF"),
+        ("white", "#FFFFFF"),
+        ("White", "#FFFFFF"),
+        ("beyaz", "#FFFFFF"),
+        ("black", "#000000"),
+        ("siyah", "#000000"),
+        ("green", "#00FF00"),
+        ("yeşil", "#00FF00"),
+        ("blue", "#0000FF"),
+        ("mavi", "#0000FF"),
+        ("red", "#FF0000"),
+        ("kırmızı", "#FF0000"),
+        ("yellow", "#FFFF00"),
+        ("sarı", "#FFFF00"),
+        ("grey", "#808080"),
+        ("gray", "#808080"),
+        ("gri", "#808080"),
+        ("#1a2B3c", "#1A2B3C"),
+    ],
+)
+def test_strategy_colour_is_normalised_or_dropped(monkeypatch, said, expected):
+    _open_colour(monkeypatch)
+    kept, notices = _repair(_manifest(), _strategy(background_media={"color": said}))
+    assert kept.background_media is not None
+    assert kept.background_media.color == expected
+    assert kept.background_media.media_id is None
+    assert notices == []
+
+
+@pytest.mark.parametrize("bad", ["turquoise", "#FFF", "#12345678", "#GGGGGG", "pink", "12"])
+def test_an_invalid_colour_is_dropped_with_a_plain_notice_not_a_failed_turn(monkeypatch, bad):
+    _open_colour(monkeypatch)
+    kept, notices = _repair(_manifest(), _strategy(background_media={"color": bad}))
+    assert kept.background_media is None
+    assert notices == [capabilities.SPEAKER_BACKGROUND_NOTICES["color_invalid"]]
+    assert notices[0].startswith("Couldn't")
+
+
+def test_a_closed_colour_gate_drops_the_colour_with_a_notice_and_keeps_media_working(monkeypatch):
+    _open_gate(monkeypatch)  # the photo / video lane is open, the colour token is not verified
+    manifest = _manifest()
+    kept, notices = _repair(manifest, _strategy(background_media={"color": "white"}))
+    assert kept.background_media is None
+    assert notices == [capabilities.SPEAKER_BACKGROUND_NOTICES["color_unavailable"]]
+    assert notices[0].startswith("Couldn't")
+    photo, none = _repair(manifest, _strategy(background_media={"media_id": POOL_PHOTO}))
+    assert photo.background_media.media_id == POOL_PHOTO and none == []
+    # Cloud / montage: the whole lane is closed, so the colour is dropped the same honest way.
+    montage, notices = _repair(
+        _manifest(edit_format="montage"), _strategy(background_media={"color": "white"})
+    )
+    assert montage.background_media is None and len(notices) == 1
+
+
+def test_the_camera_pick_is_not_consulted_for_a_colour_strategy(monkeypatch):
+    _open_colour(monkeypatch)
+    manifest = _manifest(pick=POOL_PHOTO)
+    kept, notices = _repair(manifest, _strategy(background_media={"color": "black"}))
+    assert kept.background_media.color == "#000000" and kept.background_media.media_id is None
+    assert notices == []
+    # An invalid colour does NOT fall back to the pick either: the whole ask is dropped, said.
+    dropped, notices = _repair(manifest, _strategy(background_media={"color": "turquoise"}))
+    assert dropped.background_media is None
+    assert notices == [capabilities.SPEAKER_BACKGROUND_NOTICES["color_invalid"]]
+    # With no colour asked the pick still fills in as before.
+    filled, _ = _repair(manifest, _strategy())
+    assert filled.background_media.media_id == POOL_PHOTO
+
+
+def test_a_colour_keeps_its_sequence_and_corner_while_the_windows_gate_is_open(monkeypatch):
+    _open_colour(monkeypatch, windows=True)
+    manifest = _manifest()
+    asked = _strategy(
+        background_media={
+            "color": "white",
+            "sequence": [{"media_id": POOL_PHOTO}, {"media_id": POOL_VIDEO}, {"media_id": FOREIGN}],
+            "cadence_s": 3.0,
+            "speaker_frame": "small_bottom_right",
+        }
+    )
+    kept, notices = _repair(manifest, asked)
+    background = kept.background_media
+    assert background.color == "#FFFFFF" and background.media_id is None
+    assert [entry.media_id for entry in background.sequence] == [POOL_PHOTO, POOL_VIDEO]
+    assert background.cadence_s == 3.0 and background.speaker_frame == "small_bottom_right"
+    assert notices == [capabilities.SPEAKER_BACKGROUND_NOTICES["sequence_not_found"]]
+
+
+def test_a_colour_with_windows_closed_keeps_the_colour_and_says_the_windows_were_dropped(
+    monkeypatch,
+):
+    _open_colour(monkeypatch)
+    kept, notices = _repair(
+        _manifest(),
+        _strategy(
+            background_media={
+                "color": "red",
+                "sequence": [{"media_id": POOL_PHOTO}],
+                "speaker_frame": "small_top_left",
+            }
+        ),
+    )
+    assert kept.background_media.color == "#FF0000"
+    assert not kept.background_media.sequence
+    assert kept.background_media.speaker_frame == "full"
+    assert notices == [capabilities.SPEAKER_BACKGROUND_NOTICES["windows_unavailable"]]
+
+
+def test_a_colour_backdrop_does_not_take_a_photo_out_of_the_pop_ins(monkeypatch):
+    # The colour is no pool media, so only its own sequence photos are backdrops (S43).
+    _open_colour(monkeypatch, windows=True)
+    strategy = _strategy(
+        background_media={"color": "white", "sequence": [{"media_id": POOL_VIDEO}]},
+        reaction_beats=[
+            {"beat_id": "a", "trigger": "beach", "visual_id": POOL_PHOTO},
+            {"beat_id": "b", "trigger": "waves", "visual_id": POOL_VIDEO},
+        ],
+    )
+    kept, notices = _repair(_manifest(), strategy)
+    assert [(b.beat_id, b.visual_id) for b in kept.reaction_beats] == [("a", POOL_PHOTO)]
+    assert notices == [capabilities.SPEAKER_BACKGROUND_NOT_ALSO_A_POP_IN_NOTICE]
+
+
+def test_compiling_the_plan_keeps_the_colour_and_surfaces_a_drop(monkeypatch):
+    _open_colour(monkeypatch)
+    plan = capabilities.compile_strategy_to_plan(
+        _manifest(), _strategy(background_media={"color": "gray"})
+    )
+    assert plan.strategy.background_media.color == "#808080"
+    gone = capabilities.compile_strategy_to_plan(
+        _manifest(), _strategy(background_media={"color": "mauve"})
+    )
+    assert gone.strategy.background_media is None
+    assert capabilities.SPEAKER_BACKGROUND_NOTICES["color_invalid"] in gone.notices
+
+
+def test_the_colour_notices_have_turkish_twins():
+    from app.kria.strategy_policy import _KNOWN_TR
+
+    for key in ("color_unavailable", "color_invalid"):
+        assert capabilities.SPEAKER_BACKGROUND_NOTICES[key] in _KNOWN_TR

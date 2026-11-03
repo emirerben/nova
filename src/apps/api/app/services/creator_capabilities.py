@@ -64,6 +64,7 @@ from app.agents._schemas.reaction_beats import (
     DEFAULT_BACKGROUND_CADENCE_S,
     MAX_INSERT_CLIPS,
     BackgroundSequenceEntry,
+    normalise_background_color,
 )
 from app.config import settings
 from app.schemas.creation_formats import SONG_SYNC_DEFAULT_BY_FORMAT
@@ -90,6 +91,7 @@ from app.services.phone_rollout import (
     phone_timed_video_cards_supported,
     phone_user_song_supported,
     phone_voiceover_reaction_beats_supported,
+    speaker_background_color_supported,
     speaker_background_supported,
     speaker_background_windows_supported,
 )
@@ -133,6 +135,10 @@ CAPABILITY_SPEAKER_BACKGROUND = "speaker_background"
 # `speaker_background` is advertised AND `speaker_background_windows_supported()` holds, so a
 # manifest without it keeps its dict, both hashes and the creator prompt byte-identical.
 CAPABILITY_SPEAKER_BACKGROUND_WINDOWS = "speaker_background_windows"
+# KRI-1173: a plain colour as the fill. Present ONLY while `speaker_background` is advertised AND
+# `speaker_background_color_supported()` holds (the `speakerBackgroundColor` token + a protocol-34
+# build), so a manifest without it keeps its dict, both hashes and the creator prompt identical.
+CAPABILITY_SPEAKER_BACKGROUND_COLOR = "speaker_background_color"
 # The reason a background (the creator's pick in the camera, or the agent's
 # `background_media`) is not kept. The creator reads it before approving; the Turkish twins
 # live in `app.kria.strategy_policy._KNOWN_TR`.
@@ -157,6 +163,15 @@ SPEAKER_BACKGROUND_NOTICES: dict[str, str] = {
     "sequence_not_found": (
         "Couldn't find some of the photos or videos you named for the changing background; "
         "left them out."
+    ),
+    # KRI-1173: a plain colour. Never a silent drop and never a failed turn.
+    "color_unavailable": (
+        "Couldn't put a plain colour behind you: your iPhone app can't show one yet; "
+        "kept your own background."
+    ),
+    "color_invalid": (
+        "Couldn't use that colour for your background; kept your own background. "
+        "Try white, black, green, blue, red, yellow or grey."
     ),
 }
 TALKING_CLIP_INTENTS_DROPPED_NOTICE = (
@@ -944,6 +959,8 @@ def resolve_creator_manifest(
             capabilities[CAPABILITY_SPEAKER_BACKGROUND] = _available()
             if speaker_background_windows_supported():
                 capabilities[CAPABILITY_SPEAKER_BACKGROUND_WINDOWS] = _available()
+            if speaker_background_color_supported():
+                capabilities[CAPABILITY_SPEAKER_BACKGROUND_COLOR] = _available()
             background_pick = speaker_background_pick or None
     if has_voiceover and not runs_guided_voiceover:
         # KRI-598: runtime v2 downgraded every guided_voiceover_v1 strategy to the native
@@ -1759,6 +1776,13 @@ def speaker_background_windows_open(manifest: ResolvedCreatorManifest) -> bool:
     return capability is not None and capability.available and speaker_background_open(manifest)
 
 
+def speaker_background_color_open(manifest: ResolvedCreatorManifest) -> bool:
+    """True when the manifest also advertises a plain colour as the fill (KRI-1173)."""
+
+    capability = manifest.capabilities.get(CAPABILITY_SPEAKER_BACKGROUND_COLOR)
+    return capability is not None and capability.available and speaker_background_open(manifest)
+
+
 def _speaker_background_media(
     manifest: ResolvedCreatorManifest, requested: str | None
 ) -> CreatorMediaRef | None:
@@ -1804,6 +1828,21 @@ def _repair_creator_speaker_background(
     pick = manifest.speaker_background_pick
     if wanted is None and pick is None:
         return strategy, []
+    color: str | None = None
+    if wanted is not None and wanted.color is not None:
+        # KRI-1173: a plain colour fill. The camera pick is a media pick and is NOT consulted;
+        # an invalid value or a closed capability drops the whole background with a notice.
+        if not speaker_background_color_open(manifest):
+            return (
+                strategy.model_copy(update={"background_media": None}),
+                [SPEAKER_BACKGROUND_NOTICES["color_unavailable"]],
+            )
+        color = normalise_background_color(wanted.color)
+        if color is None:
+            return (
+                strategy.model_copy(update={"background_media": None}),
+                [SPEAKER_BACKGROUND_NOTICES["color_invalid"]],
+            )
     if not speaker_background_open(manifest):
         return (
             strategy.model_copy(update={"background_media": None}),
@@ -1812,12 +1851,12 @@ def _repair_creator_speaker_background(
     notices: list[str] = []
     media: CreatorMediaRef | None = None
     start = 0.0
-    if wanted is not None:
+    if wanted is not None and color is None:
         media = _speaker_background_media(manifest, wanted.media_id)
         start = wanted.source_start_s
         if media is None:
             notices.append(SPEAKER_BACKGROUND_NOTICES["not_found"])
-    if media is None and pick is not None:
+    if media is None and color is None and pick is not None:
         media, start = _speaker_background_media(manifest, pick), 0.0
         if media is None:
             notices.append(SPEAKER_BACKGROUND_NOTICES["pick_not_found"])
@@ -1858,23 +1897,33 @@ def _repair_creator_speaker_background(
                 notices.append(SPEAKER_BACKGROUND_NOTICES["sequence_not_found"])
             if not entries:
                 cadence_s = DEFAULT_BACKGROUND_CADENCE_S
-    if media is None and entries:
+    if media is None and color is None and entries:
         # The model named no usable fill but a usable sequence: its first entry fills.
         first = entries[0]
         media = _speaker_background_media(manifest, first.media_id)
         start = first.source_start_s
-    if media is None:
+    if media is None and color is None:
         return strategy.model_copy(update={"background_media": None}), notices
-    update: dict[str, Any] = {
-        "background_media": BackgroundMedia(
+    if color is not None:
+        # KRI-1173: the colour fill names no pool media; its windows (if any) still do.
+        fill = BackgroundMedia(
+            color=color,
+            sequence=tuple(entries),
+            cadence_s=cadence_s,
+            speaker_frame=frame,
+        )
+    else:
+        fill = BackgroundMedia(
             media_id=media.media_id,
             source_start_s=start if media.kind == "video" else 0.0,
             sequence=tuple(entries),
             cadence_s=cadence_s,
             speaker_frame=frame,
         )
-    }
-    backdrop_ids = {media.media_id, *(entry.media_id for entry in entries)}
+    update: dict[str, Any] = {"background_media": fill}
+    backdrop_ids = {*(entry.media_id for entry in entries)}
+    if media is not None:
+        backdrop_ids.add(media.media_id)
 
     def _is_backdrop(media_id: str | None) -> bool:
         found = _speaker_background_media(manifest, media_id) if media_id else None

@@ -391,3 +391,147 @@ def test_a_window_across_a_removal_remaps_to_the_span_laid_out(monkeypatch):
         assert remap_range(source_start, source_end, plan) == pytest.approx(
             (window.start_s, window.end_s)
         )
+
+
+# ------------------------------------------------------------------ KRI-1173: a plain colour
+#
+# Failure modes pinned here (same Cafe T2 chain): the strategy's colour is looked up in (or
+# reserved from) the Visuals pool like a photo (S60); a colour whose token is closed renders
+# anything but what a strategy that never asked renders; a colour under media windows loses the
+# windows or reserves the wrong photos; the receipt cannot say a colour was drawn.
+
+
+def _colour_job(monkeypatch, background, *, token=True, windows_verified=False, **kwargs):
+    job = _job(monkeypatch, background=background, **kwargs)
+    ours = {"speakerBackgroundColor", "speakerBackgroundWindows"}
+    features = [f for f in gb.settings.phone_render_verified_features if f not in ours]
+    if token:
+        features.append("speakerBackgroundColor")
+    if windows_verified:
+        features.append("speakerBackgroundWindows")
+    monkeypatch.setattr(gb.settings, "phone_render_verified_features", features)
+    return job
+
+
+def _applied(job):
+    return job.assembly_plan["variants"][0]["phone_lane_receipt"]["applied"]
+
+
+def test_the_strategy_request_carries_a_colour_with_no_media_id():
+    assert gb._strategy_background_request(
+        {"creator_strategy": {"background_media": {"color": "#FFFFFF"}}}
+    ) == {"color": "#FFFFFF"}
+    # The repair normalises first; the worker still never trusts a lowercase spelling to the lane.
+    assert gb._strategy_background_request(
+        {"creator_strategy": {"background_media": {"color": " #00ff00 "}}}
+    ) == {"color": "#00FF00"}
+    request = gb._strategy_background_request(
+        {
+            "creator_strategy": {
+                "background_media": {
+                    "color": "#000000",
+                    "sequence": [{"media_id": f"asset-{OBLEA}"}],
+                    "cadence_s": 3.0,
+                    "speaker_frame": "small_top_left",
+                }
+            }
+        }
+    )
+    assert request["color"] == "#000000" and "media_id" not in request
+    assert request["sequence"][0]["media_id"] == f"asset-{OBLEA}"
+    assert request["cadence_s"] == 3.0 and request["speaker_frame"] == "small_top_left"
+    # Neither a colour nor a media id: nothing to resolve (never a crash on a bad row).
+    for raw in ({}, {"color": ""}, {"color": "  "}, {"media_id": ""}, {"color": 5}):
+        assert (
+            gb._strategy_background_request({"creator_strategy": {"background_media": raw}}) is None
+        )
+
+
+def test_strategy_colour_reserves_nothing(monkeypatch):
+    baseline = _job(monkeypatch, background=None)
+    gb._run_generative_job(str(baseline.id))
+    assert {COTOPAXI, OBLEA} <= _card_media(baseline), "the harness must offer both as cards first"
+
+    job = _colour_job(monkeypatch, {"color": "#FFFFFF"})
+    gb._run_generative_job(str(job.id))
+
+    layer = _recipe(job).speaker_background
+    assert (layer.media_kind, layer.color, layer.asset_id) == ("color", "#FFFFFF", None)
+    variant = job.assembly_plan["variants"][0]
+    receipt = variant["phone_lane_receipt"]
+    assert "background" in receipt["applied"] and receipt["dropped"] == []
+    assert receipt["background"]["color"] == "#FFFFFF"
+    # No pool photo was used as the fill, so both still take their cards exactly as before.
+    assert _card_media(job) == _card_media(baseline)
+
+
+def test_a_colour_needs_no_pool_visuals_token(monkeypatch):
+    # Neither Visuals token is verified: a colour is no pool media, so the pool-kind check
+    # (`stillImages` / `visualVideos`) must not drop it.
+    job = _colour_job(monkeypatch, {"color": "#00FF00"})
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        [
+            f
+            for f in gb.settings.phone_render_verified_features
+            if f not in {"stillImages", "visualVideos"}
+        ],
+    )
+    gb._run_generative_job(str(job.id))
+
+    assert _recipe(job).speaker_background.color == "#00FF00"
+    assert job.status == "awaiting_device"
+
+
+def test_a_closed_colour_token_renders_exactly_what_a_strategy_that_never_asked_renders(
+    monkeypatch,
+):
+    asked = _colour_job(monkeypatch, {"color": "#FFFFFF"}, token=False)
+    gb._run_generative_job(str(asked.id))
+    never = _job(monkeypatch, background=None)
+    gb._run_generative_job(str(never.id))
+
+    assert _recipe(asked).speaker_background is None
+    assert _recipe(asked).model_dump_json() == _recipe(never).model_dump_json()
+    assert _card_media(asked) == _card_media(never)
+    assert _applied(asked) == _applied(never)
+
+
+def test_a_colour_under_media_windows_reserves_only_the_window_photos(monkeypatch):
+    job = _colour_job(
+        monkeypatch,
+        {
+            "color": "#FFFFFF",
+            "sequence": [{"media_id": f"asset-{OBLEA}"}],
+            "speaker_frame": "small_bottom_right",
+        },
+        windows_verified=True,
+    )
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    layer = _recipe(job).speaker_background
+    assert layer.color == "#FFFFFF" and layer.asset_id is None
+    assert {w.asset_id for w in layer.windows} == {f"visual-{OBLEA}"}
+    assert layer.speaker_frame is not None
+    receipt = job.assembly_plan["variants"][0]["phone_overlay_receipt"]
+    offered = {entry["media_id"] for entry in receipt["placed"] + receipt["unplaced"]}
+    assert OBLEA not in offered  # the window photo is reserved ...
+    assert COTOPAXI in _card_media(job)  # ... and the colour reserves none
+
+
+def test_a_colour_with_windows_gate_closed_keeps_the_colour_and_reserves_nothing(monkeypatch):
+    asked = _colour_job(
+        monkeypatch,
+        {"color": "#FFFFFF", "sequence": [{"media_id": f"asset-{OBLEA}"}]},
+        windows_verified=False,
+    )
+    gb._run_generative_job(str(asked.id))
+    plain = _colour_job(monkeypatch, {"color": "#FFFFFF"})
+    gb._run_generative_job(str(plain.id))
+
+    layer = _recipe(asked).speaker_background
+    assert layer.color == "#FFFFFF" and layer.windows is None
+    assert _recipe(asked).model_dump_json() == _recipe(plain).model_dump_json()
+    assert _card_media(asked) == _card_media(plain)

@@ -1258,7 +1258,11 @@ enum KriaClientProtocolContract {
     /// 33 (KRI-1170): decodes and round-trips a tilt's `zoom` (a slide's media scaled 0.5 to 3x before it turns). The server
     /// offers `slide_post_tilt_zoom` only to this protocol and answers 426 `client_update_required` (`slide_tilt_zoom`) to an
     /// older build that would save over a zoomed tilt, since it re-encodes the tilt without the key.
-    static let version = 33
+    /// 34 (KRI-1173): decodes and round-trips a solid-colour speaker background (`media_kind: "color"` + `color`) and the
+    /// `speakerBackgroundColor` capability. The server offers `editor_capabilities.speaker_background_color` only to this
+    /// protocol (and only with `speakerBackgroundColor` verified) and answers 426 `client_update_required`
+    /// (`speaker_background_color`) to an older build polling or saving a recipe that already carries one.
+    static let version = 34
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -2154,6 +2158,8 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "talking_range_order": "The parts of this video have to stay in their order. Put them back in order and save again. Your edits are still here.",
             "talking_range_muted": "Range can’t mute a part of this video. Turn the sound back on for it and save again. Your edits are still here.",
             "talking_range_captions_missing": "Part of your range has no captions yet. Add captions for it, turn captions off, or put the range back, then save again. Your edits are still here.",
+            "speaker_background_color_disabled": "A plain colour behind you isn’t available on this edit yet. Pick a photo or video, or remove the background, then save again. Your edits are still here.",
+            "speaker_background_color_invalid": "That colour can’t be used. Pick a swatch or a solid colour, then save again. Your edits are still here.",
             "speaker_background_windows_disabled": "Timed backgrounds aren’t available right now. Remove them and save again. Your edits are still here.",
             "speaker_background_window_invalid": "The timed backgrounds overlap or one is too short. Give each at least half a second without overlap, then save again. Your edits are still here.",
             // 426 from the editor-commit route: this build is older than the feature the edit uses (see the call site).

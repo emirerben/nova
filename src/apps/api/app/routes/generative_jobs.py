@@ -1229,17 +1229,31 @@ class EditorCommitSpeakerBackground(BaseModel):
     KRI-1162: ``windows`` (1..40 timed backgrounds over the fill) and ``speaker_frame`` are
     optional and omitted from the dump while unused, so an old-shape Save dumps exactly as it
     did and still equals the stored document.
+
+    KRI-1173: ``kind: "color"`` + ``color`` (``#RRGGBB``, any case in, UPPERCASE stored) is a
+    solid-colour fill: no ``media_id``, no pin, ``source_start_s`` 0 (omitted from the dump).
     """
 
     model_config = {"extra": "forbid"}
 
-    media_id: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
-    kind: Literal["image", "video"]
+    # KRI-1173: ``media_id`` is absent for a colour fill and required for a photo or video; the
+    # Save validator answers a wrong combination with its own code (``speaker_background_color_
+    # invalid``) instead of a generic schema 422.
+    media_id: str | None = Field(default=None, min_length=1, max_length=160, pattern=r"^\S+$")
+    kind: Literal["image", "video", "color"]
+    # KRI-1173: ``#RRGGBB`` of a colour fill. Any case is accepted here and stored UPPERCASE;
+    # the hex itself is checked by `_validate_speaker_background_section`.
+    color: str | None = Field(default=None, max_length=64)
     source_start_s: float = Field(default=0.0, ge=0.0, le=1800.0, allow_inf_nan=False)
     windows: list[EditorCommitSpeakerBackgroundWindow] | None = Field(
         default=None, min_length=1, max_length=40
     )
     speaker_frame: EditorCommitSpeakerFrame | None = None
+
+    @field_validator("color", mode="before")
+    @classmethod
+    def _uppercase_color(cls, value: object) -> object:
+        return value.strip().upper() if isinstance(value, str) else value
 
     @property
     def uses_windows(self) -> bool:
@@ -1248,6 +1262,13 @@ class EditorCommitSpeakerBackground(BaseModel):
     @model_serializer(mode="wrap")
     def _omit_unused(self, handler):  # noqa: ANN001, ANN202
         data = handler(self)
+        if data.get("media_id") is None:
+            data.pop("media_id", None)
+        if data.get("color") is None:
+            data.pop("color", None)
+        if data.get("kind") == "color":
+            # A colour has no source start: the document carries `{kind, color}` only.
+            data.pop("source_start_s", None)
         if not data.get("windows"):
             data.pop("windows", None)
         if data.get("speaker_frame") is None:
@@ -7616,6 +7637,9 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         # KRI-1162: timed backgrounds + the speaker frame, present only when ON (same reason).
         if _speaker_background_windows_capability(job, variant):
             capabilities["speaker_background_windows"] = True
+        # KRI-1173: a solid-colour fill, present only when ON (same reason).
+        if _speaker_background_color_capability(job, variant):
+            capabilities["speaker_background_color"] = True
     if _caption_animation_capability(variant, capabilities):
         capabilities["caption_animation"] = True
     if _clip_tilt_capability(job, variant, capabilities):
@@ -11433,6 +11457,29 @@ def _speaker_background_windows_capability(job: Job, variant: dict) -> bool:
     )
 
 
+def _speaker_background_color_capability(job: Job, variant: dict) -> bool:
+    """KRI-1173: may the app author a solid-colour fill
+    (``editor_capabilities.speaker_background_color``)? The base capability AND the colour
+    gate (``speakerBackgroundColor`` verified, protocol >=
+    ``speaker_background_color_min_client_protocol``)."""
+    from app.services.phone_rollout import speaker_background_color_supported  # noqa: PLC0415
+
+    return bool(
+        _speaker_background_capability(job, variant)
+        and speaker_background_color_supported(require_client=True)
+    )
+
+
+_BACKGROUND_COLOR_RE = re.compile(r"^#[0-9A-F]{6}$")
+
+
+def _speaker_background_color_invalid() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={"code": "speaker_background_color_invalid"},
+    )
+
+
 def _validate_speaker_background_windows(
     requested: EditorCommitSpeakerBackground, assembly: dict
 ) -> None:
@@ -11496,6 +11543,7 @@ def _validate_speaker_background_section(
         SubtitledSpeakerFrame,
     )
     from app.services.phone_rollout import (  # noqa: PLC0415
+        speaker_background_color_unavailable_reason,
         speaker_background_unavailable_reason,
         speaker_background_windows_unavailable_reason,
     )
@@ -11544,6 +11592,35 @@ def _validate_speaker_background_section(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"code": "speaker_background_disabled", "reason": reason},
         )
+    is_color = requested.kind == "color"
+    if is_color:
+        # KRI-1173 (S49, S55): the colour gate on top of the base gate above.
+        color_reason = speaker_background_color_unavailable_reason()
+        if color_reason == "client_protocol_below_min":
+            raise HTTPException(
+                426,
+                detail={
+                    "code": "client_update_required",
+                    "feature": "speaker_background_color",
+                    "minimum_client_protocol": (
+                        settings.speaker_background_color_min_client_protocol
+                    ),
+                },
+            )
+        if color_reason is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_color_disabled", "reason": color_reason},
+            )
+        if (
+            requested.media_id is not None
+            or requested.color is None
+            or not _BACKGROUND_COLOR_RE.fullmatch(requested.color)
+            or requested.source_start_s != 0
+        ):
+            raise _speaker_background_color_invalid()
+    elif requested.media_id is None or requested.color is not None:
+        raise _speaker_background_color_invalid()
     if requested.uses_windows:
         # KRI-1162 (S32, S33): the windows gate on top of the base gate above.
         windows_reason = speaker_background_windows_unavailable_reason()
@@ -11563,27 +11640,39 @@ def _validate_speaker_background_section(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={"code": "speaker_background_windows_disabled", "reason": windows_reason},
             )
-    binding = pinned_visual(assembly, requested.media_id)
-    if binding is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"code": "speaker_background_media_not_in_pool"},
-        )
-    if binding.kind != requested.kind:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"code": "speaker_background_kind_mismatch"},
-        )
-    if binding.kind == "image" and requested.source_start_s != 0:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"code": "speaker_background_start_out_of_range"},
-        )
-    if binding.kind == "video" and requested.source_start_s >= (binding.duration_s or 0.0):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"code": "speaker_background_start_out_of_range"},
-        )
+    fill: dict[str, Any]
+    if is_color:
+        # KRI-1173 (S54): a colour is not a pool visual -- nothing to look up or pin.
+        fill = {"kind": "color", "color": requested.color}
+    else:
+        binding = pinned_visual(assembly, requested.media_id)
+        if binding is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_media_not_in_pool"},
+            )
+        if binding.kind != requested.kind:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_kind_mismatch"},
+            )
+        if binding.kind == "image" and requested.source_start_s != 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_start_out_of_range"},
+            )
+        if binding.kind == "video" and requested.source_start_s >= (binding.duration_s or 0.0):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_start_out_of_range"},
+            )
+        fill = {
+            "media_id": binding.media_id,
+            "gcs_path": binding.gcs_path,
+            "generation": binding.generation,
+            "kind": binding.kind,
+            "source_start_s": requested.source_start_s,
+        }
     window_lanes: list[SubtitledBackgroundWindow] = []
     if requested.uses_windows:
         _validate_speaker_background_windows(requested, assembly)
@@ -11602,11 +11691,7 @@ def _validate_speaker_background_section(
             )
     return True, speaker_background_document(
         SubtitledBackground(
-            media_id=binding.media_id,
-            gcs_path=binding.gcs_path,
-            generation=binding.generation,
-            kind=binding.kind,
-            source_start_s=requested.source_start_s,
+            **fill,
             windows=tuple(window_lanes),
             speaker_frame=(
                 SubtitledSpeakerFrame(**requested.speaker_frame.model_dump())

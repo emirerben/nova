@@ -418,6 +418,10 @@ class CreationCapabilitiesOut(BaseModel):
     # client_protocol. The per-edit editor capability (`editor_capabilities.speaker_background`)
     # narrows it to device-rendered Talk-to-camera variants.
     speaker_background: bool = False
+    # KRI-1173: the same lane may use a solid colour as the fill. True only with the base
+    # `speaker_background` gate open AND `speakerBackgroundColor` verified AND a build declaring
+    # X-Kria-Client-Protocol >= speaker_background_color_min_client_protocol.
+    speaker_background_color: bool = False
     # KRI-742: the chat composers show a mic button (VOICE_DICTATION_ENABLED).
     voice_dictation: bool = False
     slide_post_extended_device_export: bool = False
@@ -4073,6 +4077,14 @@ async def capabilities(
             and "speakerBackground" in set(settings.phone_render_verified_features)
             and client_protocol is not None
             and client_protocol >= settings.speaker_background_min_client_protocol
+        ),
+        "speaker_background_color": bool(
+            settings.speaker_background_enabled
+            and "speakerBackground" in set(settings.phone_render_verified_features)
+            and "speakerBackgroundColor" in set(settings.phone_render_verified_features)
+            and client_protocol is not None
+            and client_protocol >= settings.speaker_background_min_client_protocol
+            and client_protocol >= settings.speaker_background_color_min_client_protocol
         ),
         "voice_dictation": bool(
             settings.voice_dictation_enabled
