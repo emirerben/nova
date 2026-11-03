@@ -1549,8 +1549,8 @@ def test_playback_diagnostics_without_a_trace_is_unchanged_and_the_trace_is_boun
 
 
 def test_playback_diagnostics_drops_a_trace_that_is_not_fixed_labels_and_counts() -> None:
-    """The trace is fixed labels and counts only. Anything else (a URL, a name, a line break, upper case) is
-    dropped, not stored in a log line, and the rest of the report is still recorded."""
+    """The trace is fixed labels and counts only. Anything else (a URL, a name, a line break,
+    upper case) is dropped, not stored in a log line, and the rest of the report is still kept."""
     user = _user()
     url = _diagnostics_url(uuid.uuid4())
     for stray in (

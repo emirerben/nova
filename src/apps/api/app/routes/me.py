@@ -20,6 +20,7 @@ cross-user references on add-to-plan return 404 (not 403) so we don't leak which
 from __future__ import annotations
 
 import copy
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -31,7 +32,7 @@ import structlog
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
@@ -913,6 +914,9 @@ class LibraryPlaybackResponse(BaseModel):
     video_url: str
 
 
+_TRACE_ALPHABET = re.compile(r"[a-z0-9_.=@: -]*")
+
+
 class LibraryPlaybackDiagnostic(BaseModel):
     """An editor player item that failed on the phone (KRI-200).
 
@@ -930,7 +934,13 @@ class LibraryPlaybackDiagnostic(BaseModel):
     app_build: str | None = Field(default=None, max_length=32)
     # A Talk-to-camera edit's account of how its background was drawn: fixed labels and counts
     # only (``clips=1 hidden_run=0 cutout=412 ...``), so a vanished background can be explained.
+    # Anything outside that alphabet is dropped (the rest of the report is kept), never logged.
     trace: str | None = Field(default=None, max_length=600)
+
+    @field_validator("trace")
+    @classmethod
+    def _trace_is_fixed_labels_and_counts(cls, value: str | None) -> str | None:
+        return value if value is not None and _TRACE_ALPHABET.fullmatch(value) else None
 
 
 class RecorderDiagnostic(BaseModel):
