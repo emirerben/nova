@@ -25,14 +25,18 @@ Failure modes, written before the code (each is pinned below):
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from app.agents._schemas.creator_agent import CreativeStrategy
+from app.agents._schemas.creator_agent import CreativeStrategy, ProposeStrategy
 from app.agents._schemas.reaction_beats import InsertClip
+from app.agents.main_creator import MainCreatorAgent
 from app.kria import ask_refusals
 from app.kria.brief import BriefRequirement
 from app.kria.brief_checks import InsertClipFact, plan_facts_from_phone_variant
 from app.services import creator_capabilities as capabilities
+from tests.agents.conftest import MockModelClient
 from tests.kria.test_insert_and_cutaway_lanes import (
     INSERT_MARK,
     SECTION_MARK,
@@ -50,7 +54,7 @@ from tests.kria.test_insert_clip_planner import (
     _strategy,
     _verdict,
 )
-from tests.kria.test_planner_knows_talking_cutaways import _flat
+from tests.kria.test_planner_knows_talking_cutaways import _agent_input, _flat
 
 BETWEEN = "Place them in between my speech. Show the talks in full screen and use their audio."
 
@@ -174,6 +178,211 @@ def test_t3_with_the_cutaways_closed_the_insert_is_still_the_only_in_between_for
 
     assert "full-screen clip lane" not in insert
     assert "leave `insert_clips` empty" in insert
+
+
+# --- A, B, C: one routing rule, a silent clip, and the path a model answer really takes ---
+#
+# The prompt is routed by the POSITION words ("in between my speech", a pause) and never by the
+# sound words ("use their audio"). No live eval of this routing exists: the model's choice is
+# unmeasured, and only the paid eval in tests/evals/README.md can measure it. What the tests
+# below prove is the part the server owns: what the prompt tells the model, and that every answer
+# shape the rule asks for survives the real parse, repair and receipt path.
+
+
+def _quoted(text: str) -> set[str]:
+    """The double-quoted example phrases in ``text`` (the odd pieces between straight quotes),
+    without the JSON keys and values the section also quotes."""
+    pieces = text.split('"')[1::2]
+    return {p for p in pieces if len(p) > 3 and ":" not in p and "<" not in p and "{" not in p}
+
+
+def _overlapping(first: set[str], second: set[str]) -> set[str]:
+    """Phrases that are the same, or one inside the other ("use their audio" inside "show the
+    talks in between my speech and use their audio")."""
+    return {a for a in first for b in second if a in b or b in a}
+
+
+def _insert_paragraph(insert: str) -> str:
+    return insert[: insert.index("An earlier reply in this chat")]
+
+
+def _routing_regions(insert: str) -> tuple[str, str]:
+    """(the text that routes TO the insert, the text that says a clip is NOT an insert)."""
+    marker = "Showing a clip WHILE the talk keeps running"
+    start = insert.index(marker)
+    return insert[:start], insert[start : insert.index("is NOT an insert", start)]
+
+
+@pytest.mark.parametrize("cutaways", [True, False])
+def test_a_no_example_phrase_routes_to_both_the_insert_and_the_overlay(monkeypatch, cutaways):
+    insert = _insert_section(monkeypatch, cutaways=cutaways)
+    to_insert, not_insert = _routing_regions(insert)
+
+    assert _overlapping(_quoted(to_insert), _quoted(not_insert)) == set()
+    assert "in between my speech" in "".join(_quoted(to_insert))
+    assert "over my speech" in "".join(_quoted(not_insert))
+
+
+@pytest.mark.parametrize("cutaways", [True, False])
+def test_a_use_their_audio_is_listed_in_exactly_one_place_and_never_decides_the_route(
+    monkeypatch, cutaways
+):
+    insert = _insert_paragraph(_insert_section(monkeypatch, cutaways=cutaways))
+
+    assert insert.count("use their audio") == 1
+    assert "A request for the clip's own sound never decides" in insert
+
+
+def test_a_the_brief_rule_lists_use_their_audio_only_on_the_overlay_side():
+    flat = _flat(_extractor_prompt(insert_clips_open=True))
+    start = flat.index("IN THE MIDDLE of the talk")
+    rule = flat[start : flat.index("On a montage,", start)]
+    marker = rule.index("A clip shown while the talk keeps running")
+    assert _overlapping(_quoted(rule[:marker]), _quoted(rule[marker:])) == set()
+    assert rule.count("use their audio") == 1
+
+
+@pytest.mark.parametrize("cutaways", [True, False])
+def test_b_in_between_my_speech_is_an_insert_for_a_clip_with_no_sound_of_its_own_too(
+    monkeypatch, cutaways
+):
+    insert = _insert_section(monkeypatch, cutaways=cutaways)
+
+    assert "stays the clip shown over the talk even when" not in insert
+    assert "no sound of its own" in insert
+    assert '"keep_audio": false' in insert
+    assert "plays silent" in insert
+
+
+def test_b_the_cutaway_lane_text_does_not_keep_a_silent_clip_in_between_my_speech_as_overlay(
+    monkeypatch,
+):
+    manifest = _lanes(monkeypatch, cutaways=True, inserts=True)
+    flat = _flat(_prompt(manifest))
+    cutaway = flat[flat.index(SECTION_MARK) : flat.index(INSERT_MARK)]
+    assert "no speech or sound of its own" not in cutaway
+    assert "in between my speech" in cutaway
+
+
+def _ids(manifest) -> list[str]:
+    return [m.media_id for m in manifest.media]
+
+
+def _model_answer(manifest, rows: list[dict]) -> str:
+    return json.dumps(
+        {
+            "action": {
+                "kind": "propose_strategy",
+                "strategy": {
+                    "direction": "fast_montage",
+                    "edit_format": "subtitled",
+                    "audio_strategy": "original_audio",
+                    "render_program": "native",
+                    "target_duration_s": 58,
+                    "selected_media_ids": _ids(manifest),
+                    "insert_clips": rows,
+                    "rationale": "The talk pauses for each clip in between the speech.",
+                },
+                "summary": "Each clip plays in a pause of your talk.",
+            }
+        }
+    )
+
+
+def _run_model_answer(manifest, rows: list[dict]):
+    client = MockModelClient()
+    client.queue(MainCreatorAgent.spec.model, _model_answer(manifest, rows))
+    output = MainCreatorAgent(client).run(_agent_input(manifest))
+    assert len(client.invocations) == 1
+    assert isinstance(output.action, ProposeStrategy)
+    return output.action.strategy
+
+
+def test_c_an_answer_with_no_position_and_a_silent_clip_survives_the_real_agent_and_repair(
+    monkeypatch,
+):
+    manifest = _lanes(monkeypatch, cutaways=True, inserts=True)
+    talks, drone = _ids(manifest)[1], _ids(manifest)[2]
+    strategy = _run_model_answer(
+        manifest, [{"media_id": talks}, {"media_id": drone, "keep_audio": False}]
+    )
+    assert [(r.media_id, r.at_phrase, r.at_s, r.keep_audio) for r in strategy.insert_clips] == [
+        (talks, None, None, True),
+        (drone, None, None, False),
+    ]
+
+    assert capabilities.insert_clips_problems(manifest, strategy) == [None, None]
+    repaired, notices = capabilities.repair_creator_insert_clips(manifest, strategy)
+    assert notices == []
+    assert [(r.media_id, r.keep_audio) for r in repaired.insert_clips] == [
+        (talks, True),
+        (drone, False),
+    ]
+    assert all(r.at_phrase is None and r.at_s is None for r in repaired.insert_clips)
+
+
+def test_c_the_kept_rows_become_topic_rows_in_the_draft_receipt_without_a_phrase_or_second(
+    monkeypatch,
+):
+    manifest = _lanes(monkeypatch, cutaways=True, inserts=True)
+    talks, drone = _ids(manifest)[1], _ids(manifest)[2]
+    strategy = _run_model_answer(
+        manifest, [{"media_id": talks}, {"media_id": drone, "keep_audio": False}]
+    )
+    repaired, _ = capabilities.repair_creator_insert_clips(manifest, strategy)
+    facts = _facts_for_draft(repaired, manifest)
+
+    assert facts.insert_clips == (
+        InsertClipFact("planned", anchor="topic"),
+        InsertClipFact("planned", anchor="topic"),
+    )
+    verdict = _verdict(facts, _topic_req())
+    assert verdict.status == "met"
+    assert "end of the sentence" in verdict.reason
+
+
+def test_c_a_row_with_two_positions_is_dropped_by_the_agent_and_names_nothing_it_invented(
+    monkeypatch,
+):
+    manifest = _lanes(monkeypatch, cutaways=True, inserts=True)
+    talks = _ids(manifest)[1]
+    strategy = _run_model_answer(
+        manifest,
+        [{"media_id": talks}, {"media_id": _ids(manifest)[2], "at_phrase": "a", "at_s": 3}],
+    )
+    assert [r.media_id for r in strategy.insert_clips] == [talks]
+
+
+def test_c_the_extractor_keeps_an_insert_clip_fact_with_no_position_and_the_receipt_reads_it():
+    from app.agents._schemas.brief_extractor import BriefExtractionInput
+    from app.agents.brief_extractor import BriefExtractorAgent
+
+    answer = json.dumps(
+        {
+            "brief_updates": [
+                {
+                    "operation": "add",
+                    "kind": "style",
+                    "scope": "global",
+                    "description": BETWEEN,
+                    "facts": {"insert_clip": "the talks"},
+                }
+            ]
+        }
+    )
+    output = BriefExtractorAgent(None).parse(  # type: ignore[arg-type]
+        answer,
+        BriefExtractionInput(
+            creator_request="", user_message=BETWEEN, conversation=[], insert_clips_open=True
+        ),
+    )
+    (update,) = output.brief_updates
+    assert update.facts == {"insert_clip": "the talks"}
+    req = BriefRequirement(
+        id="r1", kind=update.kind, scope=update.scope, description=BETWEEN, facts=update.facts
+    )
+    assert req.facts.get("insert_at_phrase") is None and req.facts.get("insert_at_s") is None
+    assert _verdict(_variant([{"media_id": "a", "basis": "topic"}], []), req).status == "met"
 
 
 # --- T5: the brief ---
