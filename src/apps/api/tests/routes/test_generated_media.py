@@ -98,3 +98,25 @@ def test_paid_overlay_planning_obeys_the_same_account_gate_as_image_generation(m
     )
     assert client.post(f"/plan-items/{uuid.uuid4()}/overlay-plan", json=body).status_code == 200
     assert called == [1]
+
+
+def test_generated_images_do_not_expire_with_the_calendar(monkeypatch):
+    """No weekly 'prices verified' attestation: the gate depends on the live approval, the
+    organization, the key, the budgets and the kill switch, never on today's date."""
+    from app.services.generated_media import generated_media_enabled
+
+    for name, value in {
+        "ai_cost_control_enabled": True,
+        "generated_images_enabled": True,
+        "generated_media_live_approved": True,
+        "generated_media_billing_organization": "org-offline",
+        "openai_api_key": "sk-offline",
+        "generated_media_max_request_usd": 2.0,
+        "ai_openai_monthly_budget_usd": 100,
+        "ai_openai_image_budget_usd": 100,
+    }.items():
+        monkeypatch.setattr(settings, name, value)
+
+    assert generated_media_enabled("image") is True
+    monkeypatch.setattr(settings, "generated_images_enabled", False)
+    assert generated_media_enabled("image") is False

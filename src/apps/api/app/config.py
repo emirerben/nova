@@ -643,7 +643,6 @@ class Settings(BaseSettings):
     generated_narration_enabled: bool = False
     generated_media_live_approved: bool = False
     generated_media_billing_organization: str = ""
-    generated_media_price_verified_at: str = ""
     generated_media_max_request_usd: float = Field(default=0, ge=0, le=2.0)
     ai_openai_monthly_budget_usd: float = Field(default=0, ge=0, le=1000)
     ai_anthropic_monthly_budget_usd: float = Field(default=0, ge=0, le=1000)
