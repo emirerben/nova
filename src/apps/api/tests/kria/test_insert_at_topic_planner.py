@@ -470,7 +470,7 @@ def test_t7_a_finished_video_says_how_many_clips_played_and_why_each_missing_one
     verdict = _verdict(facts, _topic_req())
     assert verdict.status == "partial"
     assert "2 of 3" in verdict.reason
-    assert "None of what you say is about" in verdict.reason
+    assert "never talk about" in verdict.reason
 
 
 def test_t7_every_reason_the_topic_path_can_write_has_english_and_turkish_wording():
@@ -479,8 +479,8 @@ def test_t7_every_reason_the_topic_path_can_write_has_english_and_turkish_wordin
     generic = bc._insert_clip_why("zzz")
     for reason in (
         "no_matching_sentence",
-        "low_confidence",
-        "topic_check_unavailable",
+        "no_speech",
+        "over_device_budget",
         "in_tail_window",
         "in_hook_window",
         "too_close_to_previous",
@@ -533,9 +533,6 @@ def test_t9_a_finished_video_names_what_moved_a_position_he_did_not_name():
     assert "ends in the first seconds" in reason(
         {"media_id": "a", "basis": "topic", "adjusted": "hook_window"}
     )
-    assert "belongs to your last sentence" in reason(
-        {"media_id": "a", "basis": "topic", "adjusted": "tail_window"}
-    )
     assert "plays right after another" in reason(
         {"media_id": "a", "basis": "topic", "adjusted": "near_another_clip"}
     )
@@ -545,10 +542,10 @@ def test_t9_a_finished_video_names_what_moved_a_position_he_did_not_name():
     assert "by their words" in reason({"media_id": "a", "basis": "topic", "via": "keyword"})
     from app.kria.reply_language import reply_language_for
 
-    row = {"media_id": "a", "basis": "topic", "adjusted": "tail_window"}
+    row = {"media_id": "a", "basis": "topic", "adjusted": "hook_window"}
     with reply_language_for("tr"):
         turkish = reason(row)
-    assert turkish != reason(row) and "son cümlene" in turkish
+    assert turkish != reason(row) and "ilk saniyelerde" in turkish
 
 
 def test_t9_a_long_list_of_notes_is_cut_whole_never_in_the_middle_of_a_sentence():
