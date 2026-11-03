@@ -637,7 +637,9 @@ struct AttachmentSheet: View {
         }
         let ownID = take?.intakeID
         if let ownID, model.uploads.containsIntake(recordID: ownID) { return nil }
-        if replaceTarget != nil { return nil }
+        if replaceTarget != nil {
+            return replacementUnderway ? "Your new take is still being swapped in. Wait for it to finish before recording another." : nil
+        }
         // KRI-719: a Talking edit can hold several clips, so a take is only
         // refused once the edit is full, not whenever any clip is attached.
         let occupied = existing(for: .clip) + model.uploads.reservedCount(projectID: projectID, role: .clip)
@@ -645,6 +647,10 @@ struct AttachmentSheet: View {
             return "This video already has \(FootageStageCopy.count(maximumClipCount, "clip")). Your take is saved: remove a clip in Add media, then reopen it."
         }
         return nil
+    }
+
+    private var replacementUnderway: Bool {
+        BackgroundUploadCoordinator.replacementUnderway(projectID: projectID, inFlight: inFlight, records: pendingRecords)
     }
 
     private var isTalkingToCamera: Bool {
@@ -968,7 +974,7 @@ struct AttachmentSheet: View {
     }
     /// `flaggedClips`: Footage clips the Overlays hint points at (key -> is a screen recording by name or Photos).
     private func attachedList(role: CreationMediaRole, flaggedClips: [String: Bool] = [:]) -> some View {
-        let locked = removingMedia || !pendingRecords.filter { $0.projectID == projectID }.isEmpty
+        let locked = removingMedia || !pendingRecords.filter { $0.projectID == projectID }.isEmpty || replacementUnderway
         return VStack(spacing: 8) {
             ForEach(attachedMedia(for: role)) { attachment in
                 VStack(spacing: 8) {

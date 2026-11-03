@@ -972,6 +972,13 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         return flying.count + choosing.count
     }
 
+    /// A re-recorded take is being prepared, uploaded or retried. Until it lands, the clip it replaces is spoken for:
+    /// removing it, or aiming a second take at it, makes the swap answer `retake_target_missing` on every retry.
+    nonisolated static func replacementUnderway(projectID: UUID, inFlight: [UUID: InFlightUpload], records: [UploadRecoveryRecord]) -> Bool {
+        inFlight.values.contains { $0.projectID == projectID && $0.replacesMediaID != nil }
+            || records.contains { $0.projectID == projectID && $0.replacesMediaID != nil }
+    }
+
     /// KRI-294: chosen files of one role still on their way into the project, counted once each
     /// whether they are being chosen, prepared or uploaded. Failed uploads are left out: they wait on
     /// the creator's Retry, not on the upload. Feeds the Visuals batch progress.
