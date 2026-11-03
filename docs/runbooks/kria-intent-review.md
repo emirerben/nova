@@ -1,6 +1,6 @@
 # Intent review (KRI-1171)
 
-A finished, published generation is checked against what the creator asked for. This runbook covers the stages that exist today. Later stages (review agent, repair, receipts) add their own sections when they ship.
+A finished, published generation is checked against what the creator asked for. This runbook covers the stages that exist today. Later stages (repair, receipts) add their own sections when they ship.
 
 ## What runs
 
@@ -30,8 +30,8 @@ A finished, published generation is checked against what the creator asked for. 
 | --- | --- | --- |
 | `off` | not enabled or not admitted | nothing |
 | `evidence` | `ENABLED` | admission and frames only |
-| `review` | `PAID`, `OPENAI_API_KEY`, `AI_OPENAI_INTENT_REVIEW_BUDGET_USD > 0`, `AI_OPENAI_MONTHLY_BUDGET_USD > 0` | one paid frame review |
-| `repair` | `REPAIR` | reserved for a later stage |
+| `review` | `PAID`, `OPENAI_API_KEY`, `AI_OPENAI_INTENT_REVIEW_BUDGET_USD > 0`, `AI_OPENAI_MONTHLY_BUDGET_USD > 0` | one paid frame review, judged and stored in shadow (nothing is posted) |
+| `repair` | `REPAIR` | reserved for a later stage; the code ceiling keeps it at `review` today |
 
 The tier is stamped at admission. Live flags can only lower it, never raise it. The legacy Gemini quality review is retired for a runtime-v2 thread only when that creator's tier is `review` or higher and the thread's newest intent review has not ended without a verdict (`unavailable`, `exhausted`, `stale`, `review_unknown`). When it has, the next reconcile hands the generation back to the legacy review. The intent review judges the creator's request against the video; it does not replace the legacy review's mechanical repairs (caption legibility, speech cuts, transition fallback), so a creator whose review reports no findings is not covered for those.
 
@@ -52,7 +52,8 @@ The tier is stamped at admission. Live flags can only lower it, never raise it. 
 
 | Terminal | Reasons |
 | --- | --- |
-| `unavailable` | `paid_disabled`, `paid_gate_closed`, `canary_unattributed`, `frame_hash_mismatch`, `media_corrupt`, `context_too_large`, `provider_rejected`, `invalid_output`, `prompt_builder_unavailable`, `ledger_unavailable`, `disposition_unavailable` |
+| `unavailable` | `paid_disabled`, `paid_gate_closed`, `canary_unattributed`, `frame_hash_mismatch`, `media_corrupt`, `context_too_large`, `provider_rejected`, `invalid_output`, `nothing_verifiable`, `prompt_builder_unavailable`, `ledger_unavailable`, `disposition_unavailable` |
+| `no_findings`, `suggestion`, `needs_confirmation` | `reviewed` (the server judged a valid reply) |
 | `stale` | `generation_changed`, `ownership_changed` |
 | `exhausted` | `deadline` (claimed more than 180 s after `evidence_ready_at`), `attempts`, `budget_review`, `budget_monthly` |
 | `review_unknown` | `provider_unknown_outcome`, `response_lost` |
@@ -60,7 +61,38 @@ The tier is stamped at admission. Live flags can only lower it, never raise it. 
 - The claim, the pre-send recheck and the final check each lock the authority graph and compare the input digest. A newer render, a draft or recipe change, or an ownership change makes the row stale. If the call was already sent, the ledger is still settled.
 - The response is stored (`review.raw_output`, capped at 16 KB, plus provenance) before the ledger is settled. Provenance has the model, response id, usage, reserved and settled USD, latency and the hash of every frame sent. `review.provenance.visual_input_received` is true only when the transport got a completed response to the frames. `review_model_received_visual_input` on the packet and bundle stays `False`.
 - No provider call, frame decoding or pipeline event runs while a row lock is held.
-- Until the review agent ships, a completed response ends `unavailable(disposition_unavailable)`: the text and provenance are kept, no findings are parsed and nothing is shown to the creator.
+- A completed response is judged by the server (next section). `unavailable(disposition_unavailable)` now means only that the stored catalog could not be read back, an internal fault rather than anything the model said.
+
+## The review agent
+
+`nova.kria.intent_review` (`app/agents/intent_review.py`, prompt `prompts/intent_review.txt`, `prompt_version` `intent_review_v3`) is never run through `Agent.run` in production. `run_intent_review` renders its prompt, sends it through the bounded image transport under an explicit reservation, and parses the reply with the same code. The dispatcher still rejects media, so an accidental dispatcher call fails closed.
+
+**What the model is given.** The creator's request (at most 2,000 characters, as one JSON string so nothing in it can forge structure), up to 12 issued requirements (`R1`..`R12`, kind, label, the creator's verbatim words), and the frame manifest (`f0`..`f5` with a time, and a mark for frames centred on a text span). No candidate, target text or edit is ever in the prompt. Audio requirements are never issued: they are recorded in `review.catalog.withheld` and no finding or receipt may mention them.
+
+**What the model returns.** A closed schema sent as a strict JSON schema over exactly the issued aliases and sent frames: exactly one finding per issued requirement, each with a verdict (`met`, `unmet`, `unverifiable`; `unverifiable` is how the model declines), a `defect_kind` for unmet only, one to three evidence frames for unmet, and a `high`/`medium`/`low` confidence. There is no free text, so nothing the model says can become wording, timing or an edit.
+
+**What the server does with it** (`app/kria/intent_review_disposition.py`, pure functions):
+
+- Any violation voids the whole review as `unavailable(invalid_output)`: not JSON or truncated, an extra key, more than 12 findings, two findings for one requirement, an issued requirement with no finding at all (the schema cannot force coverage, so the server does: a reply that checks one requirement and goes quiet on the rest never counts as a clean pass), an alias or frame that was not issued or sent, an unmet finding with no frame, a defect kind on a verdict that is not unmet, or a defect kind that does not fit the requirement kind (a wording defect on footage). The call is still settled at actual usage, `review.invalid_output` names the first violation, and no finding is stored. A void review never lands on `no_findings`.
+- A `met` verdict on a timing requirement is recorded as `unverifiable`: stills sample instants and cannot show how long anything stays on screen.
+- A reply that judged nothing is `unavailable(nothing_verifiable)`. A catalog with no requirement the frames can judge makes no call and reserves nothing.
+- `low` confidence is ignored (kept in `disposition.ignored`). `medium` only ever produces a suggestion. A repair needs `high`, a tier of `repair`, staging preconditions that held, and a catalog candidate that matches both the requirement and the defect kind. Until the repair stage ships, every would-be repair is stored as a suggestion with `why = tier_review`.
+- Wrong footage (a `select` requirement) is always a suggestion and never a question or a repair. Wording the draft already carries is a render-fidelity suggestion plus a `render_fidelity` pipeline event for engineering triage. A wording defect with no candidate becomes at most one question (`needs_confirmation`); the rest become suggestions.
+- Row status, highest wins: `repair_staged` > `needs_confirmation` > `suggestion` > `no_findings` (which needs at least one `met`).
+
+**Candidates** (`app/kria/intent_review_catalog.py`) are built from the frozen approved draft and are emitted only when an authority other than the draft disagrees with it, because a candidate that restores the draft's own value compiles to an empty diff:
+
+| Candidate | Precondition | Auto |
+| --- | --- | --- |
+| `restore_exact_text` | no row mapped to the requirement carries the contract's creator-confirmed text (case-folded, whole words, accents kept), and the row to rewrite is one the requirement's scope names (the title, a clip's label) or holds nothing but those words. The target is the contract text byte for byte | yes |
+| `fit_text_to_duration` | the element really outlives the video: it ends more than 0.1 s after the rendered duration (the duration the frame decoder probed), so text held to the very end is left alone. Only a `text_cut_off` finding can stage it. The new end is 0.3 s before the end; the window never starts earlier or ends later than approved and keeps at least 1 s | yes |
+| `move_text_to_safe_anchor` | a title or text element with a named position. The server picks the anchor (bottom to top, top to bottom, middle to top) | no, suggestion only |
+
+A requirement finds its rows by scope (`title`, `clip:<id>`) and otherwise by the creator's words as whole words, ignoring case and accents, the way the request-following receipts do: "Sale" is not in "Wholesale Day". A row found only by the creator's words that holds other words ("Day 3 in Istanbul" against the creator's "İstanbul") is never cut down to the creator's words; a wording claim there is a question. No candidate is emitted for pinned text, sequence fragments, captions, lyric lines, text bound to a clip when footage is selected or ordered, anything under an absolute sequence timing or a protected region, `preserve_editor_text` (the creator forbade touching text, so not even a restore), or (for retime and move) an explicit timing or placement ask. Draft kinds other than `editor` issue requirements but no candidates.
+
+**Where to look.** `creator_generation_reviews.review` holds `catalog`, `raw_output` (at most 16 KB), `findings`, `disposition`, `provenance` and, for a void reply, `invalid_output`. The admin job-debug view shows the agent run (`nova.kria.intent_review`, outcome `terminal_schema` for a void reply) and the `intent_review` pipeline events. Shadow mode posts nothing: `receipt_event_id` and `question_event_id` stay empty.
+
+**Replay evals** (`pytest tests/evals/test_intent_review_evals.py`, free): goldens for a correct edit, wrong footage, wrong wording, wording drift with no authority, a timing miss and an audio decoy; hostile fixtures for each way a reply is voided. Replay proves the structure and the server judgment, not that the model catches anything; the goldens' hand-written `raw_text` is replaced by recorded replies in the live qualification run.
 
 ## Crash recovery
 

@@ -4,6 +4,8 @@ The only fake is the OpenAI SDK object; the transport, error translation and the
 adapter run for real. Nothing here reaches the network.
 """
 
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -11,8 +13,14 @@ import pytest
 
 from app.agents._model_client import ModelDispatcher
 from app.agents._openai_vision import OpenAIVisionClient
-from app.agents._runtime import ProviderOutcomeUnknownError, TerminalError, TransientError
+from app.agents._runtime import (
+    ProviderOutcomeUnknownError,
+    RunContext,
+    TerminalError,
+    TransientError,
+)
 from app.agents._text_providers import OpenAITextClient
+from app.agents.intent_review import IntentReviewAgent, IntentReviewInput
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 
@@ -183,5 +191,23 @@ def test_dispatcher_never_forwards_media_to_openai():
             prompt="hi",
             media_uri="https://generativelanguage.googleapis.com/v1beta/files/abc",
             media_mime="image/jpeg",
+        )
+    assert sdk.calls == []
+
+
+def test_the_review_agent_cannot_be_run_through_the_text_dispatcher():
+    fixture = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "fixtures/agent_evals/intent_review/golden/correct_edit.json"
+        ).read_text()
+    )
+    sdk = Sdk(response())
+    dispatcher = ModelDispatcher(
+        gemini=MagicMock(), whisper=MagicMock(), openai=OpenAITextClient(client=sdk)
+    )
+    with pytest.raises(TerminalError):
+        IntentReviewAgent(dispatcher).run(
+            IntentReviewInput.model_validate(fixture["input"]), ctx=RunContext(request_id="x")
         )
     assert sdk.calls == []

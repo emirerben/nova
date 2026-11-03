@@ -227,6 +227,19 @@ def test_an_invalid_typed_value_is_dropped_not_applied(facts):
     assert _ask().caption_look_ask(_r("r3", "style", "Captions.", facts)) is None
 
 
+@pytest.mark.parametrize(
+    "key", ["caption_size", "caption_position", "caption_color", "caption_case"]
+)
+@pytest.mark.parametrize("value", [[], {}, None, 3, ["small"], {"size": "small"}])
+def test_a_non_text_typed_value_is_dropped_and_never_raises(key, value):
+    """Emir's #2089 review: model output such as ``"caption_size": []`` raised TypeError (an
+    unhashable value tested against a dict), which would fail every receipt of the turn."""
+    req = _r("r3", "style", "Captions.", {"captions": "on", key: value})
+    assert _ask().caption_look_ask(req) is None
+    facts = dataclasses.replace(_draft_facts(_manifest()), caption_words_at_render=True)
+    _one(req, facts)  # never raises
+
+
 def test_a_colour_word_becomes_its_hex():
     ask = _ask().caption_look_ask(_r("r3", "style", "Captions.", {"caption_color": "white"}))
     assert ask is not None and ask.color == "#FFFFFF"
@@ -261,6 +274,66 @@ def test_green3_draft_says_the_caption_look_is_done_on_the_phone_writer(monkeypa
     # Prod: partial / unchecked "I can't check the captions on this draft yet."
     assert (receipt.status, receipt.verification) == ("met", "checked")
     assert receipt.reason == "Captions are small, white, lowercase and in the middle."
+
+
+# Emir's #2089 review: a typed look shares its requirement with the captions' language.
+TURKISH_ONLY = _r(
+    "r3", "style", "Captions in Turkish.", {"captions": "on", "caption_language": "tr"}
+)
+TURKISH_LOOK = _r(
+    "r3",
+    "style",
+    "Captions small, white, in Turkish.",
+    {
+        "captions": "on",
+        "caption_language": "tr",
+        "caption_size": "small",
+        "caption_color": "#FFFFFF",
+    },
+)
+
+
+def test_a_typed_look_never_hides_the_captions_language_on_a_draft():
+    facts = dataclasses.replace(_draft_facts(_manifest()), caption_words_at_render=True)
+    language = _one(TURKISH_ONLY, facts)
+    both = _one(TURKISH_LOOK, facts)
+    assert language.status != "met"  # the language is checked on the finished video
+    # Was "met" with only the look line: the Turkish ask was never judged or said.
+    assert (both.status, both.verification) == (language.status, language.verification)
+    assert language.reason in both.reason
+
+
+def test_a_typed_look_never_hides_a_word_by_word_miss():
+    """The other half of the same review: sentence captions for a word-by-word ask are a miss."""
+    ask = _r(
+        "r3",
+        "style",
+        "Small captions, word by word.",
+        {"captions": "word_by_word", "caption_size": "small"},
+    )
+    facts = dataclasses.replace(
+        _draft_facts(_manifest(), caption_style="clean"), caption_words_at_render=True
+    )
+    receipt = _one(ask, facts)
+    assert receipt.status == "partial", receipt
+    assert receipt.reason == "Captions are on as full sentences, not word by word."
+
+
+def test_readiness_treats_a_look_and_language_ask_like_the_language_ask():
+    rows_language, _ = _readiness([TURKISH_ONLY], _manifest())
+    rows_both, _ = _readiness([TURKISH_LOOK], _manifest())
+    assert rows_both["r3"]["disposition"] == rows_language["r3"]["disposition"]
+    assert rows_language["r3"]["reason"] in rows_both["r3"]["reason"]
+
+
+def test_a_finished_video_in_the_wrong_language_is_not_met_for_its_look():
+    variant = _drawn_variant(caption_language="en")
+    receipt = _one(TURKISH_LOOK, plan_facts_from_phone_variant(variant))
+    # The look is still drawn, but the captions are English, not Turkish.
+    assert receipt.status != "met", receipt
+    language = _one(TURKISH_ONLY, plan_facts_from_phone_variant(variant))
+    assert language.status != "met"
+    assert language.reason in receipt.reason
 
 
 def test_a_draft_ask_on_the_corner_speaker_is_done_and_said(monkeypatch):

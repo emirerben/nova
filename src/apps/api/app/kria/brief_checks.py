@@ -7133,7 +7133,34 @@ def _check_caption_look(
     return None
 
 
-def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+def _with_caption_words(
+    req: BriefRequirement, facts: PlanFacts, look: RequirementReceipt
+) -> RequirementReceipt:
+    """The typed look's verdict combined with the rest of the same captions ask (KRI-1177).
+
+    Emir's #2089 review: "Captions small, white, in Turkish" returned the look's "met" alone,
+    so the Turkish ask was never judged or said. The language / spelling part takes its usual
+    path (the draft's plan line, or the finished captions), a word-by-word ask its style check,
+    and the weaker verdict stands (`combine_receipts`)."""
+    if not _wants_captions(req):
+        return look
+    if _caption_words_ask(req, look_typed=True):
+        if facts.caption_words_at_render and not facts.rendered_variant and not facts.editor:
+            rest = _caption_words_plan(req, facts)
+        elif facts.caption_texts is not None:
+            rest = _check_caption_words(req, facts)
+        else:
+            rest = _receipt(req, "partial", _CANT_CHECK_CAPTIONS)
+    elif _wants_word_captions(req):
+        rest = _check_captions(req, facts, look_typed=True)
+    else:
+        return look
+    return combine_receipts(look, rest)
+
+
+def _check_captions(
+    req: BriefRequirement, facts: PlanFacts, *, look_typed: bool = False
+) -> RequirementReceipt:
     """Captions on / off / word-by-word, against the strategy's caption style.
 
     Only what the style settles is judged: an ask about a caption's look, place or
@@ -7188,7 +7215,7 @@ def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
         facts.caption_style is None
         or (facts.editor and not rendered)
         or fmt not in _SPEECH_FORMATS
-        or _CAPTION_DETAIL_RE.search(text)
+        or (not look_typed and _CAPTION_DETAIL_RE.search(text))
         or _keeps_spoken_languages(req)
     ):
         return _receipt(req, "partial", _CANT_CHECK_CAPTIONS)
@@ -9854,9 +9881,10 @@ def _asks_spelling(req: BriefRequirement) -> bool:
     return _spelled_names(req) is not None or bool(_SPELLING_RE.search(_loose_req(req)))
 
 
-def _caption_words_ask(req: BriefRequirement) -> bool:
+def _caption_words_ask(req: BriefRequirement, *, look_typed: bool = False) -> bool:
     """A captions ask about their language and/or how names are spelled, and nothing about
-    their look or place (`_check_captions` keeps those)."""
+    their look or place (`_check_captions` keeps those). ``look_typed``: the look is a typed
+    `caption_look_ask` judged on its own (KRI-1177), so look words never disqualify it."""
     if _wants_no_captions(req):
         return False
     if _asked_caption_language(req) is None and not _asks_spelling(req):
@@ -9864,7 +9892,7 @@ def _caption_words_ask(req: BriefRequirement) -> bool:
     look = _req_text(req)
     for name in _spelled_names(req) or ():
         look = look.replace(_fold(name), " ")
-    return not _CAPTION_LOOK_RE.search(look)
+    return look_typed or not _CAPTION_LOOK_RE.search(look)
 
 
 def _judges_caption_words(req: BriefRequirement, facts: PlanFacts) -> bool:
@@ -11937,7 +11965,7 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # that can only answer "can't check". No receipt / no such writer: falls through.
         look = _check_caption_look(req, facts, look_ask)
         if look is not None:
-            return look
+            return _with_caption_words(req, facts, look)
     montage_fit = _montage_landscape_fit(req, facts)
     if montage_fit is not None:
         # KRI-1027: a montage's "make it all vertical" / "keep the black bars"; a Talking

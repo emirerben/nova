@@ -123,6 +123,7 @@ def test_real_bytes_and_decoded_pixels_have_exact_provenance(local_video):
         assert frame.width <= 640 and frame.height <= 640
         assert frame.decoder_version.startswith("ffmpeg version")
     assert [f.timestamp_s for f in bundle.frames] == pytest.approx([0.5, 1.5], abs=0.01)
+    assert bundle.rendered_duration_s == pytest.approx(2.0, abs=0.1)
     assert bundle.audio_inspected is False
     assert bundle.review_model_received_visual_input is False
     serialized = bundle.model_dump_json()
