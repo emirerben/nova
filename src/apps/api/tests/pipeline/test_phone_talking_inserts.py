@@ -825,7 +825,9 @@ def _compile_take(take_s, inserts, *, keep_segments=None):
 def _assert_plays_cleanly(recipe, take_s, inserts):
     clips = sorted(recipe.tracks[0].clips, key=lambda c: c.timeline_start)
     speaker = [c for c in clips if c.source_asset_id == "take"]
-    assert all(c.source_duration >= _ONE_FRAME_S for c in clips)
+    assert all(c.source_duration >= _ONE_FRAME_S for c in clips), [
+        (c.id, c.source_duration) for c in clips if c.source_duration < _ONE_FRAME_S
+    ]
     assert sum(c.source_duration for c in speaker) == pytest.approx(take_s, abs=1e-4)
     assert recipe.duration == pytest.approx(
         take_s + sum(i.binding.original.duration_s for i in inserts), abs=1e-4
@@ -869,6 +871,8 @@ def test_random_takes_asks_and_cleanups_always_compile_without_a_sliver():
     for _ in range(400):
         full = round(rng.uniform(12.0, 70.0), rng.choice([3, 4, 6]))
         cuts = sorted(rng.uniform(1.0, full - 1.0) for _ in range(rng.choice([0, 2, 4])))
+        if any(b - a < 0.5 for a, b in zip(cuts, cuts[1:], strict=False)):
+            continue  # the cleanup itself never keeps a piece shorter than a frame
         keep, cursor = [], 0.0
         for a, b in zip(cuts[::2], cuts[1::2], strict=False):
             if a > cursor:

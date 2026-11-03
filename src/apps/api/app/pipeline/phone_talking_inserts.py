@@ -236,12 +236,14 @@ def place_inserts(
         adjusted = ask.adjusted
         if point > take_s:
             point, adjusted = take_s, ADJUSTED_TAKE_END
-        seam = min(seams, key=lambda s: abs(s - point), default=None)
-        on_seam = seam is not None and abs(seam - point) <= SEAM_SNAP_S
-        if on_seam:
+        # The start and the end of the take are seams too: a point within `SEAM_SNAP_S` of
+        # either takes it, so no sliver of speech is left before or after the clip.
+        seam = min((0.0, *seams, take_s), key=lambda s: abs(s - point))
+        if abs(seam - point) <= SEAM_SNAP_S:
             point, snap = float(seam), "seam"
         else:
-            point = round(point, 3)
+            # Rounded to the millisecond, then clamped: the rounding can land past the end.
+            point = min(round(point, 3), take_s)
         overrode: list[str] = []
         near = next((o for o in placed if abs(point - o.at_take_s) < MIN_GAP_S - _EPS), None)
         if explicit:

@@ -225,7 +225,9 @@ class PhoneCutaway(BaseModel):
 # to the creator when an ask goes past it.
 MAX_INSERT_CLIPS = 20
 INSERT_CLIP_PREFIX = "insert-"
-_INSERT_EPS_S = 1e-6
+# The microsecond grid drifts by a fraction of a microsecond per segment; a piece shorter than
+# this is that drift, never speech.
+_GRID_TOL_S = 1e-4
 # A speaker clip beside an insert shorter than this (one frame at 30 fps) is not worth playing.
 _MIN_SPEAKER_PIECE_S = 1 / 30
 
@@ -561,9 +563,9 @@ def compile_phone_subtitled_plan(
         while True:
             # An insert inside this segment splits it: the take plays up to the insert point,
             # the insert plays, and the rest of the segment resumes from the second it stopped.
-            if insert_queue and insert_queue[0].at_take_s < take_cursor + remaining - _INSERT_EPS_S:
+            if insert_queue and insert_queue[0].at_take_s < take_cursor + remaining - _GRID_TOL_S:
                 before = grid(insert_queue[0].at_take_s - take_cursor)
-                if before > _INSERT_EPS_S:
+                if before > _GRID_TOL_S:
                     main_clips.append(
                         _speaker_piece(
                             f"clip-{index + id_offset}",
@@ -596,8 +598,12 @@ def compile_phone_subtitled_plan(
             cursor = grid(cursor + remaining)
             take_cursor = grid(take_cursor + remaining)
             break
-        while insert_queue and abs(insert_queue[0].at_take_s - take_cursor) <= _INSERT_EPS_S:
+        while insert_queue and abs(insert_queue[0].at_take_s - take_cursor) <= _GRID_TOL_S:
             _emit_insert(insert_queue.pop(0))
+    # Whatever is left sits at the end of the take (the validation guarantees no point is past
+    # it): the grid's rounding must never strand one.
+    while insert_queue:
+        _emit_insert(insert_queue.pop(0))
     seen_speakers = {binding.media_id} | {i.binding.media_id for i in ordered_inserts}
     for extra_index, extra in enumerate(additional_speakers):
         extra_original = extra.original
@@ -931,9 +937,20 @@ def _validated_inserts(
             raise UnsupportedPhonePlan("an inserted Talking clip must be a video")
         if original.duration_s <= 0 or original.duration_s > _MAX_CLIP_DURATION_S:
             raise UnsupportedPhonePlan("an inserted Talking clip must be at most 5 minutes")
-        if insert.at_take_s > take_s + _INSERT_EPS_S:
+        if insert.at_take_s > take_s + _MIN_SPEAKER_PIECE_S:
             raise UnsupportedPhonePlan("an insert must fall inside the take")
-    return tuple(_onto_seam(insert, seams) for insert in ordered)
+    # The start and the end of the take are seams too: a point a hair from either leaves no
+    # speaker clip of a few milliseconds before or after the insert.
+    edges = (0.0, *seams, take_s)
+    snapped = [_onto_seam(insert, edges) for insert in ordered]
+    # Two points closer than one frame are one instant (they play one after the other), so
+    # no speaker clip of a few milliseconds sits between them.
+    out: list[PhoneInsert] = []
+    for insert in snapped:
+        if out and 0 < insert.at_take_s - out[-1].at_take_s < _MIN_SPEAKER_PIECE_S:
+            insert = insert.model_copy(update={"at_take_s": out[-1].at_take_s})
+        out.append(insert)
+    return tuple(out)
 
 
 def take_seams(keep_segments: Sequence[tuple[float, float]]) -> list[float]:
