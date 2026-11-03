@@ -4,3 +4,6 @@ https://user:secret@github.com
 # Synthetic database URLs in tests/kria/test_intent_review_qualification.py: a sentinel password that must never reach output, and a remote host the harness must refuse; no real credential.
 postgresql://qual:db-password-sentinel@localhost:5432
 postgresql://u:p@db.internal:5432
+# Synthetic database URLs in the qualification harness tests: fixed dummy "u:p" credentials used only to prove the harness refuses non-local or malformed targets; no real credential.
+postgresql://u:p@localhost
+postgresql://u:p@/ledger
