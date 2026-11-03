@@ -1132,3 +1132,34 @@ def test_render_notes_count_every_skipped_hit_of_a_capped_beat() -> None:
         "Placed 24 of 30 moments you named",
         'You said "kahve" more times than one edit can mark, so the last ones were skipped',
     ]
+
+
+def test_unplaced_generated_image_names_the_image_and_the_why_in_plain_words() -> None:
+    from app.kria.reply_language import reply_language_for
+
+    receipt = {
+        "version": 1,
+        "matcher": "agent",
+        "face_sampling": "skipped",
+        "placed": [],
+        "unplaced": [
+            {
+                "media_id": "g1",
+                "label": "Beer",
+                "reason": "no_spoken_match",
+                "kind": "image",
+                "origin": "generated",
+            }
+        ],
+    }
+    en = render_notes_from_overlay_receipt(receipt)
+    assert any(
+        'The image you made, "Beer"' in n and "no spoken moment" in n for n in en
+    ), en
+    assert not any("no_spoken_match" in n or "generated.png" in n for n in en)
+    with reply_language_for("tr"):
+        tr = render_notes_from_overlay_receipt(receipt)
+    assert any('"Beer"' in n and "oluşturduğun" in n for n in tr), tr
+    # An uploaded Visual keeps its existing sentence.
+    upload = {**receipt, "unplaced": [{"media_id": "u", "label": "a.jpg", "reason": "no_spoken_match"}]}
+    assert 'Couldn\'t find a spoken moment for "a.jpg"' in render_notes_from_overlay_receipt(upload)

@@ -1,0 +1,139 @@
+{
+  "agent": "nova.compose.overlay_placement",
+  "prompt_version": "1.4.0",
+  "input": {
+    "words": [
+      {
+        "word": "Bugün",
+        "start_s": 46.2,
+        "end_s": 46.6
+      },
+      {
+        "word": "sizlere",
+        "start_s": 46.6,
+        "end_s": 47.0
+      },
+      {
+        "word": "önemli",
+        "start_s": 47.0,
+        "end_s": 47.5
+      },
+      {
+        "word": "bir",
+        "start_s": 47.5,
+        "end_s": 47.7
+      },
+      {
+        "word": "haberi",
+        "start_s": 47.7,
+        "end_s": 48.24
+      },
+      {
+        "word": "alkol",
+        "start_s": 48.24,
+        "end_s": 48.68
+      },
+      {
+        "word": "satışı",
+        "start_s": 48.68,
+        "end_s": 49.1
+      },
+      {
+        "word": "hakkında",
+        "start_s": 49.1,
+        "end_s": 49.7
+      },
+      {
+        "word": "yeni",
+        "start_s": 49.7,
+        "end_s": 50.0
+      },
+      {
+        "word": "bir",
+        "start_s": 50.0,
+        "end_s": 50.2
+      },
+      {
+        "word": "karar",
+        "start_s": 50.2,
+        "end_s": 50.7
+      },
+      {
+        "word": "çıktı",
+        "start_s": 50.7,
+        "end_s": 51.2
+      },
+      {
+        "word": "ama",
+        "start_s": 54.0,
+        "end_s": 54.3
+      },
+      {
+        "word": "bence",
+        "start_s": 54.3,
+        "end_s": 54.8
+      },
+      {
+        "word": "insanlar",
+        "start_s": 54.8,
+        "end_s": 55.4
+      },
+      {
+        "word": "buna",
+        "start_s": 55.4,
+        "end_s": 55.7
+      },
+      {
+        "word": "alışacak",
+        "start_s": 55.7,
+        "end_s": 56.6
+      },
+      {
+        "word": "alkol",
+        "start_s": 56.88,
+        "end_s": 57.3
+      },
+      {
+        "word": "yine",
+        "start_s": 57.3,
+        "end_s": 57.6
+      },
+      {
+        "word": "satılacak",
+        "start_s": 57.6,
+        "end_s": 58.4
+      }
+    ],
+    "occupied": [],
+    "duration_s": 60.0,
+    "archetype": "talking_head",
+    "spoken_language": "tr",
+    "assets": [
+      {
+        "asset_id": "asset_sunset",
+        "kind": "image",
+        "origin": "generated",
+        "user_context": "Sunset over the sea",
+        "subject": "Sunset over the sea",
+        "description": "Sunset over the sea",
+        "on_screen_text": "",
+        "duration_s": null,
+        "aspect": 0.6667,
+        "width": 1024,
+        "height": 1536
+      }
+    ]
+  },
+  "raw_text": "{\"placements\": [], \"wishlist\": [\"Add footage of the new alcohol sales rule you mention at 0:48\"]}",
+  "output": {
+    "placements": [],
+    "wishlist": [
+      "Add footage of the new alcohol sales rule you mention at 0:48"
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "control: an unrelated English-labelled image must stay unplaced on the same Turkish speech",
+    "unproven": "Recorded-response replay. Words alkol/satışı timings are from prod 2026-11-03; the rest are invented. The real model's behaviour on this input has NOT been measured (no live run)."
+  }
+}

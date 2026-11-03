@@ -1068,3 +1068,82 @@ def test_kri661_the_creators_own_order_answer_beats_the_stored_strategy_choice(m
         pinned = SimpleNamespace(order_required=required, order_basis=basis)
         monkeypatch.setattr(contract_mod, "read_render_contract", lambda _plan, _c=pinned: _c)
         assert _approved_capture_order({}, strategy) is want
+
+
+# --- creator-generated images (prod 2026-11-03: 'Beer' never placed on "alkol") -------
+
+
+def _generated_beer() -> dict:
+    return {
+        "id": "gen1",
+        "gcs_path": "users/u1/plan/item1/pool/op/abc.png",
+        "gcs_generation": "77",
+        "kind": "image",
+        "source_filename": "generated.png",
+        "duration_s": None,
+        "aspect": 1024 / 1536,
+        "user_context": "Beer",
+        "analysis": {"width": 1024, "height": 1536, "source": "generated", "model": "gpt-image-1"},
+    }
+
+
+TURKISH_WORDS = [
+    _word("Alkol", 48.24, 48.68),
+    _word("satışı", 48.68, 49.10),
+    _word("yasaklanıyor", 49.10, 49.9),
+]
+
+
+def test_generated_image_reaches_the_agent_with_text_and_the_spoken_language(monkeypatch):
+    _patch_assets(monkeypatch, [_generated_beer()])
+    monkeypatch.setattr(pg.settings, "gemini_api_key", "fake-key", raising=False)
+    captured: dict = {}
+
+    def _fake_run(self, input, ctx=None):  # noqa: A002, ARG001
+        captured["input"] = input
+        return OverlayPlacementOutput(placements=[], wishlist=[])
+
+    monkeypatch.setattr(OverlayPlacementAgent, "run", _fake_run)
+    pg.ground_phone_subtitled_overlays(
+        _open_session,
+        job_id=str(uuid.uuid4()),
+        words=TURKISH_WORDS,
+        duration_s=60.0,
+        clip_path=None,
+        spoken_language="tr",
+    )
+    asset = captured["input"].assets[0]
+    assert asset.user_context == "Beer"
+    assert asset.subject == "Beer" and asset.description == "Beer"
+    assert asset.origin == "generated"
+    assert captured["input"].spoken_language == "tr"
+
+
+def test_unplaced_generated_image_is_labelled_with_its_title_not_the_filename(monkeypatch):
+    _patch_assets(monkeypatch, [_generated_beer()])
+    monkeypatch.setattr(pg.settings, "gemini_api_key", "", raising=False)
+    result = pg.ground_phone_subtitled_overlays(
+        _open_session,
+        job_id=str(uuid.uuid4()),
+        words=WORDS,
+        duration_s=15.0,
+        clip_path=None,
+    )
+    (entry,) = result.receipt["unplaced"]
+    assert entry["label"] == "Beer"
+    assert entry["origin"] == "generated"
+
+
+def test_upload_receipts_keep_their_exact_shape(monkeypatch):
+    _patch_assets(monkeypatch, [_asset("a1", subject="screenshot", filename="shot.jpg")])
+    monkeypatch.setattr(pg.settings, "gemini_api_key", "", raising=False)
+    result = pg.ground_phone_subtitled_overlays(
+        _open_session,
+        job_id=str(uuid.uuid4()),
+        words=[_word("nothing", 1.0, 1.4)],
+        duration_s=15.0,
+        clip_path=None,
+    )
+    assert result.receipt["unplaced"] == [
+        {"media_id": "a1", "label": "shot.jpg", "reason": "no_spoken_match", "kind": "image"}
+    ]
