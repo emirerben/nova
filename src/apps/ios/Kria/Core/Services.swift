@@ -1687,7 +1687,9 @@ struct KriaAPI: KriaAPIClient {
         throw APIError.conflict
     }
     func editorCommit(itemID: String, variantID: String, request commit: EditorCommitRequest) async throws -> EditorCommitResponse {
-        try await request(path: "plan-items/\(itemID)/variants/\(variantID)/editor-commit", method: "POST", bodyData: try JSONEncoder().encode(commit), decode: EditorCommitResponse.self)
+        try await Perf.measureAsync("talk.save.editorCommit") {
+            try await request(path: "plan-items/\(itemID)/variants/\(variantID)/editor-commit", method: "POST", bodyData: try JSONEncoder().encode(commit), decode: EditorCommitResponse.self)
+        }
     }
     func registerEditorSource(_ target: EditorSourceRegistrationTarget, sourceID: String) async throws -> EditorSourceRegistrationResponse {
         struct Body: Encodable {
@@ -2390,7 +2392,18 @@ struct RecorderDiagnosticReport: Encodable, Equatable, Sendable {
     let appBuild: String?
     /// `TakeStopReason.rawValue` of the take this report describes; nil for a live recording that has not stopped.
     let stopReason: String?
+    /// `take_finished` only: how long the movie output took to close the file after Stop, and how long everything after
+    /// that (validation, Cinematic bake, level measurement) took before the take reached Review.
+    var finalizeMs: Int? = nil
+    var finishMs: Int? = nil
+    /// What separates the sound hypotheses: the session's sample rate, the active mic mode (standard, wide spectrum,
+    /// voice isolation) and how many audio tracks the finished file holds.
+    var audioSampleRateHz: Double? = nil
+    var microphoneMode: String? = nil
+    var audioTrackCount: Int? = nil
     enum CodingKeys: String, CodingKey {
+        case finalizeMs = "finalize_ms", finishMs = "finish_ms", audioSampleRateHz = "audio_sample_rate_hz"
+        case microphoneMode = "microphone_mode", audioTrackCount = "audio_track_count"
         case kind, audioCategory = "audio_category", audioMode = "audio_mode"
         case routeInputs = "route_inputs", routeOutputs = "route_outputs", otherAudioPlaying = "other_audio_playing"
         case phaseHistory = "phase_history", channelCount = "channel_count", maxPowerDb = "max_power_db"
