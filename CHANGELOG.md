@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.14.0] - 2026-11-03
+
+### Changed
+- feat(kria): admit one review per published generation and extract bounded frame evidence (KRI-1171) (#2076) <!-- release-pr: 2076 -->
+
 ## [0.84.13.0] - 2026-11-03
 
 ### Changed
