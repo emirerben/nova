@@ -1,0 +1,366 @@
+{
+ "agent": "nova.creator.main",
+ "prompt_version": "2026-11-03-v112",
+ "input": {
+  "user_message": "Show the related parts of the talks when I talk about them. Place them in between my speech. Show the talks in full screen and use their audio. Place the stadium full screen when I talk but keep my audio",
+  "creator_request": "Show the related parts of the talks when I talk about them. Place them in between my speech. Show the talks in full screen and use their audio. Place the stadium full screen when I talk but keep my audio",
+  "creator_context": "Turkish football-news creator; films short talking-to-camera explainers.",
+  "item_context": "One talking-to-camera take plus four clips of the news being discussed (talks, the stadium).",
+  "media_context": [
+   {
+    "media_id": "analysis-proxy-ios-8F66E4F4-87E5-4B4D-B608-E37E79D9C07B.mp4",
+    "kind": "video",
+    "duration_s": 57.97,
+    "filename": "8F66E4F4-87E5-4B4D-B608-E37E79D9C07B.mp4"
+   },
+   {
+    "media_id": "analysis-proxy-ios-93211221-EEFC-4475-BF34-7D23F63894F6.mp4",
+    "kind": "video",
+    "duration_s": 15.0,
+    "filename": "93211221-EEFC-4475-BF34-7D23F63894F6.mp4"
+   },
+   {
+    "media_id": "analysis-proxy-ios-05866D5C-5C1D-4E1F-B1EF-3C341AE14577.mp4",
+    "kind": "video",
+    "duration_s": 15.0,
+    "filename": "05866D5C-5C1D-4E1F-B1EF-3C341AE14577.mp4"
+   },
+   {
+    "media_id": "analysis-proxy-ios-AF8BF2A5-B06D-4089-A8CA-C55BF924F243.mp4",
+    "kind": "video",
+    "duration_s": 13.0,
+    "filename": "AF8BF2A5-B06D-4089-A8CA-C55BF924F243.mp4"
+   },
+   {
+    "media_id": "analysis-proxy-ios-134CDBD9-2781-4407-921B-57D663D2B33B.mp4",
+    "kind": "video",
+    "duration_s": 10.0,
+    "filename": "134CDBD9-2781-4407-921B-57D663D2B33B.mp4"
+   }
+  ],
+  "conversation": [
+   {
+    "role": "user",
+    "content": "Show the related parts of the talks when I talk about them. Place them in between my speech. Show the talks in full screen and use their audio. Place the stadium full screen when I talk but keep my audio"
+   }
+  ],
+  "capability_manifest": {
+   "schema_version": 1,
+   "item_id": "item-kri1151-talking-cutaways",
+   "edit_format": "subtitled",
+   "render_program": "native",
+   "has_voiceover": false,
+   "media": [
+    {
+     "media_id": "analysis-proxy-ios-8F66E4F4-87E5-4B4D-B608-E37E79D9C07B.mp4",
+     "kind": "video",
+     "duration_s": 57.97
+    },
+    {
+     "media_id": "analysis-proxy-ios-93211221-EEFC-4475-BF34-7D23F63894F6.mp4",
+     "kind": "video",
+     "duration_s": 15.0
+    },
+    {
+     "media_id": "analysis-proxy-ios-05866D5C-5C1D-4E1F-B1EF-3C341AE14577.mp4",
+     "kind": "video",
+     "duration_s": 15.0
+    },
+    {
+     "media_id": "analysis-proxy-ios-AF8BF2A5-B06D-4089-A8CA-C55BF924F243.mp4",
+     "kind": "video",
+     "duration_s": 13.0
+    },
+    {
+     "media_id": "analysis-proxy-ios-134CDBD9-2781-4407-921B-57D663D2B33B.mp4",
+     "kind": "video",
+     "duration_s": 10.0
+    }
+   ],
+   "catalog": [],
+   "capabilities": {
+    "set_item_intent": {
+     "available": true
+    },
+    "guided_story": {
+     "available": false,
+     "reason_code": "native_render_required",
+     "reason": "this edit format or audio contract requires the native renderer"
+    },
+    "native_render": {
+     "available": true
+    },
+    "draft_guided_proposal": {
+     "available": false,
+     "reason_code": "native_render_required",
+     "reason": "this edit format or audio contract requires the native renderer"
+    },
+    "dispatch_render": {
+     "available": true
+    },
+    "select_ready_variant": {
+     "available": false,
+     "reason_code": "no_ready_variant",
+     "reason": "a ready variant is required before selection"
+    },
+    "caption_style": {
+     "available": true
+    },
+    "automatic_cut": {
+     "available": true
+    },
+    "guided_voiceover": {
+     "available": false,
+     "reason_code": "requires_voiceover",
+     "reason": "guided voiceover requires a recorded voiceover"
+    },
+    "main_creator_agent": {
+     "available": false,
+     "reason_code": "rollout_disabled",
+     "reason": "main creator agent rollout is set to zero"
+    },
+    "execution": {
+     "available": true
+    },
+    "review": {
+     "available": true
+    },
+    "auto_iteration": {
+     "available": true
+    },
+    "guided_conversation": {
+     "available": true
+    },
+    "guided_direction_confirmation": {
+     "available": true
+    },
+    "guided_auto_design": {
+     "available": true
+    },
+    "transitions": {
+     "available": true
+    },
+    "wide_looks": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "wide_looks cannot render on the iPhone yet"
+    },
+    "media_overlays": {
+     "available": true
+    },
+    "visual_blocks": {
+     "available": true
+    },
+    "motion_scenes": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "motion_scenes cannot render on the iPhone yet"
+    },
+    "sound_effects": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "sound_effects cannot render on the iPhone yet"
+    },
+    "phone_source_audio": {
+     "available": true
+    },
+    "phone_still_images": {
+     "available": true
+    },
+    "phone_visual_videos": {
+     "available": true
+    },
+    "media_overlays:video_cards": {
+     "available": true
+    },
+    "media_overlays:fullscreen": {
+     "available": true
+    },
+    "phone_format_pending_voiceover:narrated": {
+     "available": true
+    },
+    "phone_format_pending_voiceover:narrated_planned": {
+     "available": true
+    },
+    "phone_format_pending_voiceover:narrated_ready": {
+     "available": true
+    },
+    "phone_format:montage": {
+     "available": true
+    },
+    "phone_format:talking_head": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "talking_head does not render on this iPhone yet"
+    },
+    "phone_format:day_vlog": {
+     "available": true
+    },
+    "phone_format:single_hero": {
+     "available": true
+    },
+    "phone_format:subtitled": {
+     "available": true
+    },
+    "phone_format:narrated": {
+     "available": true
+    },
+    "phone_format:narrated_planned": {
+     "available": true
+    },
+    "phone_format:narrated_ready": {
+     "available": true
+    },
+    "phone_format:slides": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "slides does not render on this iPhone yet"
+    },
+    "reaction_beats": {
+     "available": true
+    },
+    "edit_format:montage": {
+     "available": true
+    },
+    "edit_format:talking_head": {
+     "available": true
+    },
+    "edit_format:day_vlog": {
+     "available": true
+    },
+    "edit_format:single_hero": {
+     "available": true
+    },
+    "edit_format:subtitled": {
+     "available": true
+    },
+    "edit_format:narrated": {
+     "available": true
+    },
+    "edit_format:narrated_planned": {
+     "available": true
+    },
+    "edit_format:narrated_ready": {
+     "available": true
+    },
+    "edit_format:slides": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "slides is disabled or has no production renderer for this media snapshot"
+    }
+   },
+   "limits": {
+    "max_media_refs": 50,
+    "max_catalog_refs": 50,
+    "max_commands": 4,
+    "max_output_duration_s": 120.0
+   },
+   "context_hash": "873be8cbb0118c2a6bf3392a5367b8e4ef813d1c4fe4fb2db8a05ffb38da6f27",
+   "manifest_hash": "81c55cf539252905b0f975e90b50040590796892889096d3547b8dc4b12f280b"
+  },
+  "brief_enabled": true
+ },
+ "raw_text": "{\"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"fast_montage\", \"edit_format\": \"subtitled\", \"audio_strategy\": \"original_audio\", \"render_program\": \"native\", \"target_duration_s\": 58, \"selected_media_ids\": [\"analysis-proxy-ios-8F66E4F4-87E5-4B4D-B608-E37E79D9C07B.mp4\", \"analysis-proxy-ios-93211221-EEFC-4475-BF34-7D23F63894F6.mp4\", \"analysis-proxy-ios-05866D5C-5C1D-4E1F-B1EF-3C341AE14577.mp4\", \"analysis-proxy-ios-AF8BF2A5-B06D-4089-A8CA-C55BF924F243.mp4\", \"analysis-proxy-ios-134CDBD9-2781-4407-921B-57D663D2B33B.mp4\"], \"insert_clips\": [{\"media_id\": \"analysis-proxy-ios-AF8BF2A5-B06D-4089-A8CA-C55BF924F243.mp4\", \"keep_audio\": true}, {\"media_id\": \"analysis-proxy-ios-93211221-EEFC-4475-BF34-7D23F63894F6.mp4\", \"keep_audio\": true}, {\"media_id\": \"analysis-proxy-ios-05866D5C-5C1D-4E1F-B1EF-3C341AE14577.mp4\", \"keep_audio\": true}], \"rationale\": \"Keep the creator's take as the spine, pause it for each talk at the sentence about it, and cover it with the stadium.\"}, \"summary\": \"I'll pause your talk for each talk clip and play it with its own sound: each one goes in at the end of the sentence where you talk about it, then your talk carries on where it stopped. A clip you never talk about is left out and I'll tell you which. The stadium clip covers your talk full screen while you keep talking, and your voice keeps playing over it.\"}, \"brief_updates\": [{\"operation\": \"add\", \"kind\": \"style\", \"scope\": \"global\", \"literal\": null, \"description\": \"Show the related parts of the talks in between my speech\", \"facts\": {\"insert_clip\": \"the talks\"}}, {\"operation\": \"add\", \"kind\": \"style\", \"scope\": \"clip:analysis-proxy-ios-134CDBD9-2781-4407-921B-57D663D2B33B.mp4\", \"literal\": null, \"description\": \"Place the stadium full screen when I talk\", \"facts\": {\"display_mode\": \"fullscreen\"}}, {\"operation\": \"add\", \"kind\": \"audio\", \"scope\": \"clip:analysis-proxy-ios-134CDBD9-2781-4407-921B-57D663D2B33B.mp4\", \"literal\": null, \"description\": \"Keep my audio while the stadium is shown\", \"facts\": {\"clip_sound\": \"off\"}}]}",
+ "output": {
+  "action": {
+   "kind": "propose_strategy",
+   "strategy": {
+    "direction": "fast_montage",
+    "edit_format": "subtitled",
+    "audio_strategy": "original_audio",
+    "render_program": "native",
+    "target_duration_s": 58,
+    "selected_media_ids": [
+     "analysis-proxy-ios-8F66E4F4-87E5-4B4D-B608-E37E79D9C07B.mp4",
+     "analysis-proxy-ios-93211221-EEFC-4475-BF34-7D23F63894F6.mp4",
+     "analysis-proxy-ios-05866D5C-5C1D-4E1F-B1EF-3C341AE14577.mp4",
+     "analysis-proxy-ios-AF8BF2A5-B06D-4089-A8CA-C55BF924F243.mp4",
+     "analysis-proxy-ios-134CDBD9-2781-4407-921B-57D663D2B33B.mp4"
+    ],
+    "insert_clips": [
+     {
+      "media_id": "analysis-proxy-ios-AF8BF2A5-B06D-4089-A8CA-C55BF924F243.mp4",
+      "keep_audio": true
+     },
+     {
+      "media_id": "analysis-proxy-ios-93211221-EEFC-4475-BF34-7D23F63894F6.mp4",
+      "keep_audio": true
+     },
+     {
+      "media_id": "analysis-proxy-ios-05866D5C-5C1D-4E1F-B1EF-3C341AE14577.mp4",
+      "keep_audio": true
+     }
+    ],
+    "rationale": "Keep the creator's take as the spine, pause it for each talk at the sentence about it, and cover it with the stadium."
+   },
+   "summary": "I'll pause your talk for each talk clip and play it with its own sound: each one goes in at the end of the sentence where you talk about it, then your talk carries on where it stopped. A clip you never talk about is left out and I'll tell you which. The stadium clip covers your talk full screen while you keep talking, and your voice keeps playing over it."
+  },
+  "brief_updates": [
+   {
+    "operation": "add",
+    "kind": "style",
+    "scope": "global",
+    "literal": null,
+    "description": "Show the related parts of the talks in between my speech",
+    "facts": {
+     "insert_clip": "the talks"
+    }
+   },
+   {
+    "operation": "add",
+    "kind": "style",
+    "scope": "clip:analysis-proxy-ios-134CDBD9-2781-4407-921B-57D663D2B33B.mp4",
+    "literal": null,
+    "description": "Place the stadium full screen when I talk",
+    "facts": {
+     "display_mode": "fullscreen"
+    }
+   },
+   {
+    "operation": "add",
+    "kind": "audio",
+    "scope": "clip:analysis-proxy-ios-134CDBD9-2781-4407-921B-57D663D2B33B.mp4",
+    "literal": null,
+    "description": "Keep my audio while the stadium is shown",
+    "facts": {
+     "clip_sound": "off"
+    }
+   }
+  ]
+ },
+ "meta": {
+  "source": "hand_authored_golden",
+  "prod_profile": true,
+  "settings": {
+   "phone_render_user_ids": [],
+   "phone_subtitled_rendering_enabled": true,
+   "talking_multi_clip_enabled": true,
+   "phone_talking_mention_cutaways_enabled": true,
+   "phone_talking_cutaway_sound_enabled": true,
+   "phone_clip_sound_windows_enabled": true,
+   "phone_talking_insert_clips_enabled": true
+  },
+  "note": "Prod thread b61b7673 (2026-11-03), the exact request, both planner lanes open and the brief on. 'Place them in between my speech' for talks that have their own speech and sound is the pausing insert, one row per talk with no phrase (the server picks the end of the sentence about each); the stadium line stays an overlay with the creator's voice kept. Hand-authored golden answer; the cassette ignores the prompt, so replay proves it parses, that the rendered prompt carries the routing, and the brief shape; it does NOT prove the live model routes this way (paid live eval).",
+  "prompt_contains": [
+   "CLIPS SHOWN FULL SCREEN OVER THE TALK",
+   "A CLIP PLAYED IN THE MIDDLE OF THE TALK",
+   "in between my speech",
+   "no `at_phrase` and no `at_s`",
+   "end of the sentence the creator says about that clip",
+   "CREATIVE BRIEF",
+   "record no position"
+  ],
+  "prompt_excludes": [
+   "is not available on iPhone",
+   "whatever it says about sound"
+  ],
+  "forbids_ask_user": true,
+  "cutaway_before_insert": true,
+  "insert_topic_media": [
+   "analysis-proxy-ios-AF8BF2A5-B06D-4089-A8CA-C55BF924F243.mp4",
+   "analysis-proxy-ios-93211221-EEFC-4475-BF34-7D23F63894F6.mp4",
+   "analysis-proxy-ios-05866D5C-5C1D-4E1F-B1EF-3C341AE14577.mp4"
+  ],
+  "brief_shape": "insert_between_speech"
+ }
+}
