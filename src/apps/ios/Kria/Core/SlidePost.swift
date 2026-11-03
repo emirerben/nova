@@ -706,6 +706,10 @@ private struct SlidePostItemResponse: Decodable {
     /// slides' photos, so without this it would be appended to the post as a NEW SLIDE the moment it is ready (and again
     /// after a relaunch or a refresh). Names come from the picture's bytes and are never removed.
     private(set) var stickerUploadNames: Set<String> = []
+    /// KRI-1142: true while the Generate picture sheet is open. A generated picture is a ready pool asset the moment
+    /// it exists, before the creator accepts it, so while this is set (and when it ends) nothing new in the pool is
+    /// appended as a slide: it either becomes a sticker or is abandoned.
+    @Published private(set) var isGeneratingPicture = false
     /// Why some freshly imported media did not become a slide (limit / photos-only). Cleared by the user.
     @Published var autoAppendNotice: String?
     /// Pool assets the session has already decided about (in the draft, removed, or skipped). Only an
@@ -1172,6 +1176,10 @@ private struct SlidePostItemResponse: Decodable {
     /// re-adds an asset the user removed. Returns the number of slides added.
     @discardableResult
     func appendNewlyReadyAssets() -> Int {
+        if isGeneratingPicture {
+            markPoolSeen()
+            return 0
+        }
         guard !isBusy, !isChatting, proposal == nil, state != nil, let current = draft else { return 0 }
         let plan = SlidePostAutoAppend.plan(draft: current, ready: readyAssets, seen: seenAssetIDs)
         guard plan.seen != seenAssetIDs || !plan.toAppend.isEmpty else { return 0 }
@@ -1184,6 +1192,32 @@ private struct SlidePostItemResponse: Decodable {
         value.slides.append(contentsOf: plan.toAppend.map { SlidePostSlide(id: UUID().uuidString, assetID: $0.id, kind: $0.kind) })
         stageDraft(value)
         return plan.toAppend.count
+    }
+    /// Opens a Generate picture session: until `endPictureGeneration`, new pool assets are decided as "not a slide".
+    func beginPictureGeneration() {
+        isGeneratingPicture = true
+        markPoolSeen()
+    }
+    /// Closes the session. Whatever was generated and not placed stays in the pool but is never offered as a slide,
+    /// including after a refresh.
+    func endPictureGeneration() {
+        markPoolSeen()
+        isGeneratingPicture = false
+    }
+    /// Places an accepted generated picture on the slide as a sticker (centre, 40% wide, on top, selected). Nil when the
+    /// slide is gone or already holds the maximum, in which case the picture is simply not added.
+    @discardableResult
+    func placeGeneratedPicture(slideID: String, assetID: String) -> String? {
+        seenAssetIDs = (seenAssetIDs ?? []).union([assetID])
+        persist()
+        return addSticker(slideID: slideID, assetID: assetID)
+    }
+    private func markPoolSeen() {
+        guard let ids = state?.assets.map(\.id) else { return }
+        let merged = (seenAssetIDs ?? []).union(ids)
+        guard merged != seenAssetIDs else { return }
+        seenAssetIDs = merged
+        persist()
     }
     func addAsset(id: String) {
         guard var value = draft,

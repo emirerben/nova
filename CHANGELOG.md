@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.7.0] - 2026-11-03
+
+### Fixed
+- feat(ios): Generate picture on slide posts, placed as a sticker (KRI-1142) (#2082) <!-- release-pr: 2082 -->
+
 ## [0.84.6.0] - 2026-11-03
 
 ### Fixed
