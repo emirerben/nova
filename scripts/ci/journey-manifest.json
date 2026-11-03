@@ -3051,7 +3051,7 @@
         "src/apps/api/app/kria/render_review_context.py",
         "src/apps/api/app/kria/review_canon.py",
         "src/apps/api/app/kria/initial_render_review_authority.py",
-        "src/apps/api/app/migrations/versions/0130_generation_reviews.py",
+        "src/apps/api/app/migrations/versions/0131_generation_reviews.py",
         "src/apps/api/app/services/render_review_admission.py",
         "src/apps/api/app/services/render_review_evidence.py",
         "src/apps/api/app/tasks/render_review.py",
