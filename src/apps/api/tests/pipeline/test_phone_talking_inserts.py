@@ -53,7 +53,6 @@ from app.pipeline.phone_subtitled_plan import (
 from app.pipeline.phone_talking_inserts import (
     ADJUSTED_JOINED,
     ADJUSTED_TAKE_END,
-    HOOK_FREE_S,
     MAX_INSERT_S,
     MAX_INSERTS,
     MIN_GAP_S,
@@ -717,7 +716,6 @@ def test_an_insert_a_hair_after_a_cleanup_seam_lands_on_the_seam_not_a_sliver_af
 def test_the_placement_snaps_to_a_nearby_cleanup_seam_without_rounding_it():
     seam = 12.3456789
     words = _words([("bir", 3.0, 3.4), ("iki", 3.5, seam - 0.02), ("üç", seam + 0.5, seam + 0.9)])
-    cues = [{"text": "bir iki", "start_s": 3.0, "end_s": seam - 0.02, "words": words[:2]}]
     (placed,) = _place(
         [_ask(phrase="bir iki")],
         words=words,
