@@ -186,6 +186,7 @@ for run in $(seq 1 "$RUNS"); do
   for scenario in "${SCENARIO_LIST[@]}"; do
     read -r background cinematic < <(scenario_env "$scenario")
     run_dir="$RUN_ROOT/$scenario--run$run"
+    rm -rf "$run_dir"
     mkdir -p "$run_dir"
     echo "talk-bench: $scenario run $run/$RUNS"
     exit_code=0
@@ -197,7 +198,9 @@ for run in $(seq 1 "$RUNS"); do
         -resultBundlePath "$run_dir/result.xcresult" -only-testing "$TEST_ID" >"$run_dir/xcodebuild.log" 2>&1 || exit_code=$?
     reason=""
     grep -q "Test Case .* skipped" "$run_dir/xcodebuild.log" && reason="the test was skipped (opt-in flags or an unsupported camera)"
-    pull_run "$run_dir"
+    # A run that never executed leaves the previous run's Documents/talk-bench on the phone; pulling it would report old numbers as new.
+    [[ "$exit_code" -ne 0 && -z "$reason" ]] && reason="xcodebuild exited $exit_code, see xcodebuild.log"
+    if [[ "$exit_code" -eq 0 && -z "$reason" ]]; then pull_run "$run_dir"; fi
     printf '{"xcodebuild_exit": %d, "reason": "%s"}\n' "$exit_code" "$reason" >"$run_dir/status.json"
     python3 "$REPORT_PY" analyze-take "$run_dir" >/dev/null || true
     echo "talk-bench:   xcodebuild exit $exit_code, $(ls "$run_dir" | grep -c '^take-.*\.\(mov\|mp4\)$' || true) take(s) pulled"
