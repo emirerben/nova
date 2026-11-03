@@ -38,6 +38,8 @@ from app.database import sync_engine
 from app.kria import intent_review_qualification as q
 from tests.services.test_openai_vision_transport import HttpError, Sdk, response
 
+pytestmark = pytest.mark.usefixtures("exclusive_intent_review_ledger")
+
 PILOT = "iqual-pg01-pilot"
 FULL = "iqual-pg01-full"
 KEY = "sk-sentinel-postgres-run"
