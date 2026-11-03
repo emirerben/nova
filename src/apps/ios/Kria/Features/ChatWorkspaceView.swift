@@ -587,6 +587,7 @@ private struct CreationWorkspaceView: View {
     @State private var showsAttachments = false
     /// KRI-815: the script the attachment sheet shows on its voiceover step; nil = the sheet as before.
     @State private var attachmentScript: VoiceoverScript?
+    @State private var attachmentLaunch: AttachmentLaunch?
     @State private var showsResult = false
     /// Live plan & review: the "Review your video" sheet, opened from the feed's CTA / Change or the project.
     @State private var reviewPresentation: ReviewPlanPresentation?
@@ -993,6 +994,10 @@ private struct CreationWorkspaceView: View {
     }
 
     @ViewBuilder private var conversationContent: some View {
+        // The video type leads the transcript while footage is being chosen, so the timeline reads in order.
+        if workspaceStage == .footage, let selectedFormat {
+            VideoTypeRow(format: selectedFormat) { isChoosingFormat = true }
+        }
         ForEach(ChatTimelineGroup.group(timeline)) { group in
             if case .media = group.entries[0].content {
                 mediaReceipts(group.entries)
@@ -1068,14 +1073,12 @@ private struct CreationWorkspaceView: View {
         case .stage:
             stageContent.id(entry.id)
         case .pendingUpload(let recordID):
-            HStack(spacing: 10) {
+            KriaMediaRow(name: uploadRecords.first { $0.id == recordID }.map { BackgroundUploadCoordinator.displayFilename($0.filename) }
+                            ?? uploadInFlight[recordID]?.filename ?? "Preparing media…",
+                         status: uploadRecords.contains { $0.id == recordID } ? .uploading(uploadProgress.values[recordID] ?? 0) : .preparing) {
                 CreationRecordThumbnail(recordID: recordID, version: previewVersion)
-                Text(uploadRecords.first { $0.id == recordID }.map { BackgroundUploadCoordinator.displayFilename($0.filename) }
-                     ?? uploadInFlight[recordID]?.filename ?? "Preparing media…")
-                    .font(KriaFont.body(12)).lineLimit(1)
-                Spacer()
-                UploadProgressBar(store: uploadProgress, recordID: recordID)
             }
+            .padding(4).background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .accessibilityIdentifier("chat-upload-\(recordID.uuidString)")
             .id(entry.id)
         case .thoughts(let summaries):
@@ -1296,6 +1299,7 @@ private struct CreationWorkspaceView: View {
     /// KRI-815: the attachment sheet, opened on the voiceover step with this script to read along.
     private func openVoiceoverStep(with script: VoiceoverScript) {
         guard canAttachMedia else { return }
+        attachmentLaunch = nil
         attachmentScript = script
         scrollRequest += 1
         showsAttachments = true
@@ -1400,8 +1404,9 @@ private struct CreationWorkspaceView: View {
         finishedEditSuggestionRefresh += 1
     }
 
-    private func openAttachments() {
+    private func openAttachments(launch: AttachmentLaunch? = nil) {
         guard canAttachMedia else { return }
+        attachmentLaunch = launch
         attachmentScript = nil
         scrollRequest += 1
         showsAttachments = true
@@ -1546,7 +1551,7 @@ private struct CreationWorkspaceView: View {
                     conversationCloseID: editorConversationCloseID,
                     // Back returns to the chats drawer (where the user came from), never the format chooser.
                     onBack: openProjects,
-                    onAddMedia: openAttachments
+                    onAddMedia: { openAttachments() }
                 )
                 .environmentObject(model)
             case .resolvingFormat:
@@ -1684,6 +1689,7 @@ private struct CreationWorkspaceView: View {
                 capabilities: capabilities,
                 capabilitiesLoaded: capabilitiesAreAuthoritative,
                 voiceoverScript: attachmentScript,
+                launch: attachmentLaunch,
                 refresh: {
                     if !capabilitiesAreAuthoritative { await refreshCapabilities() }
                     await refreshNow()
@@ -1776,13 +1782,27 @@ private struct CreationWorkspaceView: View {
                     isFocused: $composerFocused,
                     dictation: dictationForComposer,
                     dictationTerms: dictationContextTerms,
-                    attach: openAttachments,
-                    send: { Task { await send() } }
+                    attach: { openAttachments() },
+                    send: { Task { await send() } },
+                    attachMenu: attachMenu
                 )
             }
             .accessibilityHidden(projectsDrawerOpen)
             .allowsHitTesting(!projectsDrawerOpen)
         }
+    }
+
+    /// What the composer's + offers (Paper S3.05): Record and Upload for every format, and the optional script and
+    /// voiceover rows only where they mean something.
+    private var attachMenu: ChatAttachMenu {
+        ChatAttachMenu(
+            disabledReason: canAttachMedia ? nil : "Choose a video format first.",
+            offersSaved: capabilities?.mediaLibrary == true,
+            record: selectedFormat?.usesVisualPool == true ? nil : { openAttachments(launch: .record) },
+            upload: { openAttachments(launch: .source($0)) },
+            addScript: selectedFormat == .talkingToCamera ? { openAttachments(launch: .recordWithScript) } : nil,
+            addVoiceover: selectedFormat == .narrated ? { openAttachments(launch: .voiceover) } : nil
+        )
     }
 
     private var editorConversation: some View {
@@ -1803,7 +1823,14 @@ private struct CreationWorkspaceView: View {
     @ViewBuilder private var stageContent: some View {
         switch workspaceStage {
         case .format:
-            FormatStage(formats: availableFormats, isBusy: isActing || !capabilitiesAreAuthoritative, select: selectFormat).id("format-picker")
+            if let selectedFormat {
+                FormatReselectStage(formats: availableFormats, selected: selectedFormat, isBusy: isActing || !capabilitiesAreAuthoritative) { format in
+                    if format == selectedFormat { isChoosingFormat = false } else { selectFormat(format) }
+                }
+                .id("format-reselect")
+            } else {
+                FormatStage(formats: availableFormats, isBusy: isActing || !capabilitiesAreAuthoritative, select: selectFormat).id("format-picker")
+            }
             if let capabilitiesFailure {
                 RecoveryCard(failure: capabilitiesFailure) { Task { await refreshCapabilities() } }
             } else if !capabilitiesAreAuthoritative {
@@ -1819,7 +1846,8 @@ private struct CreationWorkspaceView: View {
                     preparingCount: 0,
                     previewVersion: previewVersion,
                     progress: uploadProgress,
-                    addFootage: openAttachments,
+                    addFootage: { openAttachments(launch: .chooseSource) },
+                    recordFootage: canAttachMedia ? { openAttachments(launch: .record) } : nil,
                     changeFormat: { isChoosingFormat = true },
                     attachedMedia: [],
                     isBusy: isSending || isActing || isThinking,

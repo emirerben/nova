@@ -596,7 +596,10 @@ struct FootageStage: View {
     /// `BackgroundUploadCoordinator.previewVersion`, so thumbnails re-read from disk as they appear.
     var previewVersion = 0
     let progress: UploadProgressStore
+    /// Upload: opens the "Upload from" list.
     let addFootage: () -> Void
+    /// Record: opens the camera. Nil on a surface that cannot film.
+    var recordFootage: (() -> Void)?
     let changeFormat: () -> Void
     var attachedMedia: [CreationAttachedMedia] = []
     var isBusy = false
@@ -624,128 +627,100 @@ struct FootageStage: View {
         FootageReadiness(attachedCount: format.usesVisualPool ? visualCount : 0, pendingCount: uploads.count + preparingCount)
     }
 
+    private var talkingLeads: Bool { format == .talkingToCamera && readiness.attachedCount == 0 && readiness.pendingCount == 0 }
+    private var hasMedia: Bool { readiness.attachedCount > 0 || readiness.pendingCount > 0 }
+    private var limitText: String {
+        format.usesVisualPool ? "Up to \(FootageStageCopy.count(maximumClipCount, "item"))" : "Up to \(FootageStageCopy.count(maximumClipCount, "clip"))"
+    }
+    private var reachedLimit: Bool { !format.usesVisualPool && mediaCount + readiness.pendingCount >= maximumClipCount }
+
+    private var sourceOptions: [KriaSourceOption] {
+        let canAdd = !reachedLimit && !isBusy
+        let noun = format.usesVisualPool ? "media" : "video"
+        return [
+            format.usesVisualPool ? nil : recordFootage.map { KriaSourceOption.record(caption: "Film now", identifier: "record-footage", isEnabled: canAdd, action: $0) },
+            KriaSourceOption.upload(caption: "Use existing \(noun)", identifier: format.usesVisualPool ? "choose-photos-videos" : "choose-videos", isEnabled: canAdd, action: addFootage)
+        ].compactMap { $0 }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            AssistantHeading(
-                title: format.usesVisualPool ? "Add photos & videos" : "Add your footage",
-                bodyText: format.usesVisualPool
-                    ? "Choose the photos and videos for your post. You can mix both."
-                    : format == .talkingToCamera
-                    ? FootageStageCopy.talkingBody(maximumClipCount: maximumClipCount)
-                    : "Choose the moments you want me to work with. You can add up to \(FootageStageCopy.count(maximumClipCount, "clip"))."
-            )
-
-            Button(action: addFootage) {
-                VStack(spacing: 9) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(KriaColor.ink)
-                        .frame(width: 34, height: 34)
-                        .background(KriaColor.sage)
-                        .clipShape(Circle())
-                    Text(format.usesVisualPool ? "Add photos & videos" : "Choose videos")
-                        .font(KriaFont.body(14).weight(.semibold))
-                        .foregroundStyle(KriaColor.ink)
-                    Text(format.usesVisualPool ? "Photos or videos · up to \(FootageStageCopy.count(maximumClipCount, "item"))" : "MP4, MOV · up to \(FootageStageCopy.count(maximumClipCount, "clip"))")
-                        .font(KriaFont.body(11))
-                        .foregroundStyle(KriaColor.zinc)
-                }
-                .frame(maxWidth: .infinity, minHeight: 142)
-                .background(Color.white)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(KriaColor.border, style: StrokeStyle(lineWidth: 1, dash: [6, 5]))
+            VStack(alignment: .leading, spacing: 8) {
+                Text(format.usesVisualPool ? "Add photos & videos" : "Add your footage").kriaType(.heading).foregroundStyle(KriaColor.ink)
+                    .accessibilityAddTraits(.isHeader)
+                if !hasMedia {
+                    Text(format.usesVisualPool
+                         ? "Choose the photos and videos for your post. You can mix both."
+                         : format == .talkingToCamera
+                         ? FootageStageCopy.talkingBody(maximumClipCount: maximumClipCount)
+                         : "Record new clips or upload the moments you want me to work with.")
+                        .kriaType(.body).foregroundStyle(KriaColor.mutedInk)
                 }
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier(format.usesVisualPool ? "choose-photos-videos" : "choose-videos")
+            .accessibilityElement(children: .combine)
+
+            if hasMedia {
+                HStack(spacing: 8) {
+                    if readiness.attachedCount > 0, readiness.pendingCount == 0 { KriaCheckDisc(size: 16) }
+                    Text(readiness.pendingCount > 0
+                         ? "Uploading \(FootageStageCopy.count(readiness.pendingCount, "file"))…"
+                         : "\(readiness.attachedCount) \(readiness.attachedCount == 1 ? "clip" : "clips") ready")
+                        .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier(readiness.pendingCount > 0 ? "footage-upload-progress" : "footage-ready-count")
+                if !attachedMedia.isEmpty || !uploads.isEmpty {
+                    VStack(spacing: 8) {
+                        ForEach(attachedMedia) { media in
+                            KriaMediaRow(name: media.displayName, status: .ready("Video · Ready"),
+                                         trailing: .remove(label: "Remove \(media.displayName)") { removeMedia(media.id) }) {
+                                CreationAttachmentThumbnail(media: media)
+                            }
+                            .disabled(isBusy || !uploads.isEmpty)
+                        }
+                        ForEach(uploads) { record in
+                            KriaMediaRow(name: BackgroundUploadCoordinator.displayFilename(record.filename),
+                                         status: .uploading(progress.values[record.id] ?? 0)) {
+                                CreationRecordThumbnail(recordID: record.id, version: previewVersion)
+                            }
+                        }
+                    }
+                    .padding(4).background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .accessibilityIdentifier("footage-uploading-clips")
+                }
+            }
+
+            if hasMedia {
+                HStack(spacing: 12) {
+                    Text("Add more").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                    KriaSourceRow(options: sourceOptions, layout: .compact)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    KriaSourceRow(options: sourceOptions, leadsWithFirst: talkingLeads && recordFootage != nil)
+                    Text(limitText).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                }
+            }
+            if reachedLimit {
+                Text("You’ve added \(FootageStageCopy.count(maximumClipCount, "clip")), the most for this format.")
+                    .kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+            }
 
             if !failures.isEmpty {
-                // One line, not one per file (KRI-211): a file that couldn't be sent never holds up the
-                // rest. The wording follows the cause: a file that couldn't be read is simply left out,
-                // while an upload that failed on the way can still be retried.
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(UploadFailureBanner.message(for: failures))
-                            .font(KriaFont.body(12))
-                            .foregroundStyle(KriaColor.failureText)
-                            .accessibilityIdentifier("footage-upload-failures-message")
-                        Spacer(minLength: 4)
-                        Button("Dismiss") { failures.forEach { dismissFailure($0.id) } }
-                            .font(KriaFont.body(12).weight(.medium))
-                            .frame(minHeight: 44)
-                            .accessibilityIdentifier("footage-upload-failures-dismiss")
-                    }
-                    if UploadFailureBanner.canRetry(failures) {
-                        Button("Retry") {
-                            for failure in failures where failure.cause == .uploadFailed { retryFailure(failure.id) }
-                        }
-                        .font(KriaFont.body(12).weight(.semibold))
-                        .frame(minHeight: 44)
-                        .accessibilityIdentifier("footage-upload-failures-retry")
-                    }
-                }
+                // One notice, not one per file (KRI-211): a file that couldn't be sent never holds up the rest.
+                KriaNoticeCard(
+                    tone: .failure, title: UploadFailureBanner.message(for: failures),
+                    action: UploadFailureBanner.canRetry(failures)
+                        ? KriaNoticeAction(title: "Retry") { for failure in failures where failure.cause == .uploadFailed { retryFailure(failure.id) } } : nil,
+                    link: KriaNoticeAction(title: "Dismiss") { failures.forEach { dismissFailure($0.id) } })
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("footage-upload-failures")
             }
 
-            if readiness.attachedCount > 0 {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("\(readiness.attachedCount) \(readiness.attachedCount == 1 ? "clip" : "clips") ready")
-                        .font(KriaFont.body(12).weight(.medium))
-                        .foregroundStyle(KriaColor.zinc)
-
-                    ForEach(attachedMedia) { media in
-                        HStack(spacing: 10) {
-                            CreationAttachmentThumbnail(media: media)
-                            Text(media.displayName).font(KriaFont.body(12)).lineLimit(1)
-                            Spacer()
-                            Button { removeMedia(media.id) } label: { Image(systemName: "trash").frame(width: 44, height: 44) }
-                                .accessibilityLabel("Remove \(media.displayName)")
-                                .disabled(isBusy || !uploads.isEmpty)
-                        }
-                    }
-                }
-
-            }
-
-            // Each clip on its way, with its thumbnail, from the moment it is chosen.
-            if !uploads.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(uploads) { record in
-                        HStack(spacing: 10) {
-                            CreationRecordThumbnail(recordID: record.id, version: previewVersion)
-                            Text(BackgroundUploadCoordinator.displayFilename(record.filename)).font(KriaFont.body(12)).lineLimit(1)
-                            Spacer()
-                            ProgressView(value: progress.values[record.id] ?? 0).tint(KriaColor.ink).frame(width: 60)
-                        }
-                    }
-                }
-                .accessibilityIdentifier("footage-uploading-clips")
-            }
-
             if visualsReadiness.attachedCount > 0 {
                 Text("\(visualsReadiness.attachedCount) \(visualsReadiness.attachedCount == 1 ? "visual" : "visuals") ready")
-                    .font(KriaFont.body(12).weight(.medium))
-                    .foregroundStyle(KriaColor.zinc)
+                    .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
             }
-
-            if readiness.pendingCount > 0 {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Uploading \(readiness.pendingCount) \(readiness.pendingCount == 1 ? "file" : "files")…")
-                        .font(KriaFont.body(12).weight(.medium))
-                        .foregroundStyle(KriaColor.zinc)
-                    ProgressView(value: overallProgress)
-                        .tint(KriaColor.ink)
-                        .frame(maxWidth: 160)
-                }
-                .accessibilityIdentifier("footage-upload-progress")
-            }
-
-            Button("Change format", action: changeFormat)
-                .font(KriaFont.body(12).weight(.medium))
-                .foregroundStyle(KriaColor.zinc)
-                .frame(minHeight: 44)
         }
     }
 }
@@ -1536,6 +1511,9 @@ struct ChatComposer: View {
     var dictationTerms: () -> [String] = { [] }
     let attach: () -> Void
     let send: () -> Void
+    /// When set, + opens the floating tray (Record, Upload, script, voiceover) instead of calling `attach`.
+    var attachMenu: ChatAttachMenu? = nil
+    @State private var showsTray = false
 
     private var dictationIsBusy: Bool {
         dictation.map { $0.phase == .finalizing || $0.phase == .requestingPermission } ?? false
@@ -1554,9 +1532,19 @@ struct ChatComposer: View {
                     .accessibilityIdentifier("chat-dictation-notice")
             }
             HStack(alignment: .bottom, spacing: 4) {
-                Button(action: attach) { KriaIcon(.plus).frame(width: 44, height: 44) }
-                    .disabled(!canAttach).accessibilityLabel("Attach footage")
-                    .accessibilityHint(canAttach ? "" : "Choose a video format first")
+                Button { if attachMenu != nil { showsTray.toggle() } else { attach() } } label: {
+                    if attachMenu != nil {
+                        Image(systemName: showsTray ? "xmark" : "plus").font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(showsTray ? KriaColor.ink : KriaColor.paper)
+                            .frame(width: 44, height: 44).background(showsTray ? KriaColor.fill : KriaColor.ink, in: Circle())
+                    } else {
+                        KriaIcon(.plus).frame(width: 44, height: 44)
+                    }
+                }
+                .disabled(attachMenu == nil && !canAttach)
+                .accessibilityLabel(showsTray ? "Close attach menu" : "Attach footage")
+                .accessibilityHint(canAttach ? "" : "Choose a video format first")
+                .accessibilityIdentifier("chat-attach")
                 TextField(dictation?.isListening == true && text.isEmpty ? "Listening…" : placeholder, text: $text, axis: .vertical)
                     .font(KriaFont.body(15)).lineLimit(1...4)
                     .frame(minHeight: 44).accessibilityLabel("Message Kria")
@@ -1588,6 +1576,15 @@ struct ChatComposer: View {
         }
         .padding(7).kriaFloatingSurface(RoundedRectangle(cornerRadius: 30, style: .continuous))
         .padding(.horizontal, 14).padding(.vertical, 12)
+        .overlay(alignment: .topLeading) {
+            if showsTray, let attachMenu {
+                ChatAttachTray(menu: attachMenu) { showsTray = false }
+                    .padding(.horizontal, 14)
+                    .alignmentGuide(.top) { $0[.bottom] - 6 }
+                    .transition(.opacity)
+            }
+        }
+        .onChange(of: isSending) { _, sending in if sending { showsTray = false } }
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: dictation?.phase)
         .onDisappear { dictation?.cancel() }
     }
