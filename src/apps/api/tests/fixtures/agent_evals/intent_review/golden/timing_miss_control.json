@@ -4,7 +4,7 @@
   "input": {
     "original_request": "Full creator request (chronological):\nMake a reel of my bakery trip. Title: \"Fresh Bread\". Start with the croissants coming out of the oven.",
     "catalog": {
-      "digest": "ce3b1266af2d5620a02028357f84c54bd67776cfdf46aea804701a24d2fc9673",
+      "digest": "a4c4726bc50223e123292fc7ef59babb4bfcab180b98d817bbd63f2be54964de",
       "frames": [
         {
           "frame_id": "f0",
@@ -70,8 +70,7 @@
             "R1"
           ],
           "defect_kinds": [
-            "text_cut_off",
-            "text_missing"
+            "text_cut_off"
           ],
           "element_ref": "title",
           "role": "title",

@@ -28,6 +28,7 @@ from app.text_fold import loose_text
 
 MIN_VISIBLE_S = 1.0
 END_MARGIN_S = 0.3
+OVERRUN_TOLERANCE_S = 0.1
 MAX_LABEL_CHARS = 300
 _TIMING_FACTS = frozenset(
     {"segmentation", "sequence", "timing", "overlap", "animation_phases", "duration_s"}
@@ -382,7 +383,7 @@ def build_review_catalog(
                 and start is not None
                 and isinstance(end, (int, float))
                 and not isinstance(end, bool)
-                and float(end) > rendered_duration_s - END_MARGIN_S
+                and float(end) > rendered_duration_s + OVERRUN_TOLERANCE_S
             ):
                 fitted_end = round(min(float(end), rendered_duration_s - END_MARGIN_S), 3)
                 if fitted_end - start >= MIN_VISIBLE_S:
@@ -393,7 +394,7 @@ def build_review_catalog(
                             element_id,
                             {"start_s": round(start, 3), "end_s": fitted_end},
                             requirement_ids=ids,
-                            defect_kinds=["text_cut_off", "text_missing"],
+                            defect_kinds=["text_cut_off"],
                             role=role,
                             allowed_paths=[f"{path}.start_s", f"{path}.end_s"],
                             auto=True,

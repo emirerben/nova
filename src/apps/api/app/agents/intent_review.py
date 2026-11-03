@@ -14,6 +14,7 @@ from typing import ClassVar
 
 from pydantic import BaseModel, Field, ValidationError
 
+from app.agents._openai_vision import DEFAULT_TIMEOUT_S, MAX_OUTPUT_TOKENS, VISION_MODEL
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.intent_review import (
     DEFECTS_BY_REQUIREMENT_KIND,
@@ -24,10 +25,15 @@ from app.agents._schemas.intent_review import (
 from app.agents.prompt_vocab import PROMPT_VOCABULARIES
 from app.kria.intent_review_catalog import ReviewCatalog
 from app.pipeline.prompt_loader import load_prompt
+from app.services.ai_cost_control import UsageMeter, calculate_cost_usd
 
 PROMPT_VERSION = "intent_review_v2"
 FRAMES_REQUIRED = "frames://intent-review"
 MAX_REQUEST_CHARS = 2_000
+
+
+def _usd_per_1k(**usage: int) -> float:
+    return calculate_cost_usd(VISION_MODEL, UsageMeter(**usage))
 
 
 class IntentReviewInput(BaseModel):
@@ -81,18 +87,18 @@ class IntentReviewAgent(Agent[IntentReviewInput, IntentReviewOutput]):
         name="nova.kria.intent_review",
         prompt_id="intent_review",
         prompt_version=PROMPT_VERSION,
-        model="gpt-6.1-sol",
+        model=VISION_MODEL,
         max_attempts=1,
-        timeout_s=60.0,
-        cost_per_1k_input_usd=0.002,
-        cost_per_1k_output_usd=0.010,
+        timeout_s=DEFAULT_TIMEOUT_S,
+        cost_per_1k_input_usd=_usd_per_1k(tokens_in=1000),
+        cost_per_1k_output_usd=_usd_per_1k(tokens_out=1000),
         sensitive_io=True,
         enable_clarification_retries=False,
         schema_retry_limit=0,
     )
     Input = IntentReviewInput
     Output = IntentReviewOutput
-    max_output_tokens: ClassVar[int | None] = 2_500
+    max_output_tokens: ClassVar[int | None] = MAX_OUTPUT_TOKENS
 
     def media_uri(self, input: IntentReviewInput) -> str | None:  # noqa: A002
         return FRAMES_REQUIRED

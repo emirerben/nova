@@ -25,8 +25,9 @@ Failure modes, written before the code (matrix row in parentheses). Each has a t
     remove the candidates they cover; preserve_editor_text forbids touching the text at all, so it
     removes the restore as well as the retime and the move.
   A fit that cannot hold (44):
-    no rendered duration, text that already ends in time, or less than a second of visible text
-    left, emits nothing; otherwise the window never starts earlier or ends later than approved.
+    no rendered duration, text that ends with the video or inside it, or less than a second of
+    visible text left, emits nothing; only text that really runs past the end is fitted, and only
+    a cut-off claim can stage it; the window never starts earlier or ends later than approved.
   A catalog that drifts (28):
     ids and digest are deterministic, change with the target, and a strategy draft (no editable
     text elements) still issues requirements but no candidate.
@@ -441,7 +442,7 @@ def test_text_running_past_the_end_is_fitted_inside_the_rendered_video():
     catalog = catalog_for([bar(start=1.0, end=12.0)], duration=10.0)
     (fit,) = [c for c in catalog.candidates if c.kind == "fit_text_to_duration"]
     assert fit.target == {"start_s": 1.0, "end_s": 9.7} and fit.auto is True
-    assert fit.defect_kinds == ["text_cut_off", "text_missing"]
+    assert fit.defect_kinds == ["text_cut_off"]
     assert fit.allowed_paths == [
         "editor_payload.text_elements[0].start_s",
         "editor_payload.text_elements[0].end_s",
@@ -450,7 +451,16 @@ def test_text_running_past_the_end_is_fitted_inside_the_rendered_video():
 
 @pytest.mark.parametrize(
     "start,end,duration",
-    [(0.0, 9.0, 10.0), (0.0, 9.7, 10.0), (9.0, 12.0, 10.0), (8.9, 12.0, 10.0), (0.0, 12.0, None)],
+    [
+        (0.0, 9.0, 10.0),
+        (0.0, 9.7, 10.0),
+        (0.0, 9.9, 10.0),
+        (0.0, 10.0, 10.0),
+        (0.0, 10.05, 10.0),
+        (9.0, 12.0, 10.0),
+        (8.9, 12.0, 10.0),
+        (0.0, 12.0, None),
+    ],
 )
 def test_no_fit_when_the_text_ends_in_time_or_cannot_stay_a_second(start, end, duration):
     catalog = catalog_for([bar(start=start, end=end)], duration=duration)
@@ -460,10 +470,28 @@ def test_no_fit_when_the_text_ends_in_time_or_cannot_stay_a_second(start, end, d
 def test_a_fit_never_widens_the_approved_window():
     (fit,) = [
         c
-        for c in catalog_for([bar(start=2.0, end=9.9)], duration=10.0).candidates
+        for c in catalog_for([bar(start=2.0, end=10.4)], duration=10.0).candidates
         if c.kind == "fit_text_to_duration"
     ]
-    assert fit.target["start_s"] >= 2.0 and fit.target["end_s"] <= 9.9
+    assert fit.target["start_s"] >= 2.0 and fit.target["end_s"] <= 10.4
+
+
+def test_a_missing_text_claim_on_a_title_held_to_the_end_never_stages_a_fit():
+    catalog = catalog_for([bar(start=1.0, end=10.0)], duration=10.03)
+    for defect in ("text_missing", "text_cut_off"):
+        result = claim(catalog, defect=defect)
+        assert result.disposition.repair_candidate_ids == [], defect
+
+
+def test_a_cut_off_claim_stages_the_fit_only_when_the_text_really_outlives_the_video():
+    catalog = catalog_for([bar(start=1.0, end=12.0)], duration=10.0)
+    (fit,) = [c for c in catalog.candidates if c.kind == "fit_text_to_duration"]
+    assert claim(catalog, defect="text_cut_off").disposition.repair_candidate_ids == [
+        fit.candidate_id
+    ]
+    assert claim(catalog, defect="text_missing").disposition.repair_candidate_ids == [
+        c.candidate_id for c in catalog.candidates if c.kind == "restore_exact_text"
+    ]
 
 
 # --- move_text_to_safe_anchor -------------------------------------------------------------

@@ -122,7 +122,7 @@ def evaluate(
 
 
 RESTORE = cand("restore_exact_text", ["R1"], ["copy_mismatch", "text_missing"])
-FIT = cand("fit_text_to_duration", ["R1"], ["text_cut_off", "text_missing"], element="end_s")
+FIT = cand("fit_text_to_duration", ["R1"], ["text_cut_off"], element="end_s")
 MOVE = cand("move_text_to_safe_anchor", ["R1"], ["text_obstructed"], auto=False, element="pos")
 
 
