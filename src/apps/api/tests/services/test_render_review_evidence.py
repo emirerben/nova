@@ -19,9 +19,52 @@ from app import storage
 from app.config import settings
 from app.services import render_review_evidence as evidence
 
+_TWO_COLOURS = [
+    "-f",
+    "lavfi",
+    "-i",
+    "color=red:s=160x120:r=10:d=1",
+    "-f",
+    "lavfi",
+    "-i",
+    "color=blue:s=160x120:r=10:d=1",
+    "-filter_complex",
+    "[0:v][1:v]concat=n=2:v=1:a=0",
+    "-c:v",
+    "libx264",
+    "-pix_fmt",
+    "yuv420p",
+]
+
+_ONE_SECOND_OF_VIDEO_UNDER_THREE_OF_AUDIO = [
+    "-f",
+    "lavfi",
+    "-i",
+    "color=red:s=160x120:r=10:d=1",
+    "-f",
+    "lavfi",
+    "-i",
+    "sine=frequency=440:d=3",
+    "-c:v",
+    "libx264",
+    "-pix_fmt",
+    "yuv420p",
+    "-c:a",
+    "aac",
+]
+
 
 @pytest.fixture
 def local_video(monkeypatch, tmp_path):
+    return _publish(monkeypatch, tmp_path, _TWO_COLOURS)
+
+
+@pytest.fixture
+def video_shorter_than_audio(monkeypatch, tmp_path):
+    return _publish(monkeypatch, tmp_path, _ONE_SECOND_OF_VIDEO_UNDER_THREE_OF_AUDIO)
+
+
+def _publish(monkeypatch, tmp_path, ffmpeg_args):
     monkeypatch.setattr(settings, "storage_provider", "local")
     monkeypatch.setattr(settings, "e2e_fixtures", True)
     monkeypatch.setattr(settings, "local_storage_root", str(tmp_path / "storage"))
@@ -29,27 +72,7 @@ def local_video(monkeypatch, tmp_path):
     path = f"{owner}/{job}/device/{attempt}.mp4"
     video = tmp_path / "source.mp4"
     subprocess.run(
-        [
-            "ffmpeg",
-            "-nostdin",
-            "-v",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            "color=red:s=160x120:r=10:d=1",
-            "-f",
-            "lavfi",
-            "-i",
-            "color=blue:s=160x120:r=10:d=1",
-            "-filter_complex",
-            "[0:v][1:v]concat=n=2:v=1:a=0",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            str(video),
-        ],
+        ["ffmpeg", "-nostdin", "-v", "error", *ffmpeg_args, str(video)],
         check=True,
         timeout=15,
     )
@@ -105,6 +128,25 @@ def test_real_bytes_and_decoded_pixels_have_exact_provenance(local_video):
     serialized = bundle.model_dump_json()
     assert len(serialized.encode()) < 2_000_000
     assert evidence.EvidenceBundle.model_validate_json(serialized) == bundle
+
+
+def test_frames_past_the_last_video_frame_are_dropped_not_fatal(video_shorter_than_audio):
+    basis, _, _ = video_shorter_than_audio
+    result = evidence.obtain_render_review_evidence(
+        basis, limits=evidence.EvidenceLimits(frame_count=3)
+    )
+    assert result.status == "ready", result.reason
+    assert [f.timestamp_s for f in result.bundle.frames] == pytest.approx([0.5], abs=0.01)
+    assert len(result.bundle.observations) == len(result.bundle.frames)
+
+
+def test_no_decodable_frame_at_all_is_unavailable(video_shorter_than_audio):
+    basis, _, _ = video_shorter_than_audio
+    result = evidence.obtain_render_review_evidence(
+        basis, limits=evidence.EvidenceLimits(frame_count=1)
+    )
+    assert result.status == "unavailable"
+    assert result.reason == "frame_timestamp_missing"
 
 
 @pytest.mark.parametrize(

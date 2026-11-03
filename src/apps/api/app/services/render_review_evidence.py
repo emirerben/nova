@@ -311,36 +311,40 @@ def _frames(local: Path, artifact_sha: str, limits: EvidenceLimits, deadline: fl
             f"scale=w='min({limits.max_side},iw)':h='min({limits.max_side},ih)'"
             ":force_original_aspect_ratio=decrease,showinfo"
         )
-        decoded = _run(
-            [
-                "ffmpeg",
-                "-nostdin",
-                "-v",
-                "info",
-                "-threads",
-                "1",
-                "-filter_threads",
-                "1",
-                *_LOCAL_MP4_INPUT,
-                "-i",
-                str(local),
-                "-map",
-                "0:v:0",
-                "-vf",
-                filters,
-                "-frames:v",
-                "1",
-                "-an",
-                "-sn",
-                "-dn",
-                "-q:v",
-                "4",
-                str(output),
-            ],
-            deadline,
-        )
+        try:
+            decoded = _run(
+                [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-v",
+                    "info",
+                    "-threads",
+                    "1",
+                    "-filter_threads",
+                    "1",
+                    *_LOCAL_MP4_INPUT,
+                    "-i",
+                    str(local),
+                    "-map",
+                    "0:v:0",
+                    "-vf",
+                    filters,
+                    "-frames:v",
+                    "1",
+                    "-an",
+                    "-sn",
+                    "-dn",
+                    "-q:v",
+                    "4",
+                    str(output),
+                ],
+                deadline,
+            )
+        except subprocess.CalledProcessError:
+            continue
         timestamp_match = re.search(rb"\bn:\s*0\s+pts:.*?pts_time:([0-9.+eE-]+)", decoded.stderr)
-        _require(timestamp_match is not None, "frame_timestamp_missing")
+        if timestamp_match is None:
+            continue
         timestamp = float(timestamp_match[1])
         _require(
             math.isfinite(timestamp)
@@ -373,6 +377,7 @@ def _frames(local: Path, artifact_sha: str, limits: EvidenceLimits, deadline: fl
             )
         )
         _remaining(deadline)
+    _require(frames, "frame_timestamp_missing")
     return tuple(frames)
 
 
