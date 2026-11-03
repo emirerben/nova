@@ -1,0 +1,180 @@
+{
+ "about": "KRI-1175 incident record: prod chat 'Green 3' (2026-11-03, TestFlight 1876, Fly 72c060c0b). Read-only via scripts/admin.py --prod GET jobs/9bad2d75-c4e9-4c6c-808d-69d26b4ca76c/debug (creator_strategy, variants[0].overlay_transcript, variants[0].silence_cut) and plan-items/57d612ee-763a-46c9-bafc-441e91d10e6a/debug (pool_assets). Synthetic test kit (AI presenter, made-up brands); no private media.",
+ "thread_id": "5A650474-5103-4A82-BF2A-3F7C46F5BD56",
+ "job_id": "9bad2d75-c4e9-4c6c-808d-69d26b4ca76c",
+ "creator_request": "Yorumla episode 9: Kervan x Lumo Pamukkale show. Make the whole video like a green screen: me small at the bottom right in front, and behind me full screen whichever photo or video I'm talking about, changing every 3-5 seconds. Cut the pauses and the sentence I restarted. Captions small, white, lowercase, in the middle. No music.",
+ "kit_answer_key": {
+  "source": "kria-cigdem-test/S2_brand_collab_greenscreen_short/README.md, camera-roll table (written before the run; the expected placement of each visual)",
+  "visuals": [
+   {
+    "file": "IMG_7120",
+    "pool_id": "7ea1e9bd-1c14-43fc-8e0a-ff9a97576f2b",
+    "kind": "image",
+    "shows": "sunrise show on Pamukkale terraces",
+    "on_word": "sunrise"
+   },
+   {
+    "file": "IMG_7122",
+    "pool_id": "f4c22bc6-96f9-4b63-8673-43701f64cd03",
+    "kind": "image",
+    "shows": "hand drawing a pattern on a tablet",
+    "on_word": "tablets"
+   },
+   {
+    "file": "IMG_7123",
+    "pool_id": "74c10cff-cbe5-4583-86d3-4272352a4966",
+    "kind": "image",
+    "shows": "drone carrying a phone",
+    "on_word": "drones"
+   },
+   {
+    "file": "IMG_7125",
+    "pool_id": "c26e289e-0041-442c-bccf-583584f03f66",
+    "kind": "video",
+    "shows": "drone shot over the runway (5 s)",
+    "right_after": "IMG_7123"
+   },
+   {
+    "file": "IMG_7127",
+    "pool_id": "46ad3cb7-6d2f-4685-83f2-77108c684f25",
+    "kind": "image",
+    "shows": "Instagram collab post kervan / lumo",
+    "on_word": "technology"
+   },
+   {
+    "file": "IMG_7129",
+    "pool_id": "e063d6e8-282c-48f3-8814-e9344e0eb5a3",
+    "kind": "image",
+    "shows": "lunch plate (decoy)",
+    "never": true
+   }
+  ],
+  "tolerance_s": 1.5
+ },
+ "stored_background_media": {
+  "media_id": "asset-7ea1e9bd-1c14-43fc-8e0a-ff9a97576f2b",
+  "sequence": [
+   {
+    "media_id": "asset-7ea1e9bd-1c14-43fc-8e0a-ff9a97576f2b"
+   },
+   {
+    "media_id": "asset-f4c22bc6-96f9-4b63-8673-43701f64cd03"
+   },
+   {
+    "media_id": "asset-74c10cff-cbe5-4583-86d3-4272352a4966"
+   },
+   {
+    "media_id": "asset-c26e289e-0041-442c-bccf-583584f03f66"
+   },
+   {
+    "media_id": "asset-46ad3cb7-6d2f-4685-83f2-77108c684f25"
+   }
+  ],
+  "speaker_frame": "small_bottom_right"
+ },
+ "take_duration_s": 31.223333,
+ "silence_cut_removed": [
+  [
+   5.585,
+   5.955
+  ],
+  [
+   7.325,
+   7.549
+  ],
+  [
+   16.405,
+   16.775
+  ]
+ ],
+ "words": [
+  ["Okay,", 0.0, 0.3],
+  ["we're", 0.36, 0.6],
+  ["recording.", 0.6, 1.22],
+  ["Curvan", 1.54, 1.72],
+  ["celebrated", 1.72, 2.24],
+  ["its", 2.24, 2.58],
+  ["10th", 2.58, 2.98],
+  ["year", 2.98, 3.14],
+  ["with", 3.14, 3.32],
+  ["a", 3.32, 3.56],
+  ["Sunrise", 3.56, 3.96],
+  ["Fashion", 3.96, 4.4],
+  ["Show", 4.4, 4.7],
+  ["at", 4.7, 4.94],
+  ["Pamukkale.", 4.94, 5.46],
+  ["And", 6.08, 6.3],
+  ["it", 6.3, 6.54],
+  ["wasn't", 6.54, 6.8],
+  ["alone.", 6.8, 7.2],
+  ["Lumo", 7.9, 7.9],
+  ["was", 7.9, 8.2],
+  ["the", 8.2, 8.4],
+  ["show's", 8.4, 8.7],
+  ["technology", 8.7, 9.26],
+  ["partner.", 9.26, 9.6],
+  ["The", 10.14, 10.24],
+  ["patterns", 10.24, 10.52],
+  ["were", 10.52, 10.86],
+  ["drawn", 10.86, 11.12],
+  ["on", 11.12, 11.54],
+  ["Lumo", 11.54, 11.7],
+  ["tablets,", 11.7, 12.18],
+  ["and", 12.44, 12.64],
+  ["the", 12.64, 12.74],
+  ["whole", 12.74, 13.08],
+  ["show", 13.08, 13.2],
+  ["was", 13.2, 13.88],
+  ["filmed", 13.88, 13.88],
+  ["on", 13.88, 14.26],
+  ["Lumo", 14.26, 14.54],
+  ["phones,", 14.54, 14.98],
+  ["mounted", 15.3, 15.44],
+  ["on", 15.44, 15.94],
+  ["drones.", 15.94, 16.28],
+  ["So", 16.9, 17.24],
+  ["Lumo", 17.24, 17.46],
+  ["took", 17.46, 17.68],
+  ["its", 17.68, 17.88],
+  ["tech", 17.88, 18.12],
+  ["from", 18.12, 18.38],
+  ["cold", 18.38, 18.66],
+  ["hard...", 18.66, 19.26],
+  ["No,", 19.26, 19.52],
+  ["again.", 19.52, 19.8],
+  ["So", 20.26, 20.5],
+  ["Lumo", 20.5, 20.82],
+  ["took", 20.82, 21.02],
+  ["its", 21.02, 21.22],
+  ["tech", 21.22, 21.44],
+  ["from", 21.44, 21.68],
+  ["cold", 21.68, 22.0],
+  ["hardware", 22.0, 22.46],
+  ["to", 22.46, 22.9],
+  ["a", 22.9, 23.2],
+  ["creative", 23.2, 23.46],
+  ["space", 23.46, 23.84],
+  ["that", 23.84, 24.48],
+  ["feeds", 24.48, 24.48],
+  ["fashion.", 24.48, 24.86],
+  ["In", 25.06, 25.58],
+  ["short,", 25.58, 25.8],
+  ["it's", 25.9, 26.16],
+  ["a", 26.16, 26.28],
+  ["real", 26.28, 26.5],
+  ["1", 26.5, 26.84],
+  ["plus", 26.84, 27.04],
+  ["1", 27.04, 27.38],
+  ["equals", 27.38, 27.7],
+  ["3", 27.7, 28.08],
+  ["story.", 28.08, 28.58],
+  ["So", 28.58, 29.32],
+  ["what", 29.32, 29.58],
+  ["did", 29.58, 29.72],
+  ["you", 29.72, 29.92],
+  ["think", 29.92, 30.12],
+  ["of", 30.12, 30.3],
+  ["this", 30.3, 30.48],
+  ["collaboration?", 30.48, 30.98]
+ ]
+}

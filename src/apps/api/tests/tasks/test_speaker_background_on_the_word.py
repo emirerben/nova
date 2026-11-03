@@ -20,6 +20,9 @@ VISIBLE background (windows plus the fill wherever no window covers the time).
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.config import settings
@@ -31,68 +34,41 @@ from tests.tasks.test_kri841_talking_ending_clip import (
     _recipe,
 )
 
+_FIXTURE = "green3_9bad2d75_backgrounds_on_word.json"
+
 # ------------------------------------------------------------------ the Green 3 run, verbatim
 
-# `variants[0].overlay_transcript` of job 9bad2d75 (whisper words, original take time, 2 dp).
-GREEN3_WORDS = [
-    ('Okay,', 0.0, 0.3), ("we're", 0.36, 0.6), ('recording.', 0.6, 1.22), ('Curvan', 1.54, 1.72),
-    ('celebrated', 1.72, 2.24), ('its', 2.24, 2.58), ('10th', 2.58, 2.98), ('year', 2.98, 3.14),
-    ('with', 3.14, 3.32), ('a', 3.32, 3.56), ('Sunrise', 3.56, 3.96), ('Fashion', 3.96, 4.4),
-    ('Show', 4.4, 4.7), ('at', 4.7, 4.94), ('Pamukkale.', 4.94, 5.46), ('And', 6.08, 6.3),
-    ('it', 6.3, 6.54), ("wasn't", 6.54, 6.8), ('alone.', 6.8, 7.2), ('Lumo', 7.9, 7.9),
-    ('was', 7.9, 8.2), ('the', 8.2, 8.4), ("show's", 8.4, 8.7), ('technology', 8.7, 9.26),
-    ('partner.', 9.26, 9.6), ('The', 10.14, 10.24), ('patterns', 10.24, 10.52),
-    ('were', 10.52, 10.86), ('drawn', 10.86, 11.12), ('on', 11.12, 11.54), ('Lumo', 11.54, 11.7),
-    ('tablets,', 11.7, 12.18), ('and', 12.44, 12.64), ('the', 12.64, 12.74),
-    ('whole', 12.74, 13.08), ('show', 13.08, 13.2), ('was', 13.2, 13.88),
-    ('filmed', 13.88, 13.88), ('on', 13.88, 14.26), ('Lumo', 14.26, 14.54),
-    ('phones,', 14.54, 14.98), ('mounted', 15.3, 15.44), ('on', 15.44, 15.94),
-    ('drones.', 15.94, 16.28), ('So', 16.9, 17.24), ('Lumo', 17.24, 17.46),
-    ('took', 17.46, 17.68), ('its', 17.68, 17.88), ('tech', 17.88, 18.12), ('from', 18.12, 18.38),
-    ('cold', 18.38, 18.66), ('hard...', 18.66, 19.26), ('No,', 19.26, 19.52),
-    ('again.', 19.52, 19.8), ('So', 20.26, 20.5), ('Lumo', 20.5, 20.82), ('took', 20.82, 21.02),
-    ('its', 21.02, 21.22), ('tech', 21.22, 21.44), ('from', 21.44, 21.68), ('cold', 21.68, 22.0),
-    ('hardware', 22.0, 22.46), ('to', 22.46, 22.9), ('a', 22.9, 23.2), ('creative', 23.2, 23.46),
-    ('space', 23.46, 23.84), ('that', 23.84, 24.48), ('feeds', 24.48, 24.48),
-    ('fashion.', 24.48, 24.86), ('In', 25.06, 25.58), ('short,', 25.58, 25.8),
-    ("it's", 25.9, 26.16), ('a', 26.16, 26.28), ('real', 26.28, 26.5), ('1', 26.5, 26.84),
-    ('plus', 26.84, 27.04), ('1', 27.04, 27.38), ('equals', 27.38, 27.7), ('3', 27.7, 28.08),
-    ('story.', 28.08, 28.58), ('So', 28.58, 29.32), ('what', 29.32, 29.58), ('did', 29.58, 29.72),
-    ('you', 29.72, 29.92), ('think', 29.92, 30.12), ('of', 30.12, 30.3), ('this', 30.3, 30.48),
-    ('collaboration?', 30.48, 30.98),
-]  # fmt: skip
+# The incident record (prod job 9bad2d75) and the kit's answer key, kept apart from this code.
+GREEN3 = json.loads((Path(__file__).parents[1] / "fixtures" / _FIXTURE).read_text())
+# `variants[0].overlay_transcript` (whisper words, original take time, 2 dp).
+GREEN3_WORDS = [tuple(word) for word in GREEN3["words"]]
 WORDS = [{"text": t, "start_s": s, "end_s": e} for t, s, e in GREEN3_WORDS]
-TAKE_FULL_S = 31.223333
-# `variants[0].silence_cut.removed` of the same job.
-REMOVED = [(5.585, 5.955), (7.325, 7.549), (16.405, 16.775)]
-KEEP = [(0.0, 5.585), (5.955, 7.325), (7.549, 16.405), (16.775, TAKE_FULL_S)]
+TAKE_FULL_S = GREEN3["take_duration_s"]
+# `variants[0].silence_cut.removed`: three pauses, 0.964 s.
+REMOVED = [tuple(span) for span in GREEN3["silence_cut_removed"]]
+KEEP = [
+    (start, end)
+    for start, end in zip(
+        [0.0, *(e for _s, e in REMOVED)], [*(s for s, _e in REMOVED), TAKE_FULL_S], strict=True
+    )
+]
 TAKE_S = seq.kept_duration(KEEP, TAKE_FULL_S)  # 30.259 s, the finished edit
 CADENCE_S = 4.0  # "changing every 3-5 seconds" -> the midpoint
 
 # The item's ready Visuals pool (bare pool-row ids, as `_load_ready_pool_assets` returns them).
-SUNRISE = "7ea1e9bd-1c14-43fc-8e0a-ff9a97576f2b"  # IMG_7120
-TABLET = "f4c22bc6-96f9-4b63-8673-43701f64cd03"  # IMG_7122
-DRONE_PHOTO = "74c10cff-cbe5-4583-86d3-4272352a4966"  # IMG_7123
-DRONE_VIDEO = "c26e289e-0041-442c-bccf-583584f03f66"  # IMG_7125 (5 s video)
-COLLAB_POST = "46ad3cb7-6d2f-4685-83f2-77108c684f25"  # IMG_7127
-LUNCH = "e063d6e8-282c-48f3-8814-e9344e0eb5a3"  # IMG_7129, the decoy
-NAMES = {
-    SUNRISE: "IMG_7120",
-    TABLET: "IMG_7122",
-    DRONE_PHOTO: "IMG_7123",
-    DRONE_VIDEO: "IMG_7125",
-    COLLAB_POST: "IMG_7127",
-    LUNCH: "IMG_7129",
-}
+KIT = {visual["file"]: visual for visual in GREEN3["kit_answer_key"]["visuals"]}
+SUNRISE = KIT["IMG_7120"]["pool_id"]
+TABLET = KIT["IMG_7122"]["pool_id"]
+DRONE_PHOTO = KIT["IMG_7123"]["pool_id"]
+DRONE_VIDEO = KIT["IMG_7125"]["pool_id"]  # 5 s video
+COLLAB_POST = KIT["IMG_7127"]["pool_id"]
+LUNCH = KIT["IMG_7129"]["pool_id"]  # the decoy
+NAMES = {visual["pool_id"]: name for name, visual in KIT.items()}
 
 # The planner's stored `background_media` (job.all_candidates.creator_strategy), verbatim: the
 # five in filename order, no phrase, no cadence -- the rotation the creator did not ask for.
-STORED_ORDER = [SUNRISE, TABLET, DRONE_PHOTO, DRONE_VIDEO, COLLAB_POST]
-STORED_BACKGROUND = {
-    "media_id": f"asset-{SUNRISE}",
-    "sequence": [{"media_id": f"asset-{media}"} for media in STORED_ORDER],
-    "speaker_frame": "small_bottom_right",
-}
+STORED_BACKGROUND = GREEN3["stored_background_media"]
+STORED_ORDER = [entry["media_id"].removeprefix("asset-") for entry in STORED_BACKGROUND["sequence"]]
 # What the v114 windows paragraph asks the planner for on this input: every entry phrased with
 # the take's own words; both drone visuals on the one mention of drones. Kept in the STORED
 # (filename) order on purpose: the layout must follow the talk, not the list.
@@ -111,14 +87,14 @@ ON_THE_WORD_BACKGROUND = {
     "cadence_s": CADENCE_S,
 }
 
-# Kit ground truth: the word each visual belongs on (the first time it is said).
-GROUND_TRUTH_WORD = {
-    SUNRISE: "sunrise",
-    COLLAB_POST: "technology",
-    TABLET: "tablets",
-    DRONE_PHOTO: "drones",
+# Kit answer key: the word each visual belongs on (the first time it is said), the visual that
+# must follow another, the visuals never shown.
+GROUND_TRUTH_WORD = {v["pool_id"]: v["on_word"] for v in KIT.values() if v.get("on_word")}
+RIGHT_AFTER = {
+    v["pool_id"]: KIT[v["right_after"]]["pool_id"] for v in KIT.values() if v.get("right_after")
 }
-WORD_TOLERANCE_S = 1.5
+NEVER = {v["pool_id"] for v in KIT.values() if v.get("never")}
+WORD_TOLERANCE_S = GREEN3["kit_answer_key"]["tolerance_s"]
 # "Lumo tablets" is first heard on the "Lumo" right before "tablets," (11.54 s, original time).
 LUMO_TABLETS_SOURCE_S = 11.54
 
@@ -185,31 +161,38 @@ def _first_window_start(windows, media):
 
 
 def _assert_on_their_words(windows, *, keep=KEEP):
-    """The kit's acceptance, against its ground truth (never the phrases fed in):
+    """The kit's acceptance, against its answer key (never the phrases fed in):
 
-    * the opening visual is on screen from 0 s through its word (something must be behind the
-      speaker before the first mention; the talk opens on it);
+    * the visual whose word is said first may open the video: on screen from 0 s through its word
+      (something must be behind the speaker before the first mention);
     * every other word-anchored visual's first window starts within 1.5 s of its word;
-    * the drone video starts exactly where the drone photo's first window ends;
-    * the decoy never has a window.
+    * a "right after" visual starts exactly where its leader's first window ends;
+    * a "never" visual has no window.
     """
-    for media, word in GROUND_TRUTH_WORD.items():
-        at = seq.to_output_time(_word_source_s(word), keep) if keep else _word_source_s(word)
+    heard_at = {
+        media: seq.to_output_time(_word_source_s(word), keep) if keep else _word_source_s(word)
+        for media, word in GROUND_TRUTH_WORD.items()
+    }
+    opener = min(heard_at, key=heard_at.get)
+    for media, at in heard_at.items():
+        word = GROUND_TRUTH_WORD[media]
         start = _first_window_start(windows, media)
-        if start == pytest.approx(0.0, abs=1e-6):
+        if media == opener and start == pytest.approx(0.0, abs=1e-6):
             covering = [w for w in windows if w[0] == media and w[1] <= at < w[2]]
             assert covering, f"{NAMES[media]} opens the video but is gone by {word!r} ({at:.2f})"
         else:
             assert abs(start - at) <= WORD_TOLERANCE_S, (
                 f"{NAMES[media]} starts at {start:.2f}, its word {word!r} is at {at:.2f}"
             )
-    photo = next(w for w in windows if w[0] == DRONE_PHOTO)
-    video = next((w for w in windows if w[0] == DRONE_VIDEO), None)
-    assert video is not None, "the drone video never shows"
-    assert video[1] == pytest.approx(photo[2], abs=1e-6), (
-        f"the drone video ({video[1]:.2f}) does not follow the drone photo ({photo[2]:.2f})"
-    )
-    assert LUNCH not in {w[0] for w in windows}, "the lunch decoy is shown"
+    for follower, leader in RIGHT_AFTER.items():
+        lead = next(w for w in windows if w[0] == leader)
+        follow = next((w for w in windows if w[0] == follower), None)
+        assert follow is not None, f"{NAMES[follower]} never shows"
+        assert follow[1] == pytest.approx(lead[2], abs=1e-6), (
+            f"{NAMES[follower]} ({follow[1]:.2f}) does not follow {NAMES[leader]} ({lead[2]:.2f})"
+        )
+    shown_never = NEVER & {w[0] for w in windows}
+    assert not shown_never, f"shown although never talked about: {[NAMES[m] for m in shown_never]}"
 
 
 def _assert_phone_contract(windows, *, take_s=TAKE_S):
@@ -381,20 +364,24 @@ def test_an_explicit_hold_still_ends_the_window_early():
 def test_entries_sharing_a_mention_that_cannot_all_fit_drop_the_last_with_a_note():
     """Seven visuals on "technology partner" with "Lumo tablets" 2.84 s later: they share the
     span in list order, half a second at least each; the ones that cannot fit are dropped and
-    each drop is on the receipt."""
+    each drop is on the receipt. A drop never stops the turns after the last mention (S51)."""
     shared = [f"00000000-0000-4000-8000-00000000000{i}" for i in range(7)]
     order = [*shared, TABLET]
     phrases = {**{media: "technology partner" for media in shared}, TABLET: "Lumo tablets"}
     layout, windows = _lay_out(order, phrases)
 
     _assert_phone_contract(windows)
-    in_group = [m for m, _s, _e in windows if m in shared]
+    # First appearances (the tail after the last mention shows them again, S51).
+    in_group = list(dict.fromkeys(m for m, _s, _e in windows if m in shared))
     assert len(in_group) >= 2, f"the visuals sharing a mention lost all but one: {windows}"
     assert in_group == shared[: len(in_group)], "the shared mention does not keep list order"
     dropped = {n["window"] for n in layout.notes if n.get("reason") == "window_too_short"}
     assert dropped == set(range(len(in_group), len(shared)))
-    assert next(w for w in windows if w[0] == TABLET)[1] == pytest.approx(
-        seq.to_output_time(LUMO_TABLETS_SOURCE_S, KEEP), abs=1e-6
+    tablet = next(w for w in windows if w[0] == TABLET)
+    assert tablet[1] == pytest.approx(seq.to_output_time(LUMO_TABLETS_SOURCE_S, KEEP), abs=1e-6)
+    after = [w for w in windows if w[1] >= tablet[2] - 1e-6]
+    assert len(after) >= 3 and after[-1][2] == pytest.approx(TAKE_S, abs=1e-6), (
+        f"the background stops changing after the last mention: {windows}"
     )
 
 
