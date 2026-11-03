@@ -174,6 +174,37 @@ meet exactly; that is fine).
 | S43 | The fill asset is also a window asset, or a window asset is also a card | Allowed for fill == window (same photo may fill and open); window/fill ids are reserved from `used_media_ids` so they are never also a cutaway or card. | `tests/tasks/test_speaker_background_strategy_worker.py::test_window_ids_are_reserved_from_cards` |
 | S44 | Live camera preview shows one background while the plan will switch | The camera pick stays single (the fill). The teleprompter shows "Preview" and never claims parity (S24); nothing new to draw there in this cut. | n/a, copy review |
 
+## KRI-1175: "whichever photo or video I'm talking about" (written before the code)
+
+Prod run "Green 3" (2026-11-03, job `9bad2d75`): the planner listed the five visuals in filename
+order with no `spoken_phrase` (the prompt said to use one only when the creator pairs a photo with
+words), so `lay_out` rotated them every 4 s and repeated them (8 windows). Replaying the same words
+and cut with the right phrases showed the layout itself also fails the ask: a visual without an
+anchor is dealt into every gap (the drone video appeared at 0 s, before the drone photo), the fill
+flashes in sub-0.5 s gaps and repeats the first photo while others are still to come, two visuals
+on one mention drop the first, and the 15 s after the last mention hold one visual. Root cause and
+the design decision: `.dev/root-cause.md` of the KRI-1175 branch, summarised in the PR.
+
+**Mode is decided by the request.** A sequence where EVERY entry carries a `spoken_phrase` is laid
+out "on the word" (rules below). A sequence with no phrase keeps the rotation byte-for-byte; a
+partly phrased one keeps the mixed layout above (S38/S39 unchanged there). Intent is never read off
+the creator's wording on the server (`test_kri667_no_new_intent_regexes.py`): the planner is taught
+to phrase every entry for a "whichever I'm talking about" ask (Main Creator v114).
+
+| # | Failure mode | Treatment | Pinned by |
+|---|---|---|---|
+| S46 | The planner reads "whichever photo I'm talking about" as a rotation and writes no phrase (the Green 3 bug) | The windows section teaches: for that ask, every entry gets the `spoken_phrase` copied from the take's own words naming what it shows, entries in spoken order, two visuals of one thing share the phrase, a visual never talked about is left out and named in `summary`. Model behaviour on the Green 3 input is NOT proven offline (paid replay, not run). | `tests/kria/test_speaker_background_chat.py` (the section teaches it, shown only with the windows capability) |
+| S47 | A visual starts away from its word (source vs kept-take time, the speech cut shifts it) | Unchanged anchoring: first kept-take hearing of the phrase, laid out in output time, written back in original take time. | `tests/tasks/test_speaker_background_on_the_word.py::test_green3_each_visual_starts_on_its_word` (real words + real cut, ±1.5 s in both time bases) |
+| S48 | Two visuals of one mention: the second shows first, or the first is dropped (`window_too_short`) | Entries sharing one hearing play one after another in list order, one cadence each; when the next mention leaves too little room they share it evenly, and only entries that cannot get 0.5 s are dropped with `window_too_short`. | `::test_green3_each_visual_starts_on_its_word` (drone video right after the drone photo), `::test_entries_sharing_a_mention_that_cannot_all_fit_drop_the_last_with_a_note` |
+| S49 | Between mentions the fill shows (repeating a visual already seen) or flashes in a sub-0.5 s gap while visuals are still to come | Each window holds until the next mention; no visual repeats until every visual has had its first window; an explicit `hold_s` still ends a window early. | `::test_green3_nothing_repeats_before_every_visual_was_shown`, `::test_an_explicit_hold_still_ends_the_window_early` |
+| S50 | A lead-in before the first mention shorter than 0.5 s flashes the fill | Absorbed: the first window starts at 0. A longer lead-in shows the fill. | `::test_a_lead_in_shorter_than_half_a_second_is_absorbed` |
+| S51 | After the last mention one visual is held for the rest of the take ("changing every 3-5 seconds" broken) | Once every visual has been shown, the shown visuals take turns in the order they were first shown, `cadence_s` each, to the take end; a sliver joins the last window; the 40-window cap stretches only that cadence. | `::test_green3_the_tail_keeps_changing_at_the_cadence`, `::test_a_long_tail_stretches_instead_of_passing_forty_windows` |
+| S52 | A phrase that is never heard is cycled into the talk (a photo nobody talks about shows) | On the word, an unheard entry gets no window and keeps its `phrase_not_heard` note (never a failed job). | `::test_a_phrase_never_heard_is_not_cycled_in` (Green 3 with the lunch decoy wrongly phrased) |
+| S53 | The decoy (not in the sequence) appears anyway, as the fill, a window or a card | Only sequence entries and the fill can be backgrounds; the decoy goes to the card matcher, which finds no spoken match. | `::test_green3_worker_seats_the_backgrounds_on_their_words` (whole recipe searched) |
+| S54 | The new layout changes a rotation or a mixed request | Only an all-phrased sequence takes the new path. | `::test_green3_stored_strategy_still_rotates_exactly_as_before` + every S38/S39 test above |
+| S55 | Windows break the phone contract (overlap, under 0.5 s, past the take, over 40) | Every window still passes `SpeakerBackgroundLayer`/`SpeakerBackground.swift` (shared fixtures untouched). | `::test_green3_worker_seats_the_backgrounds_on_their_words` (recipe built and validated), `tests/kria/test_speaker_background_windows.py::test_shared_fixture_v2` |
+| S56 | The word check accepts the wrong photo on a word (no negative control) | The check compares each visual with the kit's ground-truth word, never with the phrase it was given. | `::test_the_word_check_rejects_swapped_photos` |
+
 Device tests owed before `speakerBackgroundWindows` is verified: on an iPhone, a Talk-to-camera take with
 three photo windows and the speaker small bottom-right must show each photo in its window and the creator
 cleanly cut out in the corner in preview and export; a video window must loop inside its window and be
