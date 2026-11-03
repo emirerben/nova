@@ -1104,7 +1104,8 @@ Data changes: the clip row at the same index is rebuilt by the attach row builde
 carries over; trims, speech coverage and sound toggles describe the old take and are dropped), written
 only through `mutate_plan_item_media`, so the speech-cleanup analysis for the old take is superseded,
 consent cleared and the edit proposal marked stale. `thread.state.media` swaps the entry in place and gains
-`source_replacement = {replaced_media_id, media_id, superseded_job_id, revision}`. Voiceover, song,
+`source_replacement = {replaced_media_id, media_id, superseded_job_id, revision, speaker_media_ids}`
+(`speaker_media_ids` is who speaks after the swap: until a new Job renders, the old Job's receipt still names the original take, so a second re-record reads this instead). Voiceover, song,
 script, and the speaker background are untouched. The old Job is never written: its variants keep
 the take they were cut from, and the old take stays in storage (retention and thread deletion own it,
 because the old Job and its editor still name it).

@@ -40,6 +40,9 @@ class SourceReplacement:
     # The Job that was current when the swap committed; None when nothing had rendered yet.
     superseded_job_id: str | None
     revision: int
+    # Who speaks after this swap. The superseded Job's receipt keeps naming the original take,
+    # so a second swap before a new render must read this instead.
+    speaker_media_ids: tuple[str, ...] | None = None
 
     def to_state(self) -> dict[str, Any]:
         return {
@@ -47,6 +50,11 @@ class SourceReplacement:
             "media_id": self.media_id,
             "superseded_job_id": self.superseded_job_id,
             "revision": self.revision,
+            **(
+                {"speaker_media_ids": list(self.speaker_media_ids)}
+                if self.speaker_media_ids is not None
+                else {}
+            ),
         }
 
     @classmethod
@@ -59,11 +67,15 @@ class SourceReplacement:
             return None
         job_id = raw.get("superseded_job_id")
         revision = raw.get("revision")
+        speakers = raw.get("speaker_media_ids")
         return cls(
             replaced_media_id=replaced,
             media_id=media,
             superseded_job_id=job_id if isinstance(job_id, str) else None,
             revision=revision if isinstance(revision, int) else 0,
+            speaker_media_ids=(
+                tuple(str(i) for i in speakers if i) if isinstance(speakers, list) else None
+            ),
         )
 
 
@@ -126,6 +138,31 @@ def rendered_speaker_media_ids(assembly_plan: Mapping[str, Any] | None) -> froze
             if isinstance(receipt, Mapping) and receipt.get("speaker_media_id"):
                 found.add(str(receipt["speaker_media_id"]))
     return frozenset(found) or None
+
+
+def current_speaker_media_ids(
+    state: Mapping[str, Any] | None,
+    job_id: uuid.UUID | str | None,
+    assembly_plan: Mapping[str, Any] | None,
+) -> frozenset[str] | None:
+    """Who speaks now: the last swap's answer while it supersedes the Job, else the receipt."""
+
+    replacement = SourceReplacement.from_state(state)
+    if replacement is not None and replacement.speaker_media_ids is not None:
+        if source_replacement_supersedes(state, job_id):
+            return frozenset(replacement.speaker_media_ids)
+    return rendered_speaker_media_ids(assembly_plan)
+
+
+def speakers_after_swap(
+    current: frozenset[str] | None, replaced_media_id: str, media_id: str
+) -> tuple[str, ...]:
+    """The speaker set once ``media_id`` takes ``replaced_media_id``'s place.
+
+    ``current`` is None only on a one-clip item, where the swapped clip is the sole speaker.
+    """
+
+    return tuple(sorted(((current or frozenset()) - {replaced_media_id}) | {media_id}))
 
 
 @dataclass(frozen=True, slots=True)

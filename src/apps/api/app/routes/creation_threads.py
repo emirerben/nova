@@ -156,9 +156,10 @@ from app.services.source_replacement import (
     SOURCE_REPLACEMENT_STATE_KEY,
     SourceReplacement,
     check_retake_target,
+    current_speaker_media_ids,
     render_in_flight,
-    rendered_speaker_media_ids,
     retake_format_supported,
+    speakers_after_swap,
 )
 from app.services.speech_cleanup_decision import (
     SpeechCleanupDecisionConflict,
@@ -7561,6 +7562,9 @@ async def replace_media(
         for assignment in (item.clip_assignments or [])
         if isinstance(assignment, dict)
     ]
+    speakers_before = current_speaker_media_ids(
+        existing_state, job.id if job else None, job.assembly_plan if job else None
+    )
     if rejection := check_retake_target(
         edit_format=item.edit_format,
         audio_mode=item.audio_mode,
@@ -7568,7 +7572,7 @@ async def replace_media(
         assignments=assignments,
         thread_media=existing_media,
         replaced_media_id=replaced_id,
-        speaker_media_ids=rendered_speaker_media_ids(job.assembly_plan if job else None),
+        speaker_media_ids=speakers_before,
     ):
         _reject_replace(
             rejection.status_code,
@@ -7691,6 +7695,7 @@ async def replace_media(
             media_id=new_id,
             superseded_job_id=str(job.id) if job is not None else None,
             revision=int(thread.revision) + 1,
+            speaker_media_ids=speakers_after_swap(speakers_before, replaced_id, new_id),
         ).to_state(),
     }
     await _append(

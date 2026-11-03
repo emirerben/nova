@@ -565,6 +565,7 @@ async def test_retake_swaps_the_speaker_and_the_next_turn_plans_fresh(
             "media_id": new_id,
             "superseded_job_id": str(world.job_id),
             "revision": events[0].revision,
+            "speaker_media_ids": [new_id],
         }
         # The swap is one event; closing the stale approval afterwards is a second.
         assert events[0].revision == revision + 1
@@ -895,6 +896,32 @@ async def test_multi_clip_swap_keeps_the_count_and_only_the_speaker_may_change(
             "refused": "retake_target_not_speaker",
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_multi_clip_speaker_can_be_re_recorded_again_before_a_new_plan(
+    takes, object_store, multi_clip
+) -> None:
+    """The Job's receipt still names the ORIGINAL speaker until a new plan renders, so the
+    second and third swaps must follow the take the creator just recorded, not the receipt."""
+    world = seed_world(takes, labels=("a", "c"), speakers=("a",))
+    api = _api(world, object_store)
+    second, third = api.upload("b", takes["b"]), api.upload("c2", takes["c"])
+    fourth = api.upload("a2", takes["a"])
+
+    first_swap = await api.replace(world.clips["a"], second)
+    assert first_swap.status_code == 200, first_swap.text
+    again = await api.replace(second, third)
+    assert again.status_code == 200, again.text
+    once_more = await api.replace(third, fourth)
+    assert once_more.status_code == 200, once_more.text
+
+    # Neither the replaced original nor the cutaway became the speaker by the swaps.
+    stale = await api.replace(world.clips["c"], api.upload("b3", takes["b"]))
+    assert (stale.status_code, code(stale)) == (409, "retake_target_not_speaker")
+    with sync_session() as db:
+        item = db.get(PlanItem, world.item_id)
+        assert [row["media_id"] for row in item.clip_assignments] == [fourth, world.clips["c"]]
 
 
 @pytest.mark.asyncio
