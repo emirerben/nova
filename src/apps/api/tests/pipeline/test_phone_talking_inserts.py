@@ -800,3 +800,114 @@ def test_a_row_shorter_than_two_parts_keeps_its_longer_side_once():
     rows = _rows_around(brief)
     assert len(rows) == 1
     assert rows[0]["start_s"] != rows[0]["end_s"]
+
+
+# --- the take end and the take start are seams too (review of #2086, finding 1) ------------
+# About a third of frame-aligned durations round UP at the millisecond, so a point clamped to
+# the take and then rounded landed past it and the compile raised, failing the render.
+
+_AWKWARD_TAKES = (34.1336, 34.1334, 20.0005, 20.0004, 12.3456789, 9.9996, 7.0004999, 61.0006)
+
+
+def _take_words(take_s):
+    return _words([("hi", 0.2, 0.8), ("end.", max(1.0, take_s - 3.0), take_s)])
+
+
+def _compile_take(take_s, inserts, *, keep_segments=None):
+    return compile_phone_subtitled_plan(
+        (_binding("take", duration_s=take_s),),
+        caption_cues=[],
+        keep_segments=keep_segments,
+        inserts=inserts,
+    )
+
+
+def _assert_plays_cleanly(recipe, take_s, inserts):
+    clips = sorted(recipe.tracks[0].clips, key=lambda c: c.timeline_start)
+    speaker = [c for c in clips if c.source_asset_id == "take"]
+    assert all(c.source_duration >= _ONE_FRAME_S for c in clips)
+    assert sum(c.source_duration for c in speaker) == pytest.approx(take_s, abs=1e-4)
+    assert recipe.duration == pytest.approx(
+        take_s + sum(i.binding.original.duration_s for i in inserts), abs=1e-4
+    )
+
+
+@pytest.mark.parametrize("take_s", _AWKWARD_TAKES)
+@pytest.mark.parametrize("how", ["second_past_end", "last_word_phrase", "second_at_end"])
+def test_an_insert_at_the_take_end_compiles_for_any_take_length(take_s, how):
+    ask = {
+        "second_past_end": _ask(at_s=take_s + 3.0),
+        "last_word_phrase": _ask(phrase="end"),
+        "second_at_end": _ask(at_s=take_s),
+    }[how]
+    (placed,) = _place(
+        [ask],
+        words=_take_words(take_s),
+        take_s=take_s,
+        bindings={"talk": _binding("talk", duration_s=3.0)},
+    )
+    assert placed.insert is not None
+    assert placed.insert.at_take_s <= take_s
+    recipe = _compile_take(take_s, (placed.insert,))
+    _assert_plays_cleanly(recipe, take_s, (placed.insert,))
+    last = max(recipe.tracks[0].clips, key=lambda c: c.timeline_start)
+    assert last.source_asset_id == "talk"  # no speaker sliver after the pause
+
+
+@pytest.mark.parametrize("take_s", _AWKWARD_TAKES)
+def test_an_insert_a_hair_from_the_take_start_or_end_leaves_no_sliver(take_s):
+    for at in (0.0004, 0.02, take_s - 0.0004, take_s - 0.02):
+        insert = _insert(at=at, dur=3.0)
+        recipe = _compile_take(take_s, (insert,))
+        _assert_plays_cleanly(recipe, take_s, (insert,))
+
+
+def test_random_takes_asks_and_cleanups_always_compile_without_a_sliver():
+    import random
+
+    rng = random.Random(2086)
+    for _ in range(400):
+        full = round(rng.uniform(12.0, 70.0), rng.choice([3, 4, 6]))
+        cuts = sorted(rng.uniform(1.0, full - 1.0) for _ in range(rng.choice([0, 2, 4])))
+        keep, cursor = [], 0.0
+        for a, b in zip(cuts[::2], cuts[1::2], strict=False):
+            if a > cursor:
+                keep.append((cursor, a))
+            cursor = b
+        keep.append((cursor, full))
+        take_s = sum(b - a for a, b in keep)
+        words = _words(
+            [
+                ("hi", 0.2, 0.8),
+                ("mid", take_s / 2, take_s / 2 + 0.4),
+                ("end.", take_s - 1.0, take_s),
+            ]
+        )
+        seams = []
+        total = 0.0
+        for a, b in keep[:-1]:
+            total += b - a
+            seams.append(total)
+        asks = []
+        for k in range(rng.randint(1, 4)):
+            kind = rng.choice(["early", "late", "mid", "past", "phrase_last", "phrase_first"])
+            at = {
+                "early": rng.uniform(0.0, 0.3),
+                "late": take_s - rng.uniform(0.0, 0.3),
+                "mid": rng.uniform(0.0, take_s),
+                "past": take_s + rng.uniform(0.0, 9.0),
+            }.get(kind)
+            phrase = {"phrase_last": "end", "phrase_first": "hi"}.get(kind)
+            asks.append(InsertAsk(f"c{k}", at_s=at, at_phrase=phrase))
+        bindings = {f"c{k}": _binding(f"c{k}", duration_s=rng.uniform(1.0, 9.0)) for k in range(4)}
+        placed = place_inserts(asks, bindings=bindings, words=words, take_s=take_s, seams=seams)
+        inserts = tuple(p.insert for p in placed if p.insert is not None)
+        assert inserts
+        recipe = _compile_take(full, inserts, keep_segments=keep)
+        _assert_plays_cleanly(recipe, take_s, inserts)
+        back = inserts_from_recipe(
+            recipe, (_binding("take", duration_s=full), *(i.binding for i in inserts))
+        )
+        assert [i.binding.media_id for i in back] == [
+            i.binding.media_id for i in sorted(inserts, key=lambda i: i.at_take_s)
+        ]
