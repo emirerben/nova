@@ -89,7 +89,7 @@ def upgrade():
         "creator_edit_drafts",
         ["repair_draft_id"],
         ["id"],
-        ondelete="SET NULL",
+        ondelete="CASCADE",
     )
     op.create_foreign_key(
         "fk_generation_review_repair_execution",

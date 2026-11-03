@@ -20,8 +20,8 @@ import sys
 import tempfile
 import time
 import uuid
-from functools import partial
 from collections.abc import Sequence
+from functools import partial
 from pathlib import Path
 from typing import Literal
 

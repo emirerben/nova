@@ -1,7 +1,10 @@
-"""The only reader of the KRIA_INTENT_REVIEW_* flags.
+"""A creator's intent-review tier, from the KRIA_INTENT_REVIEW_* flags.
 
-A child flag set without its parent does nothing. The code ceiling stops a flag flip
-from switching on a stage that has not shipped: each PR in the stack raises it.
+This is the only place that decides a tier: a child flag set without its parent does
+nothing, and the allowlist gates every stage. KRIA_INTENT_REVIEW_ENABLED is also read
+directly, as the global kill switch, wherever admission, publishing, recovery and the
+legacy interlock must stop. The code ceiling stops a flag flip from switching on a stage
+that has not shipped: each PR in the stack raises it.
 """
 
 from __future__ import annotations
@@ -42,9 +45,7 @@ def intent_review_tier(user_id: object) -> Tier:
     return lower_tier(tier, _CODE_TIER_CEILING)
 
 
-def intent_review_replaces_legacy(user_id: object, thread: object) -> bool:
-    """Only a tier that actually reviews the finished video retires the legacy review."""
-    return (
-        getattr(thread, "runtime_version", None) == 2
-        and _RANK[intent_review_tier(user_id)] >= _RANK["review"]
-    )
+def intent_review_replaces_legacy(user_id: object, ended_without_verdict: bool = False) -> bool:
+    """Only a tier that reviews the finished video retires the legacy review, and only until
+    that review ends without a verdict for the generation."""
+    return not ended_without_verdict and _RANK[intent_review_tier(user_id)] >= _RANK["review"]

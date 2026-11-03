@@ -50,6 +50,8 @@ _EXPERIMENT_PURPOSES = frozenset(
 _OPTIONAL_PURPOSES = frozenset({"optional_background", "style_vision"})
 # KRI-756: ledger feature name of the suggestion-chip wording agent (nova.chat.suggester).
 _SUGGESTER_FEATURE = "chip_suggester"
+# KRI-1171: ledger feature name of the paid intent review.
+_INTENT_REVIEW_FEATURE = "intent_review"
 _CANARY_PURPOSES = frozenset({"release_canary", "internal_canary"})
 
 # Standard paid-tier USD per one million tokens, verified against the official
@@ -896,6 +898,8 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                 scopes.append(f"director:{creator_id}:{now.date().isoformat()}")
             if request.feature == _SUGGESTER_FEATURE and creator_id is not None:
                 scopes.append(f"suggester:{creator_id}:{now.date().isoformat()}")
+            if request.feature == _INTENT_REVIEW_FEATURE and creator_id is not None:
+                scopes.append(f"intent_review:{creator_id}:{now.date().isoformat()}")
             if test_run_id:
                 scopes.append(f"test_run:{test_run_id}")
             for scope in sorted(scopes):
@@ -1087,6 +1091,29 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                 if used >= settings.kria_suggester_daily_limit_per_user:
                     _reject(
                         scope="chip_suggester:user_day",
+                        reset_at=_next_day(now),
+                        cached_behavior_available=request.cached_behavior_available,
+                    )
+
+            if request.feature == _INTENT_REVIEW_FEATURE and creator_id is not None:
+                used = int(
+                    conn.execute(
+                        text(
+                            "SELECT COUNT(*) FROM ai_cost_reservations "
+                            "WHERE creator_id = :creator_id AND feature = :feature "
+                            "AND created_at >= :day_start "
+                            "AND status IN ('reserved','provider_started','settled','unknown')"
+                        ),
+                        {
+                            "creator_id": str(creator_id),
+                            "feature": _INTENT_REVIEW_FEATURE,
+                            "day_start": datetime(now.year, now.month, now.day, tzinfo=UTC),
+                        },
+                    ).scalar_one()
+                )
+                if used >= settings.kria_intent_review_daily_limit_per_user:
+                    _reject(
+                        scope="intent_review:user_day",
                         reset_at=_next_day(now),
                         cached_behavior_available=request.cached_behavior_available,
                     )
@@ -1356,6 +1383,22 @@ def reservation_for_key(idempotency_key: str) -> tuple[ReservationReceipt, str] 
         ),
         row["status"],
     )
+
+
+def settled_cost_for_key(idempotency_key: str) -> float | None:
+    """The cost the ledger booked for a settled reservation; None until it settles."""
+
+    from app.database import sync_engine  # noqa: PLC0415
+
+    with sync_engine.connect() as conn:
+        value = conn.execute(
+            text(
+                "SELECT settled_cost_usd FROM ai_cost_reservations "
+                "WHERE idempotency_key = :key AND status = 'settled'"
+            ),
+            {"key": idempotency_key},
+        ).scalar_one_or_none()
+    return None if value is None else float(value)
 
 
 def release_paid_call(receipt: ReservationReceipt | None) -> None:

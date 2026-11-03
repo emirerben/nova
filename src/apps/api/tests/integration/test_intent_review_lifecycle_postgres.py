@@ -1249,3 +1249,132 @@ async def test_evidence_tier_rows_are_never_republished_or_expired(
     reconcile_generation_reviews()
     paid.publish.assert_not_called()
     assert review_row(rid).status == "evidence_ready"
+
+
+# --- review-finding regressions ----------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["repair_staged", "repair_verified", "repair_reverted"])
+async def test_deleting_the_repair_draft_with_its_project_succeeds(
+    approved_publication, paid, monkeypatch, status
+):
+    rid, _, _ = await ready_review(approved_publication, monkeypatch)
+    row = review_row(rid)
+    edit_row(
+        rid,
+        status=status,
+        reason="repair",
+        repair_draft_id=uuid.UUID(row.inputs["draft_id"]),
+        repair_staged_at=datetime.now(UTC),
+        lease_token=None,
+        lease_until=None,
+    )
+    with sync_session() as db:
+        db.execute(
+            text("DELETE FROM creator_edit_drafts WHERE id = :id"), {"id": row.inputs["draft_id"]}
+        )
+        db.commit()
+    with sync_session() as db:
+        assert db.get(CreatorGenerationReview, rid) is None
+
+
+@pytest.mark.asyncio
+async def test_a_retry_after_a_full_lease_still_gets_its_one_review(
+    approved_publication, paid, monkeypatch
+):
+    rid, _, _ = await ready_review(approved_publication, monkeypatch)
+    _crash_once(monkeypatch, costs, "mark_paid_call_started")
+    provider = Provider()
+    with pytest.raises(Crash):
+        await run_async(rid, provider)
+    lease_elapsed = datetime.now(UTC) - timedelta(seconds=flow.LEASE_S + 5)
+    edit_row(
+        rid, lease_until=datetime.now(UTC) - timedelta(seconds=1), evidence_ready_at=lease_elapsed
+    )
+    flow.recover_intent_reviews()
+    assert review_row(rid).status == "evidence_ready"
+    assert await run_async(rid, provider) == "unavailable"
+    assert len(provider.calls) == 1
+    assert review_row(rid).reason == "disposition_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_crash_after_settlement_records_the_real_cost_everywhere(
+    approved_publication, paid, monkeypatch
+):
+    rid, _, _ = await ready_review(approved_publication, monkeypatch)
+    _crash_once(monkeypatch, flow, "_finish")
+    provider = Provider()
+    with pytest.raises(Crash):
+        await run_async(rid, provider)
+    assert [entry["status"] for entry in ledger()] == ["settled"]
+    expire_lease(rid)
+    flow.recover_intent_reviews()
+    row = review_row(rid)
+    assert row.review["provenance"]["settled_usd"] == pytest.approx(SETTLED_USD, abs=1e-6)
+    with sync_engine.connect() as db:
+        recorded = db.execute(
+            text(
+                "SELECT settled_cost_usd, cost_usd FROM agent_run "
+                "WHERE agent_name = 'nova.kria.intent_review' ORDER BY created_at DESC LIMIT 1"
+            )
+        ).one()
+    assert float(recorded[0]) == pytest.approx(SETTLED_USD, abs=1e-6)
+    assert float(recorded[1]) == pytest.approx(SETTLED_USD, abs=1e-6)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("limit", "reviewed"), [(1, False), (2, True)])
+async def test_one_creator_cannot_spend_past_the_daily_review_cap(
+    approved_publication, paid, monkeypatch, limit, reviewed
+):
+    rid, _, _ = await ready_review(approved_publication, monkeypatch)
+    monkeypatch.setattr(settings, "kria_intent_review_daily_limit_per_user", limit)
+    row = review_row(rid)
+    costs.reserve_paid_call(
+        costs.PaidCallRequest(
+            idempotency_key="an-earlier-review-today",
+            feature="intent_review",
+            model="gpt-6.1-sol",
+            estimated_cost_usd=0.05,
+            ctx=ctx_for(row),
+            provider="openai",
+            capability="intent_review",
+        )
+    )
+    provider = Provider()
+    outcome = await run_async(rid, provider)
+    if reviewed:
+        assert outcome == "unavailable" and len(provider.calls) == 1
+    else:
+        assert outcome == "exhausted" and provider.calls == []
+        row = review_row(rid)
+        assert row.reason == "budget_user_day"
+        assert [entry["status"] for entry in ledger()] == ["reserved"]
+
+
+@pytest.mark.asyncio
+async def test_the_legacy_review_returns_when_the_intent_review_gave_no_verdict(
+    approved_publication, paid, monkeypatch
+):
+    from app.services.intent_review_legacy import legacy_review_retired, retirement_probe
+
+    claim, *_ = approved_publication
+    rid, _, _ = await ready_review(approved_publication, monkeypatch)
+    with sync_session() as db:
+        session_id = db.get(CreatorAgentExecution, claim.execution_id).session_id
+
+    def retired():
+        with sync_session() as db:
+            return legacy_review_retired(db.execute(retirement_probe(session_id)).first())
+
+    assert retired() is True
+    for status in ("unavailable", "exhausted", "review_unknown", "stale"):
+        edit_row(rid, status=status, reason="no_verdict")
+        assert retired() is False, status
+    for status in ("no_findings", "suggestion", "needs_confirmation"):
+        edit_row(rid, status=status, reason="verdict")
+        assert retired() is True, status
+    monkeypatch.setattr(settings, "kria_intent_review_paid_enabled", False)
+    assert retired() is False

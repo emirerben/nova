@@ -4769,7 +4769,7 @@ class CreatorGenerationReview(Base):
         nullable=True,
     )
     repair_draft_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("creator_edit_drafts.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=True), ForeignKey("creator_edit_drafts.id", ondelete="CASCADE"), nullable=True
     )
     repair_render_execution_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),

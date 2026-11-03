@@ -441,22 +441,10 @@ def claim_exact_review(
     from app.models import CreatorAgentSession, Job  # noqa: PLC0415
 
     if settings.kria_intent_review_enabled:
-        from sqlalchemy import select
+        from app.services.intent_review_legacy import legacy_review_retired, retirement_probe
 
-        from app.kria.intent_review_tier import intent_review_replaces_legacy
-        from app.models import CreationThread
-
-        canonical_thread = db.scalar(
-            select(CreationThread)
-            .where(
-                CreationThread.active_creator_agent_session_id == uuid.UUID(session_id),
-                CreationThread.runtime_version == 2,
-            )
-            .limit(1)
-        )
-        if canonical_thread is not None and intent_review_replaces_legacy(
-            canonical_thread.creator_id, canonical_thread
-        ):
+        probe = db.execute(retirement_probe(uuid.UUID(session_id))).first()
+        if legacy_review_retired(probe):
             return None
 
     # Canonical lock order (app/db_locks.CANONICAL_LOCK_ORDER): Job before

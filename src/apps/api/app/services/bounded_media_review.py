@@ -43,6 +43,7 @@ MediaReviewStatus = Literal[
     "context_too_large",
     "budget_review",
     "budget_monthly",
+    "budget_user_day",
     "paid_gate_closed",
     "ledger_unavailable",
     "stale",
@@ -177,7 +178,9 @@ def invoke_bounded_media_review(
             )
         )
     except AiBudgetExceededError as exc:
-        return fail("budget_monthly", exc.scope)
+        return fail(
+            "budget_user_day" if exc.scope.endswith(":user_day") else "budget_monthly", exc.scope
+        )
     except AiCostControlPolicyError as exc:
         return fail("paid_gate_closed", exc.reason)
     except ProviderOutcomeUnknownError:

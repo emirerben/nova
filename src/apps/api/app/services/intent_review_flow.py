@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import time
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -35,6 +36,7 @@ from app.agents._runtime import RunContext
 from app.config import settings
 from app.database import sync_session
 from app.kria.intent_review_tier import intent_review_tier, lower_tier, tier_rank
+from app.kria.review_canon import digest as canonical_digest
 from app.models import CreatorGenerationReview
 from app.services import ai_cost_control as costs
 from app.services.bounded_media_review import (
@@ -48,7 +50,7 @@ from app.services.bounded_media_review import (
     usage_meter,
 )
 from app.services.pipeline_trace import pipeline_trace_for, record_pipeline_event
-from app.services.render_review_admission import _digest, _inputs, load_review_rows
+from app.services.render_review_admission import _inputs, load_review_rows
 
 log = structlog.get_logger()
 
@@ -68,6 +70,7 @@ _FAILURE_STATUS = {
     "context_too_large": ("unavailable", "context_too_large"),
     "budget_review": ("exhausted", "budget_review"),
     "budget_monthly": ("exhausted", "budget_monthly"),
+    "budget_user_day": ("exhausted", "budget_user_day"),
     "paid_gate_closed": ("unavailable", "paid_gate_closed"),
     "ledger_unavailable": ("unavailable", "ledger_unavailable"),
     "provider_unknown_outcome": ("review_unknown", "provider_unknown_outcome"),
@@ -150,7 +153,10 @@ def check_authority(db, row) -> tuple[Any, str | None]:
     except (TypeError, KeyError, AttributeError, StopIteration):
         return None, "generation_changed"
     stored = row.inputs
-    if _digest(current) == row.input_digest and _digest(stored) == row.input_digest:
+    if (
+        canonical_digest(current) == row.input_digest
+        and canonical_digest(stored) == row.input_digest
+    ):
         return rows, None
     changed_owner = current.get("owner_epoch") != stored.get("owner_epoch") or (
         (current.get("binding") or {}).get("digest") != (stored.get("binding") or {}).get("digest")
@@ -638,7 +644,8 @@ def publish_intent_review(review_id) -> bool:
         return False
 
 
-def recover_intent_reviews() -> int:
+def recover_intent_reviews(deadline: float | None = None) -> int:
+    """Bounded by ``deadline`` (monotonic): never starts a row once the beat budget is spent."""
     if not settings.kria_intent_review_enabled:
         return 0
     now = _now()
@@ -669,7 +676,13 @@ def recover_intent_reviews() -> int:
             )
         )
     handled = 0
+
+    def time_left() -> bool:
+        return deadline is None or time.monotonic() < deadline
+
     for identifier, ready_at in waiting:
+        if not time_left():
+            return handled
         if (now - ready_at).total_seconds() > CLAIM_DEADLINE_S:
             handled += finish_row(
                 identifier, expect="evidence_ready", status="exhausted", reason="deadline"
@@ -677,6 +690,8 @@ def recover_intent_reviews() -> int:
         else:
             handled += publish_intent_review(identifier)
     for identifier in expired:
+        if not time_left():
+            return handled
         _recover_expired(identifier)
         handled += 1
     return handled
@@ -704,7 +719,7 @@ def _resolve_expired(review_id) -> str:
         db.commit()
     ledger = costs.reservation_for_key(key)
     if stored.get("raw_output") is not None:
-        return _resume_after_response(review_id, new_token, stored, ledger)
+        return _resume_after_response(review_id, new_token, stored, ledger, key)
     status = ledger[1] if ledger else None
     receipt = ledger[0] if ledger else None
     if status == "provider_started":
@@ -726,7 +741,13 @@ def _resolve_expired(review_id) -> str:
                 CreatorGenerationReview.status == "reviewing",
                 CreatorGenerationReview.lease_token == new_token,
             )
-            .values(status="evidence_ready", lease_token=None, lease_until=None, review=null())
+            .values(
+                status="evidence_ready",
+                evidence_ready_at=_now(),
+                lease_token=None,
+                lease_until=None,
+                review=null(),
+            )
         ).rowcount
         db.commit()
     if reset == 1:
@@ -740,7 +761,7 @@ def _recovered(review_id, token, status: str, reason: str) -> str:
     return status
 
 
-def _resume_after_response(review_id, token, stored, ledger) -> str:
+def _resume_after_response(review_id, token, stored, ledger, key) -> str:
     provenance = stored.get("provenance") or {}
     if ledger is None or ledger[1] in {"released", "reserved"}:
         return _recovered(review_id, token, "review_unknown", "response_lost")
@@ -751,4 +772,8 @@ def _resume_after_response(review_id, token, stored, ledger) -> str:
             receipt, usage_meter(provenance.get("usage") or {}, provenance.get("response_id"))
         )
         settled = {**provenance, "settled_usd": cost}
+    elif status == "settled" and provenance.get("settled_usd") is None:
+        booked = costs.settled_cost_for_key(key)
+        if booked is not None:
+            settled = {**provenance, "settled_usd": booked}
     return _finish(review_id, token, settled=settled)

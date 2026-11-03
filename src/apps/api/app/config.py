@@ -797,6 +797,9 @@ class Settings(BaseSettings):
     kria_intent_review_repair_enabled: bool = False
     kria_intent_review_user_ids: Annotated[list[str], NoDecode] = []
     kria_intent_review_max_usd: float = Field(default=0.10, gt=0, le=0.25)
+    # Literal per-creator daily cap on paid reviews, counted in the cost ledger by feature
+    # (like edit_director and the chip suggester). 0 blocks every review.
+    kria_intent_review_daily_limit_per_user: int = Field(default=20, ge=0, le=500)
     # release_canary_id the ledger requires for internal accounts; empty => no paid review.
     kria_intent_review_canary_id: str = ""
     # KRI-520: Kria replies in the chat's language (Turkish or English). The chat's

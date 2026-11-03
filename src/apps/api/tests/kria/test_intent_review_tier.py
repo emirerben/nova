@@ -73,15 +73,16 @@ def test_child_flags_do_nothing_without_their_parents(flags, overrides, expected
     assert tier.intent_review_tier(USER) == expected
 
 
-def test_only_a_reviewing_tier_on_a_runtime_v2_thread_retires_the_legacy_review(flags, monkeypatch):
+def test_only_a_reviewing_tier_retires_the_legacy_review_until_the_review_has_no_verdict(
+    flags, monkeypatch
+):
     flags()
-    v2, v1 = SimpleNamespace(runtime_version=2), SimpleNamespace(runtime_version=1)
     monkeypatch.setattr(tier, "_CODE_TIER_CEILING", "evidence")
-    assert tier.intent_review_replaces_legacy(USER, v2) is False
+    assert tier.intent_review_replaces_legacy(USER) is False
     monkeypatch.setattr(tier, "_CODE_TIER_CEILING", "review")
-    assert tier.intent_review_replaces_legacy(USER, v2) is True
-    assert tier.intent_review_replaces_legacy(USER, v1) is False
-    assert tier.intent_review_replaces_legacy("someone-else", v2) is False
+    assert tier.intent_review_replaces_legacy(USER) is True
+    assert tier.intent_review_replaces_legacy(USER, ended_without_verdict=True) is False
+    assert tier.intent_review_replaces_legacy("someone-else") is False
 
 
 def test_every_flag_is_documented_where_operators_look():

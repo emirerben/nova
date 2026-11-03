@@ -9,6 +9,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import structlog
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert
 
@@ -360,7 +361,9 @@ def reconcile_generation_reviews(deadline=None):
     try:
         from app.services.intent_review_flow import recover_intent_reviews
 
-        recover_intent_reviews()
+        recover_intent_reviews(deadline)
+    except SoftTimeLimitExceeded:
+        raise
     except Exception:
         log.warning("intent_review_recovery_failed", exc_info=True)
     with sync_session() as db:

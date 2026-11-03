@@ -18,11 +18,12 @@ A finished, published generation is checked against what the creator asked for. 
 | `KRIA_INTENT_REVIEW_USER_IDS` | `[]` | `[]` admits nobody, `["*"]` everyone. |
 | `KRIA_INTENT_REVIEW_MAX_USD` | `0.10` | Per-review ceiling (`0 < x <= 0.25`), stamped at admission. |
 | `KRIA_INTENT_REVIEW_CANARY_ID` | empty | `release_canary_id` the ledger requires for internal accounts. |
+| `KRIA_INTENT_REVIEW_DAILY_LIMIT_PER_USER` | `20` | Paid reviews per creator per UTC day, counted in the cost ledger (`exhausted(budget_user_day)`). `0` blocks every review. |
 | `AI_OPENAI_INTENT_REVIEW_BUDGET_USD` | `0` | Monthly capability budget. `0` rejects every reserve. |
 
 ## Tier and code ceiling
 
-`app/kria/intent_review_tier.py` is the only code that reads the flags. A child flag does nothing without its parent, and `_CODE_TIER_CEILING` caps what any flag combination can switch on. Each PR in the stack raises it, so enabling a flag early cannot turn on an unfinished stage.
+`app/kria/intent_review_tier.py` is the only place that decides a creator's tier (allowlist, parent flags, API key and budgets). `KRIA_INTENT_REVIEW_ENABLED` is also read directly as the global kill switch by admission, publishing, recovery and the legacy interlock. A child flag does nothing without its parent, and `_CODE_TIER_CEILING` caps what any flag combination can switch on. Each PR in the stack raises it, so enabling a flag early cannot turn on an unfinished stage.
 
 | Tier | Needs | Does |
 | --- | --- | --- |
@@ -31,7 +32,7 @@ A finished, published generation is checked against what the creator asked for. 
 | `review` | `PAID`, `OPENAI_API_KEY`, `AI_OPENAI_INTENT_REVIEW_BUDGET_USD > 0`, `AI_OPENAI_MONTHLY_BUDGET_USD > 0` | one paid frame review |
 | `repair` | `REPAIR` | reserved for a later stage |
 
-The tier is stamped at admission. Live flags can only lower it, never raise it. The legacy Gemini quality review is retired for a runtime-v2 thread only when that creator's tier is `review` or higher, so admitting evidence alone never leaves a generation unreviewed.
+The tier is stamped at admission. Live flags can only lower it, never raise it. The legacy Gemini quality review is retired for a runtime-v2 thread only when that creator's tier is `review` or higher and the thread's newest intent review has not ended without a verdict (`unavailable`, `exhausted`, `stale`, `review_unknown`). When it has, the next reconcile hands the generation back to the legacy review. The intent review judges the creator's request against the video; it does not replace the legacy review's mechanical repairs (caption legibility, speech cuts, transition fallback), so a creator whose review reports no findings is not covered for those.
 
 ## Cost bounds
 

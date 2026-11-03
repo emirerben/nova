@@ -11,7 +11,7 @@ import copy
 import uuid
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.config import settings
 from app.database import AsyncSessionLocal, sync_session
@@ -873,6 +873,7 @@ async def test_review_sweep_is_time_boxed_and_never_runs_inside_the_chat_reconci
 
     claim, *_ = approved_publication
     monkeypatch.setattr(settings, "kria_intent_review_enabled", True)
+    monkeypatch.setattr(settings, "kria_intent_review_user_ids", ["*"])
     broker = Mock(side_effect=RuntimeError("broker unavailable"))
     monkeypatch.setattr(prepare_generation_review, "apply_async", broker)
     assert (await asyncio.to_thread(_observe_dispatched_execution, claim.execution_id))[
@@ -880,6 +881,15 @@ async def test_review_sweep_is_time_boxed_and_never_runs_inside_the_chat_reconci
     ] == "completed"
     broker.side_effect = None
     broker.reset_mock()
+    with sync_session() as db:
+        db.execute(
+            text(
+                "UPDATE creator_generation_reviews SET status = 'stale', reason = 'test_isolation' "
+                "WHERE execution_id <> :mine AND status IN ('pending', 'running')"
+            ),
+            {"mine": claim.execution_id},
+        )
+        db.commit()
 
     forbidden = Mock(side_effect=AssertionError("review recovery inside the 45s chat reconciler"))
     monkeypatch.setattr(admission, "reconcile_generation_reviews", forbidden)
@@ -887,6 +897,7 @@ async def test_review_sweep_is_time_boxed_and_never_runs_inside_the_chat_reconci
     forbidden.assert_not_called()
     monkeypatch.undo()
     monkeypatch.setattr(settings, "kria_intent_review_enabled", True)
+    monkeypatch.setattr(settings, "kria_intent_review_user_ids", ["*"])
     monkeypatch.setattr(prepare_generation_review, "apply_async", broker)
     broker.reset_mock()
 
