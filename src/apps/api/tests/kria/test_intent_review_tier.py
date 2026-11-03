@@ -1,4 +1,4 @@
-"""Failure matrix row 41: a flag flip can never switch on a stage that has not shipped.
+"""Failure matrix row 41: a flag flip never switches on a stage its parent flag has not enabled.
 
 The tier is the only thing the rest of the code reads. A child flag set without its parent
 does nothing, and an empty allowlist admits nobody.
