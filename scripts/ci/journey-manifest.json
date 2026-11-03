@@ -1932,7 +1932,7 @@
     {
       "id": "kri-551-consented-retakes",
       "needs_native": true,
-      "api_tests": "tests/agents/test_retake_detector.py tests/services/test_speech_cleanup_preflight.py tests/services/test_speech_cleanup_retakes_consent.py tests/services/test_speech_cleanup_decision.py tests/tasks/test_speech_cleanup_analysis.py tests/routes/test_creation_threads_speech_cleanup.py tests/kria/test_runtime_v2.py tests/kria/test_runtime_speech_cleanup_approval.py tests/kria/test_kri520_receipts.py tests/kria/test_brief_talking_receipts.py tests/kria/test_brief_marathon_receipts.py tests/tasks/test_kri551_cleanup_review_note.py tests/tasks/test_kri978_cleanup_review_seconds.py tests/routes/test_creator_agent.py tests/tasks/test_marathon_render_ready_review.py tests/kria/test_brief_rendered_speech_facts.py tests/kria/test_runtime_talking_first_draft.py tests/kria/test_kri787_merope_t1_runtime_postgres.py",
+      "api_tests": "tests/agents/test_retake_detector.py tests/services/test_speech_cleanup_preflight.py tests/services/test_speech_cleanup_retakes_consent.py tests/services/test_speech_cleanup_decision.py tests/tasks/test_speech_cleanup_analysis.py tests/routes/test_creation_threads_speech_cleanup.py tests/kria/test_runtime_v2.py tests/kria/test_runtime_speech_cleanup_approval.py tests/kria/test_kri520_receipts.py tests/kria/test_brief_talking_receipts.py tests/kria/test_brief_marathon_receipts.py tests/tasks/test_kri551_cleanup_review_note.py tests/tasks/test_kri978_cleanup_review_seconds.py tests/routes/test_creator_agent.py tests/tasks/test_marathon_render_ready_review.py tests/kria/test_brief_rendered_speech_facts.py tests/kria/test_runtime_talking_first_draft.py tests/kria/test_kri787_merope_t1_runtime_postgres.py tests/kria/test_kri1176_restart_cut_receipts.py tests/pipeline/test_kri1176_green3_retake_replay.py tests/evals/test_retake_detector_evals.py",
       "xctests": [
         "KriaTests/SpeechCleanupOfferTests/testLegacyStatsWithoutRetakesKeepTheOriginalDisclosure",
         "KriaTests/SpeechCleanupOfferTests/testSummarySentenceNamesRestartedSentencesWhenTheyAreIncludedInTheCount",
@@ -1975,7 +1975,26 @@
         "src/apps/api/tests/tasks/test_marathon_render_ready_review.py",
         "src/apps/api/tests/kria/test_brief_rendered_speech_facts.py",
         "src/apps/api/tests/kria/test_runtime_talking_first_draft.py",
-        "src/apps/api/tests/kria/test_kri787_merope_t1_runtime_postgres.py"
+        "src/apps/api/tests/kria/test_kri787_merope_t1_runtime_postgres.py",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/clean_no_retake_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/empty_transcript_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/en_cafe_intro_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/en_cafe_merope_dialogue_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/en_restart.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/en_scripted_voiceover_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/en_walkin_dialogue_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/es_waiter_sauces_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/es_waiter_sauces_t3_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/green3_s2_restart.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/n3_marathon_restart.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/rhetorical_repetition_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/tr_community_rhetorical_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/tr_restart.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/tr_talking_intro_negative.json",
+        "src/apps/api/tests/fixtures/kri1176_green3_restart.json",
+        "src/apps/api/tests/kria/test_kri1176_restart_cut_receipts.py",
+        "src/apps/api/tests/pipeline/test_kri1176_green3_retake_replay.py",
+        "src/apps/api/tests/evals/test_retake_detector_evals.py"
       ]
     },
     {

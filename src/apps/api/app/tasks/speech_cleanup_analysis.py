@@ -666,8 +666,10 @@ def _run_engine_once(
     reference_source: str | None = None,
     reference_covers_s: float | None,
 ) -> SpeechCleanupAnalysisResult:
+    from app.services.plan_item_media import speech_cleanup_retakes_enabled  # noqa: PLC0415
+
     retake_detect_fn = None
-    if settings.retake_cut_enabled and settings.speech_cleanup_retakes_enabled:
+    if speech_cleanup_retakes_enabled():
 
         def retake_detect_fn(words, language):  # noqa: ANN001
             return _retake_spans_for_timed_words(

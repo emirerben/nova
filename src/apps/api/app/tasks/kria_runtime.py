@@ -7390,6 +7390,19 @@ def _source_fingerprints(job: Job) -> dict[str, str]:
     return {media_id: sha for media_id, sha in found.items() if media_id not in conflicted}
 
 
+def _cleanup_note_retake_cut_possible(contract: object) -> bool:
+    """Could this render's speech cleanup have cut a restarted sentence (KRI-1176)?
+
+    Consented cleanup (``required_v1``) detects retakes only when both levers are on; the older
+    auto path needs just ``RETAKE_CUT_ENABLED``. The review note denies a restart cut otherwise.
+    """
+    from app.services.plan_item_media import speech_cleanup_retakes_enabled  # noqa: PLC0415
+
+    if contract == "required_v1":
+        return speech_cleanup_retakes_enabled()
+    return bool(settings.retake_cut_enabled)
+
+
 def _approved_generation_review(
     db: Any,
     thread: CreationThread,
@@ -7410,9 +7423,7 @@ def _approved_generation_review(
     note = speech_cleanup_review_note(
         variant,
         text=text,
-        # Consented cleanup never runs the retake detector; the older auto path does when
-        # its lever is on, so only then must the reply not deny a restart cut.
-        retake_cut_possible=contract != "required_v1" and bool(settings.retake_cut_enabled),
+        retake_cut_possible=_cleanup_note_retake_cut_possible(contract),
     )
     if not note:
         return text, receipts

@@ -6755,10 +6755,14 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         lead, status = _CLEANUP_IF_OFFERED, "partial"
     notes = [_loc(lead)]
     if _wants_named_cuts(req):
-        if (facts.phone_talking or _cuts_named_voiceover_lines(facts)) and named_cut_lines(req):
+        from app.kria.opening_cut_ask import named_cut_asks  # noqa: PLC0415
+
+        if (facts.phone_talking or _cuts_named_voiceover_lines(facts)) and named_cut_asks([req]):
             # KRI-821: the phone Talking render cuts each named line it finds said once;
             # KRI-889: so does a narrated render, out of the recorded voiceover.
             # Not certain before the render finds the line, so never "Done" (KRI-792).
+            # KRI-1176: only a line the ask itself says is kept (`named_cut_asks`): the render
+            # drops a recorded `cut_lines` entry the ask never says, so promising it is false.
             notes.append(_loc(_NAMED_CUT_AT_RENDER))
             status = "partial"
         else:

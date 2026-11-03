@@ -30,6 +30,25 @@ message. This PR's local evidence is bounded in
 not replace the original-output and device acceptance gates in
 [`kri-829-original-output-acceptance.md`](../reviews/kri-829-original-output-acceptance.md).
 
+KRI-1176 chose this path for "cut the sentence I restarted" (Green 3, job `9bad2d75`). Before
+setting the flag:
+
+1. Paid precision run (needs the owner's explicit approval; about 28 Gemini 2.5 Flash calls,
+   a few cents, hard cap $2). From `src/apps/api`:
+   `NOVA_EVAL_MODE=live GEMINI_API_KEY=… AI_COST_CONTROL_ENABLED=true AI_USAGE_ENVIRONMENT=development .venv/bin/python -m pytest tests/evals/test_retake_detector_evals.py -v --eval-mode=live --usage-purpose=live_eval --test-run-id=retake-precision-<date> --max-cost-usd=2 --approve-reservation`.
+   Pass = every negative (real takes with no restart) returns no span, and
+   `test_positive_fixtures_cut_only_the_abandoned_take` passes on Green 3 and N3: no span
+   touches a kept word. Any failure blocks the flag.
+2. Land KRI-1189 (the `cut_restarts` brief fact; child of KRI-1174, related to KRI-1176) first. Until
+   then a real retake cut leaves "Cut the sentence I restarted" at "Partly ... may still be in
+   your video" while the finished-render note says what was cut. Its new "also cuts a sentence
+   you restarted" receipt must also be in `approval_readiness._cleanup_deferred` (KRI-1178), so
+   it never holds a draft.
+3. `fly secrets set SPEECH_CLEANUP_RETAKES_ENABLED=true --app nova-video` and restart api and
+   worker (every ready analysis is retired once and consent is asked again), then the canary
+   above on an iPhone: the Green 3 take (`IMG_7231.MOV`) as the retake-positive source and one
+   take with no restart.
+
 ## Gates and sequence
 
 Deploy migration, API, web, Beat, and the dedicated `speech_analysis` Fly process
