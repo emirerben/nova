@@ -2137,6 +2137,8 @@ enum MomentOrderFixture {
 }
 #endif
 
+#if DEBUG
+
 // MARK: KRIA_TALKING_RERECORD (re-record from the ready Talking video)
 
 /// `KRIA_TALKING_RERECORD=ready|no-audio|busy-twice|slot-full|no-replace`: a Talking chat that already has one attached take.
@@ -2246,3 +2248,4 @@ extension CreationChatFixture {
         return nil
     }
 }
+#endif
