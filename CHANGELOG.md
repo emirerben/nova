@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.6.0] - 2026-11-03
+
+### Fixed
+- feat(editor): phone Talking edits can add pictures, dark (KRI-1142) (#2074) <!-- release-pr: 2074 -->
+
 ## [0.84.5.0] - 2026-11-03
 
 ### Changed
