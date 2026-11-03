@@ -373,7 +373,7 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(done.waitForExistence(timeout: 10))
         // Add stays disabled until something is picked, so leaving with nothing is Cancel.
         XCTAssertFalse(done.isEnabled)
-        app.staticTexts["Choose footage"].firstMatch.swipeDown(velocity: .fast)
+        app.buttons["gallery-cancel"].tap()
         let upload = app.buttons["source-upload"]
         XCTAssertTrue(upload.waitForExistence(timeout: 5), "Done returns to Add media")
         let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: upload)
@@ -398,6 +398,10 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(picker.frame.contains(selectionPoint), "The selected video must be inside the visible Photos picker")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
             .withOffset(CGVector(dx: selectionPoint.x, dy: selectionPoint.y)).tap()
+        // The gallery stays open until the creator confirms with the pinned Add button.
+        XCTAssertTrue(done.isEnabled)
+        XCTAssertEqual(done.label, "Add 1 clip")
+        done.tap()
         // Filling the picker advances the attachment flow after dismissal.
         // Talking-to-camera has no voiceover step, so it lands on overlays.
         XCTAssertTrue(app.staticTexts["Add overlays"].waitForExistence(timeout: 10))
@@ -409,18 +413,25 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@", "won\u{2019}t be sent", "couldn\u{2019}t be")).firstMatch.waitForExistence(timeout: 10))
         chooseVideos.tap()
         XCTAssertTrue(photos.waitForExistence(timeout: 3))
+        // The simulator library also holds videos other tests seed, so which file sorts first varies.
         let selectedClipFailure = app.staticTexts.matching(
-            NSPredicate(format: "label BEGINSWITH 'kria-outro-paper.mp4: '")
+            NSPredicate(format: "label MATCHES '.+\\.(mp4|mov): .+'")
         ).firstMatch
         XCTAssertTrue(selectedClipFailure.waitForExistence(timeout: 3),
             "The selected Photos asset remains available as a named upload failure")
-        let dismissFailure = app.buttons.matching(NSPredicate(
+        // Choosing videos opens the Upload from list over the failure card; close it to reach Dismiss.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
+        XCTAssertTrue(photos.waitForNonExistence(timeout: 5))
+        // The chat behind the sheet shows the same failure with its own Dismiss; the sheet's is the one on top.
+        let dismissButtons = app.buttons.matching(NSPredicate(
             format: "label == 'Dismiss' AND identifier != 'footage-upload-failures-dismiss'"
-        )).firstMatch
-        XCTAssertTrue(dismissFailure.isHittable)
+        ))
+        let onTop = NSPredicate { _, _ in dismissButtons.allElementsBoundByIndex.contains { $0.isHittable } }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: onTop, object: nil)], timeout: 10), .completed)
+        let dismissFailure = dismissButtons.allElementsBoundByIndex.first { $0.isHittable }!
         dismissFailure.tap()
         XCTAssertFalse(selectedClipFailure.exists)
-        XCTAssertTrue(photos.isHittable, "The user can choose the clip again after dismissing the failure")
+        XCTAssertTrue(app.buttons["source-upload"].isHittable, "The user can choose the clip again after dismissing the failure")
     }
 
     /// KRI-719: with multi-clip Talking on, the Talking footage step explains the talking video plus

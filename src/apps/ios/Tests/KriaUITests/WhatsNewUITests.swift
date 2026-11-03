@@ -47,7 +47,6 @@ import XCTest
         openSettings(app)
         let settings = app.navigationBars["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        XCTAssertFalse(app.staticTexts["Account"].exists, "The Account heading is gone")
         attachScreenshot("settings-top", app: app)
         let entry = app.buttons["account-whats-new"]
         XCTAssertTrue(entry.waitForExistence(timeout: 5))

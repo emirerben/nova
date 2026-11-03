@@ -338,7 +338,7 @@ final class SongOrderUITests: XCTestCase {
         XCTAssertTrue(on.staticTexts["Add your song"].waitForExistence(timeout: 5))
         XCTAssertTrue(on.staticTexts["song-rights-note"].exists)
         XCTAssertTrue(on.staticTexts["Only use songs you have the rights to."].exists)
-        XCTAssertTrue(on.buttons["Choose a song from Files"].exists)
+        XCTAssertTrue(on.buttons["source-upload"].exists, "the song comes from Files through the Upload tile")
         XCTAssertTrue(on.buttons["song-skip"].exists, "a song is optional")
         XCTAssertFalse(on.buttons["upload-source-photos"].exists, "a song is an audio file, not a Photos pick")
         on.terminate()

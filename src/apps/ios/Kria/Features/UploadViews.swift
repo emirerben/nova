@@ -638,6 +638,8 @@ private struct LibraryPhotosPickerSheet: View {
                 }
             }
             .padding(.horizontal, 12).frame(height: 56)
+            // The system's inline picker (UI tests only) pulls the sheet under the status bar, where Cancel can't be tapped.
+            .padding(.top, usesApplePicker ? 50 : 0)
             if onSwitch != nil {
                 HStack(spacing: 8) {
                     KriaSegmentedControl(options: [("Photos", GallerySegment.photos), ("Saved uploads", .saved)], selection: Binding(
