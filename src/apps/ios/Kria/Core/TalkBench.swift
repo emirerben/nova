@@ -51,6 +51,11 @@ final class TalkBench: @unchecked Sendable {
         uname(&system)
         bench.fact("device.machine", withUnsafeBytes(of: &system.machine) { String(decoding: $0.prefix(while: { $0 != 0 }), as: UTF8.self) })
         bench.fact("os.version", ProcessInfo.processInfo.operatingSystemVersionString)
+        bench.recordThermal(initial: true)
+        bench.recordFreeSpace(key: "disk.free_mb.start")
+        NotificationCenter.default.addObserver(forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: nil) { _ in
+            bench.recordThermal(changed: true)
+        }
         NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { _ in
             bench.flushNow()
         }
@@ -106,6 +111,39 @@ final class TalkBench: @unchecked Sendable {
         if (try? FileManager.default.linkItem(at: url, to: destination)) == nil { try? FileManager.default.copyItem(at: url, to: destination) }
     }
 
+    /// `thermal.start` is the state at launch, `thermal.end` the latest state at each flush, `thermal.max` the worst seen. A
+    /// run that began on a warm phone is not comparable to one that began cool, so the report carries all three.
+    private func recordThermal(initial: Bool = false, changed: Bool = false) {
+        let name = Self.thermalName(ProcessInfo.processInfo.thermalState)
+        lock.lock()
+        let worst = Self.thermalRank(facts["thermal.max"] ?? "nominal")
+        if initial { facts["thermal.start"] = name }
+        if Self.thermalRank(name) >= worst { facts["thermal.max"] = name }
+        facts["thermal.end"] = name
+        facts["power.low_power_mode"] = ProcessInfo.processInfo.isLowPowerModeEnabled ? "1" : "0"
+        lock.unlock()
+        if changed { count("talk.thermal.changed", detail: name) }
+    }
+
+    /// Free space as the system would report it to the app, in MB. The install of the next run needs about 180 MB of it.
+    private func recordFreeSpace(key: String) {
+        let values = try? URL(fileURLWithPath: NSHomeDirectory()).resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        guard let bytes = values?.volumeAvailableCapacityForImportantUsage else { return }
+        lock.lock(); facts[key] = String(bytes / 1_000_000); lock.unlock()
+    }
+
+    private static func thermalName(_ state: ProcessInfo.ThermalState) -> String {
+        switch state {
+        case .nominal: "nominal"
+        case .fair: "fair"
+        case .serious: "serious"
+        case .critical: "critical"
+        @unknown default: "unknown"
+        }
+    }
+
+    private static func thermalRank(_ name: String) -> Int { ["nominal": 0, "fair": 1, "serious": 2, "critical": 3][name] ?? 0 }
+
     func flushNow() {
         guard Self.isEnabled else { return }
         writeQueue.sync { write() }
@@ -146,6 +184,8 @@ final class TalkBench: @unchecked Sendable {
     }
 
     private func write() {
+        recordThermal()
+        recordFreeSpace(key: "disk.free_mb.end")
         lock.lock()
         flushScheduled = false
         var document: [String: Any] = [
@@ -168,7 +208,10 @@ extension TeleprompterRecordingFlow {
             return
         }
         do {
-            chooseBackground(from: kind == .image ? try TalkBenchFixtures.makePhoto() : try await TalkBenchFixtures.makeVideo(), kind: kind)
+            let began = DispatchTime.now().uptimeNanoseconds
+            let file = kind == .image ? try TalkBenchFixtures.makePhoto() : try await TalkBenchFixtures.makeVideo()
+            TalkBench.shared.finished("talk.bench.backgroundMake", since: began, detail: kind.rawValue)
+            chooseBackground(from: file, kind: kind)
         } catch {
             backgroundNote = "The bench could not make its \(kind.rawValue) background: \(error.localizedDescription)"
         }
