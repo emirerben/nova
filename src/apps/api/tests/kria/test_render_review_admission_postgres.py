@@ -34,7 +34,12 @@ from app.models import (
     CreatorPreparedExecution,
     Job,
 )
-from app.services.creator_render_contract import CONTRACT_FIELD, build_render_contract
+from app.services.creator_render_contract import (
+    CONTRACT_FIELD,
+    TextRequirement,
+    build_render_contract,
+    read_render_contract,
+)
 from app.services.device_render import (
     DEVICE_RENDER_FIELD,
     device_record,
@@ -54,9 +59,15 @@ from tests.services.test_render_review_evidence import local_video  # noqa: F401
 
 pytestmark = pytest.mark.usefixtures("release_abandoned_db_connections")
 
+DEFAULT_OPS = [{"op": "patch_text_style", "bar_index": 0, "patch": {"color": "#FF0000"}}]
+
 
 @pytest.fixture
 async def approved_publication(monkeypatch):
+    return await approve_publication(monkeypatch)
+
+
+async def approve_publication(monkeypatch, *, ops=None, contract_text=None):
     user, thread, session = _seed_runtime_project()
     job_id = _seed_job(user, session)
     template = phone_job(monkeypatch)
@@ -116,7 +127,7 @@ async def approved_publication(monkeypatch):
             plan=adapt_editor_action(
                 reply="Keep the words and make title red",
                 request_render=True,
-                ops=[{"op": "patch_text_style", "bar_index": 0, "patch": {"color": "#FF0000"}}],
+                ops=ops or DEFAULT_OPS,
             ),
             manifest_hash="a" * 64,
             context_hash="b" * 64,
@@ -126,11 +137,38 @@ async def approved_publication(monkeypatch):
     accepted = await _submit(user, thread, "Keep the exact title Before and make it red")
     result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
     assert result["status"] == "awaiting_approval", result
+    published = await approve_and_publish(
+        user,
+        thread,
+        job_id,
+        uuid.UUID(accepted.turn_id),
+        attempt="synthetic-publication",
+        contract_text=contract_text,
+    )
+    with sync_session() as db:
+        execution = db.get(CreatorAgentExecution, published[0].execution_id)
+        assert execution.result["editor_prep"]["device_recipe_revision"] == 2
+        assert device_record(db.get(Job, job_id), "guided_story")["status"]["request"]["recipe"][
+            "text_layers"
+        ]
+    return published
+
+
+async def approve_and_publish(
+    user,
+    thread,
+    job_id,
+    turn_id,
+    *,
+    attempt,
+    sha="a" * 64,
+    path="renders/verified.mp4",
+    contract_text=None,
+):
+    """Approve the turn's pending render, claim its dispatch and publish a synthetic artifact."""
     with sync_session() as db:
         approval = db.scalar(
-            select(CreatorAgentApproval).where(
-                CreatorAgentApproval.turn_id == uuid.UUID(accepted.turn_id)
-            )
+            select(CreatorAgentApproval).where(CreatorAgentApproval.turn_id == turn_id)
         )
         revision = db.get(CreationThread, thread).revision
         fingerprint = approval_fingerprint(approval)
@@ -160,23 +198,21 @@ async def approved_publication(monkeypatch):
             == db.get(CreatorEditDraft, approval.draft_id).snapshot_hash
         )
         record = device_record(job, "guided_story")
-        assert execution.result["editor_prep"]["device_recipe_revision"] == 2
-        assert record["status"]["request"]["recipe"]["text_layers"]
-        record.update(
-            published_attempt="synthetic-publication", base_generation="synthetic-publication"
-        )
+        record.update(published_attempt=attempt, base_generation=attempt)
+        if contract_text is not None:
+            rebound = read_render_contract({CONTRACT_FIELD: record["contract_snapshot"]}).rebind(
+                exact_texts=(TextRequirement(role="any", text=contract_text),)
+            )
+            record.update(contract_snapshot=rebound.model_dump(mode="json"))
+            record.update(contract_digest=rebound.digest)
         record["status"]["phase"] = "published"
-        record["attempts"]["synthetic-publication"] = {
-            "path": "renders/verified.mp4",
-            "size": 100,
-            "sha256": "a" * 64,
-        }
+        record["attempts"][attempt] = {"path": path, "size": 100, "sha256": sha}
         save_device_record(job, "guided_story", record)
         assembly = copy.deepcopy(job.assembly_plan)
         assembly["variants"][0].update(
-            render_generation_id="synthetic-publication",
+            render_generation_id=attempt,
             render_status="ready",
-            video_path="renders/verified.mp4",
+            video_path=path,
         )
         job.assembly_plan = assembly
         job.status = "variants_ready"
@@ -188,10 +224,10 @@ async def approved_publication(monkeypatch):
             execution_id=str(execution.id),
             job_id=str(job_id),
             variant_id="guided_story",
-            published_attempt="synthetic-publication",
-            object_path="renders/verified.mp4",
+            published_attempt=attempt,
+            object_path=path,
             object_version="1",
-            sha256="a" * 64,
+            sha256=sha,
             byte_count=100,
             recipe_digest=record["recipe_digest"],
         )

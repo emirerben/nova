@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import unicodedata
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -167,13 +167,15 @@ def _role(bar: dict[str, Any], kind: str) -> Role:
 
 
 def _issue(
-    binding: BriefBinding,
+    binding: BriefBinding, restrict_to: Collection[str] | None = None
 ) -> tuple[list[BriefRequirement], list[WithheldRequirement]]:
     """Requirements the review may judge, in priority order, plus every one it declined."""
     brief = binding.brief
     withheld: list[WithheldRequirement] = []
     eligible: list[BriefRequirement] = []
     for requirement in brief.requirements if brief else []:
+        if restrict_to is not None and requirement.id not in restrict_to:
+            continue
         if requirement.status == "superseded":
             removed = requirement.facts.get(SUPERSEDED_BY_FACT) is not None
             withheld.append(
@@ -284,8 +286,9 @@ def build_review_catalog(
     binding: BriefBinding,
     frames: Sequence[FrameRef],
     rendered_duration_s: float | None,
+    restrict_to: Collection[str] | None = None,
 ) -> ReviewCatalog:
-    requirements, withheld = _issue(binding)
+    requirements, withheld = _issue(binding, restrict_to)
     raw_rows = (
         (frozen_draft.editor_payload or {}).get("text_elements")
         if frozen_draft.kind == "editor"

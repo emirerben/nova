@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from app.agents._runtime import RunContext
     from app.kria.editor_repair import PreparedEditorRepair
+    from app.kria.intent_review_repair import IntentRepairSpec
 
 import structlog
 from pydantic import ValidationError
@@ -1001,6 +1002,7 @@ class PlannedKriaTurn:
     pin_notices: tuple[str, ...] = ()
     editor_repair: PreparedEditorRepair | None = None
     editor_repair_run_context: RunContext | None = None
+    intent_repair: IntentRepairSpec | None = None
 
 
 async def _withdraw_stuck_pins(
