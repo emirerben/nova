@@ -22,16 +22,24 @@ extension LiveFrameConsumer {
 /// A looping, muted video as the background. Decoded by `AVPlayerItemVideoOutput`, pulled one frame per camera frame.
 final class LoopingVideoBackground: LiveBackgroundProviding, @unchecked Sendable {
     private let player: AVPlayer
-    private let output: AVPlayerItemVideoOutput
+    private let outputAttributes: [String: Any]
     private let orientation: CGImagePropertyOrientation
     private let lock = NSLock()
     private var latest: CIImage?
+    private var decoded: CGSize?
+    /// The old way to loop (`efficientVideoBackground == false`).
     private var endObserver: NSObjectProtocol?
+    /// The new way: `AVPlayerLooper` queues the next pass before this one ends, so there is no seek and no gap.
+    private var looper: AVPlayerLooper?
+    private var looperObservation: NSKeyValueObservation?
+    /// One per item that can play: the looper rotates through a fixed few copies, and an output only sees the item it is on, so
+    /// each copy has its own, attached before it starts and not when it becomes current (which lost its first frames).
+    private var outputs: [AVPlayerItemVideoOutput] = []
 
     enum VideoError: Error { case noVideoTrack, zeroDuration }
 
     /// Builds a video-only composition so no audio can ever reach the session, whatever the source holds.
-    @MainActor init(url: URL) async throws {
+    @MainActor init(url: URL, tuning: LiveBackgroundTuning = .current) async throws {
         let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else { throw VideoError.noVideoTrack }
         let duration = try await asset.load(.duration)
@@ -40,28 +48,79 @@ final class LoopingVideoBackground: LiveBackgroundProviding, @unchecked Sendable
         let picture = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
         try picture?.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: track, at: .zero)
         orientation = Self.orientation(of: try await track.load(.preferredTransform))
-        output = AVPlayerItemVideoOutput(pixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
-        let item = AVPlayerItem(asset: composition)
-        item.add(output)
-        player = AVPlayer(playerItem: item)
-        player.isMuted = true
-        player.actionAtItemEnd = .none
-        endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak player] _ in
-            player?.seek(to: .zero)
-            player?.play()
+        var attributes: [String: Any] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+        if tuning.efficientVideoBackground,
+           let size = Self.decodeSize(natural: try await track.load(.naturalSize), orientation: orientation) {
+            attributes[kCVPixelBufferWidthKey as String] = Int(size.width)
+            attributes[kCVPixelBufferHeightKey as String] = Int(size.height)
         }
+        outputAttributes = attributes
+        let item = AVPlayerItem(asset: composition)
+        if tuning.efficientVideoBackground {
+            let queue = AVQueuePlayer()
+            let looper = AVPlayerLooper(player: queue, templateItem: item)
+            self.looper = looper
+            player = queue
+            looperObservation = looper.observe(\.status, options: [.initial, .new]) { [weak self] looper, _ in
+                if looper.status == .ready { self?.attachOutputs(to: looper.loopingPlayerItems) }
+            }
+        } else {
+            let output = AVPlayerItemVideoOutput(pixelBufferAttributes: attributes)
+            outputs = [output]
+            item.add(output)
+            player = AVPlayer(playerItem: item)
+            player.actionAtItemEnd = .none
+            endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak player] _ in
+                player?.seek(to: .zero)
+                player?.play()
+            }
+        }
+        player.isMuted = true
         player.play()
     }
 
     deinit { stop() }
 
-    func frame() -> CIImage? {
-        let time = output.itemTime(forHostTime: CACurrentMediaTime())
+    private func attachOutputs(to items: [AVPlayerItem]) {
         lock.lock(); defer { lock.unlock() }
-        if output.hasNewPixelBuffer(forItemTime: time), let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) {
+        guard outputs.isEmpty else { return }
+        outputs = items.map { item in
+            let output = AVPlayerItemVideoOutput(pixelBufferAttributes: outputAttributes)
+            item.add(output)
+            return output
+        }
+    }
+
+    func frame() -> CIImage? {
+        lock.lock(); defer { lock.unlock() }
+        for output in outputs {
+            let time = output.itemTime(forHostTime: CACurrentMediaTime())
+            guard output.hasNewPixelBuffer(forItemTime: time), let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) else { continue }
+            decoded = CGSize(width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer))
             latest = LiveBackgroundCompositor.coverFit(CIImage(cvPixelBuffer: buffer).oriented(orientation), into: LiveSpeakerMatteConfig.previewSize)
+            break
         }
         return latest
+    }
+
+    /// How many looper items have an output waiting on them, and how many items the looper plays. For tests.
+    var outputCount: Int { lock.lock(); defer { lock.unlock() }; return outputs.count }
+    var loopedItemCount: Int { looper?.loopingPlayerItems.count ?? 0 }
+
+    /// The size of the last decoded frame. For tests.
+    var decodedSize: CGSize? { lock.lock(); defer { lock.unlock() }; return decoded }
+
+    /// The size to decode a track of `natural` size at so the preview's cover fit draws it at 1:1, or nil when the track
+    /// is already no larger. Decoding at the size that is drawn spares the decoder, the copy and the Core Image read from a
+    /// full-resolution BGRA frame 30 times a second.
+    static func decodeSize(natural: CGSize, orientation: CGImagePropertyOrientation) -> CGSize? {
+        let turned = [.left, .right, .leftMirrored, .rightMirrored].contains(orientation)
+        let shown = turned ? CGSize(width: natural.height, height: natural.width) : natural
+        let canvas = LiveSpeakerMatteConfig.previewSize
+        let scale = max(canvas.width / shown.width, canvas.height / shown.height)
+        guard scale.isFinite, scale > 0, scale < 1 else { return nil }
+        func even(_ value: CGFloat) -> CGFloat { max(2, (value / 2).rounded(.up) * 2) }
+        return CGSize(width: even(natural.width * scale), height: even(natural.height * scale))
     }
 
     func setActive(_ active: Bool) {
@@ -78,6 +137,8 @@ final class LoopingVideoBackground: LiveBackgroundProviding, @unchecked Sendable
     var playbackSeconds: Double { player.currentTime().seconds }
 
     func stop() {
+        looper?.disableLooping()
+        looperObservation?.invalidate(); looperObservation = nil
         player.pause()
         if let endObserver { NotificationCenter.default.removeObserver(endObserver); self.endObserver = nil }
     }

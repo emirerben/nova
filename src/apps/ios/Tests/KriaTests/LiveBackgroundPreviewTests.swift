@@ -214,15 +214,15 @@ final class LiveBackgroundPreviewTests: XCTestCase {
         XCTAssertEqual(LoopingVideoBackground.orientation(of: .identity), .up)
     }
 
-    private func writeVideo(seconds: Double, to url: URL) async throws {
+    private func writeVideo(seconds: Double, to url: URL, size: CGSize = CGSize(width: 64, height: 64)) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
-        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 64, AVVideoHeightKey: 64])
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: Int(size.width), AVVideoHeightKey: Int(size.height)])
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: nil)
         writer.add(input); writer.startWriting(); writer.startSession(atSourceTime: .zero)
         let frames = Int(seconds * 30)
         for i in 0..<frames {
             while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
-            let buffer = pixelBuffer(width: 64, height: 64, (UInt8(i * 255 / max(1, frames)), 0, 255))
+            let buffer = pixelBuffer(width: Int(size.width), height: Int(size.height), (UInt8(i * 255 / max(1, frames)), 0, 255))
             adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: 30))
         }
         input.markAsFinished()
@@ -230,11 +230,18 @@ final class LiveBackgroundPreviewTests: XCTestCase {
         XCTAssertEqual(writer.status, .completed)
     }
 
+    private var previousVideoLoop: LiveBackgroundTuning { var tuning = LiveBackgroundTuning(); tuning.efficientVideoBackground = false; return tuning }
+
     func testAVideoBackgroundDeliversFramesAndLoops() async throws {
+        try await assertVideoLoops(LiveBackgroundTuning())
+        try await assertVideoLoops(previousVideoLoop)
+    }
+
+    private func assertVideoLoops(_ tuning: LiveBackgroundTuning) async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mov")
         defer { try? FileManager.default.removeItem(at: url) }
         try await writeVideo(seconds: 0.5, to: url)
-        let video = try await LoopingVideoBackground(url: url)
+        let video = try await LoopingVideoBackground(url: url, tuning: tuning)
         defer { video.stop() }
 
         var firstFrame: CIImage?
@@ -246,6 +253,33 @@ final class LiveBackgroundPreviewTests: XCTestCase {
         let wrapped = zip(samples, samples.dropFirst()).contains { $1 < $0 - 0.2 }
         XCTAssertTrue(wrapped, "a 0.5 s video must wrap back to the start within 2.4 s: \(samples)")
         XCTAssertNotNil(video.frame(), "still delivering after the loop")
+    }
+
+    /// Failure modes of the looper path, written before it: an output attached only when an item becomes current misses that
+    /// pass's first frames (measured on the simulator: a 135 ms hole at every loop, against 45 ms with an output waiting on
+    /// every item); frames are decoded larger than they are drawn; a landscape or turned track is sized from the wrong side.
+    func testEveryLoopedItemHasAnOutputWaitingAndFramesAreDecodedAtTheDrawnSize() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mov")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await writeVideo(seconds: 0.5, to: url, size: CGSize(width: 1080, height: 1920))
+        for (tuning, expected) in [(LiveBackgroundTuning(), CGSize(width: 540, height: 960)), (previousVideoLoop, CGSize(width: 1080, height: 1920))] {
+            let video = try await LoopingVideoBackground(url: url, tuning: tuning)
+            defer { video.stop() }
+            for _ in 0..<60 where video.decodedSize == nil { _ = video.frame(); try await Task.sleep(for: .milliseconds(50)) }
+            XCTAssertEqual(video.decodedSize, expected, tuning.efficientVideoBackground ? "decoded at the preview size" : "the previous full-size decode")
+            if tuning.efficientVideoBackground { XCTAssertGreaterThan(video.loopedItemCount, 0)
+                XCTAssertEqual(video.outputCount, video.loopedItemCount, "an output waits on every copy the looper rotates through") }
+        }
+    }
+
+    func testDecodeSizeFollowsTheSideTheCoverFitUses() {
+        XCTAssertEqual(LoopingVideoBackground.decodeSize(natural: CGSize(width: 1080, height: 1920), orientation: .up), CGSize(width: 540, height: 960))
+        XCTAssertEqual(LoopingVideoBackground.decodeSize(natural: CGSize(width: 3840, height: 2160), orientation: .right), CGSize(width: 960, height: 540),
+                       "stored landscape, shown portrait: scaled by the shown size, kept in the stored shape")
+        XCTAssertEqual(LoopingVideoBackground.decodeSize(natural: CGSize(width: 3840, height: 2160), orientation: .up), CGSize(width: 1708, height: 960),
+                       "a landscape video is cover-fit by its height")
+        XCTAssertNil(LoopingVideoBackground.decodeSize(natural: CGSize(width: 480, height: 854), orientation: .up), "never upscaled")
+        XCTAssertNil(LoopingVideoBackground.decodeSize(natural: .zero, orientation: .up))
     }
 
     func testRestartSeeksAVideoBackToItsFirstFrameAndItKeepsLooping() async throws {
