@@ -29,6 +29,8 @@ from app.services.ai_cost_control import (
 )
 from tests.services.test_ai_cost_control import _create_creator, ledger  # noqa: F401
 
+pytestmark = pytest.mark.usefixtures("exclusive_intent_review_ledger")
+
 
 @pytest.fixture
 def review_ledger(ledger, monkeypatch):  # noqa: F811
