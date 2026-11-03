@@ -25,6 +25,8 @@ struct AttachmentSheet: View {
     @State private var step: AttachmentStep = .footage
     @State private var lastGeneratedDraft: GeneratedMediaDraft?
     @State private var generatedDraft: GeneratedMediaDraft?
+    @State private var overlaySet = GeneratedOverlaySet()
+    @State private var showsOverlaySet = false
     @State private var loadingNarration = false
     @State private var pool: CreationVisuals?
     @State private var error: String?
@@ -194,8 +196,9 @@ struct AttachmentSheet: View {
                 attachmentNavigation
                 if let lastGeneratedDraft, lastGeneratedDraft.recovery != nil,
                    capabilitiesLoaded, generatedMediaEnabled(lastGeneratedDraft.capability) {
-                    Button("Resume generated preview") { generatedDraft = lastGeneratedDraft }
-                        .frame(minHeight: 44).accessibilityIdentifier("generated-media-resume")
+                    KriaNoticeCard(tone: .info, title: "Your preview is still here",
+                                   action: KriaNoticeAction(title: "Open") { generatedDraft = lastGeneratedDraft }, style: .banner)
+                        .padding(.horizontal, 24).accessibilityIdentifier("generated-media-resume")
                 }
                 AttachmentStepProgress(steps: steps, current: step, overlaysTitle: usesVisualPoolOnly ? SlideMediaCopy.poolTitle : nil)
                 TabView(selection: $step) {
@@ -235,6 +238,15 @@ struct AttachmentSheet: View {
                     }
                 }
             }
+            .sheet(isPresented: $showsOverlaySet) {
+                if let itemID {
+                    GeneratedOverlaysSheet(itemID: itemID, overlays: overlaySet, ideaTitle: thread?.title ?? "") {
+                        await loadVisuals()
+                        await refresh()
+                    }
+                }
+            }
+            .onDisappear { overlaySet.stopWork() }
             .fullScreenCover(isPresented: $showsTeleprompter, onDismiss: { Task { await refresh() } }) {
                 if let accountID = auth.localStorageIdentity {
                     TeleprompterScreen(accountID: accountID, projectID: projectID,
@@ -283,6 +295,7 @@ struct AttachmentSheet: View {
                     try? await Task.sleep(for: .seconds(3))
                 }
             }
+            .task(id: itemID) { configureOverlaySet() }
             #if DEBUG
             .task {
                 if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat"),
@@ -571,13 +584,25 @@ struct AttachmentSheet: View {
         }
     }
 
+    private func configureOverlaySet() {
+        guard let accountID = auth.localStorageIdentity, let itemID else { return }
+        overlaySet.configure(api: model.api, itemID: itemID, accountID: accountID)
+    }
+
+    private func openOverlaySet() {
+        configureOverlaySet()
+        overlaySet.resumeScreen()
+        showsOverlaySet = true
+    }
+
     private var overlaysStep: some View {
         VStack(alignment: .leading, spacing: 20) {
             AttachmentHeading(title: usesVisualPoolOnly ? SlideMediaCopy.addHeading : "Add overlays", subtitle: usesVisualPoolOnly ? SlideMediaCopy.subtitle : "Optional photos and supporting clips can add context to your video.")
             if uploadDestination(for: .visual).canUpload, !usesVisualPoolOnly { Text(visualsCaption).font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc) }
             if capabilitiesLoaded, capabilities?.generatedImages == true, itemID != nil {
-                Button("Generate an image") { openGeneratedMedia(GeneratedMediaDraft(capability: .image)) }
-                    .buttonStyle(KriaSecondaryButtonStyle()).accessibilityIdentifier("generate-image")
+                OverlaySetNotice(overlays: overlaySet) { openOverlaySet() }
+                KriaSourceRow(options: [KriaSourceOption(id: "generate", symbol: "sparkles", title: "Generate", caption: "Make AI overlays",
+                                                         identifier: "generate-image", action: { openOverlaySet() })], layout: .compact)
             }
             if pool == nil, error == nil { ProgressView(usesVisualPoolOnly ? SlideMediaCopy.loading : "Loading overlays…") }
             if pool != nil {

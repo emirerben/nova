@@ -73,80 +73,315 @@ struct GeneratedMediaSheet: View {
     var allowsUse = true
     var embedded = false
     var apiOverride: (any KriaAPIClient)? = nil
+    /// False only for screenshot previews, which carry a fixed server state and must not ask the server.
+    var restoresOnAppear = true
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var busy = false
-    @State private var error: String?
+    @State private var problem: OverlayProblem?
     @State private var previewLoaded = false
-    @State private var previewPlayed = false
-    @State private var player: AVPlayer?
+    @State private var stalled = false
+    @State private var showsFullScript = false
+    @StateObject private var voice = NarrationPlayer()
     @State private var pollTask: Task<Void, Never>?
 
     private var narration: Bool { draft.capability == .narration }
-    private var heading: String { narration ? "Generate narration" : (draft.capability == .imageEdit ? "Edit image" : "Generate image") }
+    private var editing: Bool { draft.capability == .imageEdit }
+    private var heading: String {
+        if narration { return "AI voice" }
+        if case .ready = stage { return editing ? "Your edit" : "Your image" }
+        return editing ? "Edit image" : "Generate image"
+    }
+    private var noun: OverlayProblemNoun { narration ? .voice : OverlayProblemNoun(singular: "image", plural: "images") }
+    private var promptIsEmpty: Bool { draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     private var api: any KriaAPIClient { apiOverride ?? model.api }
 
-    var body: some View {
-        Group {
-            if embedded { contents }
-            else {
-                NavigationStack {
-                    ScrollView { contents.padding(24) }
-                        .navigationTitle(heading)
-                        .navigationBarTitleDisplayMode(.inline)
-                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
-                        .interactiveDismissDisabled(busy)
-                }
-            }
-        }
-        .onDisappear { pollTask?.cancel(); player?.pause() }
-        .onAppear {
-            pollTask = Task { await restore() }
+    private enum Stage {
+        case compose, rejected, making, uncertain, failed, unsaved
+        case ready(GeneratedMediaOperation)
+    }
+
+    private var stage: Stage {
+        if draft.submissionRejection != nil { return .rejected }
+        guard draft.recovery != nil else { return .compose }
+        guard let operation = draft.operation else { return busy ? .making : .uncertain }
+        switch operation.state {
+        case .ready: return (operation.previewURL ?? operation.sourceURL) != nil && operation.canAccept ? .ready(operation) : .uncertain
+        case .pending, .submitting: return .making
+        case .providerComplete: return operation.canRetryStorage ? .unsaved : .making
+        case .unknown: return .uncertain
+        case .failed: return .failed
         }
     }
 
-    private var contents: some View {
-        VStack(alignment: .leading, spacing: embedded ? 10 : 18) {
-            if narration {
-                Text("This voice is AI-generated. Review the script and listen before using it.")
-                Text(draft.script?.text ?? "").textSelection(.enabled)
+    var body: some View {
+        Group {
+            if embedded {
+                VStack(alignment: .leading, spacing: 12) { notices; mainContent; inlineActions }
+            } else if hasPinnedActions {
+                KriaSheetScaffold(heading: heading, onClose: { dismiss() }) { sheetContent } pinnedBar: { pinnedActions }
             } else {
-                if !embedded {
-                    TextField("Image title", text: $draft.title)
-                        .accessibilityIdentifier("generated-media-title").disabled(draft.recovery != nil || draft.submissionRejection != nil)
-                }
-                // The exact prompt that will be paid for is always visible before the first request.
-                TextField(draft.source == nil ? "Describe your image" : "Describe the changes", text: $draft.prompt, axis: .vertical)
-                    .lineLimit(embedded ? 2...6 : 3...8).accessibilityIdentifier("generated-media-prompt").disabled(draft.recovery != nil || draft.submissionRejection != nil)
-                if embedded && draft.recovery == nil && draft.submissionRejection == nil {
-                    Text("Generating uses your account’s allowance.")
-                        .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
-                }
-            }
-            if draft.recovery == nil, draft.submissionRejection == nil {
-                Button(narration ? "Approve script and generate AI voice" : "Generate preview") { submit() }
-                    .buttonStyle(KriaPrimaryButtonStyle())
-                    .disabled(busy || !allowsNewGeneration || (!narration && draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
-                    .accessibilityIdentifier("generated-media-submit")
-            }
-            if let rejection = draft.submissionRejection {
-                Text(rejection).foregroundStyle(KriaColor.failureText)
-                Button("Edit request") { editRejectedRequest() }.disabled(busy)
-                    .accessibilityIdentifier("generated-media-edit-rejected")
-            }
-            if let operation = draft.operation { operationView(operation) }
-            else if draft.recovery != nil && !busy {
-                Text("Check your existing preview without generating again.")
-                Button("Check status") { pollTask = Task { await restore() } }.disabled(busy)
-            }
-            if busy { ProgressView("Preparing preview…") }
-            if let error { Text(error).foregroundStyle(KriaColor.failureText).accessibilityIdentifier("generated-media-error") }
-            if draft.recovery != nil && draft.operation?.state != .ready && draft.operation?.state != .failed {
-                Text("Leaving this preview keeps your generation request for later.")
-                    .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                KriaSheetScaffold(heading: heading, onClose: { dismiss() }) { sheetContent }
             }
         }
+        .background(KriaColor.paper)
+        .onDisappear { pollTask?.cancel(); voice.stop() }
+        .onAppear { if restoresOnAppear { pollTask = Task { await restore() } } }
+    }
+
+    private var sheetContent: some View {
+        VStack(alignment: .leading, spacing: 16) { notices; mainContent }
+    }
+
+    // MARK: Content
+
+    @ViewBuilder private var notices: some View {
+        ForEach(activeProblems, id: \.self) { value in
+            OverlayProblemCard(problem: value, noun: noun, handlers: handlers)
+        }
+    }
+
+    /// The one notice for what the creator is looking at: a stored request problem first, else the stage's own.
+    private var activeProblems: [OverlayProblem] {
+        if let problem { return [problem] }
+        switch stage {
+        case .rejected: return [.couldNotMake(failed: 1, total: 1)]
+        case .failed: return [.couldNotMake(failed: 1, total: 1)]
+        case .uncertain: return [.unsure]
+        case .unsaved: return [.didNotSave(count: 1)]
+        case .ready(let value) where !matchesApproval(value): return [.changedAfterStart]
+        default: return []
+        }
+    }
+
+    private var handlers: OverlayProblemHandlers {
+        OverlayProblemHandlers(
+            tryAgain: { retry() },
+            editPrompt: draft.submissionRejection != nil || !narration ? { editRequest() } : nil,
+            checkAgain: { checkAgain() },
+            saveAgain: { saveAgain() },
+            startAgain: { startAgain() },
+            close: { dismiss() })
+    }
+
+    @ViewBuilder private var mainContent: some View {
+        switch stage {
+        case .compose, .rejected: composeContent
+        case .making: makingContent
+        case .ready(let value): readyContent(value)
+        case .failed, .unsaved, .uncertain:
+            if narration { scriptCard(full: true) } else { promptSummary }
+        }
+    }
+
+    @ViewBuilder private var composeContent: some View {
+        if narration {
+            voiceDisclosure
+            scriptCard(full: true)
+        } else {
+            if let source = draft.source, editing {
+                HStack(spacing: 12) {
+                    OverlayThumbnail(url: source.previewURL ?? source.displayURL, phase: .ready, width: 64, height: 96, radius: 12)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Editing this image").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                        Text(source.sourceFilename ?? "Image").kriaType(.button).foregroundStyle(KriaColor.ink)
+                    }
+                }
+            }
+            KriaField(label: editing ? "Describe what to change" : "Describe your image", text: $draft.prompt,
+                      placeholder: editing ? "Describe what to change" : "Describe the image you want",
+                      helper: embedded ? "Generating uses your account’s allowance." : "Images come without words or titles. Add text in the editor.",
+                      maxCount: embedded ? nil : OverlayLimits.maxPrompt, isMultiline: true, minHeight: embedded ? 76 : 132)
+                .disabled(busy || draft.submissionRejection != nil)
+                .accessibilityIdentifier("generated-media-prompt")
+            if !embedded {
+                KriaField(label: "Name", text: $draft.title, placeholder: "Name (optional)", helper: "Helps Kria know where the image fits.")
+                    .disabled(busy || draft.submissionRejection != nil)
+                    .accessibilityIdentifier("generated-media-title")
+            }
+        }
+    }
+
+    private var voiceDisclosure: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle().fill(KriaColor.sky)
+                Image(systemName: "waveform").font(.system(size: 13, weight: .bold)).foregroundStyle(KriaColor.ink)
+            }
+            .frame(width: 28, height: 28)
+            Text("This voice is AI-generated. Listen before you use it.")
+                .kriaType(.button).foregroundStyle(KriaColor.ink)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(14)
+        .background(KriaColor.selectionSoft, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func scriptCard(full: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Your script").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+            Text(draft.script?.text ?? "").kriaType(.body).foregroundStyle(KriaColor.ink)
+                .lineLimit(full || showsFullScript ? nil : 3)
+                .textSelection(.enabled)
+            if !full {
+                Button(showsFullScript ? "Show less" : "Show full script") { showsFullScript.toggle() }
+                    .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium))
+                    .padding(.leading, -12)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private var promptSummary: some View {
+        Text(draft.submittedRequest?.prompt ?? draft.prompt).kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+            .lineLimit(3)
+    }
+
+    @ViewBuilder private var makingContent: some View {
+        if narration {
+            VStack(spacing: 8) {
+                if stalled {
+                    Text("This is taking longer than usual.").kriaType(.button).foregroundStyle(KriaColor.ink)
+                } else {
+                    KriaSpinner(size: 20)
+                    Text("Making your AI voice…").kriaType(.button).foregroundStyle(KriaColor.ink)
+                }
+                Text("You can close this. It keeps going.").kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                if stalled { checkAgainButton }
+            }
+            .padding(.vertical, 28).frame(maxWidth: .infinity)
+            .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        } else {
+            VStack(spacing: 16) {
+                imageFrame(url: nil, ready: false)
+                VStack(spacing: 4) {
+                    Text(embedded ? " " : (stalled ? "This is taking longer than usual." : "Making your image…"))
+                        .kriaType(.button).foregroundStyle(KriaColor.ink)
+                    Text("You can close this. It keeps going.").kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                }
+                if stalled { checkAgainButton }
+                promptSummary
+            }
+            .frame(maxWidth: .infinity)
+            .accessibilityIdentifier("generated-media-status")
+        }
+    }
+
+    private var checkAgainButton: some View {
+        Button("Check again") { checkAgain() }
+            .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium))
+            .accessibilityIdentifier("generated-media-check-again")
+    }
+
+    private func imageFrame(url: URL?, ready: Bool) -> some View {
+        let width: CGFloat = embedded ? 75 : 240
+        return OverlayThumbnail(url: url, phase: ready ? .ready : .making, width: width, height: width * 1.5, radius: 16)
+            .onChange(of: url) { _, value in previewLoaded = value != nil }
+            .onAppear { if url != nil { previewLoaded = true } }
+            .accessibilityIdentifier("generated-media-preview")
+    }
+
+    @ViewBuilder private func readyContent(_ value: GeneratedMediaOperation) -> some View {
+        if narration {
+            if let url = value.previewURL ?? value.sourceURL {
+                voicePlayer(url: url)
+            }
+            voiceDisclosure
+            scriptCard(full: false)
+        } else {
+            VStack(spacing: 12) {
+                imageFrame(url: value.previewURL ?? value.sourceURL, ready: true)
+                if !embedded { promptSummary }
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func voicePlayer(url: URL) -> some View {
+        VStack(alignment: .trailing, spacing: 12) {
+            HStack(spacing: 12) {
+                Button { voice.toggle() } label: {
+                    Image(systemName: voice.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 15, weight: .bold)).foregroundStyle(KriaColor.paper)
+                        .frame(width: 44, height: 44).background(KriaColor.ink, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(voice.isPlaying ? "Pause AI voice" : "Play AI voice")
+                .accessibilityIdentifier("generated-media-play")
+                NarrationWaveform(progress: voice.progress)
+            }
+            Text("\(NarrationPlayer.clock(voice.elapsed)) / \(NarrationPlayer.clock(voice.duration))")
+                .kriaType(.label).foregroundStyle(KriaColor.mutedInk).monospacedDigit()
+        }
+        .padding(16)
+        .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        // AVPlayer status establishes that the signed audio can actually be played.
+        .task(id: url) {
+            previewLoaded = await voice.load(url: url)
+            if !previewLoaded { problem = .unsure }
+        }
+    }
+
+    // MARK: Actions
+
+    private var hasPinnedActions: Bool {
+        switch stage {
+        case .making: false
+        case .failed, .unsaved, .uncertain: false
+        default: true
+        }
+    }
+
+    private var canUse: Bool {
+        guard case .ready(let value) = stage else { return false }
+        return !busy && allowsUse && value.canAccept && matchesApproval(value) && previewLoaded
+    }
+
+    @ViewBuilder private var pinnedActions: some View {
+        switch stage {
+        case .ready:
+            Button { if case .ready(let value) = stage { accept(value) } } label: { Text(useTitle) }
+                .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true, isLoading: busy))
+                .disabled(!canUse)
+                .accessibilityIdentifier("generated-media-use")
+                .kriaDisabledReason(canUse || busy ? nil : (previewLoaded ? nil : "Loading your \(narration ? "voice" : "image")…"))
+            if allowsNewGeneration {
+                HStack(spacing: 12) {
+                    Button("Try again") { retry() }
+                        .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, fullWidth: true))
+                        .disabled(busy).accessibilityIdentifier("generated-media-try-again")
+                    Button("Discard") { discard() }
+                        .buttonStyle(KriaButtonStyle(role: .tertiaryDestructive, size: .medium, fullWidth: true))
+                        .disabled(busy).accessibilityIdentifier("generated-media-discard")
+                }
+            }
+        default:
+            Button(submitTitle) { submit() }
+                .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true, isLoading: busy))
+                .disabled(busy || !allowsNewGeneration || draft.submissionRejection != nil || (!narration && promptIsEmpty))
+                .accessibilityIdentifier("generated-media-submit")
+                .kriaDisabledReason(!narration && promptIsEmpty && draft.submissionRejection == nil ? "Describe your image to start." : nil)
+        }
+    }
+
+    /// The embedded editor panel has no pinned bar, so the same actions sit inline.
+    @ViewBuilder private var inlineActions: some View {
+        if hasPinnedActions { VStack(spacing: 8) { pinnedActions } }
+        else if case .failed = stage { Button("Discard") { discard() }.buttonStyle(KriaButtonStyle(role: .tertiaryDestructive, size: .medium)) }
+    }
+
+    private var useTitle: String {
+        if narration { return "Use AI voice" }
+        if embedded { return "Add to timeline" }
+        return editing ? "Use edit" : "Use image"
+    }
+    private var submitTitle: String {
+        if narration { return "Approve script and make voice" }
+        return editing ? "Make edit" : "Generate image"
     }
 
     private func matchesApproval(_ value: GeneratedMediaOperation) -> Bool {
@@ -154,97 +389,45 @@ struct GeneratedMediaSheet: View {
             sourceGeneration: draft.source?.sourceGeneration, script: draft.script)
     }
 
-    @ViewBuilder private func operationView(_ value: GeneratedMediaOperation) -> some View {
-        if value.state == .ready, let url = value.previewURL ?? value.sourceURL {
-            if narration {
-                Button("Play AI voice preview") {
-                    player?.pause()
-                    let playback = AVPlayer(url: url)
-                    player = playback
-                    playback.play()
-                    previewPlayed = true
-                }
-                .accessibilityIdentifier("generated-media-play")
-                // AVPlayer status establishes that the signed audio can actually be played.
-                .task(id: url) {
-                    do {
-                        let playable = try await AVURLAsset(url: url).load(.isPlayable)
-                        previewLoaded = playable
-                    } catch { previewLoaded = false; self.error = "Couldn’t load the voice preview. Check status to refresh it." }
-                }
-            } else {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: embedded ? 112 : 480).onAppear { previewLoaded = true }
-                    case .failure:
-                        Text("Couldn’t load the image preview. Check status to refresh it.").onAppear { previewLoaded = false }
-                    default: ProgressView("Loading preview…")
-                    }
-                }
-                .accessibilityIdentifier("generated-media-preview")
-            }
-            if embedded && allowsNewGeneration {
-                Button("Try another look") {
-                    guard !busy else { return }
-                    draft.clearRecovery()
-                    previewLoaded = false
-                    error = nil
-                    submit()
-                }.disabled(busy)
-            }
-            Button { accept(value) } label: {
-                Text(narration ? "Use AI voice" : embedded ? "Add to timeline" : "Use image")
-                    .frame(maxWidth: embedded ? .infinity : nil)
-            }
-                .buttonStyle(KriaPrimaryButtonStyle())
-                .disabled(busy || !allowsUse || !value.canAccept || !matchesApproval(value) || !previewLoaded || (narration && !previewPlayed))
-                .accessibilityIdentifier("generated-media-use")
-        } else {
-            Text(statusText(value))
-                .accessibilityIdentifier("generated-media-status")
-        }
-        if value.state == .ready, !matchesApproval(value) {
-            Text("The source or script changed. Discard this preview and approve the latest version before generating again.")
-                .foregroundStyle(KriaColor.failureText)
-        }
-        if (!embedded && value.state == .ready) || value.state == .failed {
-            Button("Discard preview") { pollTask?.cancel(); draft.clearRecovery(); error = nil; previewLoaded = false; previewPlayed = false }
-                .disabled(busy)
-        }
-        if value.canRetryStorage {
-            Button("Retry saving preview") {
-                guard !busy else { return }
-                busy = true
-                pollTask?.cancel()
-                pollTask = Task {
-                    defer { busy = false }
-                    do {
-                        draft.rememberOperation(try await api.retryGeneratedMediaStorage(itemID: itemID, operationID: value.id))
-                        error = nil
-                        busy = false
-                        await poll()
-                    } catch { self.error = "Couldn’t save the preview. No new generation was requested." }
-                }
-            }.disabled(busy)
-        }
-        if !embedded || value.state != .ready || !previewLoaded {
-            Button(embedded && value.state == .ready ? "Refresh preview" : "Check status") {
-                guard !busy else { return }
-                pollTask?.cancel()
-                pollTask = Task { await restore() }
-            }.disabled(busy)
+    private func discard() {
+        pollTask?.cancel(); voice.stop()
+        draft.clearRecovery()
+        problem = nil; previewLoaded = false; stalled = false
+    }
+
+    /// One tap runs again: a failed or unwanted result is replaced by a new request with the same prompt.
+    private func retry() {
+        guard !busy, allowsNewGeneration else { return }
+        discard()
+        if draft.submissionRejection != nil { editRequest(); return }
+        submit()
+    }
+
+    private func checkAgain() {
+        guard !busy else { return }
+        pollTask?.cancel()
+        problem = nil; stalled = false
+        pollTask = Task { await restore() }
+    }
+
+    private func saveAgain() {
+        guard !busy, let operation = draft.operation else { return }
+        busy = true
+        pollTask?.cancel()
+        pollTask = Task {
+            defer { busy = false }
+            do {
+                draft.rememberOperation(try await api.retryGeneratedMediaStorage(itemID: itemID, operationID: operation.id))
+                problem = nil
+                busy = false
+                await poll()
+            } catch { problem = OverlayProblem.classifyRequest(error).isSetWide ? OverlayProblem.classifyRequest(error) : .didNotSave(count: 1) }
         }
     }
 
-    private func statusText(_ value: GeneratedMediaOperation) -> String {
-        switch value.state {
-        case .pending, .submitting: "Generating your preview…"
-        case .providerComplete: "The preview was generated and is being saved."
-        case .ready: "The preview is not available yet. Check status again."
-        case .unknown: "The provider’s result is uncertain. Generation will not be retried automatically. Check status later."
-        case .failed: "Generation could not finish. No replacement generation has been started."
-        }
+    private func startAgain() {
+        discard()
+        editRequest()
     }
 
     private func submit() {
@@ -260,7 +443,8 @@ struct GeneratedMediaSheet: View {
         )
         draft.submittedRequest = request
         busy = true
-        error = nil
+        problem = nil
+        stalled = false
         pollTask = Task {
             do {
                 draft.rememberOperation(try await api.generateMedia(itemID: itemID, body: request))
@@ -268,14 +452,23 @@ struct GeneratedMediaSheet: View {
                 await poll()
             } catch {
                 busy = false
-                if draft.handleSubmissionFailure(error) { self.error = nil }
-                else { self.error = "Couldn’t confirm the request. Check it again before starting another generation." }
+                let found = OverlayProblem.classifyRequest(error)
+                if found == .sessionEnded || found == .updateRequired {
+                    draft.clearRecovery()
+                    problem = found
+                } else if draft.handleSubmissionFailure(error) {
+                    problem = nil
+                } else {
+                    problem = found
+                }
             }
         }
     }
 
-    private func editRejectedRequest() {
+    /// Reopens the form with the source or script refreshed, so the next request is made against the newest one.
+    private func editRequest() {
         guard !busy else { return }
+        if draft.recovery != nil { discard() }
         busy = true
         pollTask = Task {
             defer { busy = false }
@@ -285,7 +478,7 @@ struct GeneratedMediaSheet: View {
                 case .imageEdit:
                     let visuals = try await api.visuals(itemID: itemID)
                     guard let source = visuals.assets.first(where: { $0.id == draft.source?.id && $0.status == "ready" }) else {
-                        error = "This source is no longer available. Close this sheet and choose another image."
+                        problem = .sourceGone
                         return
                     }
                     draft.source = source
@@ -293,8 +486,8 @@ struct GeneratedMediaSheet: View {
                     draft.script = try await api.generatedNarrationScript(itemID: itemID)
                 }
                 draft.resetRejectedRequest()
-                error = nil
-            } catch { self.error = "Couldn’t refresh the source or script. Try again when connected." }
+                problem = nil
+            } catch { problem = OverlayProblem.classifyRequest(error) == .offline ? .offline : .unsure }
         }
     }
 
@@ -317,12 +510,12 @@ struct GeneratedMediaSheet: View {
                 draft.script = try await api.generatedNarrationScript(itemID: itemID)
             }
             draft.rememberOperation(value)
-            error = nil
+            problem = nil
             busy = false
             await poll()
         } catch {
             busy = false
-            self.error = "The result is not confirmed. Check status later. No new generation was requested."
+            problem = OverlayProblem.classifyRequest(error) == .offline ? .offline : .unsure
         }
     }
 
@@ -333,12 +526,13 @@ struct GeneratedMediaSheet: View {
                 try await Task.sleep(for: .seconds(3))
                 draft.rememberOperation(try await api.generatedMedia(itemID: itemID, operationID: value.id))
             } catch is CancellationError { return }
-            catch { self.error = "Couldn’t check status. Check again when connected."; return }
+            catch { problem = OverlayProblem.classifyRequest(error) == .offline ? .offline : .unsure; return }
         }
+        if draft.operation?.shouldPoll == true { stalled = true }
     }
 
     private func accept(_ value: GeneratedMediaOperation) {
-        guard !busy, allowsUse, value.canAccept, matchesApproval(value), previewLoaded, !narration || previewPlayed else { return }
+        guard canUse else { return }
         busy = true
         pollTask?.cancel()
         pollTask = Task {
@@ -352,10 +546,84 @@ struct GeneratedMediaSheet: View {
                 await accepted()
                 if !embedded { dismiss() }
             } catch {
-                self.error = useImage == nil
-                    ? "Couldn’t use this preview. If the script changed, approve its latest version first."
-                    : "Couldn’t place this overlay. The generated preview is preserved. If your edit changed, close and plan again."
+                let found = OverlayProblem.classifyRequest(error)
+                problem = found.isSetWide ? found : .couldNotAdd
             }
         }
+    }
+}
+
+/// Plays the generated AI voice and reports where it is, so the player card can show a scrub position.
+@MainActor final class NarrationPlayer: ObservableObject {
+    @Published private(set) var isPlaying = false
+    @Published private(set) var elapsed: Double = 0
+    @Published private(set) var duration: Double = 0
+    private var player: AVPlayer?
+    private var observer: Any?
+    private var ended: NSObjectProtocol?
+
+    var progress: Double { duration > 0 ? min(1, elapsed / duration) : 0 }
+
+    static func clock(_ seconds: Double) -> String {
+        let whole = max(0, Int(seconds.rounded()))
+        return String(format: "%d:%02d", whole / 60, whole % 60)
+    }
+
+    func load(url: URL) async -> Bool {
+        stop()
+        let asset = AVURLAsset(url: url)
+        do {
+            guard try await asset.load(.isPlayable) else { return false }
+            let length = try await asset.load(.duration).seconds
+            duration = length.isFinite ? length : 0
+        } catch { return false }
+        let item = AVPlayerItem(asset: asset)
+        let playback = AVPlayer(playerItem: item)
+        observer = playback.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 600), queue: .main) { [weak self] time in
+            let seconds = time.seconds
+            Task { @MainActor in self?.elapsed = seconds.isFinite ? seconds : 0 }
+        }
+        ended = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                self?.isPlaying = false
+                self?.player?.seek(to: .zero)
+                self?.elapsed = 0
+            }
+        }
+        player = playback
+        return true
+    }
+
+    func toggle() {
+        guard let player else { return }
+        if isPlaying { player.pause() } else { player.play() }
+        isPlaying.toggle()
+    }
+
+    func stop() {
+        player?.pause()
+        if let observer { player?.removeTimeObserver(observer) }
+        if let ended { NotificationCenter.default.removeObserver(ended) }
+        observer = nil; ended = nil; player = nil
+        isPlaying = false; elapsed = 0
+    }
+}
+
+/// 36 bars: ink where it has played, ink at 30% where it has not.
+private struct NarrationWaveform: View {
+    let progress: Double
+    private static let heights: [CGFloat] = [8, 14, 22, 12, 28, 34, 20, 10, 26, 38, 30, 16, 24, 40, 32, 18, 10, 22,
+                                             36, 28, 14, 20, 34, 26, 12, 18, 30, 24, 10, 16, 22, 12, 8, 14, 10, 6]
+
+    var body: some View {
+        HStack(spacing: 3.5) {
+            ForEach(Self.heights.indices, id: \.self) { index in
+                Capsule()
+                    .fill(Double(index) / Double(Self.heights.count) < progress ? KriaColor.ink : KriaColor.ink.opacity(0.3))
+                    .frame(width: 3.5, height: Self.heights[index])
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .accessibilityHidden(true)
     }
 }

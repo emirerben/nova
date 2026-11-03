@@ -565,9 +565,10 @@ final class CreationChatFixture: @unchecked Sendable {
                        generatedMediaPostCount != 1 || generatedMediaLookupCount < 1 {
                         return response(["detail": "Recovery counters did not prove one POST and a status lookup"], status: 409)
                     }
-                    generatedMediaAssets[itemID] = [["id": operation["asset_id"]!, "kind": "image", "status": "ready",
+                    generatedMediaAssets[itemID, default: []].removeAll { $0["id"] as? String == operation["asset_id"] as? String }
+                    generatedMediaAssets[itemID, default: []].append(["id": operation["asset_id"]!, "kind": "image", "status": "ready",
                         "source_filename": operation["fixture_title"] ?? "", "preview_url": operation["preview_url"]!,
-                        "source_url": operation["source_url"]!, "generation": "1"]]
+                        "source_url": operation["source_url"]!, "generation": "1"])
                     return response(operation)
                 }
                 guard body["script_id"] as? String == "vos-fixture", body["script_version"] as? Int == 1,

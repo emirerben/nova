@@ -38,6 +38,7 @@ struct BrandPreviewHost: View {
                 .padding(20)
             case "projects": ProjectsDrawer(close: {}, openGallery: {})
             case "editor": NativeEditorView(project: PreviewFixtures.editorProject, initialDraft: PreviewFixtures.editorDraft, initialPlaybackURL: Bundle.main.url(forResource: "montage", withExtension: "mp4"), onBack: {})
+            case let value where value.hasPrefix("generate-"): GenerateImagePreviewHost(state: value)
             default:
                 VStack(spacing: 0) {
                     WorkspaceHeader(project: project, showsEditorSwitch: state == "ready", openProjects: {}, openEditor: {}, openAccount: {})
