@@ -28,6 +28,13 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("app/agents/_schemas/text_animation_phases.py", "*"): (
         "the registry, plus the legacy `effect` map designed edges never had"
     ),
+    ("app/agents/_schemas/intent_review.py", "DEFECTS_BY_REQUIREMENT_KIND"): (
+        "the registry's own per-requirement-kind subsets; the server rejects any other pairing"
+    ),
+    ("prompts/intent_review.txt", ""): (
+        "the text_cut_off versus text_missing tie-break rule; the full list is rendered by "
+        "$defect_kinds"
+    ),
     ("app/agents/_schemas/visual_editor.py", "entrance"): (
         "image overlays have their own edge set (zoom, no typewriter)"
     ),
