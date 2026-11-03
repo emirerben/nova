@@ -816,6 +816,36 @@ def test_a_restart_plus_a_quoted_line_without_a_recorded_line_keeps_the_stays_no
     assert not any(sentence in receipt.reason for sentence in _ALL_RESTART_SENTENCES)
 
 
+# --- "start over" / "start again" about the edit, not the speaker's sentence ---------------------
+
+_START_OVER_EDIT = "Cut the pauses and start over with the beach clip"
+
+
+@pytest.mark.parametrize(("cut", "retakes"), [_DETECTION_OFF[0], _DETECTION_ALL[-1]])
+def test_start_over_with_a_clip_is_not_a_restarted_sentence_before_render(
+    monkeypatch, cut, retakes
+):
+    _detection(monkeypatch, cut, retakes)
+
+    receipt = _receipt(_ask(_START_OVER_EDIT, speech_cleanup=True), _draft("offered"))
+
+    assert receipt.status == "partial", receipt
+    assert not any(sentence in receipt.reason for sentence in _ALL_RESTART_SENTENCES)
+
+
+@pytest.mark.parametrize("restart_rows", [0, 1])
+@pytest.mark.parametrize(("cut", "retakes"), [_DETECTION_OFF[0], _DETECTION_ALL[-1]])
+def test_start_over_with_a_clip_is_never_met_by_a_retake_row_after_render(
+    monkeypatch, cut, retakes, restart_rows
+):
+    _detection(monkeypatch, cut, retakes)
+
+    receipt = _rendered(_ask(_START_OVER_EDIT, speech_cleanup=True), retakes=restart_rows)
+
+    assert receipt.status == "partial", receipt
+    assert not any(sentence in (receipt.reason or "") for sentence in _ALL_RESTART_SENTENCES)
+
+
 # --- 12: "restart" about something that is not a spoken sentence ----------------------------------
 
 

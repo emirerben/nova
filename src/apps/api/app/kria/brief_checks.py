@@ -3794,12 +3794,14 @@ _NAMED_CUT_RE = re.compile(
     r"|\bhata(yi|lari) (\w+ )?(kes|çikar|sil)"
 )
 # KRI-1176: a restarted sentence the creator names without saying which one ("the sentence I
-# restarted", "my retakes", "wherever I start over"). `_RESTART_OF_RE` is a restart of or about
-# something ("the restart of the kilometer thirty sentence", "where I restart the intro"): that
-# names a sentence, which a retake count cannot prove went (KRI-551).
+# restarted", "my retakes", "wherever I start over"). "Start again/over" counts only with the
+# speaker as subject: "start over with the beach clip" is about the edit. `_RESTART_OF_RE` is a
+# restart of or about something ("the restart of the kilometer thirty sentence", "where I restart
+# the intro"): that names a sentence, which a retake count cannot prove went (KRI-551).
 _RESTART_WORD_RE = re.compile(
-    r"\brestart(s|ed|ing)?\b|\bretakes?\b|\bfalse starts?\b|\bstart (again|over)\b"
-    r"|\bscratch that\b|\bbaştan (başla|al)|\btekrar başla|\byeniden başla"
+    r"\brestart(s|ed|ing)?\b|\bretakes?\b|\bfalse starts?\b"
+    r"|\bi (start|started) (again|over)\b|\blet me start (again|over)\b|\bscratch that\b"
+    r"|\bbaştan (başla|al)|\btekrar başla|\byeniden başla"
 )
 _RESTART_OF_RE = re.compile(
     r"\b(restart|retake|false start)(s|ed)? (of|about)\b"
@@ -6658,13 +6660,6 @@ def _cuts_named_voiceover_lines(facts: PlanFacts) -> bool:
     )
 
 
-def _retake_detection_on() -> bool:
-    """KRI-1176: whether consented speech cleanup looks for restarted sentences (both levers)."""
-    from app.services.plan_item_media import speech_cleanup_retakes_enabled  # noqa: PLC0415
-
-    return speech_cleanup_retakes_enabled()
-
-
 def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Pauses, retakes and filler the creator asked to cut, against the draft.
 
@@ -6697,7 +6692,11 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     if _asks_restart_only(req):
         # KRI-1176: no line is named, so only cleanup's own retake detection can cut it.
         if facts.speech_cleanup_offered is not False:
-            detected = _retake_detection_on()
+            from app.services.plan_item_media import (  # noqa: PLC0415
+                speech_cleanup_retakes_enabled,
+            )
+
+            detected = speech_cleanup_retakes_enabled()
             notes.append(_loc(_RESTART_CUT_AT_APPROVAL if detected else _RESTART_STAYS))
         status = "partial"
     elif _wants_named_cuts(req):
@@ -6741,7 +6740,10 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
         # KRI-1176: cleanup's own cut record says whether it found a restarted sentence.
         if outcome == "applied" and (facts.speech_cleanup_retakes or 0) > 0:
             return _receipt(req, "met", None)
-        notes.append(_loc(_RESTART_NOT_FOUND if _retake_detection_on() else _RESTART_STAYS))
+        from app.services.plan_item_media import speech_cleanup_retakes_enabled  # noqa: PLC0415
+
+        detected = speech_cleanup_retakes_enabled()
+        notes.append(_loc(_RESTART_NOT_FOUND if detected else _RESTART_STAYS))
         return _receipt(req, "partial", "; ".join(notes))
     if _wants_named_cuts(req):
         if named is not None:
