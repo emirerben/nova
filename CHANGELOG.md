@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.10.0] - 2026-11-03
+
+### Changed
+- feat(kria): in-between-my-speech pauses the take at the sentence about each clip; an explicit position always wins (parent KRI-1151) (#2086) <!-- release-pr: 2086 -->
+
 ## [0.84.9.0] - 2026-11-03
 
 ### Fixed
