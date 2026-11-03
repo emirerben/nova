@@ -3,7 +3,7 @@
 # of every take. One run = one scripted take through TeleprompterHardwareUITests.testTalkBenchTake.
 #
 #   scripts/ios/talk-bench.sh                                    # 3 runs of each default scenario
-#   scripts/ios/talk-bench.sh --runs 5 --seconds 20 --label base
+#   scripts/ios/talk-bench.sh --runs 5 --seconds 20 --idle-seconds 60 --label base
 #   scripts/ios/talk-bench.sh --scenarios video-cin0,video-cin1  # <none|photo|video>-cin<0|1>, comma separated
 #   scripts/ios/talk-bench.sh --dry-run                          # resolve the plan, touch no device and build nothing
 #   scripts/ios/talk-bench.sh --pull-only manual                 # report on a session you ran by hand (see below)
@@ -36,6 +36,7 @@ TEST_ID="KriaHardwareUITests/TeleprompterHardwareUITests/testTalkBenchTake"
 
 RUNS=3
 SECONDS_PER_TAKE=10
+IDLE_SECONDS=6
 SCENARIOS="none-cin0,photo-cin0,video-cin0,none-cin1"
 DEVICE_ID="${KRIA_DEVICE_ID:-}"
 LABEL=""
@@ -50,6 +51,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --runs) RUNS="$2"; shift 2 ;;
     --seconds) SECONDS_PER_TAKE="$2"; shift 2 ;;
+    --idle-seconds) IDLE_SECONDS="$2"; shift 2 ;;
     --scenarios) SCENARIOS="$2"; shift 2 ;;
     --device-id) DEVICE_ID="$2"; shift 2 ;;
     --label) LABEL="$2"; shift 2 ;;
@@ -192,7 +194,7 @@ for run in $(seq 1 "$RUNS"); do
     exit_code=0
     TEST_RUNNER_KRIA_TELEPROMPTER_HARDWARE_TEST=1 TEST_RUNNER_KRIA_TALK_BENCH=1 \
     TEST_RUNNER_KRIA_TALK_BENCH_BACKGROUND="$background" TEST_RUNNER_KRIA_TALK_BENCH_CINEMATIC="$cinematic" \
-    TEST_RUNNER_KRIA_TALK_BENCH_SECONDS="$SECONDS_PER_TAKE" TEST_RUNNER_KRIA_TALK_BENCH_USE_TAKE="$USE_TAKE" \
+    TEST_RUNNER_KRIA_TALK_BENCH_SECONDS="$SECONDS_PER_TAKE" TEST_RUNNER_KRIA_TALK_BENCH_IDLE_SECONDS="$IDLE_SECONDS" TEST_RUNNER_KRIA_TALK_BENCH_USE_TAKE="$USE_TAKE" \
       xcodebuild test-without-building -project "$IOS_ROOT/Kria.xcodeproj" -scheme "$SCHEME" -configuration Debug \
         -destination "platform=iOS,id=$DEVICE_ID" -derivedDataPath "$DERIVED_DATA" -enableCodeCoverage NO \
         -resultBundlePath "$run_dir/result.xcresult" -only-testing "$TEST_ID" >"$run_dir/xcodebuild.log" 2>&1 || exit_code=$?
