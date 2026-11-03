@@ -16,9 +16,10 @@ Failure modes, written before the flow was wired (matrix row in parentheses). Ea
     schema closed over exactly the issued aliases and sent frames; no candidate or target text
     is ever in the prompt.
   State the creator or other rows could see (20, 35, 39):
-    nothing is posted in shadow mode (no event, no receipt or question id); the outcome, the
-    findings, the disposition and the provenance are stored; the legacy review is retired only
-    while this path is live.
+    a judged outcome posts its receipt (and a wording doubt its one question) and records their
+    ids; the outcome, the findings, the disposition and the provenance are stored; the legacy
+    review is retired only while this path is live. What gets posted is covered in
+    test_intent_review_posting_postgres.py.
   A crash that loses the judgment (19):
     a crash after the response is stored resumes into the same judged outcome, not a re-call.
 
@@ -167,7 +168,7 @@ def trace_events(job_id):
 
 
 @pytest.mark.asyncio
-async def test_a_correct_edit_is_no_findings_with_provenance_and_nothing_posted(
+async def test_a_correct_edit_is_no_findings_with_provenance_and_one_receipt(
     approved_publication, real_builder, monkeypatch
 ):
     _, thread, job_id, _ = approved_publication
@@ -185,8 +186,8 @@ async def test_a_correct_edit_is_no_findings_with_provenance_and_nothing_posted(
     assert review["provenance"]["visual_input_received"] is True
     assert review["provenance"]["frames_sent"] == 3
     assert [entry["status"] for entry in ledger()] == ["settled"]
-    assert events_in_thread(thread) == before
-    assert row.receipt_event_id is None and row.question_event_id is None
+    assert events_in_thread(thread) == before + 1
+    assert row.receipt_event_id is not None and row.question_event_id is None
     assert row.repair_draft_id is None and row.lease_token is None
 
 
@@ -217,7 +218,8 @@ async def test_wrong_footage_is_a_suggestion_and_the_draft_is_untouched(
     assert disposition["suggestions"] == [
         {"requirement_id": "R2", "candidate_id": None, "why": "no_candidate"}
     ]
-    assert events_in_thread(thread) == before and row.repair_draft_id is None
+    assert events_in_thread(thread) == before + 1 and row.repair_draft_id is None
+    assert row.question_event_id is None
     assert drafts_in_thread(thread) == drafts
 
 
@@ -225,7 +227,6 @@ async def test_wrong_footage_is_a_suggestion_and_the_draft_is_untouched(
 async def test_a_misspelt_title_is_a_candidate_but_a_review_tier_never_repairs_it(
     approved_publication, real_builder, monkeypatch
 ):
-    monkeypatch.setattr(settings, "kria_intent_review_repair_enabled", True)
     rid = await ready(approved_publication, monkeypatch)
     assert review_row(rid).tier == "review"
     edit_packet(rid, draft_edit(lambda element: element.update(text="Bef0re")))
@@ -285,7 +286,7 @@ async def test_a_wording_drift_with_no_exact_authority_asks_one_question_and_cha
     row = review_row(rid)
     assert (row.status, row.reason) == ("needs_confirmation", "reviewed")
     assert row.review["disposition"]["question"] == {"requirement_id": "R1"}
-    assert events_in_thread(thread) == before and row.question_event_id is None
+    assert events_in_thread(thread) == before + 2 and row.question_event_id is not None
 
 
 @pytest.mark.asyncio
@@ -441,7 +442,7 @@ async def test_the_stored_catalog_describes_the_exact_frames_that_were_sent(
 # --- the interlock ------------------------------------------------------------------------
 
 
-def test_every_flag_on_still_reviews_in_shadow_and_retires_the_legacy_review(monkeypatch):
+def test_every_flag_on_reaches_the_repair_tier_and_retires_the_legacy_review(monkeypatch):
     owner = "5b0f4a0e-6d2f-4a52-9f0b-5cbb3c6b2f10"
     for name, value in dict(
         kria_intent_review_enabled=True,
@@ -453,8 +454,7 @@ def test_every_flag_on_still_reviews_in_shadow_and_retires_the_legacy_review(mon
         ai_openai_monthly_budget_usd=500.0,
     ).items():
         monkeypatch.setattr(settings, name, value)
-    assert tier._CODE_TIER_CEILING == "review"
-    assert tier.intent_review_tier(owner) == "review"
+    assert tier.intent_review_tier(owner) == "repair"
     assert tier.intent_review_replaces_legacy(owner) is True
     monkeypatch.setattr(settings, "kria_intent_review_paid_enabled", False)
     assert tier.intent_review_replaces_legacy(owner) is False

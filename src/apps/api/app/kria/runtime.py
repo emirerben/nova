@@ -44,6 +44,7 @@ from app.kria.contracts import (
     RequirementReceipt,
 )
 from app.kria.duplicate_send import duplicate_reply, find_duplicate_send
+from app.kria.intent_review_copy import INTENT_REVIEW_TURN_VALUE
 from app.kria.language import is_help_question, is_status_question
 from app.kria.reply_language import (
     remember_reply_language,
@@ -3228,6 +3229,10 @@ async def read_creative_brief(
     }
     newest: dict[str, RequirementReceipt] = {}
     for event in events:
+        if (event.payload or {}).get("turn_value") == INTENT_REVIEW_TURN_VALUE:
+            # The reviewer's receipts are advisory chat rows; the deterministic ledger alone
+            # decides what a requirement shows.
+            continue
         for raw in (event.payload or {}).get("requirement_receipts") or []:
             try:
                 receipt = RequirementReceipt.model_validate(raw)

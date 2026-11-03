@@ -10,7 +10,6 @@ value would compile to an empty diff, so it is never emitted.
 from __future__ import annotations
 
 import hashlib
-import json
 import unicodedata
 from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Any, Literal
@@ -21,6 +20,7 @@ from app.agents._schemas.intent_review import ISSUABLE_KINDS, MAX_FINDINGS, Defe
 from app.kria.brief import SUPERSEDED_BY_FACT, BriefRequirement
 from app.kria.brief_binding import BriefBinding
 from app.kria.drafts import KriaDraftDocument
+from app.kria.review_canon import digest as canonical_digest
 from app.services.creator_render_contract import CreatorRenderContract
 from app.services.kria_editor_ops import is_caption_text_bar
 from app.services.kria_editor_ops_text import bars_from_snapshot, classify, fold
@@ -105,14 +105,6 @@ class ReviewCatalog(_Model):
         return next((c for c in self.candidates if c.candidate_id == candidate_id), None)
 
 
-def _json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-
-
-def _sha(value: Any) -> str:
-    return hashlib.sha256(_json(value).encode()).hexdigest()
-
-
 def strict_fold(value: str) -> str:
     """Casefold with collapsed whitespace. Diacritics stay: a missing Turkish dot is a drift."""
     return " ".join(unicodedata.normalize("NFC", value).casefold().split())
@@ -150,7 +142,7 @@ def contains_loose_words(text: str, wanted: str) -> bool:
 
 def _seal(**parts: Any) -> ReviewCatalog:
     body = {key: [item.model_dump(mode="json") for item in value] for key, value in parts.items()}
-    return ReviewCatalog(digest=_sha(body), **parts)
+    return ReviewCatalog(digest=canonical_digest(body), **parts)
 
 
 def _label(requirement: BriefRequirement) -> str:
@@ -262,7 +254,7 @@ class _Guards:
 def _candidate(
     generation: str, kind: CandidateKind, element: str, target: dict[str, Any], **fields: Any
 ) -> Candidate:
-    identity = f"{generation}|{kind}|{element}|{_sha(target)}"
+    identity = f"{generation}|{kind}|{element}|{canonical_digest(target)}"
     return Candidate(
         candidate_id=hashlib.sha256(identity.encode()).hexdigest()[:16],
         kind=kind,
