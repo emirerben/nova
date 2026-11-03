@@ -1,34 +1,93 @@
-"""'The <generated image> when I say W' is a typed trigger ask; a video cutaway is not."""
+"""'The <generated image> when I say W' is a typed trigger ask; the creator's own footage is not.
+
+The extractor prompt carries the shared brief section (which types "a photo, video, sticker ...
+timed to spoken words" as `triggers`) plus the extractor-only section. The two must agree, and
+the server (`cutaway_show_ask`) must read the facts they produce as the creator meant them.
+"""
 
 from __future__ import annotations
 
-from app.agents.brief_extractor import _NARROW_BRIEF_SECTION, BRIEF_EXTRACTOR_PROMPT_VERSION
-from app.kria.brief import BriefRequirement
-from app.kria.cutaway_show_ask import full_screen_show_ask
+import json
+
+from app.agents._schemas.brief_extractor import BriefExtractionInput
+from app.agents.brief_extractor import (
+    _NARROW_BRIEF_SECTION,
+    BRIEF_EXTRACTOR_PROMPT_VERSION,
+    BriefExtractorAgent,
+)
+from app.kria.brief import apply_updates
+from app.kria.cutaway_show_ask import brief_full_screen_show_ask
 
 
-def _req(**facts) -> BriefRequirement:
-    return BriefRequirement(
-        id="r1", kind="style", scope="global", description="show it full screen", facts=facts
+def _brief_from(update: dict, message: str):
+    out = BriefExtractorAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps({"brief_updates": [update]}),
+        BriefExtractionInput(creator_request="", user_message=message, conversation=[]),
     )
+    return apply_updates(None, out.brief_updates, source_turn_id="t1", creator_text=message)
 
 
-def test_extractor_version_is_bumped():
-    assert BRIEF_EXTRACTOR_PROMPT_VERSION > "2026-11-02-v47"
+def _style(description: str, facts: dict) -> dict:
+    return {
+        "operation": "add",
+        "kind": "style",
+        "scope": "global",
+        "literal": None,
+        "description": description,
+        "facts": facts,
+    }
+
+
+def test_extractor_version_is_the_next_free_name():
+    # v48 belongs to the talking-insert-at-mention PR; whichever lands second renumbers.
+    assert BRIEF_EXTRACTOR_PROMPT_VERSION == "2026-11-03-v49"
 
 
 def test_extractor_teaches_generated_images_as_trigger_asks():
-    section = _NARROW_BRIEF_SECTION
-    assert "image you generated" in section
-    assert "ALWAYS" in section.split("image you generated", 1)[1][:600]
-    assert "never translated" in section.split("image you generated", 1)[1][:900]
+    section = _NARROW_BRIEF_SECTION.split("an image you generated", 1)[1]
+    assert "ALWAYS" in section[:700]
+    assert "never translated" in section[:900]
 
 
-def test_the_trigger_rule_does_not_swallow_video_cutaways():
-    tail = _NARROW_BRIEF_SECTION.split("image you generated", 1)[1][:1200]
-    assert "video" in tail and "never carries `triggers`" in tail
+def test_the_extractor_has_no_media_context_it_cannot_read():
+    assert "media_context" not in _NARROW_BRIEF_SECTION
 
 
-def test_typed_cutaway_ask_still_ignores_trigger_asks():
-    assert full_screen_show_ask([_req(display_mode="fullscreen", triggers=["alkol"])]) is None
-    assert full_screen_show_ask([_req(display_mode="fullscreen")]) is not None
+def test_one_rule_separates_visuals_from_the_creators_own_footage():
+    """The shared section says a photo/video/sticker at a spoken word carries `triggers`; this
+    section must not say the opposite about videos without saying which videos."""
+    tail = _NARROW_BRIEF_SECTION.split("an image you generated", 1)[1]
+    assert "own footage" in tail
+    own = tail.split("own footage", 1)[1]
+    assert "display_mode" in own and "clip_sound" in own
+    assert "never carries `triggers`" in own
+    assert "never carries `triggers`" not in tail.split("own footage", 1)[0]
+
+
+def test_a_visual_at_a_spoken_word_is_not_read_as_a_cutaway_of_the_creators_clips():
+    brief = _brief_from(
+        _style(
+            "the generated image full screen",
+            {"triggers": ["kahve"], "display_mode": "fullscreen"},
+        ),
+        "kahve dediğimde kahve görselini tam ekran göster",
+    )
+    assert brief_full_screen_show_ask(brief) is None
+
+
+def test_the_creators_own_clips_shown_while_they_talk_are_a_cutaway_ask():
+    brief = _brief_from(
+        _style("show the talks full screen when I talk about them", {"display_mode": "fullscreen"}),
+        "Show the talks when I mention them in full screen",
+    )
+    ask = brief_full_screen_show_ask(brief)
+    assert ask is not None and ask.whole_video
+
+
+def test_dropping_the_trigger_would_turn_a_visual_into_a_cutaway():
+    """Why the rule must not tell the extractor to drop `triggers` for a Visual."""
+    brief = _brief_from(
+        _style("the generated image full screen", {"display_mode": "fullscreen"}),
+        "kahve dediğimde kahve görselini tam ekran göster",
+    )
+    assert brief_full_screen_show_ask(brief) is not None
