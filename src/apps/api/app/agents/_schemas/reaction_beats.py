@@ -181,7 +181,7 @@ class InsertClip(BaseModel):
     media_id: str = Field(min_length=1, max_length=200)
     at_phrase: str | None = Field(default=None, max_length=120)
     at_s: float | None = Field(default=None, ge=0.0, le=1800.0, allow_inf_nan=False)
-    # False only when the creator asked for the clip silent.
+    # False when the creator asked for the clip silent or it has no sound of its own.
     keep_audio: bool = True
 
     @model_validator(mode="before")

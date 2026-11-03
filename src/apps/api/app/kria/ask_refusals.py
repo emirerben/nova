@@ -219,8 +219,8 @@ def correction_note(capability: str, *, inserts_open: bool = False) -> str:
     )
     pause = (
         "If the creator explicitly asked for the talk to pause or stop while a clip plays and "
-        "then continue, or asked for clips that have speech or sound of their own in between "
-        "my speech, that is a different thing: use `insert_clips` for it as described above "
+        "then continue, or asked for clips in between my speech (with sound of their own or "
+        "not), that is a different thing: use `insert_clips` for it as described above "
         "(with no phrase for in between my speech, the server picks the sentence), and do not "
         "use it for a clip that is simply shown while the talk keeps running, over my speech."
         if inserts_open
