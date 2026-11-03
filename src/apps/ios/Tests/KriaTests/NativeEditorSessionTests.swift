@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import KriaMediaEngine
 import UIKit
 import XCTest
@@ -649,6 +650,39 @@ final class NativeEditorSessionTests: XCTestCase {
         session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 3.5)
         _ = await waitUntil { session.sourcePreviewCompileCount != compiles }
         XCTAssertGreaterThan(session.sourcePreviewCompileCount, compiles, "a real edit still rebuilds")
+    }
+
+    /// The creator's "glitch a few seconds in": while the finished render plays, the live composition finishes building
+    /// and replaces it. The live item must already be ready, seeked to the playing time and prerolled when its player
+    /// takes the canvas (it was paused, detached, built and sought only after the swap), and playback must go on.
+    func testThePlayingFinishedRenderHandsOverToAPrerolledLiveItem() async throws {
+        let (session, _, sourceURL) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        NativePreviewDiagnostics.resetRoutine()
+        session.installFinishedRenderPlayer(url: try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4")), preferredDuration: 2)
+        let finished = try XCTUnwrap(session.player)
+        session.togglePlayback()
+        let playing = await waitUntil(timeout: .seconds(10)) { session.isPlaying && finished.rate > 0 && finished.currentTime().seconds > 0.2 }
+        XCTAssertTrue(playing, "the finished render is playing")
+
+        var published: [(item: AVPlayerItem?, itemReady: Bool, playerReady: Bool, seconds: Double)] = []
+        let observer = session.$player.dropFirst().sink { next in
+            published.append((next?.currentItem, next?.currentItem?.status == .readyToPlay, next?.status == .readyToPlay, next?.currentTime().seconds ?? -1))
+        }
+        defer { observer.cancel() }
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        let live = try XCTUnwrap(session.player)
+        XCTAssertTrue(live !== finished, "the live composition replaced the finished render")
+        let handover = try XCTUnwrap(published.last, "the live player was published")
+        XCTAssertTrue(handover.item === live.currentItem && handover.itemReady && handover.playerReady,
+                      "the live item was already ready when its player took the canvas")
+        XCTAssertGreaterThan(handover.seconds, 0.15, "and already at the playing time, not at the start: \(handover.seconds)")
+        XCTAssertTrue(session.isPlaying)
+        let resumed = await waitUntil(timeout: .seconds(5)) { live.rate > 0 && live.currentTime().seconds > handover.seconds + 0.05 }
+        XCTAssertTrue(resumed, "playback went on from the handover on the live item")
+        XCTAssertTrue(NativePreviewDiagnostics.routineSnapshot().recent.contains { $0.contains("live-handoff") && $0.contains("adopted=1") },
+                      "\(NativePreviewDiagnostics.routineSnapshot().recent)")
     }
 
     /// KRI-432: dragging the start edits the document live (one undo step) but rebuilds the preview once, on release.

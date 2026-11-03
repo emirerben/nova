@@ -3634,10 +3634,30 @@ struct NativeEditorTemporaryVideo: Sendable {
             #endif
             let preview = try await LivePreviewComposition(recipe: program.recipe, assetURLs: program.assetURLs, branding: .standard)
             guard sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
+            // The finished render is playing: ready the live item on its own player first, so the swap below is not
+            // a pause, a detach, a seek and a resume in front of the creator's eyes.
+            var warmed: (player: AVPlayer, time: TimeInterval)?
+            if isPlaying, player != nil, player === finishedRenderPlayer {
+                let target = currentTime
+                if let candidate = await Self.prerolledPlayer(for: preview.preview.playerItem, at: target) { warmed = (candidate, target) }
+                guard sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else {
+                    warmed?.player.replaceCurrentItem(with: nil)
+                    return
+                }
+            }
             let latestTime = currentTime
             let resumePlayback = isPlaying
+            var adopted: AVPlayer?
+            if let warmed {
+                // The creator paused or scrubbed while it warmed, or it took long enough to be far behind: the plain path.
+                if resumePlayback, abs(latestTime - warmed.time) <= Self.warmHandoffMaxDrift { adopted = warmed.player }
+                else { warmed.player.replaceCurrentItem(with: nil) }
+                NativePreviewDiagnostics.note("live-handoff", fields: [
+                    "prerolled": "1", "adopted": adopted == nil ? "0" : "1",
+                    "driftMs": String(Int(abs(latestTime - warmed.time) * 1000))])
+            }
             sourcePreview = preview
-            installPlayer(item: preview.preview.playerItem, preferredDuration: TimelineMath.totalDuration(of: program.recipe))
+            installPlayer(item: preview.preview.playerItem, preferredDuration: TimelineMath.totalDuration(of: program.recipe), adopting: adopted)
             watchSpeakerBackground(of: preview)
             liveSongVolumeActive = liveVolume
             previewBuiltDocument = baseline
@@ -3645,7 +3665,10 @@ struct NativeEditorTemporaryVideo: Sendable {
             sourcePreviewState = .ready
             sourcePreviewSettledSequence = sequence
             if resumePlayback {
-                player?.seek(to: CMTime(seconds: min(latestTime, max(0, playbackDuration - 1.0 / 600)), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in })
+                // An adopted player already sits at `warmed.time`, decoded and prerolled; seeking it again would undo that.
+                if adopted == nil {
+                    player?.seek(to: CMTime(seconds: min(latestTime, max(0, playbackDuration - 1.0 / 600)), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in })
+                }
                 activatePreviewAudio()
                 player?.play()
             } else {
@@ -8522,7 +8545,29 @@ struct NativeEditorTemporaryVideo: Sendable {
         reinstallFinishedRender(url: playableDeviceOutputURL ?? finishedRenderURL, preferredDuration: finishedRenderDuration)
     }
 
-    private func installPlayer(item: AVPlayerItem, preferredDuration: TimeInterval? = nil) {
+    /// How far playback may have moved on while a live item warmed before that player is still adopted.
+    nonisolated private static let warmHandoffMaxDrift: TimeInterval = 0.35
+
+    /// A player holding `item`, seeked to `time` with zero tolerance and prerolled to play at rate 1, or nil when it
+    /// could not get there in about two seconds (the caller then takes the plain swap). Nothing is playing on it.
+    private static func prerolledPlayer(for item: AVPlayerItem, at time: TimeInterval) async -> AVPlayer? {
+        let candidate = AVPlayer(playerItem: item)
+        candidate.automaticallyWaitsToMinimizeStalling = false
+        var waited = 0
+        while candidate.status != .readyToPlay {
+            waited += 1
+            if candidate.status == .failed || Task.isCancelled || waited > 100 { candidate.replaceCurrentItem(with: nil); return nil }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        guard await candidate.seek(to: CMTime(seconds: max(0, time), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero),
+              await candidate.preroll(atRate: 1) else {
+            candidate.replaceCurrentItem(with: nil)
+            return nil
+        }
+        return candidate
+    }
+
+    private func installPlayer(item: AVPlayerItem, preferredDuration: TimeInterval? = nil, adopting prerolled: AVPlayer? = nil) {
         playbackSeekTarget = nil
         cancelScrubFrames()
         seekRecoveryTask?.cancel()
@@ -8546,7 +8591,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         // Stop and detach it first so its audio cannot outlive the visible player.
         player?.pause()
         player?.replaceCurrentItem(with: nil)
-        let next = AVPlayer(playerItem: item)
+        let next = prerolled ?? AVPlayer(playerItem: item)
         player = next
         observingPlayer = next
         playbackStateObserver = next.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self, weak next] _, _ in

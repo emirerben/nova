@@ -962,6 +962,12 @@ enum NativePreviewDiagnostics {
         if routineRecent.count > recentLimit { routineRecent.removeFirst(routineRecent.count - recentLimit) }
     }
 
+    /// The routine events counted and remembered so far (tests read what a handoff recorded).
+    static func routineSnapshot() -> (counts: [String: Int], recent: [String]) {
+        lock.lock(); defer { lock.unlock() }
+        return (routineCounts, routineRecent)
+    }
+
     /// Forgets the routine events (a test starts from none).
     static func resetRoutine() {
         lock.lock(); routineCounts = [:]; routineRecent = []; lock.unlock()
