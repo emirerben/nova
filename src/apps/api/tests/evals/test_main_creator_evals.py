@@ -94,6 +94,26 @@ def test_main_creator_eval(
                 (want["media_id"], want["at_phrase"])
             ]
 
+    if fixture.meta.get("insert_topic_media"):
+        # Parent KRI-1151: "place them in between my speech" is one `insert_clips` row per clip
+        # with NO position (the server picks the end of the sentence about each), the stadium
+        # line stays a full-screen overlay, and the talk pauses. The fixture's answer is
+        # hand-authored (`meta.source` is `hand_authored_golden`), not a model recording, and the
+        # cassette ignores the prompt: this block proves the answer shape and the brief shape
+        # parse. No live eval of this routing exists; the paid eval in tests/evals/README.md is
+        # the only thing that measures whether the model answers this way.
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        inserts = action["strategy"].get("insert_clips") or []
+        assert [row["media_id"] for row in inserts] == fixture.meta["insert_topic_media"]
+        assert all("at_phrase" not in row and "at_s" not in row for row in inserts)
+        assert all(row.get("keep_audio", True) for row in inserts)
+        facts = [row["facts"] for row in result.output["brief_updates"]]
+        assert any("insert_clip" in fact for fact in facts)
+        assert not any(fact.get("display_mode") for fact in facts if "insert_clip" in fact)
+        assert not any(fact.get("clip_sound") == "on" for fact in facts)
+
     copy_meta = fixture.meta.get("creative_copy_decision")
     if copy_meta:
         assert result.output is not None

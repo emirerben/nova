@@ -233,9 +233,10 @@ enum NativePhoneTalkingSource {
 
     /// Inserted clips from the receipt's `placed` rows, sorted by where the take pauses. `[]` when the variant
     /// has no receipt (an old render, the flag off) or it placed nothing, so those previews are unchanged. Nil
-    /// when any row is malformed, names a clip that is not in the pool or is a speaker, repeats a clip, or
-    /// pauses the take at the same moment as another: a preview that dropped one would be a different video from
-    /// the finished MP4, so the caller falls back to the MP4 instead.
+    /// when any row is malformed, names a clip that is not in the pool or is a speaker, or repeats a clip: a
+    /// preview that dropped one would be a different video from the finished MP4, so the caller falls back to
+    /// the MP4 instead. A pause at second 0 (before any speech) is valid, and clips paused at the same instant
+    /// stay in row order, which is the order they play.
     static func inserts(variant: [String: JSONValue], pool: NativeEditorSourcePool, speakerIndices: [Int]) -> [Insert]? {
         guard let receiptValue = variant[insertReceiptField] else { return [] }
         guard let receipt = receiptValue.objectValue else { return nil }
@@ -245,15 +246,18 @@ enum NativePhoneTalkingSource {
         for row in rows {
             guard let fields = row.objectValue, let mediaID = fields["media_id"]?.stringValue,
                   let at = fields["at_take_s"]?.numberValue, let duration = fields["duration_s"]?.numberValue,
-                  at.isFinite, duration.isFinite, at > 0, duration > 0,
+                  at.isFinite, duration.isFinite, at >= 0, duration > 0,
                   let clip = pool.clips.first(where: { $0.nativeSource?.mediaID == mediaID }),
                   !speakerIndices.contains(clip.clipIndex), !result.contains(where: { $0.clipIndex == clip.clipIndex }) else { return nil }
             let keepAudio = fields["keep_audio"]?.boolValue ?? ((fields["volume"]?.numberValue ?? 1) != 0)
             result.append(Insert(clipIndex: clip.clipIndex, atTake: at, duration: duration, keepAudio: keepAudio))
         }
-        result.sort { $0.atTake < $1.atTake }
-        for (previous, next) in zip(result, result.dropFirst()) where next.atTake - previous.atTake < 1e-6 { return nil }
-        return result
+        return stablySorted(result)
+    }
+
+    /// By pause point; clips at one instant keep the order they came in (`sorted` does not promise that).
+    private static func stablySorted(_ inserts: [Insert]) -> [Insert] {
+        inserts.enumerated().sorted { ($0.element.atTake, $0.offset) < ($1.element.atTake, $1.offset) }.map(\.element)
     }
 
     /// Source-pool cutaways from the receipt's `cutaways` rows
@@ -387,13 +391,24 @@ enum NativePhoneTalkingSource {
     }
 
     /// The first speaker's kept segments with the inserted clips between them. Each insert's point is a second
-    /// of the take (kept seconds, in order): inside a segment it splits it, on a seam it sits between two.
+    /// of the take (kept seconds, in order): inside a segment it splits it, on a seam it sits between two, at 0
+    /// it plays before the take and at its end after it. Clips at one instant play one after another in the
+    /// order given, with no speaker piece between them. A point a hair past the end (the persisted seconds
+    /// are rounded to milliseconds) is the end.
     private static func takePieces(kept: [(start: Double, end: Double)], speaker: Speaker, inserts: [PlacedInsert]) throws -> [Piece] {
         let epsilon = 1e-6
+        let roundingSlack = 0.05
         let takeLength = kept.reduce(0) { $0 + ($1.end - $1.start) }
-        var queue = inserts.sorted { $0.insert.atTake < $1.insert.atTake }
-        guard queue.allSatisfy({ $0.insert.atTake > epsilon && $0.insert.atTake < takeLength - epsilon && $0.sourceDuration.isFinite
+        var queue = inserts.enumerated().sorted { ($0.element.insert.atTake, $0.offset) < ($1.element.insert.atTake, $1.offset) }.map(\.element)
+        guard queue.allSatisfy({ $0.insert.atTake >= 0 && $0.insert.atTake <= takeLength + roundingSlack && $0.sourceDuration.isFinite
             && $0.sourceDuration > 0 && $0.insert.duration > 0 }) else { throw RecipeError.invalidTimeline }
+        queue = queue.map { entry in
+            guard entry.insert.atTake > takeLength else { return entry }
+            var clamped = entry
+            clamped.insert = Insert(clipIndex: entry.insert.clipIndex, atTake: takeLength, duration: entry.insert.duration,
+                                    keepAudio: entry.insert.keepAudio)
+            return clamped
+        }
         func placed(_ entry: PlacedInsert) -> Piece {
             // The server laid the clip out at `duration`; the file may be a hair shorter, never longer.
             Piece(clipIndex: entry.insert.clipIndex, start: 0, end: min(entry.insert.duration, entry.sourceDuration),
@@ -415,7 +430,7 @@ enum NativePhoneTalkingSource {
             }
             pieces.append(Piece(clipIndex: speaker.clipIndex, start: start, end: start + remaining, sourceDuration: speaker.duration))
             cursor += remaining
-            if let next = queue.first, abs(next.insert.atTake - cursor) <= epsilon {
+            while let next = queue.first, abs(next.insert.atTake - cursor) <= epsilon {
                 pieces.append(placed(next))
                 queue.removeFirst()
             }
@@ -943,13 +958,52 @@ extension KriaAPI {
 /// Bounded device diagnostics; no URLs, tokens, content, or raw errors.
 enum NativePreviewDiagnostics {
     private static let lock = NSLock()
-    static func record(_ stage: String, fields: [String: String] = [:]) {
+    nonisolated(unsafe) private static let timestamps = ISO8601DateFormatter()
+    /// Tests point the file somewhere private.
+    nonisolated(unsafe) static var directoryOverride: URL?
+    nonisolated(unsafe) private static var routineCounts: [String: Int] = [:]
+    nonisolated(unsafe) private static var routineRecent: [String] = []
+    private static let recentLimit = 12
+
+    /// A routine event (a rebuild, an in-place update, a replaced player): counted and remembered in memory, never
+    /// written. One happens per caption keystroke, and writing each would flush the failures out of the ring below.
+    /// The counts and the last few ride along on the next `record(..., attachRoutine: true)`.
+    static func note(_ stage: String, fields: [String: String] = [:]) {
         lock.lock()
         defer { lock.unlock() }
-        guard let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
+        routineCounts[stage, default: 0] += 1
+        let detail = fields.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
+        routineRecent.append(String(format: "%.1fs ", ProcessInfo.processInfo.systemUptime) + [stage, detail].filter { !$0.isEmpty }.joined(separator: " "))
+        if routineRecent.count > recentLimit { routineRecent.removeFirst(routineRecent.count - recentLimit) }
+    }
+
+    /// The routine events counted and remembered so far (tests read what a handoff recorded).
+    static func routineSnapshot() -> (counts: [String: Int], recent: [String]) {
+        lock.lock(); defer { lock.unlock() }
+        return (routineCounts, routineRecent)
+    }
+
+    /// Forgets the routine events (a test starts from none).
+    static func resetRoutine() {
+        lock.lock(); routineCounts = [:]; routineRecent = []; lock.unlock()
+    }
+
+    /// Appends one event to the file (the last 150 are kept). For refusals, fallbacks and failures only. With
+    /// `attachRoutine` the event also carries the routine counts and the last few routine events since launch.
+    static func record(_ stage: String, fields: [String: String] = [:], attachRoutine: Bool = false) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let root = directoryOverride ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
         let url = root.appendingPathComponent("native-preview-diagnostics.json")
         var events = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode([[String: String]].self, from: $0) } ?? []
-        events.append(fields.merging(["stage": stage, "time": ISO8601DateFormatter().string(from: Date())]) { _, value in value })
+        var event = fields
+        if attachRoutine, !routineCounts.isEmpty {
+            event["routine"] = String(routineCounts.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ").prefix(300))
+            event["recent"] = String(routineRecent.joined(separator: "; ").prefix(600))
+        }
+        event["stage"] = stage
+        event["time"] = timestamps.string(from: Date())
+        events.append(event)
         // KRI-587: one editor open on a 10-clip edit writes ~45 events, so 40 lost a failure seconds later.
         if let data = try? JSONEncoder().encode(Array(events.suffix(150))) { try? data.write(to: url, options: .atomic) }
     }
@@ -969,7 +1023,7 @@ enum NativePreviewDiagnostics {
         var fields = ["kind": kind.rawValue, "domain": report.errorDomain, "code": String(report.errorCode), "state": sourceState]
         if let domain = report.underlyingDomain { fields["underlyingDomain"] = domain }
         if let code = report.underlyingCode { fields["underlyingCode"] = String(code) }
-        record("player-item-failed", fields: fields)
+        record("player-item-failed", fields: fields, attachRoutine: true)
         return report
     }
     /// The live editable preview could not be built or played, so the finished video is shown instead.
@@ -995,7 +1049,31 @@ enum NativePreviewDiagnostics {
             underlyingCode: underlying.map(\.code),
             sourceState: String(sourceState.prefix(32)),
             appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
-        record("preview-failure-reported", fields: ["domain": report.errorDomain, "code": String(report.errorCode), "state": sourceState])
+        record("preview-failure-reported", fields: ["domain": report.errorDomain, "code": String(report.errorCode), "state": sourceState], attachRoutine: true)
+        return report
+    }
+    /// A Talk-to-camera background that is not on screen although the edit has one: no clip to cut out, or a run
+    /// of frames the matte could not answer. Same report shape and endpoint as a player-item failure; `reason` is
+    /// one of the fixed labels below and `trace` carries only fixed labels and counts.
+    /// A simulator without a working Vision model fails every frame from the first one, which says nothing about
+    /// a creator's phone: a run with not one good frame behind it is not reported from there.
+    static func shouldReportHiddenRun(_ snapshot: SpeakerBackgroundTrace.Snapshot, onSimulator: Bool) -> Bool {
+        guard onSimulator else { return true }
+        return (snapshot.counts[SpeakerBackgroundTrace.Outcome.cutout.rawValue] ?? 0)
+            + (snapshot.counts[SpeakerBackgroundTrace.Outcome.backgroundOnly.rawValue] ?? 0) > 0
+    }
+    enum SpeakerBackgroundReason: String { case noSpeakerClip = "no_speaker_clip", hiddenRun = "hidden_run" }
+    static func speakerBackgroundHidden(_ reason: SpeakerBackgroundReason, snapshot: SpeakerBackgroundTrace.Snapshot,
+                                        sourceState: String) -> PlaybackFailureReport {
+        let report = PlaybackFailureReport(
+            playerKind: .live,
+            errorDomain: "preview.speaker_background." + reason.rawValue,
+            errorCode: snapshot.longestHiddenRun,
+            underlyingDomain: nil, underlyingCode: nil,
+            sourceState: String(sourceState.prefix(32)),
+            appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+            trace: snapshot.summary)
+        record("speaker-background-hidden", fields: ["reason": reason.rawValue, "state": sourceState, "trace": snapshot.summary], attachRoutine: true)
         return report
     }
     #if DEBUG

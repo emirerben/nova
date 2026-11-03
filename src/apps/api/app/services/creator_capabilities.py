@@ -1602,7 +1602,7 @@ INSERT_CLIP_NOTICES: dict[str, str] = {
     "duplicate_clip": "That clip was asked for twice; it plays once.",
     "too_many": (
         "Couldn't play that clip in the middle of your talk: a talk can pause for at most "
-        "three clips."
+        f"{MAX_INSERT_CLIPS} clips."
     ),
 }
 

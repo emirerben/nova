@@ -64,7 +64,11 @@ from app.pipeline.prompt_loader import load_prompt
 # v46 (parent KRI-1151): the shared brief section records `insert_clip` / `insert_at_phrase`.
 # v47 (KRI-1162 / KRI-1161): the shared brief section records a photo or video behind the
 # speaker as a `style` fact `speaker_background` (+ `background_changes`, `speaker_small`).
-# v48 is reserved by the talking-insert-at-mention PR (#2086); whichever lands second renumbers.
+# v48 (parent KRI-1151): "place them in between my speech" for clips with their own sound is an
+# `insert_clip` fact with no position (the server picks the sentence); "over my speech" stays
+# display_mode / clip_sound, and the sound words never decide the route ("use their audio" is
+# listed on the overlay side only; a clip with no sound said "in between my speech" is the same
+# insert). Only the insert paragraph (shown while inserts are open) changes.
 # v49 (generated-image grounding): the extractor records "the <generated image> when I say W" as a
 # typed `triggers` ask, and says which videos that does NOT cover (the creator's own footage
 # clips). Extractor-only section; the shared brief section is untouched.
@@ -136,11 +140,14 @@ exactly as the creator wrote it, never translated>"]}, plus "display_mode" ("ful
 for it. Record `triggers` even when the image's title is in another language than the word; the
 server matches the word against the voice. Never drop `triggers` from such an ask while keeping
 `display_mode`: a full-screen ask without `triggers` is read as a cutaway of the creator's own
-clips. The one exception is the creator's own footage: a clip they filmed and attached, shown
-while the talk keeps running ("show the talks when I talk about them", "kongre dediğimde kongre
-videosunu göster") never carries `triggers`, whatever word they name; record it with
-`display_mode` / `clip_sound` as described above, because the server finds each clip's moment
-from what the clip shows.
+clips. The one exception is the creator's own footage: a clip they filmed and attached
+never carries `triggers`, whatever word they name and however they place it, shown while the
+talk keeps running ("show the talks when I talk about them", "kongre dediğimde kongre videosunu
+göster", "over my speech") or put in between their speech ("put the talks in between my
+speech"). Record it exactly as the paragraphs above say for that wording (`display_mode` /
+`clip_sound` for a clip shown over the talk, the insert fact for a clip placed in between their
+speech, when that paragraph is present), because the server finds each clip's moment from what
+the clip shows.
 """
 _NARROW_BRIEF_SECTION += _GENERATED_IMAGE_SECTION
 _NARROW_BRIEF_SECTION += """

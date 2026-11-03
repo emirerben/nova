@@ -994,7 +994,8 @@ is lost and the video grows by the clip's length.
 
 - **Strategy**: `insert_clips: [{media_id, at_phrase | at_s, keep_audio}]` (at most 3 play; up to
   8 rows parse so a 4th and beyond get the named notice "a talk can pause for at most three clips"
-  instead of vanishing; exactly one of the two positions; one of the item's OWN footage clips, a
+  instead of vanishing; at most one of the two positions: a row with NEITHER is "in between my
+  speech", paused at the end of the sentence about the clip, see **Topic placement**; one of the item's OWN footage clips, a
   Visuals video is refused for now). Model-hidden like `ending_clip`. **Prompt gating**: the
   creator prompt's insert section AND the shared brief paragraph (brief extractor v46, creator v110)
   are added only where `creator_capabilities.insert_clip_candidates(manifest)` is non-empty (rollout
@@ -1007,12 +1008,16 @@ is lost and the video grows by the clip's length.
   show-when-mentioned / cutaway-sound ask, recorded exactly as the full-screen (`display_mode`)
   and clip-sound (`clip_sound`) asks are (the cutaway lane reads those two typed facts and ignores
   a `display_mode` that carries `triggers`), never as `triggers` and never as `insert_clip`. With
-  both planner lanes open, "place them in between my speech" together with "when I talk about
-  them" is the full-screen cutaway lane, and wording with no mention anchor and no pause word
-  ("put the congress clip in the middle of my talk") gets ONE `ask_user` question (pause the talk,
-  or cover it?); with only the insert lane open the plain show-it asks leave `insert_clips`
-  empty and the model says plainly that a clip over a running talk is not available, offering
-  only the pause form. The brief records the
+  both planner lanes open, "place them in between my speech" (with or without "when I talk about
+  them") for clips that have speech or sound of their own is an insert, one row per clip with no
+  position (creator v112, brief extractor v48; thread b61b7673 meant exactly that and got an
+  overlay before); "over my speech", "while I keep talking", "keep my voice" and a clip with no
+  speech or sound of its own (a drone shot) stay the full-screen cutaway lane; wording with no
+  mention anchor, no "in between my speech" and no pause word ("put the congress clip in the
+  middle of my talk") gets ONE `ask_user` question (pause the talk, or cover it?); with only the
+  insert lane open the plain show-it asks leave `insert_clips` empty and the model says plainly
+  that a clip over a running talk is not available, offering only the pause form. The insert's
+  sound is its `keep_audio`; the brief records no separate `clip_sound` for it. The brief records the
   insert as a `style` requirement with `facts.insert_clip` (+ `insert_at_phrase` / `insert_at_s`,
   `keep_audio`). The server repair (`repair_creator_insert_clips`) drops what the phone cannot play
   with a plain notice.
@@ -1028,23 +1033,80 @@ is lost and the video grows by the clip's length.
   insert path sits on a microsecond grid, so a no-op Save recompiles the recipe bit for bit.
   Recipe-only: the engine already plays a
   different clip between two clips of one source; no capability, no protocol, no app build.
-- **Placement** (`place_inserts`, in `_run_phone_subtitled_job` after the captions are final): a
-  phrase is found in what he SAID (the spoken words on the take timeline, never the caption words:
-  translated captions and words left out of the captions do not hide a phrase or invent a pause)
-  (`ground_excerpt`, fuzzy for Whisper drift) and the insert waits for the end of that caption or the
-  next pause of 0.25 s within 2.5 s, never inside a word. A point within 0.1 s of a speech-cleanup
-  seam moves onto it (no sliver of speech beside the clip). Refused,
-  with the clip left out of the video and said in the receipt: `phrase_not_found` (also a phrase
-  inside a region speech cleanup cut out; no guess), `in_hook_window` (first 2.5 s),
-  `in_tail_window` (last second), `too_close_to_previous` (< 2 s from another insert),
-  `too_long` (> 60 s), `duplicate_clip`, `clip_in_use` (the speaker or the ending), `too_many`,
-  `clip_not_found`, `not_a_video`, `speaker_background` (the matte would cut the clip out),
-  `talking_multi_off` / `only_clip` (no other clip to play). The clip is taken out of the
-  speakers and the footage cutaways before they are scheduled; cutaways keep clear of the point.
+- **Placement** (`place_inserts`, in `_run_phone_subtitled_job` after the captions are final).
+  **An explicit position always wins over a default.** A phrase pauses the take exactly at the end
+  of its last word (found in what he SAID: the spoken words on the take timeline, never the
+  caption words; `ground_excerpt`, fuzzy for Whisper drift); a second pauses exactly there, even
+  inside a word; both hold in the first 2.5 s, in the last second, at the very start or end of the
+  take and beside another clip (clips at one instant play one after the other, in the order
+  given). The receipt records which defaults it overrode (`overrode`: `hook_window`,
+  `tail_window`, `near_another_clip`, `mid_word`) and `as_asked: true`, and the reply says so
+  ("one clip plays in the first seconds, as you asked"). Only a point past the end of the take
+  moves (to the end, `adjusted: take_end`). The defaults (stay off the first 2.5 s and the last
+  second, 2 s between clips) only choose a position he did not name, see **Topic placement**.
+  A point within 0.1 s of a speech-cleanup seam, of the start of the take or of its end moves onto
+  it (no sliver of speech beside the clip; the start and the end of the take are seams too, and the
+  point is clamped AFTER it is rounded to the millisecond, so a point never lands past the take
+  end whatever the take length; the compiler also moves two points closer than a frame onto one
+  instant and plays whatever is left at the end of the take, so an insert at the take end or
+  start never raises and never leaves a sliver). A phrase he never says (also one inside a region
+  speech cleanup cut out) is placed by meaning instead and the receipt says
+  `fallback: phrase_not_found`; only when the check is SURE nothing he says is about the clip is
+  it left out (`phrase_not_found`, with the nearest sentence offered). Refused, with the clip left out of
+  the video and said in the receipt, only what the engine cannot play: `too_long` (over the 5
+  minutes a Talking clip can be), `duplicate_clip`, `clip_in_use` (the speaker, the ending, or the
+  one clip analysed as speaking to camera), `too_many` (past `MAX_INSERTS` = 20, the size the
+  compiler and the sentence check are built for; the reply says the number), `clip_not_found`,
+  `not_a_video`, `speaker_background` (the matte would cut the clip out), `talking_multi_off` /
+  `only_clip` (no other clip to play). **The device builds at most 30 minutes**
+  (`recipes_v2.MAX_TIMELINE_S`), and the approved length is a pin: `fit_inserts` drops the LAST
+  clips (latest on the take) until the video fits, each named with the length it would have
+  reached (`over_device_budget` / `over_length_limit`, `would_be_s`; the reply says the number),
+  and a recipe the device still refuses is an `UnsupportedPhonePlan` in words, never a pydantic
+  error retried as a bug. The clip is taken out of the speakers and the footage
+  cutaways before they are scheduled; cutaways keep clear of the point.
+- **Topic placement** (a row with no phrase and no second; `phone_talking_insert_topics`,
+  `_resolve_insert_topics` in `generative_build.py`): the creator's spoken words (take timeline,
+  after speech cleanup) are cut into numbered sentences (Whisper's terminal punctuation, a pause
+  of 0.8 s, a 40-word cap cut at the longest gap). ONE model call (`nova.compose.talking_insert_
+  sentence`, via `phone_insert_topic_picker`) gets every clip's facts (summary, transcript,
+  subject, activity, brands, props) and the numbered sentences and returns, per clip, the first
+  and last sentence of the thought that covers it, a confidence, or null (an honest abstain);
+  it matches by meaning across languages, which the lexical matcher cannot (English "alcohol"
+  against Turkish "alkol"). The insert goes at the END of the last sentence (`snap:
+  sentence_end`): never moved to a later pause or caption end, never earlier, never onto another
+  clip. It is held half the silence that follows the sentence (at most 0.2 s) so his last word is
+  not clipped; an explicit second is never held. **A default can never keep a clip out.** Outcomes:
+  the check's answer (`via: meaning`; a span outside the talk or over many sentences is clamped to
+  the talk, there is no sentence cap); a clip with no usable answer (omitted, a null that is not
+  sure, a guess, numbers that name no sentence, an outage) is asked ONCE more (a second call keyed
+  apart), then placed by the keyword matcher (`via: keyword`), then at a labelled guess
+  (`via: guess`: the check's own low-confidence sentence, else the sentence sharing the most words
+  with the clip, else an even spread across the talk); `why` says which of `check_unavailable`,
+  `unclear`, `invalid_answer`, `low_confidence`, `no_facts` (nothing known about the clip) sent it
+  there. Only two things leave a clip out: no speech (`no_speech`) and a null the check gave with
+  HIGH confidence (`no_matching_sentence`: the receipt names the clip and the reply offers 'Put the
+  <clip> after "<nearest sentence>" anyway?'). The last sentence of the talk is paused AFTER it (the
+  compiler plays a clip at the very end of the take), a sentence ending in the first 2.5 s is paused
+  after the next one (`adjusted: hook_window`), and two clips on one sentence play at one instant,
+  one after the other (`adjusted: near_another_clip`, no movement). **Retries**: the sentence answer
+  is stored the moment it is known (`insert_pick_checkpoint`, Redis, fail-open, keyed by job and the
+  digest of the whole request), a Celery retry of the render takes it instead of calling again, and
+  a retry that must call keys its paid call apart (`<task id>:r<n>:p<k>`); a
+  `ProviderOutcomeUnknownError` is NOT "unavailable" (it reaches the task's retry machinery).
+  Seams between the take and a clip get the engine's own ~25 ms declick edge on every clip; there
+  is no extra crossfade (the per-clip `audio_fade_in/out` exists but a ramp over a clip edge would
+  dip his voice).   own take (the one clip analysed as speaking to camera) can never be inserted
+  (`clip_in_use`). The model call is unproven against the real model (the tests replay
+  hand-written stand-in answers, not recordings of the model; no live eval of it exists);
+  evidence to collect after the first prod renders: the receipt's `via`, `confidence`,
+  `sentence_first/last` per clip.
 - **Receipt**: `variants[i].phone_insert_clips = {placed: [{media_id, start_s, end_s, at_take_s,
-  duration_s, keep_audio, volume, basis: phrase|second, snap:
-  cue_end|pause|word_end|exact|seam}], dropped: [{media_id, reason}]}` (only with the flag on and an
-  ask). `start_s`/`end_s` are where the clip plays on the final video; `at_take_s` (6 decimals) is
+  duration_s, keep_audio, volume, basis: phrase|second|topic, snap:
+  cue_end|pause|word_end|exact|seam|sentence_end, via?: meaning|keyword|guess, confidence?,
+  sentence_first?, sentence_last?, why?, name?, overrode?, adjusted?, fallback?}], dropped:
+  [{media_id, reason, name?, after_s?, after_text?, would_be_s?}]}` (only with the flag on and an
+  ask; `name` is the name the app shows, so the reply can say which clip). `start_s`/`end_s` are where the clip plays on the final video; `at_take_s` (6 decimals) is
   where the take pauses on the TAKE timeline. The brief check (`_check_insert_clip`) reads it: met
   only when every asked clip plays, partial when some do, not possible with the reason. **The iPhone
   editor preview is rebuilt from this receipt**, not from the recipe: add fields here, never
@@ -1057,10 +1119,16 @@ is lost and the video grows by the clip's length.
   (`talking_range_multi_clip`). **Preview (iPhone)**: `NativePhoneTalkingSource.inserts` reads
   the receipt above and `hydrate(..., inserts:)` splits the take at `at_take_s` (a position on the
   cut timeline: the kept segments after speech cleanup, in order), plays the inserted clip whole
-  (its own sound, or muted when `keep_audio` is false) and resumes the take; captions, text and
+  (its own sound, or muted when `keep_audio` is false) and resumes the take. A pause at take
+  second 0, at (or up to 0.05 s past, clamped to) the take end and several clips at one
+  `at_take_s` are all drawn (same-instant clips play one after another in row order, no speaker
+  piece between them; guards `NativeEditorSourcesTests.testPhoneTalkingInsertAtTheStartOfThe
+  TakeOrItsEndOrSeveralAtOneInstant` and `testPhoneTalkingInsertsAcceptTheStartOfTheTakeAnd
+  SeveralAtOneInstant`); captions, text and
   cutaway windows are already final-timeline seconds. No receipt (an old render, the flag off)
   keeps the preview exactly as it was; a receipt the app cannot draw (clip not in the source pool,
-  a speaker, a malformed row) falls back to the finished MP4. Known gaps: the inserted clip's own
+  a speaker, a repeated clip, a negative or far-past-the-end point, a malformed row) falls back to
+  the finished MP4. Known gaps: the inserted clip's own
   speech is not captioned; the editor's timeline STRIP does not draw the inserted clip as its own
   segment (the preview does; the strip is closed on Talking edits); clip delete / trim /
   silence-cut edits do not know about it (closed on multi-clip Talking edits today); text that
@@ -1089,7 +1157,9 @@ is lost and the video grows by the clip's length.
   insert section; the cutaway tail says a pausing clip "exists only as `insert_clips`" on an explicit
   pause / stop ask; one routing question allowed). Pinned by `tests/kria/test_insert_and_cutaway_lanes.py`
   (sha of what origin/main renders) and the golden fixtures `kri1151_talking_cutaways_insert_open_*`
-  (the prod request with both lanes open => cutaway, not insert) and `kri1151_talking_insert_pause_form`.
+  (the prod request with both lanes open => cutaway, not insert) and `kri1151_talking_insert_pause_form`
+  (all hand-authored contract fixtures, not model recordings: they pin the prompt and the answer
+  shape, and no live eval of the routing exists).
 - **Worker footprint**: the insert adds only pure-Python steps (`place_inserts`, `warp_for_inserts`)
   to the phone recipe compile in `_run_phone_subtitled_job` (inside `orchestrate_generative_job`,
   soft limit 1740 s); no media is read, no ffmpeg or Skia runs, the clip is one of the item's own

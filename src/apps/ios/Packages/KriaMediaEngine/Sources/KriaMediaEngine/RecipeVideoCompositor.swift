@@ -262,6 +262,11 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         guard let matte = instruction.speakerMatte,
               let background = backgrounds.first(where: \.speakerBackgroundWindow) ?? backgrounds.first,
               let first = layers.firstIndex(where: { $0.speakerRole == .speaker }) else {
+            // A background is part of the edit but no clip can ever be cut out of it: say so instead of drawing the room
+            // silently. A speaker-less stretch of an edit that does have speaker clips (the ending clip) is not this.
+            if let matte = instruction.speakerMatte, !backgrounds.isEmpty, matte.trace.hasNoSpeakerClips {
+                matte.trace.record(.noSpeakerLayer, at: time)
+            }
             for layer in layers where layer.speakerRole != .background { try compose(layer) }
             return frame
         }
@@ -270,7 +275,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         var speaker = CIImage(color: .clear).cropped(to: instruction.canvas)
         for layer in speakers { speaker = try composeVideoLayer(layer, onto: speaker, instruction: instruction, request: request, time: time) }
         let key = speakers.map { $0.clipID ?? String($0.trackID ?? -1) }.joined(separator: "|")
-        switch matte.answer(for: speaker, at: time, canvas: instruction.canvas, clipKey: key) {
+        switch matte.answer(for: speaker, at: time, canvas: instruction.canvas, clipKey: key, backgroundStaysDrawn: instruction.speakerFrame != nil) {
         case .cutout(let mask):
             try compose(background)
             // The mask was computed on the full-size speaker layer; only then is the cut-out moved into its frame (S27).

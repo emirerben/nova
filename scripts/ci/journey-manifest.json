@@ -1151,13 +1151,21 @@
     {
       "id": "kri-1151-talking-insert-clip",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_phone_talking_inserts.py tests/tasks/test_talking_insert_clip.py tests/routes/test_phone_talking_insert_commit.py tests/kria/test_insert_clip_planner.py",
+      "api_tests": "tests/pipeline/test_phone_talking_inserts.py tests/pipeline/test_phone_talking_insert_topics.py tests/tasks/test_talking_insert_clip.py tests/tasks/test_talking_insert_topic.py tests/routes/test_phone_talking_insert_commit.py tests/kria/test_insert_clip_planner.py tests/kria/test_insert_at_topic_planner.py tests/agents/test_talking_insert_sentence.py",
       "paths": [
+        "src/apps/api/app/agents/talking_insert_sentence.py",
+        "src/apps/api/app/pipeline/phone_talking_insert_topics.py",
         "src/apps/api/app/pipeline/phone_talking_inserts.py",
+        "src/apps/api/app/services/phone_insert_topic_picker.py",
+        "src/apps/api/tests/agents/test_talking_insert_sentence.py",
+        "src/apps/api/tests/fixtures/kri1151_insert_at_topic_b61b7673.json",
+        "src/apps/api/tests/kria/test_insert_at_topic_planner.py",
         "src/apps/api/tests/kria/test_insert_clip_planner.py",
+        "src/apps/api/tests/pipeline/test_phone_talking_insert_topics.py",
         "src/apps/api/tests/pipeline/test_phone_talking_inserts.py",
         "src/apps/api/tests/routes/test_phone_talking_insert_commit.py",
-        "src/apps/api/tests/tasks/test_talking_insert_clip.py"
+        "src/apps/api/tests/tasks/test_talking_insert_clip.py",
+        "src/apps/api/tests/tasks/test_talking_insert_topic.py"
       ]
     },
     {

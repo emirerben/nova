@@ -91,3 +91,50 @@ def test_dropping_the_trigger_would_turn_a_visual_into_a_cutaway():
         "kahve dediğimde kahve görselini tam ekran göster",
     )
     assert brief_full_screen_show_ask(brief) is not None
+
+
+def test_both_lanes_coexist_when_inserts_are_open_and_each_ask_lands_in_its_own_lane():
+    """Insert lane (PR #2086) and Visuals lane (this PR) in one extractor prompt. One wording per
+    lane is parsed the way the model must emit it, then read back with the server's own readers:
+    a Visual at a word is `triggers` (and never a cutaway), the creator's own footage in between
+    their speech is an insert with no position, and over their speech is a plain overlay."""
+    from app.agents.brief_extractor import _GENERATED_IMAGE_SECTION
+    from app.agents.main_creator import _BRIEF_INSERT_CLIP_SENTENCE
+    from app.kria.brief_checks import _insert_clip_fact
+
+    prompt = BriefExtractorAgent(None).render_prompt(  # type: ignore[arg-type]
+        BriefExtractionInput(
+            creator_request="", user_message="x", conversation=[], insert_clips_open=True
+        )
+    )
+    assert _BRIEF_INSERT_CLIP_SENTENCE in prompt
+    assert _GENERATED_IMAGE_SECTION in prompt
+
+    visual = _brief_from(
+        _style("the beer image", {"triggers": ["alkol"]}),
+        "show the beer image when I say alkol",
+    )
+    insert = _brief_from(
+        _style("the talks, in between my speech", {"insert_clip": "the talks"}),
+        "put the talks in between my speech",
+    )
+    overlay = _brief_from(
+        _style("the talks over my speech", {"display_mode": "fullscreen"}),
+        "show them over my speech",
+    )
+
+    (visual_req,) = visual.live()
+    assert visual_req.facts["triggers"] == ["alkol"]
+    assert not _insert_clip_fact(visual_req)
+    assert brief_full_screen_show_ask(visual) is None
+
+    (insert_req,) = insert.live()
+    assert _insert_clip_fact(insert_req)
+    assert "triggers" not in insert_req.facts
+    assert "insert_at_phrase" not in insert_req.facts and "insert_at_s" not in insert_req.facts
+    assert brief_full_screen_show_ask(insert) is None
+
+    (overlay_req,) = overlay.live()
+    assert "triggers" not in overlay_req.facts and not _insert_clip_fact(overlay_req)
+    ask = brief_full_screen_show_ask(overlay)
+    assert ask is not None and ask.whole_video

@@ -6,7 +6,7 @@ import hashlib
 import json
 import tempfile
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -111,16 +111,11 @@ class GeneratedMediaAccept(BaseModel):
 
 
 def generated_media_enabled(capability: str) -> bool:
-    try:
-        verified = date.fromisoformat(settings.generated_media_price_verified_at)
-    except ValueError:
-        return False
     return bool(
         settings.ai_cost_control_enabled
         and settings.generated_media_live_approved
         and settings.generated_media_billing_organization
         and settings.openai_api_key
-        and timedelta(0) <= date.today() - verified <= timedelta(days=7)
         and settings.generated_media_max_request_usd >= (0.1 if capability == "narration" else 2)
         and settings.ai_openai_monthly_budget_usd > 0
         and (
