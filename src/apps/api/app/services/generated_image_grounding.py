@@ -41,8 +41,9 @@ def _one_line(value: object, limit: int) -> str:
 
 
 def prompt_metadata(capability: str, prompt: str) -> dict[str, str]:
-    """The prompt text kept on the operation (admission copies it to `generation_prompt`). Only a fresh image has a description of itself;
-    an edit prompt ("make the hat red") describes a change, not the picture."""
+    """The prompt text kept on the operation; admission copies it to `generation_prompt`.
+    Only a fresh image has a description of itself; an edit prompt ("make the hat red")
+    describes a change, not the picture."""
     if capability != "image":
         return {}
     text = _one_line(prompt, GROUNDING_PROMPT_MAX_CHARS)
