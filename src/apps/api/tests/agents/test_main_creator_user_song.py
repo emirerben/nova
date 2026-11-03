@@ -77,14 +77,15 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v106 (prompt fidelity, animation): the two brief-enabled hashes re-pinned (one added paragraph).
 # v109 (KRI-1161) teaches the `speaker_background` brief fact: the two brief-on hashes re-pinned;
 # brief-off unchanged.
-# v112 (KRI-1173) adds the `background_color` brief fact: the two brief-on hashes re-pinned;
-# brief-off unchanged; reverting that one clause reproduces the previous values.
+# v113 (KRI-1177 / KRI-1164) teaches the caption look facts and `audio_intent: no_music`, and
+# KRI-1173 adds the `background_color` brief fact: the two brief-on hashes re-pinned (main had
+# 065dbc15… / 610a0650… before the colour clause); brief-off unchanged.
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "fdababe6b1e024cd937e1cd2c8cc9d5031f4188ed852a2e6f3988502bfa07625",
+    (True, True): "ea4b279fa724a676f1280947a06a77e076780cc9a3beca298e5c49b3d411cb9e",
     (True, False): "e3de37c194b88bd906568375111a33a5d8ec8bdab981a29ff6f377162710e87e",
-    (False, True): "15f409ead69e112e48148dd5c067b819171b039030e1e316a3c7d5acaa62c9f4",
+    (False, True): "a855f01d37771a854e3c2d61baaefe9663ed128b78f438572b2e10c4cbc3f62a",
     (False, False): "e804c3135cb2e6eae9093216bee3ee0d97159aa120c2b1eef8e34e61a3d37240",
 }
 

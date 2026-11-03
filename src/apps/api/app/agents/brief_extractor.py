@@ -72,7 +72,10 @@ from app.pipeline.prompt_loader import load_prompt
 # v49 (generated-image grounding): the extractor records "the <generated image> when I say W" as a
 # typed `triggers` ask, and says which videos that does NOT cover (the creator's own footage
 # clips). Extractor-only section; the shared brief section is untouched.
-# v53 (KRI-1173; v50-v52 are held by #2089 and #2092): the shared brief section also records
+# v50 (KRI-1177 / KRI-1164, Green 3): the shared brief section records the creator's caption look
+# (`caption_size`, `caption_position`, `caption_color`, `caption_case`) and "no music" as
+# `audio_intent: no_music`; the speaker's own corner is never a caption position.
+# v53 (KRI-1173; v51-v52 are held by #2092 and others): the brief section also records
 # `background_color` on a plain-colour background ask.
 BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-03-v53"
 _NARROW_BRIEF_SECTION = (

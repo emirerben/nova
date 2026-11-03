@@ -37,6 +37,7 @@ SUITES = (
     "tests/kria/test_intent_review_disposition.py",
     "tests/kria/test_intent_review_catalog_postgres.py",
     "tests/integration/test_intent_review_outcome_postgres.py",
+    "tests/integration/test_intent_review_repair_postgres.py",
     "tests/evals/test_intent_review_evals.py",
 )
 CLAIM = (

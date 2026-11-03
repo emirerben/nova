@@ -1501,9 +1501,14 @@
     {
       "id": "kri-721-approval-readiness",
       "needs_native": false,
-      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py tests/kria/test_lev_m1_length_photo_holds_replay.py tests/kria/test_assos_request_to_recipe.py tests/kria/test_route_replays.py tests/kria/test_route_registry_flag_off.py tests/kria/test_route_lines_golden.py tests/kria/test_render_entry_pins.py tests/kria/test_lane_targets_guard.py tests/kria/test_text_animation_ask.py tests/pipeline/test_story_direction.py",
+      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py tests/kria/test_lev_m1_length_photo_holds_replay.py tests/kria/test_assos_request_to_recipe.py tests/kria/test_route_replays.py tests/kria/test_route_registry_flag_off.py tests/kria/test_route_lines_golden.py tests/kria/test_render_entry_pins.py tests/kria/test_lane_targets_guard.py tests/kria/test_text_animation_ask.py tests/pipeline/test_story_direction.py tests/kria/test_green3_pr1_receipts.py tests/tasks/test_green3_caption_look_worker.py tests/agents/test_green3_brief_prompt.py",
       "paths": [
         "src/apps/api/app/kria/approval_readiness.py",
+        "src/apps/api/app/kria/caption_look_ask.py",
+        "src/apps/api/tests/fixtures/green3_9bad2d75_caption_look_no_music.json",
+        "src/apps/api/tests/kria/test_green3_pr1_receipts.py",
+        "src/apps/api/tests/tasks/test_green3_caption_look_worker.py",
+        "src/apps/api/tests/agents/test_green3_brief_prompt.py",
         "src/apps/api/app/kria/route_disclosure.py",
         "src/apps/api/app/kria/route_capabilities/",
         "src/apps/api/app/kria/animation_ask.py",
@@ -3100,7 +3105,7 @@
     {
       "id": "kria-intent-review",
       "needs_native": false,
-      "api_tests": "tests/kria/test_intent_review_tier.py tests/services/test_openai_vision_transport.py tests/services/test_ai_cost_control_intent_review.py tests/integration/test_intent_review_lifecycle_postgres.py tests/kria/test_intent_review_disposition.py tests/kria/test_intent_review_catalog_postgres.py tests/integration/test_intent_review_outcome_postgres.py tests/evals/test_intent_review_evals.py",
+      "api_tests": "tests/kria/test_intent_review_tier.py tests/services/test_openai_vision_transport.py tests/services/test_ai_cost_control_intent_review.py tests/integration/test_intent_review_lifecycle_postgres.py tests/kria/test_intent_review_disposition.py tests/kria/test_intent_review_catalog_postgres.py tests/integration/test_intent_review_outcome_postgres.py tests/integration/test_intent_review_repair_postgres.py tests/evals/test_intent_review_evals.py",
       "paths": [
         "src/apps/api/app/kria/intent_review_tier.py",
         "src/apps/api/app/agents/_openai_vision.py",
@@ -3116,6 +3121,9 @@
         "src/apps/api/app/agents/intent_review.py",
         "src/apps/api/app/agents/_schemas/intent_review.py",
         "src/apps/api/app/services/intent_review_prompt.py",
+        "src/apps/api/app/services/intent_review_repair_flow.py",
+        "src/apps/api/app/kria/intent_review_repair.py",
+        "src/apps/api/app/kria/intent_review_copy.py",
         "src/apps/api/tests/fixtures/agent_evals/intent_review/",
         "src/apps/api/tests/kria/test_intent_review_tier.py",
         "src/apps/api/tests/services/test_openai_vision_transport.py",
@@ -3125,6 +3133,7 @@
         "src/apps/api/tests/kria/test_intent_review_disposition.py",
         "src/apps/api/tests/kria/test_intent_review_catalog_postgres.py",
         "src/apps/api/tests/integration/test_intent_review_outcome_postgres.py",
+        "src/apps/api/tests/integration/test_intent_review_repair_postgres.py",
         "src/apps/api/tests/evals/test_intent_review_evals.py"
       ]
     }

@@ -351,7 +351,8 @@ def asks_captions_on(req: BriefRequirement) -> bool:
 
 
 # Positions the creation text pass can give a title from the creator's own words
-# (`schemas.phone_text_style.explicit_text_rule` reads corner phrases only).
+# (`schemas.phone_text_style.explicit_text_rule` reads corner and "in the middle" phrases about the
+# text; this check still counts only the corners as placed).
 _CORNER_POSITIONS = frozenset({"top_left", "top_right", "bottom_left", "bottom_right"})
 
 
