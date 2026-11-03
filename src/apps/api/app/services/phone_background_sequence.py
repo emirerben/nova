@@ -29,8 +29,8 @@ Rotation and mixed (an entry has no ``spoken_phrase``, or no phrase is heard at 
 On the word (every entry has a ``spoken_phrase`` and one is heard, KRI-1175, S46-S56):
 
 * the visual is on screen while it is talked about, in the order of the talk: a phrase never
-  heard gets no window (``phrase_not_heard``); mentions within ``MIN_WINDOW_S`` of the first
-  one are one mention, whose entries follow each other from its first word;
+  heard gets no window (``phrase_not_heard``); words heard within ``MIN_WINDOW_S`` of the
+  previous one are one mention, whose entries follow each other from its first word;
 * an entry stays ``hold_s`` (else ``cadence_s``), but the last entry before the next mention
   holds until it; its ``hold_s`` ends it early and the fill shows in between, unless that gap
   would be a sliver (under ``MIN_WINDOW_S``), which the window absorbs;
@@ -39,8 +39,9 @@ On the word (every entry has a ``spoken_phrase`` and one is heard, KRI-1175, S46
 * the first window opens the video (from 0 s) unless it has ``hold_s``; a lead-in under
   ``MIN_WINDOW_S`` is absorbed either way, a longer one keeps the fill;
 * once every visual was shown, those without ``hold_s`` take turns every ``cadence_s``, in the
-  order they were first shown, to the take end (a leftover sliver joins the window before it;
-  with no such visual the fill shows); the ``MAX_WINDOWS`` stretch is that cadence only.
+  order they were first shown, to the take end (a leftover sliver joins the window before it
+  unless that one has ``hold_s``; with no such visual the fill shows); the ``MAX_WINDOWS``
+  stretch is that cadence only.
 """
 
 from __future__ import annotations
@@ -244,7 +245,8 @@ def _lay_out_on_the_word(
     by_index = {entry.index: entry for entry in entries}
     mentions: list[list[tuple[float, int]]] = []
     for at, idx in sorted((at, idx) for idx, at in anchors.items()):
-        if mentions and at - mentions[-1][0][0] <= MIN_WINDOW_S + _EPS:
+        # Words heard less than MIN_WINDOW_S after the previous one chain into the same mention.
+        if mentions and at - mentions[-1][-1][0] <= MIN_WINDOW_S + _EPS:
             mentions[-1].append((at, idx))
         else:
             mentions.append([(at, idx)])
@@ -281,9 +283,12 @@ def _lay_out_on_the_word(
     while True:
         windows = list(head)
         last = windows[-1]
-        if tail_s < max(MIN_WINDOW_S, current / 2.0) - _EPS or cycle == [last.index]:
+        sliver = tail_s < max(MIN_WINDOW_S, current / 2.0) - _EPS
+        # A held last window keeps its asked length unless the rest would flash under the minimum.
+        held_last = bool(by_index[last.index].hold_s) and tail_s >= MIN_WINDOW_S - _EPS
+        if cycle == [last.index] or (sliver and not held_last):
             windows[-1] = OutputWindow(last.index, last.start_s, take_s)
-        else:
+        elif not sliver:
             _fill_gap(tail_start, take_s, cycle, cursor, current, windows)
         # Only the tail cadence stretches; a tail with a single window cannot shrink further.
         if len(windows) <= MAX_WINDOWS or len(windows) - len(head) <= 1 or current >= tail_s:

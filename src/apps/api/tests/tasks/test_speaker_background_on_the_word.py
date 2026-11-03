@@ -46,12 +46,9 @@ WORDS = [{"text": t, "start_s": s, "end_s": e} for t, s, e in GREEN3_WORDS]
 TAKE_FULL_S = GREEN3["take_duration_s"]
 # `variants[0].silence_cut.removed`: three pauses, 0.964 s.
 REMOVED = [tuple(span) for span in GREEN3["silence_cut_removed"]]
-KEEP = [
-    (start, end)
-    for start, end in zip(
-        [0.0, *(e for _s, e in REMOVED)], [*(s for s, _e in REMOVED), TAKE_FULL_S], strict=True
-    )
-]
+KEEP = list(
+    zip([0.0, *(e for _s, e in REMOVED)], [*(s for s, _e in REMOVED), TAKE_FULL_S], strict=True)
+)
 TAKE_S = seq.kept_duration(KEEP, TAKE_FULL_S)  # 30.259 s, the finished edit
 CADENCE_S = 4.0  # "changing every 3-5 seconds" -> the midpoint
 
@@ -419,42 +416,39 @@ def test_the_word_check_rejects_swapped_photos():
 # ------------------------------------------------------------------ S53/S55: the whole worker
 
 
-def _pool_rows():
-    def row(media, kind, filename, **extra):
-        return {
-            "id": media,
-            "gcs_path": f"users/u1/plan/item/pool/{media}.{'mp4' if kind == 'video' else 'jpg'}",
-            "gcs_generation": "7",
-            "kind": kind,
-            "source_filename": filename,
-            "duration_s": 5.0 if kind == "video" else None,
-            "aspect": 0.5625,
-            "user_context": "",
-            "analysis": extra.get("analysis", {}),
-            "capture": None,
-        }
+# The decoy's real analysis (the overlay matcher's input in job 9bad2d75); the five backgrounds
+# are reserved from that matcher, so their analysis never matters here.
+_LUNCH_ANALYSIS = {
+    "subject": "Grilled chicken breast meal",
+    "description": (
+        "A plate featuring sliced grilled chicken breast, a dome of white rice garnished with "
+        "chives, and a fresh side salad with lettuce, carrots, and a tomato slice, placed next to "
+        "a glass of ice water on a wooden table."
+    ),
+}
 
-    return [
-        row(TABLET, "image", "0126B894-IMG_7122.jpeg"),
-        row(COLLAB_POST, "image", "7AEE5F83-IMG_7127.png"),
-        row(DRONE_PHOTO, "image", "73D5CA60-IMG_7123.jpeg"),
-        row(DRONE_VIDEO, "video", "A3145EFA-IMG_7125.mp4"),
-        row(SUNRISE, "image", "11376E9F-IMG_7120.jpeg"),
-        # The decoy carries its real analysis (the overlay matcher's input in job 9bad2d75).
-        row(
-            LUNCH,
-            "image",
-            "2066D9C0-IMG_7129.jpeg",
-            analysis={
-                "subject": "Grilled chicken breast meal",
-                "description": (
-                    "A plate featuring sliced grilled chicken breast, a dome of white rice "
-                    "garnished with chives, and a fresh side salad with lettuce, carrots, and a "
-                    "tomato slice, placed next to a glass of ice water on a wooden table."
-                ),
-            },
-        ),
-    ]
+
+def _pool_rows():
+    """The item's ready pool in upload order (7122, 7127, 7123, 7125, 7120, 7129), from the kit."""
+    rows = []
+    for name in ("IMG_7122", "IMG_7127", "IMG_7123", "IMG_7125", "IMG_7120", "IMG_7129"):
+        visual = KIT[name]
+        ext = "mp4" if visual["kind"] == "video" else "jpg"
+        rows.append(
+            {
+                "id": visual["pool_id"],
+                "gcs_path": f"users/u1/plan/item/pool/{visual['pool_id']}.{ext}",
+                "gcs_generation": "7",
+                "kind": visual["kind"],
+                "source_filename": f"{name}.{ext}",
+                "duration_s": 5.0 if visual["kind"] == "video" else None,
+                "aspect": 0.5625,
+                "user_context": "",
+                "analysis": _LUNCH_ANALYSIS if visual["pool_id"] == LUNCH else {},
+                "capture": None,
+            }
+        )
+    return rows
 
 
 def _green3_job(monkeypatch, background):
