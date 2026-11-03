@@ -240,6 +240,12 @@ import XCTest
         #endif
     }
 
+    /// Rebuilding the capture graph and starting a Cinematic recording each took longer than 20 s on the iPhone 13 Pro when the
+    /// recording and the phone's screen capture compete for the same media engine.
+    private static let graphRebuildTimeout: TimeInterval = 90
+    private static let recordStartTimeout: TimeInterval = 90
+    private static let backgroundAttachTimeout: TimeInterval = 180
+
     /// Talk-to-camera bench scenario, driven by `scripts/ios/talk-bench.sh`. One call is one take: idle live preview for a few
     /// seconds, a recording of `KRIA_TALK_BENCH_SECONDS`, Stop, and the wait until the take reaches Review. The app's
     /// bench recorder (`KRIA_TALK_BENCH=1`, Debug) writes every signpost interval and the finished take into its container;
@@ -258,6 +264,8 @@ import XCTest
         guard environment["KRIA_TELEPROMPTER_HARDWARE_TEST"] == "1", environment["KRIA_TALK_BENCH"] == "1" else {
             throw XCTSkip("Set KRIA_TELEPROMPTER_HARDWARE_TEST=1 and KRIA_TALK_BENCH=1 (scripts/ios/talk-bench.sh does).")
         }
+        // A failed wait would otherwise run on into a 10-minute Cinematic bake that has nothing left to measure.
+        continueAfterFailure = false
         let background = environment["KRIA_TALK_BENCH_BACKGROUND"] ?? "none"
         let cinematicWanted = environment["KRIA_TALK_BENCH_CINEMATIC"] == "1"
         let seconds = TimeInterval(environment["KRIA_TALK_BENCH_SECONDS"] ?? "") ?? 10
@@ -293,7 +301,7 @@ import XCTest
             guard cinematic.isEnabled else { throw XCTSkip("This iPhone cannot record Cinematic with the front camera.") }
             if (cinematic.value as? String) != "1" { cinematic.switches.firstMatch.tap() }
             XCTAssertEqual(cinematic.value as? String, "1")
-            guard waitUntilEnabled(record, timeout: 20) else { XCTFail("Record is enabled again after switching to Cinematic."); return }
+            guard waitUntilEnabled(record, timeout: Self.graphRebuildTimeout) else { XCTFail("Record is enabled again after switching to Cinematic."); return }
         }
         // The Cinematic choice is saved per device, so a previous scenario's "on" survives into this launch.
         if !cinematicWanted {
@@ -301,19 +309,19 @@ import XCTest
             if cinematic.waitForExistence(timeout: 5), cinematic.isEnabled, (cinematic.value as? String) == "1" {
                 cinematic.switches.firstMatch.tap()
                 XCTAssertEqual(cinematic.value as? String, "0")
-                guard waitUntilEnabled(record, timeout: 20) else { XCTFail("Record is enabled again after switching Cinematic off."); return }
+                guard waitUntilEnabled(record, timeout: Self.graphRebuildTimeout) else { XCTFail("Record is enabled again after switching Cinematic off."); return }
             }
         }
         if background != "none" {
             let live = app.descendants(matching: .any).matching(identifier: "teleprompter-live-background").firstMatch
-            XCTAssertTrue(live.waitForExistence(timeout: 30), "The \(background) background should be drawing behind the camera.")
+            XCTAssertTrue(live.waitForExistence(timeout: Self.backgroundAttachTimeout), "The \(background) background should be drawing behind the camera.")
         }
         // Idle preview: the part of the live path that runs before any recording starts.
         wait(seconds: idleSeconds)
 
         record.tap()
         let stop = app.buttons["teleprompter-stop-recording"]
-        XCTAssertTrue(stop.waitForExistence(timeout: 15), "Stop appears only after AVFoundation confirms recording started.")
+        XCTAssertTrue(stop.waitForExistence(timeout: Self.recordStartTimeout), "Stop appears only after AVFoundation confirms recording started.")
         wait(seconds: seconds)
         stop.tap()
         let useTake = app.buttons["teleprompter-use-take"]
