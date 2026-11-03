@@ -55,7 +55,10 @@ _MIN_PROVIDER_BUDGET_S = 1.0
 # code in app/routes/admin_jobs.py — keep this set as the single source of
 # truth so adding a new success outcome doesn't silently miscount.
 SUCCESS_OUTCOMES: frozenset[str] = frozenset({"ok", "ok_fallback"})
-_SENSITIVE_INPUT_KEYS = frozenset({"creator_direction", "creator_direction_prompt"})
+# `generation_prompt`: the model-written prompt behind a creator-generated image (placement input).
+_SENSITIVE_INPUT_KEYS = frozenset(
+    {"creator_direction", "creator_direction_prompt", "generation_prompt"}
+)
 
 
 def _project_sensitive_input(value: Any) -> Any:

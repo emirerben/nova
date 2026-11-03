@@ -1,0 +1,136 @@
+{
+  "agent": "nova.compose.overlay_placement",
+  "prompt_version": "1.4.0",
+  "input": {
+    "words": [
+      {
+        "word": "Arkadaşlar",
+        "start_s": 3.0,
+        "end_s": 3.35
+      },
+      {
+        "word": "bugün",
+        "start_s": 3.4,
+        "end_s": 3.75
+      },
+      {
+        "word": "marketlerdeki",
+        "start_s": 3.8,
+        "end_s": 4.15
+      },
+      {
+        "word": "yeni",
+        "start_s": 4.2,
+        "end_s": 4.55
+      },
+      {
+        "word": "düzenlemeyi",
+        "start_s": 4.6,
+        "end_s": 4.95
+      },
+      {
+        "word": "konuşacağız",
+        "start_s": 5.0,
+        "end_s": 5.35
+      },
+      {
+        "word": "çünkü",
+        "start_s": 5.4,
+        "end_s": 5.75
+      },
+      {
+        "word": "alkol",
+        "start_s": 5.8,
+        "end_s": 6.15
+      },
+      {
+        "word": "satışı",
+        "start_s": 6.2,
+        "end_s": 6.55
+      },
+      {
+        "word": "gece",
+        "start_s": 6.6,
+        "end_s": 6.95
+      },
+      {
+        "word": "yarısından",
+        "start_s": 7.0,
+        "end_s": 7.35
+      },
+      {
+        "word": "sonra",
+        "start_s": 7.4,
+        "end_s": 7.75
+      },
+      {
+        "word": "durduruluyor",
+        "start_s": 7.8,
+        "end_s": 8.15
+      },
+      {
+        "word": "ve",
+        "start_s": 8.2,
+        "end_s": 8.55
+      },
+      {
+        "word": "herkes",
+        "start_s": 8.6,
+        "end_s": 8.95
+      },
+      {
+        "word": "buna",
+        "start_s": 9.0,
+        "end_s": 9.35
+      },
+      {
+        "word": "şaşırdı",
+        "start_s": 9.4,
+        "end_s": 9.75
+      }
+    ],
+    "occupied": [],
+    "duration_s": 40.0,
+    "archetype": "talking_head",
+    "spoken_language": "tr",
+    "assets": [
+      {
+        "asset_id": "asset_beer",
+        "kind": "image",
+        "origin": "generated",
+        "user_context": "Beer",
+        "subject": "Beer",
+        "description": "Beer",
+        "on_screen_text": "",
+        "duration_s": null,
+        "aspect": 0.6667,
+        "width": 1024,
+        "height": 1536,
+        "generation_prompt": "A cold glass of beer on a pub table, shallow depth of field"
+      }
+    ]
+  },
+  "raw_text": "{\"placements\": [{\"asset_id\": \"asset_beer\", \"slot\": \"top\", \"start_s\": 5.8, \"end_s\": 8.8, \"confidence_tier\": \"likely\", \"reason\": \"You say \\\"alkol satışı\\\" (alcohol sales) — the beer image fits.\", \"transcript_anchor\": \"alkol satışı\", \"sfx_intent\": \"pop_in\"}], \"wishlist\": []}",
+  "output": {
+    "placements": [
+      {
+        "asset_id": "asset_beer",
+        "slot": "top",
+        "start_s": 5.8,
+        "end_s": 8.8,
+        "confidence_tier": "likely",
+        "reason": "You say \"alkol satışı\" (alcohol sales) — the beer image fits.",
+        "transcript_anchor": "alkol satışı",
+        "sfx_intent": "pop_in"
+      }
+    ],
+    "wishlist": []
+  },
+  "meta": {
+    "source": "hand_authored_contract",
+    "kind": "contract",
+    "pins": "the output contract (a correct answer parses and has this shape) and the prompt content, not model behaviour",
+    "case": "English-titled generated image 'Beer' over Turkish speech about alcohol sales: placed at the spoken word, 'likely'. The shape of the 2026-11-03 prod miss with a synthetic transcript, kept as the input for a future live run.",
+    "unproven": "Recorded-response contract. The transcript and timings are synthetic. Whether the real model follows prompt 1.4.0 on this input is NOT measured here; only a live run measures it."
+  }
+}

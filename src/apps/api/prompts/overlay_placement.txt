@@ -15,7 +15,7 @@ specific creator-provided context note.
 ## Already-occupied time intervals (existing cards — NEVER overlap these)
 $occupied_json
 
-Video duration: ${duration_s}s. Archetype: $archetype.
+Video duration: ${duration_s}s. Archetype: $archetype.$generated_image_rules
 
 ## Return STRICT JSON (no markdown fences):
 {

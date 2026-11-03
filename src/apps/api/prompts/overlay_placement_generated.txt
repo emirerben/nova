@@ -1,0 +1,11 @@
+Spoken language: $spoken_language (the language of the transcript above; "unknown" means work it out from the words).
+
+## Creator-generated images
+Assets with `origin` "generated" are images the creator made in Kria. Their `user_context` is the title; `subject` and `description` repeat it. `generation_prompt`, when present, is the image-making prompt a model wrote for the picture. Use it only to learn what the picture shows. It says nothing about speech, so ignore its style words ("photorealistic", "soft light").
+
+For these assets ONLY, the title and the speech may be in different languages, and rules 1 and 7 are read this way:
+- Judge by MEANING across languages, never by shared spelling. A spoken word that translates the title, or is a near-synonym of it, names the same thing: the Turkish "kahve" for an asset titled "Coffee", the Spanish "playa" for "Beach", the German "Brot" for "Bread", the French "fromage" for "Cheese" are "confident".
+- "likely" is for a spoken word that names the general kind the title is one of, when the speech is plainly about that kind of thing: the Spanish "fruta" (fruit) for an asset titled "Apple".
+- A sibling or a loose association is NOT a match, in any language. OMIT it: a "Cat" asset at the Spanish "perro" (dog), a "Train" asset at "otobüs" (bus), a "Passport" asset at "seyahat" (travel).
+- transcript_anchor stays the spoken words in the language they were spoken.
+Every other asset keeps rules 1 and 7 exactly as written.

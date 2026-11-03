@@ -9583,6 +9583,9 @@ def _run_phone_subtitled_job(
             # KRI-1015: the INDEPENDENT read of the spoken language ("" = unknown) the
             # caption-language ensure step ran with; set by whichever branch ran below.
             caption_spoken_lang = ""
+            # The language the creator speaks, for matching Visuals to speech across
+            # languages ("" = unknown); detected only, never the job-language fallback.
+            overlay_spoken_lang = ""
 
             def _requested_language_caption_words(
                 spoken_words: list[Any], spoken_lang: str
@@ -9705,6 +9708,7 @@ def _run_phone_subtitled_job(
                 # job language the fallback chain ends on): what an unmet ask is stamped.
                 spoken_caption_lang = detected_lang if _lang_source != SOURCE_FALLBACK else ""
                 caption_spoken_lang = spoken_caption_lang
+                overlay_spoken_lang = spoken_caption_lang
                 caption_words, detected_lang = _requested_language_caption_words(
                     words, detected_lang
                 )
@@ -9784,6 +9788,7 @@ def _run_phone_subtitled_job(
                     transcript_text=getattr(transcript, "full_text", None),
                     fallback=language,
                 )
+                overlay_spoken_lang = _spoken_lang if _lang_source != SOURCE_FALLBACK else ""
                 if _lang_source != SOURCE_DETECTED:
                     record_pipeline_event(
                         "captions",
@@ -10631,6 +10636,7 @@ def _run_phone_subtitled_job(
                                 # KRI-1117: nor is the photo behind the speaker a card.
                                 | background_reserved,
                                 video_supported=video_overlays_enabled,
+                                spoken_language=overlay_spoken_lang,
                                 **(
                                     {
                                         "layout": overlay_layout,
