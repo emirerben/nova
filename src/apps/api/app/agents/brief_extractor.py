@@ -64,7 +64,9 @@ from app.pipeline.prompt_loader import load_prompt
 # v46 (parent KRI-1151): the shared brief section records `insert_clip` / `insert_at_phrase`.
 # v47 (KRI-1162 / KRI-1161): the shared brief section records a photo or video behind the
 # speaker as a `style` fact `speaker_background` (+ `background_changes`, `speaker_small`).
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-02-v47"
+# v48 (generated-image grounding): the extractor records "the <generated image> when I say W" as a
+# typed `triggers` ask (extractor-only section; the shared brief section is untouched).
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-03-v48"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
@@ -122,6 +124,18 @@ the same. "Center the title" -> {"style_intent": {"set": [{"field": "alignment",
 "center"}], "target": "title"}}.
 """)
 _NARROW_BRIEF_SECTION += _STYLE_INTENT_SECTION
+_GENERATED_IMAGE_SECTION = """
+When the creator asks for an image you generated for them, or one they added in this chat, to
+show on a spoken word ("the beer image when I say alkol", "alkol dediğimde bira görselini
+göster"), ALWAYS record it as a `style` requirement carrying {"triggers": ["<the spoken word,
+exactly as the creator wrote it, never translated>"]}, plus "display_mode" ("fullscreen" or
+"pip") only when they said which. Name the image in `description` by the title it has in
+`media_context`. Record `triggers` even when the image's title is in another language than the
+word; the server matches the word against the voice. This is for photos, stickers and generated
+images only: a video clip shown while the talk keeps running never carries `triggers`; record
+it with `display_mode` / `clip_sound` as described above.
+"""
+_NARROW_BRIEF_SECTION += _GENERATED_IMAGE_SECTION
 _NARROW_BRIEF_SECTION += """
 Every add/change update needs a non-empty `literal` or `description`, including
 timing updates that have `duration_s` in `facts`. Keep all independently requested
