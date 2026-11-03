@@ -4,8 +4,6 @@ The tier is the only thing the rest of the code reads. A child flag set without 
 does nothing, an empty allowlist admits nobody, and the per-PR ceiling caps everything.
 """
 
-from types import SimpleNamespace
-
 import pytest
 
 from app.config import settings

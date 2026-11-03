@@ -459,6 +459,8 @@ def test_decoder_child_never_inherits_the_workers_credentials(monkeypatch):
     assert "secret-value" not in " ".join(environment.values())
     assert environment["PATH"] == "/usr/bin"
     assert environment["OMP_NUM_THREADS"] == "1"
+
+
 def _limits(count=6, anchors=(), refs=None):
     return evidence.EvidenceLimits(
         frame_count=count,
