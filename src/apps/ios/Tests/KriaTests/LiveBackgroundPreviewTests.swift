@@ -230,7 +230,7 @@ final class LiveBackgroundPreviewTests: XCTestCase {
         XCTAssertEqual(writer.status, .completed)
     }
 
-    private var previousVideoLoop: LiveBackgroundTuning { var tuning = LiveBackgroundTuning(); tuning.efficientVideoBackground = false; return tuning }
+    private var previousVideoLoop: LiveBackgroundTuning { var tuning = LiveBackgroundTuning(); tuning.loopedVideoBackground = false; return tuning }
 
     func testAVideoBackgroundDeliversFramesAndLoops() async throws {
         try await assertVideoLoops(LiveBackgroundTuning())
@@ -262,13 +262,49 @@ final class LiveBackgroundPreviewTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mov")
         defer { try? FileManager.default.removeItem(at: url) }
         try await writeVideo(seconds: 0.5, to: url, size: CGSize(width: 1080, height: 1920))
-        for (tuning, expected) in [(LiveBackgroundTuning(), CGSize(width: 540, height: 960)), (previousVideoLoop, CGSize(width: 1080, height: 1920))] {
+        var fullSizeDecode = LiveBackgroundTuning(); fullSizeDecode.drawnSizeVideoDecode = false
+        var neither = previousVideoLoop; neither.drawnSizeVideoDecode = false
+        for (tuning, expected) in [(LiveBackgroundTuning(), CGSize(width: 540, height: 960)), (fullSizeDecode, CGSize(width: 1080, height: 1920)),
+                                   (previousVideoLoop, CGSize(width: 540, height: 960)), (neither, CGSize(width: 1080, height: 1920))] {
             let video = try await LoopingVideoBackground(url: url, tuning: tuning)
             defer { video.stop() }
             for _ in 0..<60 where video.decodedSize == nil { _ = video.frame(); try await Task.sleep(for: .milliseconds(50)) }
-            XCTAssertEqual(video.decodedSize, expected, tuning.efficientVideoBackground ? "decoded at the preview size" : "the previous full-size decode")
-            if tuning.efficientVideoBackground { XCTAssertGreaterThan(video.loopedItemCount, 0)
+            XCTAssertEqual(video.decodedSize, expected, "\(tuning)")
+            if tuning.loopedVideoBackground { XCTAssertGreaterThan(video.loopedItemCount, 0)
                 XCTAssertEqual(video.outputCount, video.loopedItemCount, "an output waits on every copy the looper rotates through") }
+        }
+    }
+
+    /// Failure modes of reading the looper's frames, written before the fix: the looper preloads the next copy, and that
+    /// copy's output reports its frame 0 as new while the current pass is still playing, so (1) the first frame is drawn
+    /// early, about 3 frames before the end of the pass, (2) the real wrap then has no fresh frame for ~75 ms, (3) it happens
+    /// only once per rotation through the copies, so a single wrap does not show it. The ramp in the clip makes any frame
+    /// that is not the next one visible.
+    func testTheLoopedBackgroundWrapsOnlyAtTheEndOfAPass() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mov")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await writeVideo(seconds: 2, to: url)
+        let video = try await LoopingVideoBackground(url: url)
+        defer { video.stop() }
+        let context = CIContext()
+        func red(_ image: CIImage) -> Int {
+            var pixel = [UInt8](repeating: 0, count: 4)
+            let centre = CGRect(x: image.extent.midX, y: image.extent.midY, width: 1, height: 1)
+            context.render(image, toBitmap: &pixel, rowBytes: 4, bounds: centre, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+            return Int(pixel[0])
+        }
+        var reds: [Int] = []
+        let start = Date()
+        while Date().timeIntervalSince(start) < 11 {
+            if let image = video.frame() { reds.append(red(image)) }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        let wraps = zip(reds, reds.dropFirst()).enumerated().filter { $0.element.1 < $0.element.0 - 30 }
+        XCTAssertGreaterThanOrEqual(wraps.count, 4, "11 s of a 2 s clip passes every copy the looper rotates through, wrap by wrap: \(reds)")
+        XCTAssertTrue(wraps.allSatisfy { $0.element.0 > 190 }, "every wrap leaves from the last frames of a pass, none from its middle: \(reds)")
+        for wrap in wraps {
+            XCTAssertTrue(reds[(wrap.offset + 1)..<min(reds.count, wrap.offset + 6)].allSatisfy { $0 < 100 },
+                          "after a wrap the next frames are the start of the pass, not a first frame shown early and the pass resumed: \(reds)")
         }
     }
 

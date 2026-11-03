@@ -10,19 +10,20 @@ final class LiveBackgroundTuningTests: XCTestCase {
     func testNoOverrideIsTheShippingBehaviour() {
         XCTAssertEqual(LiveBackgroundTuning.resolve(environment: [:]), LiveBackgroundTuning())
         XCTAssertEqual(LiveBackgroundTuning.resolve(environment: [LiveBackgroundTuning.overrideKey: ""]), LiveBackgroundTuning())
-        XCTAssertEqual(LiveBackgroundTuning().summary, "fresh=1 input=1 async=1 video=1")
+        XCTAssertEqual(LiveBackgroundTuning().summary, "fresh=1 input=1 async=1 video=1 decode=1")
     }
 
     func testAllTurnsEveryLeverBack() {
         let parsed = LiveBackgroundTuning.parse(oldBehaviours: "all")
-        XCTAssertEqual(parsed.tuning.summary, "fresh=0 input=0 async=0 video=0")
+        XCTAssertEqual(parsed.tuning.summary, "fresh=0 input=0 async=0 video=0 decode=0")
         XCTAssertTrue(parsed.unknown.isEmpty)
     }
 
     func testAListTurnsBackOnlyTheNamedLevers() {
-        for (list, expected) in [("async", "fresh=1 input=1 async=0 video=1"),
-                                 ("fresh, video", "fresh=0 input=1 async=1 video=0"),
-                                 ("input,async,fresh", "fresh=0 input=0 async=0 video=1")] {
+        for (list, expected) in [("async", "fresh=1 input=1 async=0 video=1 decode=1"),
+                                 ("fresh, video", "fresh=0 input=1 async=1 video=0 decode=1"),
+                                 ("decode", "fresh=1 input=1 async=1 video=1 decode=0"),
+                                 ("input,async,fresh", "fresh=0 input=0 async=0 video=1 decode=1")] {
             let parsed = LiveBackgroundTuning.parse(oldBehaviours: list)
             XCTAssertEqual(parsed.tuning.summary, expected, list)
             XCTAssertTrue(parsed.unknown.isEmpty, list)
@@ -32,6 +33,6 @@ final class LiveBackgroundTuningTests: XCTestCase {
     func testAMisspelledLeverIsReportedInsteadOfIgnored() {
         let parsed = LiveBackgroundTuning.parse(oldBehaviours: "asnyc,fresh")
         XCTAssertEqual(parsed.unknown, ["asnyc"])
-        XCTAssertEqual(parsed.tuning.summary, "fresh=0 input=1 async=1 video=1")
+        XCTAssertEqual(parsed.tuning.summary, "fresh=0 input=1 async=1 video=1 decode=1")
     }
 }

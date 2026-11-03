@@ -27,14 +27,14 @@ final class LoopingVideoBackground: LiveBackgroundProviding, @unchecked Sendable
     private let lock = NSLock()
     private var latest: CIImage?
     private var decoded: CGSize?
-    /// The old way to loop (`efficientVideoBackground == false`).
+    /// The old way to loop (`loopedVideoBackground == false`).
     private var endObserver: NSObjectProtocol?
     /// The new way: `AVPlayerLooper` queues the next pass before this one ends, so there is no seek and no gap.
     private var looper: AVPlayerLooper?
     private var looperObservation: NSKeyValueObservation?
     /// One per item that can play: the looper rotates through a fixed few copies, and an output only sees the item it is on, so
     /// each copy has its own, attached before it starts and not when it becomes current (which lost its first frames).
-    private var outputs: [AVPlayerItemVideoOutput] = []
+    private var outputs: [(item: AVPlayerItem, output: AVPlayerItemVideoOutput)] = []
 
     enum VideoError: Error { case noVideoTrack, zeroDuration }
 
@@ -49,14 +49,14 @@ final class LoopingVideoBackground: LiveBackgroundProviding, @unchecked Sendable
         try picture?.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: track, at: .zero)
         orientation = Self.orientation(of: try await track.load(.preferredTransform))
         var attributes: [String: Any] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
-        if tuning.efficientVideoBackground,
+        if tuning.drawnSizeVideoDecode,
            let size = Self.decodeSize(natural: try await track.load(.naturalSize), orientation: orientation) {
             attributes[kCVPixelBufferWidthKey as String] = Int(size.width)
             attributes[kCVPixelBufferHeightKey as String] = Int(size.height)
         }
         outputAttributes = attributes
         let item = AVPlayerItem(asset: composition)
-        if tuning.efficientVideoBackground {
+        if tuning.loopedVideoBackground {
             let queue = AVQueuePlayer()
             let looper = AVPlayerLooper(player: queue, templateItem: item)
             self.looper = looper
@@ -66,7 +66,7 @@ final class LoopingVideoBackground: LiveBackgroundProviding, @unchecked Sendable
             }
         } else {
             let output = AVPlayerItemVideoOutput(pixelBufferAttributes: attributes)
-            outputs = [output]
+            outputs = [(item, output)]
             item.add(output)
             player = AVPlayer(playerItem: item)
             player.actionAtItemEnd = .none
@@ -87,18 +87,19 @@ final class LoopingVideoBackground: LiveBackgroundProviding, @unchecked Sendable
         outputs = items.map { item in
             let output = AVPlayerItemVideoOutput(pixelBufferAttributes: outputAttributes)
             item.add(output)
-            return output
+            return (item, output)
         }
     }
 
     func frame() -> CIImage? {
         lock.lock(); defer { lock.unlock() }
-        for output in outputs {
-            let time = output.itemTime(forHostTime: CACurrentMediaTime())
-            guard output.hasNewPixelBuffer(forItemTime: time), let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) else { continue }
+        // Only the item on screen: the looper preloads the next copy, and its output reports that copy's frame 0 as new while
+        // this pass is still playing, which drew the first frame early and left a hole at the real loop point.
+        guard let current = player.currentItem, let output = outputs.first(where: { $0.item === current })?.output else { return latest }
+        let time = output.itemTime(forHostTime: CACurrentMediaTime())
+        if output.hasNewPixelBuffer(forItemTime: time), let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) {
             decoded = CGSize(width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer))
             latest = LiveBackgroundCompositor.coverFit(CIImage(cvPixelBuffer: buffer).oriented(orientation), into: LiveSpeakerMatteConfig.previewSize)
-            break
         }
         return latest
     }

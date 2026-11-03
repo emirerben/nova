@@ -17,8 +17,8 @@
 # run count per timing, per scenario. The scenarios are interleaved (A B C A B C ...), as bench.sh does, so thermal drift
 # hits all of them.
 #
-# LIVE-PREVIEW A/B. A scenario may end in `-old` (all four live-preview levers back to their previous behaviour) or in
-# `-old-<lever>[-<lever>...]` with lever one of fresh, input, async, video (only those). The Debug app reads this as
+# LIVE-PREVIEW A/B. A scenario may end in `-old` (all five live-preview levers back to their previous behaviour) or in
+# `-old-<lever>[-<lever>...]` with lever one of fresh, input, async, video, decode (only those). The Debug app reads this as
 # KRIA_TALK_BENCH_LIVE_OLD and writes the resulting values to the `live.tuning` fact of the report. The scenarios are
 # interleaved, so `video-cin0,video-cin0-old` is one A/B under the same thermal drift. Needs a background (photo or video).
 #
@@ -136,8 +136,8 @@ if [[ -z "$DEVICE_ID" ]]; then DEVICE_ID="$(detect_device || true)"; fi
 
 IFS=',' read -ra SCENARIO_LIST <<<"$SCENARIOS"
 for scenario in "${SCENARIO_LIST[@]}"; do
-  [[ "$scenario" =~ ^(none|photo|video)-cin[01](-old(-(fresh|input|async|video))*)?$ ]] || {
-    echo "Bad scenario '$scenario'; expected <none|photo|video>-cin<0|1>[-old[-fresh][-input][-async][-video]]" >&2; exit 2; }
+  [[ "$scenario" =~ ^(none|photo|video)-cin[01](-old(-(fresh|input|async|video|decode))*)?$ ]] || {
+    echo "Bad scenario '$scenario'; expected <none|photo|video>-cin<0|1>[-old[-fresh][-input][-async][-video][-decode]]" >&2; exit 2; }
 done
 
 RUN_ROOT="$OUT_ROOT/$LABEL"
