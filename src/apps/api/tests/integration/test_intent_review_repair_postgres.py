@@ -1316,6 +1316,21 @@ async def test_a_retime_is_held_back_once_the_creator_asks_to_keep_the_text_as_i
 
 
 @pytest.mark.asyncio
+async def test_a_restore_is_held_back_once_the_creator_asks_to_keep_the_text_as_it_is(
+    drifted, repair_on, monkeypatch
+):
+    _, thread, _, _ = drifted
+    rid = await ready(drifted, monkeypatch)
+    keep_the_words_as_they_are(thread)
+    count = len(drafts(thread))
+    assert await run_async(rid, Provider(COPY_MISMATCH)) == "suggestion"
+    row = review_row(rid)
+    (suggestion,) = row.review["disposition"]["suggestions"]
+    assert suggestion["why"] == "protected" and suggestion["candidate_id"]
+    assert row.repair_draft_id is None and len(drafts(thread)) == count
+
+
+@pytest.mark.asyncio
 async def test_a_crash_after_the_response_is_stored_still_stages_the_repair_without_a_second_call(
     drifted, repair_on, monkeypatch
 ):
