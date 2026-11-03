@@ -65,7 +65,9 @@ from tests.kria.test_render_review_admission_postgres import (  # noqa: F401
 )
 from tests.services.test_openai_vision_transport import response
 
-pytestmark = pytest.mark.usefixtures("release_abandoned_db_connections")
+pytestmark = pytest.mark.usefixtures(
+    "release_abandoned_db_connections", "exclusive_intent_review_ledger"
+)
 
 
 @pytest.fixture
