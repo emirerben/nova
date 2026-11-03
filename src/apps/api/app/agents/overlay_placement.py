@@ -38,6 +38,9 @@ _MAX_WORDS = 1200
 class PlacementAsset(BaseModel):
     asset_id: str
     kind: str = "image"  # "image" | "video"
+    # "generated" for an image the creator made in Kria (its text is the creator's own prompt);
+    # empty for an upload, which keeps the payload byte-identical.
+    origin: str = ""
     user_context: str = ""
     subject: str = ""
     description: str = ""
@@ -59,6 +62,9 @@ class OverlayPlacementInput(BaseModel):
     occupied: list[list[float]] = Field(default_factory=list)
     duration_s: float = Field(gt=0)
     archetype: str = "talking_head"
+    # The language the creator speaks ("tr", "en", ...), when known. The asset text may be in
+    # another language; the prompt matches by meaning across the two.
+    spoken_language: str = ""
 
 
 class RawPlacement(BaseModel):
@@ -103,7 +109,9 @@ class OverlayPlacementAgent(Agent[OverlayPlacementInput, OverlayPlacementOutput]
         # assets_payload gains aspect + pixel dims.
         # 1.2.0: asset payload gains creator-authored user_context, which takes
         # semantic priority over Nova-generated description fields.
-        prompt_version="1.3.0",
+        # 1.4.0: speech and asset text may be in different languages (Turkish "alkol" vs a
+        # generated image titled "Beer"); match by meaning, and accept a clear topical match.
+        prompt_version="1.4.0",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -143,6 +151,9 @@ class OverlayPlacementAgent(Agent[OverlayPlacementInput, OverlayPlacementOutput]
             }
             for a in input.assets
         ]
+        for payload, asset in zip(assets_payload, input.assets, strict=True):
+            if asset.origin:
+                payload["origin"] = _sanitize_text(asset.origin)
         return load_prompt(
             "overlay_placement",
             words_json=json.dumps(words_payload, ensure_ascii=False),
@@ -152,6 +163,7 @@ class OverlayPlacementAgent(Agent[OverlayPlacementInput, OverlayPlacementOutput]
             ),
             duration_s=f"{input.duration_s:.1f}",
             archetype=_sanitize_text(input.archetype) or "talking_head",
+            spoken_language=_sanitize_text(input.spoken_language) or "unknown",
         )
 
     def parse(

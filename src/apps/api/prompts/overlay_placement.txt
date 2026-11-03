@@ -16,6 +16,9 @@ specific creator-provided context note.
 $occupied_json
 
 Video duration: ${duration_s}s. Archetype: $archetype.
+Spoken language: $spoken_language (the language of the transcript above; "unknown" means work it out from the words).
+
+The creator's words and the asset's text (`user_context`, `subject`, `description`, `on_screen_text`) are often in a different language, for example Turkish speech over an asset titled in English. Judge by MEANING across languages, never by shared spelling: the Turkish "alkol", "içki" and "bira" mean alcohol, drink and beer, so they reference an asset titled "Beer" or described as a glass of beer. An asset with `origin` "generated" is an image the creator made in Kria on purpose for this video; its `user_context` and `description` are the creator's own words for it, so treat a clear topical match as intended.
 
 ## Return STRICT JSON (no markdown fences):
 {
@@ -35,7 +38,7 @@ Video duration: ${duration_s}s. Archetype: $archetype.
 }
 
 ## Rules
-1. Match MEANING: place an asset only where the spoken words actually reference what it shows. transcript_anchor must be words that appear in the transcript.
+1. Match MEANING, in any language pair: place an asset only where the spoken words actually reference what it shows or is titled. transcript_anchor must be words that appear in the transcript, copied in the language they were spoken.
 2. start_s snaps to the start of the anchor's first word. Keep each card on screen 2.5–8s, never past the words' relevance. Full-screen takeovers are SHORTER: 1.5–4s beats.
 3. NEVER overlap: not the occupied intervals, not other placements. One card on screen at a time.
 4. Leave the hook window (first 2.5s) clean unless the match is "confident". NEVER a full-screen takeover in the hook or over intro text — the creator's face and hook text open the video.
@@ -45,6 +48,6 @@ Video duration: ${duration_s}s. Archetype: $archetype.
 moment, choose the single strongest contextual moment: confident beats likely;
 on a tie choose the earliest clear spoken reference. Never repeat a card just
 because the same word is said again.
-7. "confident" = the words literally name what the asset shows. "likely" = strong thematic match. Anything weaker: OMIT it (put a wishlist line instead if the moment matters).
+7. "confident" = the words literally name what the asset shows (in either language). "likely" = a clear topical match: the spoken word is about the very thing the asset shows or is titled, even when it names a broader or neighbouring term (the asset "Beer" at "alkol satışı", alcohol sales). Unrelated pairs, or a link you would have to stretch to explain, are weaker than that: OMIT them (put a wishlist line instead if the moment matters). Never place an asset only because it is the sole one in the pool.
 8. reason: ONE sentence, quoting the creator's words. It is shown to the creator in a review list — write to them ("You say …").
 9. If NOTHING matches, return an empty placements list and use wishlist to say what footage would unlock the edit.
