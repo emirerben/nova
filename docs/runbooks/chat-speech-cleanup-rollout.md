@@ -39,7 +39,7 @@ setting the flag:
    Pass = every negative (real takes with no restart) returns no span, and
    `test_positive_fixtures_cut_only_the_abandoned_take` passes on Green 3 and N3: no span
    touches a kept word. Any failure blocks the flag.
-2. Land the `cut_restarts` brief-fact follow-up to KRI-1176 (child of KRI-1174) first. Until
+2. Land KRI-1189 (the `cut_restarts` brief fact; child of KRI-1174, related to KRI-1176) first. Until
    then a real retake cut leaves "Cut the sentence I restarted" at "Partly ... may still be in
    your video" while the finished-render note says what was cut. Its new "also cuts a sentence
    you restarted" receipt must also be in `approval_readiness._cleanup_deferred` (KRI-1178), so
