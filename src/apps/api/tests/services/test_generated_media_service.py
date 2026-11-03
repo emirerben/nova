@@ -2,7 +2,6 @@
 
 import os
 import uuid
-from datetime import date
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -36,7 +35,6 @@ def generated(monkeypatch):
         "generated_narration_enabled": True,
         "generated_media_live_approved": True,
         "generated_media_billing_organization": "org-offline",
-        "generated_media_price_verified_at": date.today().isoformat(),
         "generated_media_max_request_usd": 2.0,
         "ai_openai_monthly_budget_usd": 1000,
         "ai_openai_image_budget_usd": 1000,
