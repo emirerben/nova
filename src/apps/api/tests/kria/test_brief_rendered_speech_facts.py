@@ -189,22 +189,28 @@ def test_cleanup_that_did_not_run_is_an_honest_partial():
 
 
 @pytest.mark.parametrize(
-    "description",
+    ("description", "limit"),
     [
-        "cut long pauses and the restart of the kilometer thirty sentence",
-        "cut the pauses and the retake",
+        (
+            "cut long pauses and the restart of the kilometer thirty sentence",
+            "I can't cut out one exact line yet or confirm it's gone, "
+            "so it may still be in your video",
+        ),
+        # KRI-1176: a generic retake ask gets the restart sentence, not the exact-line note.
+        (
+            "cut the pauses and the retake",
+            "Clean up speech looks only for pauses and filler sounds, "
+            "so a sentence you restarted stays in",
+        ),
     ],
 )
-def test_a_named_retake_stays_partial_until_the_exact_line_is_verified(description):
+def test_a_named_retake_stays_partial_until_the_exact_line_is_verified(description, limit):
     receipt = check_requirement(
         _req("audio", description), plan_facts_from_phone_variant(_variant())
     )
     assert receipt.status == "partial"
     assert receipt.reason.startswith("Speech cleanup cut the long pauses")
-    assert (
-        "I can't cut out one exact line yet or confirm it's gone, so it may still be in your video"
-        in receipt.reason
-    )
+    assert limit in receipt.reason
 
 
 def test_a_length_in_the_cleanup_ask_is_met_when_the_rendered_take_matches():

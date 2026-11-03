@@ -1,0 +1,839 @@
+{
+ "_about": "KRI-1176 Green 3 (2026-11-03, TestFlight 1876, Fly 72c060c0b): 'Cut the pauses and the sentence I restarted.' Cleanup (required_v1, detector mixed-gap-v8-voice-guard) cut 3 silences; the restart stayed. Read-only from prod via scripts/admin.py GET.",
+ "job_id": "9bad2d75-c4e9-4c6c-808d-69d26b4ca76c",
+ "thread_id": "5A650474-5103-4A82-BF2A-3F7C46F5BD56",
+ "take": {
+  "file": "IMG_7231.MOV",
+  "sha256": "e380315811fbd6e062fc5274c5953c1651d0ed8db6ad04dd7013de3c6ed65576",
+  "duration_s": 31.223,
+  "language": "en"
+ },
+ "request": "Yorumla episode 9: Kervan x Lumo Pamukkale show. Make the whole video like a green screen: me small at the bottom right in front, and behind me full screen whichever photo or video I'm talking about, changing every 3-5 seconds. Cut the pauses and the sentence I restarted. Captions small, white, lowercase, in the middle. No music.",
+ "brief_r2_turn1": {
+  "id": "r2",
+  "kind": "style",
+  "facts": {
+   "cut_lines": [
+    "So Lumo took its tech from cold hard, no again."
+   ],
+   "speech_cleanup": true
+  },
+  "scope": "global",
+  "status": "open",
+  "literal": null,
+  "description": "Cut the pauses and the sentence I restarted.",
+  "source_turn_id": "1d179715-39d9-44a5-9711-2395e0924da8"
+ },
+ "turn1_receipt_r2": {
+  "stage": "checked",
+  "reason": "Choose Clean up speech when you approve and the long pauses are cut; I'll cut the line you named out of your take if I find it said once, and tell you after",
+  "status": "partial",
+  "inferred": [],
+  "verification": "checked",
+  "brief_version": 1,
+  "generation_id": null,
+  "requirement_id": "r2",
+  "inferred_labels": [],
+  "target_media_ids": []
+ },
+ "turn1_readiness_r2": {
+  "reason": "If Clean up speech is offered when you approve, choose it to cut the long pauses; I'll cut the line you named out of your take if I find it said once, and tell you after",
+  "disposition": "needs_choice",
+  "evidence_owner": "brief_checks",
+  "requirement_id": "r2"
+ },
+ "final_reply": "The subtitled cut is ready. The approved render finished; review the opening, pacing, and text, then tell me what you want changed.\n- Done: Make the whole video like a green screen: me small at the bottom right in front, and behind me full screen whichever photo or video I'm talking about, changing every 3-5 seconds (8 photos or videos take turns behind you; you're small at the bottom right)\n\nSpeech cleanup cut what it heard as 3 long pauses (1.0 s). It looks only for pauses and filler sounds, so a sentence you restarted stays in.",
+ "words_source_time": [
+  {
+   "i": 0,
+   "text": "Okay,",
+   "start_s": 0.0,
+   "end_s": 0.3
+  },
+  {
+   "i": 1,
+   "text": "we're",
+   "start_s": 0.36,
+   "end_s": 0.6
+  },
+  {
+   "i": 2,
+   "text": "recording.",
+   "start_s": 0.6,
+   "end_s": 1.22
+  },
+  {
+   "i": 3,
+   "text": "Curvan",
+   "start_s": 1.54,
+   "end_s": 1.72
+  },
+  {
+   "i": 4,
+   "text": "celebrated",
+   "start_s": 1.72,
+   "end_s": 2.24
+  },
+  {
+   "i": 5,
+   "text": "its",
+   "start_s": 2.24,
+   "end_s": 2.58
+  },
+  {
+   "i": 6,
+   "text": "10th",
+   "start_s": 2.58,
+   "end_s": 2.98
+  },
+  {
+   "i": 7,
+   "text": "year",
+   "start_s": 2.98,
+   "end_s": 3.14
+  },
+  {
+   "i": 8,
+   "text": "with",
+   "start_s": 3.14,
+   "end_s": 3.32
+  },
+  {
+   "i": 9,
+   "text": "a",
+   "start_s": 3.32,
+   "end_s": 3.56
+  },
+  {
+   "i": 10,
+   "text": "Sunrise",
+   "start_s": 3.56,
+   "end_s": 3.96
+  },
+  {
+   "i": 11,
+   "text": "Fashion",
+   "start_s": 3.96,
+   "end_s": 4.4
+  },
+  {
+   "i": 12,
+   "text": "Show",
+   "start_s": 4.4,
+   "end_s": 4.7
+  },
+  {
+   "i": 13,
+   "text": "at",
+   "start_s": 4.7,
+   "end_s": 4.94
+  },
+  {
+   "i": 14,
+   "text": "Pamukkale.",
+   "start_s": 4.94,
+   "end_s": 5.46
+  },
+  {
+   "i": 15,
+   "text": "And",
+   "start_s": 6.08,
+   "end_s": 6.3
+  },
+  {
+   "i": 16,
+   "text": "it",
+   "start_s": 6.3,
+   "end_s": 6.54
+  },
+  {
+   "i": 17,
+   "text": "wasn't",
+   "start_s": 6.54,
+   "end_s": 6.8
+  },
+  {
+   "i": 18,
+   "text": "alone.",
+   "start_s": 6.8,
+   "end_s": 7.2
+  },
+  {
+   "i": 19,
+   "text": "Lumo",
+   "start_s": 7.9,
+   "end_s": 7.9
+  },
+  {
+   "i": 20,
+   "text": "was",
+   "start_s": 7.9,
+   "end_s": 8.2
+  },
+  {
+   "i": 21,
+   "text": "the",
+   "start_s": 8.2,
+   "end_s": 8.4
+  },
+  {
+   "i": 22,
+   "text": "show's",
+   "start_s": 8.4,
+   "end_s": 8.7
+  },
+  {
+   "i": 23,
+   "text": "technology",
+   "start_s": 8.7,
+   "end_s": 9.26
+  },
+  {
+   "i": 24,
+   "text": "partner.",
+   "start_s": 9.26,
+   "end_s": 9.6
+  },
+  {
+   "i": 25,
+   "text": "The",
+   "start_s": 10.14,
+   "end_s": 10.24
+  },
+  {
+   "i": 26,
+   "text": "patterns",
+   "start_s": 10.24,
+   "end_s": 10.52
+  },
+  {
+   "i": 27,
+   "text": "were",
+   "start_s": 10.52,
+   "end_s": 10.86
+  },
+  {
+   "i": 28,
+   "text": "drawn",
+   "start_s": 10.86,
+   "end_s": 11.12
+  },
+  {
+   "i": 29,
+   "text": "on",
+   "start_s": 11.12,
+   "end_s": 11.54
+  },
+  {
+   "i": 30,
+   "text": "Lumo",
+   "start_s": 11.54,
+   "end_s": 11.7
+  },
+  {
+   "i": 31,
+   "text": "tablets,",
+   "start_s": 11.7,
+   "end_s": 12.18
+  },
+  {
+   "i": 32,
+   "text": "and",
+   "start_s": 12.44,
+   "end_s": 12.64
+  },
+  {
+   "i": 33,
+   "text": "the",
+   "start_s": 12.64,
+   "end_s": 12.74
+  },
+  {
+   "i": 34,
+   "text": "whole",
+   "start_s": 12.74,
+   "end_s": 13.08
+  },
+  {
+   "i": 35,
+   "text": "show",
+   "start_s": 13.08,
+   "end_s": 13.2
+  },
+  {
+   "i": 36,
+   "text": "was",
+   "start_s": 13.2,
+   "end_s": 13.88
+  },
+  {
+   "i": 37,
+   "text": "filmed",
+   "start_s": 13.88,
+   "end_s": 13.88
+  },
+  {
+   "i": 38,
+   "text": "on",
+   "start_s": 13.88,
+   "end_s": 14.26
+  },
+  {
+   "i": 39,
+   "text": "Lumo",
+   "start_s": 14.26,
+   "end_s": 14.54
+  },
+  {
+   "i": 40,
+   "text": "phones,",
+   "start_s": 14.54,
+   "end_s": 14.98
+  },
+  {
+   "i": 41,
+   "text": "mounted",
+   "start_s": 15.3,
+   "end_s": 15.44
+  },
+  {
+   "i": 42,
+   "text": "on",
+   "start_s": 15.44,
+   "end_s": 15.94
+  },
+  {
+   "i": 43,
+   "text": "drones.",
+   "start_s": 15.94,
+   "end_s": 16.28
+  },
+  {
+   "i": 44,
+   "text": "So",
+   "start_s": 16.9,
+   "end_s": 17.24
+  },
+  {
+   "i": 45,
+   "text": "Lumo",
+   "start_s": 17.24,
+   "end_s": 17.46
+  },
+  {
+   "i": 46,
+   "text": "took",
+   "start_s": 17.46,
+   "end_s": 17.68
+  },
+  {
+   "i": 47,
+   "text": "its",
+   "start_s": 17.68,
+   "end_s": 17.88
+  },
+  {
+   "i": 48,
+   "text": "tech",
+   "start_s": 17.88,
+   "end_s": 18.12
+  },
+  {
+   "i": 49,
+   "text": "from",
+   "start_s": 18.12,
+   "end_s": 18.38
+  },
+  {
+   "i": 50,
+   "text": "cold",
+   "start_s": 18.38,
+   "end_s": 18.66
+  },
+  {
+   "i": 51,
+   "text": "hard...",
+   "start_s": 18.66,
+   "end_s": 19.26
+  },
+  {
+   "i": 52,
+   "text": "No,",
+   "start_s": 19.26,
+   "end_s": 19.52
+  },
+  {
+   "i": 53,
+   "text": "again.",
+   "start_s": 19.52,
+   "end_s": 19.8
+  },
+  {
+   "i": 54,
+   "text": "So",
+   "start_s": 20.26,
+   "end_s": 20.5
+  },
+  {
+   "i": 55,
+   "text": "Lumo",
+   "start_s": 20.5,
+   "end_s": 20.82
+  },
+  {
+   "i": 56,
+   "text": "took",
+   "start_s": 20.82,
+   "end_s": 21.02
+  },
+  {
+   "i": 57,
+   "text": "its",
+   "start_s": 21.02,
+   "end_s": 21.22
+  },
+  {
+   "i": 58,
+   "text": "tech",
+   "start_s": 21.22,
+   "end_s": 21.44
+  },
+  {
+   "i": 59,
+   "text": "from",
+   "start_s": 21.44,
+   "end_s": 21.68
+  },
+  {
+   "i": 60,
+   "text": "cold",
+   "start_s": 21.68,
+   "end_s": 22.0
+  },
+  {
+   "i": 61,
+   "text": "hardware",
+   "start_s": 22.0,
+   "end_s": 22.46
+  },
+  {
+   "i": 62,
+   "text": "to",
+   "start_s": 22.46,
+   "end_s": 22.9
+  },
+  {
+   "i": 63,
+   "text": "a",
+   "start_s": 22.9,
+   "end_s": 23.2
+  },
+  {
+   "i": 64,
+   "text": "creative",
+   "start_s": 23.2,
+   "end_s": 23.46
+  },
+  {
+   "i": 65,
+   "text": "space",
+   "start_s": 23.46,
+   "end_s": 23.84
+  },
+  {
+   "i": 66,
+   "text": "that",
+   "start_s": 23.84,
+   "end_s": 24.48
+  },
+  {
+   "i": 67,
+   "text": "feeds",
+   "start_s": 24.48,
+   "end_s": 24.48
+  },
+  {
+   "i": 68,
+   "text": "fashion.",
+   "start_s": 24.48,
+   "end_s": 24.86
+  },
+  {
+   "i": 69,
+   "text": "In",
+   "start_s": 25.06,
+   "end_s": 25.58
+  },
+  {
+   "i": 70,
+   "text": "short,",
+   "start_s": 25.58,
+   "end_s": 25.8
+  },
+  {
+   "i": 71,
+   "text": "it's",
+   "start_s": 25.9,
+   "end_s": 26.16
+  },
+  {
+   "i": 72,
+   "text": "a",
+   "start_s": 26.16,
+   "end_s": 26.28
+  },
+  {
+   "i": 73,
+   "text": "real",
+   "start_s": 26.28,
+   "end_s": 26.5
+  },
+  {
+   "i": 74,
+   "text": "1",
+   "start_s": 26.5,
+   "end_s": 26.84
+  },
+  {
+   "i": 75,
+   "text": "plus",
+   "start_s": 26.84,
+   "end_s": 27.04
+  },
+  {
+   "i": 76,
+   "text": "1",
+   "start_s": 27.04,
+   "end_s": 27.38
+  },
+  {
+   "i": 77,
+   "text": "equals",
+   "start_s": 27.38,
+   "end_s": 27.7
+  },
+  {
+   "i": 78,
+   "text": "3",
+   "start_s": 27.7,
+   "end_s": 28.08
+  },
+  {
+   "i": 79,
+   "text": "story.",
+   "start_s": 28.08,
+   "end_s": 28.58
+  },
+  {
+   "i": 80,
+   "text": "So",
+   "start_s": 28.58,
+   "end_s": 29.32
+  },
+  {
+   "i": 81,
+   "text": "what",
+   "start_s": 29.32,
+   "end_s": 29.58
+  },
+  {
+   "i": 82,
+   "text": "did",
+   "start_s": 29.58,
+   "end_s": 29.72
+  },
+  {
+   "i": 83,
+   "text": "you",
+   "start_s": 29.72,
+   "end_s": 29.92
+  },
+  {
+   "i": 84,
+   "text": "think",
+   "start_s": 29.92,
+   "end_s": 30.12
+  },
+  {
+   "i": 85,
+   "text": "of",
+   "start_s": 30.12,
+   "end_s": 30.3
+  },
+  {
+   "i": 86,
+   "text": "this",
+   "start_s": 30.3,
+   "end_s": 30.48
+  },
+  {
+   "i": 87,
+   "text": "collaboration?",
+   "start_s": 30.48,
+   "end_s": 30.98
+  }
+ ],
+ "restart": {
+  "word_span": [
+   44,
+   53
+  ],
+  "text": "So Lumo took its tech from cold hard... No, again.",
+  "previous_word": 43,
+  "kept_redelivery_first_word": 54
+ },
+ "silences_ambient_adaptive": {
+  "_about": "detect_silences_with_status(take 16 kHz mono WAV, min_silence_s=0.1, ambient_adaptive=True), run locally 2026-11-03 on the same file (sha256 above).",
+  "status": "ok",
+  "spans": [
+   [
+    0.0,
+    0.1055
+   ],
+   [
+    0.862563,
+    1.3755
+   ],
+   [
+    2.432937,
+    2.582125
+   ],
+   [
+    3.3655,
+    3.51275
+   ],
+   [
+    3.90175,
+    4.03525
+   ],
+   [
+    5.5785,
+    6.0325
+   ],
+   [
+    7.137313,
+    7.548687
+   ],
+   [
+    9.66025,
+    10.111
+   ],
+   [
+    12.113437,
+    12.472062
+   ],
+   [
+    14.429563,
+    14.567875
+   ],
+   [
+    14.836625,
+    15.101625
+   ],
+   [
+    16.248,
+    17.003688
+   ],
+   [
+    17.7585,
+    17.88475
+   ],
+   [
+    18.107688,
+    18.212125
+   ],
+   [
+    18.974312,
+    19.350938
+   ],
+   [
+    19.695438,
+    20.311375
+   ],
+   [
+    21.092,
+    21.214188
+   ],
+   [
+    21.396687,
+    21.54425
+   ],
+   [
+    22.521625,
+    22.799875
+   ],
+   [
+    23.766063,
+    23.948438
+   ],
+   [
+    24.081688,
+    24.239812
+   ],
+   [
+    24.905625,
+    25.367313
+   ],
+   [
+    25.778625,
+    26.007313
+   ],
+   [
+    27.663187,
+    27.801375
+   ],
+   [
+    28.51575,
+    29.168063
+   ],
+   [
+    31.1285,
+    31.232
+   ]
+  ]
+ },
+ "variant_silence_cut": {
+  "removed": [
+   {
+    "end_s": 5.955,
+    "reason": "silence",
+    "start_s": 5.585
+   },
+   {
+    "end_s": 7.549,
+    "reason": "silence",
+    "start_s": 7.325
+   },
+   {
+    "end_s": 16.775,
+    "reason": "silence",
+    "start_s": 16.405
+   }
+  ],
+  "version": 2,
+  "time_saved_s": 0.964,
+  "original_duration_s": 31.223
+ },
+ "variant_silence_cut_outcome": "applied",
+ "speech_cleanup_contract": "required_v1",
+ "caption_cues_output_time": [
+  {
+   "text": "Okay, we're recording.",
+   "start_s": 0.0,
+   "end_s": 1.22
+  },
+  {
+   "text": "Curvan celebrated its 10th year with",
+   "start_s": 1.54,
+   "end_s": 3.32
+  },
+  {
+   "text": "a Sunrise Fashion Show at Pamukkale.",
+   "start_s": 3.32,
+   "end_s": 5.46
+  },
+  {
+   "text": "And it wasn't alone.",
+   "start_s": 5.71,
+   "end_s": 6.83
+  },
+  {
+   "text": "Lumo was the show's technology partner.",
+   "start_s": 7.306,
+   "end_s": 9.006
+  },
+  {
+   "text": "The patterns were drawn on Lumo tablets,",
+   "start_s": 9.546,
+   "end_s": 11.846
+  },
+  {
+   "text": "and the whole show was filmed on",
+   "start_s": 11.846,
+   "end_s": 13.666
+  },
+  {
+   "text": "Lumo phones, mounted on drones.",
+   "start_s": 13.666,
+   "end_s": 15.686
+  },
+  {
+   "text": "So Lumo took its tech from cold hard...",
+   "start_s": 15.936,
+   "end_s": 18.296
+  },
+  {
+   "text": "No, again.",
+   "start_s": 18.296,
+   "end_s": 18.836
+  },
+  {
+   "text": "So Lumo took its tech from cold hardware",
+   "start_s": 19.296,
+   "end_s": 21.496
+  },
+  {
+   "text": "to a creative space that feeds fashion.",
+   "start_s": 21.496,
+   "end_s": 23.896
+  },
+  {
+   "text": "In short, it's a real 1",
+   "start_s": 24.096,
+   "end_s": 25.876
+  },
+  {
+   "text": "plus 1 equals 3 story.",
+   "start_s": 25.876,
+   "end_s": 27.616
+  },
+  {
+   "text": "So what did you think",
+   "start_s": 27.616,
+   "end_s": 29.156
+  },
+  {
+   "text": "of this collaboration?",
+   "start_s": 29.156,
+   "end_s": 30.016
+  }
+ ],
+ "script_lines": [
+  {
+   "text": "Okay, we're recording.",
+   "cut": true
+  },
+  {
+   "text": "Kervan celebrated its tenth year with a sunrise fashion show at Pamukkale. And it wasn't alone.",
+   "cut": false
+  },
+  {
+   "text": "Lumo was the show's technology partner.",
+   "cut": false
+  },
+  {
+   "text": "The patterns were drawn on Lumo tablets,",
+   "cut": false
+  },
+  {
+   "text": "and the whole show was filmed on Lumo phones mounted on drones.",
+   "cut": false
+  },
+  {
+   "text": "So Lumo took its tech from cold hard— no, again.",
+   "cut": true
+  },
+  {
+   "text": "So Lumo took its tech from cold hardware to a creative space that feeds fashion.",
+   "cut": false
+  },
+  {
+   "text": "In short, it's a real one plus one equals three story.",
+   "cut": false
+  },
+  {
+   "text": "So what did you think of this collaboration?",
+   "cut": false
+  }
+ ]
+}
