@@ -105,9 +105,10 @@ struct NativeEditorTemporaryVideo: Sendable {
             timelineItemsCache = nil
             timelineClipsCache = nil
             timelineProjectionCache = nil
-            // Assigning an equal document (a reload that found nothing new, a staged draft already applied, a
-            // hydrate that changed nothing) changes nothing the preview shows. Rebuilding for it cancelled an
-            // in-flight build and re-prepared a playing item, which the creator sees as a hitch.
+            // Assigning an equal document (a reload that found nothing new, a hydrate that changed nothing) changes
+            // nothing the preview shows. Rebuilding for it cancelled an in-flight build and re-prepared a playing
+            // item, which the creator sees as a hitch. State that is not in the document (a staged chat draft, the
+            // pending text) schedules its own rebuild through its own explicit call, not through this observer.
             guard document != oldValue else { return }
             // KRI-432: a song volume change on a settled preview is applied to the player, not rebuilt.
             if liveSongVolumeActive, sourcePreviewSettled, let built = previewBuiltDocument,
