@@ -37,6 +37,7 @@ TEST_ID="KriaHardwareUITests/TeleprompterHardwareUITests/testTalkBenchTake"
 RUNS=3
 SECONDS_PER_TAKE=10
 IDLE_SECONDS=6
+REVIEW_TIMEOUT=240
 SCENARIOS="none-cin0,photo-cin0,video-cin0,none-cin1"
 DEVICE_ID="${KRIA_DEVICE_ID:-}"
 LABEL=""
@@ -52,6 +53,7 @@ while [[ $# -gt 0 ]]; do
     --runs) RUNS="$2"; shift 2 ;;
     --seconds) SECONDS_PER_TAKE="$2"; shift 2 ;;
     --idle-seconds) IDLE_SECONDS="$2"; shift 2 ;;
+    --review-timeout) REVIEW_TIMEOUT="$2"; shift 2 ;;
     --scenarios) SCENARIOS="$2"; shift 2 ;;
     --device-id) DEVICE_ID="$2"; shift 2 ;;
     --label) LABEL="$2"; shift 2 ;;
@@ -194,15 +196,16 @@ for run in $(seq 1 "$RUNS"); do
     exit_code=0
     TEST_RUNNER_KRIA_TELEPROMPTER_HARDWARE_TEST=1 TEST_RUNNER_KRIA_TALK_BENCH=1 \
     TEST_RUNNER_KRIA_TALK_BENCH_BACKGROUND="$background" TEST_RUNNER_KRIA_TALK_BENCH_CINEMATIC="$cinematic" \
-    TEST_RUNNER_KRIA_TALK_BENCH_SECONDS="$SECONDS_PER_TAKE" TEST_RUNNER_KRIA_TALK_BENCH_IDLE_SECONDS="$IDLE_SECONDS" TEST_RUNNER_KRIA_TALK_BENCH_USE_TAKE="$USE_TAKE" \
+    TEST_RUNNER_KRIA_TALK_BENCH_SECONDS="$SECONDS_PER_TAKE" TEST_RUNNER_KRIA_TALK_BENCH_IDLE_SECONDS="$IDLE_SECONDS" TEST_RUNNER_KRIA_TALK_BENCH_REVIEW_TIMEOUT="$REVIEW_TIMEOUT" TEST_RUNNER_KRIA_TALK_BENCH_USE_TAKE="$USE_TAKE" \
       xcodebuild test-without-building -project "$IOS_ROOT/Kria.xcodeproj" -scheme "$SCHEME" -configuration Debug \
         -destination "platform=iOS,id=$DEVICE_ID" -derivedDataPath "$DERIVED_DATA" -enableCodeCoverage NO \
         -resultBundlePath "$run_dir/result.xcresult" -only-testing "$TEST_ID" >"$run_dir/xcodebuild.log" 2>&1 || exit_code=$?
     reason=""
     grep -q "Test Case .* skipped" "$run_dir/xcodebuild.log" && reason="the test was skipped (opt-in flags or an unsupported camera)"
-    # A run that never executed leaves the previous run's Documents/talk-bench on the phone; pulling it would report old numbers as new.
+    # A run that never started the test leaves the previous run's Documents/talk-bench on the phone; pulling it would report
+    # old numbers as new. A test that started and then failed wrote its own numbers, which are kept as partial evidence.
     [[ "$exit_code" -ne 0 && -z "$reason" ]] && reason="xcodebuild exited $exit_code, see xcodebuild.log"
-    if [[ "$exit_code" -eq 0 && -z "$reason" ]]; then pull_run "$run_dir"; fi
+    if grep -q "Test Case .* started" "$run_dir/xcodebuild.log" && ! grep -q "Test Case .* skipped" "$run_dir/xcodebuild.log"; then pull_run "$run_dir"; fi
     printf '{"xcodebuild_exit": %d, "reason": "%s"}\n' "$exit_code" "$reason" >"$run_dir/status.json"
     python3 "$REPORT_PY" analyze-take "$run_dir" >/dev/null || true
     echo "talk-bench:   xcodebuild exit $exit_code, $(ls "$run_dir" | grep -c '^take-.*\.\(mov\|mp4\)$' || true) take(s) pulled"

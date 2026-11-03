@@ -248,6 +248,7 @@ import XCTest
     ///   KRIA_TALK_BENCH_CINEMATIC  = 0 | 1
     ///   KRIA_TALK_BENCH_SECONDS    = recording length, default 10
     ///   KRIA_TALK_BENCH_IDLE_SECONDS = idle preview length before Record, default 6
+    ///   KRIA_TALK_BENCH_REVIEW_TIMEOUT = seconds to wait from Stop to Review (the bake runs in between), default 240
     ///   KRIA_TALK_BENCH_USE_TAKE   = 1 also taps "Use take" (needs a backend that accepts the upload; the fixture does not)
     func testTalkBenchTake() throws {
         #if targetEnvironment(simulator)
@@ -260,6 +261,7 @@ import XCTest
         let background = environment["KRIA_TALK_BENCH_BACKGROUND"] ?? "none"
         let cinematicWanted = environment["KRIA_TALK_BENCH_CINEMATIC"] == "1"
         let seconds = TimeInterval(environment["KRIA_TALK_BENCH_SECONDS"] ?? "") ?? 10
+        let reviewTimeout = TimeInterval(environment["KRIA_TALK_BENCH_REVIEW_TIMEOUT"] ?? "") ?? 240
         let idleSeconds = TimeInterval(environment["KRIA_TALK_BENCH_IDLE_SECONDS"] ?? "") ?? 6
         XCTAssertTrue(["none", "photo", "video"].contains(background), "KRIA_TALK_BENCH_BACKGROUND is none, photo or video.")
 
@@ -293,6 +295,15 @@ import XCTest
             XCTAssertEqual(cinematic.value as? String, "1")
             guard waitUntilEnabled(record, timeout: 20) else { XCTFail("Record is enabled again after switching to Cinematic."); return }
         }
+        // The Cinematic choice is saved per device, so a previous scenario's "on" survives into this launch.
+        if !cinematicWanted {
+            let cinematic = app.switches["teleprompter-cinematic"]
+            if cinematic.waitForExistence(timeout: 5), cinematic.isEnabled, (cinematic.value as? String) == "1" {
+                cinematic.switches.firstMatch.tap()
+                XCTAssertEqual(cinematic.value as? String, "0")
+                guard waitUntilEnabled(record, timeout: 20) else { XCTFail("Record is enabled again after switching Cinematic off."); return }
+            }
+        }
         if background != "none" {
             let live = app.descendants(matching: .any).matching(identifier: "teleprompter-live-background").firstMatch
             XCTAssertTrue(live.waitForExistence(timeout: 30), "The \(background) background should be drawing behind the camera.")
@@ -306,8 +317,8 @@ import XCTest
         wait(seconds: seconds)
         stop.tap()
         let useTake = app.buttons["teleprompter-use-take"]
-        guard useTake.waitForExistence(timeout: 240) else {
-            XCTFail("Stop should reach Review within four minutes, bake included.")
+        guard useTake.waitForExistence(timeout: reviewTimeout) else {
+            XCTFail("Stop should reach Review within \(Int(reviewTimeout)) s, bake included.")
             return
         }
         if environment["KRIA_TALK_BENCH_USE_TAKE"] == "1", useTake.isEnabled {
