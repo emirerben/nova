@@ -192,7 +192,22 @@ final class VisionPersonSegmenter: PersonSegmenting, @unchecked Sendable {
         let input = scaler?.scaled(frame) ?? frame
         try VNImageRequestHandler(cvPixelBuffer: input, orientation: .up, options: [:]).perform([request])
         guard let mask = request.results?.first?.pixelBuffer else { throw SegmentationError.noMask }
-        return mask
+        // A reused request may write its next answer into this same buffer while the preview still draws it.
+        return reusedRequest == nil ? mask : try Self.copy(of: mask)
+    }
+
+    private static func copy(of mask: CVPixelBuffer) throws -> CVPixelBuffer {
+        var copy: CVPixelBuffer?
+        guard CVPixelBufferCreate(nil, CVPixelBufferGetWidth(mask), CVPixelBufferGetHeight(mask), CVPixelBufferGetPixelFormatType(mask),
+                                  [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &copy) == kCVReturnSuccess, let copy else {
+            throw SegmentationError.noMask
+        }
+        CVPixelBufferLockBaseAddress(mask, .readOnly); CVPixelBufferLockBaseAddress(copy, [])
+        defer { CVPixelBufferUnlockBaseAddress(copy, []); CVPixelBufferUnlockBaseAddress(mask, .readOnly) }
+        let rows = CVPixelBufferGetHeight(mask), source = CVPixelBufferGetBytesPerRow(mask), target = CVPixelBufferGetBytesPerRow(copy)
+        guard let from = CVPixelBufferGetBaseAddress(mask), let to = CVPixelBufferGetBaseAddress(copy) else { throw SegmentationError.noMask }
+        for row in 0..<rows { memcpy(to + row * target, from + row * source, min(source, target)) }
+        return copy
     }
 }
 

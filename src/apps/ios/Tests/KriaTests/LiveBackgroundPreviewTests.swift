@@ -123,15 +123,18 @@ final class LiveBackgroundPreviewTests: XCTestCase {
         func stop() {}
     }
 
+    /// The matte on the display path, as before the async lever. The async path has its own tests.
+    private var synchronous: LiveBackgroundTuning { var tuning = LiveBackgroundTuning(); tuning.asyncSegmentation = false; return tuning }
+
     func testAFailingMatteDrawsTheRawFrameAndKeepsGoing() {
-        let preview = LiveBackgroundPreview(segmenter: FailingSegmenter())
+        let preview = LiveBackgroundPreview(segmenter: FailingSegmenter(), tuning: synchronous)
         preview.setBackground(Still())
         for _ in 0..<5 { preview.consume(pixelBuffer(), mirrored: true) }
         XCTAssertEqual(preview.statistics, LiveBackgroundStatistics(framesConsumed: 5, framesMatted: 0, framesRaw: 5))
     }
 
     func testAWorkingMatteIsCountedAndNoBackgroundYetIsRaw() {
-        let preview = LiveBackgroundPreview(segmenter: FullSegmenter())
+        let preview = LiveBackgroundPreview(segmenter: FullSegmenter(), tuning: synchronous)
         preview.consume(pixelBuffer(), mirrored: true)
         XCTAssertEqual(preview.statistics.framesRaw, 1, "no background loaded yet: the camera alone")
         preview.setBackground(Still())

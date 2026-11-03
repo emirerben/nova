@@ -99,6 +99,10 @@ struct LiveBackgroundStatistics: Equatable, Sendable {
     var framesMatted = 0
     /// Frames drawn without a matte because Vision threw or no background was ready (S25).
     var framesRaw = 0
+    /// Frames not drawn at all because the first mask of the session has not arrived yet (the screen keeps its last picture).
+    var framesAwaitingMask = 0
+    /// How many frames older than the picture drawn last the mask under it was (0 when matting is on the display path).
+    var lastMaskOffsetFrames: Int?
 }
 
 /// Draws the creator in front of the chosen background, on the camera's frame queue, into pooled IOSurface-backed pixel
@@ -120,12 +124,36 @@ final class LiveBackgroundPreview: NSObject, LiveFrameConsumer, @unchecked Senda
     private var provider: (any LiveBackgroundProviding)?
     private var providerActive = true
     private var stats = LiveBackgroundStatistics()
+    private let tuning: LiveBackgroundTuning
+    private let segmentationQueue = DispatchQueue(label: "app.kria.live-background.segmentation", qos: .userInitiated)
+    private var frameIndex = 0
+    /// One segmentation at a time. A frame that arrives while one runs is not queued behind it: the first frame after it
+    /// finishes is the one segmented, so no mask is computed from a frame that was already old when it started.
+    private var segmenting = false
+    /// Bumped when the session stops, so a mask still being computed for the old session is thrown away.
+    private var generation = 0
+    private var newestMask: SegmentedMask?
+    private var segmentationFailed = false
+
+    private struct SegmentedMask {
+        let buffer: CVPixelBuffer
+        let frameIndex: Int
+        let capturedAt: Double?
+        let frameSize: CGSize
+        /// The orientation of the pixels it was computed from. The composite mirrors camera and mask together, so a mask
+        /// only fits frames delivered the same way.
+        let mirrored: Bool
+    }
+
+    /// A mask older than this is not trusted: the person has moved on and the old outline would be a ghost.
+    private static let maxMaskAge = 0.5
 
     /// False where there is no Metal device: the screen then keeps the plain camera preview.
     var isAvailable: Bool { queue != nil }
 
-    init(segmenter: any PersonSegmenting = VisionPersonSegmenter()) {
+    init(segmenter: any PersonSegmenting = VisionPersonSegmenter(), tuning: LiveBackgroundTuning = .current) {
         self.segmenter = segmenter
+        self.tuning = tuning
         queue = MTLCreateSystemDefaultDevice()?.makeCommandQueue()
         context = LiveBackgroundCompositor.makeContext(commandQueue: queue)
         let size = LiveSpeakerMatteConfig.previewSize
@@ -168,7 +196,13 @@ final class LiveBackgroundPreview: NSObject, LiveFrameConsumer, @unchecked Senda
     }
 
     func sessionDidStop() {
-        lock.lock(); providerActive = false; let current = provider; lock.unlock()
+        lock.lock()
+        providerActive = false
+        generation += 1
+        newestMask = nil
+        segmentationFailed = false
+        let current = provider
+        lock.unlock()
         current?.setActive(false)
     }
 
@@ -178,24 +212,81 @@ final class LiveBackgroundPreview: NSObject, LiveFrameConsumer, @unchecked Senda
         Perf.measure("talk.live.consume") {
             lock.lock()
             stats.framesConsumed += 1
+            frameIndex += 1
+            let index = frameIndex
             let resume = !providerActive ? provider : nil
             providerActive = true
             lock.unlock()
             resume?.setActive(true)
             lock.lock(); let background = provider?.frame(); lock.unlock()
-            var matte: CVPixelBuffer?
-            if background != nil {
-                matte = Perf.measure("talk.live.segment") { try? segmenter.mask(for: frame) }
+            let matte: Matte
+            if background == nil {
+                matte = .raw
+            } else if tuning.asyncSegmentation {
+                matte = newestMatte(for: frame, index: index, mirrored: mirrored, capturedAt: capturedAt)
+            } else {
+                let buffer = Perf.measure("talk.live.segment") { try? segmenter.mask(for: frame) }
+                matte = buffer.map { .mask($0, offsetFrames: 0, offsetMilliseconds: 0) } ?? .raw
             }
             Perf.measure("talk.live.render") {
-                let image = composite(frame: frame, matte: matte, background: background, mirrored: mirrored)
+                if case .awaiting = matte {
+                    lock.lock(); stats.framesAwaitingMask += 1; lock.unlock()
+                    return
+                }
+                var mask: CVPixelBuffer?
+                if case let .mask(buffer, _, _) = matte { mask = buffer }
+                let image = composite(frame: frame, matte: mask, background: background, mirrored: mirrored)
                 lock.lock()
-                if matte != nil { stats.framesMatted += 1 } else { stats.framesRaw += 1 }
+                if case let .mask(_, frames, _) = matte { stats.framesMatted += 1; stats.lastMaskOffsetFrames = frames } else { stats.framesRaw += 1 }
                 lock.unlock()
                 present(image, capturedAt: capturedAt)
+                if case let .mask(_, frames, milliseconds) = matte {
+                    Perf.sample("talk.live.maskOffset", milliseconds: milliseconds, "frames=\(frames)")
+                }
             }
         }
     }
+
+    private enum Matte {
+        case mask(CVPixelBuffer, offsetFrames: Int, offsetMilliseconds: Double)
+        /// No mask: the camera frame alone, because there is no background yet or segmentation failed (S25).
+        case raw
+        /// The first mask of this session is still being computed.
+        case awaiting
+    }
+
+    /// The camera frame is drawn at once with the newest mask that fits it, and this frame is segmented in the background
+    /// when nothing else is. The mask returned is from this frame or an earlier one, and says how much earlier.
+    private func newestMatte(for frame: CVPixelBuffer, index: Int, mirrored: Bool, capturedAt: Double?) -> Matte {
+        lock.lock()
+        let startSegmentation = !segmenting
+        if startSegmentation { segmenting = true }
+        let startedIn = generation
+        let newest = newestMask, failed = segmentationFailed
+        lock.unlock()
+        let size = CGSize(width: CVPixelBufferGetWidth(frame), height: CVPixelBufferGetHeight(frame))
+        if startSegmentation {
+            segmentationQueue.async { [self] in
+                let buffer = Perf.measure("talk.live.segment") { try? segmenter.mask(for: frame) }
+                lock.lock()
+                segmenting = false
+                if generation == startedIn {
+                    newestMask = buffer.map { SegmentedMask(buffer: $0, frameIndex: index, capturedAt: capturedAt, frameSize: size, mirrored: mirrored) }
+                    segmentationFailed = buffer == nil
+                }
+                lock.unlock()
+            }
+        }
+        guard let newest else { return failed ? .raw : .awaiting }
+        guard newest.frameSize == size, newest.mirrored == mirrored else { return .awaiting }
+        let frames = index - newest.frameIndex
+        let milliseconds = capturedAt.flatMap { now in newest.capturedAt.map { max(0, (now - $0) * 1000) } } ?? Double(frames) * 1000 / 30
+        guard milliseconds / 1000 <= Self.maxMaskAge else { return .raw }
+        return .mask(newest.buffer, offsetFrames: frames, offsetMilliseconds: milliseconds)
+    }
+
+    /// Blocks until the segmentation in flight, if any, has finished. For tests.
+    func waitForSegmentation() { segmentationQueue.sync {} }
 
     /// The composite exactly as `consume` draws it, in Core Image space. Split out so a test can send it through the same
     /// render step as the screen.
