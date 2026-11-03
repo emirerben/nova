@@ -26,29 +26,10 @@ struct AttachmentHeading: View {
     let title: String
     let subtitle: String
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(KriaFont.body(28).weight(.semibold)).lineSpacing(1)
-            Text(subtitle).font(KriaFont.body(15)).foregroundStyle(KriaColor.mutedInk)
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).kriaType(.title).foregroundStyle(KriaColor.ink).accessibilityAddTraits(.isHeader)
+            Text(subtitle).kriaType(.body).foregroundStyle(KriaColor.mutedInk)
         }
-    }
-}
-
-struct AttachmentStepProgress: View {
-    let steps: [AttachmentStep]
-    let current: AttachmentStep
-    /// Replaces the "Overlays" step name (slide posts call that pool "Photos & videos").
-    var overlaysTitle: String? = nil
-    var body: some View {
-        HStack(spacing: 12) {
-            ForEach(Array(steps.enumerated()), id: \.element) { index, step in
-                VStack(alignment: .leading, spacing: 9) {
-                    Text("\(index + 1)  \(step == .overlays ? (overlaysTitle ?? step.title) : step.title)")
-                        .font(KriaFont.body(13).weight(step == current ? .semibold : .regular))
-                        .foregroundStyle(step == current ? KriaColor.ink : KriaColor.mutedInk)
-                    Capsule().fill(step == current ? KriaColor.sky : index < (steps.firstIndex(of: current) ?? 0) ? KriaColor.sage : KriaColor.line).frame(height: 3)
-                }
-            }
-        }.padding(.horizontal, 24).padding(.vertical, 14)
     }
 }
 
@@ -81,9 +62,11 @@ struct FootageDurationSummary {
 struct FootageDurationCard: View {
     let summary: FootageDurationSummary
     var body: some View {
-        HStack { Text(summary.label).font(KriaFont.body(14)); Spacer(); Text(summary.value).font(KriaFont.body(20).weight(.semibold)) }
-            .padding(16).background(KriaColor.selectionSoft, in: RoundedRectangle(cornerRadius: 12))
-            .accessibilityLabel("\(summary.label), \(summary.value)")
+        HStack(spacing: 8) {
+            KriaCheckDisc(size: 20)
+            Text("\(summary.label) · \(summary.value)").kriaType(.label).foregroundStyle(KriaColor.ink)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -95,30 +78,23 @@ enum DurationFormatter {
     static func seconds(_ seconds: TimeInterval) -> String { "\(max(1, Int(seconds.rounded(.up)))) seconds" }
 }
 
-struct VoiceoverStartView: View {
-    let canRecord: Bool
-    let start: () -> Void
-    var body: some View {
-        VStack(spacing: 16) {
-            Button(action: start) {
-                Image(systemName: "mic.fill").font(.system(size: 40, weight: .medium)).foregroundStyle(KriaColor.ink)
-                    .frame(width: 112, height: 112).background(KriaColor.sky, in: Circle())
-            }.disabled(!canRecord).accessibilityIdentifier("voiceover-record").accessibilityLabel("Record voiceover")
-            Text("Tap to record").font(KriaFont.body(17).weight(.semibold))
-            Text("You can listen before you use it.").font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-        }.frame(maxWidth: .infinity).padding(.vertical, 16)
-    }
-}
-
 struct RecordingVoiceoverView: View {
     @ObservedObject var recorder: CreationVoiceRecorder
     let stop: () -> Void
     var body: some View {
-        VStack(spacing: 18) {
-            Text(DurationFormatter.clock(recorder.elapsed)).font(KriaFont.body(34).weight(.semibold)).monospacedDigit().accessibilityIdentifier("voiceover-duration")
+        VStack(spacing: 16) {
+            Text(DurationFormatter.clock(recorder.elapsed)).kriaType(.title).monospacedDigit().foregroundStyle(KriaColor.ink)
+                .accessibilityIdentifier("voiceover-duration")
             LiveMeterWaveform(level: recorder.meter).frame(height: 42).accessibilityLabel("Live microphone level")
-            Button(action: stop) { Label("Stop recording", systemImage: "stop.fill") }.buttonStyle(AttachmentPrimaryButtonStyle()).accessibilityIdentifier("voiceover-stop")
-        }.frame(maxWidth: .infinity).padding(.vertical, 20)
+            Button(action: stop) {
+                RoundedRectangle(cornerRadius: 6, style: .continuous).fill(KriaColor.paper).frame(width: 22, height: 22)
+                    .frame(width: 64, height: 64).background(KriaColor.ink, in: Circle())
+            }
+            .buttonStyle(.plain).accessibilityLabel("Stop recording").accessibilityIdentifier("voiceover-stop")
+            Text("Stop recording").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+        }
+        .frame(maxWidth: .infinity).padding(.vertical, 24)
+        .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 
@@ -128,8 +104,8 @@ struct VoiceoverReviewView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 14) {
                 Button(action: recorder.togglePlayback) {
-                    Image(systemName: recorder.isPlaying ? "pause.fill" : "play.fill")
-                        .frame(width: 44, height: 44).background(KriaColor.sky, in: Circle())
+                    Image(systemName: recorder.isPlaying ? "pause.fill" : "play.fill").foregroundStyle(KriaColor.paper)
+                        .frame(width: 44, height: 44).background(KriaColor.ink, in: Circle())
                 }
                 .accessibilityIdentifier("voiceover-play").accessibilityLabel(recorder.isPlaying ? "Pause" : "Play")
                 VStack(alignment: .leading, spacing: 3) {
@@ -151,7 +127,7 @@ struct VoiceoverReviewView: View {
             }.frame(height: 20)
             .accessibilityLabel("Voiceover playback \(DurationFormatter.clock(recorder.playbackTime)) of \(DurationFormatter.clock(recorder.duration))")
         }
-        .padding(16).background(KriaColor.selectionSoft, in: RoundedRectangle(cornerRadius: 12))
+        .padding(16).background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 
@@ -165,12 +141,16 @@ struct VoiceoverReviewActions: View {
     let canUse: Bool
     let isUsing: Bool
     var body: some View {
-        VStack(spacing: 14) {
-            Button(recorder.isImported ? "Use voiceover" : "Use recording", action: onUse).buttonStyle(AttachmentPrimaryButtonStyle()).accessibilityIdentifier("voiceover-use").disabled(!canUse || isUsing)
+        VStack(spacing: 8) {
+            Button(recorder.isImported ? "Use voiceover" : "Use recording", action: onUse)
+                .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true, isLoading: isUsing))
+                .accessibilityIdentifier("voiceover-use").disabled(!canUse || isUsing)
             if recorder.isImported {
-                Button("Choose another audio file", action: onChooseAnother).font(KriaFont.body(14).weight(.medium)).foregroundStyle(KriaColor.mutedInk).frame(minHeight: 44).disabled(isUsing).accessibilityIdentifier("voiceover-choose-another")
+                Button("Choose another audio file", action: onChooseAnother)
+                    .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium, fullWidth: true)).disabled(isUsing).accessibilityIdentifier("voiceover-choose-another")
             } else {
-                Button("Record again", action: onRecordAgain).buttonStyle(KriaSecondaryButtonStyle()).accessibilityIdentifier("voiceover-rerecord").disabled(isUsing)
+                Button("Record again", action: onRecordAgain)
+                    .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, fullWidth: true)).accessibilityIdentifier("voiceover-rerecord").disabled(isUsing)
             }
         }
     }
@@ -183,8 +163,8 @@ struct SongReviewView: View {
     var body: some View {
         HStack(spacing: 14) {
             Button(action: player.togglePlayback) {
-                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .frame(width: 44, height: 44).background(KriaColor.sky, in: Circle())
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").foregroundStyle(KriaColor.paper)
+                    .frame(width: 44, height: 44).background(KriaColor.ink, in: Circle())
             }
             .accessibilityIdentifier("song-play").accessibilityLabel(player.isPlaying ? "Pause" : "Play")
             VStack(alignment: .leading, spacing: 3) {
@@ -194,7 +174,7 @@ struct SongReviewView: View {
             }
             Spacer()
         }
-        .padding(16).background(KriaColor.selectionSoft, in: RoundedRectangle(cornerRadius: 12))
+        .padding(16).background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("song-review")
     }
@@ -206,12 +186,11 @@ struct SongReviewActions: View {
     let canUse: Bool
     let isUsing: Bool
     var body: some View {
-        VStack(spacing: 14) {
-            Button("Use this song", action: onUse).buttonStyle(AttachmentPrimaryButtonStyle())
+        VStack(spacing: 8) {
+            Button("Use this song", action: onUse).buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true, isLoading: isUsing))
                 .accessibilityIdentifier("song-use").disabled(!canUse || isUsing)
             Button("Choose another song", action: onChooseAnother)
-                .font(KriaFont.body(14).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
-                .frame(minHeight: 44).disabled(isUsing).accessibilityIdentifier("song-choose-another")
+                .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium, fullWidth: true)).disabled(isUsing).accessibilityIdentifier("song-choose-another")
         }
     }
 }
@@ -220,13 +199,7 @@ struct VoiceoverDurationWarning: View {
     let message: String
     let addFootage: () -> Void
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(KriaColor.ink)
-            VStack(alignment: .leading, spacing: 7) {
-                Text(message).font(KriaFont.body(13))
-                Button("Add more footage", action: addFootage).font(KriaFont.body(14).weight(.semibold)).foregroundStyle(KriaColor.ink)
-            }
-        }.padding(14).background(KriaColor.butter, in: RoundedRectangle(cornerRadius: 12))
+        KriaNoticeCard(tone: .warning, title: message, action: KriaNoticeAction(title: "Add more footage", handler: addFootage))
     }
 }
 
@@ -238,7 +211,7 @@ struct LiveMeterWaveform: View {
                 ForEach(0..<19, id: \.self) { index in
                     let distance = abs(CGFloat(index - 9)) / 9
                     let height = max(5, (1 - distance * 0.55) * (8 + level * 34))
-                    Capsule().fill(KriaColor.ink).frame(width: max(2, (proxy.size.width - 72) / 19), height: height)
+                    Capsule().fill(KriaColor.sky).frame(width: max(2, (proxy.size.width - 72) / 19), height: height)
                 }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
