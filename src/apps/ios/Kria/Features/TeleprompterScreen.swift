@@ -107,13 +107,13 @@ struct TeleprompterScreen: View {
                     .frame(width: geometry.size.width, height: geometry.size.width * 16 / 9)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .accessibilityHidden(true)
-                if flow.useScript, flow.camera.error == nil {
+                if flow.useScript {
                     TeleprompterWindowOverlay(script: flow.script, canvas: canvas, persist: { flow.persistDraft() },
                                                openSettings: { showsWindowSettings = true })
                 }
                 VStack(spacing: 8) {
                     topRow
-                    if !flow.captureBusy, flow.camera.error == nil { optionsRow }
+                    if !flow.captureBusy, showsControls { optionsRow }
                     Spacer(minLength: 8)
                     cameraBottom
                         .background(GeometryReader { proxy in
@@ -128,6 +128,9 @@ struct TeleprompterScreen: View {
                                      openSettings: { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } },
                                      retry: { Task { await flow.camera.prepare() } },
                                      upload: onUpload.map { upload in { leaveForUpload(upload) } })
+                        // With a script on, the reading window and controls stay put and the card sits under them.
+                        .frame(maxHeight: .infinity, alignment: flow.useScript ? .bottom : .center)
+                        .padding(.bottom, flow.useScript ? bottomInset + 8 : 0)
                 }
             }
             .onAppear { readingCanvas = canvas }
@@ -137,12 +140,15 @@ struct TeleprompterScreen: View {
         }
     }
 
+    /// A refused camera shows the access card alone, unless a script is on: then the reading window stays.
+    private var showsControls: Bool { flow.camera.error == nil || flow.useScript }
+
     private var topRow: some View {
         ZStack {
             HStack {
                 KriaGlassCloseButton(identifier: "teleprompter-close", label: flow.captureBusy ? "Stop and review take" : "Close camera", action: closeCapture)
                 Spacer()
-                if !flow.captureBusy, flow.camera.error == nil {
+                if !flow.captureBusy, showsControls {
                     KriaCameraCapsule(title: "Script", symbol: "text.alignleft", identifier: "teleprompter-script",
                                       isOn: flow.useScript) { flow.editScript() }
                 }
@@ -196,7 +202,7 @@ struct TeleprompterScreen: View {
                     .padding(12).frame(maxWidth: .infinity, alignment: .leading).kriaCameraGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .padding(.horizontal, 16).accessibilityIdentifier("teleprompter-mic-silent")
             }
-            if flow.camera.error == nil {
+            if showsControls {
                 if flow.useScript, flow.stage != .starting, flow.stage != .finalizing { scriptStatusRow }
                 if flow.stage == .starting || flow.stage == .finalizing {
                     TeleprompterSavingLabel(camera: flow.camera, starting: flow.stage == .starting)
@@ -377,12 +383,12 @@ struct TeleprompterScreen: View {
             }
             HStack(spacing: 8) {
                 if canUse {
-                    Button { Task { await flow.retake() } } label: { Label("Record again", systemImage: KriaSourceOption.recordSymbol) }
+                    Button { Task { await flow.retake() } } label: { HStack(spacing: 6) { Image(systemName: KriaSourceOption.recordSymbol); Text("Record again").lineLimit(1).minimumScaleFactor(0.8) } }
                         .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, fullWidth: true)).disabled(busy)
                         .accessibilityIdentifier("teleprompter-retake")
                 }
                 if let onUpload {
-                    Button { leaveForUpload(onUpload) } label: { Label("Upload instead", systemImage: KriaSourceOption.uploadSymbol) }
+                    Button { leaveForUpload(onUpload) } label: { HStack(spacing: 6) { Image(systemName: KriaSourceOption.uploadSymbol); Text("Upload instead").lineLimit(1).minimumScaleFactor(0.8) } }
                         .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, fullWidth: true)).disabled(busy)
                         .accessibilityIdentifier("review-upload")
                 }

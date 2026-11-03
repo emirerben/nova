@@ -5,7 +5,7 @@ import XCTest
 final class SongOrderUITests: XCTestCase {
     private func launch(songOrder: String?, media: Bool = true) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         if media { app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1" }
         app.launchEnvironment["KRIA_CHAT_SONG_ORDER"] = songOrder
@@ -340,7 +340,7 @@ final class SongOrderUITests: XCTestCase {
         XCTAssertTrue(on.staticTexts["Only use songs you have the rights to."].exists)
         XCTAssertTrue(on.buttons["Choose a song from Files"].exists)
         XCTAssertTrue(on.buttons["song-skip"].exists, "a song is optional")
-        XCTAssertFalse(on.buttons["Choose from Photos"].exists, "a song is an audio file, not a Photos pick")
+        XCTAssertFalse(on.buttons["upload-source-photos"].exists, "a song is an audio file, not a Photos pick")
         on.terminate()
 
         let off = launch(songOrder: nil, media: false)

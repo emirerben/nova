@@ -292,11 +292,7 @@ struct ReviewTakePlayer: View {
             }
             HStack(spacing: 10) {
                 Text(DurationFormatter.clock(elapsed)).kriaType(.label).monospacedDigit()
-                Slider(value: Binding(get: { elapsed }, set: { elapsed = $0 }), in: 0...max(duration, 0.1)) { editing in
-                    scrubbing = editing
-                    if !editing { player.seek(to: CMTime(seconds: elapsed, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) }
-                }
-                .tint(Color.white).accessibilityLabel("Playback position").accessibilityIdentifier("review-scrubber")
+                scrubber
                 Text(DurationFormatter.clock(duration)).kriaType(.label).monospacedDigit()
             }
             .foregroundStyle(Color.white)
@@ -318,6 +314,30 @@ struct ReviewTakePlayer: View {
             }
         }
         .onDisappear { player.pause() }
+    }
+
+    private var scrubber: some View {
+        GeometryReader { proxy in
+            let fraction = duration > 0 ? min(1, max(0, elapsed / duration)) : 0
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.35)).frame(height: 3)
+                Capsule().fill(Color.white).frame(width: proxy.size.width * fraction, height: 3)
+                Circle().fill(Color.white).frame(width: 10, height: 10).offset(x: max(0, proxy.size.width * fraction - 5))
+            }
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                scrubbing = true
+                elapsed = duration * min(1, max(0, value.location.x / max(1, proxy.size.width)))
+            }.onEnded { _ in
+                scrubbing = false
+                player.seek(to: CMTime(seconds: elapsed, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+            })
+        }
+        .frame(height: 28)
+        .accessibilityElement().accessibilityLabel("Playback position")
+        .accessibilityValue("\(DurationFormatter.clock(elapsed)) of \(DurationFormatter.clock(duration))")
+        .accessibilityIdentifier("review-scrubber")
     }
 
     private func toggle() {

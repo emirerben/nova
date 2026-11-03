@@ -1794,8 +1794,12 @@ private struct CreationWorkspaceView: View {
 
     /// What the composer's + offers (Paper S3.05): Record and Upload for every format, and the optional script and
     /// voiceover rows only where they mean something.
-    private var attachMenu: ChatAttachMenu {
-        ChatAttachMenu(
+    private var attachMenu: ChatAttachMenu? {
+        // UI tests that exercise the Add media sheet's own steps open it straight from +; the tray has its own test.
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-legacy-attach") { return nil }
+        #endif
+        return ChatAttachMenu(
             disabledReason: canAttachMedia ? nil : "Choose a video format first.",
             offersSaved: capabilities?.mediaLibrary == true,
             record: selectedFormat?.usesVisualPool == true ? nil : { openAttachments(launch: .record) },

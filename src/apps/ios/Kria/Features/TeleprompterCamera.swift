@@ -171,6 +171,11 @@ import UIKit
             return
         }
 
+        #if DEBUG
+        // UI-test/screenshot fixture: the simulator has no camera, so show the ready controls over a dark preview.
+        if Self.usesReadyUITestFixture { phase = .ready; return }
+        #endif
+
         guard await requestPermissionsIfNeeded(generation: generation) else { return }
         guard generation == operationGeneration else { return }
         // The preview graph includes microphone input. With automatic audio configuration
@@ -498,6 +503,9 @@ import UIKit
     func sceneBecameActive() { note("scene_active") }
 
     private func handle(_ signal: TakeStopSignal) {
+        #if DEBUG
+        if Self.usesReadyUITestFixture { return }
+        #endif
         guard let reason = TakeStopPolicy.reason(for: signal) else { return }
         guard phase == .preparing || phase == .ready || phase == .recording || phase == .finalizing else { return }
         markNeedsRebuild("interruption")
@@ -645,6 +653,13 @@ import UIKit
         phase = .failed
         onFinalized?(nil, message)
     }
+
+    #if DEBUG
+    private static var usesReadyUITestFixture: Bool {
+        let process = ProcessInfo.processInfo
+        return process.arguments.contains("-ui-testing-chat") && process.environment["KRIA_TELEPROMPTER_CAMERA_READY"] == "1"
+    }
+    #endif
 
     private static var usesUnavailableUITestFixture: Bool {
         let process = ProcessInfo.processInfo

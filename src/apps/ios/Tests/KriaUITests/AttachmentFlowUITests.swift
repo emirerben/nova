@@ -7,11 +7,11 @@ final class AttachmentFlowUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Add footage"].waitForExistence(timeout: 5))
         app.scrollViews["attachment-step-footage"].swipeLeft()
         XCTAssertTrue(app.buttons["voiceover-record"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Upload an audio file"].exists)
+        XCTAssertTrue(app.buttons["voiceover-upload"].exists)
         XCTAssertFalse(app.buttons["attachment-next"].exists, "Voiceover needs a deliberate choice")
         capture(app, "Voiceover start")
         app.scrollViews["attachment-step-voiceover"].swipeRight()
-        XCTAssertTrue(app.buttons["Choose from Photos"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["source-upload"].waitForExistence(timeout: 5))
         app.buttons["attachment-next"].tap()
         XCTAssertTrue(app.buttons["voiceover-skip"].waitForExistence(timeout: 5))
         app.buttons["voiceover-skip"].tap()
@@ -81,7 +81,7 @@ final class AttachmentFlowUITests: XCTestCase {
 
     private func launchAttachments(review: String? = nil, duration: String? = nil, existingVoiceover: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         if existingVoiceover == "attached" {

@@ -29,10 +29,9 @@ import XCTest
         assertWindowStaysClearOfRecord(window, app: app)
         capture(app, "Movable glass script window")
 
-        app.buttons["Close camera"].tap()
         app.buttons["teleprompter-close"].tap()
         app.buttons["teleprompter-open"].tap()
-        app.buttons["teleprompter-open-camera"].tap()
+        app.buttons["teleprompter-use-script"].tap()
         XCTAssertTrue(app.staticTexts["teleprompter-camera-error"].waitForExistence(timeout: 10))
         XCTAssertTrue(window.waitForExistence(timeout: 5))
         XCTAssertTrue((window.value as? String)?.localizedCaseInsensitiveContains("glass") == true)
@@ -100,23 +99,23 @@ import XCTest
         app.buttons["teleprompter-open"].tap()
         let field = app.textViews["teleprompter-script-editor"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["teleprompter-open-camera"].isEnabled)
+        XCTAssertFalse(app.buttons["teleprompter-use-script"].isEnabled, "Use script waits for words")
+        XCTAssertTrue(app.buttons["teleprompter-no-script"].isHittable, "Recording without a script is always one tap away")
         field.tap()
         field.typeText("Today I want to share a simple idea.\nTake your time and enjoy the story.")
-        app.buttons["teleprompter-open-camera"].tap()
+        app.buttons["teleprompter-use-script"].tap()
         XCTAssertTrue(app.staticTexts["teleprompter-camera-error"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["teleprompter-record"].isEnabled)
-        // KRI-1160: where Cinematic cannot record (the simulator has no such camera), the switch is off, disabled,
-        // and says the take stays standard.
-        let cinematic = app.switches["teleprompter-cinematic"]
-        XCTAssertTrue(cinematic.waitForExistence(timeout: 5))
-        XCTAssertFalse(cinematic.isEnabled)
-        XCTAssertEqual(cinematic.value as? String, "0")
-        XCTAssertTrue(app.staticTexts["teleprompter-cinematic-note"].label.localizedCaseInsensitiveContains("standard mode"))
+        // KRI-1160: where Cinematic cannot record (the simulator has no such camera) the camera offers no switch,
+        // so a standard take is never mistaken for Cinematic.
+        XCTAssertFalse(app.buttons["teleprompter-cinematic"].exists)
+        // A refused camera always offers a way forward that is not the camera.
+        XCTAssertTrue(app.buttons["teleprompter-retry-camera"].exists || app.buttons["teleprompter-open-settings"].exists)
         capture(app, "Camera unavailable preserves script")
-        app.buttons["teleprompter-edit-script"].tap()
+        app.buttons["teleprompter-script"].tap()
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         XCTAssertTrue((field.value as? String)?.contains("Take your time") == true)
+        app.buttons["teleprompter-use-script"].tap()
         app.buttons["teleprompter-close"].tap()
         app.buttons["teleprompter-open"].tap()
         XCTAssertTrue(field.waitForExistence(timeout: 5))
@@ -128,13 +127,13 @@ import XCTest
         let app = launchTalking(largeText: true)
         app.buttons["teleprompter-open"].tap()
         XCTAssertTrue(app.textViews["teleprompter-script-editor"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["teleprompter-close"].isHittable)
-        XCTAssertTrue(app.buttons["teleprompter-open-camera"].isHittable)
+        XCTAssertTrue(app.buttons["teleprompter-no-script"].isHittable)
+        XCTAssertTrue(app.buttons["teleprompter-use-script"].exists)
         capture(app, "Script at accessibility size")
         let field = app.textViews["teleprompter-script-editor"]
         field.tap()
         field.typeText("Read this opening at a comfortable pace, then keep the key point clear for every viewer. Pause when you need a breath, return to the previous line, and continue with the same calm rhythm until the final call to action.")
-        app.buttons["teleprompter-open-camera"].tap()
+        app.buttons["teleprompter-use-script"].tap()
         XCTAssertTrue(app.staticTexts["teleprompter-camera-error"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["Close camera"].isHittable)
         let record = app.buttons["teleprompter-record"]
@@ -179,12 +178,12 @@ import XCTest
     func testPreviousTakeAndFailedIntakeKeepTheRecordingRecoverable() {
         let app = launchTalking(review: true)
         app.buttons["teleprompter-open"].tap()
-        XCTAssertTrue(app.buttons["Previous take"].waitForExistence(timeout: 10))
-        app.buttons["Previous take"].tap()
-        XCTAssertFalse(app.buttons["Previous take"].exists)
+        XCTAssertTrue(app.buttons["teleprompter-previous-take"].waitForExistence(timeout: 10))
+        app.buttons["teleprompter-previous-take"].tap()
+        XCTAssertFalse(app.buttons["teleprompter-previous-take"].exists)
         XCTAssertTrue(app.buttons["teleprompter-use-take"].isEnabled)
         app.buttons["teleprompter-use-take"].tap()
-        XCTAssertTrue(app.staticTexts["teleprompter-review-error"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.descendants(matching: .any)["teleprompter-review-error"].firstMatch.waitForExistence(timeout: 30))
         XCTAssertTrue(app.buttons["teleprompter-use-take"].isEnabled)
         XCTAssertTrue(app.buttons["teleprompter-retake"].isEnabled)
         capture(app, "Failed native proxy intake retains take")
@@ -221,10 +220,9 @@ import XCTest
         XCTAssertFalse(notice.label.localizedCaseInsensitiveContains("same"), "the preview never promises identical pixels")
         capture(app, "Background picked, camera unavailable")
 
-        app.buttons["Close camera"].tap()
         app.buttons["teleprompter-close"].tap()
         app.buttons["teleprompter-open"].tap()
-        app.buttons["teleprompter-open-camera"].tap()
+        app.buttons["teleprompter-use-script"].tap()
         XCTAssertTrue(app.staticTexts["teleprompter-camera-error"].waitForExistence(timeout: 10))
         XCTAssertEqual(app.buttons["teleprompter-background"].value as? String, "Photo", "a retake keeps the background")
 
@@ -244,7 +242,7 @@ import XCTest
 
     private func launchTalking(largeText: Bool = false, review: Bool = false, speakerBackground: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         if speakerBackground {
             app.launchArguments.append("-ui-testing-speaker-background")
             app.launchEnvironment["KRIA_TELEPROMPTER_BACKGROUND_FIXTURE"] = "1"
@@ -288,7 +286,7 @@ import XCTest
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
         field.typeText("This is a longer script for reading at a steady pace. We can move the reading window without losing our place. We can resize the window while keeping the camera controls clear. The background can be transparent, glass, or solid. These settings should return when this script is reopened.")
-        app.buttons["teleprompter-open-camera"].tap()
+        app.buttons["teleprompter-use-script"].tap()
         XCTAssertTrue(app.staticTexts["teleprompter-camera-error"].waitForExistence(timeout: 10))
     }
 

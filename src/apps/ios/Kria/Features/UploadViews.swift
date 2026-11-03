@@ -186,66 +186,53 @@ struct FootagePickerView: View {
             if showsHeading { KriaSectionLabel(title: "Add \(displayTitle.lowercased())") }
             sourceControls
             if let message = destination.message {
-                Text(message).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+                Text(message).kriaType(.label).foregroundStyle(KriaColor.mutedInk)
             }
             if let disclosure = uploadDisclosure {
-                Text(disclosure).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
+                Text(disclosure).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
             }
-            if selectionCapacity.remaining == 0 {
-                Text("You’ve reached the limit for \(displayTitle.lowercased()).")
-                    .font(KriaFont.body(12))
-                    .foregroundStyle(KriaColor.zinc)
-            } else if let selectionMessage {
-                Text(selectionMessage)
-                    .font(KriaFont.body(12))
-                    .foregroundStyle(KriaColor.zinc)
+            if let selectionMessage, selectionCapacity.remaining > 0 {
+                Text(selectionMessage).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
             }
             // Clips still being prepared: not yet an upload record, but already chosen. Shown at once, with
             // their thumbnail, so the user sees each pick land instead of waiting for it to finish uploading.
             ForEach(preparingUploads, id: \.id) { item in
-                HStack(spacing: 12) {
+                KriaMediaRow(name: item.filename ?? "Preparing…", status: .preparing) {
                     CreationRecordThumbnail(recordID: item.id, version: uploads.previewVersion)
-                    Text(item.filename ?? "Preparing…").lineLimit(1)
-                    Spacer()
-                    ProgressView()
                 }
+                .padding(4).background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             }
             ForEach(uploads.records.filter { $0.projectID == projectID && $0.role == role }) { record in
-                HStack(alignment: .top, spacing: 12) {
-                    CreationRecordThumbnail(recordID: record.id, version: uploads.previewVersion)
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text(BackgroundUploadCoordinator.displayFilename(record.filename)).lineLimit(1)
-                            Spacer()
-                            if record.uploadCompleted == true {
-                                Button("Retry attach") { Task { await uploads.retryAttachment(recordID: record.id) } }
-                            } else {
-                                Button("Retry") { Task { await uploads.retryUpload(recordID: record.id) } }
-                            }
-                            // Also for a clip that finished uploading but could not attach. It used to have
-                            // only "Retry attach", so a clip the server kept rejecting could never be
-                            // removed: it sat in the list forever, keeping Continue disabled.
-                            Button(record.uploadCompleted == true ? "Remove" : "Cancel") { Task { await uploads.cancel(recordID: record.id) } }
-                        }
-                        ProgressView(value: uploads.progress[record.id] ?? 0).tint(KriaColor.ink)
-                        // Failed uploads explain themselves in the failure lines below.
-                        if record.uploadFailed != true {
-                            Text(UploadProgressCaption.text(progress: uploads.progress[record.id], completed: record.uploadCompleted == true, online: network.isOnline))
-                                .font(KriaFont.body(11)).foregroundStyle(KriaColor.zinc).monospacedDigit()
-                                .accessibilityIdentifier("upload-progress-caption")
-                        }
-                        if let deadline = record.retentionExpiresAt { Text("Temporary source removed by \(deadline.formatted(date: .abbreviated, time: .shortened)).").font(KriaFont.body(11)).foregroundStyle(KriaColor.zinc) }
+                VStack(alignment: .leading, spacing: 4) {
+                    // A clip that finished uploading but could not attach is still removable: without that it sat in
+                    // the list forever, keeping Continue disabled.
+                    KriaMediaRow(
+                        name: BackgroundUploadCoordinator.displayFilename(record.filename),
+                        status: record.uploadFailed == true ? .failed("Upload failed") : .uploading(uploads.progress[record.id] ?? 0),
+                        trailing: .remove(label: record.uploadCompleted == true ? "Remove" : "Cancel") { Task { await uploads.cancel(recordID: record.id) } },
+                        onRetry: record.uploadFailed == true ? { Task { await uploads.retryUpload(recordID: record.id) } } : nil
+                    ) { CreationRecordThumbnail(recordID: record.id, version: uploads.previewVersion) }
+                    .padding(4).background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    if record.uploadCompleted == true {
+                        Button("Retry attach") { Task { await uploads.retryAttachment(recordID: record.id) } }
+                            .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium))
+                    }
+                    // Failed uploads explain themselves in the failure notices below.
+                    if record.uploadFailed != true {
+                        Text(UploadProgressCaption.text(progress: uploads.progress[record.id], completed: record.uploadCompleted == true, online: network.isOnline))
+                            .kriaType(.caption).foregroundStyle(KriaColor.mutedInk).monospacedDigit()
+                            .accessibilityIdentifier("upload-progress-caption")
+                    }
+                    if let deadline = record.retentionExpiresAt {
+                        Text("Temporary source removed by \(deadline.formatted(date: .abbreviated, time: .shortened)).").kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
                     }
                 }
             }
             // A failed clip is reported next to the ones that worked. One shared line can't do that:
             // with uploads overlapping, a later clip's success would erase an earlier clip's failure.
             ForEach(failures) { failure in
-                HStack(alignment: .firstTextBaseline) {
-                    Text("\(failure.filename): \(failure.message)").font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
-                    Spacer()
-                    Button("Dismiss") { uploads.dismissFailure(id: failure.id) }.font(KriaFont.body(12))
-                }
+                KriaNoticeCard(tone: .failure, title: "\(failure.filename): \(failure.message)",
+                               link: KriaNoticeAction(title: "Dismiss") { uploads.dismissFailure(id: failure.id) })
             }
             if let error = uploads.lastError, failures.isEmpty { Text(error).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc) }
         }

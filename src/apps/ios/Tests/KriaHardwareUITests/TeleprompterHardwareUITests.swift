@@ -36,7 +36,7 @@ import XCTest
         XCTAssertTrue(script.waitForExistence(timeout: 8))
         paste("I am recording this on an iPhone. I can pause, retake, and keep an interrupted take.", into: script, app: app)
 
-        app.buttons["teleprompter-open-camera"].tap()
+        app.buttons["teleprompter-use-script"].tap()
         let record = app.buttons["teleprompter-record"]
         guard triggerPermissionPrompts(in: app, untilEnabled: record) else { return }
         guard waitUntilEnabled(record, timeout: 20) else {
@@ -155,7 +155,7 @@ import XCTest
         let script = app.textViews["teleprompter-script-editor"]
         XCTAssertTrue(script.waitForExistence(timeout: 8))
         paste("Short script.", into: script, app: app)
-        app.buttons["teleprompter-open-camera"].tap()
+        app.buttons["teleprompter-use-script"].tap()
         let record = app.buttons["teleprompter-record"]
         guard triggerPermissionPrompts(in: app, untilEnabled: record), waitUntilEnabled(record, timeout: 20) else {
             XCTFail("A physical iPhone with granted camera and microphone permission should enable Record.")
@@ -193,7 +193,7 @@ import XCTest
         let script = app.textViews["teleprompter-script-editor"]
         XCTAssertTrue(script.waitForExistence(timeout: 8))
         paste("I am recording this on an iPhone in Cinematic mode.", into: script, app: app)
-        app.buttons["teleprompter-open-camera"].tap()
+        app.buttons["teleprompter-use-script"].tap()
         let record = app.buttons["teleprompter-record"]
         guard triggerPermissionPrompts(in: app, untilEnabled: record), waitUntilEnabled(record, timeout: 20) else {
             XCTFail("A physical iPhone with granted camera and microphone permission should enable Record.")
@@ -282,7 +282,7 @@ import XCTest
 
     private func launchTalking() -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         // Advertise the supported offline intake capability only. This neither replaces the real
         // camera/review path nor invokes the fixture's placeholder render in this capture test.

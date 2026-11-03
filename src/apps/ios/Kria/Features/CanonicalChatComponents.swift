@@ -1524,6 +1524,17 @@ struct ChatComposer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if showsTray, let attachMenu {
+                ChatAttachTray(menu: attachMenu) { showsTray = false }
+                    .padding(.horizontal, 14).padding(.top, 8)
+                    .transition(.opacity)
+            }
+            composer
+        }
+    }
+
+    private var composer: some View {
+        VStack(alignment: .leading, spacing: 0) {
             if let notice = dictation?.notice {
                 Text(notice)
                     .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
@@ -1575,14 +1586,6 @@ struct ChatComposer: View {
         }
         .padding(7).kriaFloatingSurface(RoundedRectangle(cornerRadius: 30, style: .continuous))
         .padding(.horizontal, 14).padding(.vertical, 12)
-        .overlay(alignment: .topLeading) {
-            if showsTray, let attachMenu {
-                ChatAttachTray(menu: attachMenu) { showsTray = false }
-                    .padding(.horizontal, 14)
-                    .alignmentGuide(.top) { $0[.bottom] - 6 }
-                    .transition(.opacity)
-            }
-        }
         .onChange(of: isSending) { _, sending in if sending { showsTray = false } }
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: dictation?.phase)
         .onDisappear { dictation?.cancel() }
