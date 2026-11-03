@@ -145,8 +145,28 @@ def verify_editor_repair(
         or repair.operations_json != _json(planned.plan.intents[0].arguments["operations"])
     ):
         raise KriaEditorOpError(
-            "The draft changed during the timing review. Your current preview is unchanged; "
-            "review the current draft first."
+            say(
+                en="The draft changed during the timing review. Your current preview is "
+                "unchanged; review the current draft first.",
+                tr="Zamanlama incelemesi sırasında taslak değişti. Mevcut önizlemen "
+                "değişmedi; önce güncel taslağı gözden geçir.",
+            )
+        )
+
+
+def verify_editor_repair_ownership(
+    planned: PlannedKriaTurn, *, plan_row: Any, job: Any, session: Any
+) -> None:
+    if planned.editor_repair is None:
+        return
+    if int(plan_row.ownership_epoch or 0) != int(session.ownership_epoch) or int(
+        job.content_plan_ownership_epoch or 0
+    ) != int(session.ownership_epoch):
+        raise KriaEditorOpError(
+            say(
+                en="The project ownership changed during the timing review.",
+                tr="Zamanlama incelemesi sırasında projenin sahipliği değişti.",
+            )
         )
 
 

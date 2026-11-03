@@ -190,3 +190,77 @@ def test_completion_reserve_never_starts_review(monkeypatch):
 def test_explicit_word_hold_is_never_discarded():
     ops = [RETIME, {"op": "patch_text", "patch": {"start_s": 0, "end_s": 4}}, BAD]
     assert candidate_operations(planned(ops)) is None
+
+
+def _fenced_values():
+    from types import SimpleNamespace
+
+    return dict(
+        job=SimpleNamespace(id="job"),
+        variant={"generation_id": "one"},
+        head=None,
+        client_state=None,
+        projected={"text_elements": []},
+        brief=None,
+    )
+
+
+def _accepted_with_stale_basis():
+    from app.kria.editor_repair import PreparedEditorRepair, _authority, _json, basis_digest
+
+    original = planned([RETIME, BAD])
+    intent = original.plan.intents[0].model_copy(update={"arguments": {"operations": [RETIME]}})
+    accepted = replace(original, plan=original.plan.model_copy(update={"intents": [intent]}))
+    stale = dict(_fenced_values(), variant={"generation_id": "stale"})
+    return replace(
+        accepted,
+        editor_repair=PreparedEditorRepair(
+            basis_digest(**stale), "id", _json([RETIME]), _authority(accepted)
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("language", "forbidden", "required"),
+    [("tr", ("draft", "preview"), "taslak"), ("en", ("taslak",), "draft")],
+)
+def test_changed_basis_refusal_speaks_the_creators_language(language, forbidden, required):
+    from app.kria.editor_repair import verify_editor_repair
+    from app.kria.reply_language import reply_language_for
+    from app.services.kria_editor_ops import KriaEditorOpError
+
+    with reply_language_for(language):
+        with pytest.raises(KriaEditorOpError) as raised:
+            verify_editor_repair(_accepted_with_stale_basis(), **_fenced_values())
+    message = str(raised.value).lower()
+    assert required in message
+    assert not any(word in message for word in forbidden)
+
+
+@pytest.mark.parametrize(
+    ("language", "forbidden", "required"),
+    [("tr", ("project", "ownership"), "proje"), ("en", ("sahiplik",), "project")],
+)
+def test_ownership_change_refusal_speaks_the_creators_language(language, forbidden, required):
+    from types import SimpleNamespace
+
+    from app.kria.editor_repair import verify_editor_repair_ownership
+    from app.kria.reply_language import reply_language_for
+    from app.services.kria_editor_ops import KriaEditorOpError
+
+    accepted = _accepted_with_stale_basis()
+    session = SimpleNamespace(ownership_epoch=1)
+    moved_plan = SimpleNamespace(ownership_epoch=2)
+    job = SimpleNamespace(content_plan_ownership_epoch=1)
+    with reply_language_for(language):
+        with pytest.raises(KriaEditorOpError) as raised:
+            verify_editor_repair_ownership(accepted, plan_row=moved_plan, job=job, session=session)
+    message = str(raised.value).lower()
+    assert required in message
+    assert not any(word in message for word in forbidden)
+    verify_editor_repair_ownership(
+        accepted, plan_row=SimpleNamespace(ownership_epoch=1), job=job, session=session
+    )
+    verify_editor_repair_ownership(
+        replace(accepted, editor_repair=None), plan_row=moved_plan, job=job, session=session
+    )

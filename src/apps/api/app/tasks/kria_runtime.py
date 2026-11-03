@@ -1804,13 +1804,9 @@ def _complete_draft_turn(
                 head if head is not None and head.base_job_id == job.id else None,
                 client_state,
             )
-            from app.kria.editor_repair import verify_editor_repair
+            from app.kria.editor_repair import verify_editor_repair, verify_editor_repair_ownership
 
-            if planned.editor_repair is not None and (
-                int(plan_row.ownership_epoch or 0) != int(session.ownership_epoch)
-                or int(job.content_plan_ownership_epoch or 0) != int(session.ownership_epoch)
-            ):
-                raise KriaEditorOpError("The project ownership changed during the timing review.")
+            verify_editor_repair_ownership(planned, plan_row=plan_row, job=job, session=session)
             verify_editor_repair(
                 planned,
                 job=job,
