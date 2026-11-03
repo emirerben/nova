@@ -3042,6 +3042,16 @@
         "src/apps/api/tests/kria/test_editor_repair_planner_postgres.py",
         "src/apps/api/tests/services/test_editor_repair_reviewer.py"
       ]
+    },
+    {
+      "id": "canonical-generation-intent-review",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_render_review_context.py tests/kria/test_render_review_context_postgres.py",
+      "paths": [
+        "src/apps/api/app/kria/render_review_context.py",
+        "src/apps/api/tests/kria/test_render_review_context.py",
+        "src/apps/api/tests/kria/test_render_review_context_postgres.py"
+      ]
     }
   ]
 }
