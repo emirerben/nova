@@ -55,15 +55,8 @@ struct ClipSelectionCard: View {
     @ViewBuilder private var content: some View {
         switch mode {
         case .answered(let summary):
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(KriaColor.success)
-                Text(summary ?? "Clips chosen")
-                    .font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(minHeight: 44, alignment: .leading)
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("clip-card-answered")
+            KriaAnsweredReceipt(text: summary ?? "Clips chosen")
+                .accessibilityIdentifier("clip-card-answered")
         case .active(let isSending, let submit):
             activeCard(isSending: isSending, submit: submit)
         }
@@ -73,54 +66,74 @@ struct ClipSelectionCard: View {
         question.categories.count == 1 ? "Which clips show \(question.categories[0].label)?" : "Which clips are which?"
     }
 
+    /// The chosen clips, up to four, so the choice is visible on the card; "+N" counts the rest.
+    private var chosenMedia: [CreationAttachedMedia] {
+        let ids = question.categories.flatMap { category in
+            category.candidateMediaIDs.filter { state.isSelected($0, in: category.key) }
+        }
+        var seen = Set<String>()
+        return ids.filter { seen.insert($0).inserted }.compactMap { id in media.first { $0.id == id } }
+    }
+
+    private var chosenStrip: some View {
+        let chosen = chosenMedia
+        return HStack(spacing: 8) {
+            ForEach(chosen.prefix(4), id: \.id) { item in
+                CreationAttachmentThumbnail(media: item)
+                    .scaleEffect(0.8125)
+                    .frame(width: 42, height: 52)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            if chosen.count > 4 {
+                Text("+\(chosen.count - 4)").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityHidden(true)
+    }
+
     private func activeCard(isSending: Bool, submit: @escaping (ClipSelectionSubmission, String) -> Void) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
+        KriaQuestionCard {
+            HStack(alignment: .center, spacing: 12) {
                 Image(systemName: "film.stack")
-                    .font(.system(size: 18, weight: .semibold)).foregroundStyle(KriaColor.ink)
+                    .font(.system(size: 20, weight: .medium)).foregroundStyle(KriaColor.ink)
                     .frame(width: 40, height: 40)
-                    .background(KriaColor.butter, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(KriaColor.paper, in: Circle())
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(KriaFont.body(16).weight(.semibold)).foregroundStyle(KriaColor.ink)
+                        .kriaType(.button).foregroundStyle(KriaColor.ink)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityAddTraits(.isHeader)
                     ForEach(question.categories) { category in
                         Text(progressLine(category))
-                            .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                            .accessibilityIdentifier("clip-progress-\(category.key)")
-                    }
-                    if let note {
-                        Text(note)
-                            .font(KriaFont.body(13)).foregroundStyle(KriaColor.ink)
+                            .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
                             .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityIdentifier("clip-batch-note")
+                            .accessibilityIdentifier("clip-progress-\(category.key)")
                     }
                 }
             }
-            VStack(spacing: 8) {
-                Button { showsPicker = true } label: {
-                    Text(state.canSend ? "Review clips" : "Choose clips").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(KriaPrimaryButtonStyle(minHeight: 48))
-                .disabled(isSending)
-                .accessibilityIdentifier("clip-choose")
-                Button("Skip, decide for me") {
+            if state.canSend, !chosenMedia.isEmpty { chosenStrip }
+            if let note {
+                Text(note)
+                    .kriaType(.label).foregroundStyle(KriaColor.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("clip-batch-note")
+            }
+            VStack(spacing: 4) {
+                Button(state.canSend ? "Review clips" : "Choose clips") { showsPicker = true }
+                    .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true, onFill: true))
+                    .disabled(isSending)
+                    .accessibilityIdentifier("clip-choose")
+                Button("Let Kria decide") {
                     let submission = ClipSelectionSubmission.skip(question)
                     submit(submission, submission.message(question: question, positions: positions, language: language))
                 }
-                .font(KriaFont.body(14).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .contentShape(Rectangle())
-                .buttonStyle(.plain)
+                .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium, fullWidth: true))
                 .disabled(isSending)
                 .accessibilityIdentifier("clip-skip")
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("clip-card")
     }

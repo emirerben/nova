@@ -1292,6 +1292,8 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_REPLY_FIXTURE"] = mode
+        // The tapped answer block spins while its message is pending; a running spinner keeps XCUITest from idling.
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
         app.launch()
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
@@ -1306,30 +1308,29 @@ final class CreationUITests: XCTestCase {
         shot.name = name; shot.lifetime = .keepAlways; add(shot)
     }
 
-    /// A question that offers answers shows them as chips plus "Other…"; a chip sends its exact text as an
-    /// ordinary message, "Other…" only opens the composer, and an answered question leaves no chips behind.
+    /// A question that offers answers shows them as stacked blocks plus "Type my own"; a block sends its exact text as
+    /// an ordinary message, "Type my own" only opens the composer, and an answered question leaves no blocks behind.
     func testReplyOptionChipsSendTheTappedLabelAndOtherOnlyFocusesTheComposer() {
         let app = launchReplyFixture("options")
         let first = app.buttons["reply-option-0"], second = app.buttons["reply-option-1"], third = app.buttons["reply-option-2"]
-        let other = app.buttons["reply-option-other"]
+        let other = app.buttons["answer-type-my-own"]
         XCTAssertTrue(second.waitForExistence(timeout: 15))
         XCTAssertEqual(first.label, "About 1 second")
         XCTAssertEqual(second.label, "About 0.8 seconds")
         XCTAssertEqual(third.label, "About 0.5 seconds")
-        XCTAssertEqual(other.label, "Other…")
+        XCTAssertEqual(other.label, "Type my own")
         for chip in [first, second, third, other] { XCTAssertGreaterThanOrEqual(chip.frame.height, 44, chip.identifier) }
         // The prose above the chips is unchanged (old builds rely on it).
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Kria: The clips are about 1.3 seconds each")).firstMatch.exists)
         attachScreenshot(app, "reply-option-chips")
 
-        // "Other…": the creator is put in the composer, and nothing is sent.
-        let sentBefore = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "You:")).count
+        // "Type my own": the creator is put in the composer, and nothing is sent.
         other.tap()
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Other… focuses the composer")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Type my own focuses the composer")
         RunLoop.current.run(until: Date().addingTimeInterval(1))
-        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "You:")).count, sentBefore,
-                       "Other… must not send a message")
-        XCTAssertFalse(app.staticTexts["You: Other…"].exists)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "reply[Type my own]")).firstMatch.exists,
+                       "Type my own must not send a message")
+        XCTAssertFalse(app.staticTexts["You: Type my own"].exists)
         XCTAssertTrue(second.exists, "The question is still open")
         attachScreenshot(app, "reply-option-other-composer-focused")
 
@@ -1343,7 +1344,7 @@ final class CreationUITests: XCTestCase {
             .waitForExistence(timeout: 10), "the server received the chip text as the message")
         // Answered: no tappable chips remain in the history.
         XCTAssertTrue(app.buttons["reply-option-1"].waitForNonExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["reply-option-other"].exists)
+        XCTAssertFalse(app.buttons["answer-type-my-own"].exists)
     }
 
     /// After an edit the result is said once: a short lead, then one static row per ask with its reason
@@ -1415,6 +1416,8 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_QUESTION_BATCH"] = "1"
+        // The tapped answer block spins while its message is pending; a running spinner keeps XCUITest from idling.
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
         app.launch()
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
@@ -1438,7 +1441,8 @@ final class CreationUITests: XCTestCase {
         let sentBefore = sent.count
         approve.tap()
         XCTAssertTrue(app.staticTexts["choice-batch-note"].waitForExistence(timeout: 3))
-        XCTAssertEqual(approve.value as? String, "Selected")
+        XCTAssertTrue(approve.isSelected)
+        attachScreenshot(app, "choice-batch-held")
         XCTAssertEqual(sent.count, sentBefore, "the title answer waits for the clips")
         choose.tap()
         XCTAssertTrue(app.descendants(matching: .any)["clip-sheet"].waitForExistence(timeout: 5))
@@ -1451,6 +1455,7 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["You: Use this wording · My friend in the red cap: clip 2"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["choice-card-answered"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["clip-card-answered"].exists)
+        attachScreenshot(app, "choice-batch-answered")
     }
 
     /// The other order: clips first (held, the picker card says so), then the title tap sends both.
@@ -1479,6 +1484,8 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_CHOICE_QUESTION"] = capability
+        // The tapped answer block spins while its message is pending; a running spinner keeps XCUITest from idling.
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
         app.launch()
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
@@ -1495,10 +1502,11 @@ final class CreationUITests: XCTestCase {
         let chronological = app.buttons["choice-option-chronological"]
         XCTAssertTrue(grouped.waitForExistence(timeout: 3))
         XCTAssertTrue(chronological.exists)
-        XCTAssertEqual(grouped.label, "Group by sport, chronological inside each sport (recommended)")
+        XCTAssertEqual(grouped.label, "Group by sport, chronological inside each sport, Each sport plays as one block., recommended")
         XCTAssertEqual(chronological.label, "Keep it strictly chronological; sports may interleave")
         XCTAssertGreaterThanOrEqual(grouped.frame.height, 44)
         XCTAssertGreaterThanOrEqual(chronological.frame.height, 44)
+        attachScreenshot(app, "choice-question-blocks")
         grouped.tap()
         XCTAssertTrue(app.staticTexts["You: Group by sport, chronological inside each sport"].waitForExistence(timeout: 10))
         let echo = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "choice[group_first]")).firstMatch

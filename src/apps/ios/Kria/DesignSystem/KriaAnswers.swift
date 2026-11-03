@@ -114,13 +114,15 @@ struct KriaChoiceRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .multilineTextAlignment(.leading)
-            switch state {
-            case .sending: KriaSpinner(size: 16, tint: KriaColor.ink)
-            case .selected:
+            if state == .selected {
                 Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(KriaColor.ink)
                     .frame(width: 20, height: 20).background(KriaColor.paper, in: Circle())
-            case .idle: EmptyView()
             }
+        }
+        // An overlay, so entering the sending state never changes the row's height: a taller or shorter row at the end of
+        // the transcript made the conversation scroll re-measure without end while the send was pending.
+        .overlay(alignment: .trailing) {
+            if state == .sending { KriaSpinner(size: 16, tint: KriaColor.ink) }
         }
         .foregroundStyle(foreground)
     }
@@ -156,5 +158,180 @@ private struct KriaChoiceRowStyle: ButtonStyle {
         if state == .selected { return KriaColor.ink }
         if isRecommended { return pressed ? KriaColor.butterPressed : KriaColor.butter }
         return pressed ? KriaColor.fillPressed : KriaColor.fill
+    }
+}
+
+/// One answer in a `KriaAnswerStack`. `identifier` is the accessibility id UI tests find the block by.
+struct KriaAnswerOption: Identifiable, Equatable {
+    let id: String
+    let title: String
+    var detail: String? = nil
+    var isRecommended = false
+    var identifier: String? = nil
+}
+
+/// A question's answers as full-width blocks, one under the other (Paper S2.03, S2.05, S2.06), then the optional
+/// "Type my own" row and the centered "Let Kria decide" button.
+///
+/// The stack stays active until the send succeeds. The tapped block shows a spinner while the others dim; when a
+/// send that this stack started ends and the question is still open, the send failed: the blocks re-enable, the
+/// recommended block drops to the neutral fill (butter never sits beside red) and a failure line is announced.
+/// `isLocked` dims every block while the creator types their own answer.
+struct KriaAnswerStack: View {
+    let options: [KriaAnswerOption]
+    /// The block that was tapped and is waiting for a second answer to go out with it (ink fill).
+    var heldID: String?
+    /// A send is in flight (this question's or anything else's); blocks are disabled until it ends.
+    var isSending = false
+    /// The block whose message is already in the transcript, when the question can tell which one it was.
+    var pendingID: String?
+    var isLocked = false
+    var typeMyOwn: (() -> Void)?
+    var decide: (() -> Void)?
+    let select: (KriaAnswerOption) -> Void
+
+    @State private var tappedID: String?
+    @State private var sendFailed = false
+
+    private let failureText = "Couldn’t send your answer. Tap it again."
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(options) { option in
+                KriaChoiceRow(title: option.title, detail: option.detail, state: state(of: option),
+                              isRecommended: option.isRecommended && !sendFailed) {
+                    tappedID = option.id
+                    sendFailed = false
+                    select(option)
+                }
+                .disabled(isSending || isLocked || (heldID != nil && option.id != heldID))
+                .modifier(OptionIdentifier(identifier: option.identifier))
+            }
+            if let typeMyOwn {
+                KriaChoiceRow(title: "Type my own", typeMyOwn: true, action: typeMyOwn)
+                    .disabled(isSending || isLocked)
+                    .accessibilityIdentifier("answer-type-my-own")
+            }
+            if sendFailed {
+                KriaInlineFailure(text: failureText).accessibilityIdentifier("answer-send-failed")
+            }
+            if let decide {
+                Button("Let Kria decide", action: decide)
+                    .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium, fullWidth: true))
+                    .disabled(isSending || isLocked)
+                    .accessibilityIdentifier("answer-let-kria-decide")
+            }
+        }
+        .onChange(of: isSending) { wasSending, nowSending in
+            if wasSending, !nowSending, tappedID != nil {
+                sendFailed = true
+                tappedID = nil
+            }
+        }
+    }
+
+    private func state(of option: KriaAnswerOption) -> KriaAnswerState {
+        if option.id == heldID { return .selected }
+        if isSending, option.id == (pendingID ?? tappedID) { return .sending }
+        return .idle
+    }
+
+    private struct OptionIdentifier: ViewModifier {
+        let identifier: String?
+        func body(content: Content) -> some View {
+            if let identifier { content.accessibilityIdentifier(identifier) } else { content }
+        }
+    }
+}
+
+/// A failure line: a small alert glyph and the reason in `failureText`, announced when it appears.
+struct KriaInlineFailure: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "exclamationmark.circle").font(.system(size: 13, weight: .semibold))
+                .accessibilityHidden(true)
+            Text(text).kriaType(.label).fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(KriaColor.failureText)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isStaticText)
+        .onAppear { AccessibilityNotification.Announcement(text).post() }
+    }
+}
+
+/// What Kria did for the creator, one line (Paper S2.08): the one green check disc and an ink label that
+/// grows with its text.
+struct KriaAnsweredReceipt: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            KriaCheckDisc(size: 20)
+            Text(text).kriaType(.label).foregroundStyle(KriaColor.ink).fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(minHeight: 44, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// What the creator chose (Paper S2.08): a small "You chose" caption over a right-aligned ink capsule.
+struct KriaYouChose: View {
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            Text("You chose").kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+            Text(text).kriaType(.button).foregroundStyle(KriaColor.paper)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 18).padding(.vertical, 12)
+                .background(KriaColor.ink, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("You chose: \(text)")
+    }
+}
+
+/// The quiet line a question leaves behind when a newer one replaced it (Paper S2.08).
+struct KriaSupersededLine: View {
+    var body: some View {
+        Text("Replaced by a newer question.")
+            .kriaType(.caption).foregroundStyle(KriaColor.zinc)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// The shell every rich question card shares (Paper S2.10 to S2.13): fill, radius 20, padding 16, an optional
+/// title and one helper line, then the card's own control.
+struct KriaQuestionCard<Content: View>: View {
+    var title: String?
+    var helper: String?
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if title != nil || helper != nil {
+                VStack(alignment: .leading, spacing: 2) {
+                    if let title {
+                        Text(title).kriaType(.button).foregroundStyle(KriaColor.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.isHeader)
+                    }
+                    if let helper {
+                        Text(helper).kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            content
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }

@@ -35,17 +35,10 @@ private struct SongRangeAnsweredLine: View {
     let spoken: String
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(KriaColor.success)
-                .accessibilityHidden(true)
-            Text(summary)
-                .font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(minHeight: 44, alignment: .leading)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(spoken)
-        .accessibilityIdentifier("song-range-card-answered")
+        KriaYouChose(text: summary)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(spoken)
+            .accessibilityIdentifier("song-range-card-answered")
     }
 }
 
@@ -89,16 +82,16 @@ private struct SongRangeActiveCard: View {
     private var chosenRange: SongFilmingRange? { draft?.range }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        KriaQuestionCard(title: draft == nil ? nil : "Which part of the song?",
+                         helper: draft == nil ? nil : "Set where your filming starts and ends.") {
             if let draft {
                 SongRangeWheelPair(draft: draft, from: fromBinding, to: toBinding,
-                                   fromID: "song-range-card-from", toID: "song-range-card-to", isEnabled: !isSending)
+                                   fromID: "song-range-card-from", toID: "song-range-card-to", isEnabled: !isSending,
+                                   onFill: true)
             }
             messageLine
             buttons
         }
-        .padding(14)
-        .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .excludesDrawerGesture()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("song-range-card")
@@ -107,24 +100,32 @@ private struct SongRangeActiveCard: View {
 
     @ViewBuilder private var messageLine: some View {
         if let shownMessage {
-            Text(shownMessage)
-                .font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText)
+            KriaInlineFailure(text: shownMessage).accessibilityIdentifier("song-range-card-error")
+        } else if let range = chosenRange {
+            let seconds = Int((range.end - range.start).rounded())
+            Text("You filmed \(SongRangeMath.timecode(range.start)) to \(SongRangeMath.timecode(range.end)) · \(seconds) seconds")
+                .kriaType(.label).foregroundStyle(KriaColor.ink)
                 .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("song-range-card-error")
+                .accessibilityIdentifier("song-range-card-readout")
         }
     }
 
-    private var buttons: some View {
-        VStack(spacing: 8) {
-            if draft != nil {
+    @ViewBuilder private var buttons: some View {
+        if draft != nil {
+            HStack(spacing: 8) {
                 Button("Use this part", action: sendPart)
-                    .buttonStyle(KriaPrimaryButtonStyle(minHeight: 44))
-                    .frame(maxWidth: .infinity)
+                    .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true, onFill: true))
                     .disabled(isSending || chosenRange == nil)
                     .accessibilityIdentifier("song-range-card-use")
+                Button("Whole song", action: sendWholeSong)
+                    .buttonStyle(KriaButtonStyle(role: .secondary, fullWidth: true, onFill: true))
+                    .disabled(isSending)
+                    .accessibilityLabel("Use the whole song")
+                    .accessibilityIdentifier("song-range-card-whole")
             }
+        } else {
             Button("Use the whole song", action: sendWholeSong)
-                .buttonStyle(SongRangeFillButtonStyle())
+                .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true, onFill: true))
                 .disabled(isSending)
                 .accessibilityIdentifier("song-range-card-whole")
         }
