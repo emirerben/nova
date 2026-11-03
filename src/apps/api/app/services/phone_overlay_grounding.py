@@ -48,6 +48,11 @@ from app.pipeline.render_geometry import (
     arbitrate_media_overlays,
     sample_face_regions,
 )
+from app.services.generated_image_grounding import (
+    grounding_label,
+    is_generated,
+    with_generated_grounding,
+)
 from app.services.overlay_autoplace import (
     _snap_to_word_start,
     build_suggestions,
@@ -116,6 +121,10 @@ class GroundedOverlayCards:
 
 
 def _label_for_asset(asset: dict) -> str:
+    if is_generated(asset.get("analysis")):
+        # Every generated image is stored as "generated.png"; the creator knows it by the
+        # title or prompt they typed.
+        return grounding_label(asset.get("user_context"), asset.get("analysis"))
     filename = str(asset.get("source_filename") or "").strip()
     if filename:
         return filename.rsplit("/", 1)[-1][:_MAX_LABEL_LEN]
@@ -123,6 +132,12 @@ def _label_for_asset(asset: dict) -> str:
     if subject:
         return subject[:_MAX_LABEL_LEN]
     return f"visual {asset.get('id', '')}"[:_MAX_LABEL_LEN]
+
+
+def _with_origin(entry: dict, asset: dict) -> dict:
+    """Mark a receipt row for a creator-generated image so the reply can say "the image you
+    made"; uploads keep their exact row."""
+    return {**entry, "origin": "generated"} if is_generated(asset.get("analysis")) else entry
 
 
 def _kind_for_asset(asset: dict) -> str:
@@ -323,6 +338,7 @@ def _match_placements(
     candidate_assets: list[dict],
     duration_s: float,
     occupied: list[tuple[float, float]],
+    spoken_language: str = "",
 ) -> tuple[list, list[str], str]:
     """Agent-first, heuristic-fallback matching -- mirrors
     `app.tasks.autoplace.match_overlay_suggestions`'s own matcher selection.
@@ -353,6 +369,7 @@ def _match_placements(
                         PlacementAsset(
                             asset_id=a["id"],
                             kind="video" if a.get("kind") == "video" else "image",
+                            origin="generated" if is_generated(a.get("analysis")) else "",
                             user_context=str(a.get("user_context") or ""),
                             subject=str((a.get("analysis") or {}).get("subject", "")),
                             description=str((a.get("analysis") or {}).get("description", "")),
@@ -368,6 +385,7 @@ def _match_placements(
                     occupied=[list(t) for t in occupied],
                     duration_s=duration_s,
                     archetype="talking_head",
+                    spoken_language=spoken_language,
                 ),
                 ctx=RunContext(job_id=job_id),
             )
@@ -693,6 +711,7 @@ def ground_phone_subtitled_overlays(
     layout: str = "pip",
     chronological: bool = False,
     face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
+    spoken_language: str = "",
 ) -> GroundedOverlayCards:
     """Match the speaker's transcript against the item's ready Visuals pool
     and resolve face-aware, caption-safe PiP card geometry (KRI-176).
@@ -719,7 +738,12 @@ def ground_phone_subtitled_overlays(
     """
 
     occupied_list = [(float(s), float(e)) for s, e in occupied]
-    assets = _load_ready_pool_assets(open_session, job_id=job_id)
+    # An image Kria generated has no analysis pass: derive its text on read so a row admitted
+    # before the prompt was kept still grounds on its title.
+    assets = [
+        {**a, "analysis": with_generated_grounding(a.get("analysis"), a.get("user_context"))}
+        for a in _load_ready_pool_assets(open_session, job_id=job_id)
+    ]
 
     placed: list[dict] = []
     unplaced: list[dict] = []
@@ -788,12 +812,15 @@ def ground_phone_subtitled_overlays(
         if not words:
             for asset in candidate_assets:
                 unplaced.append(
-                    {
-                        "media_id": str(asset["id"]),
-                        "label": _label_for_asset(asset),
-                        "reason": "no_spoken_match",
-                        "kind": _kind_for_asset(asset),
-                    }
+                    _with_origin(
+                        {
+                            "media_id": str(asset["id"]),
+                            "label": _label_for_asset(asset),
+                            "reason": "no_spoken_match",
+                            "kind": _kind_for_asset(asset),
+                        },
+                        asset,
+                    )
                 )
         return GroundedOverlayCards(
             cards=[],
@@ -822,6 +849,7 @@ def ground_phone_subtitled_overlays(
         candidate_assets=candidate_assets,
         duration_s=duration_s,
         occupied=occupied_list,
+        spoken_language=spoken_language,
     )
 
     assets_by_id = {a["id"]: a for a in candidate_assets}
@@ -939,12 +967,15 @@ def ground_phone_subtitled_overlays(
             continue
         reason = drop_reasons.get(asset_id, "no_spoken_match")
         unplaced.append(
-            {
-                "media_id": asset_id,
-                "label": _label_for_asset(asset),
-                "reason": reason,
-                "kind": _kind_for_asset(asset),
-            }
+            _with_origin(
+                {
+                    "media_id": asset_id,
+                    "label": _label_for_asset(asset),
+                    "reason": reason,
+                    "kind": _kind_for_asset(asset),
+                },
+                asset,
+            )
         )
         accounted_for.add(asset_id)
 

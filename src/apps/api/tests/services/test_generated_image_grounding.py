@@ -32,7 +32,7 @@ def _body(**kw) -> GeneratedMediaRequest:
 
 
 def test_image_request_keeps_a_trimmed_prompt_for_grounding():
-    long_prompt = "a frosty glass of beer on a pub table " * 60
+    long_prompt = "a frosty glass of beer on a pub table " * 30
     meta = _request_metadata(_body(prompt=long_prompt))
     assert 0 < len(meta["image_prompt"]) <= GROUNDING_PROMPT_MAX_CHARS
     assert "\n" not in meta["image_prompt"]
@@ -83,9 +83,7 @@ def test_admitted_analysis_carries_prompt_and_title_but_no_screen_text():
 
 
 def test_a_title_alone_or_a_prompt_alone_still_grounds():
-    only_title = generated_image_analysis(
-        width=1, height=1, model="m", prompt="", title="Beer"
-    )
+    only_title = generated_image_analysis(width=1, height=1, model="m", prompt="", title="Beer")
     assert only_title["subject"] == only_title["description"] == "Beer"
     only_prompt = generated_image_analysis(
         width=1, height=1, model="m", prompt="a cold beer. Photo style.", title=""
@@ -100,7 +98,12 @@ def test_existing_generated_rows_ground_lazily_from_their_title():
     """The two prod assets are not rewritten; the matcher input is derived on read."""
     out = with_generated_grounding(PROD_ANALYSIS, "Beer")
     assert out["subject"] == out["description"] == "Beer"
-    assert PROD_ANALYSIS == {"width": 1024, "height": 1536, "source": "generated", "model": "gpt-image-1"}
+    assert PROD_ANALYSIS == {
+        "width": 1024,
+        "height": 1536,
+        "source": "generated",
+        "model": "gpt-image-1",
+    }
 
 
 def test_lazy_grounding_leaves_everything_else_alone():

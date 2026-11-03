@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.agents.brief_extractor import BRIEF_EXTRACTOR_PROMPT_VERSION, _NARROW_BRIEF_SECTION
+from app.agents.brief_extractor import _NARROW_BRIEF_SECTION, BRIEF_EXTRACTOR_PROMPT_VERSION
 from app.kria.brief import BriefRequirement
 from app.kria.cutaway_show_ask import full_screen_show_ask
 

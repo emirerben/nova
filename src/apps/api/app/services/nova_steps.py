@@ -40,6 +40,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from app.agents._runtime import SUCCESS_OUTCOMES
+from app.kria.reply_language import say
 from app.models import AgentRun, Job
 from app.services.job_status import PLAN_ITEM_JOB_TERMINAL
 
@@ -562,6 +563,24 @@ def _overlay_miss_sentence(label: str, reason: str | None) -> str:
     return f'Couldn\'t place "{label}"'
 
 
+def _generated_image_miss_sentence(label: str, reason: str | None) -> str:
+    """The miss sentence for an image the creator made in Kria: it names the image by its
+    title, says why in plain words and, when the words never lined up, what to tell Kria.
+    Other causes keep the shared sentence, so no cause is claimed that the receipt cannot back."""
+    if reason in _OVERLAY_MISS_REASON_NO_SPOKEN_MATCH:
+        return say(
+            en=(
+                f'The image you made, "{label}", has no spoken moment in this video yet. '
+                "Tell me which word it should appear on and I'll place it there"
+            ),
+            tr=(
+                f'Videoda, oluşturduğun "{label}" görseli için konuşmandan uygun bir an '
+                "bulamadım. Hangi kelimede çıkmasını istediğini söylersen oraya koyarım"
+            ),
+        )
+    return _overlay_miss_sentence(label, reason)
+
+
 def render_notes_from_overlay_receipt(receipt: dict[str, Any] | None) -> list[str]:
     """Turn a variant's persisted `phone_overlay_receipt` (KRI-183, written
     by the phone Talking render worker's Visuals-as-cards matcher) into
@@ -632,7 +651,12 @@ def render_notes_from_overlay_receipt(receipt: dict[str, Any] | None) -> list[st
             reason = entry.get("reason") if isinstance(entry, dict) else None
             reason = reason if isinstance(reason, str) and reason else None
             label = _UPLOAD_UUID_PREFIX_RE.sub("", label)
-            notes.append(_overlay_miss_sentence(label[:60], reason))
+            miss = (
+                _generated_image_miss_sentence
+                if entry.get("origin") == "generated"
+                else _overlay_miss_sentence
+            )
+            notes.append(miss(label[:60], reason))
     return notes
 
 

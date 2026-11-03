@@ -1153,13 +1153,14 @@ def test_unplaced_generated_image_names_the_image_and_the_why_in_plain_words() -
         ],
     }
     en = render_notes_from_overlay_receipt(receipt)
-    assert any(
-        'The image you made, "Beer"' in n and "no spoken moment" in n for n in en
-    ), en
+    assert any('The image you made, "Beer"' in n and "no spoken moment" in n for n in en), en
     assert not any("no_spoken_match" in n or "generated.png" in n for n in en)
     with reply_language_for("tr"):
         tr = render_notes_from_overlay_receipt(receipt)
     assert any('"Beer"' in n and "oluşturduğun" in n for n in tr), tr
     # An uploaded Visual keeps its existing sentence.
-    upload = {**receipt, "unplaced": [{"media_id": "u", "label": "a.jpg", "reason": "no_spoken_match"}]}
+    upload = {
+        **receipt,
+        "unplaced": [{"media_id": "u", "label": "a.jpg", "reason": "no_spoken_match"}],
+    }
     assert 'Couldn\'t find a spoken moment for "a.jpg"' in render_notes_from_overlay_receipt(upload)

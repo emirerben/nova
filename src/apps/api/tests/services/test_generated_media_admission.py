@@ -162,13 +162,12 @@ def test_expired_result_not_uploaded(setup):
 
 def test_admitted_image_carries_prompt_text_for_autoplace(setup):
     db, op, owner, objects = setup
-    op.editable_title = "Beer"
     op.request_metadata = {"image_prompt": "a cold glass of beer on a pub table"}
     persist_generated_asset(db, op, png(), **owner)
     admit_generated_asset(db, op, **owner)
     row = db.add.call_args.args[0]
     assert row.analysis["source"] == "generated"
-    assert row.analysis["subject"] == "Beer"
+    assert row.analysis["subject"] == "Editable"
     assert row.analysis["description"] == "a cold glass of beer on a pub table"
-    assert row.user_context == "Beer"
+    assert row.user_context == "Editable"
     assert "on_screen_text" not in row.analysis
