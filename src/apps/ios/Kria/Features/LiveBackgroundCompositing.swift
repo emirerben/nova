@@ -118,18 +118,27 @@ protocol PersonSegmenting: Sendable {
     func mask(for frame: CVPixelBuffer) throws -> CVPixelBuffer
 }
 
-/// One request reused across frames. Used only from the frame queue, one frame at a time.
+/// Used only from the frame queue, one frame at a time.
 final class VisionPersonSegmenter: PersonSegmenting, @unchecked Sendable {
-    private let request: VNGeneratePersonSegmentationRequest = {
+    /// Kept only for the previous behaviour (`LiveBackgroundTuning.freshSegmentationRequest == false`).
+    private let reusedRequest: VNGeneratePersonSegmentationRequest?
+
+    init(tuning: LiveBackgroundTuning = .current) {
+        reusedRequest = tuning.freshSegmentationRequest ? nil : Self.makeRequest()
+    }
+
+    private static func makeRequest() -> VNGeneratePersonSegmentationRequest {
         let request = VNGeneratePersonSegmentationRequest()
         request.qualityLevel = LiveSpeakerMatteConfig.qualityLevel
         request.outputPixelFormat = LiveSpeakerMatteConfig.maskPixelFormat
         return request
-    }()
+    }
 
     enum SegmentationError: Error { case noMask }
 
+    /// A request per frame, as the export does, so no state can carry a mask from an earlier frame into this one.
     func mask(for frame: CVPixelBuffer) throws -> CVPixelBuffer {
+        let request = reusedRequest ?? Self.makeRequest()
         try VNImageRequestHandler(cvPixelBuffer: frame, orientation: .up, options: [:]).perform([request])
         guard let mask = request.results?.first?.pixelBuffer else { throw SegmentationError.noMask }
         return mask
