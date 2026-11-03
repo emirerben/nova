@@ -120,6 +120,8 @@ from tests.kria.test_render_review_admission_postgres import (  # noqa: F401
     approve_publication,
 )
 
+pytestmark = pytest.mark.usefixtures("release_abandoned_db_connections")
+
 DRIFTED_TITLE = "Béfore"
 REWRITE_TITLE_WITH_ACCENT = [
     {
