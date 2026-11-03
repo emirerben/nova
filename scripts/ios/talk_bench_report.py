@@ -38,8 +38,11 @@ ONE_SHOT = [
     "talk.use.pollToDone", "talk.use.backgroundUpload",
     "talk.save.editorCommit", "talk.save.resolveAssets", "talk.save.compose", "talk.save.loudnessPrepass",
     "talk.save.encode", "talk.save.export", "talk.save.hashOutput", "talk.save.publish", "talk.save.publishHash",
-    "talk.save.publishPut", "talk.save.complete", "talk.save.serverChecking",
+    "talk.save.publishPut", "talk.save.complete", "talk.save.serverChecking", "talk.bench.backgroundMake",
 ]
+# Thermal and storage facts the app writes into summary.json. Strings for thermal, MB for free space.
+THERMAL_FACTS = ("thermal.start", "thermal.end", "thermal.max")
+FREE_SPACE_FACTS = ("disk.free_mb.start", "disk.free_mb.end")
 # A `talk.hash` is credited to the smallest of these intervals that contains it.
 HASH_OWNERS = [
     "talk.use.import", "talk.use.contract", "talk.save.hashOutput", "talk.save.publishHash", "talk.save.resolveAssets",
@@ -52,6 +55,10 @@ NOTES = {
     "talk.stop.finalize": "Stop request to AVCaptureMovieFileOutput's didFinishRecording callback (the file closing).",
     "talk.stop.finishRecording": "Callback to Review-ready: validation + Cinematic bake + audio level measurement + track count.",
     "talk.hash": "Attributed to the enclosing phase by start/end containment; see hash_in_*.",
+    "thermal.start|end|max": "ProcessInfo.thermalState at app launch, at the last flush, and the worst seen in between. A run that "
+                             "began warm is not comparable to one that began nominal.",
+    "talk.live.backgroundAttached": "When the looping video or photo was handed to the live preview. `background_attached.before_record_ms` "
+                                    "is how long the creator had it on screen before Record; the idle window starts at the first live frame.",
     "talk.matte.held": "Export frames answered from the held last-good mask, counted inside the talk.save.export window.",
 }
 
@@ -187,6 +194,12 @@ def run_metrics(summary: dict) -> dict:
         for label, window in wins.items():
             if label != "post":
                 metrics[f"{reason}@{label}.count"] = float(sum(1 for t in counts(summary, reason) if inside(t, window)))
+    attached = counts(summary, "talk.live.backgroundAttached")
+    started = counts(summary, "talk.record.started")
+    if attached:
+        metrics["background_attached.at_ms"] = attached[0]
+        if started:
+            metrics["background_attached.before_record_ms"] = started[0] - attached[0]
     for name in ONE_SHOT:
         found = intervals(summary, name)
         if found:
@@ -218,6 +231,29 @@ def run_metrics(summary: dict) -> dict:
         if a and b:
             metrics[f"{label}.ms"] = (b[-1][0] + b[-1][1]) - a[0][0]
     return metrics
+
+
+def run_environment(summary: dict) -> dict:
+    facts = summary.get("facts", {})
+    environment: dict = {k: facts.get(k) for k in THERMAL_FACTS}
+    for key in FREE_SPACE_FACTS:
+        if key in facts:
+            environment[key] = float(facts[key])
+    environment["low_power_mode"] = facts.get("power.low_power_mode")
+    return environment
+
+
+def background_drew(summary: dict, scenario: str) -> bool | None:
+    """True when a background scenario segmented and presented frames before Record, None for a scenario with no background.
+    `segment` only runs while a background provider holds a frame, so its presence is proof the background was drawing; the
+    app-side counters are the evidence, the UI-test element is not."""
+    if scenario.startswith("none-"):
+        return None
+    started = counts(summary, "talk.record.started")
+    first_record = started[0] if started else float("inf")
+    segments = [t for t, _, _ in intervals(summary, "talk.live.segment") if t < first_record]
+    presented = [t for t in counts(summary, "talk.live.presented") if t < first_record]
+    return bool(segments) and bool(presented)
 
 
 def run_audio_facts(summary: dict) -> dict:
@@ -255,7 +291,9 @@ def build_report(runs_dir: Path, label: str, sha: str, device: str, planned_runs
         metrics = run_metrics(summary)
         analysis_path = run_dir / "take-analysis.json"
         entry["runs"].append({
-            "run": run_name, "metrics": metrics, "audio": run_audio_facts(summary),
+            "run": run_name, "metrics": metrics, "audio": run_audio_facts(summary), "environment": run_environment(summary),
+            "background_drew": background_drew(summary, scenario), "attempts": status.get("attempts"), "transport": status.get("transport"),
+            "thermal_before_run": status.get("thermal_before_run"),
             "takes": json.loads(analysis_path.read_text()) if analysis_path.exists() else {},
             "xcodebuild_exit": status.get("xcodebuild_exit"), "truncated_series": summary.get("truncated", []),
             "facts": {k: v for k, v in summary.get("facts", {}).items() if not k.startswith("recorder.")},
@@ -273,9 +311,13 @@ def build_report(runs_dir: Path, label: str, sha: str, device: str, planned_runs
         streams = [t.get("audio_stream_count") for run in entry["runs"] for t in run["takes"].values()]
         report_scenarios[scenario] = {
             "run_count": len(entry["runs"]), "failed_runs": entry["failed_runs"],
+            "thermal": {k: [run["environment"].get(k) for run in entry["runs"]] for k in THERMAL_FACTS},
+            "free_space_mb": {k: [run["environment"].get(k) for run in entry["runs"]] for k in FREE_SPACE_FACTS},
+            "background_drew_per_run": [run["background_drew"] for run in entry["runs"]],
             "enough_runs": len(entry["runs"]) >= 3,
             "timings": timings, "audio_per_run": audio, "ffprobe_audio_stream_counts": streams,
-            "runs": [{"run": r["run"], "xcodebuild_exit": r["xcodebuild_exit"], "truncated_series": r["truncated_series"],
+            "runs": [{"run": r["run"], "xcodebuild_exit": r["xcodebuild_exit"], "attempts": r["attempts"], "transport": r["transport"], "thermal_before_run": r["thermal_before_run"],
+                      "truncated_series": r["truncated_series"],
                       "takes": r["takes"], "facts": r["facts"]} for r in entry["runs"]],
         }
     return {
@@ -292,6 +334,9 @@ def print_table(report: dict) -> None:
     for scenario, data in sorted(report["scenarios"].items()):
         flag = "" if data["enough_runs"] else "  (FEWER THAN 3 RUNS: no usable spread)"
         print(f"\n== {scenario}: {data['run_count']} run(s), {len(data['failed_runs'])} failed{flag}")
+        print(f"  thermal start/end/max per run: {data['thermal']['thermal.start']} / {data['thermal']['thermal.end']} / {data['thermal']['thermal.max']}")
+        if any(v is False for v in data["background_drew_per_run"]):
+            print(f"  WARNING background did not draw before Record in some runs: {data['background_drew_per_run']}")
         for name, t in sorted(data["timings"].items()):
             print(f"  {name:<58} median {t['median']:>10} min {t['min']:>10} max {t['max']:>10} mad {t['mad']:>8} n={t['runs']}")
 
