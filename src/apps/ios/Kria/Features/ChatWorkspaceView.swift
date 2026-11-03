@@ -677,6 +677,9 @@ private struct CreationWorkspaceView: View {
     private func sendRerecordPlan(_ debt: SourceReplacement) async {
         rerecordLocal = .planning(debt)
         for _ in 0..<30 where isSending || isActing || isThinking || pendingUploadCount > 0 { try? await Task.sleep(for: .milliseconds(100)) }
+        // `send` returns silently while a turn runs or an earlier receipt is pending; staying `.planning` then would
+        // hide the Make it again button with nothing left to send the turn.
+        guard !isSending, !isActing, !isThinking, sendReceipt == nil else { rerecordLocal = .none; return }
         await send(message: RerecordPlanDebt.message, keepsDraft: true)
         if rerecordFacts.debt == debt, !isThinking, sendReceipt == nil { rerecordLocal = .none }
     }
