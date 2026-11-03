@@ -275,7 +275,8 @@ enum WorkspaceDestination: Equatable, Sendable {
         editorOperations: EditorOperations = LocalEditorOperations(),
         cache: CacheRepository? = nil,
         chatDrafts: ChatDraftStore = ChatDraftStore(),
-        renderOwner: @escaping @MainActor () -> String? = { nil }
+        renderOwner: @escaping @MainActor () -> String? = { nil },
+        uploadSessionConfiguration: URLSessionConfiguration? = nil
     ) {
         Perf.begin("appmodel.init")
         defer { Perf.end("appmodel.init") }
@@ -283,10 +284,11 @@ enum WorkspaceDestination: Equatable, Sendable {
         self.localOwner = renderOwner
         self.api = api
         self.editorOperations = editorOperations
+        let sessionUploads = uploadSessionConfiguration.map { BackgroundUploadCoordinator(api: api, defaultsKey: "kria.rerecord-ui-fixture.uploads", sessionConfiguration: $0) }
         #if DEBUG
-        self.uploads = ChatUITestTransport.placeHintUploads(api: api) ?? BackgroundUploadCoordinator(api: api)
+        self.uploads = ChatUITestTransport.placeHintUploads(api: api) ?? sessionUploads ?? BackgroundUploadCoordinator(api: api)
         #else
-        self.uploads = BackgroundUploadCoordinator(api: api)
+        self.uploads = sessionUploads ?? BackgroundUploadCoordinator(api: api)
         #endif
         self.deviceRenders = DeviceRenderSessions(api: api, ownerIdentity: renderOwner)
         self.cache = cache

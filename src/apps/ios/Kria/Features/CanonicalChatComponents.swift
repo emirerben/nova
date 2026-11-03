@@ -1016,6 +1016,9 @@ struct ReadyStage: View {
     var serverSuggestions: [SuggestionChip]? = nil
     var sendSuggestion: (SuggestionChip) -> Void = { _ in }
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// Re-record: drawn only when the server offers it (`.unavailable` draws nothing, so an old server changes nothing here).
+    var rerecord: RerecordPhase = .unavailable
+    var rerecordActions = RerecordActions()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1070,6 +1073,8 @@ struct ReadyStage: View {
             .padding(12)
             .background(KriaColor.fill)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            RerecordCard(phase: rerecord, actions: rerecordActions)
 
             // KRI-769: no chips to offer (capability on, set empty or still loading) = no dangling question either.
             if serverSuggestions.map({ !$0.isEmpty }) ?? true {

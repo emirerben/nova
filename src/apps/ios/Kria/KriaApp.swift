@@ -82,7 +82,7 @@ import UserNotifications
             // With an expired fixture session the account is "signed in", so its profile read must hit the fixture too.
             let auth = AuthStore(tokenStore: ChatUITestTokenStore(), api: PerfFixture.expiredToken ? api : nil)
             _auth = StateObject(wrappedValue: auth)
-            let model = AppModel(api: api, cache: CacheRepository(context: container.mainContext), renderOwner: { [weak auth] in auth?.localStorageIdentity })
+            let model = AppModel(api: api, cache: CacheRepository(context: container.mainContext), renderOwner: { [weak auth] in auth?.localStorageIdentity }, uploadSessionConfiguration: ChatUITestTransport.uploadSessionConfiguration())
             if PerfFixture.uploadTicks { model.uploads.startProgressTicksForTesting() }
             _model = StateObject(wrappedValue: model)
             return

@@ -1774,3 +1774,172 @@ extension BackgroundUploadRetryTests {
         XCTAssertNil(coordinator.photoSelections[projectID.uuidString], "cancelling released the Photos pick")
     }
 }
+
+// MARK: Re-record (swap a take instead of attaching a second one)
+
+/// A re-record that is cut short must finish as a swap. Ways it can go wrong, written before the code: the recovered
+/// upload attaches instead of swapping (a second speaker); a refused swap leaves a record that retries forever or a
+/// failure that does not say the old take is intact; a retry re-sends under a new key and swaps twice; the replaced
+/// clip is counted as an extra clip; a kill during preparation forgets which clip it replaces.
+@MainActor final class RerecordUploadTests: XCTestCase {
+    override func setUp() { super.setUp(); UploadRetryProtocol.beginTest() }
+    override func tearDown() { UploadRetryProtocol.endTest(); super.tearDown() }
+
+    private let projectID = UUID()
+    private let oldClip = "analysis-proxy-old.mp4"
+    private let newClip = "analysis-proxy-new.mp4"
+
+    private final class Server {
+        var replaceBodies: [[String: Any]] = []
+        var attachCalls = 0
+        var replaceStatuses: [(Int, String?)] = []   // consumed in order, then 200
+    }
+
+    private func threadJSON(revision: Int, clip: String, filename: String) -> Data {
+        Data(#"{"id":"\#(projectID.uuidString)","title":"t","status":"active","revision":\#(revision),"runtime_version":1,"updated_at":"2026-09-09T12:00:00Z","events":[],"state":{"media":[{"media_id":"\#(clip)","kind":"video","filename":"\#(filename)"}]}}"#.utf8)
+    }
+
+    /// A relaunched app: a coordinator over the persisted records, as `restorePendingTasks` finds them.
+    private func relaunch(record: UploadRecoveryRecord, server: Server) throws -> (BackgroundUploadCoordinator, String) {
+        let key = "kria.test.rerecord.\(UUID().uuidString)"
+        UserDefaults.standard.set(try JSONEncoder().encode([record]), forKey: key)
+        UploadRetryProtocol.handler = { [self] transport in
+            let path = transport.request.url?.path ?? ""
+            if path.hasSuffix("/media/replace") {
+                let body = (try? JSONSerialization.jsonObject(with: transport.requestBody)) as? [String: Any] ?? [:]
+                server.replaceBodies.append(body)
+                if !server.replaceStatuses.isEmpty {
+                    let (status, code) = server.replaceStatuses.removeFirst()
+                    transport.finish(status, Data(#"{"problem":{"code":"\#(code ?? "")","message":"x","phase":"accept","retryable":false,"recovery":"none"}}"#.utf8)); return
+                }
+                transport.finish(200, threadJSON(revision: 9, clip: newClip, filename: "Take.mov")); return
+            }
+            if path.hasSuffix("/media") { server.attachCalls += 1; transport.finish(400, Data()); return }
+            transport.finish(200, threadJSON(revision: 7, clip: oldClip, filename: "Old.mov"))
+        }
+        let configuration = UploadRetryProtocol.configuration()
+        let api = KriaAPI(baseURL: URL(string: "https://uploads.test")!, tokenStore: NativeEditorMemoryTokenStore(), session: URLSession(configuration: configuration))
+        return (BackgroundUploadCoordinator(api: api, defaultsKey: key, sessionConfiguration: configuration, backgroundActivity: RecordingBackgroundActivityAssertion()), key)
+    }
+
+    private func finishedUpload(replacing: String?) -> UploadRecoveryRecord {
+        UploadRecoveryRecord(
+            id: UUID(), projectID: projectID, localFilePath: "/tmp/kria-rerecord-\(UUID().uuidString).mp4", filename: "Take.mov",
+            source: .files, purpose: .cloudRenderSource, reservationID: nil, clientUploadID: "ios-x", mediaID: newClip, gcsPath: "users/u/new.mp4",
+            contentType: "video/mp4", uploadCompleted: true, retentionExpiresAt: nil, taskIdentifier: -1, retryCount: 0,
+            mediaRole: .clip, replacesMediaID: replacing)
+    }
+
+    func testRecoveredReplacementUploadSwapsTheClipAndNeverAttachesASecondOne() async throws {
+        let server = Server()
+        let record = finishedUpload(replacing: oldClip)
+        let (coordinator, key) = try relaunch(record: record, server: server)
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+
+        await coordinator.restorePendingTasks()
+
+        XCTAssertEqual(server.attachCalls, 0, "a recovered swap must not use the attach route")
+        XCTAssertEqual(server.replaceBodies.count, 1)
+        let body = try XCTUnwrap(server.replaceBodies.first)
+        XCTAssertEqual(body["replaced_media_id"] as? String, oldClip)
+        XCTAssertEqual(body["reason"] as? String, "retake")
+        XCTAssertEqual(body["client_event_id"] as? String, "ios-replace-\(record.id.uuidString)")
+        XCTAssertEqual(body["expected_revision"] as? Int, 7, "quotes the revision it just read")
+        XCTAssertEqual((body["media"] as? [String: Any])?["media_id"] as? String, newClip)
+        XCTAssertEqual((body["media"] as? [String: Any])?["kind"] as? String, "video")
+        XCTAssertTrue(coordinator.records.isEmpty)
+        let attached = CreationAttachedMedia.parse(try XCTUnwrap(coordinator.attachedThreads[projectID]?.state))
+        XCTAssertEqual(attached.map(\.id), [newClip], "one clip, the new one")
+    }
+
+    func testRefusedSwapLeavesNoRecordAndSaysTheOldTakeIsUnchanged() async throws {
+        let server = Server()
+        server.replaceStatuses = [(422, "retake_has_no_audio"), (422, "retake_has_no_audio")]
+        let (coordinator, key) = try relaunch(record: finishedUpload(replacing: oldClip), server: server)
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+
+        await coordinator.restorePendingTasks()
+
+        XCTAssertEqual(server.replaceBodies.count, 1, "the same bytes cannot succeed, so it is not sent twice")
+        XCTAssertEqual(server.attachCalls, 0)
+        XCTAssertTrue(coordinator.records.isEmpty, "nothing left to retry forever")
+        let failure = try XCTUnwrap(coordinator.failures.first)
+        XCTAssertEqual(failure.replacesMediaID, oldClip)
+        XCTAssertTrue(failure.message.contains("no sound"))
+        XCTAssertTrue(failure.message.contains("Your current take is unchanged."))
+        XCTAssertNil(coordinator.attachedThreads[projectID], "the thread the chat shows is not replaced")
+    }
+
+    func testRetryableRefusalKeepsTheRecordAndTheRetryReusesTheSameKey() async throws {
+        let server = Server()
+        server.replaceStatuses = [(409, "render_in_progress"), (409, "render_in_progress")]
+        let record = finishedUpload(replacing: oldClip)
+        let (coordinator, key) = try relaunch(record: record, server: server)
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+
+        await coordinator.restorePendingTasks()
+        let failure = try XCTUnwrap(coordinator.failures.first)
+        XCTAssertEqual(failure.cause, .uploadFailed)
+        XCTAssertEqual(coordinator.records.first?.uploadFailed, true, "kept for Retry, and not counted as in progress")
+
+        await coordinator.retryUpload(recordID: record.id)
+
+        let keys = Set(server.replaceBodies.compactMap { $0["client_event_id"] as? String })
+        XCTAssertEqual(keys, ["ios-replace-\(record.id.uuidString)"], "every attempt shares one idempotency key")
+        XCTAssertGreaterThan(server.replaceBodies.count, 2)
+        XCTAssertTrue(coordinator.records.isEmpty)
+        XCTAssertTrue(coordinator.failures.isEmpty)
+        XCTAssertEqual(server.attachCalls, 0)
+    }
+
+    func testReservationNamesTheReplacedClipOnlyForAReplacement() async throws {
+        var bodies: [[String: Any]] = []
+        UploadRetryProtocol.handler = { transport in
+            bodies.append(((try? JSONSerialization.jsonObject(with: transport.requestBody)) as? [String: Any]) ?? [:])
+            transport.finish(200, reservationResponse)
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://uploads.test")!, tokenStore: NativeEditorMemoryTokenStore(), session: URLSession(configuration: UploadRetryProtocol.configuration()))
+
+        _ = try await api.reserveProjectUpload(threadID: projectID, clientUploadID: "ios-a", filename: "a.mp4", contentType: "video/mp4", size: 10)
+        _ = try await api.reserveProjectReplacementUpload(threadID: projectID, clientUploadID: "ios-b", filename: "b.mp4", contentType: "video/mp4", size: 10, replacing: oldClip)
+
+        let files = bodies.compactMap { ($0["files"] as? [[String: Any]])?.first }
+        XCTAssertNil(files[0]["replaces_media_id"], "an ordinary reservation is byte-identical to before")
+        XCTAssertEqual(files[1]["replaces_media_id"] as? String, oldClip)
+    }
+
+    func testAReplacementDoesNotTakeAnotherClipSlot() {
+        let project = projectID
+        let inFlight = [UUID(): BackgroundUploadCoordinator.InFlightUpload(projectID: project, role: .clip, replacesMediaID: oldClip),
+                        UUID(): BackgroundUploadCoordinator.InFlightUpload(projectID: project, role: .clip)]
+        XCTAssertEqual(BackgroundUploadCoordinator.reservedCount(projectID: project, role: .clip, inFlight: inFlight, records: [], selections: [:]), 1)
+    }
+
+    func testAKillDuringPreparationRemembersWhichClipItReplaces() throws {
+        let entry = PreparingUpload(id: UUID(), projectID: projectID, localFilePath: "/tmp/x.mov", filename: "x.mov", source: .files,
+                                    purpose: .analysisProxy, role: .clip, itemID: "item", replacesMediaID: oldClip, launchToken: UUID())
+        let restored = try JSONDecoder().decode(PreparingUpload.self, from: JSONEncoder().encode(entry))
+        XCTAssertEqual(restored.replacesMediaID, oldClip)
+        var legacy = try JSONSerialization.jsonObject(with: JSONEncoder().encode(entry)) as! [String: Any]
+        legacy.removeValue(forKey: "replacesMediaID")
+        let older = try JSONDecoder().decode(PreparingUpload.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertNil(older.replacesMediaID, "an entry saved by an older build still loads, as an ordinary upload")
+    }
+}
+
+private extension UploadRetryProtocol {
+    /// URLSession hands a protocol its body as a stream.
+    var requestBody: Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open(); defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count <= 0 { break }
+            data.append(buffer, count: count)
+        }
+        return data
+    }
+}

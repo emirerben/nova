@@ -5,6 +5,8 @@ import PhotosUI
 struct TeleprompterScreen: View {
     @StateObject private var flow: TeleprompterRecordingFlow
     let admissionMessage: (TeleprompterTakeManifest?) -> String?
+    /// Set when using the take swaps an attached clip instead of adding one. Shown above Use take.
+    var replacementNotice: String? = nil
     let intake: (TeleprompterTakeManifest, URL) async -> TeleprompterIntakeResult
     let intakeState: (TeleprompterTakeManifest) async -> TeleprompterIntakeResult?
     /// Leaves the camera for the upload sources. Nil hides every Upload control on the camera.
@@ -27,6 +29,7 @@ struct TeleprompterScreen: View {
     }
 
     init(accountID: String, projectID: UUID, admissionMessage: @escaping (TeleprompterTakeManifest?) -> String?,
+         replacementNotice: String? = nil,
          intake: @escaping (TeleprompterTakeManifest, URL) async -> TeleprompterIntakeResult,
          intakeState: @escaping (TeleprompterTakeManifest) async -> TeleprompterIntakeResult?,
          speakerBackgroundEnabled: Bool = false,
@@ -43,7 +46,7 @@ struct TeleprompterScreen: View {
             flow.useScript = startsWithScript
             return flow
         }())
-        self.admissionMessage = admissionMessage; self.intake = intake; self.intakeState = intakeState
+        self.admissionMessage = admissionMessage; self.replacementNotice = replacementNotice; self.intake = intake; self.intakeState = intakeState
         self.onUpload = onUpload
         self.startsWithScript = startsWithScript
     }
@@ -325,7 +328,7 @@ struct TeleprompterScreen: View {
         if flow.attachmentFinished {
             VStack(spacing: 16) {
                 KriaCheckDisc(size: 24)
-                Text("Take added to your edit").kriaType(.heading).foregroundStyle(KriaColor.ink)
+                Text(replacementNotice == nil ? "Take added to your edit" : "Take replaced").kriaType(.heading).foregroundStyle(KriaColor.ink)
                 Button("Done") { dismiss() }.buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true))
             }
             .padding(.horizontal, 24).frame(maxHeight: .infinity)
@@ -376,11 +379,14 @@ struct TeleprompterScreen: View {
             if let note = flow.backgroundNote { reviewNote(note, id: "teleprompter-background-note") }
             if let note = flow.photosNote { reviewNote(note, id: "teleprompter-photos-note") }
             if flow.queueAccepted || flow.usingTake {
-                HStack(spacing: 8) { KriaSpinner(size: 16); Text("Adding take to your edit…").kriaType(.label).foregroundStyle(KriaColor.mutedInk) }
+                HStack(spacing: 8) { KriaSpinner(size: 16); Text(replacementNotice == nil ? "Adding take to your edit…" : "Swapping in your new take…").kriaType(.label).foregroundStyle(KriaColor.mutedInk) }
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             if let admission, !flow.queueAccepted {
                 KriaNoticeCard(tone: .failure, title: admission).accessibilityIdentifier("teleprompter-admission")
+            }
+            if let notice = replacementNotice, !flow.queueAccepted {
+                reviewNote(notice, id: "teleprompter-replacement-notice")
             }
             if let error = flow.error, !silent, take.status != .invalid {
                 KriaNoticeCard(tone: .failure, title: error).accessibilityIdentifier("teleprompter-review-error")
@@ -401,7 +407,7 @@ struct TeleprompterScreen: View {
         let limitHit = blocked && (admission?.hasPrefix("This video already has") ?? false)
         return VStack(spacing: 8) {
             if canUse, !blocked {
-                Button(take.audioCheck?.verdict == .quiet ? "Use anyway" : "Use take") { Task { await flow.useTake(intake) } }
+                Button(take.audioCheck?.verdict == .quiet ? "Use anyway" : replacementNotice == nil ? "Use take" : "Replace take") { Task { await flow.useTake(intake) } }
                     .buttonStyle(KriaButtonStyle(role: primary, fullWidth: true, isLoading: flow.usingTake))
                     .disabled(busy).accessibilityIdentifier("teleprompter-use-take")
             } else if canUse, blocked {

@@ -345,6 +345,12 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgro
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, role: CreationMediaRole) async throws -> ProjectUploadReservation
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
+    /// Re-record: the same reservations, naming the attached clip the new take replaces so it does not count against
+    /// the clip limit. Only a server that advertises `media_capabilities.clips.replace` accepts the field.
+    func reserveProjectReplacementUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, replacing mediaID: String) async throws -> ProjectUploadReservation
+    func reserveProjectReplacementProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract, replacing mediaID: String) async throws -> ProjectUploadReservation
+    /// Swaps one attached video for a reserved one in a single server transaction (`POST creation-threads/{id}/media/replace`).
+    func replaceProjectMedia(threadID: UUID, replacedMediaID: String, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread
     /// KRI-189: the same attach, plus when/where the clip was filmed. `capture` is nil when the user turned
     /// the setting off or nothing could be read; a client that does not implement this drops it.
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread
@@ -448,6 +454,9 @@ extension KriaAPIClient {
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws { throw APIError.unsupported }
     func reportRecorderDiagnostic(_ report: RecorderDiagnosticReport) async throws { throw APIError.unsupported }
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation { throw APIError.invalidResponse }
+    func reserveProjectReplacementUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, replacing mediaID: String) async throws -> ProjectUploadReservation { throw APIError.unsupported }
+    func reserveProjectReplacementProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract, replacing mediaID: String) async throws -> ProjectUploadReservation { throw APIError.unsupported }
+    func replaceProjectMedia(threadID: UUID, replacedMediaID: String, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread { throw APIError.unsupported }
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, role: CreationMediaRole) async throws -> ProjectUploadReservation {
         try await reserveProjectUpload(threadID: threadID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size)
     }
@@ -1790,6 +1799,25 @@ struct KriaAPI: KriaAPIClient {
               reservation.mediaID.hasPrefix("analysis-proxy-") else { throw APIError.invalidResponse }
         return reservation
     }
+    func reserveProjectReplacementUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, replacing mediaID: String) async throws -> ProjectUploadReservation {
+        let body = ProjectUploadReservationRequest(files: [.init(filename: filename, contentType: contentType, fileSizeBytes: size, clientUploadID: clientUploadID, replacesMediaID: mediaID)])
+        let reservations = try await request(path: "creation-threads/\(threadID.uuidString)/upload-urls", method: "POST", bodyData: try JSONEncoder().encode(body), decode: [ProjectUploadReservation].self)
+        guard let reservation = reservations.first, reservations.count == 1 else { throw APIError.invalidResponse }
+        return reservation
+    }
+    func reserveProjectReplacementProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract, replacing mediaID: String) async throws -> ProjectUploadReservation {
+        guard contract.purpose == .analysisProxy, contract.proxy != nil else { throw APIError.invalidResponse }
+        let body = ProjectUploadReservationRequest(files: [.init(filename: filename, contentType: "video/mp4", fileSizeBytes: size, clientUploadID: clientUploadID, uploadContract: contract, replacesMediaID: mediaID)])
+        let reservations = try await request(path: "creation-threads/\(threadID.uuidString)/upload-urls", method: "POST", bodyData: try JSONEncoder().encode(body), decode: [ProjectUploadReservation].self)
+        guard reservations.count == 1, let reservation = reservations.first,
+              reservation.mediaID.hasPrefix("analysis-proxy-") else { throw APIError.invalidResponse }
+        return reservation
+    }
+    func replaceProjectMedia(threadID: UUID, replacedMediaID: String, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread {
+        let media = ProjectMediaInput(mediaID: mediaID, gcsPath: gcsPath, kind: "video", filename: filename, contentType: contentType, capture: capture)
+        let body = ProjectMediaReplacementRequest(replacedMediaID: replacedMediaID, media: media, clientEventID: clientEventID, expectedRevision: expectedRevision)
+        return try await request(path: "creation-threads/\(threadID.uuidString)/media/replace", method: "POST", bodyData: try JSONEncoder().encode(body), decode: CreationThread.self)
+    }
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread {
         try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID, capture: nil)
     }
@@ -2504,7 +2532,15 @@ struct ProjectUploadFileRequest: Encodable {
     var uploadContract: ProjectMediaUploadContract? = nil
     /// KRI-374: `"song"` for a creator-uploaded song; nil (omitted from the JSON) for footage and voiceover.
     var role: String? = nil
-    enum CodingKeys: String, CodingKey { case uploadContract = "upload_contract"; case filename; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes"; case clientUploadID = "client_upload_id"; case role }
+    /// Re-record: the attached clip this file replaces. Omitted for every ordinary reservation.
+    var replacesMediaID: String? = nil
+    enum CodingKeys: String, CodingKey { case uploadContract = "upload_contract"; case filename; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes"; case clientUploadID = "client_upload_id"; case role; case replacesMediaID = "replaces_media_id" }
+}
+/// `reason` is the route's only value today, sent explicitly so a later reason is a new case, not a changed meaning.
+struct ProjectMediaReplacementRequest: Encodable {
+    let replacedMediaID: String; let media: ProjectMediaInput; let clientEventID: String; let expectedRevision: Int
+    var reason = "retake"
+    enum CodingKeys: String, CodingKey { case media, reason; case replacedMediaID = "replaced_media_id"; case clientEventID = "client_event_id"; case expectedRevision = "expected_revision" }
 }
 struct ProjectMediaAttachmentRequest: Encodable { let media: [ProjectMediaInput]; let clientEventID: String; let expectedRevision: Int; enum CodingKeys: String, CodingKey { case media; case clientEventID = "client_event_id"; case expectedRevision = "expected_revision" } }
 /// One attached media item. The three optional filming-context fields (KRI-189) are omitted from the JSON
