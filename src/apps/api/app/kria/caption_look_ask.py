@@ -117,12 +117,18 @@ def _color(value: object) -> str | None:
     return _COLOR_NAMES.get(text.casefold())
 
 
+def _word(value: object, allowed: Iterable[str]) -> str | None:
+    """``value`` when it is one of ``allowed``. Model output can hold any JSON (``[]``, ``{}``):
+    an unhashable value tested against a dict raised TypeError and failed the turn's receipts."""
+    return value if isinstance(value, str) and value in allowed else None
+
+
 def _ask(*, size: object, position: object, color: object, case: object) -> CaptionLookAsk | None:
     ask = CaptionLookAsk(
-        size=size if size in CAPTION_ASK_SIZE_PX else None,
-        position=position if position in CAPTION_ASK_POSITIONS else None,
+        size=_word(size, CAPTION_ASK_SIZE_PX),
+        position=_word(position, CAPTION_ASK_POSITIONS),
         color=_color(color),
-        case=case if case in CAPTION_ASK_CASES else None,
+        case=_word(case, CAPTION_ASK_CASES),
     )
     return ask if ask.as_dict() else None
 
