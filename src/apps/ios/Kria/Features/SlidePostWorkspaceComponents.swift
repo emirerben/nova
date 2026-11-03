@@ -574,6 +574,8 @@ struct SlidePostToolBar: View {
     /// "Remove drawing" in the More menu, only for a slide that has ink.
     var canClearDrawing = false
     var onClearDrawing: () -> Void = {}
+    /// KRI-1142: Generate picture (an AI picture placed as a sticker). Nil hides it.
+    var onGenerate: (() -> Void)?
     /// KRI-647: the system Paste control (no "Allow Paste" prompt). Nil hides it.
     var onPaste: (([NSItemProvider]) -> Void)?
     let onText: () -> Void
@@ -606,6 +608,7 @@ struct SlidePostToolBar: View {
             if showsTilt { item("rotate.right", "Tilt", id: "slidepost-tool-tilt", active: mode == .tilt, action: onTilt) }
             if showsSize { item("aspectratio", "Size", id: "slidepost-tool-size", active: false, action: onSize) }
             if showsDraw { item("pencil.tip", "Draw", id: "slidepost-tool-draw", active: mode == .draw, action: onDraw) }
+            if let onGenerate { item("sparkles", "Picture", id: "slidepost-tool-generate", active: false, action: onGenerate) }
             if let onPaste { pasteItem(onPaste) }
             Menu {
                 Button(role: .destructive, action: onRemove) { Label("Remove slide", systemImage: "trash") }.disabled(!canRemove)
