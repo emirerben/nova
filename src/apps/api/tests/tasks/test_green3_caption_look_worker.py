@@ -169,6 +169,7 @@ def test_green3_first_draft_draws_the_captions_the_creator_asked_for(monkeypatch
         "color": "#FFFFFF",
         "position": "middle",
         "case": "lower",
+        "position_x_frac": 0.5,
         "position_y_frac": 0.5,
         "over_face": False,
     }

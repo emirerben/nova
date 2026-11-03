@@ -537,7 +537,10 @@ def test_green3_finished_video_counts_distinct_photos_not_windows():
 def _drawn_variant(**changes):
     """A finished Green 3 variant as the writer leaves it with the typed look drawn."""
     variant = _variant(
-        caption_cues=[{"text": "kervan celebrated its 10th year", "start_s": 0.0, "end_s": 2.0}],
+        caption_cues=[
+            {"id": "c1", "text": "kervan celebrated its 10th year", "start_s": 0.0, "end_s": 2.0},
+            {"id": "c2", "text": "with a sunrise fashion show", "start_s": 2.0, "end_s": 4.0},
+        ],
         caption_size_px=52,
         caption_text_color="#FFFFFF",
         caption_editor_style={
@@ -548,12 +551,23 @@ def _drawn_variant(**changes):
         caption_look_receipt={
             **LOOK_DICT,
             "size_px": 52,
+            "position_x_frac": 0.5,
             "position_y_frac": 0.5,
             "over_face": False,
         },
     )
     variant.update(changes)
     return variant
+
+
+def _cues_with(index: int, **extra) -> list[dict]:
+    cues = _drawn_variant()["caption_cues"]
+    cues[index] = {**cues[index], **extra}
+    return cues
+
+
+def _style_with(**extra) -> dict:
+    return {**_drawn_variant()["caption_editor_style"], **extra}
 
 
 LOOK_DICT = {"size": "small", "position": "middle", "color": "#FFFFFF", "case": "lower"}
@@ -572,12 +586,38 @@ def test_a_finished_video_carrying_the_look_is_met():
         {"caption_text_color": "#FFFF00"},
         {"caption_size_px": 78},
         {"caption_cues": [{"text": "Kervan celebrated", "start_s": 0.0, "end_s": 2.0}]},
+        # Emir's second #2089 review: the block dragged sideways (alignment unchanged) ...
+        {"caption_editor_style": _style_with(position_x_frac=0.7)},
+        # ... one caption moved or resized in the editor (per-line overrides the render uses) ...
+        {"caption_editor_style": _style_with(line_overrides={"c2": {"position_y_frac": 0.7}})},
+        {"caption_editor_style": _style_with(line_overrides={"c2": {"position_x_frac": 0.3}})},
+        {"caption_editor_style": _style_with(line_overrides={"c2": {"size_px": 78}})},
+        # ... or one cue's own size / colour.
+        {"caption_cues": _cues_with(1, size_px=78)},
+        {"caption_cues": _cues_with(1, text_color="#FFFF00")},
     ],
 )
 def test_a_finished_video_that_lost_the_look_is_not_met(changes):
     receipt = _one(R3, plan_facts_from_phone_variant(_drawn_variant(**changes)))
     assert receipt.status == "partial", receipt
     assert receipt.reason == "The captions no longer look the way you asked."
+
+
+def test_an_override_that_keeps_the_drawn_look_is_still_met():
+    style = _style_with(line_overrides={"c2": {"size_px": 52, "position_y_frac": 0.5}})
+    variant = _drawn_variant(caption_editor_style=style, caption_cues=_cues_with(0, size_px=52))
+    receipt = _one(R3, plan_facts_from_phone_variant(variant))
+    assert receipt.status == "met", receipt
+
+
+def test_a_receipt_without_the_drawn_x_is_unknown_not_met():
+    """Where the drawn spot is not recorded, nothing is claimed (the usual "can't check")."""
+    receipt_without_x = {**_drawn_variant()["caption_look_receipt"]}
+    receipt_without_x.pop("position_x_frac")
+    receipt = _one(
+        R3, plan_facts_from_phone_variant(_drawn_variant(caption_look_receipt=receipt_without_x))
+    )
+    assert receipt.status != "met", receipt
 
 
 def test_an_editor_saved_background_counts_distinct_media():
