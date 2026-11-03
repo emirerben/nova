@@ -173,6 +173,11 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
         "forwards the request into the job at dispatch",
         frozenset({"_dispatch_item_render", "dispatch_item_render_for"}),
     ),
+    "kria/render_review_context.py": (
+        "carry",
+        "Copies approved request into immutable review context; no render decisions.",
+        frozenset({"build_render_review_context"}),
+    ),
     "tasks/kria_runtime.py": (
         "carry",
         "approval claims / dispatch carry the request; KRI-968's simpler-version offer and "

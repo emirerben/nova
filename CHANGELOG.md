@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.13.0] - 2026-11-03
+
+### Changed
+- feat(kria): freeze exactly what a finished render was approved against (KRI-1171) (#2075) <!-- release-pr: 2075 -->
+
+## [0.84.12.0] - 2026-11-03
+
+### Changed
+- feat(kria): repair a timing-only draft through bounded independent review, without rewriting words (KRI-1171) (#2081) <!-- release-pr: 2081 -->
+
 ## [0.84.11.0] - 2026-11-03
 
 ### Changed
