@@ -14,9 +14,9 @@ from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import text
+from sqlalchemy import select
 
-from app.database import sync_session
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.brief_binding import BriefBinding
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
 from app.kria.prepared_execution import PreparedExecutionSnapshot
@@ -317,39 +317,46 @@ def build_render_review_context(
         )
 
 
-def capture_render_review_context(
-    execution_id: uuid.UUID,
-    *,
-    verified_artifact: VerifiedArtifactReceipt | None,
-    observations: tuple[TimestampedObservation, ...] = (),
-) -> CaptureResult:
-    """Capture a coherent read-only database snapshot; close before any future review call."""
-    if verified_artifact is None:
-        return CaptureResult(status="unavailable", reason="artifact_verification_missing")
-    with sync_session() as db:
-        db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
-        db.execute(text("SET TRANSACTION READ ONLY"))
-        try:
-            e = db.get(CreatorAgentExecution, execution_id)
-            a = db.get(CreatorAgentApproval, uuid.UUID(e.result["approval_id"]))
-            s = db.get(CreatorAgentSession, e.session_id)
-            i = db.get(PlanItem, s.plan_item_id)
-            rows = ReviewRows(
-                plan=db.get(ContentPlan, i.content_plan_id),
-                item=i,
-                job=db.get(Job, e.target_job_id),
-                thread=db.get(CreationThread, e.target_thread_id),
-                session=s,
-                turn=db.get(CreatorAgentTurn, e.turn_id),
-                draft=db.get(CreatorEditDraft, e.target_draft_id),
-                approval=a,
-                execution=e,
-                prepared=db.get(CreatorPreparedExecution, a.prepared_execution_id)
-                if a.prepared_execution_id
-                else None,
+def load_review_rows(db, execution_id: uuid.UUID, *, locked: bool = False) -> ReviewRows:
+    """Load the exact authority graph of one accepted execution.
+
+    ``locked`` takes the rows in canonical order; the shared ContentPlan is held
+    ``FOR NO KEY UPDATE`` so foreign-key checks from other chats are never blocked.
+    """
+    execution = db.get(CreatorAgentExecution, execution_id)
+    if execution is None:
+        raise ValueError("execution_missing")
+    session = db.get(CreatorAgentSession, execution.session_id)
+    item = db.get(PlanItem, session.plan_item_id)
+    approval_id = uuid.UUID(execution.result["approval_id"])
+
+    def get(model, key):
+        if key is None:
+            raise ValueError("authority_missing")
+        query = select(model).where(model.id == key).execution_options(populate_existing=True)
+        if locked:
+            query = (
+                query.with_for_update(**CONTENT_PLAN_LOCK)
+                if model is ContentPlan
+                else query.with_for_update()
             )
-            return build_render_review_context(
-                rows, verified_artifact=verified_artifact, observations=observations
-            )
-        except (ValueError, TypeError, KeyError, AttributeError):
-            return CaptureResult(status="unavailable", reason="capture_inputs_missing_or_malformed")
+        row = db.scalar(query)
+        if row is None:
+            raise ValueError("authority_missing")
+        return row
+
+    plan = get(ContentPlan, item.content_plan_id)
+    item = get(PlanItem, item.id)
+    job = get(Job, execution.target_job_id)
+    session = get(CreatorAgentSession, execution.session_id)
+    turn = get(CreatorAgentTurn, execution.turn_id)
+    draft = get(CreatorEditDraft, execution.target_draft_id)
+    approval = get(CreatorAgentApproval, approval_id)
+    execution = get(CreatorAgentExecution, execution.id)
+    thread = get(CreationThread, execution.target_thread_id)
+    prepared = (
+        db.get(CreatorPreparedExecution, approval.prepared_execution_id)
+        if approval.prepared_execution_id
+        else None
+    )
+    return ReviewRows(plan, item, job, thread, session, turn, draft, approval, execution, prepared)

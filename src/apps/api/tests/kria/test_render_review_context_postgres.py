@@ -9,7 +9,8 @@ import copy
 import uuid
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import OperationalError
 
 from app.config import settings
 from app.database import AsyncSessionLocal, sync_session
@@ -18,7 +19,11 @@ from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_binding import BriefBinding
 from app.kria.device_render import make_device_request
 from app.kria.planner import PlannedKriaTurn, adapt_editor_action
-from app.kria.render_review_context import VerifiedArtifactReceipt, capture_render_review_context
+from app.kria.render_review_context import (
+    VerifiedArtifactReceipt,
+    build_render_review_context,
+    load_review_rows,
+)
 from app.kria.runtime import approval_fingerprint, decide_approval
 from app.models import (
     CreationThread,
@@ -185,20 +190,21 @@ async def test_capture_real_approved_native_editor_receipt(monkeypatch):
         db.commit()
         original = copy.deepcopy(job.assembly_plan)
         execution_before = copy.deepcopy(execution.result)
-    captured = await asyncio.to_thread(
-        capture_render_review_context, claim.execution_id, verified_artifact=proof
-    )
+
+    def capture(artifact):
+        with sync_session() as db:
+            return build_render_review_context(
+                load_review_rows(db, claim.execution_id), verified_artifact=artifact
+            )
+
+    captured = await asyncio.to_thread(capture, proof)
     assert captured.status == "ready", captured.reason
     assert "Keep the exact title Before" in captured.packet.original_request
     assert captured.packet.draft_id == str(approval.draft_id)
     assert captured.packet.requirement_generation == claim.target_generation_id
     assert captured.packet.published_attempt == "synthetic-publication"
     assert captured.packet.review_model_received_visual_input is False
-    refused = await asyncio.to_thread(
-        capture_render_review_context,
-        claim.execution_id,
-        verified_artifact=proof.model_copy(update={"sha256": "b" * 64}),
-    )
+    refused = await asyncio.to_thread(capture, proof.model_copy(update={"sha256": "b" * 64}))
     assert refused.status == "unavailable"
     with sync_session() as db:
         assert db.get(Job, job_id).assembly_plan == original
@@ -206,3 +212,21 @@ async def test_capture_real_approved_native_editor_receipt(monkeypatch):
         assert (
             db.get(CreatorEditDraft, approval.draft_id).snapshot_hash == captured.packet.draft_hash
         )
+
+    with sync_session() as holder:
+        rows = load_review_rows(holder, claim.execution_id, locked=True)
+        with sync_session() as other:
+            other.execute(text("SET lock_timeout = '300ms'"))
+            other.execute(
+                text("SELECT id FROM content_plans WHERE id = :id FOR KEY SHARE"),
+                {"id": rows.plan.id},
+            )
+            other.rollback()
+            other.execute(text("SET lock_timeout = '300ms'"))
+            with pytest.raises(OperationalError, match="lock timeout"):
+                other.execute(
+                    text("SELECT id FROM content_plans WHERE id = :id FOR NO KEY UPDATE"),
+                    {"id": rows.plan.id},
+                )
+            other.rollback()
+        holder.rollback()
