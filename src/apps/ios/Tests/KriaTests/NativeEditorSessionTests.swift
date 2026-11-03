@@ -628,6 +628,29 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(songClip()).sourceStart, 1, accuracy: 0.001, "fades and window are untouched")
     }
 
+    /// Assigning a document equal to the current one (a reload that found nothing new, a staged chat draft that is
+    /// already applied) shows nothing new, so it must not rebuild a settled preview: the rebuild cancelled any build
+    /// in flight and re-prepared a playing item, which the creator sees as a hitch. A real edit still rebuilds.
+    func testAssigningAnEqualDocumentDoesNotRebuildTheSettledPreview() async throws {
+        let (session, _, sourceURL) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        let player = try XCTUnwrap(session.player)
+        let item = try XCTUnwrap(player.currentItem)
+        let compiles = session.sourcePreviewCompileCount
+
+        for _ in 0..<3 { session.replaceDocumentForTesting(session.document) }
+        for _ in 0..<5 { await Task.yield() }
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(session.sourcePreviewCompileCount, compiles, "an equal document is not a change")
+        XCTAssertTrue(session.player === player && player.currentItem === item, "and the player item is untouched")
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+
+        session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 3.5)
+        _ = await waitUntil { session.sourcePreviewCompileCount != compiles }
+        XCTAssertGreaterThan(session.sourcePreviewCompileCount, compiles, "a real edit still rebuilds")
+    }
+
     /// KRI-432: dragging the start edits the document live (one undo step) but rebuilds the preview once, on release.
     func testStartDragRebuildsThePreviewOnceOnReleaseAndIsOneUndoStep() async throws {
         let (session, _, sourceURL) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
