@@ -26,7 +26,7 @@ The legacy Gemini quality review is retired for a runtime-v2 thread only once th
 
 ## Before the first flag
 
-1. The stack is merged and deployed with every flag off. Migrations `0130` (the row) and `0131` (the lifecycle) ran at release. `GET https://nova-video.fly.dev/health` is green.
+1. The stack is merged and deployed with every flag off. Migrations `0131` (the row) and `0132` (the lifecycle) ran at release. `GET https://nova-video.fly.dev/health` is green.
 2. Confirm where `tasks.prepare_generation_review` runs. It downloads up to 256 MB and runs ffmpeg, so `KRIA_INTENT_REVIEW_EVIDENCE_QUEUE` routes it: `fly.toml` pins `autoplace-jobs`, consumed by the 4 GB worker, and `tests/test_render_review_routes.py` pins that it never lands on `agent-control` or `maintenance`, which the 1 GB `light` machine (concurrency 2, embedded Beat) consumes. Nothing needs deciding; check that the deployed worker's `-Q` list includes `autoplace-jobs`. `tasks.review_generation_intent` itself is light (the frames come from the row; nothing is downloaded) and runs on `agent-control`.
 3. Open the Linear issue `Rollout: KRIA_INTENT_REVIEW` in the project. It stays open until the flags are on and verified.
 4. A native speaker has read the Turkish copy in `app/kria/intent_review_copy.py`. Not done at the time of writing. The copy this change added beyond the product spec's table (the lead of the staged-repair receipt and the revert wording that does not name a button) needs the same read.
@@ -100,7 +100,7 @@ A revert of a worse repair is the one post that does not stop with the tier: it 
 
 ## Rollback of the stack
 
-Turn every flag off first. The merged code is inert with the flags off, so the PRs do not need reverting. If a revert is ever needed, revert top-down (receipts, repair, agent, transport) and leave the migrations: `0130` and `0131` only add a table and columns and nothing reads them with the flags off.
+Turn every flag off first. The merged code is inert with the flags off, so the PRs do not need reverting. If a revert is ever needed, revert top-down (receipts, repair, agent, transport) and leave the migrations: `0131` and `0132` only add a table and columns and nothing reads them with the flags off.
 
 ## Known limits at launch
 
