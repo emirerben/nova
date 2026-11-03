@@ -1548,6 +1548,27 @@ def test_playback_diagnostics_without_a_trace_is_unchanged_and_the_trace_is_boun
     assert client.post(url, json=too_long).status_code == 422
 
 
+def test_playback_diagnostics_drops_a_trace_that_is_not_fixed_labels_and_counts() -> None:
+    """The trace is fixed labels and counts only. Anything else (a URL, a name, a line break, upper case) is
+    dropped, not stored in a log line, and the rest of the report is still recorded."""
+    user = _user()
+    url = _diagnostics_url(uuid.uuid4())
+    for stray in (
+        "see https://storage.example/clip.mp4?token=Abc",
+        "clips=1 hidden_run=0\nevent=forged",
+        "clips=1 Emir's kitchen.mov",
+        "clips=1 \u00e7ay hidden_run=0",
+    ):
+        db = _db([_scalar(uuid.uuid4())])
+        _override(user, db)
+        with structlog.testing.capture_logs() as logs:
+            response = client.post(url, json={**_PLAYBACK_DIAGNOSTIC, "trace": stray})
+        assert response.status_code == 204, stray
+        events = [entry for entry in logs if entry["event"] == "editor_playback_failed"]
+        assert len(events) == 1 and events[0]["trace"] is None, (stray, events)
+        assert events[0]["error_code"] == -11800, "the rest of the report is kept"
+
+
 _RECORDER_DIAGNOSTIC = {
     "kind": "take_silent",
     "audio_category": "playAndRecord",
