@@ -3358,4 +3358,7 @@ def run_structural(
         return check_voiceover_interviewer(output, input)
     if agent_name == "nova.plan.slide_post_composer":
         return check_slide_post_composer(output, input)
+    if agent_name == "nova.creator.brief_extractor":
+        # KRI-1189: the output schema is the check; fixtures add `meta.restart_brief`.
+        return []
     raise ValueError(f"no structural checks registered for agent {agent_name!r}")

@@ -1,0 +1,33 @@
+{
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-11-03-v52",
+  "input": {
+    "creator_request": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [style/global] Make it a talking video with small white captions in the middle.\n- [r2] [audio/global] No music.",
+    "user_message": "Also cut the sentence I restarted.",
+    "conversation": [
+      {
+        "role": "user",
+        "content": "Make it a talking video with small white captions in the middle. No music."
+      },
+      {
+        "role": "assistant",
+        "content": "Your video is ready."
+      },
+      {
+        "role": "user",
+        "content": "Also cut the sentence I restarted."
+      }
+    ],
+    "require_request_scope": true
+  },
+  "raw_text": "{\"brief_updates\": [{\"kind\": \"style\", \"scope\": \"global\", \"literal\": null, \"description\": \"Also cut the sentence I restarted.\", \"facts\": {\"speech_cleanup\": true, \"cut_restarts\": true}}], \"request_scope\": \"edit\"}",
+  "output": null,
+  "meta": {
+    "source": "hand_authored_golden",
+    "note": "KRI-1189 brief-model check (follow-up on a rendered edit). Real ask: Green 3 ask as a follow-up after the render. Hand-authored golden answer; the paid live run measures the model.",
+    "restart_brief": {
+      "cut_restarts": true,
+      "speech_cleanup": true
+    }
+  }
+}
