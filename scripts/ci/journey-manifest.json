@@ -3011,6 +3011,18 @@
       ]
     },
     {
+      "id": "kri-1173-speaker-background-color",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_speaker_background_color.py tests/routes/test_speaker_background_color_editor.py tests/tasks/test_speaker_background_worker.py tests/kria/test_draft_projects_speaker_background.py tests/kria/test_brief_checks_speaker_background.py tests/kria/test_capability_matrix.py tests/routes/test_editor_save_code_catalog.py",
+      "paths": [
+        "src/apps/api/tests/kria/test_speaker_background_color.py",
+        "src/apps/api/tests/routes/test_speaker_background_color_editor.py",
+        "src/apps/api/tests/kria/test_draft_projects_speaker_background.py",
+        "tests/fixtures/speaker-background-parity/v3.json",
+        "docs/reviews/speaker-background-color-failure-modes.md"
+      ]
+    },
+    {
       "id": "generated-image-autoplace",
       "needs_native": false,
       "api_tests": "tests/agents/test_overlay_placement_cross_language.py tests/agents/test_brief_extractor_generated_image.py tests/services/test_generated_image_grounding.py tests/services/test_phone_overlay_grounding.py tests/services/test_generated_media_admission.py tests/routes/test_creation_threads_chat_language.py tests/tasks/test_phone_overlay_spoken_language_worker.py",
@@ -3044,15 +3056,13 @@
       ]
     },
     {
-      "id": "kri-1173-speaker-background-color",
+      "id": "canonical-generation-intent-review",
       "needs_native": false,
-      "api_tests": "tests/kria/test_speaker_background_color.py tests/routes/test_speaker_background_color_editor.py tests/tasks/test_speaker_background_worker.py tests/kria/test_draft_projects_speaker_background.py tests/kria/test_brief_checks_speaker_background.py tests/kria/test_capability_matrix.py tests/routes/test_editor_save_code_catalog.py",
+      "api_tests": "tests/kria/test_render_review_context.py tests/kria/test_render_review_context_postgres.py",
       "paths": [
-        "src/apps/api/tests/kria/test_speaker_background_color.py",
-        "src/apps/api/tests/routes/test_speaker_background_color_editor.py",
-        "src/apps/api/tests/kria/test_draft_projects_speaker_background.py",
-        "tests/fixtures/speaker-background-parity/v3.json",
-        "docs/reviews/speaker-background-color-failure-modes.md"
+        "src/apps/api/app/kria/render_review_context.py",
+        "src/apps/api/tests/kria/test_render_review_context.py",
+        "src/apps/api/tests/kria/test_render_review_context_postgres.py"
       ]
     }
   ]
