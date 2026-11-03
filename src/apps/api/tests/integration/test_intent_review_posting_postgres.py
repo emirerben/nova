@@ -113,6 +113,8 @@ from tests.integration.test_intent_review_repair_postgres import (  # noqa: F401
 from tests.kria.test_render_review_admission_postgres import approved_publication  # noqa: F401
 from tests.services.test_openai_vision_transport import HttpError, response
 
+pytestmark = pytest.mark.usefixtures("release_abandoned_db_connections")
+
 
 def thread_events(thread_id):
     with sync_session() as db:
