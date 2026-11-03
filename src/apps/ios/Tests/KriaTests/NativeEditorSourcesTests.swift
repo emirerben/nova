@@ -346,11 +346,9 @@ final class NativeEditorSourcesTests: XCTestCase {
         for bad: [JSONValue] in [
             [insertRow("gone", at: 5, duration: 3)],
             [insertRow("take", at: 5, duration: 3)],
-            [insertRow("congress", at: 0, duration: 3)],
             [insertRow("congress", at: -1, duration: 3)],
             [insertRow("congress", at: 5, duration: 0)],
             [insertRow("congress", at: 5, duration: 3), insertRow("congress", at: 20, duration: 3)],
-            [insertRow("congress", at: 5, duration: 3), insertRow("second", at: 5, duration: 3)],
             [.string("congress")],
             [.object(["media_id": .string("congress"), "duration_s": .number(3)])],
         ] {
@@ -360,6 +358,68 @@ final class NativeEditorSourcesTests: XCTestCase {
         var broken = insertVariant(nil)
         broken["phone_insert_clips"] = .object(["placed": .string("x")])
         XCTAssertNil(NativePhoneTalkingSource.inserts(variant: broken, pool: pool, speakerIndices: [0]))
+    }
+
+    func testPhoneTalkingInsertsAcceptTheStartOfTheTakeAndSeveralAtOneInstant() {
+        let pool = insertPool()
+        XCTAssertEqual(NativePhoneTalkingSource.inserts(variant: insertVariant([insertRow("congress", at: 0, duration: 3)]),
+                                                        pool: pool, speakerIndices: [0]),
+                       [.init(clipIndex: 1, atTake: 0, duration: 3, keepAudio: true)])
+        // Two clips for one sentence share a point and play in the order the server wrote the rows.
+        let together = NativePhoneTalkingSource.inserts(
+            variant: insertVariant([insertRow("second", at: 5, duration: 4), insertRow("congress", at: 5, duration: 3)]),
+            pool: pool, speakerIndices: [0])
+        XCTAssertEqual(together?.map(\.clipIndex), [2, 1])
+        let atZero = NativePhoneTalkingSource.inserts(
+            variant: insertVariant([insertRow("congress", at: 0, duration: 3), insertRow("second", at: 0, duration: 4)]),
+            pool: pool, speakerIndices: [0])
+        XCTAssertEqual(atZero?.map(\.clipIndex), [1, 2])
+    }
+
+    /// A pause before any speech, after the last sentence, or several clips for one sentence are legal outcomes
+    /// of the server's placement. The preview must draw them (a throw sends the editor to a failed preview).
+    func testPhoneTalkingInsertAtTheStartOfTheTakeOrItsEndOrSeveralAtOneInstant() throws {
+        let document = EditorDocument(capabilities: ["timeline": .init(editable: false)], revision: .init(baseGeneration: "g"))
+        let take: [NativePhoneTalkingSource.Speaker] = [.init(clipIndex: 0, duration: 40)]
+        func insert(_ clip: Int, at: Double, _ length: Double) -> NativePhoneTalkingSource.PlacedInsert {
+            (.init(clipIndex: clip, atTake: at, duration: length, keepAudio: true), length)
+        }
+        func check(_ hydrated: EditorDocument, indices: [Int], starts: [Double], durations: [Double], _ label: String) {
+            XCTAssertEqual(hydrated.clips.map(\.clipIndex), indices, label)
+            XCTAssertEqual(hydrated.clips.map(\.inS), starts, label)
+            for (actual, expected) in zip(hydrated.clips.compactMap(\.durationS), durations) { XCTAssertEqual(actual, expected, accuracy: 0.0001, label) }
+            XCTAssertEqual(hydrated.clips.count, durations.count, label)
+            XCTAssertTrue(hydrated.clips.compactMap(\.durationS).allSatisfy { $0 > 0.001 }, "no sliver of speech: \(label)")
+            XCTAssertEqual(Set(hydrated.clips.compactMap(\.id)).count, hydrated.clips.count, "ids are unique: \(label)")
+        }
+        let start = try NativePhoneTalkingSource.hydrate(document, speakers: take, inserts: [insert(1, at: 0, 4)])
+        check(start, indices: [1, 0], starts: [0, 0], durations: [4, 40], "at the start")
+        let end = try NativePhoneTalkingSource.hydrate(document, speakers: take, inserts: [insert(1, at: 40, 4)])
+        check(end, indices: [0, 1], starts: [0, 0], durations: [40, 4], "at the end")
+        // Within rounding of the end, and a hair past it (the persisted seconds are rounded to milliseconds).
+        for point in [40 - 1e-7, 40.004] {
+            let near = try NativePhoneTalkingSource.hydrate(document, speakers: take, inserts: [insert(1, at: point, 4)])
+            check(near, indices: [0, 1], starts: [0, 0], durations: [40, 4], "end \(point)")
+        }
+        let sameInstant = try NativePhoneTalkingSource.hydrate(document, speakers: take, inserts: [insert(1, at: 10, 4), insert(2, at: 10, 6)])
+        check(sameInstant, indices: [0, 1, 2, 0], starts: [0, 0, 0, 10], durations: [10, 4, 6, 30], "one instant")
+        // Row order is play order, whichever clip index comes first.
+        let reversed = try NativePhoneTalkingSource.hydrate(document, speakers: take, inserts: [insert(2, at: 10, 6), insert(1, at: 10, 4)])
+        check(reversed, indices: [0, 2, 1, 0], starts: [0, 0, 0, 10], durations: [10, 6, 4, 30], "row order")
+        let startPair = try NativePhoneTalkingSource.hydrate(document, speakers: take, inserts: [insert(1, at: 0, 4), insert(2, at: 0, 6)])
+        check(startPair, indices: [1, 2, 0], starts: [0, 0, 0], durations: [4, 6, 40], "two at the start")
+        let endPair = try NativePhoneTalkingSource.hydrate(document, speakers: take, inserts: [insert(1, at: 40, 4), insert(2, at: 40, 6)])
+        check(endPair, indices: [0, 1, 2], starts: [0, 0, 0], durations: [40, 4, 6], "two at the end")
+        let everywhere = try NativePhoneTalkingSource.hydrate(document, speakers: take,
+            inserts: [insert(1, at: 0, 4), insert(2, at: 20, 6), insert(3, at: 20, 2), insert(4, at: 40, 3)])
+        check(everywhere, indices: [1, 0, 2, 3, 0, 4], starts: [0, 0, 0, 0, 20, 0], durations: [4, 20, 6, 2, 20, 3], "start, shared middle and end")
+        // On a seam between two kept segments, several clips sit there with no speech between them.
+        let seam = try NativePhoneTalkingSource.hydrate(document, speakers: [.init(clipIndex: 0, duration: 30)], removed: [(5, 7), (20, 24)],
+            inserts: [insert(1, at: 5, 4), insert(2, at: 5, 6), insert(3, at: 15, 2), insert(4, at: 24, 3)])
+        check(seam, indices: [0, 1, 2, 0, 3, 0, 0, 4], starts: [0, 0, 0, 7, 0, 17, 24, 0], durations: [5, 4, 6, 10, 2, 3, 6, 3], "seam, middle and end of a cut take")
+        // Still refused: a point far outside the take.
+        XCTAssertThrowsError(try NativePhoneTalkingSource.hydrate(document, speakers: take, inserts: [insert(1, at: 41, 4)]))
+        XCTAssertThrowsError(try NativePhoneTalkingSource.hydrate(document, speakers: take, inserts: [insert(1, at: -1, 4)]))
     }
 
     func testPhoneTalkingTakePausesForTheInsertAndResumesWhereItStopped() throws {
@@ -411,7 +471,7 @@ final class NativeEditorSourcesTests: XCTestCase {
         XCTAssertEqual(both.clips.map(\.clipIndex), [0, 1, 0, 2, 0])
         XCTAssertEqual(both.clips.map(\.inS), [0, 0, 10, 0, 20])
         XCTAssertEqual(both.clips.compactMap(\.durationS).reduce(0, +), 40, accuracy: 0.0001)
-        // An insert past the take's end or at its edges cannot be drawn: the server never writes one.
+        // An insert well past the take's end cannot be drawn: the server never writes one.
         XCTAssertThrowsError(try NativePhoneTalkingSource.hydrate(document, speakers: [speakers[0]],
             inserts: [(.init(clipIndex: 1, atTake: 31, duration: 4, keepAudio: true), 4)]))
     }
