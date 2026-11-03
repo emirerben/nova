@@ -3030,6 +3030,20 @@
       ]
     },
     {
+      "id": "kri-1051-independent-draft-repair",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_editor_repair.py tests/kria/test_editor_repair_runtime_postgres.py tests/kria/test_editor_repair_planner_postgres.py tests/services/test_editor_repair_reviewer.py",
+      "paths": [
+        "src/apps/api/app/kria/editor_repair.py",
+        "src/apps/api/app/services/bounded_review.py",
+        "src/apps/api/app/services/editor_repair_reviewer.py",
+        "src/apps/api/tests/kria/test_editor_repair.py",
+        "src/apps/api/tests/kria/test_editor_repair_runtime_postgres.py",
+        "src/apps/api/tests/kria/test_editor_repair_planner_postgres.py",
+        "src/apps/api/tests/services/test_editor_repair_reviewer.py"
+      ]
+    },
+    {
       "id": "kri-1173-speaker-background-color",
       "needs_native": false,
       "api_tests": "tests/kria/test_speaker_background_color.py tests/routes/test_speaker_background_color_editor.py tests/tasks/test_speaker_background_worker.py tests/kria/test_draft_projects_speaker_background.py tests/kria/test_brief_checks_speaker_background.py tests/kria/test_capability_matrix.py tests/routes/test_editor_save_code_catalog.py",
