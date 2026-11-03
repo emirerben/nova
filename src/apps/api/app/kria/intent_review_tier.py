@@ -3,8 +3,7 @@
 This is the only place that decides a tier: a child flag set without its parent does
 nothing, and the allowlist gates every stage. KRIA_INTENT_REVIEW_ENABLED is also read
 directly, as the global kill switch, wherever admission, publishing, recovery and the
-legacy interlock must stop. The code ceiling stops a flag flip from switching on a stage
-that has not shipped: each PR in the stack raises it.
+legacy interlock must stop.
 """
 
 from __future__ import annotations
@@ -15,7 +14,6 @@ from app.config import settings
 
 Tier = Literal["off", "evidence", "review", "repair"]
 _RANK: dict[str, int] = {"off": 0, "evidence": 1, "review": 2, "repair": 3}
-_CODE_TIER_CEILING: Tier = "review"
 
 
 def tier_rank(tier: str) -> int:
@@ -42,7 +40,7 @@ def intent_review_tier(user_id: object) -> Tier:
         and settings.ai_openai_monthly_budget_usd > 0
     ):
         tier = "repair" if settings.kria_intent_review_repair_enabled else "review"
-    return lower_tier(tier, _CODE_TIER_CEILING)
+    return tier
 
 
 def intent_review_replaces_legacy(user_id: object, ended_without_verdict: bool = False) -> bool:

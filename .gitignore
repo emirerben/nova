@@ -105,3 +105,6 @@ brand/social/dist/**/*.mov
 
 .request-following-report/
 .dictation-eval/
+
+# Intent review qualification harness outputs (python -m app.cli.qualify_intent_review, KRI-1171)
+.intent-review-qualification/

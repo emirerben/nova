@@ -1,6 +1,6 @@
 # Intent review (KRI-1171)
 
-A finished, published generation is checked against what the creator asked for. This runbook covers the stages that exist today. Later stages (receipts) add their own sections when they ship.
+A finished, published generation is checked against what the creator asked for. This runbook is the operating reference for every stage: admission, evidence, the paid review, the repair and the chat receipts. How the pipeline fits together is in [the pipeline guide](../pipelines/intent-review.md); how to turn it on, watch it and turn it off is in [the rollout runbook](intent-review-rollout.md).
 
 ## What runs
 
@@ -14,7 +14,7 @@ A finished, published generation is checked against what the creator asked for. 
 | --- | --- | --- |
 | `KRIA_INTENT_REVIEW_ENABLED` | `false` | Admission and evidence. Also the kill switch for every stage. |
 | `KRIA_INTENT_REVIEW_PAID_ENABLED` | `false` | Paid frame review. A no-op without `ENABLED`. |
-| `KRIA_INTENT_REVIEW_REPAIR_ENABLED` | `false` | Repair staging. A no-op without `PAID`, and held at `review` by the code ceiling until the posting stage ships. |
+| `KRIA_INTENT_REVIEW_REPAIR_ENABLED` | `false` | Repair staging. A no-op without `PAID`. |
 | `KRIA_INTENT_REVIEW_USER_IDS` | `[]` | `[]` admits nobody, `["*"]` everyone. |
 | `KRIA_INTENT_REVIEW_MAX_USD` | `0.10` | Per-review ceiling (`0 < x <= 0.25`), stamped at admission. |
 | `KRIA_INTENT_REVIEW_CANARY_ID` | empty | `release_canary_id` the ledger requires for internal accounts. |
@@ -22,16 +22,16 @@ A finished, published generation is checked against what the creator asked for. 
 | `KRIA_INTENT_REVIEW_EVIDENCE_QUEUE` | `celery` | Queue for frame extraction (see Queue placement). Production pins `autoplace-jobs` in `fly.toml`. |
 | `AI_OPENAI_INTENT_REVIEW_BUDGET_USD` | `0` | Monthly capability budget. `0` rejects every reserve. |
 
-## Tier and code ceiling
+## Tier
 
-`app/kria/intent_review_tier.py` is the only place that decides a creator's tier (allowlist, parent flags, API key and budgets). `KRIA_INTENT_REVIEW_ENABLED` is also read directly as the global kill switch by admission, publishing, recovery and the legacy interlock. A child flag does nothing without its parent, and `_CODE_TIER_CEILING` caps what any flag combination can switch on. Each PR in the stack raises it, so enabling a flag early cannot turn on an unfinished stage.
+`app/kria/intent_review_tier.py` is the only place that decides a creator's tier (allowlist, parent flags, API key and budgets). `KRIA_INTENT_REVIEW_ENABLED` is also read directly as the global kill switch by admission, publishing, recovery and the legacy interlock. A child flag does nothing without its parent.
 
 | Tier | Needs | Does |
 | --- | --- | --- |
 | `off` | not enabled or not admitted | nothing |
 | `evidence` | `ENABLED` | admission and frames only |
-| `review` | `PAID`, `OPENAI_API_KEY`, `AI_OPENAI_INTENT_REVIEW_BUDGET_USD > 0`, `AI_OPENAI_MONTHLY_BUDGET_USD > 0` | one paid frame review, judged and stored in shadow (nothing is posted) |
-| `repair` | `REPAIR` | stages one reversible repair draft for the creator to approve (code is merged; the code ceiling keeps every flag combination at `review` until the posting stage ships, and only tests lift it) |
+| `review` | `PAID`, `OPENAI_API_KEY`, `AI_OPENAI_INTENT_REVIEW_BUDGET_USD > 0`, `AI_OPENAI_MONTHLY_BUDGET_USD > 0` | one paid frame review, judged, stored and reported in the chat (a suggestion or a question, never a change) |
+| `repair` | `REPAIR` | stages one reversible repair draft for the creator to approve or undo |
 
 The tier is stamped at admission. Live flags can only lower it, never raise it. The legacy Gemini quality review is retired for a runtime-v2 thread only when that creator's tier is `review` or higher and the thread's newest intent review has not ended without a verdict (`unavailable`, `exhausted`, `stale`, `review_unknown`). When it has, the next reconcile hands the generation back to the legacy review. The intent review judges the creator's request against the video; it does not replace the legacy review's mechanical repairs (caption legibility, speech cuts, transition fallback), so a creator whose review reports no findings is not covered for those.
 
@@ -92,7 +92,7 @@ The tier is stamped at admission. Live flags can only lower it, never raise it. 
 
 A requirement finds its rows by scope (`title`, `clip:<id>`) and otherwise by the creator's words as whole words, ignoring case and accents, the way the request-following receipts do: "Sale" is not in "Wholesale Day". A row found only by the creator's words that holds other words ("Day 3 in Istanbul" against the creator's "İstanbul") is never cut down to the creator's words; a wording claim there is a question. No candidate is emitted for pinned text, sequence fragments, captions, lyric lines, text bound to a clip when footage is selected or ordered, anything under an absolute sequence timing or a protected region, `preserve_editor_text` (the creator forbade touching text, so not even a restore), or (for retime and move) an explicit timing or placement ask. Draft kinds other than `editor` issue requirements but no candidates.
 
-**Where to look.** `creator_generation_reviews.review` holds `catalog`, `raw_output` (at most 16 KB), `findings`, `disposition`, `provenance` and, for a void reply, `invalid_output`. The admin job-debug view shows the agent run (`nova.kria.intent_review`, outcome `terminal_schema` for a void reply) and the `intent_review` pipeline events. Shadow mode posts nothing: `receipt_event_id` and `question_event_id` stay empty.
+**Where to look.** `creator_generation_reviews.review` holds `catalog`, `raw_output` (at most 16 KB), `findings`, `disposition`, `provenance` and, for a void reply, `invalid_output`. The admin job-debug view shows the agent run (`nova.kria.intent_review`, outcome `terminal_schema` for a void reply) and the `intent_review` pipeline events (`outcome`, `posted`, `render_fidelity`). What reached the chat is `receipt_event_id`, `question_event_id` and `review.posting` (next section).
 
 **Replay evals** (`pytest tests/evals/test_intent_review_evals.py`, free): goldens for a correct edit, wrong footage, wrong wording, wording drift with no authority, a timing miss and an audio decoy; hostile fixtures for each way a reply is voided. Replay proves the structure and the server judgment, not that the model catches anything; the goldens' hand-written `raw_text` is replaced by recorded replies in the live qualification run.
 
@@ -128,6 +128,20 @@ The parent row stays locked while the undo runs, so two settlers cannot both dec
 
 **Not verifiable offline.** Whether the planner turns a creator's plain "Render previous version" into a `render.request` after a revert has not been checked, because only a live planner call can show it. Until a live check proves it, copy that offers the tap must say "ask me to render it" instead of naming a button.
 
+## What the creator is told
+
+The review reports itself in the chat once, through `app/services/intent_review_post.py`; the wording is `app/kria/intent_review_copy.py` and the composition `app/kria/intent_review_posts.py` (pure). See [the pipeline guide](../pipelines/intent-review.md#what-the-creator-sees) for the outcome table.
+
+- **Honesty key.** Every "checked" sentence needs `review.provenance.visual_input_received == true`, which only the transport writes. Without it the composer raises and nothing is posted; there is no fallback sentence. A settled repair's "I checked the new video" needs the follow-up review's own proof. A requirement the model could not judge, a timing ask (stills cannot show duration) and an audio ask get no row, and when any of them is missing the headline names the limit ("I can't judge sound or motion from still frames").
+- **Silent outcomes.** `unavailable`, `stale`, `exhausted`, `review_unknown`, `repair_abandoned` and every follow-up review post nothing. The deterministic post-render receipt (`assistant_review`) stands.
+- **Quiet thread.** A receipt is posted only if the reviewed render is still current, the creator has not spoken since, no turn is in flight, no other approval is pending and the live tier is still `review` or higher. Otherwise the decision is recorded as `review.posting[<status>] = "skipped:<why>"` (`stale`, `creator_moved_on`, `head_moved`, `tier_off`, `thread_changed`, `unchecked`, `nothing_to_say`) and nothing is written. A turn in flight or a pending approval records nothing: the post is deferred and the beat sweep retries it for 30 minutes, so a turn that is planning is never thrown back to plan again by a background event and a busy moment does not lose the outcome. `head_moved` applies to a verified or unconfirmed fix whose draft is no longer the creator's current one. A revert that changed the creator's draft is posted regardless.
+- **Once.** Events carry the client id `intent-review:<review id>:<status>:<receipt|question>`; `review.posting[<status>]` records `posted` or the skip; `receipt_event_id` and `question_event_id` hold the latest ids (a staged repair's receipt, then its settlement's, overwrite one another). Posters take the thread lock and then the review row without waiting; a poster that finds the row held (a settler mid-undo) returns `busy` and the sweep posts on the next beat.
+- **Lost posts.** `recover_intent_reviews` (every beat) runs `post_unposted_outcomes`: a postable row without a recorded decision, updated within the last 30 minutes (6 hours for a revert), is posted. A kill switch turned off before it runs makes it skip, not post.
+- **Brief.** The reviewer's receipts carry `turn_value: "intent_review"` and are ignored by `GET /creation-threads/{id}/brief`. The deterministic ledger alone decides what a requirement shows.
+- **Settlement copy.** The settlement is posted by whoever closes the parent: `settle_parent_from_child` after its commit (and after the undo is durable), or `recover_repair_staged` for `repair_unverified(no_rereview)`.
+
+The revert message does not name a button. Whether the planner turns "Render previous version" into a render after a revert needs a live planner call and has not been checked, so it says to ask for it.
+
 ## Crash recovery
 
 `recover_intent_reviews` runs on every beat (through `reconcile_generation_reviews`).
@@ -151,7 +165,7 @@ A `provider_started` reservation is never released except on a definite 4xx. The
 Apply with `fly secrets set -a nova-video ...` on api and worker, then restart both.
 
 - `KRIA_INTENT_REVIEW_REPAIR_ENABLED=false`: no new staging; a repair already staged keeps waiting for the creator and still settles. A review whose disposition asked for a repair downgrades to a suggestion (`tier_review`).
-- `KRIA_INTENT_REVIEW_PAID_ENABLED=false`: rows not yet claimed become `unavailable(paid_disabled)`. Reviews in flight finish.
+- `KRIA_INTENT_REVIEW_PAID_ENABLED=false`: rows not yet claimed become `unavailable(paid_disabled)`. Reviews in flight finish, but nothing more is posted for them (an undo that already happened is still explained).
 - `KRIA_INTENT_REVIEW_ENABLED=false`: no admission, no evidence, no review, and the legacy review is no longer retired.
 - `AI_OPENAI_INTENT_REVIEW_BUDGET_USD=0`: every reserve is rejected and the tier drops back to `evidence`.
 
@@ -161,5 +175,5 @@ Apply with `fly secrets set -a nova-video ...` on api and worker, then restart b
 
 ## Verification
 
-- `cd src/apps/api && pytest tests/integration/test_intent_review_lifecycle_postgres.py tests/services/test_ai_cost_control_intent_review.py tests/services/test_openai_vision_transport.py tests/kria/test_intent_review_tier.py` on a scratch database (`bash scripts/dev/test-db.sh`). The OpenAI SDK object is the only fake.
+- `cd src/apps/api && pytest tests/integration/test_intent_review_lifecycle_postgres.py tests/integration/test_intent_review_outcome_postgres.py tests/integration/test_intent_review_repair_postgres.py tests/integration/test_intent_review_posting_postgres.py tests/kria/test_intent_review_copy.py tests/services/test_ai_cost_control_intent_review.py tests/services/test_openai_vision_transport.py tests/kria/test_intent_review_tier.py` on a scratch database (`bash scripts/dev/test-db.sh`). The OpenAI SDK object is the only fake. The sweeps are global and take the oldest rows first, so re-create the scratch database (`--drop`, then again) when a long-lived one starts to fail the sweep-count assertions.
 - The Linux-only frame decoder is qualified by `request-following-regressions.yml`: `gh workflow run request-following-regressions.yml --ref <branch>`.

@@ -108,6 +108,15 @@ class IntentReviewOutput(BaseModel):
         return self
 
 
+def counts_as_met(verdict: str, confidence: str, requirement_kind: str | None = None) -> bool:
+    """A `met` the creator may be told was checked.
+
+    A low-confidence reading is the model's own guess, and stills sample instants, so they cannot
+    show how long anything stays on screen: neither is a pass to report or to build a verdict on.
+    """
+    return verdict == "met" and confidence != "low" and requirement_kind != "timing"
+
+
 def parse_review_output(raw_text: str) -> IntentReviewOutput:
     """Strict parse of the model's JSON; anything else voids the whole review."""
     try:
