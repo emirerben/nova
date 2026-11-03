@@ -7904,13 +7904,13 @@ def _insert_clip_facts(
         )
         out[media_id] = SentenceClip(
             key="c0",
-            summary=str(getattr(meta, "clip_summary", "") or "")[:600],
-            transcript=(str(getattr(meta, "transcript", "") or "") or own)[:900],
-            subject=str(getattr(meta, "detected_subject", "") or "")[:160],
-            activity=str(getattr(meta, "activity", "") or "")[:160],
-            hook_text=str(getattr(meta, "hook_text", "") or "")[:240],
-            brands=[str(b)[:60] for b in (getattr(meta, "clip_brands", None) or [])[:8]],
-            props=[str(p)[:60] for p in (getattr(meta, "clip_props", None) or [])[:8]],
+            summary=str(meta.clip_summary or "")[:600],
+            transcript=(str(meta.transcript or "") or own)[:900],
+            subject=str(meta.detected_subject or "")[:160],
+            activity=str(meta.activity or "")[:160],
+            hook_text=str(meta.hook_text or "")[:240],
+            brands=[str(b)[:60] for b in (meta.clip_brands or [])[:8]],
+            props=[str(p)[:60] for p in (meta.clip_props or [])[:8]],
         )
     return out
 
@@ -9099,7 +9099,7 @@ def _run_phone_subtitled_job(
                         for c in talking_roles.speakers
                         if (m := next((x for x in clip_metas if str(x.clip_id) == c), None))
                         is not None
-                        and getattr(m, "speaks_to_camera", None) is True
+                        and m.speaks_to_camera is True
                         and not getattr(m, "failed", False)
                         and not getattr(m, "analysis_degraded", False)
                     ]
@@ -29178,7 +29178,7 @@ def _narrated_storyboard_plan(
                         understanding.get("summary") or getattr(meta, "hook_text", "") or ""
                     )[:500],
                     subject=str(getattr(meta, "detected_subject", "") or "")[:240],
-                    transcript=str(getattr(meta, "transcript", "") or "")[:500],
+                    transcript=str(meta.transcript or "")[:500],
                     content_type=str(understanding.get("content_type") or "broll"),
                     duration_s=float(clip_durations_s.get(clip_id, 0.0) or 0.0) or None,
                     best_moments=[
