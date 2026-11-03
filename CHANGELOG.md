@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.15.0] - 2026-11-03
+
+### Changed
+- feat(kria): send review frames to OpenAI under a reserved, capped budget (KRI-1171) (#2077) <!-- release-pr: 2077 -->
+
 ## [0.84.14.0] - 2026-11-03
 
 ### Changed
