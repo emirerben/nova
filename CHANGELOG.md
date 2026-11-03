@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.5.0] - 2026-11-03
+
+### Changed
+- feat(kria): continued turns reuse earlier planner answers and record why they continued (KRI-709) (#2073) <!-- release-pr: 2073 -->
+
 ## [0.84.4.0] - 2026-11-02
 
 ### Changed
