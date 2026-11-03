@@ -134,6 +134,7 @@ MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
     # the `worker` machine it's managing — obviously.
     "tasks.manage_render_worker_lifecycle",
     "tasks.reconcile_kria_turns",
+    "tasks.reconcile_generation_reviews",
     "tasks.reconcile_creator_preparations",
     "tasks.prune_kria_drafts",
     "tasks.execute_kria_approval",
@@ -235,6 +236,7 @@ celery_app.conf.update(
         "tasks.observe_kria_job": {"queue": "agent-control"},
         "tasks.extract_kria_brief": {"queue": "agent-control"},
         "tasks.kria_suggester": {"queue": "agent-control"},
+        "tasks.prepare_generation_review": {"queue": settings.kria_intent_review_evidence_queue},
         "tasks.analyze_kria_clips": {"queue": settings.pool_asset_analysis_queue},
         "tasks.analyze_user_song": {"queue": settings.pool_asset_analysis_queue},
         "tasks.align_user_song_takes": {"queue": settings.pool_asset_analysis_queue},
@@ -331,6 +333,10 @@ celery_app.conf.update(
         },
         "reconcile-kria-turns-every-minute": {
             "task": "tasks.reconcile_kria_turns",
+            "schedule": 60.0,
+        },
+        "reconcile-generation-reviews-every-minute": {
+            "task": "tasks.reconcile_generation_reviews",
             "schedule": 60.0,
         },
         "prune-kria-draft-bodies-daily": {

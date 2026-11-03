@@ -8421,13 +8421,6 @@ def reconcile_kria_turns() -> dict[str, int]:
             return {"published": 0, "settled": 0, "skipped": 1}
         try:
             result = _reconcile_kria_turns_body()
-            if settings.kria_intent_review_enabled:
-                from app.services.render_review_admission import reconcile_generation_reviews
-
-                try:
-                    reconcile_generation_reviews()
-                except Exception:
-                    log.warning("intent_review_reconcile_failed", exc_info=True)
             try:
                 for successor_id in _expire_pending_approvals():
                     run_kria_turn.apply_async(

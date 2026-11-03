@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import time
 import uuid
@@ -17,67 +16,18 @@ from app.config import settings
 from app.database import sync_session
 from app.kria.brief_binding import BriefBinding
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
-from app.kria.render_review_context import ReviewRows, build_render_review_context
+from app.kria.render_review_context import build_render_review_context, load_review_rows
+from app.kria.review_canon import digest
 from app.models import (
-    ContentPlan,
-    CreationThread,
-    CreatorAgentApproval,
     CreatorAgentExecution,
     CreatorAgentSession,
-    CreatorAgentTurn,
-    CreatorEditDraft,
     CreatorGenerationReview,
-    CreatorPreparedExecution,
-    Job,
-    PlanItem,
 )
 from app.services.device_render import device_record, device_status
 
 log = structlog.get_logger()
 MAX_ATTEMPTS = 3
 LEASE_SECONDS = 120
-
-
-def _digest(value):
-    return hashlib.sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()
-    ).hexdigest()
-
-
-def load_review_rows(db, execution_id, *, locked=False):
-    e = db.get(CreatorAgentExecution, execution_id)
-    if e is None:
-        raise ValueError("execution_missing")
-    s = db.get(CreatorAgentSession, e.session_id)
-    i = db.get(PlanItem, s.plan_item_id)
-    approval_id = uuid.UUID(e.result["approval_id"])
-
-    def get(model, key):
-        if key is None:
-            raise ValueError("authority_missing")
-        query = select(model).where(model.id == key).execution_options(populate_existing=True)
-        if locked:
-            query = query.with_for_update()
-        row = db.scalar(query)
-        if row is None:
-            raise ValueError("authority_missing")
-        return row
-
-    p = get(ContentPlan, i.content_plan_id)
-    i = get(PlanItem, i.id)
-    j = get(Job, e.target_job_id)
-    s = get(CreatorAgentSession, e.session_id)
-    turn = get(CreatorAgentTurn, e.turn_id)
-    d = get(CreatorEditDraft, e.target_draft_id)
-    a = get(CreatorAgentApproval, approval_id)
-    e = get(CreatorAgentExecution, e.id)
-    t = get(CreationThread, e.target_thread_id)
-    prepared = (
-        db.get(CreatorPreparedExecution, a.prepared_execution_id)
-        if a.prepared_execution_id
-        else None
-    )
-    return ReviewRows(p, i, j, t, s, turn, d, a, e, prepared)
 
 
 def _inputs(rows):
@@ -174,7 +124,7 @@ def _inputs(rows):
         approval_id=str(a.id),
         recipe=status.request.recipe.model_dump(mode="json"),
         dispatch_settings=copy.deepcopy((j.all_candidates or {}).get("creator_strategy")),
-        record=record,
+        publication=_publication_identity(j, variant_id),
         prepared=copy.deepcopy(rows.prepared.snapshot) if rows.prepared else None,
         prepared_digest=rows.prepared.snapshot_digest if rows.prepared else None,
         prepared_invalidated=str(rows.prepared.invalidated_at)
@@ -183,8 +133,27 @@ def _inputs(rows):
     )
 
 
+def _publication_identity(job, variant_id):
+    """Immutable publication fields only: reads rewrite the device record (polls, protocol)."""
+    record = device_record(job, variant_id)
+    published = record.get("published_attempt")
+    attempt = record.get("attempts", {}).get(published, {})
+    variants = (job.assembly_plan or {}).get("variants", [])
+    variant = next((v for v in variants if v.get("variant_id") == variant_id), {})
+    return {
+        "published_attempt": published,
+        "requirement_generation": record.get("requirement_generation"),
+        "recipe_digest": record.get("recipe_digest"),
+        "attempt_path": attempt.get("path"),
+        "publication_proof": attempt.get("publication_proof"),
+        "render_generation_id": variant.get("render_generation_id"),
+        "render_status": variant.get("render_status"),
+        "video_path": variant.get("video_path"),
+    }
+
+
 def _demand_identity(execution, job, session):
-    return _digest(
+    return digest(
         {
             "execution": str(execution.id),
             "job": str(job.id),
@@ -195,8 +164,7 @@ def _demand_identity(execution, job, session):
             "draft": str(execution.target_draft_id),
             "revision": execution.target_draft_revision,
             "binding": execution.result.get("brief_binding"),
-            "record": device_record(job, execution.target_variant_id),
-            "variants": (job.assembly_plan or {}).get("variants"),
+            "publication": _publication_identity(job, execution.target_variant_id),
             "settings": (job.all_candidates or {}).get("creator_strategy"),
         }
     )
@@ -228,7 +196,11 @@ def _set_admission_marker(execution, **changes):
         execution.result = {**execution.result, "intent_review_admission": {**marker, **changes}}
 
 
-def _recover_admission_demands():
+def _time_left(deadline):
+    return deadline is None or time.monotonic() < deadline
+
+
+def _recover_admission_demands(deadline=None):
     with sync_session() as db:
         identifiers = list(
             db.scalars(
@@ -244,6 +216,8 @@ def _recover_admission_demands():
             )
         )
     for identifier in identifiers:
+        if not _time_left(deadline):
+            return
         with sync_session() as db:
             try:
                 rows = load_review_rows(db, identifier, locked=True)
@@ -305,7 +279,7 @@ def admit_generation_review(db, execution):
                 inputs = {"execution_id": str(execution.id), "status": "missing_authority"}
                 state, reason = "unavailable", "missing_authority"
             identity = inputs.get("basis", {})
-            key = _digest(
+            key = digest(
                 [
                     str(execution.id),
                     identity.get("published_attempt"),
@@ -323,7 +297,7 @@ def admit_generation_review(db, execution):
                     execution_id=execution.id,
                     owner_id=owner_session.creator_id,
                     review_key=key,
-                    input_digest=_digest(inputs),
+                    input_digest=digest(inputs),
                     inputs=inputs,
                     status=state,
                     attempts=0,
@@ -359,7 +333,7 @@ def publish_generation_review(review_id):
             row.last_publish_attempt_at = db.scalar(select(func.clock_timestamp()))
             db.commit()
         prepare_generation_review.apply_async(
-            args=[str(review_id)], task_id=f"generation-review:{review_id}", queue="agent-control"
+            args=[str(review_id)], task_id=f"generation-review:{review_id}"
         )
         return True
     except Exception:
@@ -367,10 +341,11 @@ def publish_generation_review(review_id):
         return False
 
 
-def reconcile_generation_reviews():
+def reconcile_generation_reviews(deadline=None):
+    """Bounded by ``deadline`` (monotonic): never starts a unit of work once it has passed."""
     if not settings.kria_intent_review_enabled:
         return 0
-    _recover_admission_demands()
+    _recover_admission_demands(deadline)
     with sync_session() as db:
         ids = list(
             db.scalars(
@@ -390,7 +365,71 @@ def reconcile_generation_reviews():
                 .limit(25)
             )
         )
-    return sum(publish_generation_review(identifier) for identifier in ids)
+    published = 0
+    for identifier in ids:
+        if not _time_left(deadline):
+            break
+        published += publish_generation_review(identifier)
+    return published
+
+
+FRAME_RETENTION = timedelta(hours=24)
+_SWEEP_ADVISORY_KEY = 0x4B52494752564900
+
+
+def expire_review_frames():
+    """Stills of a creator's footage do not outlive the review that needed them."""
+    cutoff = datetime.now(UTC) - FRAME_RETENTION
+    with sync_session() as db:
+        expired = db.execute(
+            text(
+                """
+                UPDATE creator_generation_reviews
+                SET result = jsonb_set(
+                    result,
+                    '{evidence,frames}',
+                    (
+                        SELECT COALESCE(
+                            jsonb_agg((frame - 'image_bytes') || '{"image_expired": true}'),
+                            '[]'::jsonb
+                        )
+                        FROM jsonb_array_elements(result #> '{evidence,frames}') AS frame
+                    )
+                )
+                WHERE created_at < :cutoff
+                  AND status <> 'running'
+                  AND jsonb_typeof(result #> '{evidence,frames}') = 'array'
+                  AND EXISTS (
+                      SELECT 1 FROM jsonb_array_elements(result #> '{evidence,frames}') AS f
+                      WHERE f ? 'image_bytes'
+                  )
+                """
+            ),
+            {"cutoff": cutoff},
+        ).rowcount
+        db.commit()
+    return expired
+
+
+def sweep_generation_reviews(budget_s):
+    """The review lane's own beat sweep: single-flight, time-boxed, away from chat turns."""
+    if not settings.kria_intent_review_enabled:
+        return {"published": 0, "expired_frames": 0}
+    from app.database import sync_engine
+
+    with sync_engine.connect() as lock_conn:
+        got = lock_conn.execute(
+            text("select pg_try_advisory_lock(:key)"), {"key": _SWEEP_ADVISORY_KEY}
+        ).scalar()
+        if not got:
+            return {"published": 0, "expired_frames": 0, "skipped": 1}
+        try:
+            deadline = time.monotonic() + budget_s
+            published = reconcile_generation_reviews(deadline)
+            return {"published": published, "expired_frames": expire_review_frames()}
+        finally:
+            lock_conn.execute(text("select pg_advisory_unlock(:key)"), {"key": _SWEEP_ADVISORY_KEY})
+            lock_conn.commit()
 
 
 def claim_generation_review(review_id):
@@ -405,7 +444,7 @@ def claim_generation_review(review_id):
             or (row.status == "running" and row.lease_until and row.lease_until > now)
         ):
             return None
-        if _digest(row.inputs) != row.input_digest:
+        if digest(row.inputs) != row.input_digest:
             row.status, row.reason = "stale", "admission_inputs_changed"
             row.lease_token, row.lease_until = None, None
             db.commit()
@@ -433,7 +472,7 @@ def run_generation_review(review_id):
     # Recheck before storage I/O so a known stale generation consumes no evidence work.
     try:
         with sync_session() as db:
-            if _digest(_inputs(load_review_rows(db, execution_id))) != input_digest:
+            if digest(_inputs(load_review_rows(db, execution_id))) != input_digest:
                 raise ValueError("authority_changed")
         evidence = obtain_render_review_evidence(
             ReviewBasis.model_validate(inputs["basis"]), deadline_monotonic=time.monotonic() + 90
@@ -459,7 +498,7 @@ def run_generation_review(review_id):
         try:
             rows = load_review_rows(db, execution_id, locked=True)
             current = _inputs(rows)
-            current_digest = _digest(current)
+            current_digest = digest(current)
         except (ValueError, TypeError, KeyError, AttributeError, StopIteration):
             rows, current_digest = None, None
         row = db.get(CreatorGenerationReview, review_id, with_for_update=True)
@@ -473,7 +512,7 @@ def run_generation_review(review_id):
         if (
             current_digest != input_digest
             or row.input_digest != input_digest
-            or _digest(row.inputs) != input_digest
+            or digest(row.inputs) != input_digest
         ):
             row.status, row.reason = "stale", "authority_changed"
         elif bundle is None:

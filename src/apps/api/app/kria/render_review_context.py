@@ -7,19 +7,21 @@ client upload hashes and publication success alone cannot supply this capability
 
 from __future__ import annotations
 
-import hashlib
-import json
 import uuid
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field, model_validator
 from sqlalchemy import select
 
 from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.brief_binding import BriefBinding
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
 from app.kria.prepared_execution import PreparedExecutionSnapshot
+from app.kria.review_canon import FrozenModel
+from app.kria.review_canon import canonical_json as _json
+from app.kria.review_canon import digest as canonical_digest
+from app.kria.review_canon import require as _require
 from app.models import (
     ContentPlan,
     CreationThread,
@@ -38,10 +40,6 @@ from app.services.creator_render_contract import (
     read_render_contract,
 )
 from app.services.device_render import _recipe_digest, device_record, device_status
-
-
-class FrozenModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
 
 class VerifiedArtifactReceipt(FrozenModel):
@@ -129,15 +127,6 @@ class ReviewRows:
     approval: CreatorAgentApproval
     execution: CreatorAgentExecution
     prepared: CreatorPreparedExecution | None = None
-
-
-def _json(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-
-
-def _require(condition: bool, reason: str) -> None:
-    if not condition:
-        raise ValueError(reason)
 
 
 def build_render_review_context(
@@ -324,9 +313,7 @@ def build_render_review_context(
         )
         return CaptureResult(
             status="ready",
-            packet=RenderReviewPacket(
-                **data, packet_digest=hashlib.sha256(_json(data).encode()).hexdigest()
-            ),
+            packet=RenderReviewPacket(**data, packet_digest=canonical_digest(data)),
         )
     except (ValueError, TypeError, KeyError, AttributeError, StopIteration) as exc:
         return CaptureResult(

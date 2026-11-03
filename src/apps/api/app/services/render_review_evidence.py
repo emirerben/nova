@@ -20,15 +20,18 @@ import sys
 import tempfile
 import time
 import uuid
+from functools import partial
 from pathlib import Path
 from typing import Literal
 
 from PIL import Image
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from app import storage
 from app.kria.device_render import DeviceRenderIdentity
 from app.kria.render_review_context import TimestampedObservation, VerifiedArtifactReceipt
+from app.kria.review_canon import FrozenModel as _FrozenModel
+from app.kria.review_canon import require
 
 _LOCAL_MP4_INPUT = (
     "-protocol_whitelist",
@@ -69,18 +72,21 @@ os.execv(sys.argv[1], sys.argv[1:])
 """
 
 
+_DECODER_ENV_ALLOWLIST = ("PATH", "LANG", "LC_ALL", "LD_LIBRARY_PATH", "TMPDIR")
+
+
+def _decoder_environment() -> dict[str, str]:
+    """Only what ffmpeg needs; the worker's credentials never reach a creator-bytes parser."""
+    inherited = {key: os.environ[key] for key in _DECODER_ENV_ALLOWLIST if key in os.environ}
+    return {**inherited, "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1"}
+
+
 def _resource_limits_supported() -> bool:
     return sys.platform == "linux" and hasattr(os, "geteuid") and os.geteuid() != 0
 
 
-class FrozenModel(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-        frozen=True,
-        allow_inf_nan=False,
-        ser_json_bytes="base64",
-        val_json_bytes="base64",
-    )
+class FrozenModel(_FrozenModel):
+    model_config = ConfigDict(ser_json_bytes="base64", val_json_bytes="base64")
 
 
 class ReviewBasis(FrozenModel):
@@ -178,9 +184,7 @@ def _remaining(deadline: float) -> float:
     return remaining
 
 
-def _require(condition: bool, reason: str) -> None:
-    if not condition:
-        raise _Unavailable(reason)
+_require = partial(require, error=_Unavailable)
 
 
 def _proof(basis: ReviewBasis) -> _PublicationProof:
@@ -213,7 +217,7 @@ def _run(arguments: list[str], deadline: float) -> subprocess.CompletedProcess:
         raise _Unavailable("decoder_command_unavailable")
     timeout = min(20.0, _remaining(deadline))
     stop = time.monotonic() + timeout
-    environment = {**os.environ, "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1"}
+    environment = _decoder_environment()
     command = [sys.executable, "-I", "-c", _LIMITED_DECODER, executable, *arguments[1:]]
     with subprocess.Popen(
         command,

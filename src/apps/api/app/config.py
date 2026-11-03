@@ -782,6 +782,13 @@ class Settings(BaseSettings):
     # durable turn/approval endpoints deliberately fail closed as 404.
     kria_runtime_v2_enabled: bool = False
     kria_intent_review_enabled: bool = False
+    kria_intent_review_evidence_queue: str = Field(
+        default="celery",
+        description="Celery queue for `tasks.prepare_generation_review`, which downloads the "
+        "published MP4 (up to 256MB, RAM-backed /tmp) and runs ffmpeg. The code default keeps "
+        "local `dev-auto.sh` working. Production pins an `autoplace-jobs` queue in fly.toml, "
+        "never `agent-control`/`maintenance`, which the 1GB `light`/Beat machine consumes.",
+    )
     # KRI-520: Kria replies in the chat's language (Turkish or English). The chat's
     # language comes from the creator's own messages, then the device language; server
     # copy and the Main Creator/copilot prompts follow it. Default TRUE; kill switch =

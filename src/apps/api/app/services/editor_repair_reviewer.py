@@ -6,14 +6,11 @@ import json
 import math
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
 from app.agents._runtime import RunContext
+from app.kria.review_canon import FrozenModel
 from app.services.bounded_review import ReviewProvenance, invoke_bounded_review
-
-
-class FrozenModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
 
 
 class EditorRepairEvidence(FrozenModel):

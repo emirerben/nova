@@ -382,3 +382,21 @@ def test_linux_decoder_output_file_has_hard_size_limit(tmp_path):
         )
     assert output.exists()
     assert output.stat().st_size <= 1024 * 1024
+
+
+def test_decoder_child_never_inherits_the_workers_credentials(monkeypatch):
+    from app.services.render_review_evidence import _decoder_environment
+
+    for name in (
+        "OPENAI_API_KEY",
+        "DATABASE_URL",
+        "REDIS_URL",
+        "GOOGLE_SERVICE_ACCOUNT_JSON",
+        "ADMIN_API_KEY",
+    ):
+        monkeypatch.setenv(name, "secret-value")
+    monkeypatch.setenv("PATH", "/usr/bin")
+    environment = _decoder_environment()
+    assert "secret-value" not in " ".join(environment.values())
+    assert environment["PATH"] == "/usr/bin"
+    assert environment["OMP_NUM_THREADS"] == "1"

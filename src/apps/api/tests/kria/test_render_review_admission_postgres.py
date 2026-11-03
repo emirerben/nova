@@ -713,3 +713,160 @@ async def test_reconcile_rotates_past_undelivered_backlog(
         assert all(
             db.get(CreatorGenerationReview, identifier).status == "pending" for identifier in added
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change", ["generation", "ownership", "binding", "recipe", "dispatch_settings", "proof"]
+)
+async def test_authority_digest_ignores_read_side_effects_but_not_authority(
+    approved_publication, monkeypatch, change
+):
+    from app.kria.review_canon import digest
+    from app.models import CreatorGenerationReview
+    from app.routes.device_render import READER_PROTOCOL_FIELD
+    from app.services.render_review_admission import _inputs, load_review_rows
+
+    claim, _, job_id, _ = approved_publication
+    rid = await admit_case(approved_publication, monkeypatch)
+
+    def authority_digest():
+        with sync_session() as db:
+            try:
+                return digest(_inputs(load_review_rows(db, claim.execution_id)))
+            except ValueError as exc:
+                return f"refused:{exc}"
+
+    def edit_job(edit):
+        with sync_session() as db:
+            job = db.get(Job, job_id)
+            assembly = copy.deepcopy(job.assembly_plan)
+            edit(job, assembly)
+            job.assembly_plan = assembly
+            db.commit()
+
+    with sync_session() as db:
+        admitted = db.get(CreatorGenerationReview, rid).input_digest
+    assert authority_digest() == admitted
+    edit_job(
+        lambda job, assembly: assembly[DEVICE_RENDER_FIELD]["guided_story"].update(
+            last_polled_at="2030-01-01T00:00:00+00:00", **{READER_PROTOCOL_FIELD: 99}
+        )
+    )
+    assert authority_digest() == admitted
+
+    def drift(job, assembly):
+        live = assembly[DEVICE_RENDER_FIELD]["guided_story"]
+        if change == "generation":
+            assembly["variants"][0]["render_generation_id"] = "later-generation"
+        elif change == "ownership":
+            job.content_plan_ownership_epoch += 1
+        elif change == "dispatch_settings":
+            job.all_candidates = {
+                **(job.all_candidates or {}),
+                "creator_strategy": {"target_duration_s": 3},
+            }
+        elif change == "recipe":
+            live["recipe_digest"] = "b" * 64
+        elif change == "proof":
+            live["attempts"][live["published_attempt"]]["publication_proof"] = {"sha256": "c" * 64}
+
+    if change == "binding":
+        with sync_session() as db:
+            execution = db.get(CreatorAgentExecution, claim.execution_id)
+            updated = copy.deepcopy(execution.result)
+            updated["brief_binding"]["creator_request"] = "Changed request"
+            execution.result = updated
+            db.commit()
+    else:
+        edit_job(drift)
+    assert authority_digest() != admitted
+
+
+@pytest.mark.asyncio
+async def test_review_sweep_is_time_boxed_and_never_runs_inside_the_chat_reconciler(
+    approved_publication, monkeypatch
+):
+    from unittest.mock import Mock
+
+    from app.models import CreatorGenerationReview
+    from app.services import render_review_admission as admission
+    from app.tasks.kria_runtime import reconcile_kria_turns
+    from app.tasks.render_review import prepare_generation_review
+
+    claim, *_ = approved_publication
+    monkeypatch.setattr(settings, "kria_intent_review_enabled", True)
+    broker = Mock(side_effect=RuntimeError("broker unavailable"))
+    monkeypatch.setattr(prepare_generation_review, "apply_async", broker)
+    assert (await asyncio.to_thread(_observe_dispatched_execution, claim.execution_id))[
+        0
+    ] == "completed"
+    broker.side_effect = None
+    broker.reset_mock()
+
+    forbidden = Mock(side_effect=AssertionError("review recovery inside the 45s chat reconciler"))
+    monkeypatch.setattr(admission, "reconcile_generation_reviews", forbidden)
+    reconcile_kria_turns.run()
+    forbidden.assert_not_called()
+    monkeypatch.undo()
+    monkeypatch.setattr(settings, "kria_intent_review_enabled", True)
+    monkeypatch.setattr(prepare_generation_review, "apply_async", broker)
+    broker.reset_mock()
+
+    assert admission.sweep_generation_reviews(budget_s=-1)["published"] == 0
+    broker.assert_not_called()
+    assert admission.sweep_generation_reviews(budget_s=30)["published"] >= 1
+    with sync_session() as db:
+        assert db.scalar(
+            select(CreatorGenerationReview.last_publish_attempt_at).where(
+                CreatorGenerationReview.execution_id == claim.execution_id
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_decoded_stills_are_dropped_after_retention_but_their_hashes_stay(
+    approved_publication, monkeypatch
+):
+    from datetime import UTC, datetime, timedelta
+
+    from app.models import CreatorGenerationReview
+    from app.services.render_review_admission import expire_review_frames
+
+    rid = await admit_case(approved_publication, monkeypatch)
+
+    def frame(index):
+        return {"image_bytes": "/9j/AAAA", "image_sha256": f"{index:064x}", "timestamp_s": index}
+
+    evidence = {"frames": [frame(1), frame(2)], "rendered_duration_s": 9.5}
+
+    def stage(created_ago, status):
+        with sync_session() as db:
+            row = db.get(CreatorGenerationReview, rid)
+            row.result = {"evidence": evidence, "packet": {"keep": True}}
+            row.status = status
+            row.created_at = datetime.now(UTC) - created_ago
+            db.commit()
+
+    def stored():
+        with sync_session() as db:
+            return db.get(CreatorGenerationReview, rid).result
+
+    stage(timedelta(hours=1), "evidence_ready")
+    assert expire_review_frames() == 0
+    assert stored()["evidence"]["frames"][0]["image_bytes"]
+    stage(timedelta(days=2), "running")
+    assert expire_review_frames() == 0
+    stage(timedelta(days=2), "evidence_ready")
+    assert expire_review_frames() == 1
+    result = stored()
+    assert [f["image_sha256"] for f in result["evidence"]["frames"]] == [
+        frame(1)["image_sha256"],
+        frame(2)["image_sha256"],
+    ]
+    assert all(
+        "image_bytes" not in f and f["image_expired"] is True for f in result["evidence"]["frames"]
+    )
+    assert result["evidence"]["rendered_duration_s"] == 9.5
+    assert result["packet"] == {"keep": True}
+    assert expire_review_frames() == 0

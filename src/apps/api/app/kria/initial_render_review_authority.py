@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from app.kria import prepared_execution as prepared
 from app.kria.brief_binding import BriefBinding
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
+from app.kria.review_canon import require as _require
 from app.services.creator_render_contract import (
     CONTRACT_FIELD,
     build_render_contract,
@@ -31,11 +32,6 @@ class InitialRenderAuthority:
     binding_digest: str
     prepared_id: str
     prepared_attempt_id: str
-
-
-def _require(condition: bool, reason: str) -> None:
-    if not condition:
-        raise ValueError(reason)
 
 
 def resolve_initial_render_authority(rows: ReviewRows) -> InitialRenderAuthority:
