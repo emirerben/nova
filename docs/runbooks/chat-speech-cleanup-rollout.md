@@ -39,8 +39,11 @@ setting the flag:
    Pass = every negative (real takes with no restart) returns no span, and
    `test_positive_fixtures_cut_only_the_abandoned_take` passes on Green 3 and N3: no span
    touches a kept word. Any failure blocks the flag.
-2. Add `_RESTART_CUT_AT_APPROVAL` to `approval_readiness._cleanup_deferred` (KRI-1178) if it
-   is not there yet, so the "also cuts a sentence you restarted" receipt never holds a draft.
+2. Land the `cut_restarts` brief-fact follow-up to KRI-1176 (child of KRI-1174) first. Until
+   then a real retake cut leaves "Cut the sentence I restarted" at "Partly ... may still be in
+   your video" while the finished-render note says what was cut. Its new "also cuts a sentence
+   you restarted" receipt must also be in `approval_readiness._cleanup_deferred` (KRI-1178), so
+   it never holds a draft.
 3. `fly secrets set SPEECH_CLEANUP_RETAKES_ENABLED=true --app nova-video` and restart api and
    worker (every ready analysis is retired once and consent is asked again), then the canary
    above on an iPhone: the Green 3 take (`IMG_7231.MOV`) as the retake-positive source and one

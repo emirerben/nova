@@ -82,8 +82,8 @@ def current_detector_policy() -> str:
 def speech_cleanup_retakes_enabled() -> bool:
     """Keep consented preflight retakes fenced from legacy auto-cut rollout.
 
-    The one reading of the two levers: the detector policy, the engine run, the draft
-    receipts and the finished-render note all ask here (KRI-1176).
+    The one reading of the two levers: the detector policy, the engine run and the
+    finished-render note all ask here (KRI-1176).
     """
 
     from app.config import settings  # noqa: PLC0415

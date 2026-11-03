@@ -372,11 +372,10 @@ def test_cleanup_and_a_named_cut_keep_the_named_cut_receipt_when_length_matches(
     receipt = check_requirement(req, _talking(speech_cleanup_enabled=True, duration_s=24))
 
     assert receipt.status == "partial"
-    # KRI-1176: a generic retake ask gets the restart sentence, not the exact-line note.
     assert (
-        "Clean up speech looks only for pauses and filler sounds, so a sentence you restarted "
-        "stays in"
-    ) in (receipt.reason or "")
+        "I can't cut out one exact line yet or confirm it's gone, so it may still be in your video"
+        in (receipt.reason or "")
+    )
     assert "can't promise" not in (receipt.reason or "")
 
 
