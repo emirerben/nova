@@ -297,6 +297,28 @@ final class SpeakerBackgroundCompositionTests: XCTestCase {
         }
     }
 
+    /// S51 (live preview + trace): the editor's live composition draws a colour fill through the same matte and trace as a
+    /// photo: the speaker is cut out frame by frame, nothing is counted as a hidden background, and the colour shows.
+    @MainActor func testLivePreviewDrawsAColourFillAndTracesACutout() async throws {
+        useSpeakerSegmenter(self, GreenPersonSegmenter())
+        let directory = try speakerTestDirectory(self)
+        let speaker = try await writeSpeakerClip(directory: directory, size: (canvas.width, canvas.height), seconds: 2)
+        let scene = try speakerRecipe(canvas: canvas, speaker: speaker, duration: 2, background: nil, colorBackground: "#FFFFFF")
+        let live = try await LivePreviewComposition(recipe: scene.recipe, assetURLs: scene.urls)
+        try live.updateText(recipe: scene.recipe)
+        let generator = AVAssetImageGenerator(asset: live.preview.playerItem.asset)
+        generator.videoComposition = live.preview.playerItem.videoComposition
+        generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+        let frame = try SpeakerTestFrame(try await generator.image(at: CMTime(seconds: 1, preferredTimescale: 600)).image)
+        for (fx, fy) in corners { XCTAssertTrue(isColor(frame.rgb(fx: fx, fy: fy), SpeakerTestColor.white), "corner (\(fx), \(fy)): \(frame.rgb(fx: fx, fy: fy))") }
+        XCTAssertTrue(isColor(frame.rgb(fx: personCenter.0, fy: personCenter.1), SpeakerColor.person))
+        let snapshot = try XCTUnwrap(live.speakerTrace).snapshot()
+        XCTAssertEqual(snapshot.speakerClips, 1)
+        XCTAssertGreaterThan(snapshot.counts["cutout"] ?? 0, 0, snapshot.summary)
+        XCTAssertNil(snapshot.counts["no_speaker_layer"], snapshot.summary)
+        XCTAssertEqual(snapshot.longestHiddenRun, 0)
+    }
+
     /// S51 (live preview): a colour fill survives an in-place editor update, and changing the colour takes the full rebuild.
     @MainActor func testColourChangeTakesTheFullRebuild() async throws {
         useSpeakerSegmenter(self, GreenPersonSegmenter())
