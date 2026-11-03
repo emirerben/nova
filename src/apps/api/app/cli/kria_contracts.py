@@ -65,6 +65,7 @@ from app.routes.creation_threads import (
     CreationCapabilitiesOut,
     CreationThreadOut,
     MessageBody,
+    ReplaceMediaBody,
     SuggestionSetOut,
     UploadBody,
     UploadTarget,
@@ -210,6 +211,7 @@ MOBILE_API_MODELS = (
     UploadBody,
     UploadTarget,
     AttachBody,
+    ReplaceMediaBody,
     ActionBody,
     MessageBody,
     SuggestionSetOut,
@@ -819,6 +821,18 @@ def mobile_openapi_json() -> str:
                     "security": bearer,
                     "requestBody": _json_request(AttachBody),
                     "responses": _json_responses(CreationThreadOut),
+                },
+            },
+            "/creation-threads/{thread_id}/media/replace": {
+                "parameters": [thread_id],
+                "post": {
+                    "operationId": "replaceCreationThreadMedia",
+                    "security": bearer,
+                    "requestBody": _json_request(ReplaceMediaBody),
+                    "responses": {
+                        **_json_responses(CreationThreadOut),
+                        "404": {"description": "Re-recording is unavailable"},
+                    },
                 },
             },
             "/creation-threads/{thread_id}/delta": {

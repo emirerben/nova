@@ -1073,3 +1073,61 @@ block of `make kria-replay FIXTURE=29-ekim`.
 
 `EditCopilotAgent` has `max_output_tokens=16_384` with a 130 s timeout: a runaway call needs 124.3 s to
 reach the cap, so it must stay under the timeout (`test_edit_copilot_budget_runs_out_before_its_provider_timeout`).
+
+## Re-recording a take (`MEDIA_REPLACE_ENABLED`)
+
+`POST /creation-threads/{id}/media/replace` swaps ONE attached speaker clip for a new upload in
+one transaction. A client-side remove-then-attach can commit with zero speakers, and on a
+multi-clip Talking item an attach adds a second one; the swap keeps the clip count and its slot, so
+neither state is ever committed. It is additive: old builds never call it, and they drop the
+`media_replaced` event and ignore `state.source_replacement`.
+
+Flag: `MEDIA_REPLACE_ENABLED`, default `false`. Off: the route and `upload-urls`
+`replaces_media_id` answer 404 `media_replace_unavailable`, and `media_capabilities.clips.replace`
+is absent (not `false`). Apply: `fly secrets set MEDIA_REPLACE_ENABLED=true --app nova-video`, restart
+api + worker, then ship the app that calls it. New app against an old server gets that 404, so the app
+must read `media_capabilities.clips.replace` first. Rollback: unset the secret and restart.
+
+Request body (`StrictBody`, unknown fields are 422): `replaced_media_id`, `media` (a `MediaInput`,
+kind `video`, the proxy reservation id on a device-only thread), `reason` (only `"retake"`),
+`client_event_id`, `expected_revision`. Response 200 is the same `CreationThreadOut` as attach. Errors are
+`{"problem": {"code", "message", "retryable", "recovery", "current_revision"}}`:
+
+| Status | `problem.code` |
+| --- | --- |
+| 404 | `media_replace_unavailable`, or a thread code from `_load` (`thread_not_found`, `thread_deleted`, `thread_id_invalid`) |
+| 409 | `thread_archived`, `idempotency_key_reused`, `revision_mismatch` (carries `current_revision`), `render_in_progress`, `draft_missing`, `retake_target_missing`, `retake_target_not_speaker`, `retake_speaker_unknown`, `retake_same_source`, `source_already_attached`, `retake_source_unresolved`, `upload_not_finished` (retryable) |
+| 422 | `retake_unsupported_format`, `retake_target_not_clip`, `retake_kind_mismatch`, `retake_library_unsupported`, `retake_has_no_audio`, `invalid_media_id`, `path_mismatch`, `device_render_unsupported`, plus the verifier codes it shares with attach |
+| 503 | `identity_unavailable`, `upload_verification_error`, `media_verification_error` (retryable) |
+
+Data changes: the clip row at the same index is rebuilt by the attach row builder (only `shot_id`
+carries over; trims, speech coverage and sound toggles describe the old take and are dropped), written
+only through `mutate_plan_item_media`, so the speech-cleanup analysis for the old take is superseded,
+consent cleared and the edit proposal marked stale. `thread.state.media` swaps the entry in place and gains
+`source_replacement = {replaced_media_id, media_id, superseded_job_id, revision}`. Voiceover, song,
+script, and the speaker background are untouched. The old Job is never written: its variants keep
+the take they were cut from, and the old take stays in storage (retention and thread deletion own it,
+because the old Job and its editor still name it).
+
+Fresh plan: while `item.current_job_id` is the superseded Job, `planner._load_editor_target` misses
+with `source_replaced` (deliberately not a guarded miss), so a follow-up routes to `replan` and the next
+strategy claim mints a new Job from the new take. The marker goes inert on its own once that Job is current.
+The server never starts the planning turn; the client sends the follow-up message. Pending approvals
+prepared against the old take are closed with code `source_replaced` after the commit
+(`retire_pending_approvals_for_source_change`, canonical lock order, idempotent, re-run by every replay).
+
+`upload-urls` accepts `replaces_media_id`: a video that replaces an attached clip does not count
+against the clip cap (one exemption per replaced clip). Guard: `tests/kria/test_replace_media_e2e.py`
+(real route, real Postgres, real ffprobe; `.replace-media-e2e/report.json`).
+
+Not closed server-side (known residuals):
+- A crash-resume of a replacement upload that calls attach instead of replace: a safe 409
+  `clip_cap_exceeded` for one-clip Talking, but with `TALKING_MULTI_CLIP_ENABLED` on it adds a second
+  speaker. Closing it needs a column on `creation_thread_upload_reservations` marking a replacement.
+- A new take with an audio track that is silent or inaudible passes registration; the on-device
+  audio check and the existing render failure path are the guards.
+- Brief requirements scoped to the old take (`clip:<old id>`, protected text naming the old speaker,
+  timed background windows) are not retargeted. The next plan reads the brief as it stands and the planner
+  reports what it cannot place as unresolved.
+- A phone export record stuck in `awaiting_device` or `syncing` keeps answering 409
+  `render_in_progress` until the stale-record reaper (24 h) settles it.

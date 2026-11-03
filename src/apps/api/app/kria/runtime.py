@@ -2300,25 +2300,30 @@ _APPROVAL_STALE_COPY = (
 )
 
 
-async def _expire_blocking_approval(
+@dataclass
+class _LockedApproval:
+    """One pending approval with its rows locked in canonical order (see the helper)."""
+
+    thread: CreationThread
+    session: CreatorAgentSession | None
+    turn: CreatorAgentTurn | None
+    approval: CreatorAgentApproval | None
+    execution: CreatorAgentExecution | None
+    plan_item: PlanItem | None
+
+
+async def _lock_approval_chain(
     db: AsyncSession,
     *,
     thread_id: uuid.UUID,
     creator_id: uuid.UUID,
     approval_id: uuid.UUID,
-) -> int | None:
-    """Lazily expire an overdue pending approval that blocks `submit_turn` (KRI-295).
+) -> _LockedApproval | None:
+    """Lock an approval and everything `_close_pending_approval` touches, or None if unknown.
 
-    Returns the thread revision after expiry, or None when nothing was expired
-    (decided/extended meanwhile). An approval someone else expired after `submit_turn`
-    saw it pending (the reconcile sweep, between that rollback and these locks) counts
-    as expired here too: its notice is the bump the creator could not have seen, exactly
-    as when this call writes it. The caller must hold NO locks: this re-acquires
-    them in canonical order (PlanItem -> Session -> Turn -> Approval -> Execution
-    -> Thread), exactly like `decide_approval`. `submit_turn` therefore rolls back
-    (releasing its Thread lock) before calling this, rather than locking Thread
-    first and then Session/Turn, which would invert the order and can deadlock
-    with a concurrent decide/cancel/sweeper.
+    The caller must hold NO locks: rows are taken in canonical order (PlanItem -> Session ->
+    Turn -> Approval -> Execution -> Thread), exactly like `decide_approval`. The caller
+    re-checks the approval's state under the locks and rolls back if it bails.
     """
     approval_ref = (
         await db.execute(
@@ -2397,6 +2402,42 @@ async def _expire_blocking_approval(
             )
         ).scalar_one_or_none()
     thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=True)
+    return _LockedApproval(
+        thread=thread,
+        session=session,
+        turn=turn,
+        approval=approval,
+        execution=execution,
+        plan_item=plan_item,
+    )
+
+
+async def _expire_blocking_approval(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    approval_id: uuid.UUID,
+) -> int | None:
+    """Lazily expire an overdue pending approval that blocks `submit_turn` (KRI-295).
+
+    Returns the thread revision after expiry, or None when nothing was expired
+    (decided/extended meanwhile). An approval someone else expired after `submit_turn`
+    saw it pending (the reconcile sweep, between that rollback and these locks) counts
+    as expired here too: its notice is the bump the creator could not have seen, exactly
+    as when this call writes it. The caller must hold NO locks: this re-acquires
+    them in canonical order (PlanItem -> Session -> Turn -> Approval -> Execution
+    -> Thread), exactly like `decide_approval`. `submit_turn` therefore rolls back
+    (releasing its Thread lock) before calling this, rather than locking Thread
+    first and then Session/Turn, which would invert the order and can deadlock
+    with a concurrent decide/cancel/sweeper.
+    """
+    locked = await _lock_approval_chain(
+        db, thread_id=thread_id, creator_id=creator_id, approval_id=approval_id
+    )
+    if locked is None:
+        return None
+    thread, session, turn, approval = locked.thread, locked.session, locked.turn, locked.approval
     if approval is not None and approval.status == "expired":  # expired by the sweep meanwhile
         revision = int(thread.revision)
         await db.rollback()
@@ -2416,8 +2457,8 @@ async def _expire_blocking_approval(
         session=session,
         turn=turn,
         approval=approval,
-        execution=execution,
-        plan_item=plan_item,
+        execution=locked.execution,
+        plan_item=locked.plan_item,
         code="approval_expired",
         message=_thread_say(
             thread,
@@ -2432,6 +2473,126 @@ async def _expire_blocking_approval(
         ),
         approval_status="expired",
     )
+
+
+SOURCE_REPLACED_CODE = "source_replaced"
+
+
+async def _approvals_made_for_replaced_source(
+    db: AsyncSession, *, thread_id: uuid.UUID, creator_id: uuid.UUID
+) -> list[uuid.UUID]:
+    """Pending approvals prepared against a take the creator has since replaced.
+
+    An approval is stale when the media identity its draft was bound to no longer matches the
+    item, or (a draft with no binding) when it was made before the swap. One made AFTER the
+    swap binds the new identity and is left alone, so a replayed retirement can never cancel a
+    fresh plan. Its target Job is no signal: a fresh strategy approval still pins the old Job
+    until the new one is minted.
+    """
+    from app.kria.brief_binding import media_identity, snapshot_media  # noqa: PLC0415
+    from app.services.source_replacement import SourceReplacement  # noqa: PLC0415
+
+    thread = (
+        await db.execute(
+            select(CreationThread).where(
+                CreationThread.id == thread_id, CreationThread.creator_id == creator_id
+            )
+        )
+    ).scalar_one_or_none()
+    replacement = SourceReplacement.from_state(getattr(thread, "state", None))
+    if thread is None or replacement is None or thread.active_plan_item_id is None:
+        return []
+    item = await db.get(PlanItem, thread.active_plan_item_id)
+    replaced_at = (
+        await db.execute(
+            select(func.max(CreationThreadEvent.created_at)).where(
+                CreationThreadEvent.thread_id == thread_id,
+                CreationThreadEvent.event_type == "media_replaced",
+            )
+        )
+    ).scalar_one_or_none()
+    current_identity = media_identity(snapshot_media(item)) if item is not None else None
+    approvals = (
+        (
+            await db.execute(
+                select(CreatorAgentApproval).where(
+                    CreatorAgentApproval.thread_id == thread_id,
+                    CreatorAgentApproval.creator_id == creator_id,
+                    CreatorAgentApproval.status == "pending",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    stale: list[uuid.UUID] = []
+    for approval in approvals:
+        draft = await db.get(CreatorEditDraft, approval.draft_id) if approval.draft_id else None
+        document = _parse_draft_document(getattr(draft, "snapshot_json", None))
+        binding = getattr(document, "brief_binding", None)
+        if binding is not None and current_identity is not None:
+            if media_identity(binding.media_snapshot) != current_identity:
+                stale.append(approval.id)
+        elif replaced_at is not None and approval.created_at <= replaced_at:
+            stale.append(approval.id)
+    return stale
+
+
+async def retire_pending_approvals_for_source_change(
+    db: AsyncSession, *, thread_id: uuid.UUID, creator_id: uuid.UUID
+) -> int:
+    """Close the approvals a take swap made stale so the creator's next message plans fresh.
+
+    Without this a pending approval keeps the thread's turn slot, and the creator's next
+    message queues behind a card they can no longer meaningfully decide. Stale approvals are
+    already refused at decide and claim time (`thread_revision_stale`, the media-identity
+    fences); this only removes the blocker. The caller must hold NO locks: each approval is
+    re-locked in canonical order and closed by `_close_pending_approval`, which commits.
+    Idempotent, so a retried replace can run it again.
+    """
+    closed = 0
+    for approval_id in await _approvals_made_for_replaced_source(
+        db, thread_id=thread_id, creator_id=creator_id
+    ):
+        await db.rollback()
+        locked = await _lock_approval_chain(
+            db, thread_id=thread_id, creator_id=creator_id, approval_id=approval_id
+        )
+        if (
+            locked is None
+            or locked.session is None
+            or locked.turn is None
+            or locked.approval is None
+            or locked.approval.status != "pending"
+        ):
+            await db.rollback()
+            continue
+        await _close_pending_approval(
+            db,
+            thread=locked.thread,
+            session=locked.session,
+            turn=locked.turn,
+            approval=locked.approval,
+            execution=locked.execution,
+            plan_item=locked.plan_item,
+            code=SOURCE_REPLACED_CODE,
+            message=_thread_say(
+                locked.thread,
+                en=(
+                    "You swapped in a new take, so I cancelled the plan I had prepared for the "
+                    "old one. Nothing was rendered. Tell me what you want and I'll plan it "
+                    "again with your new take."
+                ),
+                tr=(
+                    "Yeni çekimini ekledin, o yüzden eski çekim için hazırladığım planı iptal "
+                    "ettim. Hiçbir video oluşturulmadı. Ne istediğini söyle, yeni çekiminle "
+                    "yeniden planlayayım."
+                ),
+            ),
+        )
+        closed += 1
+    await db.rollback()
+    return closed
 
 
 async def _validated_render_shape(
