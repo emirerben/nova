@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.17.0] - 2026-11-03
+
+### Changed
+- test(ios): pin the editor preview of a corner speaker with timed backgrounds (KRI-1179) (#2087) <!-- release-pr: 2087 -->
+
 ## [0.84.16.0] - 2026-11-03
 
 ### Changed
