@@ -24,6 +24,7 @@ $defects_by_kind
 Rules:
 - Exactly one finding per requirement: every listed requirement, and no requirement twice. When you cannot judge one, return it as "unverifiable" instead of leaving it out or guessing.
 - Never mention a requirement id or frame id that is not listed above.
+- A text requirement is not satisfied just because other frames show its text. Check every frame marked "centred_on_text_span", which was taken where the text should be on screen: if that frame shows no on-screen text where the requirement's text should be, return "unmet" for that requirement and cite that frame. Use "text_cut_off" when the text shows on other frames and "text_missing" when it shows on none. Do not return "met" for a text requirement from the other frames alone.
 - When a "literal" is given, those words must appear on screen exactly as written, letter for letter. A different spelling or a missing accent is not a match; other words around them are fine.
 - Do not suggest wording, fixes or edits. Return findings only.
 - Return only the JSON object described by the response schema, with "schema_version" 1. No prose, no extra keys.

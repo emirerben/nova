@@ -27,7 +27,7 @@ from app.kria.intent_review_catalog import ReviewCatalog
 from app.pipeline.prompt_loader import load_prompt
 from app.services.ai_cost_control import UsageMeter, calculate_cost_usd
 
-PROMPT_VERSION = "intent_review_v2"
+PROMPT_VERSION = "intent_review_v3"
 FRAMES_REQUIRED = "frames://intent-review"
 MAX_REQUEST_CHARS = 2_000
 

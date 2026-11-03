@@ -180,7 +180,7 @@ async def test_a_correct_edit_is_no_findings_with_provenance_and_nothing_posted(
     review = row.review
     assert [f["verdict"] for f in review["findings"]] == ["met"]
     assert review["disposition"]["outcome"] == "no_findings"
-    assert review["prompt_version"] == "intent_review_v2"
+    assert review["prompt_version"] == "intent_review_v3"
     assert review["catalog"]["requirements"][0]["brief_id"] == "r1"
     assert review["provenance"]["visual_input_received"] is True
     assert review["provenance"]["frames_sent"] == 3

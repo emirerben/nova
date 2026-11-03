@@ -65,7 +65,7 @@ The tier is stamped at admission. Live flags can only lower it, never raise it. 
 
 ## The review agent
 
-`nova.kria.intent_review` (`app/agents/intent_review.py`, prompt `prompts/intent_review.txt`, `prompt_version` `intent_review_v2`) is never run through `Agent.run` in production. `run_intent_review` renders its prompt, sends it through the bounded image transport under an explicit reservation, and parses the reply with the same code. The dispatcher still rejects media, so an accidental dispatcher call fails closed.
+`nova.kria.intent_review` (`app/agents/intent_review.py`, prompt `prompts/intent_review.txt`, `prompt_version` `intent_review_v3`) is never run through `Agent.run` in production. `run_intent_review` renders its prompt, sends it through the bounded image transport under an explicit reservation, and parses the reply with the same code. The dispatcher still rejects media, so an accidental dispatcher call fails closed.
 
 **What the model is given.** The creator's request (at most 2,000 characters, as one JSON string so nothing in it can forge structure), up to 12 issued requirements (`R1`..`R12`, kind, label, the creator's verbatim words), and the frame manifest (`f0`..`f5` with a time, and a mark for frames centred on a text span). No candidate, target text or edit is ever in the prompt. Audio requirements are never issued: they are recorded in `review.catalog.withheld` and no finding or receipt may mention them.
 
