@@ -350,34 +350,43 @@ def _readiness(requirements, manifest, **strategy):
     return {row["requirement_id"]: row for row in report["requirements"]}, report
 
 
-def test_green3_turn1_is_ready_with_the_typed_brief(monkeypatch):
+def test_green3_turn1_holds_only_the_restarted_sentence_with_the_typed_brief(monkeypatch):
     _open_windows(monkeypatch)
     rows, report = _readiness(
         [R1, R2, R3, R4], _manifest(PHOTO, OTHER), background_media=GREEN3_BACKGROUND
     )
     # Prod: r2 needs_choice, r3 evidence_missing, r4 unsupported -> "Make it without these".
+    # Backgrounds, captions and no music are approvable now. r2 also names the restarted
+    # sentence, which KRI-1176 (#2090) honestly says may stay in while the retake path is off,
+    # so r2 alone is held; the pauses-only ask below pins KRI-1178 on the cleanup choice.
     assert {rid: row["disposition"] in APPROVABLE for rid, row in rows.items()} == {
         "r1": True,
-        "r2": True,
+        "r2": False,
         "r3": True,
         "r4": True,
     }, rows
-    assert report["ready"] is True
-    # The cleanup line is still what the creator reads about r2.
+    assert rows["r2"]["disposition"] == "needs_choice"
+    assert report["ready"] is False
+    # The cleanup line is still what the creator reads first about r2, then the honest part.
     assert rows["r2"]["reason"].startswith("If Clean up speech is offered when you approve")
+    assert rows["r2"]["reason"].endswith("so it may still be in your video")
 
 
-def test_green3_prod_brief_no_longer_lists_the_cleanup_under_leaves_out(monkeypatch):
+def test_green3_prod_brief_replays_prod_but_drops_the_named_line_promise(monkeypatch):
     _open_windows(monkeypatch)
     rows, report = _readiness(
         [R1, R2, R3_PROD, R4_PROD], _manifest(PHOTO, OTHER), background_media=GREEN3_BACKGROUND
     )
-    # The replay says exactly what prod said (event seq 7) ...
-    for rid in ("r2", "r3", "r4"):
+    # The replay says exactly what prod said (event seq 7) about captions and music ...
+    for rid in ("r3", "r4"):
         assert rows[rid]["reason"] == PROD_ROWS[rid]["reason"], rid
-    # ... but the cleanup is no longer a "Leaves out" item (prod: needs_choice).
-    assert PROD_ROWS["r2"]["disposition"] == "needs_choice"
-    assert rows["r2"]["disposition"] in APPROVABLE, rows["r2"]
+    # ... and keeps prod's cleanup sentence for r2 without its false "I'll cut the line you
+    # named" (KRI-1176, #2090). r2 stays held for that line, as in prod.
+    prod_cleanup, _ = PROD_ROWS["r2"]["reason"].split("; ", 1)
+    assert rows["r2"]["reason"].startswith(prod_cleanup + "; "), rows["r2"]
+    assert "I'll cut the line you named" in PROD_ROWS["r2"]["reason"]
+    assert "I'll cut the line you named" not in rows["r2"]["reason"]
+    assert rows["r2"]["disposition"] == PROD_ROWS["r2"]["disposition"] == "needs_choice"
     # The untyped asks keep today's verdicts (no word reading).
     assert rows["r3"]["disposition"] == PROD_ROWS["r3"]["disposition"] == "evidence_missing"
     assert rows["r4"]["disposition"] == PROD_ROWS["r4"]["disposition"] == "unsupported"
