@@ -802,7 +802,12 @@ class PlanFacts:
     caption_size_px: int | None = None
     caption_text_color: str | None = None
     caption_alignment: str | None = None
+    caption_x_frac: float | None = None
     caption_y_frac: float | None = None
+    # Per-caption changes the render applies over the block's look: a cue's own ``size_px`` /
+    # ``text_color`` and the editor's ``line_overrides`` (``size_px``, ``position_x_frac``,
+    # ``position_y_frac``), one mapping per changed caption (`phone_captions` compile).
+    caption_line_overrides: tuple[Mapping[str, Any], ...] = ()
     # KRI-1164: a finished phone render that plays music under the video (a smart music bed, or
     # a track mixed in rather than only recommended). False = none recorded.
     music_in_render: bool = False
@@ -2837,9 +2842,28 @@ def _caption_look_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
     alignment = style.get("alignment") if isinstance(style, Mapping) else None
     if isinstance(alignment, str) and alignment:
         facts["caption_alignment"] = alignment
-    y_frac = _finite_number(style.get("position_y_frac")) if isinstance(style, Mapping) else None
-    if y_frac is not None:
-        facts["caption_y_frac"] = y_frac
+    style = style if isinstance(style, Mapping) else {}
+    for key, fact in (("position_x_frac", "caption_x_frac"), ("position_y_frac", "caption_y_frac")):
+        value = _finite_number(style.get(key))
+        if value is not None:
+            facts[fact] = value
+    cues = [cue for cue in variant.get("caption_cues") or [] if isinstance(cue, Mapping)]
+    lines = style.get("line_overrides")
+    lines = lines if isinstance(lines, Mapping) else {}
+    overrides = []
+    for cue in cues:
+        own = {key: cue[key] for key in ("size_px", "text_color") if cue.get(key) is not None}
+        line = lines.get(cue.get("id")) if cue.get("id") is not None else None
+        if isinstance(line, Mapping):
+            own.update(
+                (key, line[key])
+                for key in ("size_px", "position_x_frac", "position_y_frac")
+                if line.get(key) is not None
+            )
+        if own:
+            overrides.append(own)
+    if overrides:
+        facts["caption_line_overrides"] = tuple(overrides)
     return facts
 
 
@@ -7019,6 +7043,34 @@ def _merge_cleanup_timing(
     return _receipt(req, "partial", f"{cleanup.reason}; {timing.reason}")
 
 
+def _caption_lines_kept(
+    ask: CaptionLookAsk, receipt: Mapping[str, Any], overrides: Sequence[Mapping[str, Any]]
+) -> bool | None:
+    """Do single captions changed in the editor still carry the asked look (Emir's second #2089
+    review)? The render draws each override (`phone_captions`), so one caption resized,
+    recoloured or moved off the drawn spot is the look changed; an override that keeps it is
+    not. None = an asked spot the receipt does not record, which nothing can compare."""
+    unknown = False
+    for line in overrides:
+        if ask.size is not None and "size_px" in line:
+            size = _finite_number(line["size_px"])
+            if size is None or round(size) != round(float(receipt.get("size_px") or 0)):
+                return False
+        if ask.color is not None and "text_color" in line:
+            if str(line["text_color"]).casefold() != ask.color.casefold():
+                return False
+        if ask.position is not None:
+            for key in ("position_x_frac", "position_y_frac"):
+                if key not in line:
+                    continue
+                drawn, now = _finite_number(receipt.get(key)), _finite_number(line[key])
+                if drawn is None:
+                    unknown = True
+                elif now is None or abs(now - drawn) > 0.02:
+                    return False
+    return None if unknown else True
+
+
 def _caption_look_kept(ask: CaptionLookAsk, facts: PlanFacts) -> bool | None:
     """Does the finished variant still carry the look its first draft drew (KRI-1177)?
 
@@ -7051,11 +7103,20 @@ def _caption_look_kept(ask: CaptionLookAsk, facts: PlanFacts) -> bool | None:
             unknown = True
         elif facts.caption_alignment != caption_alignment(ask.position):
             return False
-        drawn_y = _finite_number(receipt.get("position_y_frac"))
-        if drawn_y is not None and facts.caption_y_frac is not None:
-            # Same side but moved up or down (a KRI-827 mark, an editor drag) is not the spot.
-            if abs(facts.caption_y_frac - drawn_y) > 0.02:
+        # Same side but moved up, down or sideways (a KRI-827 mark, an editor drag) is not the
+        # spot; a spot the receipt or the variant does not record is unknown, never met.
+        for drawn, now in (
+            (receipt.get("position_x_frac"), facts.caption_x_frac),
+            (receipt.get("position_y_frac"), facts.caption_y_frac),
+        ):
+            drawn = _finite_number(drawn)
+            if drawn is None or now is None:
+                unknown = True
+            elif abs(now - drawn) > 0.02:
                 return False
+    kept = _caption_lines_kept(ask, receipt, facts.caption_line_overrides)
+    if kept is not True:
+        return kept
     if ask.case is not None:
         if receipt.get("case") != ask.case:
             return False
