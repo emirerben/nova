@@ -8,7 +8,7 @@ digest that freezes all of it. `app.cli.qualify_intent_review` runs it; the prer
 `docs/reviews/intent-review/QUALIFICATION.md`.
 
 The cases go through the real server path: the frozen brief, draft and contract become a catalog
-and a prompt through `IntentReviewPromptBuilder`, frame times come from the production planner
+and a prompt through `build_review`, frame times come from the production planner
 (`plan_frame_times`), and a reply is judged by `evaluate_review` and turned into the chat's
 receipts by `compose_posts`. Only the provider call is outside this module.
 """
@@ -43,11 +43,11 @@ from app.kria.intent_review_copy import UncheckedReview, question_options
 from app.kria.intent_review_disposition import Evaluation, RepairPreconditions, evaluate_review
 from app.kria.intent_review_posts import Post, compose_posts
 from app.kria.intent_review_repair import build_repair_ops
+from app.kria.review_canon import digest
 from app.services import ai_cost_control as costs
 from app.services.bounded_media_review import MediaReviewRequest, estimate_media_review_cost
 from app.services.creator_render_contract import CreatorRenderContract, TextRequirement
-from app.services.intent_review_flow import BuiltReview, FrameView
-from app.services.intent_review_prompt import IntentReviewPromptBuilder
+from app.services.intent_review_prompt import BuiltReview, FrameView, build_review
 from app.services.render_review_evidence import EvidenceLimits, plan_frame_times
 
 REPEATS = 2
@@ -376,7 +376,8 @@ def _receipt_then_question(j: Judgement) -> str | None:
     question = _english(j)[1]
     if question.payload.get("requirement_id") != "b1":
         return f"question about {question.payload.get('requirement_id')}"
-    if question.payload.get("options") != question_options():
+    literal = next((r.literal for r in j.catalog.requirements if r.brief_id == "b1"), None)
+    if question.payload.get("options") != question_options(literal):
         return "question options are not the closed set"
     return None
 
@@ -791,7 +792,7 @@ def _input_tokens(estimate_usd: float) -> tuple[int, int]:
 def build_case(case: Case) -> BuiltCase:
     packet = _packet(case)
     frames = _frames(case)
-    built = IntentReviewPromptBuilder().build(packet, frames, rendered_duration_s=DURATION_S)
+    built = build_review(packet, frames, rendered_duration_s=DURATION_S)
     catalog = ReviewCatalog.model_validate(built.catalog)
     shell = BuiltCase(case, packet, frames, built, catalog, 0.0, 0, 0)
     estimate = estimate_media_review_cost(
@@ -1130,14 +1131,8 @@ def subtotal(rows: list[SpendRow], stage: Stage | None = None) -> float:
     return round(sum(r.estimate_usd for r in rows if stage is None or r.item.stage == stage), 6)
 
 
-def _sha(value: Any) -> str:
-    return hashlib.sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
-    ).hexdigest()
-
-
 def preregistration_digest(built: Mapping[str, BuiltCase], items: list[Item]) -> str:
-    return _sha(
+    return digest(
         {
             "model": VISION_MODEL,
             "prompt_version": PROMPT_VERSION,
@@ -1157,7 +1152,7 @@ def preregistration_digest(built: Mapping[str, BuiltCase], items: list[Item]) ->
                     "prompt_sha256": hashlib.sha256(
                         built[case.name].built.prompt.encode()
                     ).hexdigest(),
-                    "schema_sha256": _sha(built[case.name].built.response_schema),
+                    "schema_sha256": digest(built[case.name].built.response_schema),
                     "requirements": [r.model_dump() for r in built[case.name].catalog.requirements],
                     "withheld": [w.model_dump() for w in built[case.name].catalog.withheld],
                     "candidates": [c.model_dump() for c in built[case.name].catalog.candidates],

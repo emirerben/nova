@@ -83,7 +83,6 @@ from sqlalchemy import select, text
 
 from app.config import settings
 from app.database import AsyncSessionLocal, sync_session
-from app.kria import intent_review_tier as tier
 from app.kria.brief import BriefRequirement
 from app.kria.brief_binding import BriefBinding
 from app.kria.drafts import undo_draft
@@ -143,7 +142,6 @@ TEXT_CUT_OFF = reply(finding("R1", "unmet", "text_cut_off", ["f1"]))
 def repair_on(paid, monkeypatch):
     monkeypatch.setattr(flow, "build_review", prompt.build_review)
     monkeypatch.setattr(settings, "kria_intent_review_repair_enabled", True)
-    monkeypatch.setattr(tier, "_CODE_TIER_CEILING", "repair")
     yield paid
     # The beat sweep is global and takes the oldest 25 staged rows: one test's leftover repair
     # must not crowd the next test's out of it.
@@ -483,21 +481,6 @@ async def test_a_repair_flag_turned_off_after_the_review_downgrades_to_a_suggest
     assert await run_async(rid, Provider(COPY_MISMATCH)) == "suggestion"
     (suggestion,) = review_row(rid).review["disposition"]["suggestions"]
     assert suggestion["why"] == "tier_review" and len(drafts(thread)) == count
-
-
-@pytest.mark.asyncio
-async def test_the_code_ceiling_alone_keeps_repair_off_with_every_flag_on(
-    drifted, repair_on, monkeypatch
-):
-    _, thread, _, _ = drifted
-    monkeypatch.setattr(tier, "_CODE_TIER_CEILING", "review")
-    rid = await ready(drifted, monkeypatch)
-    assert review_row(rid).tier == "review"
-    count = len(drafts(thread))
-    assert await run_async(rid, Provider(COPY_MISMATCH)) == "suggestion"
-    row = review_row(rid)
-    assert [s["why"] for s in row.review["disposition"]["suggestions"]] == ["tier_review"]
-    assert row.repair_draft_id is None and len(drafts(thread)) == count
 
 
 @pytest.mark.asyncio

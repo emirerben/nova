@@ -18,7 +18,7 @@ Everything ships dark: every flag below defaults off, so merging changes nothing
 
 A child flag does nothing without its parent, and the flags are read in exactly one place (`app/kria/intent_review_tier.py`). The tier is stamped on a row when it is admitted and the live flags can only lower it, so turning a flag off takes effect on rows already waiting.
 
-The code ceiling (`_CODE_TIER_CEILING`) is `repair`: with every flag on, a creator reaches the repair tier. It exists so that a flag flipped early could never switch on a stage that had not shipped; it is not a rollout lever.
+With every flag on, a creator reaches the repair tier. The tier is decided only by the flags, the allowlist, the API key and the budgets; there is no code-level brake.
 
 The legacy Gemini quality review is retired for a runtime-v2 thread only once that creator's tier is `review` or higher. Admitting evidence alone never leaves a generation unreviewed. The legacy flags are off in production, so the retirement is a no-op there today.
 
@@ -103,6 +103,6 @@ Turn every flag off first. The merged code is inert with the flags off, so the P
 ## Known limits at launch
 
 - Whether the planner turns a plain "Render previous version" after a revert into a render has not been checked (it needs a live planner call), so the revert message says "ask me to render it" instead of naming a button.
-- The one question a wording doubt asks offers "Change it" / "Keep it". The tap is an ordinary user message read by the planner; that it resolves to the right element has not been checked live.
+- The one question a wording doubt asks offers "Change it to \"<the creator's words>\"" / "Keep it". The tap is an ordinary user message read by the planner, and the option carries the exact words so the planner has nothing to invent; that it resolves to the right element has not been checked live.
 - Stills cannot show sound or motion. Audio asks are never reviewed, and a timing ask is never reported as met. A low-confidence `met` is treated like a low-confidence `unmet`: ignored. A review whose only passes are guesses is `unavailable(nothing_verifiable)` and posts nothing.
 - Receipts are English or Turkish, from the thread's stored language; any other language reads English.

@@ -110,15 +110,15 @@ def _receipt(stamp: _Stamp, lead: str, rows: list[dict[str, Any]], also: list[st
     return Post("receipt", "assistant_response", lead, payload)
 
 
-def _question(stamp: _Stamp, brief_id: str) -> Post:
-    options = question_options()
+def _question(stamp: _Stamp, brief_id: str, literal: str | None) -> Post:
+    options = question_options(literal)
     payload = {
         **stamp.base(),
         "requirement_id": brief_id,
         "options": options,
         "recommended_option": options[0],
     }
-    return Post("question", "assistant_question", question_text(), payload)
+    return Post("question", "assistant_question", question_text(literal), payload)
 
 
 def _may_not_match(catalog: ReviewCatalog, offers: list[tuple[str | None, str]]) -> str:
@@ -138,6 +138,11 @@ def _brief_id(catalog: ReviewCatalog, alias: str) -> str:
     if requirement is None:
         raise UncheckedReview(f"{alias} was not issued")
     return requirement.brief_id
+
+
+def _literal(catalog: ReviewCatalog, alias: str) -> str | None:
+    requirement = catalog.requirement(alias)
+    return requirement.literal if requirement is not None else None
 
 
 def _rows_in_catalog_order(
@@ -164,6 +169,11 @@ def _original(status: str, stamp: _Stamp, review: Mapping[str, Any]) -> list[Pos
     if status == "no_findings":
         if not reasons:
             return []
+        if disposition.ignored:
+            for alias in disposition.ignored:
+                reasons[alias] = ("partial", reason_may_not_match())
+            rows = _rows_in_catalog_order(stamp, catalog, reasons)
+            return [_receipt(stamp, headline_suggestion(), rows, [])]
         everything = len(reasons) == len(catalog.requirements) and not catalog.withheld
         rows = _rows_in_catalog_order(stamp, catalog, reasons)
         return [_receipt(stamp, headline_checked(everything_judged=everything), rows, [])]
@@ -189,7 +199,7 @@ def _original(status: str, stamp: _Stamp, review: Mapping[str, Any]) -> list[Pos
         return []
     posts = [_receipt(stamp, lead, _rows_in_catalog_order(stamp, catalog, reasons), [])]
     if question is not None:
-        posts.append(_question(stamp, _brief_id(catalog, question)))
+        posts.append(_question(stamp, _brief_id(catalog, question), _literal(catalog, question)))
     return posts
 
 

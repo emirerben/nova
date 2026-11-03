@@ -183,15 +183,43 @@ def headline_staged() -> str:
     )
 
 
-def question_text() -> str:
+MAX_QUOTED_CHARS = 60
+
+
+def _quoted(literal: str | None) -> str | None:
+    words = " ".join((literal or "").split())
+    if not words:
+        return None
+    if len(words) > MAX_QUOTED_CHARS:
+        words = words[: MAX_QUOTED_CHARS - 1].rstrip() + "…"
+    return f'"{words}"'
+
+
+def question_text(literal: str | None = None) -> str:
+    quoted = _quoted(literal)
+    if quoted is None:
+        return say(
+            en="The text on screen doesn't match what you asked for. Want me to change it?",
+            tr="Ekrandaki yazı istediğinle uyuşmuyor. Değiştireyim mi?",
+        )
     return say(
-        en="The text on screen doesn't match what you asked for. Want me to change it?",
-        tr="Ekrandaki yazı istediğinle uyuşmuyor. Değiştireyim mi?",
+        en=(
+            "The text on screen doesn't match what you asked for. "
+            f"Want me to change it to {quoted}?"
+        ),
+        tr=f"Ekrandaki yazı istediğinle uyuşmuyor. {quoted} olarak değiştireyim mi?",
     )
 
 
-def question_options() -> list[str]:
-    return [say(en="Change it", tr="Değiştir"), say(en="Keep it", tr="Böyle kalsın")]
+def question_options(literal: str | None = None) -> list[str]:
+    """The tap is an ordinary message, so the first option carries the words it authorises."""
+    quoted = _quoted(literal)
+    change = (
+        say(en="Change it", tr="Değiştir")
+        if quoted is None
+        else say(en=f"Change it to {quoted}", tr=f"{quoted} olarak değiştir")
+    )
+    return [change, say(en="Keep it", tr="Böyle kalsın")]
 
 
 def headline_verified() -> str:

@@ -31,12 +31,11 @@ from app.kria.reply_language import thread_reply_language
 from app.models import (
     CreationThread,
     CreationThreadEvent,
-    CreatorAgentApproval,
     CreatorAgentExecution,
-    CreatorAgentTurn,
     CreatorGenerationReview,
 )
 from app.services.intent_review_flow import check_authority
+from app.services.intent_review_repair_flow import thread_busy
 from app.services.pipeline_trace import pipeline_trace_for, record_pipeline_event
 
 log = structlog.get_logger()
@@ -48,7 +47,6 @@ SETTLED = frozenset({"repair_verified", "repair_unverified", "repair_reverted"})
 POST_WINDOW = timedelta(minutes=30)
 STATE_CHANGE_WINDOW = timedelta(hours=6)
 SWEEP_LIMIT = 50
-_IN_FLIGHT = ("pending", "queued", "planning", "executing", "observing")
 
 
 def _now() -> datetime:
@@ -117,29 +115,6 @@ def _creator_spoke_since(db, thread_id, since: datetime) -> bool:
                 CreationThreadEvent.role == "user",
                 CreationThreadEvent.event_type == "user_message",
                 CreationThreadEvent.created_at > since,
-            )
-        )
-    )
-
-
-def _thread_busy(db, thread_id, *, own_approval_is_pending: bool) -> bool:
-    """A turn in flight, or the creator mid-decision on an approval that is not this review's."""
-    in_flight = db.scalar(
-        select(func.count())
-        .select_from(CreatorAgentTurn)
-        .where(CreatorAgentTurn.thread_id == thread_id, CreatorAgentTurn.status.in_(_IN_FLIGHT))
-    )
-    if in_flight:
-        return True
-    if own_approval_is_pending:
-        return False
-    return bool(
-        db.scalar(
-            select(func.count())
-            .select_from(CreatorAgentApproval)
-            .where(
-                CreatorAgentApproval.thread_id == thread_id,
-                CreatorAgentApproval.status == "pending",
             )
         )
     )
@@ -237,7 +212,7 @@ def _post(review_id) -> tuple[str, dict[str, Any] | None]:
             since = _reference_time(db, row, child)
             if since is None or _creator_spoke_since(db, thread.id, since):
                 return _skip(db, row, "creator_moved_on"), None
-            if _thread_busy(db, thread.id, own_approval_is_pending=status == "repair_staged"):
+            if thread_busy(db, thread.id, own_approval_is_pending=status == "repair_staged"):
                 return _skip(db, row, "thread_busy"), None
         try:
             posts = compose_posts(

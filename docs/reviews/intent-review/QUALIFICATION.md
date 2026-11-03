@@ -24,7 +24,7 @@ What it can and cannot show:
 | --- | --- |
 | Model | `gpt-6.1-sol` (`VISION_MODEL`, `app/agents/_openai_vision.py`) |
 | Request | Responses API, 5 or 6 inline JPEG frames at 360x640 with `detail: high`, strict JSON schema closed over the issued aliases, `reasoning.effort: low`, `max_output_tokens: 2500`, `store: false`, no SDK retries, 60 s timeout |
-| Prompt | `intent_review_v2` (`prompts/intent_review.txt`), built by `IntentReviewPromptBuilder` from the frozen brief, draft and contract |
+| Prompt | `intent_review_v2` (`prompts/intent_review.txt`), built by `build_review` from the frozen brief, draft and contract |
 | Price | $2 per million input tokens, $10 per million output tokens, `multi-provider-2026-11-02.v6` (`app/services/ai_cost_control.py`). Cross-checked with `gstack-eval-plan arms --arms gpt-6.1-sol --input-tokens 16446 --output-tokens 2500`: $0.0579, the same figure. Both read the same published rate; neither was checked against OpenAI's pricing page in this session. |
 | Not verified | That this model accepts image input. The transport is proven only against a fake SDK object (`tests/services/test_openai_vision_transport.py`). The first priced call, pilot item 1, is the live proof; a 4xx there releases the reservation and ends the run at the cost of nothing. |
 
@@ -32,7 +32,7 @@ What it can and cannot show:
 
 All five items share one creator request: `Make a short reel of my festival day. Title: "Festival Day". Start with the red balloon. Add upbeat music.` and one brief: `b1` title text (literal "Festival Day"), `b2` select ("Start with the red balloon"), `b3` audio ("Add upbeat music"). The server withholds `b3` (audio is never issued), so the model sees two requirements, `R1` and `R2`. The video is 8 s with three clips: 0 to 2.6 s, 2.6 to 5.2 s, 5.2 to 8 s.
 
-The footage is drawn in process by `render_frame` (`app/kria/intent_review_qualification.py`): flat illustrations of a red balloon, a blue boat, a green tree and a yellow house, with the title painted as text. No file is read as media, no creator footage and no production data are used, and the harness has no media input option. Frame times come from the production planner `plan_frame_times` with the title span as the text anchor, so the model sees what production would show it. The catalog, prompt and candidates come from the real `build_review_catalog` and `IntentReviewPromptBuilder`. What is not real: the frozen packet is the minimal one those two read, not a `RenderReviewPacket` from a published generation, and the frames are illustrations, not video.
+The footage is drawn in process by `render_frame` (`app/kria/intent_review_qualification.py`): flat illustrations of a red balloon, a blue boat, a green tree and a yellow house, with the title painted as text. No file is read as media, no creator footage and no production data are used, and the harness has no media input option. Frame times come from the production planner `plan_frame_times` with the title span as the text anchor, so the model sees what production would show it. The catalog, prompt and candidates come from the real `build_review_catalog` and `build_review`. What is not real: the frozen packet is the minimal one those two read, not a `RenderReviewPacket` from a published generation, and the frames are illustrations, not video.
 
 | Case | Footage and draft | Frames (s) | Outcome the server must reach |
 | --- | --- | --- | --- |
@@ -210,7 +210,7 @@ Under `src/apps/api/.intent-review-qualification/` (the harness never writes els
 | `runs/<run_id>/report.json` | | Verdict, every predicate with its failure detail, provenance per call (`visual_input_received`, `frames_sent`, frame hashes, usage, `settled_usd`, latency), the stop reason, `PILOT_PROJECTION`. |
 | `runs/<run_id>/replies/<item>.json` | | The raw model reply, stored before the ledger settles. These replace the hand-written `raw_text` of the golden fixtures. |
 | `runs/<run_id>/receipts/<item>.json` | | The chat events the creator would see, English and Turkish. A native speaker reads the Turkish. |
-| `spend.json` | | The journal behind the $5 total. |
+| `spend.json` | | The journal behind the $5 total. One per machine: it is always `src/apps/api/.intent-review-qualification/spend.json` whatever the working directory or `--out`, written under a file lock, and a second `--execute` is refused while one runs. `INTENT_REVIEW_QUALIFICATION_JOURNAL` moves it (tests only). |
 
 Two inspectors, separately, for each item: open the frames the reply cites, then read the predicate result and the receipt, and say whether the verdict matches what the frame shows. A predicate that passed for the wrong reason (for example a `wrong_content` finding citing a frame that shows the balloon) is a miss to record, whatever the harness says. Then check the ledger:
 

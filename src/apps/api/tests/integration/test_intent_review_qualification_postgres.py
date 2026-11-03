@@ -122,7 +122,11 @@ def rows(run_id):
 
 
 def execute(tmp_path, run_id, stage, sdk, *, maximum="0.50"):
-    env = {cli.RUN_ID_ENV: run_id, cli.MAX_USD_ENV: maximum}
+    env = {
+        cli.RUN_ID_ENV: run_id,
+        cli.MAX_USD_ENV: maximum,
+        cli.JOURNAL_ENV: str(tmp_path / "spend.json"),
+    }
     return cli.main(
         ["--execute", "--stage", stage, "--out", str(tmp_path)], client=sdk.client, env=env
     )

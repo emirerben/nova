@@ -304,11 +304,6 @@ def test_everything_judged_gets_the_plain_headline_and_a_row_per_met_ask():
         ),
         pytest.param(
             catalog(requirement("R1", "r1"), requirement("R2", "r2", "select")),
-            [finding("R1"), finding("R2", "unmet", "wrong_content", "low")],
-            id="a_low_confidence_unmet_is_not_a_clean_pass",
-        ),
-        pytest.param(
-            catalog(requirement("R1", "r1"), requirement("R2", "r2", "select")),
             [finding("R1"), finding("R2", confidence="low")],
             id="a_low_confidence_met_is_a_guess_not_a_pass",
         ),
@@ -326,6 +321,26 @@ def test_anything_stills_cannot_judge_names_the_limit_and_gets_no_row(cat, findi
         "see matches. I can't judge sound or motion from still frames."
     )
     assert set(rows(post)) == {"r1"}
+
+
+@pytest.mark.parametrize("language", [None, "tr"])
+def test_a_low_confidence_unmet_is_a_doubt_the_creator_hears_about_not_an_all_clear(language):
+    cat = catalog(requirement("R1", "r1"), requirement("R2", "r2", "select"))
+    rev = review(
+        cat,
+        [finding("R1"), finding("R2", "unmet", "wrong_content", "low")],
+        disposition("no_findings", ignored=["R2"]),
+    )
+    (post,) = posts("no_findings", "reviewed", rev, language=language)
+    assert "Everything I could see matches" not in lead(post)
+    assert "Görebildiğim her şey uyuyor" not in lead(post)
+    assert rows(post)["r1"]["status"] == "met"
+    assert rows(post)["r2"]["status"] == "partial"
+    assert rows(post)["r2"]["reason"] == (
+        "Videoda uyuşmuyor olabilir. Hiçbir şey değişmedi."
+        if language == "tr"
+        else "May not match in the video. Nothing changed."
+    )
 
 
 def test_a_medium_confidence_pass_is_still_a_checked_pass_only_low_is_ignored():
@@ -485,6 +500,40 @@ def test_a_wording_doubt_with_no_authority_is_a_receipt_then_one_two_option_ques
     assert question.payload["recommended_option"] == "Change it"
     assert question.payload["requirement_id"] == "r1"
     assert "requirement_receipts" not in question.payload
+
+
+@pytest.mark.parametrize(
+    ("language", "text", "change"),
+    [
+        (
+            None,
+            "The text on screen doesn't match what you asked for. "
+            'Want me to change it to "İstanbul"?',
+            'Change it to "İstanbul"',
+        ),
+        (
+            "tr",
+            'Ekrandaki yazı istediğinle uyuşmuyor. "İstanbul" olarak değiştireyim mi?',
+            '"İstanbul" olarak değiştir',
+        ),
+    ],
+)
+def test_the_question_names_the_words_so_a_bare_tap_authorises_exactly_that(language, text, change):
+    cat = catalog(
+        IssuedRequirement(
+            requirement_id="R1", brief_id="r1", kind="text", label="title", literal="İstanbul"
+        ),
+        requirement("R2", "r2", "select"),
+    )
+    rev = review(
+        cat,
+        [finding("R1", "unmet", "copy_mismatch"), finding("R2")],
+        disposition("needs_confirmation", question="R1"),
+    )
+    _, question = posts("needs_confirmation", "reviewed", rev, language=language)
+    assert question.content == text
+    assert question.payload["options"][0] == change
+    assert question.payload["recommended_option"] == change
 
 
 def test_a_staged_repair_posts_a_receipt_and_never_a_question():

@@ -108,7 +108,8 @@ DIGEST = _digest()
 
 
 def run(tmp_path, capsys, *argv, env=None):
-    code = cli.main([*argv, "--out", str(tmp_path)], env=env or {})
+    env = {cli.JOURNAL_ENV: str(tmp_path / "spend.json"), **(env or {})}
+    code = cli.main([*argv, "--out", str(tmp_path)], env=env)
     return code, capsys.readouterr().out
 
 
@@ -388,3 +389,35 @@ def test_no_secret_reaches_stdout_or_any_artifact(tmp_path, capsys, approved, mo
         if path.is_file() and path.suffix in {".json", ".txt"}:
             haystack += path.read_text()
     assert SECRET_KEY not in haystack and "db-password-sentinel" not in haystack
+
+
+def test_two_invocations_never_overwrite_each_others_spend(tmp_path):
+    path = tmp_path / "spend.json"
+    first, second = cli.Journal(path), cli.Journal(path)
+    first.open_run("iqual-aaaa-pilot", "pilot", 1.0, "d" * 64)
+    first.record("iqual-aaaa-pilot", "case/0", "started", 0.06)
+    second.open_run("iqual-bbbb-pilot", "pilot", 1.0, "d" * 64)
+    second.record("iqual-bbbb-pilot", "case/0", "settled", 0.06, 0.05)
+    fresh = cli.Journal(path)
+    assert set(fresh.runs) == {"iqual-aaaa-pilot", "iqual-bbbb-pilot"}
+    assert first.unknown() == ["iqual-aaaa-pilot/case/0"]
+    assert first.committed_usd() == pytest.approx(0.11)
+
+
+def test_the_journal_does_not_move_with_the_working_directory_or_the_output_directory(
+    tmp_path, monkeypatch
+):
+    here = cli.journal_path({})
+    monkeypatch.chdir(tmp_path)
+    assert cli.journal_path({}) == here and here.is_absolute()
+    assert cli.journal_path({cli.JOURNAL_ENV: str(tmp_path / "j.json")}) == tmp_path / "j.json"
+    assert cli.DEFAULT_OUT.is_absolute()
+
+
+def test_a_second_execute_cannot_start_while_one_holds_the_spend_lock(tmp_path):
+    path = tmp_path / "spend.json"
+    running, second = cli.Journal(path), cli.Journal(path)
+    assert running.hold_run_lock() is True
+    assert second.hold_run_lock() is False
+    del running
+    assert cli.Journal(path).hold_run_lock() is True

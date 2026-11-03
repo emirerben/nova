@@ -22,9 +22,9 @@ A finished, published generation is checked against what the creator asked for. 
 | `KRIA_INTENT_REVIEW_EVIDENCE_QUEUE` | `celery` | Queue for frame extraction (see Queue placement). Production pins `autoplace-jobs` in `fly.toml`. |
 | `AI_OPENAI_INTENT_REVIEW_BUDGET_USD` | `0` | Monthly capability budget. `0` rejects every reserve. |
 
-## Tier and code ceiling
+## Tier
 
-`app/kria/intent_review_tier.py` is the only place that decides a creator's tier (allowlist, parent flags, API key and budgets). `KRIA_INTENT_REVIEW_ENABLED` is also read directly as the global kill switch by admission, publishing, recovery and the legacy interlock. A child flag does nothing without its parent, and `_CODE_TIER_CEILING` caps what any flag combination can switch on. It is `repair` now that every stage has shipped; while the stack was being built each PR raised it, so a flag flipped early could not turn on an unfinished stage.
+`app/kria/intent_review_tier.py` is the only place that decides a creator's tier (allowlist, parent flags, API key and budgets). `KRIA_INTENT_REVIEW_ENABLED` is also read directly as the global kill switch by admission, publishing, recovery and the legacy interlock. A child flag does nothing without its parent.
 
 | Tier | Needs | Does |
 | --- | --- | --- |

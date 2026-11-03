@@ -18,6 +18,7 @@ exact commands: docs/reviews/intent-review/QUALIFICATION.md.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import io
 import json
 import math
@@ -26,7 +27,8 @@ import re
 import statistics
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -50,7 +52,9 @@ from app.services.bounded_media_review import (
 RUN_ID_ENV = "INTENT_REVIEW_QUALIFICATION_RUN_ID"
 MAX_USD_ENV = "INTENT_REVIEW_QUALIFICATION_MAX_USD"
 RUN_ID_PATTERN = re.compile(r"^iqual-[a-z0-9][a-z0-9-]{3,40}-(pilot|full)$")
-DEFAULT_OUT = Path(".intent-review-qualification")
+JOURNAL_ENV = "INTENT_REVIEW_QUALIFICATION_JOURNAL"
+API_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_OUT = API_ROOT / ".intent-review-qualification"
 DOC_PATH = ("docs", "reviews", "intent-review", "QUALIFICATION.md")
 _DIGEST_LINE = re.compile(r"^Preregistration digest:\s*`?([0-9a-f]{64})`?\s*$", re.MULTILINE)
 _LOCAL_HOSTS = frozenset({None, "", "localhost", "127.0.0.1", "::1"})
@@ -60,20 +64,61 @@ EXIT_REFUSED = 3
 # --- the spend journal ------------------------------------------------------------------------
 
 
+def journal_path(env: Mapping[str, str]) -> Path:
+    """One journal per machine: independent of the working directory and of `--out`."""
+    override = env.get(JOURNAL_ENV)
+    return Path(override) if override else DEFAULT_OUT / "spend.json"
+
+
 class Journal:
-    """What this machine has already committed, across runs: the $5 total is checked here."""
+    """What this machine has already committed, across runs: the $5 total is checked here.
+
+    Every mutation reloads the file under an exclusive lock, so two invocations never overwrite
+    each other's runs, and `hold_run_lock` keeps a second `--execute` from starting at all.
+    """
 
     def __init__(self, path: Path):
         self.path = path
         self.data: dict[str, Any] = {"version": 1, "runs": {}}
-        if path.is_file():
-            self.data = json.loads(path.read_text())
+        self._run_lock: Any = None
+        self.reload()
+
+    def reload(self) -> None:
+        self.data = (
+            json.loads(self.path.read_text()) if self.path.is_file() else {"version": 1, "runs": {}}
+        )
+
+    @contextmanager
+    def _exclusive(self) -> Iterator[None]:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.path.with_suffix(".lock"), "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            self.reload()
+            yield
+
+    def release_run_lock(self) -> None:
+        if self._run_lock is not None:
+            self._run_lock.close()
+            self._run_lock = None
+
+    def hold_run_lock(self) -> bool:
+        """Take the machine-wide execute lock for this process; False if another run holds it."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(self.path.with_suffix(".run.lock"), "a")  # noqa: SIM115
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            handle.close()
+            return False
+        self._run_lock = handle
+        return True
 
     @property
     def runs(self) -> dict[str, Any]:
         return self.data["runs"]
 
     def committed_usd(self) -> float:
+        self.reload()
         total = 0.0
         for run in self.runs.values():
             for entry in run["items"].values():
@@ -88,6 +133,7 @@ class Journal:
         return round(total, 6)
 
     def unknown(self) -> list[str]:
+        self.reload()
         return [
             f"{run_id}/{key}"
             for run_id, run in self.runs.items()
@@ -102,27 +148,30 @@ class Journal:
         os.replace(scratch, self.path)
 
     def open_run(self, run_id: str, stage: str, max_usd: float, digest: str) -> None:
-        self.runs[run_id] = {
-            "stage": stage,
-            "approved_max_usd": max_usd,
-            "digest": digest,
-            "opened_at": datetime.now(UTC).isoformat(),
-            "verdict": None,
-            "items": {},
-        }
-        self.save()
+        with self._exclusive():
+            self.runs[run_id] = {
+                "stage": stage,
+                "approved_max_usd": max_usd,
+                "digest": digest,
+                "opened_at": datetime.now(UTC).isoformat(),
+                "verdict": None,
+                "items": {},
+            }
+            self.save()
 
     def record(self, run_id: str, key: str, state: str, estimate: float, settled=None) -> None:
-        self.runs[run_id]["items"][key] = {
-            "state": state,
-            "estimate_usd": estimate,
-            "settled_usd": settled,
-        }
-        self.save()
+        with self._exclusive():
+            self.runs[run_id]["items"][key] = {
+                "state": state,
+                "estimate_usd": estimate,
+                "settled_usd": settled,
+            }
+            self.save()
 
     def close_run(self, run_id: str, verdict: str) -> None:
-        self.runs[run_id]["verdict"] = verdict
-        self.save()
+        with self._exclusive():
+            self.runs[run_id]["verdict"] = verdict
+            self.save()
 
 
 # --- gates ------------------------------------------------------------------------------------
@@ -759,91 +808,99 @@ def main(
     rows = q.spend_table(built, items)
     digest = q.preregistration_digest(built, items)
     pinned = pinned_digest()
-    journal = Journal(args.out / "spend.json")
-    gates = check_gates(
-        execute=args.execute,
-        stage=args.stage,
-        rows=rows,
-        journal=journal,
-        environment=environment,
-        digest=digest,
-        pinned=pinned,
-    )
-
-    checks = [
-        *q.run_scorer_checks(built),
-        q.run_honesty_check(built),
-        *q.run_discrimination_checks(built),
-        q.DryRunCheck(
-            "preregistration_pinned",
-            pinned == digest,
-            "QUALIFICATION.md pins the digest this code computes"
-            if pinned == digest
-            else "QUALIFICATION.md is missing or pins another digest",
-        ),
-    ]
-    mode_name = "execute" if args.execute else "dry-run"
-    allowance = (
-        "provider calls allowed if every gate holds"
-        if args.execute
-        else "no provider call, no ledger write"
-    )
-    print(f"INTENT_REVIEW_QUALIFICATION: {mode_name} ({allowance})")
-    print(
-        f"MODEL: {VISION_MODEL}  PROMPT_VERSION: {PROMPT_VERSION}  "
-        f"PRICE_VERSION: {costs.PRICE_VERSION}"
-    )
-    print(f"PREREG_DIGEST: {digest}")
-    print_spend_table(rows)
-    checks_ok = print_checks("DRY_RUN_CHECKS", checks)
-    path = write_artifacts(args.out, built, rows, checks, gates, digest, pinned)
-    print(f"ARTIFACTS: {path.parent}/ (dry-run.json, montage.png, frames/, prompts/)")
-    print(f"DRY_RUN_RESULT: {'pass' if checks_ok else 'fail'}")
-
-    failed = [g for g in gates if not g.ok]
-    print(f"EXECUTION_GATES for stage {args.stage}: {len(gates) - len(failed)}/{len(gates)} hold")
-    for gate in gates:
-        print(f"  {'ok  ' if gate.ok else 'FAIL'} {gate.name}: {gate.detail}")
-    if not args.execute:
-        print("EXECUTION: not requested (dry run). No provider was contacted.")
-        return 0 if checks_ok else 1
-    if failed or not checks_ok:
-        print("EXECUTION: refused. No client was built and nothing was reserved.")
+    journal = Journal(journal_path(os.environ if env is None else env))
+    if args.execute and not journal.hold_run_lock():
+        print("EXECUTION: refused. Another qualification run holds the spend lock.")
         return EXIT_REFUSED
-    max_usd = _approved_max(environment.max_usd)
-    if max_usd is None or environment.run_id is None:
-        return EXIT_REFUSED
-    outcomes, stopped = execute_stage(
-        stage=args.stage,
-        items=items,
-        built=built,
-        run_id=environment.run_id,
-        max_usd=max_usd,
-        out=args.out,
-        journal=journal,
-        digest=digest,
-        client=client,
-    )
-    report = stage_report(
-        stage=args.stage,
-        built=built,
-        run_id=environment.run_id,
-        max_usd=max_usd,
-        digest=digest,
-        items=items,
-        outcomes=outcomes,
-        stopped=stopped,
-    )
-    _write_json(args.out / "runs" / environment.run_id / "report.json", report)
-    journal.close_run(environment.run_id, report["verdict"])
-    print_report(report)
-    print(f"REPORT: {args.out / 'runs' / environment.run_id / 'report.json'}")
-    print(f"QUALIFICATION_STAGE: {args.stage} {report['verdict']}")
-    pilot = journal.runs.get(f"{environment.run_id.rsplit('-', 1)[0]}-pilot")
-    if args.stage == "full":
-        both = report["verdict"] == "pass" and bool(pilot) and pilot["verdict"] == "pass"
-        print(f"QUALIFICATION: {'pass' if both else 'fail'} (pilot and full, every predicate)")
-    return 0 if report["verdict"] == "pass" else 1
+    try:
+        gates = check_gates(
+            execute=args.execute,
+            stage=args.stage,
+            rows=rows,
+            journal=journal,
+            environment=environment,
+            digest=digest,
+            pinned=pinned,
+        )
+
+        checks = [
+            *q.run_scorer_checks(built),
+            q.run_honesty_check(built),
+            *q.run_discrimination_checks(built),
+            q.DryRunCheck(
+                "preregistration_pinned",
+                pinned == digest,
+                "QUALIFICATION.md pins the digest this code computes"
+                if pinned == digest
+                else "QUALIFICATION.md is missing or pins another digest",
+            ),
+        ]
+        mode_name = "execute" if args.execute else "dry-run"
+        allowance = (
+            "provider calls allowed if every gate holds"
+            if args.execute
+            else "no provider call, no ledger write"
+        )
+        print(f"INTENT_REVIEW_QUALIFICATION: {mode_name} ({allowance})")
+        print(
+            f"MODEL: {VISION_MODEL}  PROMPT_VERSION: {PROMPT_VERSION}  "
+            f"PRICE_VERSION: {costs.PRICE_VERSION}"
+        )
+        print(f"PREREG_DIGEST: {digest}")
+        print_spend_table(rows)
+        checks_ok = print_checks("DRY_RUN_CHECKS", checks)
+        path = write_artifacts(args.out, built, rows, checks, gates, digest, pinned)
+        print(f"ARTIFACTS: {path.parent}/ (dry-run.json, montage.png, frames/, prompts/)")
+        print(f"DRY_RUN_RESULT: {'pass' if checks_ok else 'fail'}")
+
+        failed = [g for g in gates if not g.ok]
+        print(
+            f"EXECUTION_GATES for stage {args.stage}: {len(gates) - len(failed)}/{len(gates)} hold"
+        )
+        for gate in gates:
+            print(f"  {'ok  ' if gate.ok else 'FAIL'} {gate.name}: {gate.detail}")
+        if not args.execute:
+            print("EXECUTION: not requested (dry run). No provider was contacted.")
+            return 0 if checks_ok else 1
+        if failed or not checks_ok:
+            print("EXECUTION: refused. No client was built and nothing was reserved.")
+            return EXIT_REFUSED
+        max_usd = _approved_max(environment.max_usd)
+        if max_usd is None or environment.run_id is None:
+            return EXIT_REFUSED
+        outcomes, stopped = execute_stage(
+            stage=args.stage,
+            items=items,
+            built=built,
+            run_id=environment.run_id,
+            max_usd=max_usd,
+            out=args.out,
+            journal=journal,
+            digest=digest,
+            client=client,
+        )
+        report = stage_report(
+            stage=args.stage,
+            built=built,
+            run_id=environment.run_id,
+            max_usd=max_usd,
+            digest=digest,
+            items=items,
+            outcomes=outcomes,
+            stopped=stopped,
+        )
+        _write_json(args.out / "runs" / environment.run_id / "report.json", report)
+        journal.close_run(environment.run_id, report["verdict"])
+        print_report(report)
+        print(f"REPORT: {args.out / 'runs' / environment.run_id / 'report.json'}")
+        print(f"QUALIFICATION_STAGE: {args.stage} {report['verdict']}")
+        pilot = journal.runs.get(f"{environment.run_id.rsplit('-', 1)[0]}-pilot")
+        if args.stage == "full":
+            both = report["verdict"] == "pass" and bool(pilot) and pilot["verdict"] == "pass"
+            print(f"QUALIFICATION: {'pass' if both else 'fail'} (pilot and full, every predicate)")
+        return 0 if report["verdict"] == "pass" else 1
+    finally:
+        journal.release_run_lock()
 
 
 if __name__ == "__main__":

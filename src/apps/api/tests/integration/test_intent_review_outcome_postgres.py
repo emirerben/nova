@@ -455,7 +455,6 @@ def test_every_flag_on_reaches_the_repair_tier_and_retires_the_legacy_review(mon
         ai_openai_monthly_budget_usd=500.0,
     ).items():
         monkeypatch.setattr(settings, name, value)
-    assert tier._CODE_TIER_CEILING == "repair"
     assert tier.intent_review_tier(owner) == "repair"
     assert tier.intent_review_replaces_legacy(owner) is True
     monkeypatch.setattr(settings, "kria_intent_review_paid_enabled", False)

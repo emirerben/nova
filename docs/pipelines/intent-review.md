@@ -23,7 +23,7 @@ render ready (observer)
 
 | Stage | Module | Contract |
 | --- | --- | --- |
-| Tier | `kria/intent_review_tier.py` | The only reader of the `KRIA_INTENT_REVIEW_*` flags. A child flag needs its parent; `_CODE_TIER_CEILING` is `repair`. Live flags can only lower the stamped tier. |
+| Tier | `kria/intent_review_tier.py` | The only place that decides a creator's tier. `KRIA_INTENT_REVIEW_ENABLED` is also read directly as the global kill switch. A child flag needs its parent. Live flags can only lower the stamped tier. |
 | Frozen inputs | `kria/render_review_context.py` | The approved request, draft, recipe and verified export identity. `review_model_received_visual_input` stays `False` here; the truth is `review.provenance.visual_input_received`, written only by the transport. |
 | Transport | `agents/_openai_vision.py`, `services/bounded_media_review.py` | Frames as `input_image`, `store=False`, no retries, cost reserved before a frame leaves the process. The text adapter still rejects media. |
 | Catalog | `kria/intent_review_catalog.py` | Issues at most 12 requirements (audio is never issued) and the candidates a repair may use, each only when an authority other than the draft disagrees with the draft. |
@@ -37,9 +37,9 @@ render ready (observer)
 
 | Outcome | Chat |
 | --- | --- |
-| `no_findings` | One receipt: "I checked the finished video against your request. Everything I could see matches." If anything was withheld (audio) or could not be judged from stills, the headline names the limit instead. One `met` row per ask judged `met` at medium or high confidence; a low-confidence `met` is a guess and gets no row. |
+| `no_findings` | One receipt: "I checked the finished video against your request. Everything I could see matches." If anything was withheld (audio) or could not be judged from stills, the headline names the limit instead. One `met` row per ask judged `met` at medium or high confidence; a low-confidence `met` is a guess and gets no row. A low-confidence `unmet` is a doubt, so the all-clear headline is never used: the receipt says something may not match and carries a `partial` row for it. |
 | `suggestion` | One receipt: something may not match, nothing was changed. One `partial` row per doubtful ask; the optional fix is named only when it is still a sensible offer. |
-| `needs_confirmation` | The suggestion receipt, then one `assistant_question` with the options "Change it" / "Keep it". A tap is an ordinary user message; the reviewer stages nothing. |
+| `needs_confirmation` | The suggestion receipt, then one `assistant_question` with the options "Change it to \"<the creator's words>\"" / "Keep it". The question and the first option name the exact words, because a tap is an ordinary user message the planner reads on its own; the reviewer stages nothing. |
 | `repair_staged` | The repair turn's own card (`draft_applied` with Undo, then `approval_requested`), then one receipt saying the fix is waiting for approval. Never a question. |
 | `repair_verified` | One receipt: the fix worked, checked again; the fix line in the past tense; Undo still available. Every targeted ask must be `met` in the follow-up review at medium or high confidence; a low-confidence `met` leaves the repair `repair_unverified`. |
 | `repair_unverified` | One receipt: the fix is in the new video but could not be confirmed; never says "checked". |
