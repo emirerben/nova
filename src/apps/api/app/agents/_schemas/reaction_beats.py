@@ -150,10 +150,13 @@ class EndingClip(BaseModel):
     keep_audio: bool = True
 
 
-MAX_INSERT_CLIPS = 3
+# The size the recipe compiler and the sentence check are built for (the same number as
+# `phone_subtitled_plan.MAX_INSERT_CLIPS`, pinned equal by a test): a creator who asks for more is
+# told the number, not silently cut.
+MAX_INSERT_CLIPS = 20
 # Rows kept when parsing, so the repair can name each one past the cap (`too_many`) instead of
 # the parse cutting it unseen.
-MAX_INSERT_CLIP_ROWS = 8
+MAX_INSERT_CLIP_ROWS = MAX_INSERT_CLIPS + 10
 
 
 class InsertClip(BaseModel):
@@ -165,9 +168,11 @@ class InsertClip(BaseModel):
     running under it), nothing the creator said is lost. ``media_id`` is an opaque manifest
     media id of one of the item's own footage clips; the server repair
     (``app.services.creator_capabilities.repair_creator_insert_clips``) keeps it only where the
-    phone can render it and canonicalizes the id. Exactly one of ``at_phrase`` (words the
+    phone can render it and canonicalizes the id. At most one of ``at_phrase`` (words the
     creator says; the clip plays at the next natural pause after them) or ``at_s`` (a second of
-    the take) names the moment; the worker records what it really placed
+    the take) names the moment. With neither ("place them in between my speech") the clip plays at
+    the end of the sentence the creator says about it, chosen by meaning by the worker
+    (`app.pipeline.phone_talking_insert_topics`); the worker records what it really placed
     (``variant["phone_insert_clips"]``). Carries no resolved timestamp.
     """
 
@@ -190,8 +195,8 @@ class InsertClip(BaseModel):
 
     @model_validator(mode="after")
     def _one_position(self) -> InsertClip:
-        if (self.at_phrase is None) == (self.at_s is None):
-            raise ValueError("an insert clip needs exactly one of at_phrase or at_s")
+        if self.at_phrase is not None and self.at_s is not None:
+            raise ValueError("an insert clip takes at most one of at_phrase or at_s")
         return self
 
     @model_serializer(mode="wrap")

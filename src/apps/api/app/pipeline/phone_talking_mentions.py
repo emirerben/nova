@@ -262,6 +262,33 @@ def _best_mention(
     return best
 
 
+def _key_weights(clips: Sequence[FootageClip], tokens: Sequence[_Token]) -> dict[str, float]:
+    """Rarity of each word: the creator says it rarely and few clips are about it."""
+    creator_count = Counter(t.key for t in tokens)
+    clip_count = Counter(key for clip in clips for key in clip.keys)
+    return {
+        key: 1.0 / (creator_count[key] * clip_count[key])
+        for key in creator_count
+        if clip_count[key] > 0
+    }
+
+
+def keyword_mentions(
+    clips: Sequence[FootageClip], *, words: Sequence[Any]
+) -> dict[str, tuple[float, float, float]]:
+    """``{clip_id: (score, first_matched_word_start_s, last_matched_word_end_s)}`` for each clip
+    that has a mention of what it shows: the same matcher `schedule_mention_cutaways` places
+    footage by, so a clip is "mentioned" the same way whichever lane asks."""
+    tokens = _timeline_tokens(words)
+    weight = _key_weights(clips, tokens)
+    found: dict[str, tuple[float, float, float]] = {}
+    for clip in clips:
+        best = _best_mention(clip, tokens, weight)
+        if best is not None:
+            found[clip.clip_id] = best
+    return found
+
+
 def _fit_at(
     start_s: float, length_s: float, free: Sequence[tuple[float, float]]
 ) -> tuple[float, float] | None:
@@ -296,13 +323,7 @@ def schedule_mention_cutaways(
     whether its window sits at a mention or was spread, and why.
     """
     tokens = _timeline_tokens(words)
-    creator_count = Counter(t.key for t in tokens)
-    clip_count = Counter(key for clip in clips for key in clip.keys)
-    weight = {
-        key: 1.0 / (creator_count[key] * clip_count[key])
-        for key in creator_count
-        if clip_count[key] > 0
-    }
+    weight = _key_weights(clips, tokens)
 
     duration = max(float(duration_s), 0.0)
     lo = min(HOOK_FREE_S, duration)

@@ -7859,17 +7859,208 @@ def _strategy_insert_asks(all_candidates: dict) -> list[Any]:
             continue
         phrase = row.get("at_phrase")
         at_s = row.get("at_s")
+        clean_phrase = phrase.strip() if isinstance(phrase, str) and phrase.strip() else None
+        clean_s = (
+            float(at_s) if isinstance(at_s, int | float) and not isinstance(at_s, bool) else None
+        )
         asks.append(
             InsertAsk(
                 media_id=media_id.strip(),
-                at_phrase=phrase.strip() if isinstance(phrase, str) and phrase.strip() else None,
-                at_s=float(at_s)
-                if isinstance(at_s, int | float) and not isinstance(at_s, bool)
-                else None,
+                at_phrase=clean_phrase,
+                at_s=clean_s,
                 keep_audio=row.get("keep_audio") is not False,
+                # No phrase and no second: "in between my speech", the end of the sentence
+                # about the clip (`_resolve_insert_topics`).
+                at_topic=clean_phrase is None and clean_s is None,
             )
         )
-    return asks[: MAX_INSERTS + 4]
+    return asks[: MAX_INSERTS + 10]
+
+
+def _insert_clip_facts(
+    ask_media_ids: Sequence[str],
+    *,
+    bindings: Sequence[Any],
+    clip_metas: Sequence[Any],
+    clip_id_to_gcs: Mapping[str, str],
+    transcripts: Mapping[str, Any],
+) -> dict[str, Any]:
+    """``{media_id: SentenceClip}`` plus ``keys`` for the clips an insert row names: what each
+    shows and says (its analysis and its own speech), the input of the sentence meaning check.
+    Facts only decide timing, they never become on-screen text."""
+    from app.agents.talking_insert_sentence import SentenceClip  # noqa: PLC0415
+
+    metas = {str(meta.clip_id): meta for meta in clip_metas}
+    clip_of_path = {path: cid for cid, path in clip_id_to_gcs.items()}
+    out: dict[str, Any] = {}
+    for media_id in ask_media_ids:
+        row = next((b for b in bindings if b.media_id == media_id), None)
+        cid = clip_of_path.get(row.proxy_path) if row is not None else None
+        meta = metas.get(cid) if cid is not None else None
+        if meta is None:
+            continue
+        own = " ".join(
+            str(getattr(word, "text", "")) for word in getattr(transcripts.get(cid), "words", [])
+        )
+        out[media_id] = SentenceClip(
+            key="c0",
+            summary=str(getattr(meta, "clip_summary", "") or "")[:600],
+            transcript=(str(getattr(meta, "transcript", "") or "") or own)[:900],
+            subject=str(getattr(meta, "detected_subject", "") or "")[:160],
+            activity=str(getattr(meta, "activity", "") or "")[:160],
+            hook_text=str(getattr(meta, "hook_text", "") or "")[:240],
+            brands=[str(b)[:60] for b in (getattr(meta, "clip_brands", None) or [])[:8]],
+            props=[str(p)[:60] for p in (getattr(meta, "clip_props", None) or [])[:8]],
+        )
+    return out
+
+
+def _resolve_insert_topics(
+    asks: Sequence[Any],
+    *,
+    spoken_words: Sequence[Any],
+    take_s: float,
+    in_use: Collection[str],
+    clip_facts: Mapping[str, Any],
+    language: str,
+    job_id: str | None,
+) -> tuple[list[Any], list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Parent KRI-1151: give every "in between my speech" ask (`InsertAsk.at_topic`) its pause
+    point, the END OF THE SENTENCE that talks about the clip, chosen by meaning.
+
+    Returns ``(asks, drops, info)``: ``asks`` has each resolved topic ask as an exact `at_s`
+    (best fits first, so two clips on one sentence give it to the better fit), phrase / second
+    asks untouched and a topic ask for a clip already in use left for `place_inserts` to refuse;
+    ``drops`` is a receipt row per clip the talk has no sentence for (and why); ``info`` is the
+    per-clip receipt detail (how it was chosen)."""
+    from dataclasses import replace as _replace  # noqa: PLC0415
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from app.pipeline.phone_talking_insert_topics import (  # noqa: PLC0415
+        NO_MATCHING_SENTENCE,
+        resolve_topics,
+        split_sentences,
+    )
+    from app.pipeline.phone_talking_inserts import phrase_end_s  # noqa: PLC0415
+    from app.pipeline.phone_talking_mentions import (  # noqa: PLC0415
+        FootageClip,
+        clip_keys,
+        keyword_mentions,
+    )
+    from app.services.phone_insert_topic_picker import pick_topic_sentences  # noqa: PLC0415
+
+    # A phrase he never says cannot be honoured exactly: the nearest thing is the sentence about
+    # the clip, said in the receipt (`fallback`), not a silent drop.
+    asks = [
+        _replace(a, at_phrase=None, at_topic=True, fallback="phrase_not_found")
+        if a.at_phrase
+        and a.media_id not in in_use
+        and phrase_end_s(a.at_phrase, spoken_words, take_s) is None
+        else a
+        for a in asks
+    ]
+    topic = [a for a in asks if a.at_topic and a.media_id not in in_use]
+    if not topic:
+        return list(asks), [], {}
+    ids = list(dict.fromkeys(a.media_id for a in topic))
+    words = [
+        w
+        if not isinstance(w, Mapping)
+        else SimpleNamespace(
+            text=str(w.get("text", "")),
+            start_s=float(w.get("start_s", 0.0) or 0.0),
+            end_s=float(w.get("end_s", 0.0) or 0.0),
+        )
+        for w in spoken_words
+    ]
+    sentences = split_sentences(words, take_s)
+    if not sentences:
+        resolutions = resolve_topics(ids, [], picks={}, keyword_end_s={}, take_s=take_s)
+    else:
+        keyword_clips = [
+            FootageClip(
+                media_id,
+                footage_s=1.0,
+                keys=clip_keys(
+                    [
+                        facts.summary,
+                        facts.transcript,
+                        facts.subject,
+                        facts.hook_text,
+                        *facts.brands,
+                        *facts.props,
+                    ]
+                ),
+            )
+            for media_id in ids
+            if (facts := clip_facts.get(media_id)) is not None
+        ]
+        keyword_end = {
+            media_id: window[2]
+            for media_id, window in keyword_mentions(keyword_clips, words=words).items()
+        }
+        picks = None
+        if settings.phone_talking_insert_meaning_enabled:
+            picks = pick_topic_sentences(
+                {m: clip_facts[m] for m in ids if m in clip_facts},
+                sentences,
+                language=language,
+                job_id=job_id,
+            )
+        resolutions = resolve_topics(
+            ids, sentences, picks=picks, keyword_end_s=keyword_end, take_s=take_s
+        )
+    by_media = {r.media_id: r for r in resolutions}
+    fallbacks = {a.media_id for a in topic if a.fallback}
+    drops = [
+        {
+            "media_id": r.media_id,
+            "reason": "phrase_not_found"
+            if r.media_id in fallbacks
+            else r.reason or NO_MATCHING_SENTENCE,
+        }
+        for r in resolutions
+        if r.point_s is None
+    ]
+    info = {
+        r.media_id: {
+            "via": r.via,
+            "sentence_first": r.first,
+            "sentence_last": r.last,
+            **({"confidence": r.confidence} if r.confidence else {}),
+        }
+        for r in resolutions
+        if r.point_s is not None
+    }
+    rank = {"high": 0, "medium": 1, "low": 2}
+    resolved: list[Any] = []
+    seen: set[str] = set()
+    for ask in asks:
+        row = by_media.get(ask.media_id)
+        if not ask.at_topic or ask.media_id in in_use or row is None or ask.media_id in seen:
+            resolved.append(ask)  # `place_inserts` refuses an unresolved one by name
+            continue
+        seen.add(ask.media_id)
+        if row.point_s is not None:
+            resolved.append(
+                _replace(
+                    ask,
+                    at_s=row.point_s,
+                    basis="topic",
+                    at_topic=False,
+                    adjusted=row.adjusted,
+                )
+            )
+    # Explicit phrases and seconds are placed first, then the best-fitting sentence choices, so
+    # two clips on one sentence give it to the better fit.
+    resolved.sort(
+        key=lambda a: (
+            a.basis == "topic",
+            info.get(a.media_id, {}).get("via") == "keyword",
+            rank.get(info.get(a.media_id, {}).get("confidence", "medium"), 1),
+        )
+    )
+    return resolved, drops, info
 
 
 def _strategy_ending_request(all_candidates: dict) -> dict[str, Any] | None:
@@ -8901,12 +9092,24 @@ def _run_phone_subtitled_job(
                         )
                         if cid is not None and ask.media_id not in insert_ids.values():
                             insert_ids[cid] = ask.media_id
+                    # The creator's own take (the one clip his analysis says speaks to camera)
+                    # is the spine of the video: it can never be what the take pauses for.
+                    to_camera = [
+                        c
+                        for c in talking_roles.speakers
+                        if (m := next((x for x in clip_metas if str(x.clip_id) == c), None))
+                        is not None
+                        and getattr(m, "speaks_to_camera", None) is True
+                        and not getattr(m, "failed", False)
+                        and not getattr(m, "analysis_degraded", False)
+                    ]
                     for cid, media_id in list(insert_ids.items()):
                         others = [c for c in talking_roles.speakers if c != cid]
                         is_ending = ending_request is not None and (
                             ending_request["media_id"] == media_id
                         )
-                        if is_ending or (cid in talking_roles.speakers and not others):
+                        is_take = cid in to_camera and len(to_camera) == 1
+                        if is_ending or is_take or (cid in talking_roles.speakers and not others):
                             insert_in_use.add(media_id)
                             del insert_ids[cid]
                     if insert_ids:
@@ -9093,7 +9296,13 @@ def _run_phone_subtitled_job(
                     return found
                 plan = plan_cutaway_sound_for_snapshot(
                     snapshot,
-                    cutaway_media_ids=[c.binding.media_id for c in found],
+                    # A clip that plays while the take is paused sounds through its own track
+                    # (`PhoneInsert.keep_audio`); naming it here lets a "use their audio" ask
+                    # that covers it be judged met instead of overridden.
+                    cutaway_media_ids=[
+                        *(c.binding.media_id for c in found),
+                        *(i.binding.media_id for i in inserts if i.keep_audio),
+                    ],
                     speaker_media_ids=[b.media_id for b in speakers],
                 )
                 if not plan.rows:
@@ -9717,6 +9926,28 @@ def _run_phone_subtitled_job(
                     place_inserts,
                 )
 
+                insert_asks, topic_drops, insert_topic_info = _resolve_insert_topics(
+                    insert_asks,
+                    spoken_words=insert_spoken_words
+                    or timeline_words
+                    or [w for cue in cues or [] for w in cue.get("words") or []],
+                    take_s=sum(max(0.0, end - start) for start, end in speaker_keep_segments),
+                    in_use={
+                        binding.media_id,
+                        *(extra.media_id for extra in extra_speaker_bindings),
+                        *insert_in_use,
+                    },
+                    clip_facts=_insert_clip_facts(
+                        [a.media_id for a in insert_asks],
+                        bindings=bindings,
+                        clip_metas=clip_metas,
+                        clip_id_to_gcs=clip_id_to_gcs,
+                        transcripts=talking_transcripts,
+                    ),
+                    language=str(all_candidates.get("language") or ""),
+                    job_id=job_id,
+                )
+                insert_drops.extend(topic_drops)
                 placements = place_inserts(
                     insert_asks,
                     bindings={row.media_id: row for row in bindings},
@@ -9725,7 +9956,6 @@ def _run_phone_subtitled_job(
                     words=insert_spoken_words
                     or timeline_words
                     or [w for cue in cues or [] for w in cue.get("words") or []],
-                    cues=cues or [],
                     take_s=sum(max(0.0, end - start) for start, end in speaker_keep_segments),
                     in_use={
                         binding.media_id,
@@ -9741,7 +9971,19 @@ def _run_phone_subtitled_job(
                     if p.insert is None
                 )
                 insert_basis = {
-                    p.insert.binding.media_id: {"basis": p.basis, "snap": p.snap}
+                    p.insert.binding.media_id: {
+                        "basis": p.basis,
+                        "snap": p.snap,
+                        # An explicit position is placed exactly as asked; the receipt names
+                        # the defaults it ignored, and what moved a position he did not name.
+                        **({"as_asked": True} if p.basis in ("phrase", "second") else {}),
+                        **({"overrode": list(p.overrode)} if p.overrode else {}),
+                        **({"adjusted": p.adjusted} if p.adjusted else {}),
+                        **(
+                            {"fallback": p.ask.fallback} if getattr(p.ask, "fallback", None) else {}
+                        ),
+                        **insert_topic_info.get(p.insert.binding.media_id, {}),
+                    }
                     for p in placements
                     if p.insert is not None
                 }

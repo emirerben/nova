@@ -4,26 +4,33 @@ An insert switches the picture to another clip, with that clip's own audio, whil
 creator's take is PAUSED, then the take resumes where it stopped. Nothing he said is lost
 and the video grows by the insert's length.
 
-Failure-mode list, written before the code (each one is a test below):
+Failure-mode list (each one is a test below). Rule from the creator: an explicit instruction
+wins over every heuristic; the heuristics only choose a position he did not name.
 
- 1. insert at the very start / inside the hook window       -> refused, `in_hook_window`
- 2. insert at the very end / inside the last second          -> refused, `in_tail_window`
- 3. two inserts closer than MIN_GAP_S on the take            -> the later one refused
- 4. the phrase is never said                                 -> refused, `phrase_not_found`
- 5. the phrase sits in a region speech cleanup cut out       -> the same refusal (cut-time
-    words never contain it), never placed at a guessed time
- 6. the insert is longer than MAX_INSERT_S                   -> refused, `too_long`
- 7. the same clip asked twice                                -> the second refused
- 8. the clip is already a speaker / cutaway / the ending     -> refused, `clip_in_use`
- 9. more than MAX_INSERTS                                    -> the rest refused
-10. the position lands inside a word                         -> moved to a word boundary
-11. a caption / card / cutaway straddles the insert point    -> split around it, never
+ 1. an explicit second / phrase in the hook window or at the very start    -> honoured, receipt
+    says it overrode the hook default
+ 2. an explicit second / phrase in the last second or at the very end      -> honoured
+ 3. an explicit second in the middle of a word                             -> cut there, as asked
+ 4. two explicit inserts next to each other, or at the same instant        -> both play, in order
+ 5. a fourth (or twentieth) insert                                         -> played; past the
+    engine's MAX_INSERTS the rest are refused with that number
+ 6. a 70 s clip                                                            -> played; refused only
+    past the engine's five minutes
+ 7. a second past the end of the take                                      -> the end of the take,
+    said in the receipt
+ 8. the phrase is never said                                               -> refused here (the
+    worker places it by meaning and says so, see test_talking_insert_topic.py)
+ 9. the same clip asked twice / a clip already in use / not a video        -> refused by name
+10. a default (topic) position near another clip                           -> joins it
+11. a caption / card / cutaway straddles the insert point                  -> split around it, never
     shown over the inserted clip
-12. a second insert comes after a first                      -> its position already includes
-    the first's length (no double or missing shift)
-13. the recompile of a pinned recipe (editor Save)           -> the insert comes back as it was
-14. Range after an insert                                    -> refused with a named reason
-15. flag off                                                 -> byte-identical recipe
+12. a second insert comes after a first                                    -> its position already
+    includes the first's length (no double or missing shift)
+13. the recompile of a pinned recipe (editor Save)                         -> the insert comes back
+    as it was
+14. Range after an insert                                                  -> refused with a named
+    reason
+15. flag off                                                               -> byte-identical recipe
 """
 
 from __future__ import annotations
@@ -44,14 +51,21 @@ from app.pipeline.phone_subtitled_plan import (
     speaker_binding_from_recipe,
 )
 from app.pipeline.phone_talking_inserts import (
+    ADJUSTED_JOINED,
+    ADJUSTED_TAKE_END,
     HOOK_FREE_S,
     MAX_INSERT_S,
     MAX_INSERTS,
     MIN_GAP_S,
+    OVERRODE_HOOK,
+    OVERRODE_MID_WORD,
+    OVERRODE_NEAR_OTHER,
+    OVERRODE_TAIL,
     TAIL_FREE_S,
     InsertAsk,
     insert_blocked_windows,
     inserts_from_recipe,
+    phrase_end_s,
     place_inserts,
     shift_time,
     warp_for_inserts,
@@ -107,78 +121,90 @@ def _ask(media_id="talk", *, phrase=None, at_s=None, keep_audio=True):
     return InsertAsk(media_id=media_id, at_phrase=phrase, at_s=at_s, keep_audio=keep_audio)
 
 
-def _place(
-    asks, *, bindings=None, in_use=(), words=TAKE_WORDS, cues=TAKE_CUES, take_s=TAKE_S, **extra
-):
+def _place(asks, *, bindings=None, in_use=(), words=TAKE_WORDS, take_s=TAKE_S, **extra):
     bindings = bindings if bindings is not None else {"talk": _binding("talk", duration_s=8.0)}
     return place_inserts(
-        asks, bindings=bindings, words=words, cues=cues, take_s=take_s, in_use=in_use, **extra
+        asks, bindings=bindings, words=words, take_s=take_s, in_use=in_use, **extra
     )
 
 
 # --- placement ------------------------------------------------------------------------------
 
 
-def test_a_phrase_places_the_insert_at_the_end_of_the_caption_that_says_it():
+def test_a_phrase_places_the_insert_exactly_at_the_end_of_its_last_word():
     (placed,) = _place([_ask(phrase="kongreyi anlatacağım")])
     assert placed.reason is None
     assert placed.insert is not None
-    # "anlatacağım" ends 5.2, the caption ends 5.2: the take pauses there.
+    # "anlatacağım" ends 5.2: the take pauses exactly there.
     assert placed.insert.at_take_s == pytest.approx(5.2)
-    assert placed.basis == "phrase"
-    assert placed.snap == "cue_end"
+    assert (placed.basis, placed.snap, placed.overrode) == ("phrase", "phrase_end", ())
 
 
-def test_a_phrase_inside_a_sentence_moves_to_the_pause_after_the_word_never_mid_word():
-    # "henüz bir" ends at 9.3, mid-caption; the next gap is after "yok" (10.4 -> 14.0), which
-    # is the caption end, so it snaps there. The point is never inside a word.
+def test_a_phrase_in_the_middle_of_a_sentence_is_not_moved_to_a_later_pause_or_caption_end():
+    # "henüz bir" ends at 9.3, mid-sentence; the caption ends at 10.4. The creator named the
+    # words, so the take pauses at the end of "bir".
     (placed,) = _place([_ask(phrase="henüz bir")])
     assert placed.insert is not None
-    point = placed.insert.at_take_s
-    assert not any(w["start_s"] < point < w["end_s"] for w in TAKE_WORDS)
-    assert point == pytest.approx(10.4)
+    assert placed.insert.at_take_s == pytest.approx(9.3)
+    assert not any(w["start_s"] < 9.3 < w["end_s"] for w in TAKE_WORDS)
 
 
-def test_a_second_in_the_middle_of_a_word_moves_to_the_word_boundary():
+def test_a_second_in_the_middle_of_a_word_cuts_there_as_asked_and_says_so():
     (placed,) = _place([_ask(at_s=4.0)])  # inside "kongreyi" 3.5-4.2
     assert placed.insert is not None
-    point = placed.insert.at_take_s
-    assert not any(w["start_s"] < point < w["end_s"] for w in TAKE_WORDS)
-    assert placed.basis == "second"
+    assert placed.insert.at_take_s == pytest.approx(4.0)
+    assert (placed.basis, placed.snap) == ("second", "exact")
+    assert placed.overrode == (OVERRODE_MID_WORD,)
 
 
-def test_a_phrase_that_is_never_said_is_refused_not_guessed():
+def test_a_phrase_that_is_never_said_is_refused_here_the_worker_places_it_by_meaning():
     (placed,) = _place([_ask(phrase="bu hiç söylenmedi")])
     assert placed.insert is None
     assert placed.reason == "phrase_not_found"
+    assert phrase_end_s("bu hiç söylenmedi", TAKE_WORDS, TAKE_S) is None
 
 
-def test_a_phrase_in_a_cut_out_region_is_refused_like_one_never_said():
+def test_a_phrase_in_a_cut_out_region_is_not_found_like_one_never_said():
     cut_time_words = [w for w in TAKE_WORDS if w["text"] != "kongreyi"]
     (placed,) = _place([_ask(phrase="kongreyi")], words=cut_time_words)
     assert placed.insert is None
     assert placed.reason == "phrase_not_found"
 
 
-def test_an_insert_at_the_start_or_in_the_hook_window_is_refused():
-    for at in (0.0, HOOK_FREE_S - 0.1):
+def test_an_explicit_second_in_the_first_second_or_at_the_very_start_is_honoured():
+    for at in (0.0, 0.85, 2.0):
         (placed,) = _place([_ask(at_s=at)])
-        assert placed.insert is None
-        assert placed.reason == "in_hook_window"
+        assert placed.insert is not None, at
+        assert placed.insert.at_take_s == pytest.approx(at)
+        assert placed.overrode == (OVERRODE_HOOK,)
+        assert placed.adjusted is None
 
 
-def test_an_insert_at_the_end_or_in_the_last_second_is_refused():
-    for at in (TAKE_S, TAKE_S - TAIL_FREE_S + 0.1):
+def test_an_explicit_second_in_the_last_second_or_at_the_very_end_is_honoured():
+    for at in (TAKE_S - TAIL_FREE_S + 0.1, TAKE_S):
         (placed,) = _place([_ask(at_s=at)])
-        assert placed.insert is None
-        assert placed.reason == "in_tail_window"
+        assert placed.insert is not None, at
+        assert placed.insert.at_take_s == pytest.approx(at)
+        assert placed.overrode == (OVERRODE_TAIL,)
 
 
-def test_an_insert_longer_than_the_cap_is_refused():
+def test_a_second_past_the_end_of_the_take_plays_at_its_end_and_says_what_moved():
+    (placed,) = _place([_ask(at_s=TAKE_S + 12.0)])
+    assert placed.insert is not None
+    assert placed.insert.at_take_s == pytest.approx(TAKE_S)
+    assert placed.adjusted == ADJUSTED_TAKE_END
+
+
+def test_a_seventy_second_clip_is_played_not_refused():
+    long = {"talk": _binding("talk", duration_s=70.0)}
+    (placed,) = _place([_ask(at_s=10.0)], bindings=long)
+    assert placed.reason is None and placed.insert is not None
+
+
+def test_only_a_clip_over_the_engines_five_minutes_is_refused():
     long = {"talk": _binding("talk", duration_s=MAX_INSERT_S + 1)}
     (placed,) = _place([_ask(at_s=10.0)], bindings=long)
-    assert placed.insert is None
-    assert placed.reason == "too_long"
+    assert (placed.insert, placed.reason) == (None, "too_long")
 
 
 def test_the_same_clip_twice_places_once():
@@ -194,23 +220,46 @@ def test_a_clip_already_used_as_speaker_cutaway_or_ending_is_refused():
     assert placed.reason == "clip_in_use"
 
 
-def test_adjacent_inserts_closer_than_the_gap_refuse_the_later_one():
-    bindings = {"a": _binding("a", duration_s=4.0), "b": _binding("b", duration_s=4.0)}
-    first, second = _place(
-        [_ask("a", at_s=5.2), _ask("b", at_s=5.2 + MIN_GAP_S - 0.5)], bindings=bindings
+def test_explicit_inserts_next_to_each_other_or_at_the_same_instant_all_play_in_order():
+    bindings = {n: _binding(n, duration_s=4.0) for n in "abc"}
+    near, same_as_near, apart = _place(
+        [_ask("a", at_s=5.2), _ask("b", at_s=5.2 + 0.5), _ask("c", at_s=5.2 + 0.5)],
+        bindings=bindings,
     )
-    assert first.insert is not None
-    assert second.insert is None
-    assert second.reason == "too_close_to_previous"
+    assert near.insert is not None and near.overrode == ()
+    assert same_as_near.insert is not None
+    assert same_as_near.overrode == (OVERRODE_NEAR_OTHER,)
+    assert apart.insert is not None
+    assert apart.insert.at_take_s == pytest.approx(same_as_near.insert.at_take_s)
 
 
-def test_the_count_is_capped():
-    ids = [f"c{i}" for i in range(MAX_INSERTS + 1)]
-    bindings = {i: _binding(i, duration_s=3.0) for i in ids}
-    ats = [5.2, 10.4, 15.8, 25.6]
+def test_a_fourth_insert_and_a_twentieth_are_played_as_asked():
+    ids = [f"c{i}" for i in range(MAX_INSERTS)]
+    bindings = {i: _binding(i, duration_s=1.0) for i in ids}
+    ats = [3.0 + 1.2 * n for n in range(len(ids))]
     placed = _place([_ask(i, at_s=a) for i, a in zip(ids, ats, strict=True)], bindings=bindings)
-    assert [p.insert is not None for p in placed] == [True, True, True, False]
+    assert all(p.insert is not None for p in placed)
+    assert len(placed) == 20 and len(placed) > 3
+
+
+def test_past_the_engine_limit_the_rest_are_refused_with_that_reason():
+    ids = [f"c{i}" for i in range(MAX_INSERTS + 1)]
+    bindings = {i: _binding(i, duration_s=1.0) for i in ids}
+    placed = _place(
+        [_ask(i, at_s=3.0 + n) for n, i in enumerate(ids)], bindings=bindings, take_s=60.0
+    )
     assert placed[-1].reason == "too_many"
+    assert all(p.insert is not None for p in placed[:-1])
+
+
+def test_a_point_chosen_by_meaning_near_another_clip_joins_it_instead_of_leaving_a_sliver():
+    bindings = {"a": _binding("a", duration_s=4.0), "b": _binding("b", duration_s=4.0)}
+    first = InsertAsk("a", at_s=10.4)
+    second = InsertAsk("b", at_s=10.4 + MIN_GAP_S - 0.5, basis="topic")
+    placed_a, placed_b = _place([first, second], bindings=bindings)
+    assert placed_b.insert is not None
+    assert placed_b.insert.at_take_s == pytest.approx(10.4)
+    assert (placed_b.adjusted, placed_b.overrode) == (ADJUSTED_JOINED, ())
 
 
 def test_an_ask_with_no_position_or_no_such_clip_is_refused_with_a_reason():
@@ -407,20 +456,42 @@ def test_extra_speakers_and_the_ending_move_after_the_insert():
     assert recipe.duration == pytest.approx(44.0)
 
 
-def test_an_insert_at_the_edges_or_a_clip_already_playing_is_refused():
-    with pytest.raises(ValueError):  # the model itself refuses a point at the very start
-        _insert(at=0.0, dur=3.0)
-    for at in (30.0, 31.0):
-        with pytest.raises(UnsupportedPhonePlan):
-            _compile((_insert(at=at, dur=3.0),))
-    with pytest.raises(UnsupportedPhonePlan):
+def test_an_insert_at_the_very_start_or_end_or_beside_another_plays_as_asked():
+    start = _compile((_insert(at=0.0, dur=3.0),))
+    ids = [c.source_asset_id for c in start.tracks[0].clips]
+    assert ids == ["talk", "take"]
+    assert start.duration == pytest.approx(33.0)
+    end = _compile((_insert(at=30.0, dur=3.0),))
+    assert [c.source_asset_id for c in end.tracks[0].clips] == ["take", "talk"]
+    assert end.duration == pytest.approx(33.0)
+    # Two at one instant play one after the other, in the order given; the take resumes after.
+    same = _compile((_insert("a", at=10.0, dur=3.0), _insert("b", at=10.0, dur=2.0)))
+    assert [c.source_asset_id for c in same.tracks[0].clips] == ["take", "a", "b", "take"]
+    assert same.duration == pytest.approx(35.0)
+    both_ends = _compile((_insert("a", at=0.0, dur=3.0), _insert("b", at=30.0, dur=2.0)))
+    assert [c.source_asset_id for c in both_ends.tracks[0].clips] == ["a", "take", "b"]
+
+
+def test_what_the_engine_cannot_play_is_still_refused_by_name():
+    with pytest.raises(UnsupportedPhonePlan):  # past the end of the take
+        _compile((_insert(at=31.0, dur=3.0),))
+    with pytest.raises(UnsupportedPhonePlan):  # the take cannot play twice
         _compile((_insert("take", at=5.0, dur=3.0),))
     with pytest.raises(UnsupportedPhonePlan):
         _compile(
             (_insert("second", at=5.0, dur=3.0),), extras=(_binding("second", duration_s=6.0),)
         )
-    with pytest.raises(UnsupportedPhonePlan):
+    with pytest.raises(UnsupportedPhonePlan):  # one clip twice
         _compile((_insert("x", at=5.0, dur=3.0), _insert("x", at=15.0, dur=3.0)))
+    too_many = tuple(_insert(f"c{k}", at=1.0 + k, dur=1.0) for k in range(MAX_INSERTS + 1))
+    with pytest.raises(UnsupportedPhonePlan):
+        _compile(too_many)
+
+
+def test_the_most_inserts_the_engine_plays_compile_and_round_trip():
+    inserts = tuple(_insert(f"c{k}", at=1.0 + 1.3 * k, dur=1.0) for k in range(MAX_INSERTS))
+    recipe = _compile(inserts)
+    assert recipe.duration == pytest.approx(30.0 + MAX_INSERTS * 1.0)
 
 
 def test_the_pinned_recipe_gives_the_insert_back_and_a_recompile_is_identical():
@@ -445,6 +516,33 @@ def test_the_pinned_recipe_gives_the_insert_back_and_a_recompile_is_identical():
     ]
     again = _compile(again_inserts, keep_segments=keep)
     assert again.model_dump_json() == first.model_dump_json()
+
+
+def test_edge_and_same_instant_inserts_come_back_from_the_pinned_recipe_unchanged():
+    chosen = (
+        _insert("a", at=0.0, dur=3.0),
+        _insert("b", at=10.0, dur=2.0),
+        _insert("c", at=10.0, dur=4.0),
+        _insert("d", at=30.0, dur=1.0),
+    )
+    first = _compile(chosen)
+    bindings = (
+        _binding("take", duration_s=30.0),
+        *(_binding(n, duration_s=d) for n, d in (("a", 3.0), ("b", 2.0), ("c", 4.0), ("d", 1.0))),
+    )
+    back = inserts_from_recipe(first, bindings)
+    assert [(i.binding.media_id, round(i.at_take_s, 3)) for i in back] == [
+        ("a", 0.0),
+        ("b", 10.0),
+        ("c", 10.0),
+        ("d", 30.0),
+    ]
+    keep = [
+        (c.source_start, c.source_start + c.source_duration)
+        for c in first.tracks[0].clips
+        if c.source_asset_id == "take"
+    ]
+    assert _compile(back, keep_segments=keep).model_dump_json() == first.model_dump_json()
 
 
 def test_a_sound_cutaway_never_mutes_the_inserted_clip():
@@ -516,7 +614,6 @@ def test_a_caption_spoken_before_the_insert_does_not_come_back_after_it():
         [_ask(phrase="kongrede olanları")],
         bindings={"talk": _binding("talk", duration_s=6.0)},
         words=flat,
-        cues=cues,
         take_s=20.0,
     )
     assert placed.insert is not None
@@ -584,13 +681,12 @@ def test_random_cue_and_insert_layouts_show_each_caption_word_exactly_once():
             PhoneInsert(binding=_binding(f"i{k}", duration_s=rng.choice([3.0, 6.0])), at_take_s=p)
             for k, p in enumerate(picked)
         )
-        # Through the real placement too: its snaps land on pauses and caption ends.
+        # Through the real placement too: an explicit second is cut exactly there.
         asks = [_ask(f"i{k}", at_s=p) for k, p in enumerate(picked)]
         placed = place_inserts(
             asks,
             bindings={f"i{k}": _binding(f"i{k}", duration_s=6.0) for k in range(len(picked))},
             words=spoken,
-            cues=rows,
             take_s=take_s,
         )
         snapped = tuple(p.insert for p in placed if p.insert is not None)
@@ -625,7 +721,6 @@ def test_the_placement_snaps_to_a_nearby_cleanup_seam_without_rounding_it():
     (placed,) = _place(
         [_ask(phrase="bir iki")],
         words=words,
-        cues=cues,
         seams=[seam],
         take_s=30.0,
     )

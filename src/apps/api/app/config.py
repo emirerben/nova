@@ -320,6 +320,14 @@ class Settings(BaseSettings):
     # Apply: `fly secrets set PHONE_TALKING_INSERT_CLIPS_ENABLED=true --app nova-video` + restart
     # api + worker, Fly only (no Vercel twin); rollback with `=false` the same way.
     phone_talking_insert_clips_enabled: bool = False
+    # Parent KRI-1151: an `insert_clips` row with no phrase and no second ("place them in between
+    # my speech") is paused at the end of the sentence that talks about the clip, chosen by one
+    # small model call over the clip's facts and the creator's numbered sentences
+    # (`nova.compose.talking_insert_sentence`). False: no model call, keywords choose the
+    # sentence and the receipt says so (`via: keyword`). Only read inside the insert lane above.
+    # Apply: `fly secrets set PHONE_TALKING_INSERT_MEANING_ENABLED=false --app nova-video` +
+    # restart api + worker; default true.
+    phone_talking_insert_meaning_enabled: bool = True
     # KRI-183 (video Visuals as PiP): when this flag AND
     # `phone_rollout.phone_subtitled_overlays_supported()` hold AND
     # "visualVideos" is in `phone_render_verified_features` -- i.e.

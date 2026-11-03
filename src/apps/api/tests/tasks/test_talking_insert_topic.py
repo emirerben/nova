@@ -97,12 +97,12 @@ def meaning(monkeypatch):
     return client
 
 
-def _go(monkeypatch, *, strategy=None, **kw):
+def _go(monkeypatch, *, strategy=None, brief=None, **kw):
     return _run(
         monkeypatch,
         mention=True,
         clips=THIS_JOB_CLIPS,
-        brief=_brief(),
+        brief=brief or _brief(),
         strategy=strategy if strategy is not None else _strategy(*TALKS),
         settings_overrides=FLAG,
         **kw,
@@ -223,20 +223,28 @@ def test_one_model_call_covers_all_the_talks_and_sees_their_facts_and_his_senten
 def test_when_the_meaning_check_is_down_keywords_choose_the_sentence_and_the_receipt_says_so(
     monkeypatch,
 ):
+    from app.pipeline.phone_talking_insert_topics import split_sentences
+
     client = _Recorded(TransientError("provider down"))
     monkeypatch.setattr("app.services.phone_insert_topic_picker.default_client", lambda: client)
     _job, recipe, variant = _go(monkeypatch)
     receipt = variant[gb.PHONE_INSERT_CLIPS_FIELD]
+    sentences = split_sentences(
+        [{"text": t, "start_s": a, "end_s": b} for t, a, b in CREATOR_CLIP["words"]], TAKE_S
+    )
     placed = {row["media_id"]: row for row in receipt["placed"]}
-    # The final talk shares "Euro2032", "stat" with the sentence ending at 20.8: the pause is the
-    # sentence end, not the word.
-    assert placed[FINAL_TALK]["via"] == "keyword"
-    assert placed[FINAL_TALK]["sentence_last"] == 6
-    final = next(c for c in _pieces(recipe) if c.source_asset_id == FINAL_TALK)
-    assert final.timeline_start == pytest.approx(SENTENCE_6_END, abs=1e-3)
-    # No keyword found the offer talk: it is left out and the reason is that the check could not
-    # run, not "nothing is about it".
-    assert {"media_id": ALLOCATE_TALK, "reason": "topic_check_unavailable"} in receipt["dropped"]
+    assert set(placed) == {FINAL_TALK}
+    row = placed[FINAL_TALK]
+    # Labelled as a keyword guess, and the pause is still a SENTENCE end, never a matched word.
+    assert row["via"] == "keyword"
+    assert row["snap"] == "sentence_end"
+    assert row["at_take_s"] == pytest.approx(sentences[row["sentence_last"] - 1].end_s, abs=1e-3)
+    # The two talks no keyword finds are left out, and the reason is that the check could not run,
+    # not that nothing he says is about them.
+    assert receipt["dropped"] == [
+        {"media_id": ALLOCATE_TALK, "reason": "topic_check_unavailable"},
+        {"media_id": CONGRESS_TALK, "reason": "topic_check_unavailable"},
+    ]
 
 
 def test_flag_off_the_recipe_is_byte_identical_and_the_receipt_is_absent(monkeypatch, meaning):
@@ -258,7 +266,9 @@ def test_the_creators_own_take_named_as_a_talk_is_refused_and_no_model_call_is_s
     receipt = variant[gb.PHONE_INSERT_CLIPS_FIELD]
     assert receipt["placed"] == []
     assert receipt["dropped"] == [{"media_id": CREATOR, "reason": "clip_in_use"}]
-    assert [c.source_asset_id for c in _pieces(recipe)] == [CREATOR]
+    # He stays the one take of the video: first, and played once, not paused for himself.
+    ids = [c.source_asset_id for c in _pieces(recipe)]
+    assert ids[0] == CREATOR and ids.count(CREATOR) == 1
     assert meaning.prompts == []
 
 
@@ -282,3 +292,147 @@ def test_a_talk_also_asked_as_an_overlay_plays_once_as_an_insert(monkeypatch, me
     ids = [c.source_asset_id for t in recipe.tracks for c in t.clips]
     assert ids.count(ALLOCATE_TALK) == 1
     assert ids.count(FINAL_TALK) == 1
+
+
+# --- an explicit position wins over every default ---
+
+
+def _overlay_the_rest() -> CreativeBrief:
+    """The talks no insert row names are shown over his speech, so the main track is his take."""
+    overlay = BriefRequirement(
+        id="r9",
+        kind="style",
+        scope="global",
+        description="Show the other talks full screen while I talk",
+        facts={"display_mode": "fullscreen"},
+    )
+    return CreativeBrief(version=2, requirements=[*_brief().requirements, overlay])
+
+
+def _explicit(*rows: dict) -> dict:
+    return {
+        "insert_clips": [{"keep_audio": True, **row} for row in rows],
+        "selected_media_ids": [CREATOR, STADIUM, *TALKS],
+    }
+
+
+def _word(text: str) -> tuple[float, float]:
+    return next((a, b) for t, a, b in CREATOR_CLIP["words"] if t == text)
+
+
+def test_a_keyword_mid_sentence_the_creator_named_is_cut_right_after_that_word(monkeypatch):
+    # "Euro2032" is the 2nd word of a sentence that ends at 20.8; he said "after Euro2032".
+    _job, recipe, variant = _go(
+        monkeypatch,
+        brief=_overlay_the_rest(),
+        strategy=_explicit({"media_id": FINAL_TALK, "at_phrase": "Euro2032"}),
+    )
+    _start, word_end = _word("Euro2032")
+    final = next(c for c in _pieces(recipe) if c.source_asset_id == FINAL_TALK)
+    assert final.timeline_start == pytest.approx(word_end, abs=1e-3)
+    assert word_end < SENTENCE_6_END - 1.0
+    (row,) = variant[gb.PHONE_INSERT_CLIPS_FIELD]["placed"]
+    assert (row["basis"], row["snap"], row["as_asked"]) == ("phrase", "phrase_end", True)
+    assert "adjusted" not in row
+
+
+def test_an_insert_asked_for_in_the_first_second_is_placed_there_and_the_receipt_says_so(
+    monkeypatch,
+):
+    _job, recipe, variant = _go(
+        monkeypatch,
+        brief=_overlay_the_rest(),
+        strategy=_explicit({"media_id": FINAL_TALK, "at_s": 0.6}),
+    )
+    main = _pieces(recipe)
+    assert [c.source_asset_id for c in main] == [CREATOR, FINAL_TALK, CREATOR]
+    assert main[0].source_duration == pytest.approx(0.6, abs=1e-3)
+    (row,) = variant[gb.PHONE_INSERT_CLIPS_FIELD]["placed"]
+    assert row["overrode"] == ["hook_window"] and row["as_asked"] is True
+    assert row["at_take_s"] == pytest.approx(0.6, abs=1e-3)
+
+
+def test_an_insert_asked_for_at_the_very_start_plays_before_the_take(monkeypatch):
+    _job, recipe, _variant = _go(
+        monkeypatch,
+        brief=_overlay_the_rest(),
+        strategy=_explicit({"media_id": FINAL_TALK, "at_s": 0}),
+    )
+    assert [c.source_asset_id for c in _pieces(recipe)] == [FINAL_TALK, CREATOR]
+    assert recipe.duration == pytest.approx(TAKE_S + DURATION[FINAL_TALK])
+
+
+def test_two_inserts_asked_for_next_to_each_other_both_play(monkeypatch):
+    _job, recipe, variant = _go(
+        monkeypatch,
+        brief=_overlay_the_rest(),
+        strategy=_explicit(
+            {"media_id": FINAL_TALK, "at_s": 30.0}, {"media_id": ALLOCATE_TALK, "at_s": 31.0}
+        ),
+    )
+    assert [c.source_asset_id for c in _pieces(recipe)] == [
+        CREATOR,
+        FINAL_TALK,
+        CREATOR,
+        ALLOCATE_TALK,
+        CREATOR,
+    ]
+    rows = {r["media_id"]: r for r in variant[gb.PHONE_INSERT_CLIPS_FIELD]["placed"]}
+    assert rows[ALLOCATE_TALK]["overrode"] == ["near_another_clip"]
+    assert variant[gb.PHONE_INSERT_CLIPS_FIELD]["dropped"] == []
+
+
+def test_a_fourth_insert_is_played_as_asked(monkeypatch):
+    clips = (FINAL_TALK, ALLOCATE_TALK, CONGRESS_TALK, STADIUM)
+    _job, recipe, variant = _go(
+        monkeypatch,
+        brief=_overlay_the_rest(),
+        strategy=_explicit(*({"media_id": m, "at_s": 20.0 + 15 * k} for k, m in enumerate(clips))),
+    )
+    played = [c.source_asset_id for c in _pieces(recipe) if c.source_asset_id != CREATOR]
+    assert played == list(clips)
+    assert variant[gb.PHONE_INSERT_CLIPS_FIELD]["dropped"] == []
+    total = TAKE_S + sum(DURATION[m] for m in clips)
+    assert recipe.duration == pytest.approx(total)
+
+
+def test_a_seventy_second_clip_is_played_whole(monkeypatch):
+    long_clips = [
+        {**c, "duration_s": 70.0} if c["media_id"] == ALLOCATE_TALK else c for c in THIS_JOB_CLIPS
+    ]
+    _job, recipe, variant = _run(
+        monkeypatch,
+        mention=True,
+        clips=long_clips,
+        brief=_overlay_the_rest(),
+        strategy=_explicit({"media_id": ALLOCATE_TALK, "at_s": 40.0}),
+        settings_overrides=FLAG,
+    )
+    insert = next(c for c in _pieces(recipe) if c.source_asset_id == ALLOCATE_TALK)
+    assert insert.source_duration == pytest.approx(70.0)
+    assert recipe.duration == pytest.approx(TAKE_S + 70.0)
+    assert variant[gb.PHONE_INSERT_CLIPS_FIELD]["dropped"] == []
+
+
+def test_a_phrase_he_never_says_is_placed_where_he_talks_about_the_clip_and_the_receipt_says_so(
+    monkeypatch, meaning
+):
+    _job, recipe, variant = _go(
+        monkeypatch,
+        brief=_overlay_the_rest(),
+        strategy=_explicit({"media_id": FINAL_TALK, "at_phrase": "uzay mekiği"}),
+    )
+    (row,) = variant[gb.PHONE_INSERT_CLIPS_FIELD]["placed"]
+    assert row["fallback"] == "phrase_not_found" and row["basis"] == "topic"
+    final = next(c for c in _pieces(recipe) if c.source_asset_id == FINAL_TALK)
+    assert final.timeline_start == pytest.approx(SENTENCE_6_END, abs=1e-3)
+
+
+def test_the_hook_default_applies_only_where_he_named_nothing(monkeypatch, meaning):
+    # The recorded choice puts the offer talk after sentence 5 and the final talk after
+    # sentence 6: far from the hook, so neither is adjusted.
+    _job, _recipe, variant = _go(monkeypatch)
+    assert all(
+        "adjusted" not in r and "overrode" not in r
+        for r in variant[gb.PHONE_INSERT_CLIPS_FIELD]["placed"]
+    )

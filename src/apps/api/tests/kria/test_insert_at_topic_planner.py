@@ -65,7 +65,7 @@ def _topic_req() -> BriefRequirement:
     )
 
 
-# --- T1, T2: the row ------------------------------------------------------------------------------
+# --- T1, T2: the row ---
 
 
 def test_t1_a_row_with_no_position_is_valid_and_means_the_sentence_about_the_clip():
@@ -105,7 +105,7 @@ def test_t2_the_repair_keeps_a_position_less_row_and_names_why_it_drops_one(monk
     assert notices == [capabilities.INSERT_CLIP_NOTICES["insert_clips_off"]] * 2
 
 
-# --- T3, T4: the prompt ------------------------------------------------------------------------------
+# --- T3, T4: the prompt ---
 
 
 def _insert_section(monkeypatch, *, cutaways: bool) -> str:
@@ -176,7 +176,7 @@ def test_t3_with_the_cutaways_closed_the_insert_is_still_the_only_in_between_for
     assert "leave `insert_clips` empty" in insert
 
 
-# --- T5: the brief --------------------------------------------------------------------------------------------
+# --- T5: the brief ---
 
 
 def test_t5_the_brief_records_in_between_my_speech_as_one_insert_clip_fact_with_no_position():
@@ -191,7 +191,7 @@ def test_t5_the_brief_records_in_between_my_speech_as_one_insert_clip_fact_with_
     assert "over my speech" in rule
 
 
-# --- T6: the corrective note --------------------------------------------------------------------------------------
+# --- T6: the corrective note ---
 
 
 @pytest.mark.parametrize(
@@ -205,7 +205,7 @@ def test_t6_the_note_points_in_between_my_speech_at_insert_clips_when_that_lane_
     assert "over my speech" in note
 
 
-# --- T7: the receipts --------------------------------------------------------------------------------------------------
+# --- T7: the receipts ---
 
 
 def test_t7_a_draft_does_not_promise_a_clip_the_render_may_leave_out(monkeypatch):
@@ -224,6 +224,8 @@ def _variant(placed, dropped):
     return plan_facts_from_phone_variant(
         {
             "resolved_archetype": "subtitled",
+            "render_destination": "device",
+            "render_status": "ready",
             "phone_insert_clips": {"placed": placed, "dropped": dropped},
         }
     )
@@ -235,14 +237,14 @@ def test_t7_a_finished_video_says_how_many_clips_played_and_why_each_missing_one
         [{"media_id": "c", "reason": "no_matching_sentence"}],
     )
     assert facts.insert_clips == (
-        InsertClipFact("applied"),
-        InsertClipFact("applied"),
+        InsertClipFact("applied", anchor="topic"),
+        InsertClipFact("applied", anchor="topic"),
         InsertClipFact("dropped", reason="no_matching_sentence"),
     )
     verdict = _verdict(facts, _topic_req())
     assert verdict.status == "partial"
     assert "2 of 3" in verdict.reason
-    assert "none of what you say is about" in verdict.reason
+    assert "None of what you say is about" in verdict.reason
 
 
 def test_t7_every_reason_the_topic_path_can_write_has_english_and_turkish_wording():
@@ -263,3 +265,80 @@ def test_t7_every_reason_the_topic_path_can_write_has_english_and_turkish_wordin
 
     with reply_language_for("tr"):
         assert bc._insert_clip_why("no_matching_sentence") != bc._insert_clip_why("zzz")
+
+
+# --- T8, T9: an explicit position wins, and the receipt says what it overrode ---
+
+
+def test_t8_the_prompt_says_the_position_the_creator_names_wins(monkeypatch):
+    insert = _insert_section(monkeypatch, cutaways=True)
+
+    assert "Whatever position the creator names wins" in insert
+    assert "even in the first seconds, at the very end or next to another clip" in insert
+    assert "the server never moves it" in insert
+    assert "Up to 20 clips" in insert
+    assert "At most three" not in insert
+
+
+def test_t9_a_finished_video_names_each_default_an_explicit_ask_overrode():
+    facts = _variant(
+        [
+            {"media_id": "a", "basis": "second", "overrode": ["hook_window", "mid_word"]},
+            {"media_id": "b", "basis": "second", "overrode": ["tail_window"]},
+            {"media_id": "c", "basis": "second", "overrode": ["near_another_clip"]},
+        ],
+        [],
+    )
+    verdict = _verdict(facts, _topic_req())
+    assert verdict.status == "met"
+    for words in (
+        "plays in the first seconds, as you asked",
+        "at the very end of your talk, as you asked",
+        "in the middle of a word, as you asked",
+        "right next to another, as you asked",
+    ):
+        assert words in verdict.reason, words
+
+
+def test_t9_a_finished_video_names_what_moved_a_position_he_did_not_name():
+    def reason(*rows):
+        return _verdict(_variant(list(rows), []), _topic_req()).reason
+
+    assert "ends in the first seconds" in reason(
+        {"media_id": "a", "basis": "topic", "adjusted": "hook_window"}
+    )
+    assert "belongs to your last sentence" in reason(
+        {"media_id": "a", "basis": "topic", "adjusted": "tail_window"}
+    )
+    assert "plays right after another" in reason(
+        {"media_id": "a", "basis": "topic", "adjusted": "near_another_clip"}
+    )
+    assert "I didn't hear you say the words you named" in reason(
+        {"media_id": "a", "basis": "topic", "fallback": "phrase_not_found"}
+    )
+    assert "by their words" in reason({"media_id": "a", "basis": "topic", "via": "keyword"})
+    from app.kria.reply_language import reply_language_for
+
+    row = {"media_id": "a", "basis": "topic", "adjusted": "tail_window"}
+    with reply_language_for("tr"):
+        turkish = reason(row)
+    assert turkish != reason(row) and "son cümlene" in turkish
+
+
+def test_t9_a_long_list_of_notes_is_cut_whole_never_in_the_middle_of_a_sentence():
+    rows = [
+        {"media_id": "a", "basis": "second", "overrode": ["hook_window", "tail_window"]},
+        {"media_id": "b", "basis": "second", "overrode": ["mid_word", "near_another_clip"]},
+        {"media_id": "c", "basis": "topic", "adjusted": "hook_window", "via": "keyword"},
+        {"media_id": "d", "basis": "topic", "fallback": "phrase_not_found"},
+    ]
+    reason = _verdict(_variant(rows, []), _topic_req()).reason
+    assert reason.endswith("; and more") and len(reason) <= 300
+
+
+def test_t9_a_clip_with_no_sentence_about_it_is_told_in_plain_words_not_a_code():
+    from app.kria import brief_checks as bc
+
+    for reason in ("no_matching_sentence", "phrase_not_found", "too_long", "too_many"):
+        text = bc._insert_clip_why(reason)
+        assert "_" not in text, text

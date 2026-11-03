@@ -220,8 +220,10 @@ class PhoneCutaway(BaseModel):
         return self
 
 
-# Parent KRI-1151: the most clips a Talking edit pauses its take for.
-MAX_INSERT_CLIPS = 3
+# Parent KRI-1151: the most clips a Talking edit pauses its take for. Not a taste limit: it is the
+# size the planner, the sentence check and the recipe are built and tested for, and it is stated
+# to the creator when an ask goes past it.
+MAX_INSERT_CLIPS = 20
 INSERT_CLIP_PREFIX = "insert-"
 _INSERT_EPS_S = 1e-6
 # A speaker clip beside an insert shorter than this (one frame at 30 fps) is not worth playing.
@@ -237,7 +239,7 @@ class PhoneInsert(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
     binding: PhoneSourceBinding
-    at_take_s: float = Field(gt=0, le=1800)
+    at_take_s: float = Field(ge=0, le=1800)
     keep_audio: bool = True
 
 
@@ -594,7 +596,7 @@ def compile_phone_subtitled_plan(
             cursor = grid(cursor + remaining)
             take_cursor = grid(take_cursor + remaining)
             break
-        if insert_queue and abs(insert_queue[0].at_take_s - take_cursor) <= _INSERT_EPS_S:
+        while insert_queue and abs(insert_queue[0].at_take_s - take_cursor) <= _INSERT_EPS_S:
             _emit_insert(insert_queue.pop(0))
     seen_speakers = {binding.media_id} | {i.binding.media_id for i in ordered_inserts}
     for extra_index, extra in enumerate(additional_speakers):
@@ -906,8 +908,12 @@ def _validated_inserts(
 ) -> tuple[PhoneInsert, ...]:
     """``inserts`` in take order, or `UnsupportedPhonePlan` naming what cannot be played.
 
-    A point within `_MIN_SPEAKER_PIECE_S` of a cut seam in the take moves onto the seam: the
-    other way it would leave a speaker clip of a few milliseconds beside the insert."""
+    Only what the engine cannot play is refused: too many, a clip that plays twice or is not a
+    video or is over five minutes, a point outside the take. A point at the very start or end of
+    the take, next to another insert or at the same instant as one is played as asked (clips
+    at one instant play one after the other, in the order given). A point within
+    `_MIN_SPEAKER_PIECE_S` of a cut seam in the take moves onto the seam: the other way it would
+    leave a speaker clip of a few milliseconds beside the insert."""
     if not inserts:
         return ()
     if len(inserts) > MAX_INSERT_CLIPS:
@@ -916,7 +922,6 @@ def _validated_inserts(
         )
     ordered = tuple(sorted(inserts, key=lambda i: i.at_take_s))
     seen = {speaker_media_id, *extra_media_ids}
-    previous = 0.0
     for insert in ordered:
         original = insert.binding.original
         if insert.binding.media_id in seen:
@@ -926,11 +931,8 @@ def _validated_inserts(
             raise UnsupportedPhonePlan("an inserted Talking clip must be a video")
         if original.duration_s <= 0 or original.duration_s > _MAX_CLIP_DURATION_S:
             raise UnsupportedPhonePlan("an inserted Talking clip must be at most 5 minutes")
-        if insert.at_take_s <= _INSERT_EPS_S or insert.at_take_s >= take_s - _INSERT_EPS_S:
-            raise UnsupportedPhonePlan("an insert must fall inside the take, not at its edges")
-        if insert.at_take_s - previous <= _INSERT_EPS_S:
-            raise UnsupportedPhonePlan("two inserts cannot pause the take at the same moment")
-        previous = insert.at_take_s
+        if insert.at_take_s > take_s + _INSERT_EPS_S:
+            raise UnsupportedPhonePlan("an insert must fall inside the take")
     return tuple(_onto_seam(insert, seams) for insert in ordered)
 
 

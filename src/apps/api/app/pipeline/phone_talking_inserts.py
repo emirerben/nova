@@ -9,17 +9,22 @@ whole talk).
 The data shape is one number per insert: ``PhoneInsert.at_take_s``, a position on the TAKE
 timeline (the first speaker's seconds with no insert counted). Three pure steps own the rest:
 
-1. `place_inserts` turns the creator's asks (a phrase he says, or a second) into
-   `PhoneInsert`s, or says why one cannot be placed. The point is always a boundary in his
-   speech (the end of a caption, a pause between words, a word's end), never inside a word, and
-   never in the hook window or the last second. No guess is made for a phrase that is not
-   there.
+1. `place_inserts` turns the creator's asks into `PhoneInsert`s, or says why one cannot be
+   placed. **An explicit ask wins over every heuristic**: the end of the phrase he names, the
+   second he states, the sentence the meaning check found at his word ("in between my speech"),
+   exactly there, even in the first seconds, in the last second, in the middle of a word or
+   beside another clip. The heuristics (stay off the first 2.5 s and the last second, keep
+   2 s between clips, never inside a word) only choose a position where he named none, and the
+   placement says which of them an explicit ask overrode. A clip is refused only when it cannot
+   physically play: missing, not a video, over five minutes, already the take, or past the
+   engine's `MAX_INSERTS`.
 2. `warp_for_inserts` moves everything expressed on the take timeline (captions, text rows,
    cards, effects, cutaways) onto the final timeline: whatever starts at or after an insert
    moves later by its length, and a window that spans the point is split around it, so
    nothing is drawn over the inserted clip and nothing is lost.
 3. `compile_phone_subtitled_plan(inserts=...)` lays the clips out (the compiler's contract is
-   unchanged: everything it is given is on the final timeline).
+   unchanged: everything it is given is on the final timeline). Clips at one instant play one
+   after the other.
 
 `inserts_from_recipe` is the inverse of the compile, so an editor Save keeps an insert as it
 was. Facts only decide timing; the inserted clip's words are never drawn as text.
@@ -27,8 +32,7 @@ was. Facts only decide timing; the inserted clip's words are never drawn as text
 
 from __future__ import annotations
 
-import math
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -51,6 +55,7 @@ __all__ = [
     "TAIL_FREE_S",
     "InsertAsk",
     "InsertPlacement",
+    "phrase_end_s",
     "WarpedTimeline",
     "insert_blocked_windows",
     "insert_rows",
@@ -63,14 +68,10 @@ __all__ = [
 # The variant receipt of what the worker placed (`{"placed": [...], "dropped": [...]}`).
 PHONE_INSERT_CLIPS_FIELD = "phone_insert_clips"
 MAX_INSERTS = MAX_INSERT_CLIPS
-# A longer clip is not an insert, it is a second video: refused rather than trimmed.
-MAX_INSERT_S = 60.0
-# Two inserts closer than this on the take would leave a few words between two long breaks.
+# The engine's clip length limit (a Talking clip is at most five minutes), not a taste limit.
+MAX_INSERT_S = 300.0
+# Default spacing when the creator named no position: two clips closer than this are one stop.
 MIN_GAP_S = 2.0
-# How far past the spoken phrase the insert may wait for the end of a caption or a pause.
-SNAP_SLACK_S = 2.5
-# A gap between two words this long is a pause the insert can sit in.
-PAUSE_S = 0.25
 _EPS = 1e-6
 # A cleanup seam this close to the point takes it: a speaker clip of a few frames beside the
 # insert is not worth playing.
@@ -84,23 +85,52 @@ _BLOCK_S = 0.05
 
 @dataclass(frozen=True)
 class InsertAsk:
-    """What the creator asked for, as the approved strategy carries it."""
+    """What the creator asked for, as the approved strategy carries it.
+
+    A row with no phrase and no second is ``at_topic``: the pause goes at the end of the sentence
+    about the clip, which the worker resolves (`phone_talking_insert_topics`) into an ``at_s``
+    with ``basis="topic"`` before `place_inserts` sees it. ``fallback`` names why a phrase ask
+    was placed by meaning instead (he never said the words)."""
 
     media_id: str
     at_phrase: str | None = None
     at_s: float | None = None
     keep_audio: bool = True
+    at_topic: bool = False
+    basis: str | None = None
+    fallback: str | None = None
+    # What moved a topic point off the sentence end (hook / tail window), already applied.
+    adjusted: str | None = None
 
 
 @dataclass(frozen=True)
 class InsertPlacement:
-    """One ask and what became of it: a `PhoneInsert`, or a ``reason`` it was not used."""
+    """One ask and what became of it: a `PhoneInsert`, or a ``reason`` it was not used.
+
+    ``overrode`` lists the defaults an explicit position ignored, ``adjusted`` what moved a
+    point the creator did not name (see `NOTE_*`); both are written to the receipt so the reply
+    can say "placed at your 0:20 as asked" or "moved after the first seconds"."""
 
     ask: InsertAsk
     insert: PhoneInsert | None
     reason: str | None = None
-    basis: str | None = None  # "phrase" | "second"
-    snap: str | None = None  # "cue_end" | "pause" | "word_end" | "exact" | "seam"
+    basis: str | None = None  # "phrase" | "second" | "topic"
+    # "phrase_end" | "exact" | "seam" | "sentence_end"
+    snap: str | None = None
+    overrode: tuple[str, ...] = ()
+    adjusted: str | None = None
+
+
+# Defaults an explicit position can override (InsertPlacement.overrode) ...
+OVERRODE_HOOK = "hook_window"
+OVERRODE_TAIL = "tail_window"
+OVERRODE_NEAR_OTHER = "near_another_clip"
+OVERRODE_MID_WORD = "mid_word"
+# ... and what can move a position the creator did not name (InsertPlacement.adjusted).
+ADJUSTED_HOOK = "hook_window"
+ADJUSTED_TAIL = "tail_window"
+ADJUSTED_JOINED = "near_another_clip"
+ADJUSTED_TAKE_END = "take_end"
 
 
 @dataclass(frozen=True)
@@ -131,43 +161,12 @@ def _take_words(words: Sequence[Any], take_s: float) -> list[dict]:
     return sorted(rows, key=lambda w: w["start_s"])
 
 
-def _boundaries(
-    words: Sequence[Mapping[str, Any]], cues: Iterable[Mapping[str, Any]]
-) -> list[tuple[float, str]]:
-    """Moments in his speech where a pause for another clip reads naturally."""
-    found: dict[float, str] = {}
-    for index, word in enumerate(words):
-        end = float(word["end_s"])
-        following = words[index + 1]["start_s"] if index + 1 < len(words) else math.inf
-        if following - end >= PAUSE_S:
-            found[round(end, 3)] = "pause"
-    for cue in cues:
-        end = cue.get("end_s")
-        if end is not None:
-            found[round(float(end), 3)] = "cue_end"
-    return sorted((t, kind) for t, kind in found.items())
-
-
-def _snap(
-    point: float, words: Sequence[Mapping[str, Any]], cues: Sequence[Mapping[str, Any]]
-) -> tuple[float, str]:
-    """``point`` moved to a boundary in his speech: out of a word to its end, then forward to
-    the end of the caption or the pause that follows within `SNAP_SLACK_S`."""
-    snap = "exact"
-    for word in words:
-        if float(word["start_s"]) + _EPS < point < float(word["end_s"]) - _EPS:
-            point, snap = float(word["end_s"]), "word_end"
-            break
-    for at, kind in _boundaries(words, cues):
-        if point - _EPS <= at <= point + SNAP_SLACK_S:
-            return at, kind
-    return point, snap
-
-
-def _phrase_end(phrase: str, words: Sequence[Mapping[str, Any]], take_s: float) -> float | None:
+def phrase_end_s(phrase: str, words: Sequence[Any], take_s: float) -> float | None:
+    """The second the last word of ``phrase`` ends in what he said, or None when he never says it
+    (a phrase inside a region speech cleanup cut out is not found either)."""
     from app.services.speech_segments import ground_excerpt  # noqa: PLC0415
 
-    grounded = ground_excerpt(list(words), phrase, duration_s=take_s)
+    grounded = ground_excerpt(_take_words(words, take_s), phrase, duration_s=take_s)
     return None if grounded is None else float(grounded.word_end_s)
 
 
@@ -176,18 +175,20 @@ def place_inserts(
     *,
     bindings: Mapping[str, PhoneSourceBinding],
     words: Sequence[Any],
-    cues: Sequence[Mapping[str, Any]],
     take_s: float,
     in_use: Collection[str] = (),
     seams: Sequence[float] = (),
 ) -> list[InsertPlacement]:
     """One `InsertPlacement` per ask, in ask order.
 
-    ``words``/``cues`` are the creator's speech on the take timeline (speech cleanup already
-    applied, so a phrase inside a cut-out region is not found); ``in_use`` is every clip the
-    edit already plays (speakers, cutaways, the ending); ``seams`` are the take-timeline seconds
-    where speech cleanup joined two kept segments: a point within `SEAM_SNAP_S` of one moves
-    onto it, unrounded, so no sliver of speech is left beside the insert.
+    ``words`` are the creator's speech on the take timeline (speech cleanup already applied, so
+    a phrase inside a cut-out region is not found); ``in_use`` is every clip the edit already
+    plays (speakers, cutaways, the ending); ``seams`` are the take-timeline seconds where speech
+    cleanup joined two kept segments: a point within `SEAM_SNAP_S` of one moves onto it,
+    unrounded, so no sliver of speech is left beside the insert.
+
+    Order matters for the defaults only: explicit asks should come first (the worker sorts), so
+    a point the creator did not name joins an earlier clip instead of the other way round.
     """
     speech = _take_words(words, take_s)
     placed: list[PhoneInsert] = []
@@ -218,36 +219,63 @@ def place_inserts(
         if float(original.duration_s) > MAX_INSERT_S:
             out.append(refuse(ask, "too_long"))
             continue
+        explicit = ask.basis != "topic"
         if ask.at_phrase:
             basis = "phrase"
-            point = _phrase_end(ask.at_phrase, speech, take_s)
+            point = phrase_end_s(ask.at_phrase, speech, take_s)
             if point is None:
                 out.append(refuse(ask, "phrase_not_found", basis=basis))
                 continue
+            snap = "phrase_end"
         elif ask.at_s is not None:
-            basis, point = "second", float(ask.at_s)
+            basis, point = ask.basis or "second", float(ask.at_s)
+            snap = "exact" if explicit else "sentence_end"
         else:
             out.append(refuse(ask, "no_position"))
             continue
-        if point < HOOK_FREE_S - _EPS:
-            out.append(refuse(ask, "in_hook_window", basis=basis))
-            continue
-        at, snap = _snap(point, speech, cues)
-        seam = min(seams, key=lambda s: abs(s - at), default=None)
-        if seam is not None and abs(seam - at) <= SEAM_SNAP_S:
-            at, snap = float(seam), "seam"
-        if at > take_s - TAIL_FREE_S + _EPS:
-            out.append(refuse(ask, "in_tail_window", basis=basis, snap=snap))
-            continue
-        if snap != "seam":
-            at = round(at, 3)
-        if any(abs(at - other.at_take_s) < MIN_GAP_S for other in placed):
-            out.append(refuse(ask, "too_close_to_previous", basis=basis, snap=snap))
-            continue
-        insert = PhoneInsert(binding=binding, at_take_s=at, keep_audio=ask.keep_audio)
+        adjusted = ask.adjusted
+        if point > take_s:
+            point, adjusted = take_s, ADJUSTED_TAKE_END
+        seam = min(seams, key=lambda s: abs(s - point), default=None)
+        on_seam = seam is not None and abs(seam - point) <= SEAM_SNAP_S
+        if on_seam:
+            point, snap = float(seam), "seam"
+        else:
+            point = round(point, 3)
+        overrode: list[str] = []
+        near = next((o for o in placed if abs(point - o.at_take_s) < MIN_GAP_S - _EPS), None)
+        if explicit:
+            # The creator named this position: nothing below moves it, it only records which
+            # defaults it ignored.
+            if point < HOOK_FREE_S - _EPS:
+                overrode.append(OVERRODE_HOOK)
+            if point > take_s - TAIL_FREE_S + _EPS:
+                overrode.append(OVERRODE_TAIL)
+            if near is not None:
+                overrode.append(OVERRODE_NEAR_OTHER)
+            if snap == "exact" and any(
+                w["start_s"] + _EPS < point < w["end_s"] - _EPS for w in speech
+            ):
+                overrode.append(OVERRODE_MID_WORD)
+        elif near is not None:
+            # A point chosen by meaning that lands within a couple of seconds of a clip already
+            # placed would leave a few words between two long breaks: it plays right after that
+            # clip instead (clips at one instant play one after the other).
+            point, adjusted = near.at_take_s, ADJUSTED_JOINED
+        insert = PhoneInsert(binding=binding, at_take_s=point, keep_audio=ask.keep_audio)
         placed.append(insert)
         used.add(ask.media_id)
-        out.append(InsertPlacement(ask, insert, None, basis, snap))
+        out.append(
+            InsertPlacement(
+                ask,
+                insert,
+                None,
+                basis,
+                snap,
+                overrode=tuple(overrode),
+                adjusted=adjusted,
+            )
+        )
     return out
 
 

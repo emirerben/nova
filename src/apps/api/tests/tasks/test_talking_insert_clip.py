@@ -112,12 +112,19 @@ def test_flag_off_the_recipe_is_byte_identical_and_the_receipt_says_why(monkeypa
     assert gb.PHONE_INSERT_CLIPS_FIELD not in variant
 
 
-def test_a_phrase_the_creator_never_says_inserts_nothing_and_says_so(monkeypatch):
+def test_a_phrase_the_creator_never_says_is_left_out_when_nothing_he_says_is_about_the_clip(
+    monkeypatch,
+):
+    from app.agents._runtime import TransientError
+    from tests.agents.test_talking_insert_sentence import _Recorded
+
+    # The meaning check cannot run either, so nothing places the clip: said, not guessed.
+    client = _Recorded(TransientError("provider down"))
+    monkeypatch.setattr("app.services.phone_insert_topic_picker.default_client", lambda: client)
     strategy = {"insert_clips": [{"media_id": CONGRESS_TALK, "at_phrase": "uzay mekiği"}]}
     _job, recipe, variant = _run(
         monkeypatch, mention=True, strategy=strategy, settings_overrides=FLAG
     )
-    # Asked for at a moment that never came: not used at all, rather than shown elsewhere.
     assert CONGRESS_TALK not in {c.source_asset_id for t in recipe.tracks for c in t.clips}
     receipt = variant[gb.PHONE_INSERT_CLIPS_FIELD]
     assert receipt["placed"] == []

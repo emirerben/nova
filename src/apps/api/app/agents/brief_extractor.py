@@ -64,7 +64,10 @@ from app.pipeline.prompt_loader import load_prompt
 # v46 (parent KRI-1151): the shared brief section records `insert_clip` / `insert_at_phrase`.
 # v47 (KRI-1162 / KRI-1161): the shared brief section records a photo or video behind the
 # speaker as a `style` fact `speaker_background` (+ `background_changes`, `speaker_small`).
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-02-v47"
+# v48 (parent KRI-1151): "place them in between my speech" for clips with their own sound is an
+# `insert_clip` fact with no position (the server picks the sentence); "over my speech" stays
+# display_mode / clip_sound. Only the insert paragraph (shown while inserts are open) changes.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-03-v48"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
