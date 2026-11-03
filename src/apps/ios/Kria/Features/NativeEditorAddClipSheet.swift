@@ -2,7 +2,10 @@ import SwiftUI
 import PhotosUI
 
 /// What the Add clip sheet starts doing when it opens (the empty player's Record and Upload buttons skip the choice).
-enum AddClipLaunch: Hashable { case choose, record, upload }
+enum AddClipLaunch: Hashable, Identifiable {
+    case choose, record, upload
+    var id: Self { self }
+}
 
 /// Sheet for appending a new clip or photo to the end of the native editor's timeline (Paper S3.16b): Record | Upload,
 /// then "Upload from" once Upload is chosen. Deliberately does not reuse `FootagePickerView` — that
@@ -12,7 +15,7 @@ enum AddClipLaunch: Hashable { case choose, record, upload }
 struct NativeEditorAddClipSheet: View {
     @ObservedObject var session: NativeEditorSession
     var launch: AddClipLaunch = .choose
-    @EnvironmentObject private var auth: AuthStore
+    @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var photoItem: PhotosPickerItem?
     @State private var showingPhotosPicker = false
@@ -45,7 +48,7 @@ struct NativeEditorAddClipSheet: View {
                 sourceRows
             } else {
                 KriaSourceRow(options: [
-                    auth.localStorageIdentity == nil ? nil : .record(caption: "Film now", identifier: "native-editor-add-clip-record", isEnabled: !session.isAddingClip) { showsCamera = true },
+                    model.localAccountID == nil ? nil : .record(caption: "Film now", identifier: "native-editor-add-clip-record", isEnabled: !session.isAddingClip) { showsCamera = true },
                     .upload(caption: "Use existing video", identifier: "native-editor-add-clip-upload", isEnabled: !session.isAddingClip) { choosingSource = true }
                 ].compactMap { $0 })
             }
@@ -72,7 +75,7 @@ struct NativeEditorAddClipSheet: View {
             if addedByRecording { dismiss() }
             else if uploadAfterCamera { uploadAfterCamera = false; choosingSource = true }
         }) {
-            if let accountID = auth.localStorageIdentity {
+            if let accountID = model.localAccountID {
                 TeleprompterScreen(accountID: accountID, projectID: session.creationThreadID ?? UUID(),
                                    admissionMessage: { _ in nil },
                                    intake: { take, url in
@@ -90,7 +93,7 @@ struct NativeEditorAddClipSheet: View {
             guard !launched else { return }
             launched = true
             switch launch {
-            case .record: if auth.localStorageIdentity != nil { showsCamera = true }
+            case .record: if model.localAccountID != nil { showsCamera = true }
             case .upload: choosingSource = true
             case .choose: break
             }

@@ -371,9 +371,13 @@ final class CreationUITests: XCTestCase {
 
         let done = app.buttons["photos-picker-done"]
         XCTAssertTrue(done.waitForExistence(timeout: 10))
-        done.tap()
+        // Add stays disabled until something is picked, so leaving with nothing is Cancel.
+        XCTAssertFalse(done.isEnabled)
+        app.staticTexts["Choose footage"].firstMatch.swipeDown(velocity: .fast)
         let upload = app.buttons["source-upload"]
         XCTAssertTrue(upload.waitForExistence(timeout: 5), "Done returns to Add media")
+        let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: upload)
+        XCTAssertEqual(XCTWaiter.wait(for: [hittable], timeout: 10), .completed)
 
         upload.tap()
         XCTAssertTrue(photos.waitForExistence(timeout: 5))
@@ -435,7 +439,7 @@ final class CreationUITests: XCTestCase {
         card.tap()
         XCTAssertTrue(app.staticTexts["Choose the video of you talking, plus any clips to show while you talk."].waitForExistence(timeout: 5),
                       app.debugDescription)
-        XCTAssertTrue(app.staticTexts["MP4, MOV · up to 10 clips"].exists)
+        XCTAssertTrue(app.staticTexts["Up to 10 clips"].exists)
         let chooseVideos = app.buttons["choose-videos"]
         XCTAssertTrue(chooseVideos.waitForExistence(timeout: 5))
         chooseVideos.tap()

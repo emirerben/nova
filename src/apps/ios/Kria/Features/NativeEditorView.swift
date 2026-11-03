@@ -39,8 +39,7 @@ struct NativeEditorView: View {
     @State private var drawMode: DrawMode?
     @StateObject private var sketch = NativeDrawingSketch()
     private struct DrawMode: Equatable { var appendingTo: String? }
-    @State private var showsEmptyAddClip = false
-    @State private var addClipLaunch: AddClipLaunch = .choose
+    @State private var emptyAddClip: AddClipLaunch?
     @State private var selectedTextForActions: String?
     @State private var selectedSoundEffectForActions: String?
     /// KRI-185: a block opened from the Text tab's list edits its words first and
@@ -200,7 +199,7 @@ struct NativeEditorView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
-            .sheet(isPresented: $showsEmptyAddClip) { NativeEditorAddClipSheet(session: session, launch: addClipLaunch) }
+            .sheet(item: $emptyAddClip) { NativeEditorAddClipSheet(session: session, launch: $0) }
             .onChange(of: deviceLocalFile) { _, file in
                 if let file { session.showDeviceOutput(file) }
             }
@@ -382,7 +381,7 @@ struct NativeEditorView: View {
             NativeVideoPreview(
                 session: session, onEmptyTap: handleEmptyPreviewTap,
                 onFindOriginals: { showsOriginalsRecovery = true },
-                onAddClip: { addClipLaunch = $0; showsEmptyAddClip = true }
+                onAddClip: { emptyAddClip = $0 }
             )
                 .frame(width: previewHeight * session.previewAspectRatio, height: previewHeight)
                 .clipped()
