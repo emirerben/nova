@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.19.0] - 2026-11-03
+
+### Changed
+- feat(kria): judge a finished edit against the creator's request with typed findings (KRI-1171) (#2078) <!-- release-pr: 2078 -->
+
 ## [0.84.18.0] - 2026-11-03
 
 ### Fixed
