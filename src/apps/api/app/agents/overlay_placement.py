@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents.music_matcher import _sanitize_text
+from app.config import settings
 from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
@@ -38,6 +39,12 @@ _MAX_WORDS = 1200
 class PlacementAsset(BaseModel):
     asset_id: str
     kind: str = "image"  # "image" | "video"
+    # "generated" for an image the creator made in Kria (its text is the creator's own prompt);
+    # empty for an upload, which keeps the payload byte-identical.
+    origin: str = ""
+    # The trimmed prompt an image model was given for a generated image. Image-making text: a
+    # hint for what the picture shows, redacted from AgentRun / Langfuse (see `_runtime`).
+    generation_prompt: str = ""
     user_context: str = ""
     subject: str = ""
     description: str = ""
@@ -59,6 +66,9 @@ class OverlayPlacementInput(BaseModel):
     occupied: list[list[float]] = Field(default_factory=list)
     duration_s: float = Field(gt=0)
     archetype: str = "talking_head"
+    # The language the creator speaks ("tr", "en", ...), when known. The asset text may be in
+    # another language; the prompt matches by meaning across the two.
+    spoken_language: str = ""
 
 
 class RawPlacement(BaseModel):
@@ -103,7 +113,9 @@ class OverlayPlacementAgent(Agent[OverlayPlacementInput, OverlayPlacementOutput]
         # assets_payload gains aspect + pixel dims.
         # 1.2.0: asset payload gains creator-authored user_context, which takes
         # semantic priority over Nova-generated description fields.
-        prompt_version="1.3.0",
+        # 1.4.0: speech and asset text may be in different languages (Turkish "alkol" vs a
+        # generated image titled "Beer"); match by meaning, and accept a clear topical match.
+        prompt_version="1.4.0",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -143,6 +155,22 @@ class OverlayPlacementAgent(Agent[OverlayPlacementInput, OverlayPlacementOutput]
             }
             for a in input.assets
         ]
+        cross_language = settings.overlay_placement_cross_language_enabled and any(
+            a.origin for a in input.assets
+        )
+        generated_rules = ""
+        if cross_language:
+            # Only a pool with a creator-generated image loosens anything, and only for those
+            # assets; every other render (uploads, the web path, flag off) is the 1.3.0 prompt.
+            for payload, asset in zip(assets_payload, input.assets, strict=True):
+                if asset.origin:
+                    payload["origin"] = _sanitize_text(asset.origin)
+                if asset.generation_prompt:
+                    payload["generation_prompt"] = _sanitize_text(asset.generation_prompt)
+            generated_rules = "\n\n" + load_prompt(
+                "overlay_placement_generated",
+                spoken_language=_sanitize_text(input.spoken_language) or "unknown",
+            ).rstrip("\n")
         return load_prompt(
             "overlay_placement",
             words_json=json.dumps(words_payload, ensure_ascii=False),
@@ -152,6 +180,7 @@ class OverlayPlacementAgent(Agent[OverlayPlacementInput, OverlayPlacementOutput]
             ),
             duration_s=f"{input.duration_s:.1f}",
             archetype=_sanitize_text(input.archetype) or "talking_head",
+            generated_image_rules=generated_rules,
         )
 
     def parse(

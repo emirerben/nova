@@ -635,6 +635,7 @@ class Settings(BaseSettings):
     # migration can land before enforcement. Production enables it only after
     # split-project API keys and alert budgets have been verified.
     ai_cost_control_enabled: bool = False
+    creator_repair_reviewer_enabled: bool = False
     credit_quality_review_enabled: bool = False
     credit_quality_review_billing_verified: bool = False
     credit_quality_review_approved_run_id: str = ""
@@ -2738,6 +2739,11 @@ class Settings(BaseSettings):
     # in Vercel — keep in sync (dual-flag trap, see CLAUDE.md).
     # Kill switch: OVERLAY_AUTOPLACE_ENABLED=false → all pool/suggestion routes 404.
     overlay_autoplace_enabled: bool = False
+    # Visuals placement (`overlay_placement` prompt 1.4.0): for an image the creator generated, the
+    # agent matches the title to the speech across languages (Turkish "kahve" vs "Coffee"). False:
+    # the prompt is byte-identical to 1.3.0 (no origin, no generation_prompt, no extra section).
+    # Apply: fly secret OVERLAY_PLACEMENT_CROSS_LANGUAGE_ENABLED=false + restart api + worker.
+    overlay_placement_cross_language_enabled: bool = True
 
     # General overlay matcher/planner queue. These tasks can use transcript
     # fallback and stay on the media-safe render worker in production.
