@@ -49,6 +49,7 @@ from app.pipeline.render_geometry import (
     sample_face_regions,
 )
 from app.services.generated_image_grounding import (
+    GENERATION_PROMPT_KEY,
     grounding_label,
     is_generated,
     with_generated_grounding,
@@ -370,6 +371,9 @@ def _match_placements(
                             asset_id=a["id"],
                             kind="video" if a.get("kind") == "video" else "image",
                             origin="generated" if is_generated(a.get("analysis")) else "",
+                            generation_prompt=str(
+                                (a.get("analysis") or {}).get(GENERATION_PROMPT_KEY) or ""
+                            ),
                             user_context=str(a.get("user_context") or ""),
                             subject=str((a.get("analysis") or {}).get("subject", "")),
                             description=str((a.get("analysis") or {}).get("description", "")),

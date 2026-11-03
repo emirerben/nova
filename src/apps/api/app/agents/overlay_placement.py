@@ -41,6 +41,9 @@ class PlacementAsset(BaseModel):
     # "generated" for an image the creator made in Kria (its text is the creator's own prompt);
     # empty for an upload, which keeps the payload byte-identical.
     origin: str = ""
+    # The trimmed prompt an image model was given for a generated image. Image-making text: a
+    # hint for what the picture shows, redacted from AgentRun / Langfuse (see `_runtime`).
+    generation_prompt: str = ""
     user_context: str = ""
     subject: str = ""
     description: str = ""
@@ -154,6 +157,8 @@ class OverlayPlacementAgent(Agent[OverlayPlacementInput, OverlayPlacementOutput]
         for payload, asset in zip(assets_payload, input.assets, strict=True):
             if asset.origin:
                 payload["origin"] = _sanitize_text(asset.origin)
+            if asset.generation_prompt:
+                payload["generation_prompt"] = _sanitize_text(asset.generation_prompt)
         return load_prompt(
             "overlay_placement",
             words_json=json.dumps(words_payload, ensure_ascii=False),

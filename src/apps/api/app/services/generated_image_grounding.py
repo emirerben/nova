@@ -2,13 +2,24 @@
 
 A generated image is never analysed (Kria wrote it), so before this module its stored
 analysis was `{width, height, source, model}` and the overlay placement agent saw an empty
-description beside a one-word title (prod 2026-11-03: "Beer" vs the spoken Turkish "alkol").
+description beside a one-word title.
 
-The text here is the creator's OWN prompt and title, kept on their own asset. It fills only
-`subject` / `description`, which ground matching and the creator-facing label. It never fills
-`on_screen_text` or `brands`, and nothing here writes overlay text, so the invariant that
-Gemini metadata never becomes on-screen text is untouched. The prompt is never logged and
-never echoed in an operation response.
+Two kinds of text, kept apart on purpose:
+
+- `subject` / `description` hold the creator's TITLE only. Every reader of those fields (the
+  no-AI keyword matcher, the wishlist filter, the pool response the client reads, the edit
+  proposal) is built for short topical text, and the title is already visible to the creator.
+- `generation_prompt` holds the trimmed prompt the image model was given. In the Visuals panel
+  that prompt is written by `OverlayGenerationAgent` (a model) and then reviewed by the creator,
+  so it is model text, not the creator's own words, and it is image-making text ("photorealistic,
+  soft light") that says little about speech. Only the LLM placement input reads it, as a hint
+  for what the picture shows. It is stored on the creator's own asset row and the operation row
+  (`request_metadata.image_prompt`), is redacted from the AgentRun / Langfuse copy of the
+  placement input (`_runtime._SENSITIVE_INPUT_KEYS`), and is never echoed in an operation
+  response.
+
+Nothing here fills `on_screen_text` or `brands`, and nothing here writes overlay text, so the
+invariant that Gemini metadata never becomes on-screen text is untouched.
 """
 
 from __future__ import annotations
@@ -22,6 +33,7 @@ _SUBJECT_MAX_CHARS = 80
 _LABEL_MAX_CHARS = 60
 FALLBACK_LABEL = "Generated image"
 IMAGE_PROMPT_KEY = "image_prompt"
+GENERATION_PROMPT_KEY = "generation_prompt"
 
 
 def _one_line(value: object, limit: int) -> str:
@@ -29,7 +41,7 @@ def _one_line(value: object, limit: int) -> str:
 
 
 def prompt_metadata(capability: str, prompt: str) -> dict[str, str]:
-    """The prompt text kept on the operation. Only a fresh image has a description of itself;
+    """The prompt text kept on the operation (admission copies it to `generation_prompt`). Only a fresh image has a description of itself;
     an edit prompt ("make the hat red") describes a change, not the picture."""
     if capability != "image":
         return {}
@@ -46,14 +58,12 @@ def generated_image_analysis(
         "source": GENERATED_SOURCE,
         "model": model,
     }
-    clean_prompt = _one_line(prompt, GROUNDING_PROMPT_MAX_CHARS)
     clean_title = _one_line(title, _SUBJECT_MAX_CHARS)
-    subject = clean_title or clean_prompt[:_SUBJECT_MAX_CHARS].strip()
-    description = clean_prompt or clean_title
-    if subject:
-        analysis["subject"] = subject
-    if description:
-        analysis["description"] = description
+    if clean_title:
+        analysis["subject"] = analysis["description"] = clean_title
+    clean_prompt = _one_line(prompt, GROUNDING_PROMPT_MAX_CHARS)
+    if clean_prompt:
+        analysis[GENERATION_PROMPT_KEY] = clean_prompt
     return analysis
 
 
@@ -80,5 +90,6 @@ def with_generated_grounding(analysis: dict | None, user_context: str | None) ->
 
 def grounding_label(user_context: str | None, analysis: dict | None) -> str:
     """What the creator calls this generated image: never the stored `generated.png`."""
-    subject = analysis.get("subject") if isinstance(analysis, dict) else ""
-    return _one_line(user_context or subject or FALLBACK_LABEL, _LABEL_MAX_CHARS)
+    stored = analysis if isinstance(analysis, dict) else {}
+    named = user_context or stored.get("subject") or stored.get(GENERATION_PROMPT_KEY)
+    return _one_line(named or FALLBACK_LABEL, _LABEL_MAX_CHARS)
