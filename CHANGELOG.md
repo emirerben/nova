@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.8.0] - 2026-11-03
+
+### Fixed
+- chore(media): drop the weekly price-verified expiry (KRI-1142) (#2085) <!-- release-pr: 2085 -->
+
 ## [0.84.7.0] - 2026-11-03
 
 ### Fixed
