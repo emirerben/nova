@@ -1,7 +1,7 @@
 {
  "thread_id": "b61b7673-7c55-4195-899f-e9d33f55af4e",
  "job_id": "ae77b21e-40d6-48be-967a-b3c2b9921dbb",
- "note": "Prod job ae77b21e (2026-11-03): the creator's 94.6 s take of that job (161 Whisper words with their punctuation, from the variant's overlay_transcript; the take was not cut). The talks and the stadium are the clips of talking_show_when_mentioned_6fa36e51.json (the same files; this job spelled their media ids differently). The request: 'Place them in between my speech ... use their audio'. The creator's take is a NEW clip, so only its words and duration live here. 'recorded_choice' is the model response the sentence check replays: HAND-AUTHORED from reading the transcript, NOT a recording of the real model.",
+ "note": "Prod job ae77b21e (2026-11-03): the creator's 94.6 s take of that job (161 Whisper words with their punctuation, from the variant's overlay_transcript; the take was not cut). The talks and the stadium are the clips of talking_show_when_mentioned_6fa36e51.json (the same files; this job spelled their media ids differently). The request: 'Place them in between my speech ... use their audio'. 'hand_authored_choice' and 'hand_authored_abstain_control' are the model responses the sentence check replays. BOTH ARE HAND-AUTHORED from reading the transcript and the clip summaries: neither is a recording of the real model and neither is evidence of what it would answer. They exist to exercise the placement contract (a medium-confidence match for the congress talk, and a control where the model is surely that nothing is about it) and no live eval of this check exists.",
  "creator": {
   "role": "creator",
   "clip_id": "files/w5rwd0ufg8go",
@@ -832,7 +832,32 @@
    "activity": "speaking to camera"
   }
  },
- "recorded_choice": {
+ "hand_authored_choice": {
+  "picks": [
+   {
+    "clip": "c1",
+    "first": 6,
+    "last": 6,
+    "confidence": "high",
+    "reason": "Euro2032 and the stadium: the 2032 final talk"
+   },
+   {
+    "clip": "c2",
+    "first": 5,
+    "last": 5,
+    "confidence": "medium",
+    "reason": "the offer made on 24 October: the talk offering to allocate the stadium"
+   },
+   {
+    "clip": "c3",
+    "first": 16,
+    "last": 16,
+    "confidence": "medium",
+    "reason": "taking proposals to a congress vote: 'no decision has been taken yet'"
+   }
+  ]
+ },
+ "hand_authored_abstain_control": {
   "picks": [
    {
     "clip": "c1",
@@ -853,7 +878,7 @@
     "first": null,
     "last": null,
     "confidence": "high",
-    "reason": "nothing he says is about a congress"
+    "reason": "CONTROL: an invented sure-nothing verdict to exercise the leave-out path"
    }
   ]
  }

@@ -8,16 +8,16 @@ Failure modes pinned (written before the code):
  2. a topic that runs across two sentences is cut after the first one;
  3. a clip whose facts are English and whose sentences are Turkish ("alcohol" / "alkol") is never
     matched because the only matcher is lexical;
- 4. the model finds nothing and the clip is placed anyway (or dropped without saying why);
+ 4. the model surely finds nothing and the clip is placed anyway (or dropped without saying why);
  5. a low-confidence guess is trusted over the creator's words, or a lexical match overrides a
-    model that said "no sentence is about this";
- 6. the meaning check is unavailable and the clip silently vanishes, or silently takes a guess
-    that is not labelled as one;
- 7. the sentence ends in the first 2.5 s or is the last thing he says: the clip is not dropped,
-    it plays after the next sentence / just before the last one and the receipt says so (these
-    are defaults: an explicit phrase or second is never moved, see test_phone_talking_inserts);
- 8. two clips choose the same sentence, or two points closer than 2 s: the later one plays right
-    after the earlier one, said in the receipt;
+    model that said, surely, "no sentence is about this";
+ 6. the meaning check is unavailable, or answered badly for one clip, and the clip silently
+    vanishes (it is placed by keyword, then by a labelled guess, never left out);
+ 7. the sentence ends in the first 2.5 s: the clip plays after the next sentence and the receipt
+    says so; the sentence is the last thing he says: the clip plays AFTER it (these are
+    defaults: an explicit phrase or second is never moved, see test_phone_talking_inserts);
+ 8. two clips choose the same sentence, or two points closer than 2 s: each stays at the end of
+    its own sentence, the same sentence is the same instant, played in order;
  9. a sentence is cut at a decimal ("70.000"), runs on for a minute because Whisper wrote no
     punctuation, or is split mid-word.
 """
@@ -31,6 +31,7 @@ from app.pipeline.phone_talking_insert_topics import (
     MAX_SENTENCE_WORDS,
     Sentence,
     TopicPick,
+    needs_retry,
     resolve_topics,
     split_sentences,
 )
@@ -170,16 +171,60 @@ def test_the_model_saying_no_sentence_is_about_it_leaves_the_clip_out_even_with_
     assert row.via is None
 
 
-def test_a_clip_the_model_did_not_answer_for_is_left_out_with_the_same_reason():
-    (row,) = resolve_topics(["a"], SENTENCES, picks={}, keyword_end_s={"a": 5.0}, take_s=TAKE_S)
-    assert (row.point_s, row.reason) == (None, "no_matching_sentence")
+def test_a_clip_the_model_did_not_answer_for_is_placed_by_its_words_and_says_why():
+    (row,) = resolve_topics(["a"], SENTENCES, picks={}, keyword_end_s={"a": 1.0}, take_s=TAKE_S)
+    assert (row.via, row.why, row.reason) == ("keyword", "invalid_answer", None)
+    assert row.point_s is not None
 
 
-def test_an_answer_outside_the_talk_is_not_trusted():
-    for bad in ((0, 1), (4, 9), (3, 2), (1, 5)):
+def test_a_clip_nothing_matches_is_placed_at_its_best_scoring_sentence_labelled_a_guess():
+    keys = {"a": clip_keys(["a stat proposal for the club", "Maltepe"])}
+    (row,) = resolve_topics(
+        ["a"], SENTENCES, picks={}, keyword_end_s={}, take_s=TAKE_S, clip_keys=keys
+    )
+    assert (row.via, row.why, row.reason) == ("guess", "invalid_answer", None)
+    assert row.first == 2  # the one sentence that shares "Maltepe"
+    assert row.point_s == pytest.approx(SENTENCES[1].end_s)
+
+
+def test_clips_nothing_can_score_are_spread_over_the_talk_not_stacked_or_dropped():
+    rows = resolve_topics(["a", "b", "c"], SENTENCES, picks=None, keyword_end_s={}, take_s=TAKE_S)
+    assert all(r.via == "guess" and r.point_s is not None for r in rows)
+    assert len({r.first for r in rows}) == 3  # three different sentences
+    assert [r.first for r in rows] == sorted(r.first for r in rows)
+
+
+def test_a_clip_with_no_facts_is_placed_and_the_reason_is_its_own():
+    (row,) = resolve_topics(
+        ["a"], SENTENCES, picks={}, keyword_end_s={}, take_s=TAKE_S, no_facts=["a"]
+    )
+    assert (row.via, row.why, row.reason) == ("guess", "no_facts", None)
+
+
+def test_only_a_sure_nothing_leaves_a_clip_out_and_it_offers_the_nearest_sentence():
+    keys = {"a": clip_keys(["Maltepe stat"])}
+    sure = {"a": TopicPick("a", first=None, last=None, confidence="high")}
+    (row,) = resolve_topics(
+        ["a"], SENTENCES, picks=sure, keyword_end_s={}, take_s=TAKE_S, clip_keys=keys
+    )
+    assert (row.point_s, row.reason, row.nearest) == (None, "no_matching_sentence", 2)
+    unsure = {"a": TopicPick("a", first=None, last=None, confidence="medium")}
+    (placed,) = resolve_topics(
+        ["a"], SENTENCES, picks=unsure, keyword_end_s={}, take_s=TAKE_S, clip_keys=keys
+    )
+    assert (placed.via, placed.why, placed.reason) == ("guess", "unclear", None)
+    assert resolve_topics(["a"], [], picks=sure, keyword_end_s={}, take_s=TAKE_S)[0].reason == (
+        "no_speech"
+    )
+
+
+def test_an_answer_that_runs_past_the_talk_or_over_many_sentences_is_clamped_not_refused():
+    expected = {(0, 1): (1, 1), (4, 9): (4, 5), (3, 2): (2, 3), (1, 5): (1, 5), (2, 5): (2, 5)}
+    for bad, (first, last) in expected.items():
         picks = {"a": TopicPick("a", first=bad[0], last=bad[1], confidence="high")}
         (row,) = resolve_topics(["a"], SENTENCES, picks=picks, keyword_end_s={}, take_s=TAKE_S)
-        assert (row.point_s, row.reason) == (None, "no_matching_sentence"), bad
+        assert (row.via, row.first, row.last, row.reason) == ("meaning", first, last, None), bad
+        assert row.point_s >= SENTENCES[last - 1].end_s - 1e-9  # after it (the hook may add)
 
 
 def test_a_low_confidence_pick_counts_only_when_the_keywords_land_in_the_same_sentences():
@@ -189,19 +234,31 @@ def test_a_low_confidence_pick_counts_only_when_the_keywords_land_in_the_same_se
         ["a"], SENTENCES, picks=low, keyword_end_s={"a": keyword_in_3}, take_s=TAKE_S
     )
     assert (kept.via, kept.last, kept.confidence) == ("meaning", 3, "low")
-    (dropped,) = resolve_topics(
-        ["a"], SENTENCES, picks=low, keyword_end_s={"a": 1.0}, take_s=TAKE_S
-    )
-    assert (dropped.point_s, dropped.reason) == (None, "low_confidence")
+    (other,) = resolve_topics(["a"], SENTENCES, picks=low, keyword_end_s={"a": 1.0}, take_s=TAKE_S)
+    assert (other.via, other.why, other.last) == ("keyword", "low_confidence", 1)
     (alone,) = resolve_topics(["a"], SENTENCES, picks=low, keyword_end_s={}, take_s=TAKE_S)
-    assert (alone.point_s, alone.reason) == (None, "low_confidence")
+    # Nothing else to go on: the model's own low-confidence sentence is the labelled guess.
+    assert (alone.via, alone.why, alone.last) == ("guess", "low_confidence", 3)
 
 
-def test_when_the_meaning_check_is_unavailable_keywords_are_used_and_labelled_as_such():
+def test_when_the_meaning_check_is_unavailable_keywords_then_a_guess_place_the_clip():
     (found,) = resolve_topics(["a"], SENTENCES, picks=None, keyword_end_s={"a": 1.0}, take_s=TAKE_S)
-    assert found.via == "keyword"
+    assert (found.via, found.why) == ("keyword", "check_unavailable")
     (missing,) = resolve_topics(["a"], SENTENCES, picks=None, keyword_end_s={}, take_s=TAKE_S)
-    assert (missing.point_s, missing.reason) == (None, "topic_check_unavailable")
+    assert (missing.via, missing.why, missing.reason) == ("guess", "check_unavailable", None)
+    assert missing.point_s is not None
+
+
+def test_needs_retry_asks_again_for_everything_but_a_confident_answer_or_a_sure_nothing():
+    n = len(SENTENCES)
+    assert needs_retry(None, n)
+    assert needs_retry(TopicPick("a", None, None, "medium"), n)
+    assert needs_retry(TopicPick("a", None, None, "low"), n)
+    assert needs_retry(TopicPick("a", 2, None, "high"), n)
+    assert needs_retry(TopicPick("a", 2, 3, "low"), n)
+    assert not needs_retry(TopicPick("a", None, None, "high"), n)
+    assert not needs_retry(TopicPick("a", 2, 3, "medium"), n)
+    assert not needs_retry(TopicPick("a", 4, 9, "high"), n)
 
 
 def test_rows_come_back_in_the_order_asked():
@@ -214,6 +271,9 @@ def test_rows_come_back_in_the_order_asked():
 
 
 # --- 1, 7, 8. placing at the sentence end ---
+
+
+_HOLD = 0.2
 
 
 def _ask(media_id: str, point: float) -> InsertAsk:
@@ -231,18 +291,37 @@ def test_a_sentence_end_is_used_exactly_and_never_moved_to_a_later_pause_or_capt
     )
     (placed,) = _place([_ask("m", 11.0)], words=words)
     assert placed.insert is not None
-    assert placed.insert.at_take_s == pytest.approx(11.0)
+    # At the end of the sentence, holding into the silence after it (at most 0.2 s): never at
+    # the later pause or caption end 12.0 s.
+    assert 11.0 <= placed.insert.at_take_s <= 11.0 + _HOLD
     assert (placed.basis, placed.snap) == ("topic", "sentence_end")
     assert placed.overrode == ()
 
 
-def test_the_last_sentence_plays_just_before_it_and_the_receipt_says_so():
+def test_the_last_sentence_of_the_talk_pauses_after_it_never_before_he_mentions_it():
     last = len(SENTENCES)
     picks = {"a": TopicPick("a", first=last, last=last, confidence="high")}
     (row,) = resolve_topics(["a"], SENTENCES, picks=picks, keyword_end_s={}, take_s=TAIL_TAKE_S)
-    assert row.adjusted == "tail_window"
-    assert row.point_s == pytest.approx(SENTENCES[last - 2].end_s)
+    assert row.adjusted is None
+    assert row.point_s == pytest.approx(SENTENCES[last - 1].end_s)
     assert (row.first, row.last) == (last, last)
+
+
+def test_a_clip_about_the_last_thing_he_says_plays_after_it_through_the_placement():
+    words = _words("Hello there.", start=0.5, step=0.5) + _words(
+        "And the congress vote.", start=8.0, step=0.4
+    )
+    sentences = split_sentences(words, take_s=10.0)
+    picks = {"c": TopicPick("c", first=len(sentences), last=len(sentences), confidence="high")}
+    (row,) = resolve_topics(["c"], sentences, picks=picks, keyword_end_s={}, take_s=10.0)
+    (placed,) = place_inserts(
+        [InsertAsk("c", at_s=row.point_s, basis="topic")],
+        bindings={"c": _binding("c", duration_s=4.0)},
+        words=words,
+        take_s=10.0,
+    )
+    assert placed.insert is not None
+    assert placed.insert.at_take_s >= sentences[-1].end_s - 1e-9  # after he said it
 
 
 def test_a_sentence_that_ends_inside_the_hook_plays_after_the_next_one_and_says_so():
@@ -270,11 +349,40 @@ def test_two_clips_on_the_same_sentence_both_play_the_second_right_after_the_fir
     assert second.adjusted == "near_another_clip"
 
 
-def test_inserts_two_seconds_apart_are_both_kept_where_they_were_chosen():
+def test_inserts_two_seconds_apart_stay_each_at_the_end_of_its_own_sentence():
     first, second = _place([_ask("a", 20.0), _ask("b", 22.0)])
     assert first.insert is not None and second.insert is not None
-    assert second.insert.at_take_s == pytest.approx(22.0)
+    assert 22.0 <= second.insert.at_take_s <= 22.0 + _HOLD
+    assert second.adjusted is None
     assert isinstance(second.insert, PhoneInsert)
+
+
+def test_a_default_point_is_not_pulled_onto_an_explicit_one_even_an_earlier_one():
+    words = _words("Bir iki üç dört.", start=8.0, step=0.5)  # "dört." ends at 10.0 ...
+    explicit = InsertAsk("x", at_s=10.0)
+    topic = InsertAsk("t", at_s=11.5, basis="topic")
+    placed_x, placed_t = _place([explicit, topic], words=words)
+    assert placed_x.insert is not None and placed_t.insert is not None
+    assert placed_x.insert.at_take_s == pytest.approx(10.0)
+    assert 11.5 <= placed_t.insert.at_take_s <= 11.5 + _HOLD
+    assert placed_t.adjusted is None
+
+
+def test_a_default_waits_half_the_silence_after_the_sentence_an_explicit_second_never_waits():
+    words = _words("Bir iki üç dört.", start=8.0, step=0.5) + _words("Beş.", start=10.4, step=0.5)
+    # The sentence ends at 10.0; the next word starts at 10.4: half the gap is 0.2.
+    (topic,) = _place([InsertAsk("t", at_s=10.0, basis="topic")], words=words)
+    assert topic.insert is not None and topic.insert.at_take_s == pytest.approx(10.2)
+    words = _words("Bir iki üç dört.", start=8.0, step=0.5) + _words("Beş.", start=10.1, step=0.5)
+    (tight,) = _place([InsertAsk("t", at_s=10.0, basis="topic")], words=words)
+    assert tight.insert is not None and tight.insert.at_take_s == pytest.approx(10.05)
+    (long_gap,) = _place(
+        [InsertAsk("t", at_s=10.0, basis="topic")],
+        words=_words("Bir iki üç dört.", start=8.0, step=0.5) + _words("Beş.", start=20.0),
+    )
+    assert long_gap.insert is not None and long_gap.insert.at_take_s == pytest.approx(10.2)
+    (exact,) = _place([InsertAsk("e", at_s=10.0)], words=words)
+    assert exact.insert is not None and exact.insert.at_take_s == pytest.approx(10.0)
 
 
 def test_a_topic_ask_the_worker_never_resolved_is_refused_not_guessed():

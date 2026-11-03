@@ -7,7 +7,8 @@ with their punctuation) and the three podium talks plus the drone shot of the st
 overlaid the talks (the take kept running, the creator muted under them) and spread the one
 talk no mention matched to an arbitrary second, silenced. The creator asked for the take to
 PAUSE. Only transport (download, probe, Whisper) and the model call are replaced: the sentence
-check replays a recorded response (hand-authored, not the real model's), and the classifier,
+check replays a HAND-AUTHORED response (never a recording of the real model: no live eval of
+this check exists), and the classifier,
 placement, warp, compiler and recipe validation are the real ones.
 """
 
@@ -43,10 +44,11 @@ THIS_JOB_CLIPS = [CREATOR_CLIP, *[c for c in CLIPS if c["role"] != "creator"]]
 TAKE_S = CREATOR_CLIP["duration_s"]
 DURATION = {c["media_id"]: c["duration_s"] for c in CLIPS}
 FLAG = {"phone_talking_insert_clips_enabled": True}
-# The take's sentence ends the recorded choice names: sentence 5 ends "...teklif olduğunu
+# The take's sentence ends the hand-authored choice names: sentence 5 ends "...teklif olduğunu
 # açıkladı." and sentence 6 "... Fenerbahçe'ye verilecekmiş.".
-SENTENCE_5_END = 15.2
-SENTENCE_6_END = 20.8
+# The pause is the end of the sentence (15.2 / 20.8) held 0.2 s into the silence after it.
+SENTENCE_5_END = 15.4
+SENTENCE_6_END = 21.0
 STADIUM_SCOPE = "clip:134CDBD9-2781-4407-921B-57D663D2B33B.mp4"
 
 
@@ -91,8 +93,16 @@ TALKS = (FINAL_TALK, ALLOCATE_TALK, CONGRESS_TALK)
 
 @pytest.fixture
 def meaning(monkeypatch):
-    """The sentence check answers with the recorded response."""
-    client = _Recorded(_FIXTURE["recorded_choice"])
+    """The sentence check answers with the hand-authored response (a contract fixture)."""
+    client = _Recorded(_FIXTURE["hand_authored_choice"])
+    monkeypatch.setattr("app.services.phone_insert_topic_picker.default_client", lambda: client)
+    return client
+
+
+@pytest.fixture
+def surely_nothing(monkeypatch):
+    """CONTROL: the check is, surely, that nothing he says is about the congress talk."""
+    client = _Recorded(_FIXTURE["hand_authored_abstain_control"])
     monkeypatch.setattr("app.services.phone_insert_topic_picker.default_client", lambda: client)
     return client
 
@@ -114,7 +124,7 @@ def _pieces(recipe):
 
 
 def test_the_talks_pause_the_take_at_the_end_of_the_sentence_that_is_about_them(
-    monkeypatch, meaning
+    monkeypatch, surely_nothing
 ):
     _job, recipe, variant = _go(monkeypatch)
     main = _pieces(recipe)
@@ -141,14 +151,12 @@ def test_the_talks_pause_the_take_at_the_end_of_the_sentence_that_is_about_them(
     assert recipe.duration == pytest.approx(TAKE_S + DURATION[ALLOCATE_TALK] + DURATION[FINAL_TALK])
 
 
-def test_the_receipt_says_how_each_clip_was_placed_and_why_the_congress_talk_was_left_out(
-    monkeypatch, meaning
-):
+def test_the_receipt_says_how_each_clip_was_placed(monkeypatch, meaning):
     _job, recipe, variant = _go(monkeypatch)
     receipt = variant[gb.PHONE_INSERT_CLIPS_FIELD]
     placed = {row["media_id"]: row for row in receipt["placed"]}
-    assert set(placed) == {ALLOCATE_TALK, FINAL_TALK}
-    for media_id, sentence in ((ALLOCATE_TALK, 5), (FINAL_TALK, 6)):
+    assert set(placed) == set(TALKS)
+    for media_id, sentence in ((ALLOCATE_TALK, 5), (FINAL_TALK, 6), (CONGRESS_TALK, 16)):
         row = placed[media_id]
         assert (row["basis"], row["snap"], row["via"]) == ("topic", "sentence_end", "meaning")
         assert (row["sentence_first"], row["sentence_last"]) == (sentence, sentence)
@@ -157,12 +165,25 @@ def test_the_receipt_says_how_each_clip_was_placed_and_why_the_congress_talk_was
     assert placed[FINAL_TALK]["start_s"] == pytest.approx(
         SENTENCE_6_END + DURATION[ALLOCATE_TALK], abs=1e-3
     )
-    # The talk no sentence is about is not placed anywhere, and the receipt says so.
-    assert receipt["dropped"] == [{"media_id": CONGRESS_TALK, "reason": "no_matching_sentence"}]
+    assert receipt["dropped"] == []
+    assert {c.source_asset_id for c in _pieces(recipe)} >= set(TALKS)
+
+
+def test_a_clip_the_check_is_surely_nothing_about_is_left_out_named_with_the_nearest_sentence(
+    monkeypatch, surely_nothing
+):
+    """CONTROL on a hand-authored verdict: the leave-out path, not a claim about the content."""
+    _job, recipe, variant = _go(monkeypatch)
+    receipt = variant[gb.PHONE_INSERT_CLIPS_FIELD]
+    assert {row["media_id"] for row in receipt["placed"]} == {ALLOCATE_TALK, FINAL_TALK}
+    (dropped,) = receipt["dropped"]
+    assert (dropped["media_id"], dropped["reason"]) == (CONGRESS_TALK, "no_matching_sentence")
     assert CONGRESS_TALK not in {c.source_asset_id for t in recipe.tracks for c in t.clips}
 
 
-def test_captions_after_each_pause_move_by_exactly_the_clips_before_them(monkeypatch, meaning):
+def test_captions_after_each_pause_move_by_exactly_the_clips_before_them(
+    monkeypatch, surely_nothing
+):
     _job, _plain_recipe, plain = _go(monkeypatch, strategy={})
     _job, _recipe, variant = _go(monkeypatch)
     before = {tuple(c["text"].split()): c for c in plain["caption_cues"]}
@@ -183,7 +204,9 @@ def test_captions_after_each_pause_move_by_exactly_the_clips_before_them(monkeyp
     assert seen == {0.0, DURATION[ALLOCATE_TALK], DURATION[ALLOCATE_TALK] + DURATION[FINAL_TALK]}
 
 
-def test_the_stadium_stays_an_overlay_over_his_voice_and_never_covers_a_pause(monkeypatch, meaning):
+def test_the_stadium_stays_an_overlay_over_his_voice_and_never_covers_a_pause(
+    monkeypatch, surely_nothing
+):
     _job, recipe, _variant = _go(monkeypatch)
     cutaways = _tracks(recipe)["talking-head-cutaways"].clips
     assert {c.source_asset_id for c in cutaways} == {STADIUM}
@@ -233,18 +256,20 @@ def test_when_the_meaning_check_is_down_keywords_choose_the_sentence_and_the_rec
         [{"text": t, "start_s": a, "end_s": b} for t, a, b in CREATOR_CLIP["words"]], TAKE_S
     )
     placed = {row["media_id"]: row for row in receipt["placed"]}
-    assert set(placed) == {FINAL_TALK}
     row = placed[FINAL_TALK]
     # Labelled as a keyword guess, and the pause is still a SENTENCE end, never a matched word.
     assert row["via"] == "keyword"
     assert row["snap"] == "sentence_end"
     assert row["at_take_s"] == pytest.approx(sentences[row["sentence_last"] - 1].end_s, abs=1e-3)
-    # The two talks no keyword finds are left out, and the reason is that the check could not run,
-    # not that nothing he says is about them.
-    assert receipt["dropped"] == [
-        {"media_id": ALLOCATE_TALK, "reason": "topic_check_unavailable"},
-        {"media_id": CONGRESS_TALK, "reason": "topic_check_unavailable"},
-    ]
+    # Nothing is left out because the check could not run: the two talks no keyword finds are
+    # placed at a labelled guess, and the receipt says which and why.
+    assert receipt["dropped"] == []
+    assert set(placed) == set(TALKS)
+    assert (row["via"], row["why"]) == ("keyword", "check_unavailable")
+    for media_id in (ALLOCATE_TALK, CONGRESS_TALK):
+        assert placed[media_id]["via"] in ("keyword", "guess")
+        assert placed[media_id]["why"] == "check_unavailable"
+        assert placed[media_id]["snap"] == "sentence_end"
 
 
 def test_flag_off_the_recipe_is_byte_identical_and_the_receipt_is_absent(monkeypatch, meaning):
@@ -429,10 +454,75 @@ def test_a_phrase_he_never_says_is_placed_where_he_talks_about_the_clip_and_the_
 
 
 def test_the_hook_default_applies_only_where_he_named_nothing(monkeypatch, meaning):
-    # The recorded choice puts the offer talk after sentence 5 and the final talk after
+    # The hand-authored choice puts the offer talk after sentence 5 and the final talk after
     # sentence 6: far from the hook, so neither is adjusted.
     _job, _recipe, variant = _go(monkeypatch)
     assert all(
         "adjusted" not in r and "overrode" not in r
         for r in variant[gb.PHONE_INSERT_CLIPS_FIELD]["placed"]
     )
+
+
+# --- a retry of the same render delivery keeps the first attempt's meaning answer ------------
+
+
+class _FakeStore:
+    def __init__(self) -> None:
+        self.rows: dict[str, str] = {}
+
+    def get(self, key):
+        return self.rows.get(key)
+
+    def setex(self, key, ttl, value):
+        self.rows[key] = value
+
+
+def _facts():
+    from app.agents.talking_insert_sentence import SentenceClip
+
+    return {
+        m: SentenceClip(key="c0", summary=f"a talk about {m}", transcript="")
+        for m in (FINAL_TALK, ALLOCATE_TALK, CONGRESS_TALK)
+    }
+
+
+def _resolve(retries):
+    from app.pipeline.phone_talking_inserts import InsertAsk
+
+    token = gb._TASK_RETRIES.set(retries)
+    try:
+        return gb._resolve_insert_topics(
+            [InsertAsk(m, at_topic=True) for m in (FINAL_TALK, ALLOCATE_TALK, CONGRESS_TALK)],
+            spoken_words=[
+                {"text": t, "start_s": a, "end_s": b} for t, a, b in CREATOR_CLIP["words"]
+            ],
+            take_s=TAKE_S,
+            in_use=(),
+            clip_facts=_facts(),
+            language="tr",
+            job_id="job-retry",
+        )
+    finally:
+        gb._TASK_RETRIES.reset(token)
+
+
+def test_a_retried_render_reuses_the_first_attempts_answer_instead_of_falling_to_keywords(
+    monkeypatch,
+):
+    shared = _FakeStore()
+    monkeypatch.setattr("app.services.insert_pick_checkpoint._redis", lambda: shared)
+    first_client = _Recorded(_FIXTURE["hand_authored_choice"])
+    monkeypatch.setattr(
+        "app.services.phone_insert_topic_picker.default_client", lambda: first_client
+    )
+    _asks, drops, info = _resolve(retries=0)
+    assert drops == []
+    assert {row["via"] for row in info.values()} == {"meaning"}
+    # The retry of the same delivery: the provider would now refuse the identical call, but the
+    # first answer was kept, so the clips are still placed by meaning and nothing is paid.
+    dead = _Recorded(TransientError("the ledger refuses a replay"))
+    monkeypatch.setattr("app.services.phone_insert_topic_picker.default_client", lambda: dead)
+    _asks, drops, info = _resolve(retries=1)
+    assert drops == []
+    assert {row["via"] for row in info.values()} == {"meaning"}
+    assert dead.prompts == []

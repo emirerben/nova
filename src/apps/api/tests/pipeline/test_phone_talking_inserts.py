@@ -62,6 +62,7 @@ from app.pipeline.phone_talking_inserts import (
     OVERRODE_TAIL,
     TAIL_FREE_S,
     InsertAsk,
+    fit_inserts,
     insert_blocked_windows,
     inserts_from_recipe,
     phrase_end_s,
@@ -237,8 +238,9 @@ def test_a_fourth_insert_and_a_twentieth_are_played_as_asked():
     bindings = {i: _binding(i, duration_s=1.0) for i in ids}
     ats = [3.0 + 1.2 * n for n in range(len(ids))]
     placed = _place([_ask(i, at_s=a) for i, a in zip(ids, ats, strict=True)], bindings=bindings)
+    assert len(placed) == MAX_INSERTS
     assert all(p.insert is not None for p in placed)
-    assert len(placed) == 20 and len(placed) > 3
+    assert [p.insert.at_take_s for p in placed] == pytest.approx(ats)
 
 
 def test_past_the_engine_limit_the_rest_are_refused_with_that_reason():
@@ -251,14 +253,25 @@ def test_past_the_engine_limit_the_rest_are_refused_with_that_reason():
     assert all(p.insert is not None for p in placed[:-1])
 
 
-def test_a_point_chosen_by_meaning_near_another_clip_joins_it_instead_of_leaving_a_sliver():
+def test_a_point_chosen_by_meaning_near_another_clip_stays_at_the_end_of_its_own_sentence():
     bindings = {"a": _binding("a", duration_s=4.0), "b": _binding("b", duration_s=4.0)}
     first = InsertAsk("a", at_s=10.4)
     second = InsertAsk("b", at_s=10.4 + MIN_GAP_S - 0.5, basis="topic")
     placed_a, placed_b = _place([first, second], bindings=bindings)
     assert placed_b.insert is not None
-    assert placed_b.insert.at_take_s == pytest.approx(10.4)
-    assert (placed_b.adjusted, placed_b.overrode) == (ADJUSTED_JOINED, ())
+    assert placed_b.insert.at_take_s >= 10.4 + MIN_GAP_S - 0.5  # never moved earlier
+    assert (placed_b.adjusted, placed_b.overrode) == (None, ())
+
+
+def test_two_clips_about_the_same_part_play_at_one_instant_and_the_receipt_says_so():
+    bindings = {"a": _binding("a", duration_s=4.0), "b": _binding("b", duration_s=4.0)}
+    placed_a, placed_b = _place(
+        [InsertAsk("a", at_s=10.4, basis="topic"), InsertAsk("b", at_s=10.4, basis="topic")],
+        bindings=bindings,
+    )
+    assert placed_a.insert is not None and placed_b.insert is not None
+    assert placed_b.insert.at_take_s == placed_a.insert.at_take_s
+    assert placed_b.adjusted == ADJUSTED_JOINED
 
 
 def test_an_ask_with_no_position_or_no_such_clip_is_refused_with_a_reason():
@@ -491,6 +504,17 @@ def test_the_most_inserts_the_engine_plays_compile_and_round_trip():
     inserts = tuple(_insert(f"c{k}", at=1.0 + 1.3 * k, dur=1.0) for k in range(MAX_INSERTS))
     recipe = _compile(inserts)
     assert recipe.duration == pytest.approx(30.0 + MAX_INSERTS * 1.0)
+    bindings = (_binding("take", duration_s=30.0), *(i.binding for i in inserts))
+    back = inserts_from_recipe(recipe, bindings)
+    assert [(i.binding.media_id, round(i.at_take_s, 3)) for i in back] == [
+        (i.binding.media_id, round(i.at_take_s, 3)) for i in inserts
+    ]
+    keep = [
+        (c.source_start, c.source_start + c.source_duration)
+        for c in recipe.tracks[0].clips
+        if c.source_asset_id == "take"
+    ]
+    assert _compile(back, keep_segments=keep).model_dump_json() == recipe.model_dump_json()
 
 
 def test_the_pinned_recipe_gives_the_insert_back_and_a_recompile_is_identical():
@@ -915,3 +939,41 @@ def test_random_takes_asks_and_cleanups_always_compile_without_a_sliver():
         assert [i.binding.media_id for i in back] == [
             i.binding.media_id for i in sorted(inserts, key=lambda i: i.at_take_s)
         ]
+
+
+# --- the device builds at most 30 minutes (review of #2086, finding 2) ---------------------
+
+
+def _long_insert(k, dur=300.0):
+    return PhoneInsert(binding=_binding(f"i{k}", duration_s=dur), at_take_s=1.0 + k)
+
+
+def test_the_compiler_says_in_words_that_a_video_is_too_long_for_the_device():
+    inserts = tuple(_long_insert(k) for k in range(6))
+    with pytest.raises(UnsupportedPhonePlan, match="30 minutes"):
+        _compile_take(300.0, inserts)
+
+
+def test_inserts_past_the_device_budget_are_dropped_from_the_end_and_each_is_named():
+    inserts = tuple(_long_insert(k) for k in range(8))
+    kept, dropped = fit_inserts(inserts, base_s=300.0)
+    assert [i.binding.media_id for i in kept] == [f"i{k}" for k in range(5)]
+    assert [d["media_id"] for d in dropped] == ["i7", "i6", "i5"]
+    assert {d["reason"] for d in dropped} == {"over_device_budget"}
+    assert dropped[0]["would_be_s"] == pytest.approx(300.0 + 8 * 300.0)
+    _compile_take(300.0, kept)  # what fits compiles
+
+
+def test_inserts_that_fit_are_all_kept_and_none_named():
+    inserts = tuple(_long_insert(k, 10.0) for k in range(20))
+    kept, dropped = fit_inserts(inserts, base_s=300.0)
+    assert len(kept) == 20 and dropped == []
+
+
+def test_the_creators_approved_length_drops_the_last_clips_the_way_the_ending_clip_does():
+    inserts = tuple(_long_insert(k, 20.0) for k in range(4))
+    kept, dropped = fit_inserts(
+        inserts, base_s=30.0, over_limit=lambda base, added: base + added > 75.0
+    )
+    assert [i.binding.media_id for i in kept] == ["i0", "i1"]
+    assert {d["reason"] for d in dropped} == {"over_length_limit"}
