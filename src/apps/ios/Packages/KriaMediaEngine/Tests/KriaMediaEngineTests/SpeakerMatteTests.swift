@@ -211,6 +211,27 @@ final class SpeakerMatteTests: XCTestCase {
         XCTAssertEqual(unreadable.trace.snapshot().counts["original.unreadable"], 3)
     }
 
+    /// A build with no segmenter at all is an environment, not a frame that failed: every frame is labelled
+    /// `original.no_segmenter`, and it never grows the hidden run that gets reported.
+    func testNoSegmenterIsLabelledAndNeverAHiddenRun() {
+        let matte = SpeakerMatte(segmenter: nil)
+        let fired = Locked(false)
+        matte.trace.onDegraded = { _ in fired.mutate { $0 = true } }
+        play(matte, frames: 0..<150)
+        let snapshot = matte.trace.snapshot()
+        XCTAssertEqual(snapshot.counts["original.no_segmenter"], 150)
+        XCTAssertEqual(snapshot.longestHiddenRun, 0)
+        XCTAssertFalse(fired.value)
+    }
+
+    /// The caller that draws the background under an unmasked frame says so, and those frames are not hidden ones.
+    func testFramesWhoseBackgroundIsStillDrawnAreNotHidden() {
+        let matte = SpeakerMatte(segmenter: ScriptedSegmenter { _ in throw MediaEngineError.exportFailed })
+        for index in 0..<90 { _ = matte.answer(for: speaker, at: 1 + Double(index) * frame, canvas: canvas, clipKey: "clip-0", backgroundStaysDrawn: true) }
+        XCTAssertEqual(matte.trace.snapshot().counts["original.error"], 90)
+        XCTAssertEqual(matte.trace.snapshot().longestHiddenRun, 0)
+    }
+
     /// A held mask that is dropped is recorded as dropped, by the reason: a cut to another clip, or a jump in time.
     func testTheTraceNamesAJumpThatDroppedAHeldMask() {
         let matte = SpeakerMatte(segmenter: ScriptedSegmenter { [leftHalf] call in
