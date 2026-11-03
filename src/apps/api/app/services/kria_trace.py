@@ -222,6 +222,7 @@ async def resolve_kria_trace(
                 "lease_epoch": int(row.lease_epoch),
                 "lease_expires_at": _iso(row.lease_expires_at),
                 "error_code": _error_code(row.error),
+                "planning_runs": list(row.planning_runs or []),
                 "created_at": _iso(row.created_at),
                 "updated_at": _iso(row.updated_at),
                 "completed_at": _iso(row.completed_at),

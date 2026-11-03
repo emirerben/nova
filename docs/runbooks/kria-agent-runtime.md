@@ -416,6 +416,33 @@ pre-fix behaviour. Diagnose: `kria_turn_auto_continued` log lines (turn_id, leas
 `GET creation-threads/<id>/turns` shows one turn with several lease epochs and one
 assistant event. Guard: `tests/kria/test_turn_auto_continue_postgres.py`.
 
+Continued runs reuse planner answers (KRI-709, `app/services/turn_checkpoint.py`): a run that
+is itself a continuation (lease epoch above 1) takes the first run's Main Creator,
+brief-extractor and clip-intent-planner answers for the same input instead of paying and
+waiting again; the first run never reads. Answers live in one Redis hash per turn
+(`kria:turn-checkpoint:<turn_id>`, 30 min TTL as a backstop) keyed by a digest of the call, its
+whole input, the agent's prompt version, model, fallbacks and thinking level, Main Creator's
+output mode, both schemas and the deployed image (`FLY_IMAGE_REF`), so a changed request,
+flag or deploy misses. The hash is deleted when the turn completes or fails; the last
+permitted run stores nothing. Redis is fail-open: a down, slow or unreadable store is a
+miss, never a failed turn (a drifted answer is a silent miss and logs nothing, because the
+validation text would quote creator words). Not checkpointed: the voiceover-script writer
+and the vision resolver (a continued run repeats them).
+Trace: `kria/trace` shows `planning_runs` on the turn, one record per run of a continued turn
+(`epoch`, `outcome` continued | exhausted | superseded | completed | failed, `reason`, `calls`).
+`reason` codes: `clip_analysis_pending`, `clip_intent_resolution_pending`, `song_order_pending`,
+`research_pending` (a failed run carries the turn failure code). `calls` is milliseconds per
+`main_creator` / `brief_extractor` / `clip_intent_planner` (source `model`, or `checkpoint` when
+reused), `clip_understanding_wait` (`wait`), and the timed steps `research`,
+`clip_intent_resolution` (the vision re-check) and `voiceover_script_writer` (`step`). A turn
+that finishes on its first run writes no record. Rollback: `fly secrets set
+KRIA_TURN_CHECKPOINT_ENABLED=false --app nova-video` + restart api and worker stops the
+reuse (continuation stays on; each run pays again, as in PR 1);
+`KRIA_TURN_AUTO_CONTINUE_MAX_RUNS=1` turns continuation itself off, and with it the checkpoint.
+Migration 0130 adds the nullable `planning_runs` column (metadata-only, runs in the Fly release
+command); deploy API first, then restart the worker. Guards: `test_continuation_checkpoint_postgres.py`,
+`test_continuation_trace_postgres.py`, `tests/services/test_turn_checkpoint.py`.
+
 Copies of a message (KRI-552): when the creator re-sends their latest message word for word
 (the chat looked stuck), `submit_turn` answers it in one line instead of queuing a second plan
 (`app/kria/duplicate_send.py`). It counts as a copy while that message's turn is pending,

@@ -4383,35 +4383,45 @@
       "status": "open_pr",
       "owner": "KRI-709",
       "paths": [
+        "src/apps/api/app/config.py",
         "src/apps/api/app/kria/paid_call_scope.py",
         "src/apps/api/app/kria/planner.py",
         "src/apps/api/app/kria/voiceover_script.py",
+        "src/apps/api/app/services/clip_intent_planning.py",
         "src/apps/api/app/services/clip_understanding.py",
+        "src/apps/api/app/services/turn_checkpoint.py",
         "src/apps/api/app/tasks/kria_runtime.py"
       ],
       "regression_tests": [
         "tests/kria/test_continuation_paid_call_postgres.py",
-        "tests/kria/test_generated_image_understanding.py"
+        "tests/kria/test_generated_image_understanding.py",
+        "tests/kria/test_continuation_checkpoint_postgres.py",
+        "tests/kria/test_continuation_record_postgres.py",
+        "tests/kria/test_continuation_trace_postgres.py",
+        "tests/services/test_turn_checkpoint.py"
       ],
       "harness": "real_with_db",
-      "kill_switch": null,
+      "kill_switch": "kria_turn_checkpoint_enabled",
       "evidence": {
-        "offline_replay": "Real Postgres reservation ledger, real MainCreatorAgent and the turn task's own _plan_with_live_agent epoch hand-off with a fake model client: epoch 2 of the same prompt is a new paid call (red on the test-only commit), a same-epoch replay is still refused, epoch 1 keys are unchanged; a generated image no longer holds the 45 s wait.",
+        "offline_replay": "Real Postgres reservation ledger, real MainCreatorAgent and the turn task's own _plan_with_live_agent epoch hand-off with a fake model client: epoch 2 of the same prompt is a new paid call, a same-epoch replay is still refused, epoch 1 keys are unchanged; a generated image no longer holds the 45 s wait. Checkpoint: a continued run takes the first run's Main Creator, brief-extractor and clip-intent answers for the same input (red with the turn id unset or the store read removed), and misses on a changed request, thinking level, output mode, schema or release; a drifted stored answer logs no creator text; a finished turn deletes its checkpoint; planning_runs records every run (continued, exhausted, completed, failed) with the real calls, waits and steps.",
         "live_model": "Not run (no paid calls).",
         "native_output": "Not applicable: planning-stage only.",
-        "production": "Not deployed."
+        "production": "Not deployed. Rollback: fly secret KRIA_TURN_CHECKPOINT_ENABLED=false (api + worker) stops the reuse; KRIA_TURN_AUTO_CONTINUE_MAX_RUNS=1 stops continuation itself."
       },
       "neighbours_covered": [
         "brief extractor and its retry id, epoch 1 and 2",
         "same-epoch replay still refused by the ledger",
-        "blank or probe-only uploaded images still wait for analysis"
+        "blank or probe-only uploaded images still wait for analysis",
+        "checkpoint reuse for Main Creator, brief extractor and clip-intent planner",
+        "checkpoint switch off pays again exactly as before"
       ],
       "neighbours_gap": [
-        "clip-intent planner and voiceover-script writer share the request-id helper but have no per-site test",
-        "each continued run still re-bills its planner calls until the follow-up checkpoint PR lands"
+        "voiceover-script writer shares the request-id helper but is not checkpointed (a continued run re-writes the script)",
+        "the vision resolver inside clip-intent resolution is not checkpointed (timed in planning_runs only)",
+        "a late write from an older run overwrites a newer one (last writer wins; the answers are for the same input)"
       ],
       "follow_ups": [
-        "KRI-709 checkpoint + continuation record PR"
+        "KRI-709 voiceover-script and vision-resolver checkpoints, if their cost shows up in planning_runs"
       ],
       "red_control": "not_applicable",
       "journey": "kria-continued-turn-paid-calls"

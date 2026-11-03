@@ -48,6 +48,7 @@ from app.kria.reply_language import current_reply_language, say
 from app.models import CreationThreadEvent
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_understanding import clip_record
+from app.services.turn_checkpoint import timed_step
 
 log = structlog.get_logger()
 
@@ -304,7 +305,8 @@ async def draft_script(
         )
 
     try:
-        output = await asyncio.to_thread(_run)
+        with timed_step("voiceover_script_writer"):
+            output = await asyncio.to_thread(_run)
     except ProviderOutcomeUnknownError:
         raise
     except Exception as exc:  # noqa: BLE001 - any writer failure is the honest fallback

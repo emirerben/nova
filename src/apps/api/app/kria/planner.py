@@ -275,6 +275,7 @@ from app.services.spoken_quotes import (
 )
 from app.services.spoken_roles import SpokenSeats
 from app.services.story_intent_reconciliation import reconcile_story_intents
+from app.services.turn_checkpoint import checkpointed
 
 log = structlog.get_logger()
 
@@ -984,6 +985,8 @@ class PlannedKriaTurn:
     # flight). The runtime re-runs the same turn instead of asking the creator to say
     # "go ahead". Server-only: never reaches `KriaTurnPlan`, which forbids extra fields.
     continuable: bool = False
+    # Why it asked to run again (a reason code, never text): recorded on the turn and the trace.
+    continue_reason: str = ""
     prepared_collection_story: dict | None = None
     # KRI-881: research done before approval (`app.kria.research_preview`), server-owned.
     prepared_research: dict | None = None
@@ -2858,15 +2861,26 @@ async def _call_main_creator(
             ),
         )
 
-    try:
-        return await asyncio.to_thread(_run_agent)
-    except (ProviderOutcomeUnknownError, ProviderQuotaExceededError, AiBudgetExceededError):
-        # Provider work may still be billable, or a spend cap answers the same on every
-        # retry. Never disguise either as a recoverable planning failure ("try again"):
-        # the turn fails with its own code and copy.
-        raise
-    except TerminalError as exc:
-        raise RuntimeError("Kria could not produce a reliable editorial plan") from exc
+    async def _call() -> MainCreatorOutput:
+        try:
+            return await asyncio.to_thread(_run_agent)
+        except (ProviderOutcomeUnknownError, ProviderQuotaExceededError, AiBudgetExceededError):
+            # Provider work may still be billable, or a spend cap answers the same on every
+            # retry. Never disguise either as a recoverable planning failure ("try again"):
+            # the turn fails with its own code and copy.
+            raise
+        except TerminalError as exc:
+            raise RuntimeError("Kria could not produce a reliable editorial plan") from exc
+
+    # A continued run takes the first run's answer for this exact input instead of paying again.
+    return await checkpointed(
+        "main_creator",
+        agent_cls=MainCreatorAgent,
+        agent_input=inputs.agent_input,
+        output_cls=MainCreatorOutput,
+        call=_call,
+        variant=settings.main_creator_output_mode,
+    )
 
 
 # Prompt fidelity (errors unit): the extractor is read-only, so ONE bounded retry after a
@@ -2951,26 +2965,41 @@ async def _call_brief_extractor(
             ),
         )
 
-    try:
-        return await asyncio.to_thread(_run_agent, paid_call_request_id(thread_id))
-    except (ProviderOutcomeUnknownError, ProviderQuotaExceededError, AiBudgetExceededError):
-        # A spend cap is not a reading failure: the turn fails with its own code (A1).
-        raise
-    except TerminalError as exc:
-        if not _extractor_retry_allowed(exc):
-            raise RuntimeError("Kria could not extract the creative brief reliably") from exc
-        log.warning("kria_extractor_retry", **_recovery_cause("followup_extraction", exc))
-        await asyncio.sleep(_EXTRACTOR_RETRY_BACKOFF_S)
+    async def _call() -> BriefExtractionOutput:
         try:
-            # A distinct request id: the paid-call reservation key is stable per request id
-            # and attempt number, so the retry must not collide with the failed run's.
-            return await asyncio.to_thread(
-                _run_agent, paid_call_request_id(thread_id, "extractor-retry")
-            )
+            return await asyncio.to_thread(_run_agent, paid_call_request_id(thread_id))
         except (ProviderOutcomeUnknownError, ProviderQuotaExceededError, AiBudgetExceededError):
+            # A spend cap is not a reading failure: the turn fails with its own code (A1).
             raise
-        except TerminalError as retry_exc:
-            raise RuntimeError("Kria could not extract the creative brief reliably") from retry_exc
+        except TerminalError as exc:
+            if not _extractor_retry_allowed(exc):
+                raise RuntimeError("Kria could not extract the creative brief reliably") from exc
+            log.warning("kria_extractor_retry", **_recovery_cause("followup_extraction", exc))
+            await asyncio.sleep(_EXTRACTOR_RETRY_BACKOFF_S)
+            try:
+                # A distinct request id: the paid-call reservation key is stable per request id
+                # and attempt number, so the retry must not collide with the failed run's.
+                return await asyncio.to_thread(
+                    _run_agent, paid_call_request_id(thread_id, "extractor-retry")
+                )
+            except (
+                ProviderOutcomeUnknownError,
+                ProviderQuotaExceededError,
+                AiBudgetExceededError,
+            ):
+                raise
+            except TerminalError as retry_exc:
+                raise RuntimeError(
+                    "Kria could not extract the creative brief reliably"
+                ) from retry_exc
+
+    return await checkpointed(
+        "brief_extractor",
+        agent_cls=BriefExtractorAgent,
+        agent_input=agent_input,
+        output_cls=BriefExtractionOutput,
+        call=_call,
+    )
 
 
 def _extraction_request_scope(
@@ -3392,6 +3421,7 @@ async def _plan_voiceover_script(
                 response=_clips_still_checking_reply(len(pending)),
             ),
             continuable=True,
+            continue_reason="clip_analysis_pending",
             **hashes,
         )
     deadline = turn_deadline.get()
@@ -3971,6 +4001,7 @@ async def _look_inside_clips_first(
             context_hash=manifest.context_hash,
             # KRI-709: only a budget/deadline stop continues.
             continuable=resolution.status == "pending" and not resolution.needs_creator,
+            continue_reason="clip_intent_resolution_pending",
         )
     looked = after_looking(resolution.intents, planned.rejected_selections)
     if looked.outcome == FOUND and answers_found_card(thread_events):
@@ -4341,6 +4372,7 @@ async def _plan_creator_action(
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
                 continuable=gate.pending,
+                continue_reason="song_order_pending",
             )
         if gate.strategy is not None:
             # The model flipped away from lip-sync mid-exchange and the gate kept it:
@@ -4553,6 +4585,7 @@ async def _plan_creator_action(
                 continuable=(
                     planned.resolution.status == "pending" and not planned.resolution.needs_creator
                 ),
+                continue_reason="clip_intent_resolution_pending",
             )
         # Leverkusen M2: a part with its clip but no edge or seconds (or one that leaves nothing
         # of the clip) is asked about in plain words; it is never drafted with the part showing.
@@ -6674,6 +6707,7 @@ async def _plan_live_turn(
                     manifest_hash=manifest.manifest_hash,
                     context_hash=manifest.context_hash,
                     continuable=True,
+                    continue_reason="clip_analysis_pending",
                     brief_updates=pre_extracted_updates,
                     # KRI-814: a delegating request paused on analysis is still read.
                     brief_delegated=extracted_delegation,
@@ -7026,6 +7060,7 @@ async def _plan_live_turn(
             manifest_hash=manifest.manifest_hash,
             context_hash=manifest.context_hash,
             continuable=True,
+            continue_reason="clip_analysis_pending",
             brief_updates=updates,
             brief_expected_version=prior_brief.version if prior_brief else 0,
             brief_coverage={

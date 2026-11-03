@@ -67,6 +67,7 @@ from app.services.creator_label_reply import (
 )
 from app.services.spoken_quotes import regound_quoted_intents
 from app.services.too_short_clips import resolve_too_short
+from app.services.turn_checkpoint import checkpointed, note_wait, timed_step
 from app.text_fold import loose_words
 
 if TYPE_CHECKING:
@@ -199,7 +200,9 @@ async def wait_for_clip_understanding(
         if not _unanalysed(clips) or remaining <= 0:
             break
         await asyncio.sleep(min(UNDERSTANDING_POLL_S, remaining))
-    return clips, round(time.monotonic() - started, 1)
+    spent = round(time.monotonic() - started, 1)
+    note_wait("clip_understanding_wait", seconds=spent)
+    return clips, spent
 
 
 def resolve_order_by_intent(intent: ClipIntent, clips: list[IntentClip]) -> ResolvedClipIntent:
@@ -1315,9 +1318,22 @@ async def plan_and_resolve_clip_intents(
     if checked_inventory is not None:
         log.info("clip_intent_planner.inventory_reuse", reused=reused is not None)
     try:
-        output = reused or await asyncio.to_thread(
-            ClipIntentPlannerAgent(default_client()).run, planner_input, ctx=run_context
-        )
+        if reused is not None:
+            output = reused
+        else:
+
+            async def _plan() -> ClipIntentPlannerOutput:
+                return await asyncio.to_thread(
+                    ClipIntentPlannerAgent(default_client()).run, planner_input, ctx=run_context
+                )
+
+            output = await checkpointed(
+                "clip_intent_planner",
+                agent_cls=ClipIntentPlannerAgent,
+                agent_input=planner_input,
+                output_cls=ClipIntentPlannerOutput,
+                call=_plan,
+            )
     except TerminalSchemaError as exc:
         # Invalid model output is a content-recovery problem, not a failed
         # preparation. Ask for a restatement and trust none of the candidate
@@ -1599,25 +1615,27 @@ async def plan_and_resolve_clip_intents(
             )
 
     async def _resolve(pending: list[ClipIntent]) -> IntentResolution:
-        return await resolve_clip_intents_for_turn(
-            intents=pending,
-            creator_request=creator_request,
-            clips=clips,
-            run_context=run_context,
-            background=background,
-            checkpoint=checkpoint,
-            max_vision_requeries=max_vision_requeries,
-            vision_deadline_s=vision_deadline_s,
-            # KRI-516: chapter captions under a filming-time order are stretches of the day.
-            # Omitted otherwise, so every other call is unchanged.
-            **({"filming_order": True} if order_by_intents else {}),
-            # KRI-692: a Turkish chat's picker row never shows a model-written English label.
-            **(
-                {"creator_words": {i.intent_id: i.source_quote for i in output.intents}}
-                if current_reply_language() == "tr"
-                else {}
-            ),
-        )
+        # The vision re-check reads clips with the model: tens of seconds a run, so it is timed.
+        with timed_step("clip_intent_resolution"):
+            return await resolve_clip_intents_for_turn(
+                intents=pending,
+                creator_request=creator_request,
+                clips=clips,
+                run_context=run_context,
+                background=background,
+                checkpoint=checkpoint,
+                max_vision_requeries=max_vision_requeries,
+                vision_deadline_s=vision_deadline_s,
+                # KRI-516: chapter captions under a filming-time order are stretches of the day.
+                # Omitted otherwise, so every other call is unchanged.
+                **({"filming_order": True} if order_by_intents else {}),
+                # KRI-692: a Turkish chat's picker row never shows a model-written English label.
+                **(
+                    {"creator_words": {i.intent_id: i.source_quote for i in output.intents}}
+                    if current_reply_language() == "tr"
+                    else {}
+                ),
+            )
 
     # KRI-991: the resolver is not deterministic and re-reads the whole list every turn, so a
     # match the asking turn already found stands and only the rest is resolved (once, or not at

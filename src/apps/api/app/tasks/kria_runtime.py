@@ -195,6 +195,13 @@ from app.services.thought_summaries import (
     bind_thought_publisher,
     publisher_for_creation,
 )
+from app.services.turn_checkpoint import (
+    TurnRunRecorder,
+    discard,
+    timed_step,
+    turn_run_id,
+    turn_run_recorder,
+)
 from app.text_fold import loose_words
 from app.worker import celery_app
 
@@ -624,7 +631,83 @@ def _complete_response_turn(
     )
 
 
-def _continue_turn(turn_id: uuid.UUID, *, lease_owner: str, lease_epoch: int) -> str:
+# Bound on the per-turn continuation record (the run cap is lower; this is a safety net).
+_MAX_PLANNING_RUNS = 8
+
+
+def _planning_run_record(
+    *,
+    epoch: int,
+    outcome: str,
+    reason: str,
+    at: datetime,
+    calls: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    """One run of a continued turn: reason codes and milliseconds only, never creator text."""
+    return {
+        "epoch": epoch,
+        "outcome": outcome,
+        "reason": reason or ("" if outcome in ("completed", "failed") else "unspecified"),
+        "at": at.isoformat(),
+        "calls": [dict(call) for call in calls],
+    }
+
+
+def _append_planning_run(
+    turn_id: uuid.UUID,
+    *,
+    epoch: int,
+    outcome: str,
+    reason: str = "",
+    calls: Sequence[dict[str, Any]] = (),
+) -> None:
+    """Best-effort: a trace write never changes what the creator sees or how the turn ends."""
+    try:
+        with sync_session() as db:
+            turn = db.execute(
+                select(CreatorAgentTurn).where(CreatorAgentTurn.id == turn_id).with_for_update()
+            ).scalar_one_or_none()
+            if turn is None:
+                return
+            record = _planning_run_record(
+                epoch=epoch,
+                outcome=outcome,
+                reason=reason,
+                at=db.execute(select(func.now())).scalar_one(),
+                calls=calls,
+            )
+            turn.planning_runs = [*(turn.planning_runs or []), record][-_MAX_PLANNING_RUNS:]
+            db.commit()
+    except Exception:  # noqa: BLE001 - observability only
+        log.warning("kria_planning_run_record_failed", turn_id=str(turn_id), exc_info=True)
+
+
+def _close_turn_run(
+    turn_id: uuid.UUID,
+    *,
+    lease_epoch: int,
+    outcome: str | None,
+    reason: str = "",
+    calls: Sequence[dict[str, Any]] = (),
+) -> None:
+    """The turn reached a terminal state: drop its stored planner answers, and when it had been
+    continued record this last run, so the trace ends with how the creator's turn really ended.
+    ``outcome=None`` means the run is already recorded."""
+    discard(turn_id)
+    if outcome is not None and lease_epoch > 1:
+        _append_planning_run(
+            turn_id, epoch=lease_epoch, outcome=outcome, reason=reason, calls=calls
+        )
+
+
+def _continue_turn(
+    turn_id: uuid.UUID,
+    *,
+    lease_owner: str,
+    lease_epoch: int,
+    reason: str = "",
+    calls: Sequence[dict[str, Any]] = (),
+) -> str:
     """KRI-709: release a turn whose planner stopped on a time budget so it runs again.
 
     Returns ``"continued"`` (turn is ``pending`` again, caller publishes it),
@@ -639,9 +722,16 @@ def _continue_turn(turn_id: uuid.UUID, *, lease_owner: str, lease_epoch: int) ->
 
     Same lock discipline as `_complete_response_turn`: the turn row under FOR UPDATE and
     the lease re-checked, so a cancel during planning stays cancelled. No event is
-    written and no brief version persisted: the next run does both.
+    written and no brief version persisted: the next run does both. The decision itself is
+    recorded on the turn (`planning_runs`: run, reason code, per-call and per-wait
+    milliseconds), so a later "ran out of time" is diagnosable from `kria/trace`.
     """
     if lease_epoch >= int(settings.kria_turn_auto_continue_max_runs):
+        if int(settings.kria_turn_auto_continue_max_runs) > 1:
+            # The run the creator saw fail: with the switch off nothing was ever continued.
+            _append_planning_run(
+                turn_id, epoch=lease_epoch, outcome="exhausted", reason=reason, calls=calls
+            )
         return "exhausted"
     with sync_session() as db:
         turn = db.execute(
@@ -664,8 +754,22 @@ def _continue_turn(turn_id: uuid.UUID, *, lease_owner: str, lease_epoch: int) ->
         turn.lease_expires_at = database_now + timedelta(
             seconds=_CONTINUE_COUNTDOWN_S + _CONTINUE_LEASE_SLACK_S
         )
+        record = _planning_run_record(
+            epoch=lease_epoch,
+            outcome="continued",
+            reason=reason,
+            at=database_now,
+            calls=calls,
+        )
+        turn.planning_runs = [*(turn.planning_runs or []), record][-_MAX_PLANNING_RUNS:]
         db.commit()
-    log.info("kria_turn_auto_continued", turn_id=str(turn_id), lease_epoch=lease_epoch)
+    log.info(
+        "kria_turn_auto_continued",
+        turn_id=str(turn_id),
+        lease_epoch=lease_epoch,
+        reason=record["reason"],
+        calls=record["calls"],
+    )
     return "continued"
 
 
@@ -3387,6 +3491,7 @@ async def _plan_with_live_agent(
     degraded_token = start_degraded_retry.set(bool(snapshot.get("start_degraded")))
     # A continued or reclaimed run re-sends unchanged prompts: its paid calls are new calls.
     epoch_token = turn_run_epoch.set(lease_epoch)
+    run_id_token = turn_run_id.set(turn_id)
     sender = bind_sending_build(stamped_client_protocol(snapshot.get("client_protocol")))
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
@@ -3524,6 +3629,7 @@ async def _plan_with_live_agent(
         turn_deadline.reset(deadline)
         start_degraded_retry.reset(degraded_token)
         turn_run_epoch.reset(epoch_token)
+        turn_run_id.reset(run_id_token)
         unbind_sending_build(sender)
         stop.set()
         try:
@@ -4358,6 +4464,9 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
     )
     # A follow-up sent while this turn plans is queued behind it: plan without it.
     history_token = answering_through_sequence.set(snapshot.get("source_sequence"))
+    # This run's calls and waits, for the continuation record (see `_continue_turn`).
+    recorder = TurnRunRecorder()
+    recorder_token = turn_run_recorder.set(recorder)
     try:
         if (
             settings.main_creator_agent_enabled or snapshot.get("camera_roll_story")
@@ -4384,18 +4493,25 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
             with _lease_heartbeat_thread(
                 identifier, lease_owner=lease_owner, lease_epoch=lease_epoch
             ):
-                planned = research_preview.with_research(
-                    planned,
-                    snapshot,
-                    turn_id=identifier,
-                    deadline=turn_started + float(run_kria_turn.soft_time_limit or 200),
-                )
+                with timed_step("research"):
+                    planned = research_preview.with_research(
+                        planned,
+                        snapshot,
+                        turn_id=identifier,
+                        deadline=turn_started + float(run_kria_turn.soft_time_limit or 200),
+                    )
+            # What this run's record says, unless `_continue_turn` already wrote it ("exhausted").
+            run_outcome: str | None = "completed"
             if planned.plan.mode == "respond" and planned.continuable:
                 # KRI-709: the planner stopped on a time budget with its answers saved.
                 # Run the same turn again instead of asking the creator to say "go
                 # ahead"; the chat keeps showing "Thinking" (no assistant event yet).
                 outcome = _continue_turn(
-                    identifier, lease_owner=lease_owner, lease_epoch=lease_epoch
+                    identifier,
+                    lease_owner=lease_owner,
+                    lease_epoch=lease_epoch,
+                    reason=planned.continue_reason,
+                    calls=recorder.calls,
                 )
                 if outcome == "lost":
                     return {"turn_id": turn_id, "status": "ignored"}
@@ -4411,7 +4527,10 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     except Exception:  # noqa: BLE001 - the reconciler republishes the pending row
                         log.warning("kria_turn_continue_publish_failed", turn_id=turn_id)
                     return {"turn_id": turn_id, "status": "continued"}
+                if outcome == "exhausted":
+                    run_outcome = None
                 if outcome == "successor":
+                    run_outcome = "superseded"
                     planned = replace(
                         planned,
                         plan=planned.plan.model_copy(
@@ -4536,6 +4655,13 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     )
                     return {"turn_id": turn_id, "status": "requeued"}
                 return {"turn_id": turn_id, "status": "ignored"}
+            _close_turn_run(
+                identifier,
+                lease_epoch=lease_epoch,
+                outcome=run_outcome,
+                reason=planned.continue_reason,
+                calls=recorder.calls,
+            )
             if thought_publisher is not None:
                 thought_publisher.complete()
             if planned.defer_brief:
@@ -4644,6 +4770,13 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
             turn_id=turn_id,
             error_class=type(exc).__name__,
         )
+        _close_turn_run(
+            identifier,
+            lease_epoch=lease_epoch,
+            outcome="failed",
+            reason=_turn_failure_code(exc),
+            calls=recorder.calls,
+        )
         successor_turn_id = _fail_turn(
             identifier,
             code=_turn_failure_code(exc),
@@ -4667,6 +4800,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
             thought_publisher.fail()
         release_reply_language(language_token)
         answering_through_sequence.reset(history_token)
+        turn_run_recorder.reset(recorder_token)
 
 
 async def _extract_brief_async(snapshot: dict[str, Any], user_message: str):
