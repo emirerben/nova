@@ -22,10 +22,9 @@ import binascii
 import hashlib
 import time
 import uuid
-from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any
 
 import structlog
 from pydantic import ValidationError
@@ -58,6 +57,11 @@ from app.services.bounded_media_review import (
     reservation_json,
     usage_meter,
 )
+from app.services.intent_review_prompt import (
+    FrameView,
+    NothingToReview,
+    build_review,
+)
 from app.services.pipeline_trace import pipeline_trace_for, record_pipeline_event
 from app.services.render_review_admission import _inputs, load_review_rows
 
@@ -84,50 +88,6 @@ _FAILURE_STATUS = {
     "provider_unknown_outcome": ("review_unknown", "provider_unknown_outcome"),
     "provider_rejected": ("unavailable", "provider_rejected"),
 }
-
-
-@dataclass(frozen=True)
-class FrameView:
-    frame_id: str
-    jpeg: bytes
-    sha256: str
-    width: int
-    height: int
-    timestamp_s: float
-    anchor_ref: str | None
-
-
-@dataclass(frozen=True)
-class BuiltReview:
-    prompt: str
-    response_schema: dict[str, Any]
-    catalog: dict[str, Any]
-    prompt_version: str
-
-
-class NothingToReview(Exception):
-    """No requirement the frames could judge: finish without spending anything."""
-
-
-class ReviewPromptBuilder(Protocol):
-    def build(
-        self,
-        packet: dict[str, Any],
-        frames: Sequence[FrameView],
-        *,
-        rendered_duration_s: float | None = None,
-    ) -> BuiltReview: ...
-
-
-_PROMPT_BUILDER: ReviewPromptBuilder | None = None
-
-
-def resolve_prompt_builder() -> ReviewPromptBuilder:
-    if _PROMPT_BUILDER is not None:
-        return _PROMPT_BUILDER
-    from app.services.intent_review_prompt import IntentReviewPromptBuilder
-
-    return IntentReviewPromptBuilder()
 
 
 @dataclass(frozen=True)
@@ -417,7 +377,7 @@ def _call_review(claim: Claim, client: OpenAIVisionClient | None) -> str:
     except _Unusable as exc:
         return _terminal_for_claim(claim, "unavailable", exc.reason)
     try:
-        built = resolve_prompt_builder().build(
+        built = build_review(
             claim.packet,
             frames,
             rendered_duration_s=claim.evidence.get("rendered_duration_s"),

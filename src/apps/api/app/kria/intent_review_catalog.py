@@ -346,6 +346,8 @@ def build_review_catalog(
                 )
             ):
                 continue
+            if guards.preserve_text:
+                continue
             path = f"editor_payload.text_elements[{bar['index']}]"
             wanted = {
                 alias: exact
@@ -371,7 +373,7 @@ def build_review_catalog(
                         auto=True,
                     )
                 )
-            if guards.preserve_text or guards.explicit_timing(bar, kind, [r for _, r in owners]):
+            if guards.explicit_timing(bar, kind, [r for _, r in owners]):
                 continue
             ids = [a for a, _ in owners]
             start, end = bar["start_s"], row.get("end_s")

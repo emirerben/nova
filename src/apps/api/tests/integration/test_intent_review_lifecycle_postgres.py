@@ -73,6 +73,7 @@ from app.models import (
 from app.services import ai_cost_control as costs
 from app.services import intent_review_flow as flow
 from app.services import render_review_evidence as evidence
+from app.services.intent_review_prompt import BuiltReview
 from app.services.pipeline_trace import pipeline_trace_for
 from app.services.render_review_admission import (
     reconcile_generation_reviews,
@@ -118,7 +119,7 @@ class Builder:
 
     def build(self, packet, frames, *, rendered_duration_s=None):
         self.seen.append((packet, list(frames)))
-        return flow.BuiltReview(
+        return BuiltReview(
             prompt=self.prompt,
             response_schema=SCHEMA,
             catalog={"frames": [frame.frame_id for frame in frames]},
@@ -189,7 +190,7 @@ def paid(monkeypatch):
         monkeypatch.setattr(settings, name, value)
     monkeypatch.setattr(tier, "_CODE_TIER_CEILING", "review")
     builder = Builder()
-    monkeypatch.setattr(flow, "_PROMPT_BUILDER", builder)
+    monkeypatch.setattr(flow, "build_review", builder.build)
     publish = Mock()
     monkeypatch.setattr(review_generation_intent, "apply_async", publish)
     yield SimpleNamespace(publish=publish, builder=builder)
@@ -926,11 +927,10 @@ async def test_a_failing_prompt_builder_is_unavailable_without_a_call(
 ):
     rid, _, _ = await ready_review(approved_publication, monkeypatch)
 
-    class Broken:
-        def build(self, packet, frames, *, rendered_duration_s=None):
-            raise RuntimeError("catalog could not be built")
+    def broken(packet, frames, *, rendered_duration_s=None):
+        raise RuntimeError("catalog could not be built")
 
-    monkeypatch.setattr(flow, "_PROMPT_BUILDER", Broken())
+    monkeypatch.setattr(flow, "build_review", broken)
     provider = Provider()
     assert await run_async(rid, provider) == "unavailable"
     assert review_row(rid).reason == "prompt_builder_unavailable"

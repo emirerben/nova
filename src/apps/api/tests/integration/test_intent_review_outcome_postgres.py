@@ -30,7 +30,6 @@ ledger and every transition run for real on PostgreSQL.
 
 import copy
 import json
-from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select, text
@@ -43,6 +42,7 @@ from app.kria.brief_binding import BriefBinding
 from app.models import CreationThreadEvent, CreatorEditDraft
 from app.services import ai_cost_control as costs
 from app.services import intent_review_flow as flow
+from app.services import intent_review_prompt as prompt
 from app.services import render_review_evidence as evidence
 from app.services.render_review_admission import run_generation_review
 from tests.integration.test_intent_review_lifecycle_postgres import (  # noqa: F401
@@ -68,7 +68,7 @@ from tests.services.test_openai_vision_transport import response
 
 @pytest.fixture
 def real_builder(paid, monkeypatch):
-    monkeypatch.setattr(flow, "_PROMPT_BUILDER", None)
+    monkeypatch.setattr(flow, "build_review", prompt.build_review)
     return paid
 
 
@@ -439,7 +439,6 @@ async def test_the_stored_catalog_describes_the_exact_frames_that_were_sent(
 
 def test_every_flag_on_still_reviews_in_shadow_and_retires_the_legacy_review(monkeypatch):
     owner = "5b0f4a0e-6d2f-4a52-9f0b-5cbb3c6b2f10"
-    v2 = SimpleNamespace(runtime_version=2)
     for name, value in dict(
         kria_intent_review_enabled=True,
         kria_intent_review_paid_enabled=True,
@@ -452,9 +451,9 @@ def test_every_flag_on_still_reviews_in_shadow_and_retires_the_legacy_review(mon
         monkeypatch.setattr(settings, name, value)
     assert tier._CODE_TIER_CEILING == "review"
     assert tier.intent_review_tier(owner) == "review"
-    assert tier.intent_review_replaces_legacy(owner, v2) is True
+    assert tier.intent_review_replaces_legacy(owner) is True
     monkeypatch.setattr(settings, "kria_intent_review_paid_enabled", False)
-    assert tier.intent_review_replaces_legacy(owner, v2) is False
+    assert tier.intent_review_replaces_legacy(owner) is False
 
 
 # --- recovery -----------------------------------------------------------------------------

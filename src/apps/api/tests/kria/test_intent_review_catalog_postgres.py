@@ -22,8 +22,8 @@ Failure modes, written before the code (matrix row in parentheses). Each has a t
   A candidate that touches what the creator protected (23):
     selected or ordered footage on a clip-linked label, an absolute sequence timing, a
     protected region, an explicit timing ask, a placement ask, and preserve_editor_text each
-    remove the candidates they cover; preserve_editor_text blocks retiming and moving, not the
-    restore of the creator's own words.
+    remove the candidates they cover; preserve_editor_text forbids touching the text at all, so it
+    removes the restore as well as the retime and the move.
   A fit that cannot hold (44):
     no rendered duration, text that already ends in time, or less than a second of visible text
     left, emits nothing; otherwise the window never starts earlier or ends later than approved.
@@ -400,19 +400,20 @@ def test_a_protected_region_removes_every_candidate():
     assert catalog.candidates == []
 
 
-def test_preserve_editor_text_blocks_retime_and_move_but_not_the_restore():
+def test_preserve_editor_text_removes_every_candidate_including_the_restore():
     rows = [bar(text="Bef0re", end=12.0)]
-    asks = [
-        requirement(),
-        requirement("r2", "timing", "title", None, facts={"preserve_editor_text": True}),
-    ]
-    assert kinds(catalog_for(rows, [asks[0]])) == [
+    assert kinds(catalog_for(rows, [requirement()])) == [
         "fit_text_to_duration",
         "move_text_to_safe_anchor",
         "restore_exact_text",
     ]
-    preserved = [requirement(facts={"preserve_editor_text": True})]
-    assert kinds(catalog_for(rows, preserved)) == ["restore_exact_text"]
+    on_the_timing_ask = [
+        requirement(),
+        requirement("r2", "timing", "title", None, facts={"preserve_editor_text": True}),
+    ]
+    on_the_text_ask = [requirement(facts={"preserve_editor_text": True})]
+    assert catalog_for(rows, on_the_timing_ask).candidates == []
+    assert catalog_for(rows, on_the_text_ask).candidates == []
 
 
 @pytest.mark.parametrize(
