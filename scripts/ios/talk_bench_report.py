@@ -244,6 +244,10 @@ def build_report(runs_dir: Path, label: str, sha: str, device: str, planned_runs
         entry = scenarios.setdefault(scenario, {"runs": [], "failed_runs": []})
         status = json.loads((run_dir / "status.json").read_text()) if (run_dir / "status.json").exists() else {}
         summary = load_summary(run_dir)
+        if summary is not None and status.get("xcodebuild_exit") not in (0, None):
+            entry["failed_runs"].append({"run": run_name, "reason": status.get("reason"), "xcodebuild_exit": status.get("xcodebuild_exit"),
+                                         "partial_metrics": run_metrics(summary)})
+            continue
         if summary is None:
             entry["failed_runs"].append({"run": run_name, "reason": status.get("reason", "no summary.json pulled from the device"),
                                          "xcodebuild_exit": status.get("xcodebuild_exit")})
