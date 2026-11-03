@@ -137,6 +137,9 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
             do { if let draft = try store.loadDraft() { script.draft = draft } }
             catch { self.error = "Couldn’t restore the script. Your saved takes are still available." }
             restoreBackground()
+            #if DEBUG
+            await installBenchBackground()
+            #endif
             let recovery = try store.loadManifestsRecoveringCorruption()
             if let warning = recovery.recoveryWarning { self.error = warning }
             var takes = recovery.manifests.filter { $0.status != .accepted }
@@ -327,6 +330,9 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         // The choice at the end of filming wins: the picker may change while recording.
         take.speakerBackground = speakerBackgroundEnabled ? background?.reference : nil
         finalizedTake = take
+        #if DEBUG
+        if let url { TalkBench.shared.keepTake(url) }
+        #endif
         script.pause(); stage = .review
         error = message
         // KRI-653: a silent take is never attached. Say why before the creator reaches for "Use take".
@@ -589,7 +595,9 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
     func useTake(_ intake: (TeleprompterTakeManifest, URL) async -> TeleprompterIntakeResult) async {
         guard !usingTake, !queueAccepted, var take = selectedTake, take.status == .review,
               take.audioCheck?.verdict != .silent else { return }
-        usingTake = true; defer { usingTake = false }
+        usingTake = true
+        Perf.begin("talk.use.spinner", id: take.id.uuidString)
+        defer { usingTake = false; Perf.end("talk.use.spinner", id: take.id.uuidString) }
         do {
             let request = take
             let previous = pendingTake
@@ -599,19 +607,23 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
             if let previous, previous.id != take.id, previous.status != .accepted {
                 try removeTake(previous)
             }
-            let result = await intake(request, store.fileURL(for: take))
+            let result = await Perf.measureAsync("talk.use.intake") { await intake(request, store.fileURL(for: take)) }
             apply(result)
             // The take is handed over first and never waits on, or fails because of, its background.
             if case .failed = result { return }
-            await uploadBackgroundIfNeeded()
+            await Perf.measureAsync("talk.use.backgroundUpload") { await uploadBackgroundIfNeeded() }
         } catch { self.error = "Your video is kept, but its details couldn’t be saved. Try again." }
     }
 
     func apply(_ result: TeleprompterIntakeResult) {
         guard var take = selectedTake else { return }
         switch result {
-        case .queued: queueAccepted = true; error = nil
+        case .queued:
+            queueAccepted = true; error = nil
+            // The take is with the upload queue; this runs until the server lists it on the edit.
+            Perf.begin("talk.use.pollToDone", id: take.id.uuidString)
         case .attached:
+            Perf.end("talk.use.pollToDone", id: take.id.uuidString)
             take.status = .accepted
             do {
                 try store.save(manifest: take)
