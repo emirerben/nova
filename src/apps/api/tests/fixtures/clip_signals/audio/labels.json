@@ -1,0 +1,426 @@
+{
+ "clean_00.m4a": {
+  "label": "clean",
+  "params": {
+   "bitrate": 40000,
+   "channels": 1,
+   "dur": 3.0,
+   "f0": 95.0,
+   "level_db": -25.28775062539114,
+   "room_db": -49.680393096441136,
+   "sr": 44100
+  },
+  "seed": 1000
+ },
+ "clean_01.m4a": {
+  "label": "clean",
+  "params": {
+   "bitrate": 40000,
+   "channels": 1,
+   "dur": 3.0,
+   "f0": 120.0,
+   "level_db": -24.327472509453813,
+   "room_db": -49.738985045424414,
+   "sr": 44100
+  },
+  "seed": 1001
+ },
+ "clean_02.m4a": {
+  "label": "clean",
+  "params": {
+   "bitrate": 80000,
+   "channels": 2,
+   "dur": 3.0,
+   "f0": 180.0,
+   "level_db": -25.434995379465608,
+   "room_db": -59.461688246542764,
+   "sr": 44100
+  },
+  "seed": 1002
+ },
+ "clean_03.m4a": {
+  "label": "clean",
+  "params": {
+   "bitrate": 40000,
+   "channels": 1,
+   "dur": 3.0,
+   "f0": 220.0,
+   "level_db": -25.050077170384277,
+   "room_db": -55.283885375263125,
+   "sr": 44100
+  },
+  "seed": 1003
+ },
+ "clean_04.m4a": {
+  "label": "clean",
+  "params": {
+   "bitrate": 40000,
+   "channels": 1,
+   "dur": 3.0,
+   "f0": 95.0,
+   "level_db": -23.158751596495634,
+   "room_db": -54.73352928981209,
+   "sr": 44100
+  },
+  "seed": 1004
+ },
+ "clean_05.m4a": {
+  "label": "clean",
+  "params": {
+   "bitrate": 80000,
+   "channels": 2,
+   "dur": 3.0,
+   "f0": 120.0,
+   "level_db": -22.93679516729361,
+   "room_db": -50.387066312440155,
+   "sr": 44100
+  },
+  "seed": 1005
+ },
+ "clipped_00.m4a": {
+  "label": "clipped",
+  "params": {
+   "bitrate": 40000,
+   "channels": 1,
+   "drive": 7.844974279363852,
+   "dur": 3.0,
+   "f0": 95.0,
+   "sr": 44100
+  },
+  "seed": 1400
+ },
+ "clipped_01.m4a": {
+  "label": "clipped",
+  "params": {
+   "bitrate": 40000,
+   "channels": 1,
+   "drive": 7.331477327835749,
+   "dur": 3.0,
+   "f0": 120.0,
+   "sr": 44100
+  },
+  "seed": 1401
+ },
+ "clipped_02.m4a": {
+  "label": "clipped",
+  "params": {
+   "bitrate": 80000,
+   "channels": 2,
+   "drive": 7.050458065862686,
+   "dur": 3.0,
+   "f0": 180.0,
+   "sr": 44100
+  },
+  "seed": 1402
+ },
+ "crowd_00.m4a": {
+  "label": "crowd",
+  "params": {
+   "bitrate": 40000,
+   "channels": 1,
+   "dur": 3.0,
+   "f0": 95.0,
+   "kind": "babble",
+   "level_db": -24.222738156071664,
+   "pure": false,
+   "snr_db": 6.887782802062996,
+   "sr": 44100,
+   "voices": 8
+  },
+  "seed": 1200
+ },
+ "crowd_01.m4a": {
+  "label": "crowd",
+  "params": {
+   "bitrate": 40000,
+   "channels": 1,
+   "dur": 3.0,
+   "f0": 120.0,
+   "kind": "babble",
+   "level_db": -21.195562984577172,
+   "pure": false,
+   "snr_db": 8.638705383619827,
+   "sr": 44100,
+   "voices": 9
+  },
+  "seed": 1201
+ },
+ "crowd_02.m4a": {
+  "label": "crowd",
+  "params": {
+   "bitrate": 80000,
+   "channels": 2,
+   "dur": 3.0,
+   "f0": 180.0,
+   "kind": "babble",
+   "level_db": -22.879577989728553,
+   "pure": false,
+   "snr_db": 8.509425866447499,
+   "sr": 44100,
+   "voices": 6
+  },
+  "seed": 1202
+ },
+ "crowd_03.m4a": {
+  "label": "crowd",
+  "params": {
+   "bitrate": 40000,
+   "channels": 1,
+   "dur": 3.0,
+   "f0": 220.0,
+   "kind": "babble",
+   "level_db": -22.750307627611846,
+   "pure": true,
+   "snr_db": 4.59620284047957,
+   "sr": 44100,
+   "voices": 7
+  },
+  "seed": 1203
+ },
+ "crowd_04.m4a": {
+  "label": "crowd",
+  "params": {
+   "bitrate": 40000,
+   "channels": 1,
+   "dur": 3.0,
+   "f0": 95.0,
+   "kind": "traffic",
+   "level_db": -21.368610085299867,
+   "pure": false,
+   "snr_db": 0.210938712554529,
+   "sr": 44100,
+   "voices": 9
+  },
+  "seed": 1204
+ },
+ "crowd_05.m4a": {
+  "label": "crowd",
+  "params": {
+   "bitrate": 80000,
+   "channels": 2,
+   "dur": 3.0,
+   "f0": 120.0,
+   "kind": "hiss",
+   "level_db": -23.145554451092778,
+   "pure": false,
+   "snr_db": 1.4254397683717988,
+   "sr": 44100,
+   "voices": 9
+  },
+  "seed": 1205
+ },
+ "music_00.m4a": {
+  "label": "music",
+  "params": {
+   "bitrate": 40000,
+   "bpm": 110.99652740600263,
+   "channels": 1,
+   "dur": 3.0,
+   "f0": 95.0,
+   "level_db": -15.99368692440765,
+   "sr": 44100,
+   "variant": "sub"
+  },
+  "seed": 1300
+ },
+ "music_01.m4a": {
+  "label": "music",
+  "params": {
+   "bitrate": 40000,
+   "bpm": 133.64610892033895,
+   "channels": 1,
+   "dur": 3.0,
+   "f0": 120.0,
+   "level_db": -25.82521096442631,
+   "sr": 44100,
+   "variant": "bassline"
+  },
+  "seed": 1301
+ },
+ "music_02.m4a": {
+  "label": "music",
+  "params": {
+   "bitrate": 80000,
+   "bpm": 98.48226839995735,
+   "channels": 2,
+   "dur": 3.0,
+   "f0": 180.0,
+   "level_db": -14.143487154857144,
+   "sr": 44100,
+   "variant": "full"
+  },
+  "seed": 1302
+ },
+ "music_03.m4a": {
+  "label": "music",
+  "params": {
+   "bitrate": 40000,
+   "bpm": 98.29906626214563,
+   "channels": 1,
+   "dur": 3.0,
+   "f0": 220.0,
+   "level_db": -14.392094874996948,
+   "sr": 44100,
+   "variant": "hard_bass"
+  },
+  "seed": 1303
+ },
+ "music_04.m4a": {
+  "label": "music",
+  "params": {
+   "bitrate": 40000,
+   "bpm": 105.75885107307043,
+   "channels": 1,
+   "dur": 3.0,
+   "f0": 95.0,
+   "level_db": -17.492242207412097,
+   "sr": 44100,
+   "variant": "full_speech"
+  },
+  "seed": 1304
+ },
+ "silence_00.m4a": {
+  "label": "silence",
+  "params": {
+   "bitrate": 40000,
+   "channels": 1,
+   "db": 0.0,
+   "dur": 3.0,
+   "mode": "zeros",
+   "sr": 44100
+  },
+  "seed": 1500
+ },
+ "silence_01.m4a": {
+  "label": "silence",
+  "params": {
+   "bitrate": 40000,
+   "channels": 1,
+   "db": -89.44037516693464,
+   "dur": 3.0,
+   "mode": "noise",
+   "sr": 44100
+  },
+  "seed": 1501
+ },
+ "silence_02.m4a": {
+  "label": "silence",
+  "params": {
+   "bitrate": 80000,
+   "channels": 2,
+   "db": -69.35788780330716,
+   "dur": 3.0,
+   "mode": "noise",
+   "sr": 44100
+  },
+  "seed": 1502
+ },
+ "silence_03.m4a": {
+  "label": "silence",
+  "params": {
+   "bitrate": 40000,
+   "channels": 1,
+   "db": -56.798770207334044,
+   "dur": 3.0,
+   "mode": "noise",
+   "sr": 44100
+  },
+  "seed": 1503
+ },
+ "wind_00.m4a": {
+  "label": "wind",
+  "params": {
+   "bitrate": 40000,
+   "channels": 1,
+   "dur": 3.0,
+   "f0": 95.0,
+   "fc": 131.93628447424743,
+   "gust": 1.2370980840203505,
+   "level_db": -18.670062063802757,
+   "pure": false,
+   "snr_db": 2.1220633629016223,
+   "sr": 44100
+  },
+  "seed": 1100
+ },
+ "wind_01.m4a": {
+  "label": "wind",
+  "params": {
+   "bitrate": 40000,
+   "channels": 1,
+   "dur": 3.0,
+   "f0": 120.0,
+   "fc": 135.1994750762849,
+   "gust": 1.2674400524893092,
+   "level_db": -21.68958631282151,
+   "pure": false,
+   "snr_db": 3.7227728366920907,
+   "sr": 44100
+  },
+  "seed": 1101
+ },
+ "wind_02.m4a": {
+  "label": "wind",
+  "params": {
+   "bitrate": 80000,
+   "channels": 2,
+   "dur": 3.0,
+   "f0": 180.0,
+   "fc": 113.8886656336276,
+   "gust": 1.3271815902662267,
+   "level_db": -21.616424683015925,
+   "pure": false,
+   "snr_db": -2.471676376354898,
+   "sr": 44100
+  },
+  "seed": 1102
+ },
+ "wind_03.m4a": {
+  "label": "wind",
+  "params": {
+   "bitrate": 40000,
+   "channels": 1,
+   "dur": 3.0,
+   "f0": 220.0,
+   "fc": 177.57683066217052,
+   "gust": 0.8041494824637148,
+   "level_db": -21.123355244915142,
+   "pure": false,
+   "snr_db": 2.931056640626373,
+   "sr": 44100
+  },
+  "seed": 1103
+ },
+ "wind_04.m4a": {
+  "label": "wind",
+  "params": {
+   "bitrate": 40000,
+   "channels": 1,
+   "dur": 3.0,
+   "f0": 95.0,
+   "fc": 172.63204127576475,
+   "gust": 1.2629048622958248,
+   "level_db": -17.40655646370779,
+   "pure": true,
+   "snr_db": 4.508458193370219,
+   "sr": 44100
+  },
+  "seed": 1104
+ },
+ "wind_05.m4a": {
+  "label": "wind",
+  "params": {
+   "bitrate": 80000,
+   "channels": 2,
+   "dur": 3.0,
+   "f0": 120.0,
+   "fc": 222.301179188269,
+   "gust": 1.1987419101770334,
+   "level_db": -20.1232955939873,
+   "pure": true,
+   "snr_db": 2.6161533051161534,
+   "sr": 44100
+  },
+  "seed": 1105
+ }
+}
