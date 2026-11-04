@@ -1,0 +1,121 @@
+{
+  "overlays": [
+    {
+      "text": "Οι αρχαίοι πολιτισμοί και φυλές αρχίζουν να τα κρατάνε για εύκολη πρόσβαση στο γάλα, το μαλλί, το κρέας και το δέρμα.",
+      "effect": "static",
+      "font_family": "TikTok Sans Bold",
+      "text_size_px": 78,
+      "position_y_frac": 0.2,
+      "position_x_frac": 0.5,
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "stroke_width": 4,
+      "shadow_enabled": true,
+      "start_s": 0,
+      "end_s": 3
+    },
+    {
+      "text": "Οι αρχαίοι πολιτισμοί και φυλές αρχίζουν να τα κρατάνε για εύκολη πρόσβαση στο γάλα, το μαλλί, το κρέας και το δέρμα.",
+      "effect": "static",
+      "font_family": "Montserrat Bold",
+      "text_size_px": 78,
+      "position_y_frac": 0.2,
+      "position_x_frac": 0.5,
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "stroke_width": 4,
+      "shadow_enabled": true,
+      "start_s": 0,
+      "end_s": 3
+    },
+    {
+      "text": "홍콩의 스카이라인을 이루는 빌딩 행렬은 빅토리아 항구의 수면에 선명히 비치는 모습 때문에 반짝이는 막대그래프에 비유된다.",
+      "effect": "static",
+      "font_family": "TikTok Sans Bold",
+      "text_size_px": 78,
+      "position_y_frac": 0.5,
+      "position_x_frac": 0.5,
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "stroke_width": 4,
+      "shadow_enabled": true,
+      "start_s": 0,
+      "end_s": 3
+    },
+    {
+      "text": "إن عرض الصوت والضوء الهرمي واحد من أمتع الأشياء الموجودة بالمنطقة للأطفال.",
+      "effect": "static",
+      "font_family": "TikTok Sans Bold",
+      "text_size_px": 78,
+      "position_y_frac": 0.5,
+      "position_x_frac": 0.5,
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "stroke_width": 4,
+      "shadow_enabled": true,
+      "start_s": 0,
+      "end_s": 3
+    },
+    {
+      "text": "إن عرض الصوت والضوء الهرمي واحد",
+      "effect": "karaoke-line",
+      "font_family": "TikTok Sans Bold",
+      "text_size_px": 78,
+      "position_y_frac": 0.8,
+      "position_x_frac": 0.5,
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "stroke_width": 4,
+      "shadow_enabled": true,
+      "start_s": 0,
+      "end_s": 3,
+      "highlight_color": "#84CC16",
+      "word_timings": [
+        {
+          "text": "إن",
+          "start_s": 0.0,
+          "end_s": 0.35
+        },
+        {
+          "text": "عرض",
+          "start_s": 0.4,
+          "end_s": 0.75
+        },
+        {
+          "text": "الصوت",
+          "start_s": 0.8,
+          "end_s": 1.15
+        },
+        {
+          "text": "والضوء",
+          "start_s": 1.2,
+          "end_s": 1.55
+        },
+        {
+          "text": "الهرمي",
+          "start_s": 1.6,
+          "end_s": 1.95
+        },
+        {
+          "text": "واحد",
+          "start_s": 2.0,
+          "end_s": 2.35
+        }
+      ]
+    },
+    {
+      "text": "U njemu se navodi da je naju pečatljivije mesto za glavni predmet na preseku linija koje vertikuli horizontalno dele sliku na trećinu. U zagradi vidi primer.",
+      "effect": "static",
+      "font_family": "Inter Tight",
+      "text_size_px": 78,
+      "position_y_frac": 0.5,
+      "position_x_frac": 0.5,
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "stroke_width": 4,
+      "shadow_enabled": true,
+      "start_s": 0,
+      "end_s": 3
+    }
+  ]
+}

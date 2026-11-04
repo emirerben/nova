@@ -314,3 +314,84 @@ def test_the_brief_checks_greek_captions_by_their_text():
     )
     assert wrong.status == "partial"
     assert wrong.reason == "The captions are in English, not Greek."
+
+
+# --- F11: the phone's caption keep-out boxes are measured in the face that draws them --
+
+
+@pytest.mark.parametrize("language", ["ko", "ar", "en"])
+def test_phone_caption_bounds_are_measured_in_the_face_that_draws_the_text(monkeypatch, language):
+    # Hangul/Arabic runs carry glyph ids (or shaped text) of the script face; measuring them
+    # in the caption look's own face reads other glyphs' outlines, so the reserved caption
+    # area (the watermark/title keep-out) was wrong for Korean and Arabic.
+    from app.config import settings
+    from app.pipeline.canvas import PORTRAIT
+    from app.pipeline.phone_captions import PhoneCaptionLook, compile_caption_layers
+    from app.services import phone_text_styling as styling
+
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [*settings.phone_render_verified_features, "scriptFonts"],
+    )
+    text = _clips(language)[0]["reference"]
+    layers = compile_caption_layers(
+        [{"text": text, "start_s": 0.0, "end_s": 4.0}], canvas_width=1080, canvas_height=1920
+    )
+    import app.pipeline.phone_captions as phone_captions
+
+    measured_in: set[str] = set()
+    real_ink_box = phone_captions.caption_ink_box
+
+    def spy(run, typeface):  # noqa: ANN001, ANN202
+        measured_in.add(typeface.getFamilyName())
+        return real_ink_box(run, typeface)
+
+    monkeypatch.setattr(phone_captions, "caption_ink_box", spy)
+    look = PhoneCaptionLook()
+    token = styling._POLICY.set({"caption_look": look})
+    try:
+        styling.remember_caption_bounds(layers, canvas=PORTRAIT)
+        boxes = styling._POLICY.get()["_caption_boxes"]
+    finally:
+        styling._POLICY.reset(token)
+    expected = {"ko": "Noto Sans KR", "ar": "Noto Sans Arabic", "en": "TikTok Sans"}[language]
+    assert boxes
+    assert measured_in == {expected}
+
+
+# --- F10: Smart captions close a phrase on Arabic and Greek sentence marks ----------
+
+
+@pytest.mark.parametrize(
+    ("words", "first_cue"),
+    [
+        # Arabic question mark "؟" ends a sentence; the next sentence starts a new cue.
+        (["هل", "أنت", "بخير؟", "نعم", "أنا", "بخير", "جدا", "اليوم"], "هل أنت بخير؟"),
+        # Greek question mark is ";" (and U+037E).
+        (
+            ["Τι", "κάνεις", "σήμερα;", "Καλά", "είμαι", "πολύ", "ευχαριστώ", "φίλε"],
+            "Τι κάνεις σήμερα;",
+        ),
+    ],
+    ids=["ar", "el"],
+)
+def test_smart_captions_close_on_arabic_and_greek_question_marks(words, first_cue):
+    from app.smart_edit.captions import build_smart_caption_cues
+    from app.smart_edit.presets import CaptionPolicy
+
+    policy = CaptionPolicy(
+        min_words=3, max_words=7, max_lines=2, max_chars=44, font_family="Montserrat Bold",
+        font_size_px=64, y_frac=0.705, width_frac=0.88, color="&H00FFFFFF",
+        stroke_color="&H00000000", stroke_width=6,
+    )  # fmt: skip
+    cue = {
+        "text": " ".join(words),
+        "start_s": 0.0,
+        "end_s": 4.0,
+        "words": [
+            {"text": w, "start_s": i * 0.5, "end_s": i * 0.5 + 0.4} for i, w in enumerate(words)
+        ],
+    }
+    cues = build_smart_caption_cues([cue], policy)
+    assert cues[0]["text"] == first_cue
