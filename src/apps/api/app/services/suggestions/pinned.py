@@ -51,7 +51,7 @@ V2_ID_PREFIX = "ss_"
 # The key a submitted pin is stamped under on the creator's ``user_message`` event.
 PIN_KEY = "pinned_suggestion"
 # The key on a ring entry that records the cards a tap already applied.
-CONSUMED_KEY = "consumed"
+CONSUMED_FIELD = "consumed"
 
 # The editor ops a pinned tap may run in this lane. A stored action with any other op is refused,
 # so nothing that carries text (add_text, rewrite_text, set_title ...) or runs server-async
@@ -152,7 +152,7 @@ def is_consumed(state: Mapping[str, Any] | None, set_id: str, suggestion_id: str
     """True once a tap has applied this card from this set."""
     ring = state.get(RING_KEY) if isinstance(state, Mapping) else None
     index = _entry_index(ring, set_id) if isinstance(ring, list) else None
-    consumed = ring[index].get(CONSUMED_KEY) if index is not None else None
+    consumed = ring[index].get(CONSUMED_FIELD) if index is not None else None
     return isinstance(consumed, Mapping) and suggestion_id in consumed
 
 
@@ -169,9 +169,9 @@ def mark_consumed(
     if index is None or not isinstance(state, Mapping):
         return None
     entry = ring[index]
-    prior = entry.get(CONSUMED_KEY)
+    prior = entry.get(CONSUMED_FIELD)
     prior = prior if isinstance(prior, Mapping) else {}
-    marked = {**entry, CONSUMED_KEY: {**prior, suggestion_id: str(turn_id)}}
+    marked = {**entry, CONSUMED_FIELD: {**prior, suggestion_id: str(turn_id)}}
     return {**state, RING_KEY: [*ring[:index], marked, *ring[index + 1 :]]}
 
 
