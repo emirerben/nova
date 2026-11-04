@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.85.0.0] - 2026-11-04
+
+### Added
+- feat(kria): solid-colour backgrounds behind the Talk-to-camera speaker (KRI-1173) (#2088) <!-- release-pr: 2088 -->
+
 ## [0.84.22.0] - 2026-11-03
 
 ### Changed
