@@ -95,6 +95,32 @@ _SUFFIXES = frozenset(
 _TRUNCATED_GENITIVE = {"n": "nin"}
 
 
+# A capitalised word inside a sentence of the creator's own request: a name they typed. Letters
+# only (Turkish included), the case ending after an apostrophe left off ("Kervan'ın" -> "Kervan").
+_NAME_TOKEN = re.compile(r"(?<![\w'’])([A-ZÇĞİÖŞÜ][a-zçğıöşü]+)(?:['’][a-zçğıöşü]+)?(?![\w])")
+_SENTENCE_END = re.compile(r"[.!?…]\s*$|^\s*$")
+
+
+def creator_request_names(text: str | None) -> tuple[str, ...]:
+    """Names the creator typed (Green 4/5): capitalised words that do not start a sentence, at
+    least ``_MIN_TARGET_LEN`` letters ("Kervan", "Pamukkale"; never "Make" at a sentence start,
+    never "Lumo": too short for a safe match). The request header line is skipped. In order,
+    unique, at most ``MAX_ASKS``."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for line in (text or "").splitlines():
+        if line.strip().casefold().startswith("full creator request"):
+            continue
+        for found in _NAME_TOKEN.finditer(line):
+            name = found.group(1)
+            if len(name) < _MIN_TARGET_LEN or _SENTENCE_END.search(line[: found.start()]):
+                continue
+            if _fold(name) not in seen:
+                seen.add(_fold(name))
+                names.append(name)
+    return tuple(names[:MAX_ASKS])
+
+
 def _sound(word: str) -> str:
     """Folded, sound-approximate key: "community" and "komüniti" are both "komuniti"."""
     key = re.sub(r"[^a-z]", "", _fold(word).translate(_SOUND_FOLD))

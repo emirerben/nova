@@ -12274,7 +12274,10 @@ def _phone_talking_caption_text(
     ``clip_metas`` are the job's Gemini clip records. Returns ``(cues, unclear_words_receipt)``.
     """
     from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
-    from app.pipeline.caption_spelling import extract_spelling_asks  # noqa: PLC0415
+    from app.pipeline.caption_spelling import (  # noqa: PLC0415
+        creator_request_names,
+        extract_spelling_asks,
+    )
     from app.pipeline.captions import resplit_cues_into_sentences  # noqa: PLC0415
 
     cues = correct_caption_cues(
@@ -12285,15 +12288,20 @@ def _phone_talking_caption_text(
         trusted_aliases=None,
     )
     cues = resplit_cues_into_sentences(cues)
+    # Green 4/5: a mid-sentence capital whisper's full text put on an ordinary word ("a Sunrise
+    # Fashion Show") is lowered when Gemini's own record of the take writes it lowercase.
+    if settings.caption_case_reference_enabled:
+        cues = _settle_caption_case(cues, clip_metas)
     # KRI-631: the creator's quoted spelling asks ("write 'community' in English").
     # KRI-793: plus every word the approved brief lists to spell in the captions
     # ("correct spellings: Oblea de la Casa, dulce de leche, ..."), applied last
     # so caption correction can never undo them.
+    # Green 4/5: plus the names the creator typed ("Kervan x Lumo Pamukkale show" -> "Curvan").
+    request = _creator_request_text(all_candidates)
+    names = creator_request_names(request) if settings.caption_request_names_enabled else ()
     cues = _apply_creator_spellings(
         cues,
-        _phone_caption_spellings(
-            snapshot, extract_spelling_asks(_creator_request_text(all_candidates))
-        ),
+        _phone_caption_spellings(snapshot, (*extract_spelling_asks(request), *names)),
     )
     # KRI-849: "if you can't tell what he says, ask me": leave the unclear word out.
     cues, unclear_words_receipt = _apply_unclear_words(
@@ -12305,6 +12313,31 @@ def _phone_talking_caption_text(
     # KRI-1177: "captions lowercase" is the cue text itself, so the drawn layers, the
     # editor and a Save all carry it.
     return generation_caption_cues(cues, language=detected_lang), unclear_words_receipt
+
+
+def _settle_caption_case(cues: list, clip_metas: Any) -> list:
+    """``cues`` with whisper's unsupported mid-sentence capitals lowered against the job's Gemini
+    clip records (`caption_case.settle_caption_case`), and a `captions/case_settled` trace event
+    naming every caption line that changed."""
+    from app.pipeline.caption_case import settle_caption_case  # noqa: PLC0415
+
+    references = [getattr(meta, "transcript", None) for meta in clip_metas or ()]
+    out = settle_caption_case(cues, references)
+    changes = [
+        {"before": str(old.get("text") or "")[:200], "after": str(new.get("text") or "")[:200]}
+        for old, new in zip(cues, out, strict=True)
+        if old.get("text") != new.get("text")
+    ]
+    if changes:
+        try:
+            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+            record_pipeline_event(
+                "captions", "case_settled", {"changed": len(changes), "changes": changes[:20]}
+            )
+        except Exception:  # noqa: BLE001 - observability only
+            pass
+    return out
 
 
 def _apply_creator_spellings(cues: list, targets: tuple[str, ...]) -> list:
