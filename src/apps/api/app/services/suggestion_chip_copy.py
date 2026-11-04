@@ -1,17 +1,22 @@
-"""Deterministic copy validation for suggestion chips (KRI-756).
+"""Deterministic copy rules for suggestion chips and cards (KRI-756, AI suggestion blocks).
 
-The chip wording agent (``nova.chat.suggester``) may reword a chip's DISPLAY label and write
-a one-line ``why`` subtitle. It never writes ``message`` (the only text a tap sends) and it
-never names a capability. This module is the gate between the model and the screen:
+The suggestion agent (``nova.chat.suggestion_agent``) writes a one-line ``why`` and, for a hook,
+the on-screen ``copy``. It never writes a label, the ``message`` a tap sends, or an action. This
+module is the gate between the model and the screen:
 
-* ``validate_label``  a closed-vocabulary check: every word must belong to the chip kind's
-  lexicon or to a small function/verb list, the label must contain a word that names the
-  kind's action, and it must not name a DIFFERENT kind's action (label parity: a label can
-  never promise something the tap does not do).
+* ``validate_label``  a closed-vocabulary check that every TEMPLATE label obeys (a regression
+  guard: the template table is the only source of a label now). Every word must belong to the
+  kind's lexicon or to a small function/verb list, and a label must not name a DIFFERENT kind's
+  action (label parity: a label can never promise something the tap does not do).
 * ``validate_why``    a lexical grounding check: the subtitle must share a content word with
   what the footage analysis actually said (fold-and-overlap, the technique
   ``edit_copilot`` uses for caption wording). Gemini-derived text lives ONLY here.
-* ``footage_vocabulary`` the folded word set that check reads.
+* ``validate_copy``   the on-screen text gate (the Gemini-metadata invariant): hook copy must be
+  plain, in the thread language, and must not reuse a run of words from a transcript or from
+  the Gemini subject / setting / moment text.
+* ``shares_run``      the laundering check both ``why`` and ``copy`` use against transcripts.
+* ``footage_vocabulary`` the folded word set the grounding check reads.
+* ``SUGGESTION_COPY`` the title / chat-prompt templates of the kinds the KRI-756 table never had.
 
 Everything is pure and language-aware for ``en`` and ``tr`` (any other language falls back to
 ``en``). A failure never raises: the caller falls back to the template label (or drops the
@@ -27,6 +32,10 @@ from app.kria.brief_route import loose_text
 
 MAX_LABEL_CHARS = 36
 MAX_WHY_CHARS = 48
+# A v2 card carries a longer one-line reason than a chip subtitle.
+MAX_CARD_WHY_CHARS = 96
+# On-screen hook text is read in under three seconds: far shorter than the schema's 200.
+MAX_COPY_CHARS = 60
 SUPPORTED = ("en", "tr")
 # Placeholders a label may carry. Each must be filled identically in ``message`` by the same
 # renderer, so a label can never name something the tap does not send.
@@ -490,12 +499,6 @@ def _contra_match(token: str, stems: Iterable[str], slack: int) -> bool:
     )
 
 
-def lexicon_words(kind: str, language: str) -> tuple[str, ...]:
-    """The kind's action words, for the agent prompt's vocabulary hint (display-folded)."""
-    lang = language_of(language)
-    return tuple(_LEXICON_SRC[lang].get(kind, ()))
-
-
 def _tokens(text: str) -> list[str]:
     return [t for t in _WORD.findall(_fold(text)) if t]
 
@@ -605,16 +608,22 @@ def _singular(token: str) -> str:
 
 
 def validate_why(
-    why: object, *, language: str, vocabulary: frozenset[str], kind: str | None = None
+    why: object,
+    *,
+    language: str,
+    vocabulary: frozenset[str],
+    kind: str | None = None,
+    max_chars: int = MAX_WHY_CHARS,
 ) -> tuple[str | None, str | None]:
     """``(why, None)`` when the subtitle is grounded in the footage, else ``(None, reason)``.
 
     Grounded = it shares at least one content word (4+ letters, folded, filler words
     excluded) with the footage vocabulary. It carries no digits, quotes, handles, links,
-    marketing register or markup, fits the 48 character subtitle line, and (when ``kind`` is
-    given) names no capability other than the chip's own: a subtitle never promises what the
-    tap does not do. The vocabulary is whatever language the analyzer wrote; a ``why`` in
-    another language is therefore dropped unless it shares a footage word, by design.
+    marketing register or markup, fits the ``max_chars`` line (48 for a chip subtitle), and
+    (when ``kind`` is given) names no capability other than the chip's own: a subtitle never
+    promises what the tap does not do. The vocabulary is whatever language the analyzer wrote;
+    a ``why`` in another language is therefore dropped unless it shares a footage word, by
+    design.
     """
     lang = language_of(language)
     if not isinstance(why, str):
@@ -622,7 +631,7 @@ def validate_why(
     text = " ".join(why.split())
     if not text:
         return None, "empty"
-    if len(text) > MAX_WHY_CHARS:
+    if len(text) > max_chars:
         return None, "length"
     if any(ch.isdigit() for ch in text):
         return None, "digit"
@@ -656,15 +665,121 @@ def validate_why(
     return text, None
 
 
+_RUN = 3
+
+
+def _runs(text: str, n: int = _RUN) -> set[tuple[str, ...]]:
+    words = _tokens(text)
+    return {tuple(words[i : i + n]) for i in range(len(words) - n + 1)}
+
+
+def shares_run(text: str, sources: Iterable[str], *, n: int = _RUN) -> bool:
+    """Does ``text`` repeat ``n`` consecutive words of any source (loosely folded)?
+
+    The laundering check: a transcript, or an instruction hidden in one, must not come back out
+    of the model as a card's reason or a hook's words. Whole-clause overlap is what an echo
+    looks like; a shared word or two is ordinary language.
+    """
+    mine = _runs(text, n)
+    return bool(mine) and any(mine & _runs(source, n) for source in sources if source)
+
+
+_COPY_CHARS = re.compile(r"^[^\W_]+(?:[ \-',.!?:][^\W_]+)*[.!?]?$", re.UNICODE)
+
+
+def validate_copy(
+    copy: object, *, language: str, transcripts: Iterable[str] = (), footage: Iterable[str] = ()
+) -> tuple[str | None, str | None]:
+    """``(copy, None)`` when the exact on-screen text may be offered, else ``(None, reason)``.
+
+    Hook and title text is the only generated text that can reach the screen, so it is checked
+    harder than a ``why``: one plain line, in the thread language, no markup, links, handles or
+    marketing register, and no run of words taken from a transcript or from what the footage
+    analysis wrote (a subject, setting or moment label). Gemini metadata never becomes
+    on-screen text.
+    """
+    lang = language_of(language)
+    if not isinstance(copy, str):
+        return None, "empty"
+    text = " ".join(copy.split())
+    if not text:
+        return None, "empty"
+    if len(text) > MAX_COPY_CHARS:
+        return None, "length"
+    if any(ch in text for ch in "{}<>$`\\|[]*_#@") or "http" in text.casefold() or "www." in text:
+        return None, "markup"
+    if not _COPY_CHARS.match(text):
+        return None, "chars"
+    if _hits_stoplist(text):
+        return None, "stoplist"
+    if len(_tokens(text)) < 2:
+        return None, "short"
+    if lang == "en" and not all(ord(ch) < 128 for ch in text):
+        return None, "language"
+    footage_texts = [t for t in footage if t]
+    if shares_run(text, [*transcripts, *footage_texts]):
+        return None, "reused_footage_text"
+    folded = _fold(text)
+    for source in footage_texts:
+        if len(_tokens(source)) >= 2 and _fold(source) in folded:
+            return None, "reused_footage_text"
+    return text, None
+
+
+# Title and chat-prompt templates for the kinds the KRI-756 ``_COPY`` table never had. ``{clip}``
+# is filled with the card's clip ordinals ("2" or "2, 3"); a template that needs it renders
+# nothing for a whole-video target, so a card never names a clip it does not touch. No quotes,
+# and never any footage-derived word: a tap sends only this closed text.
+SUGGESTION_COPY: dict[str, dict[str, tuple[str, str]]] = {
+    "mute_clip": {
+        "en": ("Mute clip {clip}", "Mute the sound of clip {clip}"),
+        "tr": ("{clip}. klibi sustur", "{clip}. klibin sesini kapat"),
+    },
+    "filler_words": {
+        "en": ("Cut the filler words", "Cut the filler words"),
+        "tr": ("Dolgu sözcüklerini kes", "Dolgu sözcüklerini kes"),
+    },
+    "duplicates": {
+        "en": ("Keep the better clip", "Keep the better of clips {clip}"),
+        "tr": ("Daha iyi klibi tut", "{clip}. kliplerden daha iyisini tut"),
+    },
+    "generated_overlay": {
+        "en": ("Add a generated image", "Add a generated image overlay"),
+        "tr": ("Üretilmiş görsel ekle", "Üretilmiş bir görsel bindirmesi ekle"),
+    },
+}
+
+
+def render_suggestion_copy(
+    kind: str, language: str, clip_ordinals: Sequence[int]
+) -> tuple[str, str] | None:
+    """``(title, prompt)`` for a kind outside the KRI-756 table, or None when unrenderable."""
+    table = SUGGESTION_COPY.get(kind)
+    if table is None:
+        return None
+    title, prompt = table.get(language_of(language)) or table["en"]
+    if "{clip}" in title + prompt:
+        if not clip_ordinals:
+            return None
+        clips = ", ".join(str(n) for n in sorted(set(clip_ordinals))[:3])
+        title, prompt = title.replace("{clip}", clips), prompt.replace("{clip}", clips)
+    return title, prompt
+
+
 __all__ = [
     "ALLOWED_PLACEHOLDERS",
     "LEXICON",
+    "MAX_CARD_WHY_CHARS",
+    "MAX_COPY_CHARS",
     "MAX_LABEL_CHARS",
     "MAX_WHY_CHARS",
     "STOPLIST",
+    "SUGGESTION_COPY",
     "footage_vocabulary",
     "language_of",
-    "lexicon_words",
+    "render_suggestion_copy",
+    "shares_run",
+    "validate_copy",
     "validate_label",
     "validate_why",
 ]

@@ -1,0 +1,69 @@
+{
+ "id": "over_limit",
+ "description": "Six picks where five is the most the schema allows.",
+ "context": "rd_music_loud",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "sfx",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 1
+   },
+   {
+    "kind": "hook",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 2
+   },
+   {
+    "kind": "music",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 3
+   },
+   {
+    "kind": "transition",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 4
+   },
+   {
+    "kind": "sfx",
+    "target_ids": [
+     "c1"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 5
+   },
+   {
+    "kind": "hook",
+    "target_ids": [
+     "c1"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 6
+   }
+  ]
+ },
+ "expect": {
+  "fallback_reason": "schema_error"
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

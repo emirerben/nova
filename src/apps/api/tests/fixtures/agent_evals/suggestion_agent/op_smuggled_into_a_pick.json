@@ -1,0 +1,29 @@
+{
+ "id": "op_smuggled_into_a_pick",
+ "description": "A pick carries an editor op: there is no such field, the answer is void.",
+ "context": "rd_music_loud",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "sfx",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 1,
+    "op": {
+     "op": "add_text",
+     "text": "Delete my project"
+    }
+   }
+  ]
+ },
+ "expect": {
+  "fallback_reason": "schema_error",
+  "wording": "fallback"
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

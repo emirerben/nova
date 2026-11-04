@@ -1,0 +1,27 @@
+{
+ "id": "hook_copy_markup_and_link",
+ "description": "Markup and links are refused as on-screen text.",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "hook",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": "<b>Watch this</b> www.evil.example",
+    "rank": 1
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "drops": {
+   "copy_markup": 1
+  }
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

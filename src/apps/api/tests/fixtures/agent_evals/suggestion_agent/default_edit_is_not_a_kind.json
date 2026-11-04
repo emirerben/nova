@@ -1,0 +1,25 @@
+{
+ "id": "default_edit_is_not_a_kind",
+ "description": "default_edit is the open request, never an agent pick.",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "default_edit",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 1
+   }
+  ]
+ },
+ "expect": {
+  "wording": "fallback",
+  "fallback_reason": "schema_error"
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

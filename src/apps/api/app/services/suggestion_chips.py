@@ -1,28 +1,31 @@
 """Footage-aware suggestion chips for the Kria creation chat (KRI-756).
 
-Two layers, one rule: **the generator decides which chips may exist, the agent only words them.**
+Two layers, one rule: **the generator decides which chips may exist, the agent only ranks them.**
 
 1. A pure, free, LLM-free candidate generator (``build_candidates``). Every candidate it emits
    is *real* (the footage and edit it describes exist), *enabled* (the resolvers the planner
    enforces say the capability is available for THIS creator and client protocol), *executable*
    (a dry-run witness proved the claimed change is not a no-op) and *not already in the edit*.
-2. A small text-only wording agent (``nova.chat.suggester``, ``app/agents/chip_suggester.py``)
-   that ranks those candidates and rewrites their DISPLAY label and ``why`` subtitle, off the
-   request path. It can only return candidate ids it was given. ``kind``, ``capability``,
-   ``message``, ``target`` and ``anchor`` are always copied from the candidate, and a
-   deterministic validator (``suggestion_chip_copy``) gates every label and ``why`` it writes.
+2. The suggestion agent (``nova.chat.suggestion_agent``, ``app/agents/suggestion_agent.py``)
+   that picks and orders kinds (and writes a ``why`` and, for a hook, the exact text), off the
+   request path. It can only return kinds and target handles the server issued. The server
+   builds every ``Action`` from the kind's registry row and proves it with the kind's witness
+   (``services/suggestions/picks.py``); ``label``, ``message``, ``capability`` and ``anchor``
+   are always the server's own, and a deterministic validator (``suggestion_chip_copy``) gates
+   every ``why`` and ``copy`` it writes.
 
-The GET route never calls a model: ``assemble_set`` joins cached agent wording onto live
-candidates and falls back, per chip, to the template label. A chip's ``message`` is a closed
-server template with no Gemini-derived words, so the "Gemini metadata never becomes overlay
-text" invariant holds by construction.
+The GET route never calls a model: ``assemble_set`` joins the cached agent picks onto live
+candidates and falls back to the deterministic order. A chip's ``label`` and ``message`` are
+closed server templates with no Gemini-derived words, so the "Gemini metadata never becomes
+overlay text" invariant holds by construction.
 
 Layout:
 
 * ``build_candidates(ctx)``          pure, never raises, no I/O -> ``CandidatePlan``.
-* ``assemble_set(ctx, plan, ...)``   pure join of plan + wording -> ``SuggestionSetOut``.
-* ``build_suggestion_set(ctx)``      ``assemble_set`` over ``build_candidates`` (template wording).
-* ``resolve_wording(...)``           validates raw agent output against live candidates.
+* ``assemble_set(ctx, plan, ...)``   pure join of plan + agent picks -> ``SuggestionSetOut``.
+* ``assemble_suggestions(...)``      the same join as the server-side ``SuggestionSet`` (actions).
+* ``build_suggestion_set(ctx)``      ``assemble_set`` over ``build_candidates`` (no agent).
+* ``build_agent_input(ctx, plan)``   the ``SuggestionAgentInput`` payload.
 * ``CHIP_KIND_GATE``                 one spec row per ``ChipKind`` (guarded by a test).
 * ``load_suggestion_context(...)``   the only read path (route + worker call it).
 * ``persist_suggestion_set(...)``    ring write on ``thread.state`` (revision-neutral).
@@ -37,8 +40,8 @@ import asyncio
 import hashlib
 import json
 import unicodedata
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Literal
 
 import structlog
@@ -48,7 +51,8 @@ from app.services.suggestion_chip_copy import (
     MAX_LABEL_CHARS,
     footage_vocabulary,
     language_of,
-    validate_label,
+    render_suggestion_copy,
+    shares_run,
     validate_why,
 )
 from app.services.suggestions.context import (
@@ -59,20 +63,36 @@ from app.services.suggestions.context import (
     Target,
     any_speech,
     any_to_camera,
+    cap_ok,
+    families,
     live_clips,
     music_level,
     slots,
+    snapshot_digest,
+    text_bars,
     title_bar,
     video_clips,
 )
 from app.services.suggestions.models import (
+    MAX_SUGGESTIONS,
     ChipAnchorOut,
     ChipKind,
     ChipKindSpec,
     ChipMomentOut,
+    SuggestionAgentOutput,
     SuggestionAnchorOut,
     SuggestionDigest,
     SuggestionOut,
+    SuggestionSet,
+)
+from app.services.suggestions.picks import (
+    COPY_KINDS,
+    Issued,
+    Pick,
+    PoolRow,
+    build_suggestions,
+    deterministic_picks,
+    issue_kinds,
 )
 from app.services.suggestions.registry import legacy_gate
 
@@ -94,8 +114,9 @@ SETTING_WORDS = 8
 MOMENT_CHARS = 60
 MOMENTS_PER_CLIP = 3
 
-# Bump together with prompts/chip_suggester.txt (AgentSpec.prompt_version reads this).
-PROMPT_VERSION = "2026-10-19.2"
+# Bump together with prompts/suggestion_agent.txt and agents/skills/edit-improver (the agent's
+# AgentSpec.prompt_version reads this; it also feeds every set digest, so a bump re-asks).
+PROMPT_VERSION = "2026-11-04.1"
 
 # Must equal iOS ``ChatSubmission.mediaOnlyMessage`` (ChatTimeline.swift). A media-only send
 # is an ordinary message: Main Creator has no special detection for it (gate (a)).
@@ -272,7 +293,6 @@ def _copy(kind: ChipKind, language: str) -> tuple[str, str]:
 
 
 CHIP_KIND_GATE = legacy_gate()
-_NO_TARGET = NO_TARGET  # tests/evals/chip_suggester_harness.py derives a candidate id from it
 
 
 _WITNESS_TIER: dict[str, str] = {
@@ -632,150 +652,6 @@ def _build_candidates(ctx: SuggestionContext) -> CandidatePlan:
     )
 
 
-# ── Wording: validated agent output joined onto live candidates ──────────────────────
-
-
-@dataclass(frozen=True)
-class RankedWording:
-    cid: str
-    label_template: str
-    why: str | None = None
-
-
-@dataclass(frozen=True)
-class Wording:
-    """Agent wording that already passed the structural checks (cids are a subset of the pool)."""
-
-    status: Literal["agent", "fallback"] = "fallback"
-    default_label: str | None = None
-    ranked: tuple[RankedWording, ...] = ()
-    prompt_version: str = PROMPT_VERSION
-    fallback_reason: str | None = None
-
-
-@dataclass
-class WordingStats:
-    n_in: int = 0
-    n_out: int = 0
-    n_dropped: int = 0
-    drop_reasons: dict[str, int] = field(default_factory=dict)
-
-    def drop(self, reason: str) -> None:
-        self.n_dropped += 1
-        self.drop_reasons[reason] = self.drop_reasons.get(reason, 0) + 1
-
-
-def wording_to_dict(wording: Wording) -> dict[str, Any]:
-    return {
-        "status": wording.status,
-        "default_label": wording.default_label,
-        "ranked": [
-            {"cid": r.cid, "label_template": r.label_template, "why": r.why} for r in wording.ranked
-        ],
-        "prompt_version": wording.prompt_version,
-        "fallback_reason": wording.fallback_reason,
-    }
-
-
-def wording_from_dict(raw: object) -> Wording | None:
-    """Parse a stored wording; anything malformed is None (the caller falls back)."""
-    if not isinstance(raw, Mapping):
-        return None
-    try:
-        status = "agent" if raw.get("status") == "agent" else "fallback"
-        ranked = tuple(
-            RankedWording(
-                cid=str(row["cid"]),
-                label_template=str(row.get("label_template") or ""),
-                why=str(row["why"]) if row.get("why") else None,
-            )
-            for row in raw.get("ranked") or []
-            if isinstance(row, Mapping) and row.get("cid")
-        )
-        default = raw.get("default_label")
-        return Wording(
-            status=status,
-            default_label=str(default) if isinstance(default, str) and default else None,
-            ranked=ranked,
-            prompt_version=str(raw.get("prompt_version") or PROMPT_VERSION),
-            fallback_reason=(str(raw["fallback_reason"]) if raw.get("fallback_reason") else None),
-        )
-    except (KeyError, TypeError, ValueError):
-        return None
-
-
-def resolve_wording(
-    ctx: SuggestionContext,
-    plan: CandidatePlan,
-    *,
-    default_label: str | None,
-    ranked: Sequence[tuple[str, str, str | None]],
-) -> tuple[Wording, WordingStats]:
-    """Validate raw agent output against LIVE candidates. Pure; never raises.
-
-    ``ranked`` is ``[(cid, label_template, why)]`` in the agent's order. A cid not in the pool,
-    a duplicate kind or an over-limit item is dropped; a label that fails the deterministic
-    validator keeps the chip with its template label; a ``why`` that is not grounded in the
-    footage is cleared. The model can therefore never add, rename or re-target a chip.
-    """
-    stats = WordingStats(n_in=len(ranked) + (1 if default_label else 0))
-    pool = {c.cid: c for c in plan.pool}
-    vocab = footage_vocabulary(live_clips(ctx))
-    cap = MAX_LEVERS.get(plan.state, MAX_CHIPS)
-    kept: list[RankedWording] = []
-    seen_kinds: set[ChipKind] = set()
-    copy_bearing = 0
-    for cid, template, why in ranked:
-        cand = pool.get(cid)
-        if cand is None:
-            stats.drop("unknown_cid")
-            continue
-        if cand.kind in seen_kinds:
-            stats.drop("duplicate_kind")
-            continue
-        if cand.kind in COPY_BEARING:
-            if copy_bearing:
-                stats.drop("copy_bearing")
-                continue
-            copy_bearing += 1
-        if len(kept) >= cap:
-            stats.drop("over_limit")
-            continue
-        label_ok, label_reason = validate_label(
-            template, kind=str(cand.kind), language=ctx.language, slots=cand.label_slots
-        )
-        if label_ok is None:
-            stats.drop(f"label_{label_reason}")
-            template = ""
-        why_ok: str | None = None
-        if why:
-            why_ok, why_reason = validate_why(
-                why, language=ctx.language, vocabulary=vocab, kind=str(cand.kind)
-            )
-            if why_ok is None:
-                stats.drop(f"why_{why_reason}")
-        seen_kinds.add(cand.kind)
-        kept.append(RankedWording(cid=cid, label_template=template, why=why_ok))
-    resolved_default: str | None = None
-    if default_label:
-        ok, reason = validate_label(
-            default_label, kind=str(ChipKind.DEFAULT_EDIT), language=ctx.language, slots={}
-        )
-        if ok is None:
-            stats.drop(f"default_{reason}")
-        else:
-            resolved_default = default_label
-    stats.n_out = len(kept) + (1 if resolved_default else 0)
-    usable = any(r.label_template or r.why for r in kept) or resolved_default
-    wording = Wording(
-        status="agent" if kept or resolved_default else "fallback",
-        default_label=resolved_default,
-        ranked=tuple(kept),
-        fallback_reason=None if usable else "label_rejected",
-    )
-    return wording, stats
-
-
 # ── Assembly ─────────────────────────────────────────────────────────────────────────
 
 
@@ -826,29 +702,6 @@ def _chip(
         label_source=source,
         requires_protocol=cand.min_protocol,
     )
-
-
-def _worded(
-    cand: Candidate,
-    ctx: SuggestionContext,
-    template: str | None,
-    why: str | None,
-    vocab: frozenset[str],
-) -> tuple[str, str, str | None]:
-    """``(label, label_source, why)`` re-validated at assembly time (never trust the store)."""
-    label, source = cand.fallback_label, "template"
-    if template:
-        rendered, _reason = validate_label(
-            template, kind=str(cand.kind), language=ctx.language, slots=cand.label_slots
-        )
-        if rendered is not None:
-            label, source = rendered, "agent"
-    checked_why: str | None = None
-    if why:
-        checked_why, _why_reason = validate_why(
-            why, language=ctx.language, vocabulary=vocab, kind=str(cand.kind)
-        )
-    return label, source, checked_why
 
 
 _EVIDENCE_MAX = 48
@@ -914,15 +767,178 @@ def _evidence(cand: Candidate, ctx: SuggestionContext, state: str) -> str | None
     return line if line and len(line) <= _EVIDENCE_MAX else None
 
 
+def _picks_of(output: SuggestionAgentOutput | None) -> list[Pick]:
+    if output is None:
+        return []
+    return [
+        Pick(kind=p.kind, target_ids=tuple(p.target_ids), why=p.why, copy=p.copy_text)
+        for p in sorted(output.ranked, key=lambda p: p.rank)
+    ]
+
+
+def _pool_rows(plan: CandidatePlan) -> list[PoolRow]:
+    return [
+        PoolRow(str(c.kind), c.target, c.touched, c.score, c.gap_tags, c.facts) for c in plan.pool
+    ]
+
+
+def issued_for(ctx: SuggestionContext, plan: CandidatePlan) -> tuple[Issued, ...]:
+    """The kinds the agent may pick for this plan (the engine pool plus registry kinds).
+
+    Nothing before the clips are understood: a first-prompt card needs footage facts.
+    """
+    if plan.state not in ("first_prompt", "ready"):
+        return ()
+    if plan.state == "first_prompt" and ctx.understanding != "complete":
+        return ()
+    return issue_kinds(ctx, plan.state, _pool_rows(plan))
+
+
+def _card_copy(
+    ctx: SuggestionContext, plan: CandidatePlan
+) -> Callable[[str, Sequence[Target], str | None], tuple[str, str, list[str]] | None]:
+    """Title, chat prompt and evidence of a card: closed server text, never agent words.
+
+    A KRI-756 kind keeps its chip label and message verbatim (the tap sends the same words the
+    legacy chip sent). Every other kind renders from ``SUGGESTION_COPY``.
+    """
+    by_kind = {str(c.kind): c for c in plan.pool}
+
+    def render(
+        kind: str, targets: Sequence[Target], _copy: str | None
+    ) -> tuple[str, str, list[str]] | None:
+        tr = language_of(ctx.language) == "tr"
+        ordinals = [t.clip_ordinal for t in targets if t.clip_ordinal is not None]
+        cand = by_kind.get(kind)
+        if cand is not None:
+            title, prompt = cand.fallback_label, cand.message
+            line = _evidence(cand, ctx, plan.state)
+            evidence = [line] if line else []
+        else:
+            rendered = render_suggestion_copy(kind, ctx.language, ordinals)
+            if rendered is None:
+                return None
+            title, prompt = rendered
+            evidence = []
+        for n in ordinals[:2]:
+            evidence.append(f"Klip {n}" if tr else f"Clip {n}")
+        return title, prompt, evidence[:3]
+
+    return render
+
+
+def _agent_texts(ctx: SuggestionContext) -> tuple[list[str], list[str]]:
+    """``(transcripts, footage_texts)``: what an agent's ``why`` or ``copy`` must not echo."""
+    transcripts = [
+        str(t) for t in (ctx.kind_inputs.get("transcripts") or {}).values() if isinstance(t, str)
+    ]
+    footage: list[str] = []
+    for clip in live_clips(ctx):
+        footage += [str(clip.get("subject") or ""), str(clip.get("setting") or "")]
+        for moment in clip.get("notable_moments") or []:
+            if isinstance(moment, Mapping):
+                footage.append(str(moment.get("label") or moment.get("description") or ""))
+        on_screen = clip.get("on_screen_text")
+        if isinstance(on_screen, str):
+            footage.append(on_screen)
+    return transcripts, [t for t in footage if t]
+
+
+def _build_kwargs(ctx: SuggestionContext, plan: CandidatePlan) -> dict[str, Any]:
+    transcripts, footage = _agent_texts(ctx)
+    return {
+        "base_digest": plan.base_digest,
+        "copy_for": _card_copy(ctx, plan),
+        "transcripts": transcripts,
+        "footage_texts": footage,
+    }
+
+
+@dataclass(frozen=True)
+class PickStats:
+    """What came of an agent answer: picks in, picks that serve something, drops by reason."""
+
+    n_in: int
+    n_out: int
+    drops: dict[str, int]
+
+
+def pick_stats(
+    ctx: SuggestionContext, plan: CandidatePlan, output: SuggestionAgentOutput
+) -> PickStats:
+    """Score an answer against the LIVE plan. Pure; never raises.
+
+    A pick counts when its kind is an engine candidate (the legacy chip serves it) or the
+    registry built and proved its card. Everything else is a drop, by reason.
+    """
+    picks = _picks_of(output)
+    try:
+        cards, drops = build_suggestions(
+            ctx, issued_for(ctx, plan), picks, **_build_kwargs(ctx, plan)
+        )
+    except Exception:  # noqa: BLE001 - telemetry must not fail a run
+        log.warning("suggestion_chips.error", stage="pick_stats", exc_info=True)
+        cards, drops = [], {"stats_error": 1}
+    served = {str(c.kind) for c in plan.pool} | {c.kind for c in cards}
+    kept = {p.kind for p in picks} & served
+    return PickStats(n_in=len(picks), n_out=len(kept), drops=drops)
+
+
+def assemble_suggestions(
+    ctx: SuggestionContext,
+    plan: CandidatePlan,
+    picks: SuggestionAgentOutput | None = None,
+) -> tuple[SuggestionSet | None, dict[str, int]]:
+    """The server-side set of v2 cards (actions included) and what was dropped, by reason.
+
+    The agent's picks are built in its rank order; when none survives (an empty answer, or
+    every pick failed its witness) the deterministic order is built instead, so the creator
+    never sees fewer cards because the model was unhelpful. None when nothing can be offered.
+    """
+    issued = issued_for(ctx, plan)
+    if not issued:
+        return None, {}
+    common = _build_kwargs(ctx, plan)
+    cards, drops = build_suggestions(ctx, issued, _picks_of(picks), **common)
+    if not cards:
+        cards, more = build_suggestions(ctx, issued, deterministic_picks(issued), **common)
+        for reason, count in more.items():
+            drops[reason] = drops.get(reason, 0) + count
+    if not cards:
+        return None, drops
+    return (
+        SuggestionSet(
+            set_id=plan.set_id,
+            digest=SuggestionDigest(
+                media_digest=ctx.media_digest,
+                snapshot_hash=snapshot_digest(ctx.snapshot),
+                signals_version=ctx.signals_version,
+                state=plan.state,
+                language=language_of(ctx.language),
+                prompt_version=PROMPT_VERSION,
+            ),
+            state=plan.state,
+            suggestions=cards,
+        ),
+        drops,
+    )
+
+
 def assemble_set(
     ctx: SuggestionContext,
     plan: CandidatePlan,
-    wording: Wording | None = None,
+    picks: SuggestionAgentOutput | None = None,
     *,
     pending: bool = False,
     retry_after_s: int | None = None,
 ) -> SuggestionSetOut:
-    """Join a plan with (optional) validated wording. Pure; labels are re-validated here."""
+    """Join a plan with (optional) agent picks. Pure; every ``why`` is re-validated here.
+
+    The legacy ``chips`` are the engine's proven levers in the agent's order (template labels,
+    a validated ``why`` or the deterministic evidence line); without usable picks, the
+    deterministic top of the pool. The v2 ``suggestions`` are added only behind
+    ``KRIA_SUGGESTION_PINNED_TAPS_ENABLED``: a card is only safe to tap when the tap is pinned.
+    """
     understanding = _understanding_out(ctx, plan)
     if plan.state == "none":
         return SuggestionSetOut(
@@ -935,48 +951,60 @@ def assemble_set(
             chips=[],
         )
     vocab = footage_vocabulary(live_clips(ctx))
+    transcripts, _footage = _agent_texts(ctx)
     cap = MAX_LEVERS[plan.state]
-    chosen: list[tuple[Candidate, str, str, str | None]] = []
+    chosen: list[tuple[Candidate, str | None]] = []
     used_agent = False
 
-    if plan.default is not None:
-        template = wording.default_label if wording and not pending else None
-        label, source, _ = _worded(plan.default, ctx, template, None, vocab)
-        used_agent = used_agent or source == "agent"
-        chosen.append((plan.default, label, source, None))
-
     if not pending:
-        by_cid = {c.cid: c for c in plan.pool}
-        if wording is not None and wording.status == "agent":
-            seen: set[ChipKind] = set()
-            for row in wording.ranked:
-                cand = by_cid.get(row.cid)
-                if (
-                    cand is None
-                    or cand.kind in seen
-                    or len(chosen) - (1 if plan.default else 0) >= cap
-                ):
+        by_kind = {str(c.kind): c for c in plan.pool}
+        seen: set[str] = set()
+        copy_bearing = 0
+        for pick in _picks_of(picks):
+            cand = by_kind.get(pick.kind)
+            if cand is None or pick.kind in seen or len(chosen) >= cap:
+                continue
+            if cand.kind in COPY_BEARING:
+                if copy_bearing:
                     continue
-                label, source, why = _worded(cand, ctx, row.label_template, row.why, vocab)
-                seen.add(cand.kind)
-                used_agent = used_agent or source == "agent" or why is not None
-                chosen.append((cand, label, source, why))
-        if len(chosen) == (1 if plan.default else 0):
-            # No usable agent ranking: the deterministic top of the pool, template labels.
-            for cand in plan.levers[:cap]:
-                chosen.append((cand, cand.fallback_label, "template", None))
+                copy_bearing += 1
+            why: str | None = None
+            if pick.why:
+                why, _reason = validate_why(
+                    pick.why, language=ctx.language, vocabulary=vocab, kind=pick.kind
+                )
+                if why is not None and shares_run(why, transcripts):
+                    why = None
+            seen.add(pick.kind)
+            used_agent = True
+            chosen.append((cand, why))
+        if not chosen:
+            # No usable agent ranking: the deterministic top of the pool, template wording.
+            chosen = [(cand, None) for cand in plan.levers[:cap]]
 
+    rows: list[tuple[Candidate, str | None]] = (
+        [(plan.default, None)] if plan.default is not None else []
+    ) + chosen
     chips = [
         _chip(
             cand,
             rank=index + 1,
-            label=label,
-            source=source,
+            label=cand.fallback_label,
+            source="template",
             why=why or _evidence(cand, ctx, plan.state),
             default_edit=cand.kind is ChipKind.DEFAULT_EDIT and plan.state == "first_prompt",
         )
-        for index, (cand, label, source, why) in enumerate(chosen)
+        for index, (cand, why) in enumerate(rows)
     ]
+    suggestions: list[SuggestionOut] = []
+    digest: SuggestionDigest | None = None
+    if not pending:
+        from app.config import settings  # noqa: PLC0415
+
+        if settings.kria_suggestion_pinned_taps_enabled:
+            built, _drops = assemble_suggestions(ctx, plan, picks)
+            if built is not None:
+                suggestions, digest = built.wire(), built.digest
     if pending:
         wording_state = "pending"
     else:
@@ -990,22 +1018,24 @@ def assemble_set(
         wording=wording_state,
         anchor=_anchor(ctx),
         chips=chips,
+        suggestions=suggestions,
+        digest=digest,
     )
 
 
 def build_suggestion_set(
-    ctx: SuggestionContext, wording: Wording | None = None
+    ctx: SuggestionContext, picks: SuggestionAgentOutput | None = None
 ) -> SuggestionSetOut:
-    """Pure, I/O-free, LLM-free, never raises: candidates + (optional) wording, one call.
+    """Pure, I/O-free, LLM-free, never raises: candidates + (optional) agent picks, one call.
 
-    With no wording this is the template-label set. Understanding still running yields the
+    With no picks this is the deterministic set. Understanding still running yields the
     ``pending`` set (``default_edit`` only, ``retry_after_s``).
     """
     try:
         plan = _build_candidates(ctx)
         if plan.state == "first_prompt" and ctx.understanding == "pending":
             return assemble_set(ctx, plan, None, pending=True, retry_after_s=PENDING_RETRY_S)
-        return assemble_set(ctx, plan, wording)
+        return assemble_set(ctx, plan, picks)
     except Exception:  # noqa: BLE001 - fail open to "render nothing"
         log.warning("suggestion_chips.error", stage="build", exc_info=True)
         return unavailable_set()
@@ -1020,19 +1050,69 @@ def _clean_phrase(value: object, *, words: int, chars: int) -> str:
     return " ".join(text.split()[:words])[:chars].strip()
 
 
-def build_agent_input(ctx: SuggestionContext, plan: CandidatePlan) -> dict[str, Any]:
-    """The ``ChipSuggesterInput`` payload: opaque handles, truncated Gemini text, no ids.
+_TRANSCRIPT_WORDS = 70
+_TRANSCRIPT_CHARS = 420
+_SIGNAL_CHARS = 600
 
-    ``c1..cN`` name clips and ``c2.m1`` names a moment; the server maps them back, so the
-    model never types a media id or a timestamp. Transcripts and creator-typed text are
-    never sent at first_prompt; at ready only the creator's own latest request is.
+
+def _compact_signal(value: Any, depth: int = 0) -> Any:
+    """A measured signal payload reduced to short scalars, so one clip cannot flood the prompt."""
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, (int, float)):
+        return round(float(value), 3) if isinstance(value, float) else value
+    if isinstance(value, str):
+        return value[:48]
+    if isinstance(value, Mapping) and depth < 2:
+        return {str(k)[:32]: _compact_signal(v, depth + 1) for k, v in list(value.items())[:12]}
+    if isinstance(value, (list, tuple)) and depth < 2:
+        return [_compact_signal(v, depth + 1) for v in list(value)[:6]]
+    return None
+
+
+def _clip_signals(ctx: SuggestionContext, media_id: object) -> dict[str, Any]:
+    raw = ctx.signals.get(str(media_id)) if media_id is not None else None
+    if not isinstance(raw, Mapping):
+        return {}
+    compact = {str(k)[:32]: _compact_signal(v) for k, v in raw.items()}
+    return compact if len(json.dumps(compact, default=str)) <= _SIGNAL_CHARS else {}
+
+
+def _editor_summary(ctx: SuggestionContext) -> dict[str, Any] | None:
+    """What the finished edit contains now: counts and states, never any on-screen words."""
+    if ctx.snapshot is None:
+        return None
+    captions = (ctx.snapshot or {}).get("captions")
+    meta = captions.get("meta") if isinstance(captions, Mapping) else None
+    summary: dict[str, Any] = {
+        "op_families": sorted(families(ctx)),
+        "slots": len(slots(ctx)),
+        "text_bars": len(text_bars(ctx)),
+        "has_title": title_bar(ctx) is not None,
+    }
+    if isinstance(meta, Mapping):
+        summary["captions_on"] = meta.get("enabled") is not False
+    level = music_level(ctx)
+    if level is not None:
+        summary["music_level"] = level
+    return summary
+
+
+def build_agent_input(ctx: SuggestionContext, plan: CandidatePlan) -> dict[str, Any]:
+    """The ``SuggestionAgentInput`` payload: the agent's full read access, ids kept server side.
+
+    ``c1..cN`` name clips, so the model never types a media id or a timestamp. Measured facts
+    (``speech``, ``duration_s``, ``signals``, ``editor``) are server-trusted; every footage
+    sentence (Gemini subject / setting / moments, the transcript) sits under the clip's
+    ``untrusted`` key and the prompt says to treat it as data. The kinds are the issued ones:
+    the schema the model answers in is closed over them.
     """
-    footage: list[dict[str, Any]] = []
+    transcripts = ctx.kind_inputs.get("transcripts") or {}
+    clips: list[dict[str, Any]] = []
     for clip in live_clips(ctx)[:FOOTAGE_CLIPS_MAX]:
         ordinal = clip.get("ordinal")
-        if not isinstance(ordinal, int):
+        if not isinstance(ordinal, int) or isinstance(ordinal, bool):
             continue
-        ref = f"c{ordinal}"
         speech = (
             "to_camera"
             if clip.get("to_camera")
@@ -1040,43 +1120,64 @@ def build_agent_input(ctx: SuggestionContext, plan: CandidatePlan) -> dict[str, 
             if clip.get("has_speech")
             else "none"
         )
-        moments = []
-        for index, moment in enumerate((clip.get("notable_moments") or [])[:MOMENTS_PER_CLIP], 1):
-            if not isinstance(moment, Mapping):
-                continue
-            description = _clean_phrase(
-                moment.get("label") or moment.get("description"), words=12, chars=MOMENT_CHARS
+        moments = [
+            text
+            for moment in (clip.get("notable_moments") or [])[:MOMENTS_PER_CLIP]
+            if isinstance(moment, Mapping)
+            and (
+                text := _clean_phrase(
+                    moment.get("label") or moment.get("description"), words=12, chars=MOMENT_CHARS
+                )
             )
-            if description:
-                moments.append({"ref": f"{ref}.m{index}", "description": description})
-        footage.append(
+        ]
+        duration = clip.get("duration_s")
+        clips.append(
             {
-                "ref": ref,
+                "ref": f"c{ordinal}",
                 "kind": "image" if clip.get("kind") == "image" else "video",
-                "subject": _clean_phrase(clip.get("subject"), words=SUBJECT_WORDS, chars=48),
-                "setting": _clean_phrase(clip.get("setting"), words=SETTING_WORDS, chars=60),
                 "speech": speech,
-                "moments": moments,
+                "duration_s": round(float(duration), 1)
+                if isinstance(duration, (int, float)) and not isinstance(duration, bool)
+                else None,
+                "signals": _clip_signals(ctx, clip.get("media_id")),
+                "untrusted": {
+                    "subject": _clean_phrase(clip.get("subject"), words=SUBJECT_WORDS, chars=48),
+                    "setting": _clean_phrase(clip.get("setting"), words=SETTING_WORDS, chars=60),
+                    "moments": moments,
+                    "transcript": _clean_phrase(
+                        transcripts.get(clip.get("media_id")),
+                        words=_TRANSCRIPT_WORDS,
+                        chars=_TRANSCRIPT_CHARS,
+                    ),
+                },
             }
         )
     payload: dict[str, Any] = {
         "state": plan.state,
         "language": language_of(ctx.language),
-        "max_chips": MAX_LEVERS.get(plan.state, MAX_CHIPS),
-        "footage": footage,
-        "already_in_edit": list(plan.already_in_edit),
-        "candidates": [
+        "max_suggestions": MAX_SUGGESTIONS,
+        "kinds": [
             {
-                "cid": c.cid,
-                "kind": str(c.kind),
-                "gap_tags": list(c.gap_tags),
-                "facts": dict(c.facts),
-                "label_slots": sorted(c.label_slots),
-                "fallback_label": c.fallback_label,
+                "kind": row.kind.kind,
+                "gap_tags": list(row.gap_tags),
+                "facts": dict(row.facts),
+                "carries_copy": row.kind.kind in COPY_KINDS,
             }
-            for c in plan.pool
+            for row in issued_for(ctx, plan)[:16]
         ],
+        "clips": clips,
+        "already_in_edit": list(plan.already_in_edit),
+        "capabilities": sorted(
+            name
+            for name, row in ((ctx.manifest or {}).get("capabilities") or {}).items()
+            if cap_ok(ctx, str(name))
+        )[:24],
     }
+    editor = _editor_summary(ctx) if plan.state == "ready" else None
+    if editor is not None:
+        payload["editor"] = editor
+    if ctx.brief_headline:
+        payload["brief"] = _clean_phrase(ctx.brief_headline, words=40, chars=240)
     if plan.state == "ready" and ctx.typed_request:
         payload["typed_request"] = " ".join(ctx.typed_request.split())[:200]
     return payload

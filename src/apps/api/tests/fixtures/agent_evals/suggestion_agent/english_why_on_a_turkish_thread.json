@@ -1,0 +1,27 @@
+{
+ "id": "english_why_on_a_turkish_thread",
+ "description": "A Turkish thread gets an English line: dropped.",
+ "context": "east-run-brief::ready",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "music",
+    "target_ids": [
+     "all"
+    ],
+    "why": "Runner talking to camera over the music",
+    "copy": null,
+    "rank": 1
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "why": {
+   "music": false
+  }
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

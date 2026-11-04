@@ -1,0 +1,27 @@
+{
+ "id": "ungrounded_why",
+ "description": "A why with no footage word is dropped.",
+ "context": "rd_music_loud",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "music",
+    "target_ids": [
+     "all"
+    ],
+    "why": "Great vibes all around here",
+    "copy": null,
+    "rank": 1
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "why": {
+   "music": false
+  }
+ },
+ "tags": [
+  "adversarial"
+ ]
+}
