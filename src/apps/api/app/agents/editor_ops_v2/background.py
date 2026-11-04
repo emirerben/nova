@@ -251,6 +251,13 @@ def _working_document(state: Any) -> dict | None:
     return background_current(state.job, state.variant)
 
 
+def _keep_full_screen(document: dict, working: object) -> None:
+    """Carry the creator's full-screen opening (Qendresa item 16) onto a rebuilt document: every
+    background op changes the fill, the timed backgrounds or the corner, never the opening."""
+    if isinstance(working, dict) and working.get("full_screen_windows"):
+        document["full_screen_windows"] = [dict(span) for span in working["full_screen_windows"]]
+
+
 def _op_set_background(state: Any, op: dict[str, Any]) -> None:
     from app.services.kria_editor_ops import (  # noqa: PLC0415
         KriaEditorOpError,
@@ -266,6 +273,7 @@ def _op_set_background(state: Any, op: dict[str, Any]) -> None:
     # KRI-1162: one fill replaces the timed backgrounds; the corner the speaker sits in stays.
     if isinstance(working, dict) and working.get("speaker_frame"):
         document["speaker_frame"] = dict(working["speaker_frame"])
+    _keep_full_screen(document, working)
     if document == background_current(state.job, state.variant):
         raise KriaEditorOpError("That photo or video is already behind you")
     state.speaker_background = document
@@ -290,6 +298,7 @@ def _op_set_background_color(state: Any, op: dict[str, Any]) -> None:
             document["windows"] = [dict(window) for window in working["windows"]]
         if working.get("speaker_frame"):
             document["speaker_frame"] = dict(working["speaker_frame"])
+    _keep_full_screen(document, working)
     if document == background_current(state.job, state.variant):
         raise KriaEditorOpError("That colour is already behind you")
     state.speaker_background = document
@@ -345,6 +354,7 @@ def _op_set_background_sequence(state: Any, op: dict[str, Any]) -> None:
     }
     if isinstance(working, dict) and working.get("speaker_frame"):
         document["speaker_frame"] = dict(working["speaker_frame"])
+    _keep_full_screen(document, working)
     if document == background_current(state.job, state.variant):
         raise KriaEditorOpError("Those backgrounds are already behind you")
     state.speaker_background = document

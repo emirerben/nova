@@ -3255,6 +3255,7 @@
                 "speakerBackground",
                 "speakerBackgroundWindows",
                 "speakerBackgroundColor",
+                "speakerFrameWindows",
                 "clipTilt",
                 "clipBackdropMedia",
                 "scriptFonts",
@@ -3386,6 +3387,7 @@
                 "speakerBackground",
                 "speakerBackgroundWindows",
                 "speakerBackgroundColor",
+                "speakerFrameWindows",
                 "clipTilt",
                 "clipBackdropMedia",
                 "scriptFonts",
@@ -4182,6 +4184,15 @@
             "title": "Color",
             "type": "string"
           },
+          "full_screen_windows": {
+            "default": null,
+            "items": {
+              "$ref": "#/components/schemas/EditorCommitSpeakerFullScreenWindow"
+            },
+            "nullable": true,
+            "title": "Full Screen Windows",
+            "type": "array"
+          },
           "kind": {
             "enum": [
               "image",
@@ -4307,6 +4318,30 @@
           "y_fraction"
         ],
         "title": "EditorCommitSpeakerFrame",
+        "type": "object"
+      },
+      "EditorCommitSpeakerFullScreenWindow": {
+        "additionalProperties": false,
+        "description": "One full-screen span of the Save section (Qendresa item 16): from ``start_s`` to ``end_s``\nof the edit's timeline the speaker's own take is drawn full-frame. Order, overlap, the\n0.5 s minimum, the count and the edit end are checked by\n`_validate_speaker_full_screen_windows` so they answer with their own code.",
+        "properties": {
+          "end_s": {
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "End S",
+            "type": "number"
+          },
+          "start_s": {
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "Start S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "start_s",
+          "end_s"
+        ],
+        "title": "EditorCommitSpeakerFullScreenWindow",
         "type": "object"
       },
       "EditorCommitUserSong": {
@@ -11234,6 +11269,17 @@
             "title": "Color",
             "type": "string"
           },
+          "full_screen_windows": {
+            "default": null,
+            "items": {
+              "$ref": "#/components/schemas/SpeakerFullScreenWindow"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "nullable": true,
+            "title": "Full Screen Windows",
+            "type": "array"
+          },
           "loop": {
             "default": true,
             "title": "Loop",
@@ -11363,6 +11409,31 @@
           "y_fraction"
         ],
         "title": "SpeakerFrame",
+        "type": "object"
+      },
+      "SpeakerFullScreenWindow": {
+        "additionalProperties": false,
+        "description": "Qendresa item 16: from ``start`` to ``end`` (output seconds) the speaker's own take shows\nfull-frame and untouched (no mask, no background, no corner frame).",
+        "properties": {
+          "end": {
+            "exclusiveMinimum": true,
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "End",
+            "type": "number"
+          },
+          "start": {
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "Start",
+            "type": "number"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "SpeakerFullScreenWindow",
         "type": "object"
       },
       "StaggeredContent": {

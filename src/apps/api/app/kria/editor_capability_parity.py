@@ -222,6 +222,16 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
             "clear_speaker_frame",
         ),
     ),
+    # Qendresa item 16: the speaker full screen in their own take before the background / corner.
+    # The planner writes it from the creator's first ask (`background_media.full_screen_opening`);
+    # the copilot ops keep it through every background change and `remove_background` clears it,
+    # but no chat op removes the opening alone yet.
+    "speaker_full_opening": _g(
+        "agent_unsupported",
+        "removeFullScreenOpening",
+        reason="Removing only the full-screen opening is editor-only; chat keeps it through every "
+        "background op and clears it with remove_background.",
+    ),
     "video_shape": _g(
         "agent_unsupported",
         "setVideoShape",

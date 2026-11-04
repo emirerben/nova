@@ -380,6 +380,28 @@ def _seat_mention(
     return placed
 
 
+def _clip_to_opening(
+    windows: Sequence[OutputWindow], opening_s: float, notes: list[dict]
+) -> list[OutputWindow]:
+    """No window starts before the switch: clip it to start there, or drop it (with a note) when
+    under ``MIN_WINDOW_S`` of it remains."""
+    kept: list[OutputWindow] = []
+    for window in windows:
+        if window.start_s >= opening_s - _EPS:
+            kept.append(window)
+        elif window.end_s - opening_s < MIN_WINDOW_S - _EPS:
+            notes.append(
+                {
+                    "lane": "background",
+                    "window": window.index,
+                    "reason": "inside_full_screen_opening",
+                }
+            )
+        else:
+            kept.append(OutputWindow(window.index, opening_s, window.end_s))
+    return kept
+
+
 def _lay_out_on_the_word(
     entries: Sequence[SequenceEntry],
     anchors: dict[int, float],
@@ -388,8 +410,13 @@ def _lay_out_on_the_word(
     cadence_s: float,
     take_s: float,
     hold_last: bool = False,
+    opening_s: float = 0.0,
 ) -> SequenceLayout:
-    """Every entry has a phrase and one is heard: each visual sits on the words that name it."""
+    """Every entry has a phrase and one is heard: each visual sits on the words that name it.
+
+    ``opening_s`` (Qendresa item 16) is where the full-screen opening ends: no window starts
+    before it (0.0 = no opening, every output byte-identical).
+    """
     by_index = {entry.index: entry for entry in entries}
     mentions: list[list[tuple[float, int]]] = []
     for at, idx in sorted((at, idx) for idx, at in anchors.items()):
@@ -411,11 +438,20 @@ def _lay_out_on_the_word(
                 notes=notes,
             )
         )
+    if opening_s > _EPS:
+        head = _clip_to_opening(head, opening_s, notes)
+        if not head:
+            return SequenceLayout(
+                windows=(),
+                notes=tuple({tuple(sorted(n.items())): n for n in notes}.values()),
+                cadence_s=cadence_s,
+                anchored=frozenset(anchors),
+            )
     # Lead-in: the talk opens on its first visual; a held first window keeps the fill before it
-    # unless that would be a sliver.
+    # unless that would be a sliver. With a full-screen opening it opens at the switch instead.
     first = head[0]
-    if not by_index[first.index].hold_s or first.start_s < MIN_WINDOW_S - _EPS:
-        head[0] = OutputWindow(first.index, 0.0, first.end_s)
+    if not by_index[first.index].hold_s or first.start_s - opening_s < MIN_WINDOW_S - _EPS:
+        head[0] = OutputWindow(first.index, opening_s, first.end_s)
 
     if hold_last:
         # No rhythm was asked: the last visual talked about stays (its own hold_s still ends it,
@@ -477,14 +513,20 @@ def lay_out(
     words: Sequence[dict] | None,
     keep_segments: Sequence[tuple[float, float]] | None,
     keep_changing: bool = False,
+    opening_s: float | None = None,
 ) -> SequenceLayout:
-    """The windows of ``entries`` on a kept take of ``take_s`` seconds, plus honest notes."""
+    """The windows of ``entries`` on a kept take of ``take_s`` seconds, plus honest notes.
+
+    ``opening_s`` (Qendresa item 16, S74): the end of the speaker's full-screen opening, in
+    kept-take seconds. No window starts before it; ``None`` leaves every output unchanged.
+    """
     from app.agents._schemas.reaction_beats import (  # noqa: PLC0415
         DEFAULT_BACKGROUND_CADENCE_S,
     )
     from app.config import settings  # noqa: PLC0415
 
     follows_talk = settings.background_follows_talk_enabled
+    opening = float(opening_s) if opening_s else 0.0
     notes: list[dict] = []
     if not entries or take_s < MIN_WINDOW_S - _EPS:
         return SequenceLayout(windows=(), cadence_s=cadence_s)
@@ -512,6 +554,7 @@ def lay_out(
             cadence_s=cadence_s,
             take_s=take_s,
             hold_last=follows_talk and not stated_rhythm,
+            opening_s=opening,
         )
     by_index = {entry.index: entry for entry in entries}
     cycle = [e.index for e in entries if e.index not in anchors]
@@ -530,8 +573,10 @@ def lay_out(
                 notes.append({"lane": "background", "window": idx, "reason": "window_too_short"})
                 continue
             occupied.append(OutputWindow(idx, start, end))
+        if opening > _EPS:
+            occupied = _clip_to_opening(occupied, opening, notes)
         cursor = 0
-        t = 0.0
+        t = opening
         for block in occupied:
             cursor = _fill_gap(t, block.start_s, cycle, cursor, current, windows)
             windows.append(block)
@@ -552,3 +597,112 @@ def lay_out(
         cadence_s=current,
         anchored=frozenset(anchors),
     )
+
+
+# ------------------------------------------------------------------ the full-screen opening
+
+
+def first_heard_at(
+    entries: Sequence[SequenceEntry],
+    words: Sequence[dict] | None,
+    keep_segments: Sequence[tuple[float, float]] | None,
+) -> float | None:
+    """Earliest kept-take hearing of any phrased entry, with the same anchoring `lay_out` uses
+    (the follows-the-talk matcher when ``BACKGROUND_FOLLOWS_TALK_ENABLED``), or ``None``."""
+    from app.config import settings  # noqa: PLC0415
+
+    phrased = [entry for entry in entries if entry.spoken_phrase]
+    if not phrased or not words:
+        return None
+    if settings.background_follows_talk_enabled:
+        found = [
+            at
+            for at in _anchor_times_following_talk(phrased, words, keep_segments).values()
+            if at is not None
+        ]
+    else:
+        found = [
+            at
+            for at in (_anchor_time(entry, words, keep_segments) for entry in phrased)
+            if at is not None
+        ]
+    return min(found) if found else None
+
+
+OPENING_MIN_S = 1.0  # at least this long on screen, and at least this much take left after it
+OPENING_DEFAULT_S = 5.0
+OPENING_FIRST_HEARD_RANGE_S = (2.0, 8.0)
+OPENING_TITLE_MAX_S = 8.0
+_OPENING_SNAP_S = 1.5
+_OPENING_SENTENCE_SNAP_S = 1.0
+
+
+def full_screen_opening_end(
+    *,
+    words: Sequence[dict] | None,
+    keep_segments: Sequence[tuple[float, float]] | None,
+    take_s: float,
+    stated_s: float | None,
+    first_heard_s: float | None,
+    title_end_s: float | None,
+) -> tuple[float | None, str | None]:
+    """Where the speaker's full-screen opening ends, in KEPT-take seconds (S72, S73).
+
+    Returns ``(x, None)`` or ``(None, "take_too_short")``. The target is the stated length, else
+    the first recording's word when heard 2-8 s in, else 5 s, never before the hook title ends
+    (when it ends within 8 s). It snaps to the middle of the gap between two kept words within
+    1.5 s (preferring a sentence end within 1.0 s), else to the nearest word end, so the switch
+    never falls inside a spoken word. At least 1 s of take must be on either side.
+    """
+    lo, hi = OPENING_MIN_S, float(take_s) - OPENING_MIN_S
+    if hi < lo - _EPS:
+        return None, "take_too_short"
+    if stated_s is not None:
+        target = float(stated_s)
+    elif first_heard_s is not None and (
+        OPENING_FIRST_HEARD_RANGE_S[0] <= first_heard_s <= OPENING_FIRST_HEARD_RANGE_S[1]
+    ):
+        target = float(first_heard_s)
+    else:
+        target = OPENING_DEFAULT_S
+    if title_end_s is not None and title_end_s <= OPENING_TITLE_MAX_S:
+        target = max(target, float(title_end_s))
+    target = min(max(target, lo), hi)
+
+    kept: list[tuple[float, float, str]] = []
+    for word in words or []:
+        if not isinstance(word, dict):
+            continue
+        try:
+            start, end = float(word.get("start_s")), float(word.get("end_s"))
+        except (TypeError, ValueError):
+            continue
+        at = to_output_time(start, keep_segments)
+        if at is not None:
+            kept.append((at, at + max(0.0, end - start), str(word.get("text") or "")))
+    kept.sort()
+    if not kept:
+        return target, None
+
+    def _in_word(x: float) -> bool:
+        return any(s + _EPS < x < e - _EPS for s, e, _t in kept)
+
+    gaps: list[tuple[float, bool]] = []  # (time, follows a sentence end)
+    for (_s, e, text), (s_next, _e, _t) in zip(kept, kept[1:], strict=False):
+        if s_next >= e - _EPS:
+            gaps.append(((e + s_next) / 2.0, text.rstrip("\"')").endswith((".", "!", "?"))))
+    in_range = [(t, sentence) for t, sentence in gaps if lo - _EPS <= t <= hi + _EPS]
+    sentence_hits = [
+        t for t, sentence in in_range if sentence and abs(t - target) <= _OPENING_SENTENCE_SNAP_S
+    ]
+    if sentence_hits:
+        return min(sentence_hits, key=lambda t: abs(t - target)), None
+    near = [t for t, _s in in_range if abs(t - target) <= _OPENING_SNAP_S]
+    if near:
+        return min(near, key=lambda t: abs(t - target)), None
+    ends = [e for _s, e, _t in kept if lo - _EPS <= e <= hi + _EPS and not _in_word(e)]
+    if ends:
+        return min(ends, key=lambda t: abs(t - target)), None
+    if not _in_word(target):
+        return target, None
+    return None, "take_too_short"

@@ -376,6 +376,16 @@ class SpeakerBackgroundFact:
     # why a colour is not available on this edit ("unavailable" | "app_too_old"; None = it is).
     color: str | None = None
     color_code: str | None = None
+    # Qendresa item 16: the speaker's own take full screen BEFORE the background / corner.
+    # ``full_screen_opening_s`` is how long the finished video really is full screen from 0 s
+    # (None = no opening was made); ``asked_full_opening`` that the strategy / worker was asked
+    # for one; ``opening_planned`` that a draft's repaired strategy keeps it; ``opening_code``
+    # why an asked opening is not there ("app_too_old" | "unavailable" | "disabled" |
+    # "take_too_short"; None = no reason recorded).
+    full_screen_opening_s: float | None = None
+    asked_full_opening: bool = False
+    opening_planned: bool = False
+    opening_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -961,8 +971,42 @@ def _color_closed_code() -> str:
     return "app_too_old" if reason == "client_protocol_below_min" else "unavailable"
 
 
+def _strategy_full_opening_ask(strategy: Mapping[str, Any]) -> bool:
+    """The strategy asks the speaker to start full screen (``background_media.full_screen_opening``,
+    a typed field the model wrote; never read off the creator's words, KRI-667)."""
+    media = strategy.get("background_media")
+    return isinstance(media, Mapping) and media.get("full_screen_opening") is True
+
+
+def _without_full_opening_keys(strategy: Mapping[str, Any]) -> dict[str, Any]:
+    out = dict(strategy)
+    media = out.get("background_media")
+    if isinstance(media, Mapping):
+        out["background_media"] = {
+            k: v
+            for k, v in media.items()
+            if k not in {"full_screen_opening", "full_screen_opening_s"}
+        }
+    return out
+
+
+def _opening_closed_code(client_protocol: int | None) -> str:
+    """Why a draft that asked to start full screen cannot: the planner's gate for the build."""
+    from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+    from app.services.phone_rollout import speaker_full_opening_planned_reason  # noqa: PLC0415
+
+    # A caller that passes no build reads the one bound for this turn: the same build the
+    # manifest advertised the capability for (`creator_capabilities`, `current_client_protocol`).
+    build = client_protocol if client_protocol is not None else current_client_protocol()
+    # None = the gate is open for this build, so the repair dropped it for another reason (no
+    # background survived, capability not advertised): "not available" is the honest word.
+    return speaker_full_opening_planned_reason(build) or "unavailable"
+
+
 def _speaker_background_facts(
-    strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest
+    strategy: Mapping[str, Any],
+    manifest: ResolvedCreatorManifest,
+    client_protocol: int | None = None,
 ) -> dict[str, Any]:
     """The background as approval will keep it: the same repair `compile_strategy_to_plan` runs.
 
@@ -983,10 +1027,17 @@ def _speaker_background_facts(
         for item in manifest.media
         if item.media_id.startswith("asset-") and item.kind in {"image", "video"}
     ]
+    raw = dict(strategy)
+    opening_ask = _strategy_full_opening_ask(raw)
     try:
-        parsed = CreativeStrategy.model_validate(dict(strategy))
+        parsed = CreativeStrategy.model_validate(raw)
     except ValueError:
-        return {}
+        # A strategy whose `background_media` carries the opening keys before the schema knows
+        # them still reads: the keys are only an ask, judged below.
+        try:
+            parsed = CreativeStrategy.model_validate(_without_full_opening_keys(raw))
+        except ValueError:
+            return {}
     asked = parsed.background_media
     asked_windows = len(asked.sequence) if asked is not None else 0
     asked_media_count = (
@@ -1003,6 +1054,8 @@ def _speaker_background_facts(
                 pool_count=len(pool),
                 asked_windows=asked_windows,
                 asked_frame=asked_frame,
+                asked_full_opening=opening_ask,
+                opening_code=_opening_closed_code(client_protocol) if opening_ask else None,
             )
         }
     repaired, _notices = repair_creator_speaker_background(manifest, parsed)
@@ -1019,8 +1072,11 @@ def _speaker_background_facts(
                 windows_open=windows_open,
                 asked_frame=asked_frame,
                 color_code=color_code,
+                asked_full_opening=opening_ask,
+                opening_code=_opening_closed_code(client_protocol) if opening_ask else None,
             )
         }
+    opening_planned = bool(getattr(kept, "full_screen_opening", False))
     return {
         "speaker_background": SpeakerBackgroundFact(
             "planned",
@@ -1036,8 +1092,46 @@ def _speaker_background_facts(
             asked_frame=asked_frame,
             color=kept.color,
             color_code=color_code,
+            asked_full_opening=opening_ask,
+            opening_planned=opening_planned,
+            opening_code=(
+                _opening_closed_code(client_protocol)
+                if opening_ask and not opening_planned
+                else None
+            ),
         )
     }
+
+
+def _opening_seconds(windows: object) -> float | None:
+    """The end of the full-screen window that starts at 0 (an opening), else None."""
+    if not isinstance(windows, list):
+        return None
+    for window in windows:
+        if not isinstance(window, Mapping):
+            continue
+        try:
+            start, end = float(window["start_s"]), float(window["end_s"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if start <= 0.05 and end > start:
+            return end
+    return None
+
+
+def _dropped_opening_code(receipt: Mapping[str, Any]) -> str | None:
+    """The worker's reason the asked-for opening was not made, from the lane receipt's
+    ``dropped`` list, else None."""
+    dropped = receipt.get("dropped")
+    for entry in dropped if isinstance(dropped, list) else []:
+        if (
+            isinstance(entry, Mapping)
+            and entry.get("lane") == "background"
+            and entry.get("part") == "full_screen_opening"
+        ):
+            reason = entry.get("reason")
+            return reason if isinstance(reason, str) and reason else "unavailable"
+    return None
 
 
 def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBackgroundFact | None:
@@ -1073,6 +1167,8 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
             windows_open=True,
             frame=_frame_preset_name(doc.get("speaker_frame")),
             color=str(doc["color"]) if doc.get("color") and not doc.get("media_id") else None,
+            # The document is the creator's own edit: its windows decide, never the lane receipt.
+            full_screen_opening_s=_opening_seconds(doc.get("full_screen_windows")),
         )
     receipt = variant.get("phone_lane_receipt")
     if not isinstance(receipt, Mapping) or not isinstance(receipt.get("applied"), list):
@@ -1083,6 +1179,13 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
     detail = detail if isinstance(detail, Mapping) else {}
     windows = detail.get("windows")
     media = detail.get("media")
+    opening_s = detail.get("full_screen_opening_s")
+    opening_s = (
+        float(opening_s)
+        if isinstance(opening_s, int | float) and not isinstance(opening_s, bool) and opening_s > 0
+        else None
+    )
+    opening_code = _dropped_opening_code(receipt)
     return SpeakerBackgroundFact(
         "applied",
         window_count=int(windows)
@@ -1094,6 +1197,9 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
         windows_open=True,
         frame=detail.get("speaker_frame") if isinstance(detail.get("speaker_frame"), str) else None,
         color=detail.get("color") if isinstance(detail.get("color"), str) else None,
+        full_screen_opening_s=opening_s,
+        asked_full_opening=opening_s is not None or opening_code is not None,
+        opening_code=opening_code if opening_s is None else None,
     )
 
 
@@ -1285,8 +1391,12 @@ def plan_facts_from_strategy(
     manifest: ResolvedCreatorManifest | None = None,
     speech_cleanup_enabled: bool | None = None,
     speech_cleanup_offered: bool | None = None,
+    client_protocol: int | None = None,
 ) -> PlanFacts:
     """Read verifiable facts off a serialized ``CreativeStrategy``.
+
+    ``client_protocol`` is the app build the draft answers (Qendresa item 16: why an asked
+    full-screen opening is closed); None = unknown.
 
     ``manifest`` is the turn's resolved creator manifest. Without it the beat,
     closing-shot and clip-count facts stay unknown (never guessed).
@@ -1353,7 +1463,7 @@ def plan_facts_from_strategy(
     if manifest is not None:
         extra = _beat_facts(strategy, manifest)
         extra.update(_timed_card_facts(strategy, manifest))
-        extra.update(_speaker_background_facts(strategy, manifest))
+        extra.update(_speaker_background_facts(strategy, manifest, client_protocol))
         extra["fullscreen_sequence"] = _draft_fullscreen_sequence(strategy, manifest)
         extra["video_clip_count"] = _video_clip_count(strategy, manifest)
         extra["take_duration_s"] = _selected_video_seconds(strategy, manifest)
@@ -4611,6 +4721,28 @@ def _check_background_color(
 def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Is a photo or video behind the speaker, as the creator asked (KRI-1161)?
 
+    When the same requirement also carries ``speaker_full_opening`` (Qendresa item 16) the
+    full-screen start is judged too: a missing opening makes a "met" background at most "partial",
+    and a made one is reported beside it.
+    """
+    receipt = _check_speaker_background_core(req, facts)
+    fact = facts.speaker_background
+    if not _full_opening_asked(req) or fact is None or receipt.status == "not_possible":
+        return receipt
+    if fact.status not in {"applied", "planned"}:
+        return receipt
+    rendered = bool(facts.rendered_variant)
+    state = _opening_state(fact, rendered=rendered)
+    if state in {"made", "planned"}:
+        extra = _opening_sentence(fact, state)
+        return _receipt(req, receipt.status, f"{receipt.reason or ''} {extra}".strip())
+    gap = _opening_missing_sentence(fact, rendered=rendered)
+    return _receipt(req, "partial", f"{receipt.reason or ''} {gap}".strip())
+
+
+def _check_speaker_background_core(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """The photo / video part of `_check_speaker_background` (KRI-1161).
+
     A draft judges the repaired strategy against the item's own pool; a finished video its own
     record. A refusal always names the part and the reason: never the generic Talking "can't"
     (which left the whole green-screen ask out of the reply), never silence.
@@ -4688,6 +4820,169 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
             en += f"; you're {corner[0]}"
             tr += f"; sen {corner[1]}sın"
     return _receipt(req, "met", say(en=en + ".", tr=tr + "."))
+
+
+# ----------------------------------------------- Qendresa item 16: she starts full screen
+
+_CORNER_PLACES = {
+    "small_bottom_right": ("bottom-right", "sağ alt"),
+    "small_bottom_left": ("bottom-left", "sol alt"),
+    "small_top_right": ("top-right", "sağ üst"),
+    "small_top_left": ("top-left", "sol üst"),
+}
+
+
+def _full_opening_asked(req: BriefRequirement) -> bool:
+    """The model recorded that the speaker starts full screen (``facts["speaker_full_opening"]``).
+
+    KRI-667: a typed fact, never the creator's words; "full screen" alone is the KRI-547 framing
+    ask, which `_check_speaker_framing` still reads.
+    """
+    return _fact_flag(req, "speaker_full_opening") is True
+
+
+def _corner_small(frame: str | None) -> tuple[str, str] | None:
+    """("small in the bottom-right corner", its Turkish) for a drawn corner frame, else None."""
+    if frame is None:
+        return None
+    place = _CORNER_PLACES.get(frame)
+    if place is None:
+        return "small in a corner", "köşede küçük"
+    return f"small in the {place[0]} corner", f"{place[1]} köşede küçük"
+
+
+def _seconds_words(seconds: float) -> str:
+    return f"{round(seconds, 1):g}"
+
+
+def _opening_state(fact: SpeakerBackgroundFact, *, rendered: bool) -> str:
+    """ "made" (finished, seconds known), "planned" (draft keeps it), "closed" (asked, with a
+    reason) or "missing" (not there, no reason)."""
+    if rendered:
+        if fact.full_screen_opening_s is not None:
+            return "made"
+        return "closed" if fact.opening_code else "missing"
+    if fact.opening_planned:
+        return "planned"
+    return "closed" if fact.asked_full_opening and fact.opening_code else "missing"
+
+
+def _opening_why(code: str | None) -> str:
+    """Why an asked opening is not there, as a clause (empty when no reason was recorded)."""
+    if code == "app_too_old":
+        return say(
+            en="update the Kria app to start full screen",
+            tr="tam ekran başlamak için Kria uygulamasını güncelle",
+        )
+    if code == "take_too_short":
+        return say(
+            en="your take is too short to start full screen and still move into the corner",
+            tr="çekimin tam ekran başlayıp köşeye geçmek için fazla kısa",
+        )
+    if code:
+        return say(
+            en="starting full screen isn't available on iPhone yet",
+            tr="tam ekran başlamak iPhone'da henüz yok",
+        )
+    return ""
+
+
+def _opening_sentence(fact: SpeakerBackgroundFact, state: str) -> str:
+    """The opening that was made (or is planned), in the creator's words, with the corner."""
+    corner = _corner_small(fact.frame)
+    if state == "made" and fact.full_screen_opening_s is not None:
+        seconds = _seconds_words(fact.full_screen_opening_s)
+        en = f"You're full screen in your own take for the first {seconds} s"
+        tr = f"İlk {seconds} sn kendi çekiminde tam ekransın"
+    else:
+        en = "You'll start full screen in your own room"
+        tr = "Kendi odanda tam ekran başlayacaksın"
+    if corner is None:
+        return say(
+            en=f"{en}, then your background takes the screen.",
+            tr=f"{tr}, sonra arka plan ekranı alıyor.",
+        )
+    if state == "made":
+        return say(en=f"{en}, then {corner[0]}.", tr=f"{tr}, sonra {corner[1]}sın.")
+    return say(
+        en=f"{en}, then you're {corner[0]} when you start on your first recording.",
+        tr=f"{tr}, sonra ilk kaydına geçince {corner[1]}sın.",
+    )
+
+
+def _opening_missing_sentence(fact: SpeakerBackgroundFact, *, rendered: bool) -> str:
+    """Names the corner (or the plain fact) and the reason when there is no full-screen start."""
+    corner = _corner_small(fact.frame)
+    why = _opening_why(fact.opening_code)
+    if corner is not None:
+        en = f"You're {corner[0]} from the start, not full screen first"
+        tr = f"Baştan itibaren {corner[1]}sın, tam ekran başlamıyorsun"
+    elif rendered:
+        en = "The video doesn't start full screen in your own take"
+        tr = "Video kendi çekiminde tam ekran başlamıyor"
+    else:
+        en = "I haven't planned a full-screen start in your own take"
+        tr = "Kendi çekiminde tam ekran bir başlangıç planlamadım"
+    if why:
+        return say(en=f"{en}; {why}.", tr=f"{tr}; {why}.")
+    return say(en=f"{en}.", tr=f"{tr}.")
+
+
+def _check_full_screen_opening(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """ "Start with me full screen ..." recorded as ``speaker_full_opening`` (item 16, S78).
+
+    A draft is met only when the repaired strategy keeps the opening; a finished video only when
+    it recorded the seconds (the variant's own document wins after an editor Save). Otherwise it
+    names the corner she is in and why (app too old, not available yet, take too short).
+    """
+    fact = facts.speaker_background
+    if fact is None:
+        return _receipt(req, "partial", _NO_CHECKER)
+    rendered = bool(facts.rendered_variant)
+    if fact.status == "unavailable":
+        reason = {"unavailable": _SB_UNAVAILABLE, "app_too_old": _SB_APP_TOO_OLD}.get(
+            fact.code or "", _SB_NOT_TALKING
+        )
+        return _receipt(req, "not_possible", _sb(reason))
+    if fact.status == "none":
+        # Nothing is drawn behind the speaker, so there is no background to move into.
+        if rendered:
+            return _receipt(req, "not_possible", _sb(_SB_NOT_DRAWN))
+        why = _opening_why(fact.opening_code)
+        if why:
+            return _receipt(req, "not_possible", say(en=f"{why.capitalize()}.", tr=f"{why}."))
+        return _receipt(req, "not_possible", _sb(_SB_NOT_PLANNED))
+    state = _opening_state(fact, rendered=rendered)
+    if state in {"made", "planned"}:
+        return _receipt(req, "met", _opening_sentence(fact, state))
+    sentence = _opening_missing_sentence(fact, rendered=rendered)
+    if state == "closed" or rendered:
+        return _receipt(req, "not_possible", sentence)
+    return _receipt(req, "partial", sentence)
+
+
+def _corner_framing_receipt(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """The KRI-547 framing words ("start with me full screen") on a video that draws the
+    speaker small in a corner: never "fills the frame" (S78).
+
+    Only the framing words reached here (the typed ``speaker_full_opening`` fact goes to
+    `_check_full_screen_opening`), and "full screen" can also mean "fill the frame all the way
+    through", so even a made opening is only "partial": the receipt tells the truth (full screen
+    first, then the corner) and leaves the ask unconfirmed. None when no corner is drawn.
+    """
+    fact = facts.speaker_background
+    if fact is None or fact.status not in {"applied", "planned"}:
+        return None
+    if _corner_small(fact.frame) is None:
+        return None
+    rendered = bool(facts.rendered_variant)
+    state = _opening_state(fact, rendered=rendered)
+    if state in {"made", "planned"}:
+        return _receipt(req, "partial", _opening_sentence(fact, state))
+    sentence = _opening_missing_sentence(fact, rendered=rendered)
+    if rendered or state == "closed":
+        return _receipt(req, "not_possible", sentence)
+    return _receipt(req, "partial", sentence)
 
 
 def _ending_clip_fact(req: BriefRequirement) -> bool:
@@ -8825,6 +9120,12 @@ def _check_speaker_framing(req: BriefRequirement, facts: PlanFacts) -> Requireme
             )
         )
         return _receipt(req, "partial", reason, verification="unchecked")
+    if mode == "face_fill" or facts.speaker_framing_reason == "not_landscape":
+        # Both answers below say the speaker fills the frame. A video that draws them small in a
+        # corner (Qendresa item 16, S78) must not claim that.
+        corner = _corner_framing_receipt(req, facts)
+        if corner is not None:
+            return corner
     if mode == "face_fill":
         absent = facts.speaker_framing_absent_s
         if absent is not None and absent >= _FRAMING_ABSENT_NOTE_S:
@@ -11588,8 +11889,8 @@ def _has_checker(req: BriefRequirement) -> bool:
         return True
     if _ending_clip_fact(req):
         return True  # KRI-841: judged against the plan's / render's ending video
-    if asks_speaker_background(req):
-        return True  # KRI-1161: judged against the plan's / render's background
+    if asks_speaker_background(req) or _full_opening_asked(req):
+        return True  # KRI-1161 / item 16: judged against the plan's / render's background
     if wants_no_music(req):
         return True  # KRI-1164: judged against the plan's / render's music
     if caption_look_ask(req) is not None:
@@ -12196,7 +12497,12 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
     if asks_speaker_background(req):
         # KRI-1161: "put the photo behind me" / a green screen is judged against the background
         # the plan (or the render) holds, ahead of the framing and generic Talking answers.
+        # A requirement that also carries `speaker_full_opening` has its opening judged inside.
         return _check_speaker_background(req, facts)
+    if _full_opening_asked(req):
+        # Qendresa item 16: the typed "start with me full screen" owns the sentence, ahead of the
+        # KRI-547 framing words that would read it as "fill the frame".
+        return _check_full_screen_opening(req, facts)
     if wants_no_music(req):
         # KRI-1164: the typed "no music" is judged against the plan's / render's music, ahead of
         # the bed and source-sound readers (it says nothing about the footage's own sound).

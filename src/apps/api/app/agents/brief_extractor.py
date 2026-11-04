@@ -12,7 +12,11 @@ from app.agents._schemas.brief_extractor import (
     BriefExtractionInput,
     BriefExtractionOutput,
 )
-from app.agents.main_creator import _BRIEF_PROMPT_SECTION, with_insert_clip_brief
+from app.agents.main_creator import (
+    _BRIEF_PROMPT_SECTION,
+    with_full_opening_brief,
+    with_insert_clip_brief,
+)
 from app.agents.prompt_vocab import render_vocab_tokens
 from app.kria.brief import (
     BriefUpdateBatchError,
@@ -81,7 +85,12 @@ from app.pipeline.prompt_loader import load_prompt
 # `background_color` on a plain-colour background ask.
 # v54 (KRI-1189 lands after #2088): v52's `cut_restarts` teaching on top of v53. The
 # KRI-1189 replay fixtures keep the `2026-11-03-v52` label they were recorded under.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-04-v54"
+# v60 (Qendresa item 16; v55-v59 are reserved for items 12-15 and 17): with
+# SPEAKER_FULL_OPENING_ENABLED the shared brief section records `speaker_full_opening` /
+# `speaker_full_opening_s` ("start with me full screen"). The extractor has no manifest, so the
+# flag alone gates it; the main planner also needs the capability, and a fact recorded where the
+# phone cannot start full screen is answered honestly by the receipt. Flag off: unchanged bytes.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-04-v60"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
@@ -167,6 +176,18 @@ one invalid field must not remove the other requested changes.
 """
 
 
+def _narrow_brief_section(insert_clips_open: bool) -> str:
+    from app.config import settings  # noqa: PLC0415
+
+    section = (
+        with_insert_clip_brief(_NARROW_BRIEF_SECTION)
+        if insert_clips_open
+        else _NARROW_BRIEF_SECTION
+    )
+    # Qendresa item 16: "" unless SPEAKER_FULL_OPENING_ENABLED; flag off keeps the bytes.
+    return with_full_opening_brief(section) if settings.speaker_full_opening_enabled else section
+
+
 class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.creator.brief_extractor",
@@ -199,11 +220,7 @@ class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
             user_message=input.user_message,
             conversation=json.dumps(input.conversation, ensure_ascii=False),
             # Parent KRI-1151: the planner says whether the item can pause the take for a clip.
-            brief_section=(
-                with_insert_clip_brief(_NARROW_BRIEF_SECTION)
-                if input.insert_clips_open
-                else _NARROW_BRIEF_SECTION
-            ),
+            brief_section=_narrow_brief_section(input.insert_clips_open),
         )
 
     def parse(self, raw_text: str, input: BriefExtractionInput) -> BriefExtractionOutput:  # noqa: A002, ARG002

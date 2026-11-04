@@ -941,6 +941,20 @@ class Settings(BaseSettings):
     # nova-video` + restart (api + worker); rollback = `...=false` + restart. Design:
     # docs/reviews/speaker-background-windows-failure-modes.md (S57-S69).
     background_follows_talk_enabled: bool = False
+    # Qendresa item 16 (builds on KRI-1162): the speaker starts FULL SCREEN in their own take (no
+    # person mask, no background, no corner) and then drops into the background / corner for the
+    # rest of the edit. Recipe field `speaker_background.full_screen_windows` (capability
+    # `speakerFrameWindows`, app builds >= `speaker_full_opening_min_client_protocol`); the planner
+    # writes it from `background_media.full_screen_opening` (Main Creator v125, taught only with
+    # the flag on). Below the protocol, or without the verified token, the windows are laid out as
+    # today (corner from 0 s) and the receipt says the full-screen opening was not made. Default
+    # FALSE: off, every prompt, recipe and receipt is byte-identical. Apply: verify
+    # `speakerFrameWindows` on a device, add it to PHONE_RENDER_VERIFIED_FEATURES, then `fly secrets
+    # set SPEAKER_FULL_OPENING_ENABLED=true --app nova-video` + restart (api + worker); rollback =
+    # `...=false` + restart. Design: docs/reviews/speaker-background-windows-failure-modes.md
+    # (S70-S82).
+    speaker_full_opening_enabled: bool = False
+    speaker_full_opening_min_client_protocol: int = 38
     # KRI-1192: the app bundles Noto Sans KR / Noto Sans Arabic (the script-fallback faces that
     # draw Hangul and Arabic captions) from protocol 35. A phone recipe naming one requires
     # `scriptFonts` (verified in PHONE_RENDER_VERIFIED_FEATURES after the device check) and an

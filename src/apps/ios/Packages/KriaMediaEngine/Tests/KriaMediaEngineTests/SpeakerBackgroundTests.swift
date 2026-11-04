@@ -82,6 +82,53 @@ final class SpeakerBackgroundTests: XCTestCase {
         }
     }
 
+    // MARK: - Qendresa item 16 wire (v4.json: full_screen_windows)
+
+    func testSharedFixtureV4() throws {
+        let valid = try cases("valid", file: "v4")
+        XCTAssertGreaterThanOrEqual(valid.count, 3)
+        for item in valid {
+            let layer = try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: item.layer)
+            XCTAssertEqual(layer, try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: XCTUnwrap(item.normalized)), item.name)
+            try layer.validate()
+            let rewritten = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(layer)) as? NSDictionary)
+            XCTAssertEqual(rewritten, try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(item.normalized)) as? NSDictionary), item.name)
+        }
+        let invalid = try cases("invalid", file: "v4")
+        XCTAssertGreaterThanOrEqual(invalid.count, 5)
+        for item in invalid {
+            XCTAssertThrowsError(try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: item.layer), item.name)
+        }
+    }
+
+    func testFullScreenWindowsDeriveTheirCapabilityAndAreHitByTime() throws {
+        let plain = SpeakerBackgroundLayer(assetID: "a", mediaKind: .image)
+        XCTAssertFalse(plain.showsSpeakerFullScreen(at: 0))
+        let layer = SpeakerBackgroundLayer(assetID: "a", mediaKind: .image,
+                                           fullScreenWindows: [SpeakerFullScreenWindow(start: 0, end: 3), SpeakerFullScreenWindow(start: 3, end: 4)])
+        try layer.validate()
+        XCTAssertTrue(layer.showsSpeakerFullScreen(at: 0))
+        XCTAssertTrue(layer.showsSpeakerFullScreen(at: 2.999))
+        XCTAssertTrue(layer.showsSpeakerFullScreen(at: 3), "touching windows: the second starts at 3")
+        XCTAssertFalse(layer.showsSpeakerFullScreen(at: 4), "end is exclusive")
+        XCTAssertFalse(SpeakerBackgroundLayer.color("#111111", fullScreenWindows: [SpeakerFullScreenWindow(start: 1, end: 2)]).showsSpeakerFullScreen(at: 0.5))
+        XCTAssertThrowsError(try SpeakerBackgroundLayer(assetID: "a", mediaKind: .image, fullScreenWindows: []).validate())
+        let five = (0..<5).map { SpeakerFullScreenWindow(start: Double($0) * 2, end: Double($0) * 2 + 1) }
+        XCTAssertThrowsError(try SpeakerBackgroundLayer(assetID: "a", mediaKind: .image, fullScreenWindows: five).validate())
+        // The wire spelling is snake_case and the key is absent while unused.
+        let wire = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(layer)) as? [String: Any])
+        XCTAssertEqual((wire["full_screen_windows"] as? [[String: Any]])?.count, 2)
+        XCTAssertNil((try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(plain)) as? [String: Any]))["full_screen_windows"])
+        var object = try recipeObject()
+        object["speaker_background"] = ["asset_id": "media-1", "media_kind": "image", "full_screen_windows": [["start": 0, "end": 3]]]
+        let recipe = try decode(object)
+        try recipe.validate()
+        XCTAssertTrue(recipe.effectiveCapabilities.isSuperset(of: [.speakerBackground, .speakerFrameWindows]))
+        XCTAssertFalse(recipe.effectiveCapabilities.contains(.speakerBackgroundWindows), "the opening alone is not a timed background")
+        XCTAssertEqual(CapabilityNegotiator().decide(for: recipe).route, .cloud)
+        XCTAssertTrue(CapabilityNegotiator().decide(for: recipe).missingCapabilities.contains(.speakerFrameWindows))
+    }
+
     /// S48: a media layer never writes `color`; a colour layer never writes `asset_id`.
     func testColourAndMediaLayersWriteOnlyTheirOwnKeys() throws {
         let media = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(SpeakerBackgroundLayer(assetID: "a", mediaKind: .image))) as? [String: Any])

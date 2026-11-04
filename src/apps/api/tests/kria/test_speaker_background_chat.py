@@ -393,7 +393,7 @@ def test_a_closed_gate_prompt_is_byte_identical_to_one_with_no_background_suppor
 def test_the_prompt_version_is_bumped_for_the_new_field():
     from app.agents.main_creator import MAIN_CREATOR_PROMPT_VERSION
 
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-04-v123"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-04-v125"
 
 
 # ----------------------------------------------------------- KRI-1162: several backgrounds
@@ -998,3 +998,136 @@ def test_keep_changing_is_lenient_about_what_the_model_writes():
     assert made(True) is True
     assert made("banana") is False
     assert made([1]) is False
+
+
+# ----------------------------------------- Qendresa item 16: start full screen (S79, S82)
+
+
+def _open_full_opening(monkeypatch: pytest.MonkeyPatch, *, advertised: bool = True) -> None:
+    """Flag on and (optionally) the `speaker_full_opening` capability advertised.
+
+    The capability helper belongs to the strategy / render worker; the prompt gate asks it first
+    (`speaker_full_opening_taught`), so it is stubbed here to keep this test independent of it.
+    """
+    _open_windows(monkeypatch)
+    monkeypatch.setattr(settings, "speaker_full_opening_enabled", True)
+    monkeypatch.setattr(
+        capabilities, "speaker_full_opening_open", lambda _m: advertised, raising=False
+    )
+
+
+def _full_opening_section() -> str:
+    from app.agents.main_creator import _FULL_OPENING_PROMPT_SECTION
+
+    return _FULL_OPENING_PROMPT_SECTION
+
+
+def _brief_prompt(manifest) -> str:
+    from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
+
+    return MainCreatorAgent(None).render_prompt(
+        MainCreatorInput(
+            user_message="start with me full screen",
+            media_context=[{"media_id": POOL_PHOTO, "kind": "image", "filename": "beach.jpg"}],
+            capability_manifest=manifest,
+            brief_enabled=True,
+        )
+    )
+
+
+def test_the_full_opening_strategy_teaching_needs_the_flag_and_the_capability(monkeypatch):
+    section = _full_opening_section()
+    _open_full_opening(monkeypatch)
+    on = _render_prompt(_manifest())
+    assert on.count(section) == 1
+    assert "full_screen_opening" in on and "full_screen_opening_s" in on
+    assert "never this" in section  # "put my recordings full screen" is the window media
+
+    # flag on, capability absent: nothing taught
+    _open_full_opening(monkeypatch, advertised=False)
+    assert "full_screen_opening" not in _render_prompt(_manifest())
+
+    # capability advertised, flag off: nothing taught, and the rest of the prompt is unchanged
+    _open_full_opening(monkeypatch)
+    monkeypatch.setattr(settings, "speaker_full_opening_enabled", False)
+    off = _render_prompt(_manifest())
+    assert "full_screen_opening" not in off
+    assert on.replace("\n" + section, "") == off
+
+
+def test_the_full_opening_brief_fact_is_taught_to_both_agents_only_with_the_flag(monkeypatch):
+    from app.agents._schemas.brief_extractor import BriefExtractionInput
+    from app.agents.brief_extractor import BriefExtractorAgent
+    from app.agents.main_creator import _BRIEF_FULL_OPENING_SENTENCE
+
+    def extractor() -> str:
+        return BriefExtractorAgent(None).render_prompt(
+            BriefExtractionInput(user_message="start with me full screen")
+        )
+
+    _open_full_opening(monkeypatch)
+    assert _BRIEF_FULL_OPENING_SENTENCE in _brief_prompt(_manifest())
+    assert _BRIEF_FULL_OPENING_SENTENCE in extractor()
+    assert "speaker_full_opening_s" in extractor()
+
+    # the main planner also needs the capability; a closed capability keeps its bytes
+    _open_full_opening(monkeypatch, advertised=False)
+    assert "speaker_full_opening" not in _brief_prompt(_manifest())
+
+    monkeypatch.setattr(settings, "speaker_full_opening_enabled", False)
+    assert "speaker_full_opening" not in extractor()
+    _open_full_opening(monkeypatch)
+    monkeypatch.setattr(settings, "speaker_full_opening_enabled", False)
+    assert "speaker_full_opening" not in _brief_prompt(_manifest())
+
+
+def test_flag_off_the_brief_sections_are_the_bytes_they_were_before_the_opening(monkeypatch):
+    import hashlib
+
+    from app.agents._schemas.brief_extractor import BriefExtractionInput
+    from app.agents.brief_extractor import BriefExtractorAgent, _narrow_brief_section
+    from app.agents.main_creator import _BRIEF_PROMPT_SECTION, brief_prompt_section
+
+    def digest(text: str) -> str:
+        return hashlib.sha256(text.encode()).hexdigest()
+
+    monkeypatch.setattr(settings, "speaker_full_opening_enabled", False)
+    # Frozen from the tree before item 16 (the shared brief section and its extractor narrowing).
+    assert brief_prompt_section() is _BRIEF_PROMPT_SECTION
+    assert digest(brief_prompt_section()) == (
+        "562441ab494ae1bf4c0f79dd9811163c782b8548712f05ed7334ceaba675ffe6"
+    )
+    assert digest(brief_prompt_section(True)) == (
+        "af985463dadc95b0650cb151876be9dbc34ace21d2fe070cc800a92f0ccaf4c5"
+    )
+    assert digest(_narrow_brief_section(False)) == (
+        "2d958315757e8f5a08c38d47cb0b62a478c45c712f0e8b9a62cd1d21276b90ef"
+    )
+    assert digest(_narrow_brief_section(True)) == (
+        "1e26b084eb4827cdfce9f02612b60482b94bdca49afbd26adee05b80cee0c453"
+    )
+    # and the whole extractor prompt, byte for byte (captured before the change)
+    for insert_open, expected in (
+        (False, "8ee1c407332c0711d0eeb06d3cc7143d161bde65208f4e583f8f4f6f67ac75d7"),
+        (True, "fe01ae9ed86bd46d376ba8b3b7509b74d43dd20f6fb01b6823b151c5ce53d709"),
+    ):
+        rendered = BriefExtractorAgent(None).render_prompt(
+            BriefExtractionInput(
+                user_message="start with me full screen", insert_clips_open=insert_open
+            )
+        )
+        assert digest(rendered) == expected
+
+
+def test_the_brief_anchor_exists_exactly_once_in_both_agents_sections():
+    from app.agents.brief_extractor import _NARROW_BRIEF_SECTION
+    from app.agents.main_creator import _BRIEF_FULL_OPENING_ANCHOR, _BRIEF_PROMPT_SECTION
+
+    assert _BRIEF_PROMPT_SECTION.count(_BRIEF_FULL_OPENING_ANCHOR) == 1
+    assert _NARROW_BRIEF_SECTION.count(_BRIEF_FULL_OPENING_ANCHOR) == 1
+
+
+def test_the_full_opening_facts_stay_on_the_requirement_through_a_reword():
+    from app.kria.brief import STICKY_FACTS
+
+    assert {"speaker_full_opening", "speaker_full_opening_s"} <= STICKY_FACTS

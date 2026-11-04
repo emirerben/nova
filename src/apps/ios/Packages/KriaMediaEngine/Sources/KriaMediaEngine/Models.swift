@@ -234,6 +234,8 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if speakerBackground != nil { result.insert(.speakerBackground) }
         if speakerBackground?.mediaKind == .color { result.insert(.speakerBackgroundColor) }
         if speakerBackground?.windows != nil || speakerBackground?.speakerFrame != nil { result.insert(.speakerBackgroundWindows) }
+        // Qendresa item 16 (protocol 38): a full-screen opening/ending is a layer property an older build would silently ignore.
+        if speakerBackground?.fullScreenWindows != nil { result.insert(.speakerFrameWindows) }
         if textLayers.contains(where: { ($0.bend ?? 0) != 0 }) { result.insert(.textBend) }
         if textLayers.contains(where: { $0.karaoke?.singleWord == true }) { result.insert(.singleWordText) }
         if textLayers.contains(where: { $0.behindSubject == true }) { result.insert(.behindSubject) }
@@ -552,7 +554,7 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
          soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, singleWordText, freezeFrame,
          behindSubject, speakerBackground, clipTilt, clipBackdropMedia,
-         speakerBackgroundWindows, speakerBackgroundColor, scriptFonts
+         speakerBackgroundWindows, speakerBackgroundColor, scriptFonts, speakerFrameWindows
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }

@@ -4119,6 +4119,15 @@ stripped (trace `speaker_background_color_phone_fallback`) and the creator keeps
 and `editor_capabilities.speaker_background_color` / the thread capability of the same name hide the Colour
 control. Detail: `docs/pipelines/speaker-background.md` "Solid-colour fill (KRI-1173)".
 
+Qendresa item 16 adds `full_screen_windows` on the same layer (the speaker's own take full screen, no mask and
+no background, before the corner) behind `SPEAKER_FULL_OPENING_ENABLED` (default off), the verified token
+`speakerFrameWindows` and client protocol >= 38 (`SPEAKER_FULL_OPENING_MIN_CLIENT_PROTOCOL`). Add the token only
+after a physical-iPhone check: the opening in preview and export, a clean cut-out on the switch frame, and the
+corner fallback when the mask fails there. With the flag, the token or the build missing, the windows are laid
+out as today (corner from 0 s) and the receipt says the opening was not made; builds below 38 get `426
+client_update_required` (`feature: "speaker_full_opening"`) only for a recipe already pinned with it. Detail:
+`docs/pipelines/speaker-background.md` "Full screen first, then the corner".
+
 
 ## Clip tilt (KRI-1134)
 

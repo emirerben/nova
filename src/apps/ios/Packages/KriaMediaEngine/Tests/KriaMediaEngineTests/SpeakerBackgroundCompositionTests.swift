@@ -416,5 +416,79 @@ final class SpeakerBackgroundCompositionTests: XCTestCase {
         let late = try await previewFrame(windowOnly.recipe, urls: windowOnly.urls, at: 1.5)
         XCTAssertTrue(isColor(late.rgb(fx: 0.04, fy: 0.04), SpeakerColor.background), "the fill after the window")
     }
+
+    // MARK: - Qendresa item 16: a full-screen opening. Rows S71 and S81 in
+    // `docs/reviews/speaker-background-windows-failure-modes.md`.
+
+    private struct SwitchFailure: Error {}
+    private let cornerFrame = SpeakerFrame(widthFraction: 0.42, xFraction: 0.76, yFraction: 0.80)
+    /// Where the green person sits inside the `small_bottom_right` box (see `testSpeakerFramePutsTheCutOutInTheCorner`).
+    private var personInCorner: (Double, Double) { (0.76, 0.80 + 0.21 - 0.5 * 0.75 * 0.42) }
+
+    /// Builds a 2 s edit with a blue photo background, the bottom-right corner frame and a full-screen opening of `0..<opening`.
+    @MainActor private func openingScene(opening: Double) async throws -> (recipe: EditRecipe, urls: [String: URL]) {
+        let directory = try speakerTestDirectory(self)
+        let speaker = try await writeSpeakerClip(directory: directory, size: (canvas.width, canvas.height), seconds: 2)
+        let scene = try speakerRecipe(canvas: canvas, speaker: speaker, duration: 2,
+                                      background: SpeakerTestBackground(url: try solidSpeakerTestImage(directory: directory)),
+                                      speakerFrame: cornerFrame,
+                                      fullScreenWindows: [SpeakerFullScreenWindow(start: 0, end: opening)])
+        try scene.recipe.validate()
+        XCTAssertTrue(scene.recipe.effectiveCapabilities.contains(.speakerFrameWindows))
+        return scene
+    }
+
+    /// S70/S71: inside the opening the speaker's own take is the whole frame (the magenta room is visible, the blue
+    /// background is not, and nobody is cut out), and the segmenter is never asked. After it the background shows and
+    /// the speaker sits in the corner.
+    @MainActor func testFullScreenWindowDrawsTheRawTakeWithoutMasking() async throws {
+        let segmenter = GreenPersonSegmenter()
+        useSpeakerSegmenter(self, segmenter)
+        let scene = try await openingScene(opening: 1)
+        let opening = try await previewFrame(scene.recipe, urls: scene.urls, at: 0.5)
+        XCTAssertEqual(segmenter.calls, 0, "no person mask is computed inside the opening")
+        XCTAssertTrue(isColor(opening.rgb(fx: personCenter.0, fy: personCenter.1), SpeakerColor.person), "the speaker's own colour, full-frame: \(opening.rgb(fx: personCenter.0, fy: personCenter.1))")
+        for (fx, fy) in corners {
+            XCTAssertTrue(isColor(opening.rgb(fx: fx, fy: fy), SpeakerColor.room), "the room is untouched at (\(fx), \(fy)): \(opening.rgb(fx: fx, fy: fy))")
+            XCTAssertFalse(isColor(opening.rgb(fx: fx, fy: fy), SpeakerColor.background), "no background inside the opening at (\(fx), \(fy))")
+        }
+        let after = try await previewFrame(scene.recipe, urls: scene.urls, at: 1.5)
+        XCTAssertGreaterThan(segmenter.calls, 0, "outside the opening the matte runs as before")
+        for (fx, fy) in corners.dropLast() + [personCenter] {
+            XCTAssertTrue(isColor(after.rgb(fx: fx, fy: fy), SpeakerColor.background), "the background after the opening at (\(fx), \(fy)): \(after.rgb(fx: fx, fy: fy))")
+        }
+        XCTAssertTrue(isColor(after.rgb(fx: personInCorner.0, fy: personInCorner.1), SpeakerColor.person), "the speaker sits in the corner after the opening")
+    }
+
+    /// S81: the decision is per frame by time. At 30 fps the frame before `end` (29/30 s) is still the raw take and the
+    /// frame AT `end` (1.0 s) is already the corner, never a frame of background or corner early nor of raw late.
+    @MainActor func testFullScreenWindowEdgesAreFrameExact() async throws {
+        useSpeakerSegmenter(self, GreenPersonSegmenter())
+        let scene = try await openingScene(opening: 1)
+        let last = try await previewFrame(scene.recipe, urls: scene.urls, at: 29.0 / 30.0)
+        XCTAssertTrue(isColor(last.rgb(fx: 0.04, fy: 0.04), SpeakerColor.room), "the last frame before end is raw: \(last.rgb(fx: 0.04, fy: 0.04))")
+        XCTAssertTrue(isColor(last.rgb(fx: personCenter.0, fy: personCenter.1), SpeakerColor.person))
+        let first = try await previewFrame(scene.recipe, urls: scene.urls, at: 1.0)
+        XCTAssertTrue(isColor(first.rgb(fx: 0.04, fy: 0.04), SpeakerColor.background), "the frame at end is the corner layout: \(first.rgb(fx: 0.04, fy: 0.04))")
+        XCTAssertTrue(isColor(first.rgb(fx: personInCorner.0, fy: personInCorner.1), SpeakerColor.person))
+        XCTAssertTrue(isColor(first.rgb(fx: personCenter.0, fy: personCenter.1), SpeakerColor.background))
+        let start = try await previewFrame(scene.recipe, urls: scene.urls, at: 0)
+        XCTAssertTrue(isColor(start.rgb(fx: 0.04, fy: 0.04), SpeakerColor.room), "the very first frame is raw")
+    }
+
+    /// S71: the mask fails on the first corner frame (the switch). The fallback is today's `.original` answer: the plain
+    /// take small in the corner over the background. It is never hidden, and the room is never drawn full-frame.
+    @MainActor func testAFailedMaskAtTheSwitchShowsThePlainSpeakerInTheCorner() async throws {
+        let segmenter = ScriptedSegmenter { _ in throw SwitchFailure() }
+        useSpeakerSegmenter(self, segmenter)
+        let scene = try await openingScene(opening: 1)
+        let frame = try await previewFrame(scene.recipe, urls: scene.urls, at: 1.0)
+        XCTAssertEqual(segmenter.calls, 1, "the switch frame is the first frame the matte sees")
+        XCTAssertTrue(isColor(frame.rgb(fx: 0.04, fy: 0.04), SpeakerColor.background), "background behind the corner: \(frame.rgb(fx: 0.04, fy: 0.04))")
+        XCTAssertTrue(isColor(frame.rgb(fx: personCenter.0, fy: personCenter.1), SpeakerColor.background), "not full-frame")
+        XCTAssertTrue(isColor(frame.rgb(fx: personInCorner.0, fy: personInCorner.1), SpeakerColor.person), "the speaker is visible in the corner")
+        // Unmasked, so the room around the person inside the box is drawn too.
+        XCTAssertTrue(isColor(frame.rgb(fx: 0.76 - 0.42 * 0.4, fy: personInCorner.1), SpeakerColor.room), "the plain take, not a cut-out: \(frame.rgb(fx: 0.76 - 0.42 * 0.4, fy: personInCorner.1))")
+    }
 }
 #endif

@@ -163,14 +163,18 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
     let speakerMatte: SpeakerMatte?
     /// Where the matted speaker is drawn (KRI-1162); nil draws it full-frame, as before.
     let speakerFrame: SpeakerFrame?
+    /// Qendresa item 16: spans (edit seconds) where the speaker's own take is drawn full-frame, unmasked, with no background. Decided
+    /// per frame by `time` in `composeBelowText`, never by this instruction's range, so the edges are frame-exact (S81).
+    let fullScreenWindows: [SpeakerFullScreenWindow]
     let canvas: CGRect
     let transparentBackground: Bool
-    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, drawings: NativeDrawingStore? = nil, transparentBackground: Bool = false, subjectMatte: NativeSubjectMatte? = nil, speakerMatte: SpeakerMatte? = nil, speakerFrame: SpeakerFrame? = nil) {
+    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, drawings: NativeDrawingStore? = nil, transparentBackground: Bool = false, subjectMatte: NativeSubjectMatte? = nil, speakerMatte: SpeakerMatte? = nil, speakerFrame: SpeakerFrame? = nil, fullScreenWindows: [SpeakerFullScreenWindow] = []) {
         self.transparentBackground = transparentBackground
         self.drawings = drawings
         self.subjectMatte = subjectMatte
         self.speakerMatte = speakerMatte
         self.speakerFrame = speakerFrame
+        self.fullScreenWindows = fullScreenWindows
         self.cameraPulses = cameraPulses
         self.motionScenes = motionScenes
         self.timeRange = timeRange
@@ -259,6 +263,13 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         func compose(_ layer: RecipeVideoLayer) throws { frame = try composeVideoLayer(layer, onto: frame, instruction: instruction, request: request, time: time) }
         // `layers` holds only what is active at `time`: the one window covering it (windows are disjoint), else the fill (S28).
         let backgrounds = layers.filter { $0.speakerRole == .background }
+        // Qendresa item 16: inside a full-screen window the speaker's own take is drawn untouched. No matte is asked (so a
+        // failed or slow mask can never show here), no background and no frame; every other layer draws as usual.
+        if !instruction.fullScreenWindows.isEmpty, SpeakerBackgroundLayer.fullScreen(instruction.fullScreenWindows, at: time) {
+            instruction.speakerMatte?.trace.record(.fullScreen, at: time)
+            for layer in layers where layer.speakerRole != .background { try compose(layer) }
+            return frame
+        }
         guard let matte = instruction.speakerMatte,
               let background = backgrounds.first(where: \.speakerBackgroundWindow) ?? backgrounds.first,
               let first = layers.firstIndex(where: { $0.speakerRole == .speaker }) else {
