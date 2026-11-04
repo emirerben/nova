@@ -140,6 +140,25 @@ Greek, Danish, Serbian and Croatian were stored as `"greek"`, `"danish"`, `"serb
 | en | 12 | 12 | 0 | 12 | 0 | 0.059 | 0.059 | 12/12 |
 | tr | 12 | 12 | 0 | 12 | 0 | 0.068 | 0.068 | 12/12 |
 
+**Held out.** The Danish and Serbian word lists were tuned while reading the test-split clips
+above, so a second set the code never saw was run afterwards: 12 clips per language from the
+FLEURS **dev** split (other speakers, other sentences; `--split dev`):
+
+| Language | Clips | Caption language = spoken | Re-run in another language | Script ok | Text-ID wrong | Raw whisper error | Final caption error | lingua agrees |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| pt | 12 | 12 | 0 | 12 | 0 | 0.047 | 0.047 | 12/12 |
+| es | 12 | 12 | 0 | 12 | 0 | 0.037 | 0.037 | 11/11 |
+| el | 12 | 12 | 0 | 12 | 0 | 0.133 | 0.133 | 12/12 |
+| de | 12 | 12 | 0 | 12 | 0 | 0.022 | 0.022 | 11/11 |
+| ko | 12 | 12 | 0 | 12 | 0 | 0.028 | 0.028 | 12/12 |
+| it | 12 | 12 | 0 | 12 | 0 | 0.025 | 0.025 | 12/12 |
+| fr | 12 | 12 | 0 | 12 | 0 | 0.036 | 0.036 | 10/10 |
+| ar | 12 | 12 | 0 | 12 | 0 | 0.029 | 0.029 | 12/12 |
+| da | 12 | 12 | 0 | 12 | 0 | 0.201 | 0.201 | 12/12 |
+| sr | 12 | 12 | 0 | 12 | 0 | 0.094 | 0.094 | 11/11 |
+| en | 12 | 12 | 0 | 12 | 0 | 0.028 | 0.028 | 12/12 |
+| tr | 12 | 12 | 0 | 12 | 0 | 0.104 | 0.104 | 12/12 |
+
 "Final = raw" is the point: no deterministic step changes a word. Serbian's 0.167 is
 measured in Latin; against the Cyrillic FLEURS text it would read 0.99, which is the
 alphabet, not the words. The text language-ID (`detect_text_language`) makes 0 wrong calls
