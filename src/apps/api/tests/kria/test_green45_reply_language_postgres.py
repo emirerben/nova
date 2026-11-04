@@ -41,6 +41,7 @@ from app.models import (
     CreatorAgentSession,
     Persona,
     PlanItem,
+    User,
 )
 
 _db_name = make_url(settings.database_url).database or ""
@@ -221,3 +222,47 @@ async def test_switch_off_is_the_device_language(monkeypatch: pytest.MonkeyPatch
     await _send(user_id, green5, CHIP, locale=TURKISH_PHONE)
 
     assert _language(green5) == "tr"
+
+
+def _greeting(user_id: uuid.UUID, *, accept_language: str) -> str:
+    """POST /creation-threads as ``user_id`` (the real route) and return the format prompt."""
+    from fastapi.testclient import TestClient
+
+    from app.auth import get_current_user
+    from app.main import app
+
+    with sync_session() as db:
+        user = db.get(User, user_id)
+        db.expunge(user)
+    app.dependency_overrides[get_current_user] = lambda: user
+    try:
+        response = TestClient(app).post(
+            "/creation-threads", json={}, headers={"Accept-Language": accept_language}
+        )
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+    assert response.status_code in (200, 201), response.text
+    thread_id = uuid.UUID(response.json()["id"])
+    with sync_session() as db:
+        return db.execute(
+            select(CreationThreadEvent.content).where(
+                CreationThreadEvent.thread_id == thread_id,
+                CreationThreadEvent.event_type == "format_prompt",
+            )
+        ).scalar_one()
+
+
+@pytest.mark.asyncio
+async def test_a_new_chat_greets_in_the_language_the_creator_types() -> None:
+    user_id, _green5 = await _english_creator_with_new_chat()
+    await async_engine.dispose()  # the route runs on the test client's own event loop
+
+    assert _greeting(user_id, accept_language=TURKISH_PHONE).startswith("What are we making?")
+
+
+@pytest.mark.asyncio
+async def test_a_new_creator_is_greeted_in_the_device_language() -> None:
+    """5: no typed history, the device language greets as before (KRI-784)."""
+    user_id, _thread, _ = _seed_runtime_project()
+
+    assert _greeting(user_id, accept_language=TURKISH_PHONE).startswith("Ne yapıyoruz?")

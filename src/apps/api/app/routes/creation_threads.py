@@ -60,7 +60,9 @@ from app.kria.media_sources import (
 )
 from app.kria.plan_contract import CONTRACT_VERSION
 from app.kria.reply_language import (
+    creator_typed_language,
     detect_chat_language,
+    needs_typed_history,
     remember_reply_language,
     reply_language_for,
     resolve_reply_language,
@@ -4268,13 +4270,24 @@ async def create_thread(
     # a short follow-up ("ok") keeps it. The device language only picks this
     # prompt's copy and is never stored.
     remember_reply_language(thread, detect_chat_language(body.message))
+    # Green 5: a new chat greets in the language the creator types in their other chats when
+    # its first message (if any) does not say; the device language is the last resort.
+    typed_elsewhere = (
+        await creator_typed_language(db, creator_id=user.id, exclude_thread_id=thread.id)
+        if needs_typed_history(body.message, None)
+        else None
+    )
     await _append(
         db,
         thread,
         event_type="format_prompt",
         role="assistant",
         content=_format_prompt_copy(
-            resolve_reply_language(body.message, locale=request.headers.get("accept-language"))
+            resolve_reply_language(
+                body.message,
+                locale=request.headers.get("accept-language"),
+                typed_elsewhere=typed_elsewhere,
+            )
         ),
         payload={
             "kind": "select_format",

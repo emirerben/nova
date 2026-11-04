@@ -3624,3 +3624,10 @@ watermark as hard obstacles, then raised.
 **Kept:** briefs written before the prompt change carry no fact and keep #2090's answer. A retake row never makes a named-line ask met (KRI-551).
 **Evidence:** paid retake precision run 2026-11-03 (`retake-precision-2026-11-03-r5`, $0.047): 8/8 restart-free real takes return no span, Green 3 cuts only 44..53, N3 only 28..31.
 **Guards:** `tests/kria/test_kri1189_cut_restarts_receipts.py`, `tests/evals/runners/restart_brief.py` (`meta.restart_brief` on the `kri1189_*` Main Creator and brief-extractor fixtures), `tests/kria/test_kri667_no_new_intent_regexes.py`.
+
+## [2026-11-04] A chat nothing has told its language yet answers in the language the creator types, before the device's (Green 5)
+
+**Context:** Green 5 started with a "Suggest an edit." tap on a phone set to Turkish. The tap is stock text (KRI-520 ignores it), the chat had no language yet, so `resolve_reply_language` fell back to `Accept-Language` (tr); the turn worker snapshots the language at claim time, so the whole chip turn (creative direction, heads-up, card) came back Turkish although the creator types English in every chat and their own message 14 s later was English. The new chat's greeting ("Ne yapıyoruz?") came from the device the same way.
+**Decision:** `KRIA_REPLY_LANGUAGE_HISTORY_ENABLED` (default true): for a chat with no language yet and a message that does not say (tap, media, "ok"), `submit_turn` and the thread-creation greeting read `reply_language.creator_typed_language`: the language of the creator's latest message typed in another of their own chats (stock sentences never count, 20 latest). Order: this message > the chat's language > typed elsewhere > device. Fail-open: a lookup error leaves the device language. Off: byte-identical (KRI-784).
+**Kept:** a message typed in this chat always decides (a Turkish message after English chats answers Turkish); a creator who only ever tapped keeps the device language; other creators' chats never count.
+**Guards:** `tests/kria/test_green45_reply_language_postgres.py`, `tests/kria/test_kri520_reply_language_postgres.py`.

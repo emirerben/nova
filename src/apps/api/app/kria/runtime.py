@@ -47,6 +47,8 @@ from app.kria.duplicate_send import duplicate_reply, find_duplicate_send
 from app.kria.intent_review_copy import INTENT_REVIEW_TURN_VALUE
 from app.kria.language import is_help_question, is_status_question
 from app.kria.reply_language import (
+    creator_typed_language,
+    needs_typed_history,
     remember_reply_language,
     reply_language_for,
     resolve_reply_language,
@@ -1017,8 +1019,16 @@ async def submit_turn(
         duplicate = await find_duplicate_send(db, thread, body.message)
     # KRI-520: the chat's reply language after this message, stored on the locked
     # thread row (committed with the event below; rolled back with a refusal).
+    previous_language = thread_reply_language(thread)
+    # Green 5: a chat that has not told yet and a message that does not say (a chip tap)
+    # takes the language the creator types in their other chats before the device's.
+    typed_elsewhere = (
+        await creator_typed_language(db, creator_id=creator_id, exclude_thread_id=thread.id)
+        if needs_typed_history(body.message, previous_language)
+        else None
+    )
     reply_language = resolve_reply_language(
-        body.message, previous=thread_reply_language(thread), locale=locale
+        body.message, previous=previous_language, locale=locale, typed_elsewhere=typed_elsewhere
     )
     remember_reply_language(thread, reply_language)
     inert_response: tuple[Literal["progress", "question"], str] | None = None
