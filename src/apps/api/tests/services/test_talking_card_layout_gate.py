@@ -29,7 +29,11 @@ from app.services.phone_subtitled_editor import (
     lanes_from_recipe,
     sections_from_lanes,
 )
-from app.tasks.generative_build import _card_layout_context, _take_window_to_source
+from app.tasks.generative_build import (
+    _card_layout_context,
+    _card_layout_framing_ok,
+    _take_window_to_source,
+)
 from tests.pipeline.test_phone_subtitled_plan import (
     _binding,
     _overlay_card,
@@ -159,3 +163,24 @@ def test_recipe_derivation_leaves_a_normal_card_unmarked():
     photo, recipe = _recipe_with(_overlay_card(id="top", y_frac=0.3))
     derived = lanes_from_recipe(recipe, visuals=(photo,))
     assert derived.overlays[0].caption_clear is False
+
+
+@pytest.mark.parametrize(
+    ("face_filled", "fit", "w", "h", "expected"),
+    [
+        (False, "fill", 1080, 1920, True),
+        (False, "fill", 1920, 1080, True),
+        (False, "fill", 1080, 1930, True),  # within the 0.01 tolerance of 9:16
+        (True, "fill", 1920, 1080, False),  # KRI-547 face fill: close-up crop
+        (False, "fit", 1920, 1080, False),  # letterboxed take moves the face in y
+        (False, "fill", 1080, 2340, False),  # taller than portrait: cropped top and bottom
+        (False, "fill", 100, 0, False),
+    ],
+)
+def test_card_layout_framing_truth_table(face_filled, fit, w, h, expected):
+    assert (
+        _card_layout_framing_ok(
+            face_filled=face_filled, landscape_fit=fit, display_width=w, display_height=h
+        )
+        is expected
+    )

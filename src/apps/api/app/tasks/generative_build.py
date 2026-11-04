@@ -8718,6 +8718,29 @@ def _take_window_to_source(
     return (src_start, src_end) if src_end > src_start else None
 
 
+def _card_layout_framing_ok(
+    *,
+    face_filled: bool,
+    landscape_fit: str,
+    display_width: int,
+    display_height: int,
+) -> bool:
+    """Is the speaker framed so source-frame face boxes map exactly (in y) to the canvas?
+
+    Ways it goes wrong: (a) a KRI-547 face fill crops to a close-up where only the
+    eyes-nose-mouth core is protected, so a full-width card could cover forehead or chin;
+    (b) a letterboxed ("fit") take moves the face in y; (c) a source taller than 9:16 is
+    cropped top and bottom. Only a plain cover-fill of a source at least as wide as 9:16
+    keeps the grounding's face boxes exact.
+    """
+    return bool(
+        not face_filled
+        and landscape_fit == "fill"
+        and display_height > 0
+        and display_width / display_height >= 9 / 16 - 0.01
+    )
+
+
 def _card_layout_planned(all_candidates: dict) -> bool:
     from app.services.phone_rollout import (  # noqa: PLC0415
         stamped_client_protocol,
@@ -10709,20 +10732,32 @@ def _run_phone_subtitled_job(
                             "wishlist": [],
                         }
                     else:
+                        # Qendresa item 15: lay the cards out against the measured caption
+                        # band and the title / listed-text windows. Closed (kwarg omitted,
+                        # byte-identical call) unless every gate holds.
+                        from app.pipeline.phone_recipe_shared import (  # noqa: PLC0415
+                            display_dims,
+                        )
                         from app.services.phone_overlay_grounding import (  # noqa: PLC0415
                             ground_phone_subtitled_overlays,
                         )
 
-                        # Qendresa item 15: lay the cards out against the measured caption
-                        # band and the title / listed-text windows. Closed (kwarg omitted,
-                        # byte-identical call) unless every gate holds.
                         card_layout = _card_layout_context(
                             open_=(
                                 overlay_layout == "pip"
+                                # The switch first: with it closed nothing below is evaluated.
+                                and _card_layout_planned(all_candidates)
                                 and not landscape_canvas
+                                and _card_layout_framing_ok(
+                                    face_filled=bool(
+                                        framed_grounding or speaker_position_x is not None
+                                    ),
+                                    landscape_fit=landscape_fit,
+                                    display_width=display_dims(binding.original)[0],
+                                    display_height=display_dims(binding.original)[1],
+                                )
                                 and strategy_background_lane is None
                                 and not (lane_request is not None and lane_request.background)
-                                and _card_layout_planned(all_candidates)
                             ),
                             policy=current_phone_text_policy(),
                             text_rows=title_rows + spoken_text_rows,

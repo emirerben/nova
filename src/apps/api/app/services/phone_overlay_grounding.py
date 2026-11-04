@@ -223,6 +223,7 @@ def sample_card_faces(
     face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
     anchors_per_card: int = _MAX_FACE_ANCHORS_PER_CARD,
     max_anchors: int = _MAX_FACE_ANCHORS_TOTAL,
+    receipt_out: dict[str, Any] | None = None,
 ) -> tuple[list[ProtectedRegion], str]:
     """Fail-safe face sampling over every card's own window (see
     `resolve_phone_card_geometry`): ``(face_regions, "ok" | "failed" | "skipped")``."""
@@ -247,6 +248,8 @@ def sample_card_faces(
                 count_decoded=False,
                 **({"raw_boxes": True} if face_box_to_canvas is not None else {}),
             )
+            if receipt_out is not None and isinstance(_receipt, dict):
+                receipt_out.update(_receipt)
             if face_box_to_canvas is not None:
                 face_regions = [
                     ProtectedRegion(region.start_s, region.end_s, mapped, kind=_FACE_CORE_KIND)
@@ -824,6 +827,7 @@ def _lay_out_cards(
         if len(live) * _MAX_FACE_ANCHORS_PER_CARD <= _LAYOUT_MAX_ANCHORS
         else 3
     )
+    sample_receipt: dict[str, Any] = {}
     sampled = sample_card_faces(
         live,
         clip_path=clip_path,
@@ -831,7 +835,9 @@ def _lay_out_cards(
         face_box_to_canvas=face_box_to_canvas,
         anchors_per_card=per_card,
         max_anchors=min(len(live) * per_card, _LAYOUT_MAX_ANCHORS),
+        receipt_out=sample_receipt,
     )
+    complete = not sample_receipt.get("timed_out")
     face_regions, face_sampling = sampled
     caption_top, caption_bottom = card_layout.caption_band or (_CAPTION_PROTECTED_TOP_FRAC, 1.0)
     caption_box = NormalizedBox(0.0, caption_top, 1.0, caption_bottom)
@@ -856,6 +862,7 @@ def _lay_out_cards(
                     fallback_face_box=_FALLBACK_FACE_BOX,
                     caption_box=caption_box,
                     placed=placed_boxes,
+                    complete=complete,
                 ),
             )
         if spot is None:
@@ -885,6 +892,13 @@ def _lay_out_cards(
             strict_geometry=True,
             extra_protected=[
                 ProtectedRegion(0.0, float("inf"), caption_box, kind="captions"),
+                # Sampling ran but saw no face: a Talking edit has a speaker, so a miss is not
+                # a clear frame (same rule as the layout cards).
+                *(
+                    [ProtectedRegion(0.0, float("inf"), _FALLBACK_FACE_BOX, kind="face_fallback")]
+                    if face_sampling == "ok" and not face_regions
+                    else []
+                ),
                 *(ProtectedRegion(s, e, box, kind=_EXTRA_CARD_KIND) for s, e, box in placed_boxes),
             ],
         )

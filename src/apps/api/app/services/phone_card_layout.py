@@ -126,6 +126,35 @@ def place_card(aspect: float | None, blockers: Sequence[NormalizedBox]) -> CardP
     return chosen
 
 
+_MIN_COVERAGE = 0.9
+# A face sample speaks for this long either side of its moment when judging whether a card's
+# window was looked at (heads move slowly): 3 evenly spaced samples cover a 4 s card, 2 do not.
+_SAMPLE_REACH_S = 0.75
+
+
+def _covered_fraction(regions: Sequence[Any], start_s: float, end_s: float) -> float:
+    """Share of ``[start_s, end_s]`` the regions cover (clipped, overlaps merged), each region
+    reaching `_SAMPLE_REACH_S` either side of its sample moment (its window's centre)."""
+    span = end_s - start_s
+    if span <= 0:
+        return 1.0
+    spans = sorted(
+        (
+            max((r.start_s + r.end_s) / 2 - _SAMPLE_REACH_S, start_s),
+            min((r.start_s + r.end_s) / 2 + _SAMPLE_REACH_S, end_s),
+        )
+        for r in regions
+        if r.start_s < end_s and start_s < r.end_s
+    )
+    covered, edge = 0.0, start_s
+    for lo, hi in spans:
+        lo = max(lo, edge)
+        if hi > lo:
+            covered += hi - lo
+            edge = hi
+    return covered / span
+
+
 def blockers_for_card(
     start_s: float,
     end_s: float,
@@ -135,24 +164,26 @@ def blockers_for_card(
     fallback_face_box: NormalizedBox,
     caption_box: NormalizedBox,
     placed: Sequence[tuple[float, float, NormalizedBox]],
+    complete: bool = True,
 ) -> list[NormalizedBox]:
     """Every box a card on ``[start_s, end_s]`` must stay clear of (zero overlap).
 
     ``face_regions`` are objects with ``start_s``/``end_s``/``box`` (``ProtectedRegion``).
-    Faces in time with the card block it; if none is, but faces were seen elsewhere, their union
-    blocks ("never assume the face left"); if sampling did not run clean, or ran but saw no face
-    anywhere (a Talking edit always has a speaker; a detector miss under a full-width card would
-    cover the face), the fallback box does.
+    Faces in time with the card block it; if those samples cover under 90 % of the card's
+    window, or none is in time, the union of every sampled face blocks too ("never assume the
+    face left"); if sampling did not run clean, or ran but saw no face anywhere (a Talking edit
+    always has a speaker; a detector miss under a full-width card would cover the face), the
+    fallback box does. ``complete=False`` (the pass timed out) also adds the fallback box to a
+    card with no sample in its window.
     ``placed`` are the ``(start_s, end_s, box)`` of cards already laid out: none may stack.
     """
     blockers: list[NormalizedBox] = []
     if face_sampling != "ok" or not face_regions:
         blockers.append(fallback_face_box)
-    elif face_regions:
-        in_time = [r.box for r in face_regions if r.start_s < end_s and start_s < r.end_s]
-        if in_time:
-            blockers.extend(in_time)
-        else:
+    else:
+        in_time = [r for r in face_regions if r.start_s < end_s and start_s < r.end_s]
+        blockers.extend(r.box for r in in_time)
+        if _covered_fraction(in_time, start_s, end_s) < _MIN_COVERAGE:
             boxes = [r.box for r in face_regions]
             blockers.append(
                 NormalizedBox(
@@ -162,6 +193,8 @@ def blockers_for_card(
                     max(b.bottom for b in boxes),
                 )
             )
+            if not complete and not in_time:
+                blockers.append(fallback_face_box)
     blockers.append(caption_box)
     blockers.extend(box for s, e, box in placed if s < end_s and start_s < e)
     return blockers

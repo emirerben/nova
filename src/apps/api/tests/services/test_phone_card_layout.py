@@ -15,6 +15,9 @@ Written BEFORE the code. Ways this goes wrong, each covered below:
 - an alpha sticker kept small (today's corner path);
 - a recording's trim start dropped; text windows shared with a card;
 - ``card_layout=None`` changing today's output at all.
+- (review) samples that cover only part of a card's window counted as the whole window;
+- (review) a timed-out / partial sampling pass counted as clean;
+- (review) the corner-card fallback path trusting "ok but no face seen".
 """
 
 from __future__ import annotations
@@ -414,3 +417,89 @@ def test_card_layout_none_is_todays_output(monkeypatch):
         (c.start_s, c.end_s, c.x_frac, c.y_frac, c.scale, c.kind) for c in r.cards
     ]
     assert strip(without) == strip(again)
+
+
+# --- review follow-ups ---------------------------------------------------------------------
+
+FB = NormalizedBox(0.28, 0.02, 0.72, 0.52)
+LOW = NormalizedBox(0.3, 0.40, 0.7, 0.60)
+
+
+def _blockers(regions, start=0.0, end=10.0, **kw):
+    return blockers_for_card(
+        start,
+        end,
+        face_regions=regions,
+        face_sampling="ok",
+        fallback_face_box=FB,
+        caption_box=caption(0.62, 0.72),
+        placed=[],
+        **kw,
+    )
+
+
+def test_partial_coverage_adds_the_union_of_all_faces():
+    # the in-time sample covers 2 s of a 10 s card; the head elsewhere sits lower
+    regions = [ProtectedRegion(0, 2, FACE), ProtectedRegion(30, 31, LOW)]
+    blockers = _blockers(regions)
+    assert FACE in blockers
+    assert NormalizedBox(0.3, 0.22, 0.7, 0.60) in blockers
+
+
+def test_full_coverage_uses_only_the_in_time_faces():
+    # Real samples are +-0.5 s around their moment; one every 1.5 s looks at the whole card.
+    regions = [ProtectedRegion(t - 0.5, t + 0.5, FACE) for t in (0.5, 2.0, 3.5, 5.0, 6.5, 8.0, 9.5)]
+    regions.append(ProtectedRegion(30, 31, LOW))
+    blockers = _blockers(regions)
+    assert LOW not in blockers and NormalizedBox(0.3, 0.22, 0.7, 0.60) not in blockers
+
+
+def test_samples_two_seconds_apart_leave_gaps_and_add_the_union():
+    regions = [ProtectedRegion(t - 0.5, t + 0.5, FACE) for t in (1.0, 3.0, 5.0, 7.0, 9.0)]
+    regions.append(ProtectedRegion(30, 31, LOW))
+    assert NormalizedBox(0.3, 0.22, 0.7, 0.60) in _blockers(regions)  # 7.5 s of 10 s < 90 %
+
+
+def test_overlapping_samples_are_merged_not_double_counted():
+    regions = [
+        ProtectedRegion(0, 5, FACE),
+        ProtectedRegion(1, 6, FACE),
+        ProtectedRegion(30, 31, LOW),
+    ]
+    assert NormalizedBox(0.3, 0.22, 0.7, 0.60) in _blockers(regions)  # 6 s of 10 s < 90 %
+
+
+def test_incomplete_sampling_with_no_in_time_face_adds_union_and_fallback():
+    blockers = _blockers([ProtectedRegion(30, 31, LOW)], complete=False)
+    assert LOW in blockers and FB in blockers
+
+
+def test_complete_sampling_with_no_in_time_face_has_no_fallback_box():
+    assert FB not in _blockers([ProtectedRegion(30, 31, LOW)])
+
+
+def test_timed_out_sampling_is_reported_to_the_caller(monkeypatch):
+    def partial(_clip, anchors, **_kw):
+        return [ProtectedRegion(0, 1, FACE, kind="face")], {"timed_out": True, "partial": True}
+
+    monkeypatch.setattr(pg, "sample_face_regions", partial)
+    receipt: dict = {}
+    pg.sample_card_faces(
+        [{"start_s": 0.0, "end_s": 4.0}], clip_path="c.mp4", job_id="j", receipt_out=receipt
+    )
+    assert receipt["timed_out"] is True
+
+
+def test_corner_fallback_protects_the_fallback_box_when_no_face_was_seen(monkeypatch):
+    result = _ground(
+        monkeypatch,
+        [_asset("s", aspect=1.0, analysis={"has_alpha": True})],
+        [_raw("s", 10.0, 14.0)],
+        faces=lambda _c, anchors, **_k: ([], {"attempted": len(anchors), "detected": 0}),
+        card_layout=CardLayoutContext(caption_band=(0.62, 0.72)),
+    )
+    assert result.receipt["face_sampling"] == "ok"
+    # Strict and fail-closed: the sticker may find no safe spot, never one on the fallback box.
+    assert len(result.cards) + len(result.receipt["unplaced"]) == 1
+    for card in result.cards:
+        assert not boxes_intersect(_card_box(card, 1.0), pg._FALLBACK_FACE_BOX)
