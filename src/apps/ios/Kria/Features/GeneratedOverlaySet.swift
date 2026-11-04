@@ -22,6 +22,14 @@ enum OverlayProblem: Hashable {
         }
     }
 
+    /// Shown in the failure tone (red), where butter never sits beside it and the primary turns ink.
+    var isFailure: Bool {
+        switch self {
+        case .unsure, .offline, .changedAfterStart, .sourceGone: false
+        default: true
+        }
+    }
+
     static func classifyRequest(_ error: Error) -> OverlayProblem {
         if let urlError = error as? URLError {
             switch urlError.code {
@@ -185,6 +193,20 @@ struct OverlayCard: Identifiable {
         drivers.removeAll()
     }
 
+    /// Picks the requests back up after `stopWork` ran for a reason that was not a real dismissal (the Add media
+    /// content disappears while a full-screen cover such as the camera is up). Requests that outran the poll
+    /// budget stay stalled: the creator asks for those with Check again.
+    func resumeWork() {
+        for card in cards where !card.accepted {
+            for slot in [Slot.main, .remake] {
+                let key = DriverKey(card: card.id, slot: slot)
+                guard drivers[key] == nil, let value = generation(card.id, slot),
+                      value.phase == .making, !value.stalled else { continue }
+                drive(card.id, slot, post: false)
+            }
+        }
+    }
+
     private struct Saved: Codable {
         struct SavedCard: Codable {
             let id: UUID
@@ -292,7 +314,23 @@ struct OverlayCard: Identifiable {
     func redo(_ id: UUID) {
         guard let card = card(id) else { return }
         if card.remake != nil { return }
+        // A request still being made is paid for already: a second one would bill again and drop the first.
+        if card.generation?.phase == .making { return }
         beginGeneration(id, slot: .main, prompt: card.generation?.prompt ?? card.trimmedPrompt)
+    }
+
+    /// Start again: drops every made version that was not accepted and returns to the prompts that made them.
+    func startAgain() {
+        for index in cards.indices where !cards[index].accepted {
+            drivers[DriverKey(card: cards[index].id, slot: .main)]?.cancel()
+            drivers[DriverKey(card: cards[index].id, slot: .remake)]?.cancel()
+            if let prompt = cards[index].generation?.prompt { cards[index].prompt = prompt }
+            cards[index].generation = nil
+            cards[index].remake = nil
+        }
+        setProblem = nil
+        screen = cards.contains { $0.isDraft } ? .compose : .results
+        persist()
     }
 
     func retryFailed() {

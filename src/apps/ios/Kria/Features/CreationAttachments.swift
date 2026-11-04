@@ -271,7 +271,10 @@ struct AttachmentSheet: View {
                     }
                 }
             }
-            .onDisappear { overlaySet.stopWork() }
+            // The camera is a full-screen cover, which also makes this content disappear. Only a real dismissal
+            // stops the overlay requests; coming back picks up any that a stop did cancel.
+            .onDisappear { if !showsTeleprompter { overlaySet.stopWork() } }
+            .onAppear { overlaySet.resumeWork() }
             .sheet(isPresented: $showsScriptEntry, onDismiss: {
                 // The camera waits for the script sheet to finish closing.
                 if openCameraAfterScript { openCameraAfterScript = false; showsTeleprompter = true }
@@ -815,26 +818,46 @@ struct AttachmentSheet: View {
     private var visualList: some View {
         VStack(spacing: 12) {
             ForEach(pool?.assets ?? []) { asset in
-                HStack(spacing: 12) {
-                    AsyncImage(url: asset.previewURL ?? (asset.kind == "image" ? asset.displayURL : nil)) { image in image.resizable().scaledToFill() } placeholder: { Image(systemName: asset.kind == "image" ? "photo" : "video") }
-                        .frame(width: 52, height: 64).clipped().clipShape(RoundedRectangle(cornerRadius: 8))
-                    VStack(alignment: .leading) {
-                        Text(asset.sourceFilename ?? (usesVisualPoolOnly ? (asset.kind == "video" ? "Video" : "Photo") : "Visual")).font(KriaFont.body(14)).lineLimit(1)
-                        VisualStatusLine(text: asset.statusCaption(retryingAutomatically: autoRetry.isRetryPending(asset.id)), preparing: asset.preparationStage != nil, color: asset.status == "failed" ? KriaColor.failureText : KriaColor.zinc)
-                            .font(KriaFont.body(11))
-                    }
-                    Spacer()
-                    if capabilitiesLoaded, capabilities?.generatedImageEditing == true,
-                       asset.kind == "image", asset.status == "ready", asset.sourceGeneration != nil {
-                        Button("Edit image") { openGeneratedMedia(GeneratedMediaDraft(capability: .imageEdit, source: asset)) }
-                            .accessibilityIdentifier("generate-image-edit-\(asset.id)")
-                    }
-                    if asset.status == "failed", asset.retryable != false { Button("Retry") { Task { await retry(asset) } }.disabled(mutatingVisual || !autoRetry.canRetryManually(asset.id)) }
-                    Button { Task { await remove(asset) } } label: { Image(systemName: "trash").frame(width: 44, height: 44) }
-                        .accessibilityLabel("Remove \(asset.sourceFilename ?? (usesVisualPoolOnly ? SlideMediaCopy.removeFallback : "visual"))").disabled(mutatingVisual)
-                }
+                visualRow(asset)
+                    .padding(4).background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             }
         }
+    }
+
+    /// One attached overlay or photo (Paper S1.01): a `KriaMediaRow` with its status, one trailing control and,
+    /// when it failed, a visible Retry. Edit image lives in the menu; a row with nothing to edit shows a trash disc.
+    private func visualRow(_ asset: CreationVisual) -> some View {
+        let name = asset.sourceFilename ?? (usesVisualPoolOnly ? (asset.kind == "video" ? "Video" : "Photo") : "Visual")
+        let kindLabel = asset.kind == "video" ? "Video" : "Photo"
+        let status: KriaMediaRow<AnyView>.Status
+        if asset.status == "failed" {
+            status = .failed(asset.statusCaption(retryingAutomatically: autoRetry.isRetryPending(asset.id)))
+        } else if asset.preparationStage != nil {
+            status = .preparing
+        } else if asset.status == "ready" {
+            status = .ready("\(kindLabel) · Ready")
+        } else {
+            status = .ready(asset.statusCaption(retryingAutomatically: false))
+        }
+        let canEditImage = capabilitiesLoaded && capabilities?.generatedImageEditing == true
+            && asset.kind == "image" && asset.status == "ready" && asset.sourceGeneration != nil
+        let removeAction = KriaMenuAction(title: "Remove", systemImage: "trash", isDestructive: true) { Task { await remove(asset) } }
+        let trailing: KriaMediaRow<AnyView>.Trailing = canEditImage
+            ? .menu(label: "Actions for \(name)", [
+                KriaMenuAction(title: "Edit image", systemImage: "wand.and.stars") { openGeneratedMedia(GeneratedMediaDraft(capability: .imageEdit, source: asset)) },
+                removeAction,
+            ])
+            : .remove(label: "Remove \(asset.sourceFilename ?? (usesVisualPoolOnly ? SlideMediaCopy.removeFallback : "visual"))") { Task { await remove(asset) } }
+        let canRetry = asset.status == "failed" && asset.retryable != false && !mutatingVisual && autoRetry.canRetryManually(asset.id)
+        return KriaMediaRow(name: name, status: status, trailing: trailing,
+                            onRetry: canRetry ? { Task { await retry(asset) } } : nil) {
+            AnyView(AsyncImage(url: asset.previewURL ?? (asset.kind == "image" ? asset.displayURL : nil)) { image in
+                image.resizable().scaledToFill()
+            } placeholder: {
+                KriaThumbnailPlaceholder(systemImage: asset.kind == "image" ? "photo" : "video")
+            })
+        }
+        .accessibilityIdentifier("visual-row-\(asset.id)")
     }
 
     private var footageDurationSummary: FootageDurationSummary {

@@ -6,6 +6,7 @@ import SwiftUI
 /// `KRIA_BRAND_STATE=generate-<state>`); never enters release navigation.
 struct GenerateImagePreviewHost: View {
     let state: String
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var overlays = GeneratedOverlaySet()
     @StateObject private var voiceDraft = GeneratedMediaDraft(capability: .narration)
 
@@ -35,6 +36,7 @@ struct GenerateImagePreviewHost: View {
             if state.hasPrefix("generate-voice") { voice } else { overlaySheet }
         }
         .background(KriaColor.paper)
+        .environment(\.dynamicTypeSize, ProcessInfo.processInfo.environment["UI_TEST_DYNAMIC_TYPE_SIZE"] == "accessibility5" ? .accessibility5 : dynamicTypeSize)
         .task { install() }
     }
 

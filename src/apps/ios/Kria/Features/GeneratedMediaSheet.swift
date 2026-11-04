@@ -93,6 +93,7 @@ struct GeneratedMediaSheet: View {
         return editing ? "Edit image" : "Generate image"
     }
     private var noun: OverlayProblemNoun { narration ? .voice : OverlayProblemNoun(singular: "image", plural: "images") }
+    private var promptIsTooLong: Bool { draft.prompt.count > OverlayLimits.maxPrompt }
     private var promptIsEmpty: Bool { draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     private var api: any KriaAPIClient { apiOverride ?? model.api }
@@ -279,9 +280,9 @@ struct GeneratedMediaSheet: View {
 
     private func imageFrame(url: URL?, ready: Bool) -> some View {
         let width: CGFloat = embedded ? 75 : 240
-        return OverlayThumbnail(url: url, phase: ready ? .ready : .making, width: width, height: width * 1.5, radius: 16)
-            .onChange(of: url) { _, value in previewLoaded = value != nil }
-            .onAppear { if url != nil { previewLoaded = true } }
+        // Use stays off until the picture itself has loaded; a Reload frame never counts as seen.
+        return OverlayThumbnail(url: url, phase: ready ? .ready : .making, width: width, height: width * 1.5, radius: 16,
+                                onLoad: { previewLoaded = $0 })
             .accessibilityIdentifier("generated-media-preview")
     }
 
@@ -345,7 +346,7 @@ struct GeneratedMediaSheet: View {
         switch stage {
         case .ready:
             Button { if case .ready(let value) = stage { accept(value) } } label: { Text(useTitle) }
-                .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true, isLoading: busy))
+                .buttonStyle(KriaButtonStyle(role: activeProblems.contains(where: \.isFailure) ? .ink : .primary, fullWidth: true, isLoading: busy))
                 .disabled(!canUse)
                 .accessibilityIdentifier("generated-media-use")
                 .kriaDisabledReason(canUse || busy ? nil : (previewLoaded ? nil : "Loading your \(narration ? "voice" : "image")…"))
@@ -362,9 +363,9 @@ struct GeneratedMediaSheet: View {
         default:
             Button(submitTitle) { submit() }
                 .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true, isLoading: busy))
-                .disabled(busy || !allowsNewGeneration || draft.submissionRejection != nil || (!narration && promptIsEmpty))
+                .disabled(busy || !allowsNewGeneration || draft.submissionRejection != nil || (!narration && (promptIsEmpty || promptIsTooLong)))
                 .accessibilityIdentifier("generated-media-submit")
-                .kriaDisabledReason(!narration && promptIsEmpty && draft.submissionRejection == nil ? "Describe your image to start." : nil)
+                .kriaDisabledReason(!narration && draft.submissionRejection == nil ? (promptIsEmpty ? "Describe your image to start." : (promptIsTooLong ? "Shorten your prompt to start." : nil)) : nil)
         }
     }
 

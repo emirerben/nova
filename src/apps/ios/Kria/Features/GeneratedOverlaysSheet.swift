@@ -185,7 +185,7 @@ private struct PromptCard: View {
                 .accessibilityIdentifier("overlay-prompt-\(number)")
             if focused {
                 HStack {
-                    Text("\(card.prompt.count) / \(OverlayLimits.maxPrompt)")
+                    Text(verbatim: "\(card.prompt.count) / \(OverlayLimits.maxPrompt)")
                         .kriaType(.label).foregroundStyle(KriaColor.mutedInk).monospacedDigit()
                     Spacer()
                 }
@@ -279,7 +279,8 @@ private struct MakingScreen: View {
                 OverlayProblemCard(problem: problem, handlers: .init(
                     tryAgain: { overlays.retryFailed() },
                     editPrompt: { if let id = failedID { overlays.screen = .edit(id) } },
-                    checkAgain: { overlays.checkAgain() }, saveAgain: { overlays.saveAgain() }))
+                    checkAgain: { overlays.checkAgain() }, saveAgain: { overlays.saveAgain() },
+                    startAgain: { overlays.startAgain() }, close: close))
             }
             ForEach(overlays.madeCards) { card in
                 OverlayRow(number: overlays.number(of: card.id), card: card, style: .status(stalled: card.generation?.stalled == true))
@@ -300,7 +301,9 @@ private struct ResultsScreen: View {
 
     private var count: Int { overlays.readyCount }
     private var heading: String { overlays.madeCards.count == 1 ? "Your overlay" : "Your \(overlays.madeCards.count) overlays" }
-    private var useTitle: String { count == 1 ? "Use overlay" : "Use \(count) overlays" }
+    private var useTitle: String { count == 0 ? "Use overlays" : (count == 1 ? "Use overlay" : "Use \(count) overlays") }
+    /// Butter never sits beside a red notice, so the primary turns ink while one is on screen.
+    private var showsFailure: Bool { overlays.problems.contains(where: \.isFailure) }
     private var reason: String? {
         if overlays.makingCount > 0 { return "Waiting for the rest to finish." }
         return count == 0 ? "Nothing is ready to use yet." : nil
@@ -313,7 +316,8 @@ private struct ResultsScreen: View {
                     OverlayProblemCard(problem: problem, handlers: .init(
                         tryAgain: { problem == .couldNotAdd ? use() : overlays.retryFailed() },
                         editPrompt: { if let id = failedID { overlays.screen = .edit(id) } },
-                        checkAgain: { overlays.checkAgain() }, saveAgain: { overlays.saveAgain() }))
+                        checkAgain: { overlays.checkAgain() }, saveAgain: { overlays.saveAgain() },
+                        startAgain: { overlays.startAgain() }, close: close))
                 }
                 ForEach(overlays.madeCards) { card in
                     let number = overlays.number(of: card.id)
@@ -326,7 +330,7 @@ private struct ResultsScreen: View {
             }
         } pinnedBar: {
             Button(useTitle) { use() }
-                .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true, isLoading: overlays.isAdding))
+                .buttonStyle(KriaButtonStyle(role: showsFailure ? .ink : .primary, fullWidth: true, isLoading: overlays.isAdding))
                 .disabled(count == 0 || overlays.makingCount > 0)
                 .accessibilityIdentifier("generated-media-use")
                 .kriaDisabledReason(reason)
@@ -372,7 +376,7 @@ private struct EditScreen: View {
                         .focused($focused)
                         .accessibilityIdentifier("overlay-edit-prompt")
                     HStack {
-                        Text("\(prompt.count) / \(OverlayLimits.maxPrompt)")
+                        Text(verbatim: "\(prompt.count) / \(OverlayLimits.maxPrompt)")
                             .kriaType(.label).foregroundStyle(KriaColor.mutedInk).monospacedDigit()
                         Spacer()
                     }
@@ -405,6 +409,7 @@ private struct RemadeScreen: View {
     private var number: Int { overlays.number(of: cardID) }
     private var remake: OverlayGeneration? { overlays.card(cardID)?.remake }
     private var phase: OverlayGeneration.Phase { remake?.phase ?? .making }
+    private var remakeShowsFailure: Bool { remake.map { problem(for: $0).isFailure && phase != .making && phase != .ready } ?? false }
     private var heading: String { phase == .ready ? "Overlay \(number), remade" : "Remaking overlay \(number)" }
 
     var body: some View {
@@ -413,7 +418,8 @@ private struct RemadeScreen: View {
                 if let remake, phase == .failed || phase == .unsure || phase == .unsaved {
                     OverlayProblemCard(problem: problem(for: remake), handlers: .init(
                         tryAgain: { overlays.retryRemake(cardID) }, editPrompt: { overlays.screen = .edit(cardID) },
-                        checkAgain: { overlays.checkAgain() }, saveAgain: { overlays.saveAgain() }))
+                        checkAgain: { overlays.checkAgain() }, saveAgain: { overlays.saveAgain() },
+                        startAgain: { overlays.startAgain() }, close: close))
                 }
                 OverlayThumbnail(url: remake?.previewURL, phase: phase, width: 240, height: 360, radius: 16)
                 if let remake {
@@ -426,7 +432,7 @@ private struct RemadeScreen: View {
             .frame(maxWidth: .infinity)
         } pinnedBar: {
             Button("Use this version") { overlays.useRemake(cardID) }
-                .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true))
+                .buttonStyle(KriaButtonStyle(role: remakeShowsFailure ? .ink : .primary, fullWidth: true))
                 .disabled(phase != .ready)
                 .accessibilityIdentifier("generated-media-use")
                 .kriaDisabledReason(phase == .making ? "Making your overlay…" : nil)
@@ -463,35 +469,70 @@ private struct OverlayRow: View {
     let card: OverlayCard
     let style: Style
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private var generation: OverlayGeneration? { card.generation }
+    private var stacked: Bool { dynamicTypeSize.isAccessibilitySize }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            OverlayThumbnail(url: generation?.previewURL, phase: generation?.phase, width: 80, height: 120, radius: 12)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 4) {
+        Group {
+            if stacked {
+                // Accessibility sizes: the picture, the words and the controls each get the full width,
+                // so nothing wraps inside a sliver beside the thumbnail.
+                VStack(alignment: .leading, spacing: 12) {
+                    thumbnail
                     Text("Overlay \(number)").kriaType(.button).foregroundStyle(KriaColor.ink)
-                    Spacer(minLength: 4)
-                    switch style {
-                    case .status(let stalled): StatusLabel(phase: generation?.phase ?? .making, stalled: stalled)
-                    case .actions(let edit, let redo, let remove):
-                        OverlayIconButton(symbol: "pencil", label: "Edit prompt for overlay \(number)", identifier: "overlay-edit-\(number)", action: edit)
-                        OverlayIconButton(symbol: "arrow.clockwise", label: "Redo overlay \(number)", identifier: "overlay-redo-\(number)", action: redo)
-                        OverlayIconButton(symbol: "trash", label: "Remove overlay \(number)", identifier: "overlay-remove-\(number)", action: remove)
+                    if case .status(let stalled) = style { StatusLabel(phase: generation?.phase ?? .making, stalled: stalled) }
+                    prompt
+                    if case .actions = style, let phase = generation?.phase, phase != .ready {
+                        StatusLabel(phase: phase, stalled: generation?.stalled == true)
+                    }
+                    if case .actions(let edit, let redo, let remove) = style {
+                        HStack(spacing: 8) { controls(edit: edit, redo: redo, remove: remove) }
                     }
                 }
-                .frame(minHeight: 44)
-                Text(generation?.prompt ?? card.prompt).kriaType(.body).foregroundStyle(KriaColor.ink)
-                if case .actions = style, let phase = generation?.phase, phase != .ready {
-                    StatusLabel(phase: phase, stalled: generation?.stalled == true).padding(.top, 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(alignment: .top, spacing: 12) {
+                    thumbnail
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 4) {
+                            Text("Overlay \(number)").kriaType(.button).foregroundStyle(KriaColor.ink)
+                            Spacer(minLength: 4)
+                            switch style {
+                            case .status(let stalled): StatusLabel(phase: generation?.phase ?? .making, stalled: stalled)
+                            case .actions(let edit, let redo, let remove): controls(edit: edit, redo: redo, remove: remove)
+                            }
+                        }
+                        .frame(minHeight: 44)
+                        prompt
+                        if case .actions = style, let phase = generation?.phase, phase != .ready {
+                            StatusLabel(phase: phase, stalled: generation?.stalled == true).padding(.top, 2)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(12)
         .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("overlay-row-\(number)")
+    }
+
+    private var thumbnail: some View {
+        OverlayThumbnail(url: generation?.previewURL, phase: generation?.phase, width: 80, height: 120, radius: 12)
+    }
+
+    private var prompt: some View {
+        Text(generation?.prompt ?? card.prompt).kriaType(.body).foregroundStyle(KriaColor.ink)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder private func controls(edit: @escaping () -> Void, redo: @escaping () -> Void, remove: @escaping () -> Void) -> some View {
+        OverlayIconButton(symbol: "pencil", label: "Edit prompt for overlay \(number)", identifier: "overlay-edit-\(number)", action: edit)
+        OverlayIconButton(symbol: "arrow.clockwise", label: "Redo overlay \(number)", identifier: "overlay-redo-\(number)",
+                          isEnabled: generation?.phase != .making, action: redo)
+        OverlayIconButton(symbol: "trash", label: "Remove overlay \(number)", identifier: "overlay-remove-\(number)", action: remove)
     }
 }
 
@@ -506,7 +547,6 @@ private struct StatusLabel: View {
                 KriaCheckDisc(size: 16)
                 Text("Ready").foregroundStyle(KriaColor.mutedInk)
             case .making:
-                if !stalled { KriaSpinner(size: 13) }
                 Text(stalled ? "Still working" : "Making…").foregroundStyle(KriaColor.mutedInk)
             case .failed: Text("Didn’t finish").foregroundStyle(KriaColor.failureText)
             case .unsure: Text("Not sure yet").foregroundStyle(KriaColor.mutedInk)
@@ -526,11 +566,14 @@ struct OverlayThumbnail: View {
     let width: CGFloat
     let height: CGFloat
     let radius: CGFloat
+    /// Reports whether the picture itself loaded (true) or failed (false), for screens that gate on it.
+    var onLoad: ((Bool) -> Void)?
     @State private var reload = 0
 
     var body: some View {
         ZStack {
-            KriaColor.paper
+            // White-to-fill wash (Paper S1.05): a plain fill tile would vanish on a fill card.
+            LinearGradient(colors: [KriaColor.paper, KriaColor.fillPressed], startPoint: .topLeading, endPoint: .bottomTrailing)
             content
         }
         .frame(width: width, height: height)
@@ -541,7 +584,9 @@ struct OverlayThumbnail: View {
         if let url, phase == .ready {
             AsyncImage(url: url) { result in
                 switch result {
-                case .success(let image): image.resizable().scaledToFill().frame(width: width, height: height).clipped()
+                case .success(let image):
+                    image.resizable().scaledToFill().frame(width: width, height: height).clipped()
+                        .onAppear { onLoad?(true) }
                 case .failure:
                     Button { reload += 1 } label: {
                         VStack(spacing: 4) {
@@ -552,14 +597,15 @@ struct OverlayThumbnail: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(KriaColor.failureSoft)
                     }
+                    .onAppear { onLoad?(false) }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Couldn’t show your overlay. Reload")
-                default: KriaColor.fill.overlay { KriaSpinner(size: 20) }
+                default: KriaSpinner(size: 20)
                 }
             }
             .id(reload)
         } else {
-            KriaColor.fill.overlay {
+            ZStack {
                 switch phase {
                 case .failed, .unsaved: Image(systemName: "exclamationmark").font(.system(size: 17, weight: .bold)).foregroundStyle(KriaColor.failureText)
                 case .unsure: Image(systemName: "questionmark").font(.system(size: 17, weight: .bold)).foregroundStyle(KriaColor.mutedInk)
@@ -575,6 +621,7 @@ private struct OverlayIconButton: View {
     let symbol: String
     let label: String
     let identifier: String
+    var isEnabled = true
     let action: () -> Void
 
     var body: some View {
@@ -582,12 +629,14 @@ private struct OverlayIconButton: View {
             Image(systemName: symbol).font(.system(size: 15, weight: .semibold))
         }
         .buttonStyle(OverlayIconStyle())
+        .disabled(!isEnabled)
         .accessibilityLabel(label)
         .accessibilityIdentifier(identifier)
     }
 }
 
 private struct OverlayIconStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundStyle(KriaColor.ink)
