@@ -33,13 +33,24 @@ PROXY = "users/u/analysis-proxy-clip.mp4"
 TIGHT = "Cut out all my pauses so it's tight"
 
 
-def _snapshot(text: str, *, cleanup_fact: bool = True) -> dict:
+def _snapshot(text: str, *, cleanup_fact: bool = True, tight_fact: bool | None = None) -> dict:
     req = BriefRequirement(
         id="r1",
         kind="audio",
         scope="global",
         description=text,
-        facts={"speech_cleanup": True} if cleanup_fact else {},
+        facts=(
+            {
+                "speech_cleanup": True,
+                **(
+                    {"pauses": "tight"}
+                    if (text == TIGHT if tight_fact is None else tight_fact)
+                    else {}
+                ),
+            }
+            if cleanup_fact
+            else {}
+        ),
     )
     binding = BriefBinding.create(uuid.uuid4(), CreativeBrief(version=1, requirements=[req]))
     return {
@@ -88,6 +99,12 @@ async def test_tight_ask_on_phone_talking_single_clip_is_requested_and_tight():
 @pytest.mark.asyncio
 async def test_plain_cleanup_ask_is_requested_but_not_tight():
     snapshot = _snapshot("cut the long pauses")
+    assert await routes._cleanup_ask_projection(_db(snapshot), _thread(), _item()) == (True, False)
+
+
+@pytest.mark.asyncio
+async def test_tight_words_without_the_recorded_fact_are_not_tight():
+    snapshot = _snapshot(TIGHT, tight_fact=False)
     assert await routes._cleanup_ask_projection(_db(snapshot), _thread(), _item()) == (True, False)
 
 

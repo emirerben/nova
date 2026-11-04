@@ -27,88 +27,50 @@ def _req(text: str, **facts) -> BriefRequirement:
     return BriefRequirement(id="r", kind="audio", scope="global", description=text, facts=facts)
 
 
-TIGHT = [
-    "Cut out all my pauses so it's tight",
-    "remove every pause",
-    "cut each pause, I want it snappy",
-    "remove the pauses and make it fast paced",
-    "cut the silences, no dead air",
-    "get rid of all the pauses",
-    "zero pauses please, cut them",
-    "cut no pauses, make it tighter",
-    "tüm duraklamaları kes",
-    "her boşluğu kes, sessizlikleri çıkar",
-    "hiç boşluk kalmasın, sessizlikleri kes",
-    "duraklamaları kes, hızlı tempo olsun",
-    "Tüm sessizlikleri kes",
-]
-# The cleanup gate's noun list has no "gap"/"boşluk"/"duraksama": these need the recorded
-# `speech_cleanup` fact (the model records it, KRI-667); the words then decide "every".
-TIGHT_WITH_FACT = [
-    "remove the gaps, no gaps between every sentence",
-    "bütün boşlukları kes, seri olsun",
-    "her duraksamayı çıkar",
-]
 CLEANUP_ONLY = [
     "cut the long pauses",
     "remove the ums and uhs",
-    "cut the pauses",
     "uzun duraklamaları kes",
-]
-NOT_TIGHT = [
-    "keep my pauses",
-    "don't remove the pauses, keep it tight",
-    "tight shot on my face",
-    "keep it tight on my face",
-    "tight framing please",
-    "fast cuts between clips",
-    "make the captions snappy",
-    "duraklamalar kalsın",
+    # Words never decide (KRI-667): a tight-sounding ask without the recorded fact is plain cleanup.
+    "Cut out all my pauses so it's tight",
+    "bütün boşlukları kes, sıkı olsun",
     "cut out her long pauses",
-    "remove her pauses",
-    "cut her gaps",
-    # "all her pauses": only "all/every + my/the/..." counts; "her" alone never makes it tight.
-    "remove all her pauses",
 ]
+TIGHT_FACT = {"speech_cleanup": True, "pauses": "tight"}
 
 
-@pytest.mark.parametrize("text", TIGHT)
-def test_tight_asks_are_recognised(text):
-    req = _req(text)
-    assert wants_speech_cleanup(req), text
-    assert wants_tight_pauses(req), text
+def test_recorded_tight_fact_is_tight():
+    for text in ("Cut out all my pauses so it's tight", "bütün boşlukları kes, sıkı olsun", "x"):
+        req = _req(text, **TIGHT_FACT)
+        assert wants_speech_cleanup(req)
+        assert wants_tight_pauses(req)
+    assert wants_tight_pauses(_req("x", speech_cleanup=True, pauses=" Tight "))
 
 
-@pytest.mark.parametrize("text", TIGHT_WITH_FACT)
-def test_tight_asks_with_recorded_cleanup(text):
-    req = _req(text, speech_cleanup=True)
-    assert wants_tight_pauses(req), text
+@pytest.mark.parametrize("pauses", ["long", "", None, True, 1, ["tight"], "natural"])
+def test_other_pause_facts_are_not_tight(pauses):
+    assert not wants_tight_pauses(_req("cut all my pauses", speech_cleanup=True, pauses=pauses))
+
+
+def test_keep_my_pauses_is_not_tight_even_with_the_fact():
+    assert not wants_tight_pauses(_req("keep my pauses", speech_cleanup=False, pauses="tight"))
+    assert not wants_tight_pauses(_req("keep my pauses", pauses="tight"))
+
+
+def test_tight_fact_needs_a_cleanup_ask():
+    assert not wants_tight_pauses(_req("make it feel quick", pauses="tight"))
 
 
 @pytest.mark.parametrize("text", CLEANUP_ONLY)
 def test_plain_cleanup_is_not_tight(text):
-    req = _req(text)
+    req = _req(text, speech_cleanup=True)
     assert wants_speech_cleanup(req), text
     assert not wants_tight_pauses(req), text
 
 
-@pytest.mark.parametrize("text", NOT_TIGHT)
-def test_non_asks_do_not_fire(text):
-    assert not wants_tight_pauses(_req(text)), text
-
-
-def test_recorded_fact_decides():
-    req = _req("make it feel quick", speech_cleanup=True, pauses="tight")
-    assert wants_tight_pauses(req)
-    # A recorded tight pace with no cleanup consent in the ask is not a cleanup ask.
-    assert not wants_tight_pauses(_req("make it feel quick", pauses="tight"))
-    # A recorded "no cleanup" beats words.
-    assert not wants_tight_pauses(_req("cut all my pauses", speech_cleanup=False, pauses="tight"))
-
-
 def test_brief_level_helpers():
-    plain = _req("cut the long pauses")
-    tight = _req("cut every pause")
+    plain = _req("cut the long pauses", speech_cleanup=True)
+    tight = _req("cut every pause", **TIGHT_FACT)
     brief = CreativeBrief(requirements=[plain])
     assert brief_wants_speech_cleanup(brief)
     assert not brief_tight_pauses(brief)
@@ -116,3 +78,13 @@ def test_brief_level_helpers():
     assert brief_tight_pauses(both)
     gone = tight.model_copy(update={"id": "g", "status": "superseded"})
     assert not brief_tight_pauses(CreativeBrief(requirements=[plain, gone]))
+
+
+def test_requested_in_chat_is_fact_based():
+    # The word fallback would read "no need to cut the pauses" as a cleanup ask.
+    assert not wants_speech_cleanup(_req("No need to cut the pauses"))
+    assert not brief_wants_speech_cleanup(
+        CreativeBrief(requirements=[_req("No need to cut the pauses")])
+    )
+    assert wants_speech_cleanup(_req("whatever", speech_cleanup=True))
+    assert not wants_speech_cleanup(_req("cut the pauses", speech_cleanup=False))

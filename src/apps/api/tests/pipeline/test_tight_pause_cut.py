@@ -23,6 +23,11 @@ Failure modes written down BEFORE the code (repo testing policy):
 16. (v2) A sliver next to a consented cut is left, so the pause stays over the limit.
 17. (v2) The report measures pauses with Kria's own spans instead of the acceptance
     definition (highpass 90 Hz, -38 dB, 0.12 s).
+18. (v3) Keep segments become phone-recipe clips (max 100): a capped plan plus one later
+    cut must still compile; a consented plan already at the limit gets no new cuts.
+19. (v3) A word's soft unvoiced ending INSIDE its own stamp is cut.
+20. (v3) A successful empty pause measurement is treated as a failed one (and a failed one
+    silently falls back to the -30 dB spans).
 """
 
 from __future__ import annotations
@@ -251,6 +256,7 @@ def test_cap_keeps_total_removals_within_max(tmp_path):
     plan = sc.CutPlan(keep_segments=[(0.0, dur)], removed=[], time_saved_s=0.0)
     out, report = tpc.tighten_pauses(plan, words, silences, dur, samples=samples)
     assert len(out.removed) <= sc.MAX_REMOVALS
+    assert len(out.keep_segments) <= tpc.TIGHT_MAX_KEEP_SEGMENTS
     assert report.capped is True
 
 
@@ -408,3 +414,133 @@ def test_v2_word_free_short_shot_between_two_cuts_is_given_back(tmp_path):
         touches = any(abs(r.end_s - lo) < 1e-6 or abs(r.start_s - hi) < 1e-6 for r in new)
         if touches:
             assert hi - lo >= sc.MIN_KEEP_SPEECH_SEGMENT_S - 1e-6
+
+
+def test_v3_capped_plan_still_compiles_with_a_later_cut(tmp_path):
+    from app.kria.media_sources import OriginalMediaDescriptor
+    from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
+    from app.services.phone_sources import PhoneSourceBinding
+
+    gaps = ([0.45, 0.5, 0.4, 0.9, 0.45, 0.55] * 30)[:170]
+    path, words, dur, _ = build_take(tmp_path, gaps)
+    plan = consented(path, words, dur)
+    out, report = tpc.apply_tight_pauses(plan, path, words, dur)
+    assert len(out.keep_segments) <= tpc.TIGHT_MAX_KEEP_SEGMENTS
+    longest = max(out.keep_segments, key=lambda s: s[1] - s[0])
+    extra = sc.Removal(longest[0] + 1.0, longest[0] + 1.3, "opening_cut")
+    removed = sorted([*out.removed, extra], key=lambda r: r.start_s)
+    later = replace(out, removed=removed, keep_segments=tpc._complement(removed, dur))
+    binding = PhoneSourceBinding(
+        media_id="clip-0",
+        proxy_path="user/analysis-proxy-clip-0.mp4",
+        generation="1",
+        original=OriginalMediaDescriptor(
+            sha256="a" * 64,
+            byte_count=1000,
+            duration_s=dur,
+            width=1080,
+            height=1920,
+            orientation_degrees=0,
+            has_audio=True,
+        ),
+    )
+    recipe = compile_phone_subtitled_plan((binding,), caption_cues=[], cut_plan=later)
+    video = next(t for t in recipe.tracks if t.kind == "video")
+    assert len(video.clips) == len(later.keep_segments) <= 100
+
+
+def test_v3_consented_plan_at_segment_limit_gets_no_new_cuts(tmp_path):
+    path, words, dur, samples = build_take(tmp_path, [0.5] * 125)
+    silences = _gap_silences(words)
+    removed = [sc.Removal(a + sc.PAD_S, b - sc.PAD_S, sc.REASON_SILENCE) for a, b in silences[:90]]
+    plan = sc.CutPlan(
+        keep_segments=tpc._complement(removed, dur),
+        removed=removed,
+        time_saved_s=sum(r.end_s - r.start_s for r in removed),
+    )
+    assert len(plan.keep_segments) >= tpc.TIGHT_MAX_KEEP_SEGMENTS
+    out, report = tpc.tighten_pauses(plan, words, silences, dur, samples=samples)
+    assert out is plan and report.capped is True
+
+
+def test_v3_soft_unvoiced_ending_inside_the_stamp_is_kept(tmp_path):
+    path, words, dur, samples = build_take(tmp_path, [1.0, 1.0, 1.0])
+    rng = np.random.default_rng(11)
+    samples = samples.copy()
+    true_end = words[1]["end_s"]
+    s0 = int(true_end * SR)
+    tail = rng.standard_normal(int(0.3 * SR)) * 3e-4 * 10 ** (12 / 20)
+    samples[s0 : s0 + len(tail)] += tail.astype(np.float32)
+    silences = _gap_silences(words)  # Kria calls the soft tail silence
+    words[1] = {**words[1], "end_s": true_end + 0.3}  # the stamp covers the tail
+    plan = _whole_plan(dur)
+    out, _ = tpc.tighten_pauses(plan, words, silences, dur, samples=samples)
+    assert _new_removals(plan, out)
+    for r in out.removed:
+        assert r.end_s <= true_end + 1e-6 or r.start_s >= true_end + 0.3 + sc.PAD_S - 0.01
+
+
+def test_v3_empty_measurement_is_a_measurement_and_failed_one_is_unmeasured(
+    cycle_take, monkeypatch
+):
+    path, words, dur, _, plan = cycle_take
+    monkeypatch.setattr(tpc, "measure_silence_spans", lambda *a, **k: [])
+    out, report = tpc.apply_tight_pauses(plan, path, words, dur)
+    assert report.status == "applied"
+    assert report.longest_pause_s == 0.0 and report.pauses_over_limit == 0
+    monkeypatch.setattr(tpc, "measure_silence_spans", lambda *a, **k: None)
+    out2, report2 = tpc.apply_tight_pauses(plan, path, words, dur)
+    assert report2.status == "applied" and out2.removed == out.removed
+    assert report2.longest_pause_s is None and report2.longest_pause_before_s is None
+    assert report2.pauses_over_limit is None and report2.reason == "unmeasured"
+
+
+def _noise(samples, lo_s, hi_s, rel_db, seed):
+    rng = np.random.default_rng(seed)
+    out = samples.copy()
+    a, b = int(lo_s * SR), int(hi_s * SR)
+    out[a:b] += (rng.standard_normal(b - a) * 3e-4 * 10 ** (rel_db / 20)).astype(np.float32)
+    return out
+
+
+def test_v4_stretched_stamp_far_from_core_is_cut_despite_soft_noise(tmp_path):
+    path, words, dur, samples = build_take(tmp_path, [0.3, 1.5, 0.3, 0.3])
+    silences = _gap_silences(words)
+    ts = words[2]["start_s"]
+    words[2] = {**words[2], "start_s": ts - 0.8}
+    samples = _noise(samples, ts - 0.8, ts - 0.4, 12, 21)
+    plan = _whole_plan(dur)
+    out, _ = tpc.tighten_pauses(plan, words, silences, dur, samples=samples)
+    assert any(r.start_s <= ts - 0.7 and r.end_s >= ts - 0.45 for r in _new_removals(plan, out))
+
+
+def test_v4_soft_onset_just_before_the_core_is_kept(tmp_path):
+    path, words, dur, samples = build_take(tmp_path, [0.3, 1.5, 0.3, 0.3])
+    silences = _gap_silences(words)
+    ts = words[2]["start_s"]
+    words[2] = {**words[2], "start_s": ts - 0.3}
+    samples = _noise(samples, ts - 0.15, ts, 12, 22)
+    plan = _whole_plan(dur)
+    out, _ = tpc.tighten_pauses(plan, words, silences, dur, samples=samples)
+    assert _new_removals(plan, out)
+    for r in out.removed:
+        assert r.end_s <= ts - 0.15 - sc.PAD_S + 0.01 or r.start_s >= ts - 1e-6
+
+
+def test_v5_room_tone_flicker_in_onset_zone_does_not_block_the_cut(tmp_path):
+    path, words, dur, samples = build_take(tmp_path, [0.3, 1.5, 0.3, 0.3])
+    silences = _gap_silences(words)
+    ts = words[2]["start_s"]
+    words[2] = {**words[2], "start_s": ts - 0.3}
+    rng = np.random.default_rng(31)
+    samples = samples.copy()
+    frame = int(0.02 * SR)
+    for i in range(int(0.3 / 0.02)):
+        db = rng.choice([6.0, 7.0, 8.0])
+        a = int((ts - 0.3) * SR) + i * frame
+        samples[a : a + frame] += (rng.standard_normal(frame) * 3e-4 * 10 ** (db / 20)).astype(
+            np.float32
+        )
+    plan = _whole_plan(dur)
+    out, _ = tpc.tighten_pauses(plan, words, silences, dur, samples=samples)
+    assert any(r.start_s <= ts - 0.2 and r.end_s >= ts - 0.13 for r in _new_removals(plan, out))

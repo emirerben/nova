@@ -30,6 +30,8 @@ ASK = "Cut out all my pauses so it's tight"
 
 def _req(text=ASK, **facts) -> BriefRequirement:
     facts.setdefault("speech_cleanup", True)
+    if text == ASK:
+        facts.setdefault("pauses", "tight")
     return BriefRequirement(id="tight", kind="audio", scope="global", description=text, facts=facts)
 
 
@@ -119,7 +121,7 @@ def test_unavailable_report(flag_on):
     receipt = _rendered(_req(), _report(status="unavailable", pauses_over_limit=None, reason="x"))
     assert receipt.status == "partial"
     assert receipt.reason == (
-        "I couldn't measure the quiet parts of your take, so only the long pauses were cut"
+        "I couldn't measure the quiet parts of your take, so I didn't shorten the shorter pauses"
     )
 
 
@@ -149,6 +151,11 @@ def test_not_run_keeps_todays_logic(flag_on):
     assert receipt.reason == "Speech cleanup didn't run on this video, so the long pauses stay"
 
 
+def test_tight_words_without_the_fact_are_plain_cleanup(flag_on):
+    receipt = _rendered(_req(pauses=None))
+    assert (receipt.status, receipt.reason) == ("met", None)
+
+
 def test_plain_pause_ask_untouched_by_flag(flag_on):
     receipt = _rendered(_req("cut the long pauses"))
     assert (receipt.status, receipt.reason) == ("met", None)
@@ -174,7 +181,12 @@ def test_named_cut_note_survives_tight_lead(flag_on):
 
 
 def _draft(**over) -> PlanFacts:
-    base = {"edit_format": "subtitled", "phone_talking": True, "speech_cleanup_enabled": True}
+    base = {
+        "edit_format": "subtitled",
+        "phone_talking": True,
+        "video_clip_count": 1,
+        "speech_cleanup_enabled": True,
+    }
     base.update(over)
     return PlanFacts(**base)
 
@@ -241,3 +253,68 @@ def test_turkish_dynamic_and_draft_receipts(flag_on):
     assert over.reason.startswith(brief_checks._REASON_TR[brief_checks._TIGHT_OVER_LIMIT])
     assert "0,35 sn" in over.reason and "0,6 sn" in over.reason
     assert brief_checks.is_format_limit(over.reason)
+
+
+def test_no_change_with_pauses_over_limit_is_honest(flag_on):
+    report = _report(status="no_change", pauses_over_limit=2, longest_pause_s=0.84)
+    assert _rendered(_req(), report).reason == (
+        "I couldn't safely shorten 2 pauses (the longest is 0.8 s), so they stay"
+    )
+    one = _report(status="no_change", pauses_over_limit=1, longest_pause_s=0.84)
+    assert _rendered(_req(), one).reason == (
+        "I couldn't safely shorten 1 pause (the longest is 0.8 s), so it stays"
+    )
+    with reply_language_for("tr"):
+        tr = _rendered(_req(), report)
+    assert "kısaltamadım" in tr.reason and "0,8 sn" in tr.reason
+
+
+def test_unmeasured_reason_maps_to_unmeasured_line(flag_on):
+    report = _report(
+        status="no_change", reason="unmeasured", pauses_over_limit=None, longest_pause_s=None
+    )
+    assert _rendered(_req(), report).reason == (
+        "I couldn't measure the quiet parts of your take, so I didn't shorten the shorter pauses"
+    )
+
+
+def test_multi_clip_draft_does_not_promise_tight(flag_on):
+    for count in (2, 3, None):
+        receipt = check_requirement(_req(), _draft(video_clip_count=count))
+        assert receipt.reason == (
+            "Speech cleanup cuts only the long pauses in this kind of video, so shorter pauses stay"
+        ), count
+
+
+def _cut_variant(rows, report=None):
+    v = _variant(report)
+    v["silence_cut"] = {"removed": rows}
+    return v
+
+
+def test_touching_rows_count_as_one_pause_and_say_pauses(flag_on):
+    from app.kria.brief_checks import speech_cleanup_review_note
+
+    rows = [
+        {"reason": "silence", "start_s": 1.0, "end_s": 1.8},
+        {"reason": "silence", "start_s": 1.8, "end_s": 1.9},  # sliver touching the first
+        {"reason": "silence", "start_s": 4.0, "end_s": 4.2},  # small tight cut
+        {"reason": "filler_lexical", "start_s": 6.0, "end_s": 6.2},
+    ]
+    note = speech_cleanup_review_note(_cut_variant(rows, _report(added_cuts=2)))
+    assert "2 pauses and 1 filler sound (1.3 s)" in note
+    assert "long pause" not in note
+    plain = speech_cleanup_review_note(_cut_variant(rows))
+    assert "2 long pauses and 1 filler sound" in plain
+
+
+def test_consented_rows_unchanged_by_merging():
+    from app.kria.brief_checks import speech_cleanup_review_note
+
+    rows = [
+        {"reason": "silence", "start_s": 1.0, "end_s": 1.8},
+        {"reason": "silence", "start_s": 2.0, "end_s": 2.9},
+        {"reason": "silence", "start_s": 2.9005, "end_s": 3.0},  # within 1 ms: same pause
+    ]
+    two_apart = speech_cleanup_review_note(_cut_variant(rows[:2]))
+    assert "2 long pauses (1.7 s)" in two_apart

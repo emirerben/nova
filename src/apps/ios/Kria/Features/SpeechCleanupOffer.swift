@@ -139,8 +139,8 @@ struct SpeechCleanupPreselectedChoice: View {
                 Text("Clean up speech")
                     .font(KriaFont.body(14).weight(.medium))
                 Text(stats.tightPauses
-                    ? "You asked for tight pauses, so this is on. Every pause gets cut down to about 0.3 s."
-                    : "You asked me to cut your pauses, so this is on.")
+                    ? "You asked for tight pauses, so this is on. I'll cut every pause down to about 0.3 s and tell you after if any stay longer."
+                    : "You asked me to clean up your speech, so this is on.")
                     .font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
             }
             .disabled(isDisabled)

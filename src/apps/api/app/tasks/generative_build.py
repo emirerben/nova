@@ -9502,8 +9502,8 @@ def _run_phone_subtitled_job(
                     )
                     if cut_plan is not consented_plan:
                         # The public receipt reads only these two counts: report what was cut.
-                        speech_cleanup_outcome_context["output_removal_count"] = len(
-                            cut_plan.removed
+                        speech_cleanup_outcome_context["output_removal_count"] = (
+                            _merged_removal_count(cut_plan.removed)
                         )
                         speech_cleanup_outcome_context["output_removed_ms"] = max(
                             0, int(round(cut_plan.time_saved_s * 1000))
@@ -11933,6 +11933,17 @@ def _phone_opening_cut(
         except Exception:  # noqa: BLE001 - observability only
             pass
     return cut_plan, receipts
+
+
+def _merged_removal_count(removed: Sequence[Any], *, join_s: float = 0.001) -> int:
+    """Removals counted as the creator sees them: ones touching within ``join_s`` are one cut."""
+    count = 0
+    last_end: float | None = None
+    for row in sorted(removed, key=lambda r: r.start_s):
+        if last_end is None or row.start_s > last_end + join_s:
+            count += 1
+        last_end = row.end_s if last_end is None else max(last_end, row.end_s)
+    return count
 
 
 def _phone_tight_pause_cut(

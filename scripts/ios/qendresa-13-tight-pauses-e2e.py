@@ -59,6 +59,7 @@ TAKE_FILE = "q13-take.mp4"
 WAV_FILE = "q13-take.wav"
 SILENCE_FILTER = "highpass=f=90,silencedetect=n=-38dB:d=0.12"
 CONTROL_CUT_S = 0.4
+TAIL_CONTROL_CUT_S = 0.15  # the realistic failure: a word's last 0.15 s clipped
 
 
 # --------------------------------------------------------------------------------------
@@ -234,7 +235,7 @@ def prepare(args: argparse.Namespace) -> int:
                 kind="audio",
                 scope="global",
                 description="Cut out all my pauses so it's tight",
-                facts={"speech_cleanup": True},
+                facts={"speech_cleanup": True, "pauses": "tight"},
             )
         ],
     )
@@ -349,9 +350,8 @@ def prepare(args: argparse.Namespace) -> int:
     print(
         f"  take {duration_s:.2f}s, language={language!r}, words={len(snapshot_words)}"
     )
-    print(
-        f"  consented plan: {e2e['plans']['consented']}, recipe {recipes['q13_consented'].duration:.2f}s"
-    )
+    consented_s = recipes["q13_consented"].duration
+    print(f"  consented plan: {e2e['plans']['consented']}, recipe {consented_s:.2f}s")
     print(
         f"  tight plan:     {e2e['plans']['tight']}, recipe {recipes['q13_tight'].duration:.2f}s"
     )
@@ -488,16 +488,24 @@ def _word_diff(before: list[dict], after: list[dict]) -> list[dict]:
 
 
 def _negative_control(
-    consented_wav: Path, words: list[dict], model: Path, work: Path
+    consented_wav: Path,
+    words: list[dict],
+    model: Path,
+    work: Path,
+    *,
+    tail: bool = False,
 ) -> dict:
     dur = _duration(consented_wav)
     candidates = [w for w in words if w["start_s"] > 1.0 and w["end_s"] < dur - 2.0]
     if not candidates:
         return {"caught": False, "note": "no usable word for the control"}
     pick = max(candidates, key=lambda w: w["end_s"] - w["start_s"])
-    mid = (pick["start_s"] + pick["end_s"]) / 2
-    cut_a, cut_b = mid - CONTROL_CUT_S / 2, mid + CONTROL_CUT_S / 2
-    control = work / "control.wav"
+    if tail:
+        cut_a, cut_b = pick["end_s"] - TAIL_CONTROL_CUT_S, pick["end_s"]
+    else:
+        mid = (pick["start_s"] + pick["end_s"]) / 2
+        cut_a, cut_b = mid - CONTROL_CUT_S / 2, mid + CONTROL_CUT_S / 2
+    control = work / ("control_tail.wav" if tail else "control.wav")
     _run(
         [
             "ffmpeg",
@@ -575,6 +583,10 @@ def compare(args: argparse.Namespace) -> int:
         report["control"] = _negative_control(
             consented_wav, words_by_case["q13_consented"], model, work
         )
+        # Informational only: can the word check see a clipped word tail at all?
+        report["control_tail"] = _negative_control(
+            consented_wav, words_by_case["q13_consented"], model, work, tail=True
+        )
 
     (out / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     for case_id, info in report["cases"].items():
@@ -592,8 +604,18 @@ def compare(args: argparse.Namespace) -> int:
         print(f"  {op['op']}: [{before}] -> [{after}]")
     control = report["control"]
     print(f"negative control caught: {control['caught']} ({control.get('cut_word')})")
+    tail = report["control_tail"]
+    print(
+        f"tail control (last {TAIL_CONTROL_CUT_S}s of a word) caught: {tail['caught']} "
+        f"({tail.get('cut_word')}) [informational]"
+    )
     print(f"wrote {out / 'report.json'}")
-    return 0 if control["caught"] else 3
+    if not control["caught"]:
+        return 3
+    if not report["cases"]["q13_tight"]["pauses"]["pass"]:
+        print("q13_tight FAILED the pause rule")
+        return 4
+    return 0
 
 
 def main() -> int:

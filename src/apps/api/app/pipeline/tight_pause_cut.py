@@ -56,6 +56,17 @@ SILENCE_MIN_S = 0.1  # same min_silence_s the preflight analysis uses
 TIGHT_QUIET_ABOVE_FLOOR_DB = 15.0
 # On a noisy take "silence" is ambient noise and soft speech hides in it (KRI-1017): no cuts.
 TIGHT_MAX_FLOOR_DBFS = -45.0
+# Inside a word's own stamp the loud bar is lower than elsewhere: today's cleanup never cuts
+# inside a stamp, so a soft unvoiced ending/onset (+12 dB) there stays protected. Room tone
+# flickers up to about +8 dB in 20 ms frames, so the bar sits above that.
+TIGHT_QUIET_IN_STAMP_ABOVE_FLOOR_DB = 10.0
+# ... but only next to the word's own audible core: a stamp stretched far back into a pause
+# is not a soft onset 0.7 s away from the sound.
+TIGHT_SOFT_ONSET_S = 0.2
+TIGHT_SOFT_ENDING_S = 0.3
+# Each keep segment is one clip on the phone recipe's video track (max 100). Leave headroom
+# for the named / opening / explicit cuts that come after this module.
+TIGHT_MAX_KEEP_SEGMENTS = 85
 _LOUD_WIN_S = 0.02
 _LOUD_HOP_S = 0.01
 _SLIVER_MIN_S = 0.01
@@ -143,7 +154,9 @@ def _segment_index(t: float, keep: Sequence[tuple[float, float]]) -> int | None:
     return None
 
 
-def _loud_runs(samples: np.ndarray, sr: int, floor_db: float) -> list[tuple[float, float]]:
+def _loud_runs(
+    samples: np.ndarray, sr: int, floor_db: float, above_db: float = TIGHT_QUIET_ABOVE_FLOOR_DB
+) -> list[tuple[float, float]]:
     """Spans where 20 ms RMS frames sit more than ``TIGHT_QUIET_ABOVE_FLOOR_DB`` over the floor."""
 
     win, hop = int(sr * _LOUD_WIN_S), int(sr * _LOUD_HOP_S)
@@ -153,7 +166,7 @@ def _loud_runs(samples: np.ndarray, sr: int, floor_db: float) -> list[tuple[floa
     csum = np.concatenate([[0.0], np.cumsum(x * x)])
     starts = np.arange(0, len(x) - win + 1, hop)
     level = 10.0 * np.log10((csum[starts + win] - csum[starts]) / win + 1e-12)
-    loud = level > floor_db + TIGHT_QUIET_ABOVE_FLOOR_DB
+    loud = level > floor_db + above_db
     runs: list[tuple[float, float]] = []
     first: int | None = None
     for i, flag in enumerate([*loud.tolist(), False]):
@@ -163,6 +176,20 @@ def _loud_runs(samples: np.ndarray, sr: int, floor_db: float) -> list[tuple[floa
             runs.append((starts[first] / sr, (starts[i - 1] + win) / sr))
             first = None
     return _merge(runs)
+
+
+def _soft_zones(
+    stamps: list[tuple[float, float]], silences: list[tuple[float, float]]
+) -> list[tuple[float, float]]:
+    """Strict-bar zones: a soft onset / ending beside each stamp's audible core."""
+
+    zones: list[tuple[float, float]] = []
+    for ws, we in stamps:
+        core = [p for p in _subtract(ws, we, silences) if p[1] - p[0] > _SLIVER_MIN_S]
+        if core:
+            zones.append((max(ws, core[0][0] - TIGHT_SOFT_ONSET_S), core[0][0]))
+            zones.append((core[-1][1], min(we, core[-1][1] + TIGHT_SOFT_ENDING_S)))
+    return _merge(zones)
 
 
 def _protected_spans(
@@ -349,6 +376,7 @@ def tighten_pauses(
     samples: np.ndarray | None,
     sr: int = SAMPLE_RATE,
     measure_silences: Sequence[tuple[float, float]] | None = None,
+    measurable: bool = True,
 ) -> tuple[CutPlan, TightPauseReport]:
     normalized = _normalize_words(words)
     spans = _merge([(float(a), float(b)) for a, b in silences])
@@ -364,10 +392,23 @@ def tighten_pauses(
                 "no_change", 0, 0.0, None, None, None, 0, 0, False, "noisy_take"
             )
         loud = _loud_runs(samples, sr, floor_db)
+        stamps = _soft_zones(normalized, spans)
+        in_stamp = _loud_runs(samples, sr, floor_db, TIGHT_QUIET_IN_STAMP_ABOVE_FLOOR_DB)
+        loud = _merge(
+            [
+                *loud,
+                *(
+                    (max(lo, ws), min(hi, we))
+                    for lo, hi in in_stamp
+                    for ws, we in stamps
+                    if min(hi, we) - max(lo, ws) > _EPS
+                ),
+            ]
+        )
         candidates = _candidates(kept, keep, plan.removed, spans, normalized, loud)
     else:
         candidates = []
-    before_longest, _ = kept_pause_stats(plan, words, measure, duration_s)
+    before_longest = kept_pause_stats(plan, words, measure, duration_s)[0] if measurable else None
 
     guard_dropped = guard_trimmed = 0
     new: list[Removal] = []
@@ -386,19 +427,29 @@ def tighten_pauses(
     consented = list(plan.removed)
     new = _enforce_fragments(consented, new, kept, normalized, duration_s)
     capped = False
-    if len(consented) + len(new) > MAX_REMOVALS:
+
+    def over_budget() -> bool:
+        return (
+            len(consented) + len(new) > MAX_REMOVALS
+            or len(_complement([*consented, *new], duration_s)) > TIGHT_MAX_KEEP_SEGMENTS
+        )
+
+    while new and over_budget():
         capped = True
-        room = max(0, MAX_REMOVALS - len(consented))
-        ranked = sorted(new, key=lambda r: (-(r.end_s - r.start_s), r.start_s))
-        new = sorted(ranked[:room], key=lambda r: r.start_s)
+        new.remove(min(new, key=lambda r: (r.end_s - r.start_s, -r.start_s)))
+    if capped:
         new = _enforce_fragments(consented, new, kept, normalized, duration_s)
 
     reason = None if audio_ok else "audio_unavailable"
+    if reason is None and not measurable:
+        reason = "unmeasured"
     if not new:
         status: Literal["applied", "no_change", "unavailable"] = (
             "no_change" if audio_ok else "unavailable"
         )
-        longest, over = kept_pause_stats(plan, words, measure, duration_s)
+        longest, over = (
+            kept_pause_stats(plan, words, measure, duration_s) if measurable else (None, None)
+        )
         return plan, TightPauseReport(
             status, 0, 0.0, longest, before_longest, over,
             guard_dropped, guard_trimmed, capped, reason,
@@ -411,10 +462,12 @@ def tighten_pauses(
         keep_segments=_complement(removed, duration_s),
         time_saved_s=sum(r.end_s - r.start_s for r in removed),
     )
-    longest, over = kept_pause_stats(out_plan, words, measure, duration_s)
+    longest, over = (
+        kept_pause_stats(out_plan, words, measure, duration_s) if measurable else (None, None)
+    )
     return out_plan, TightPauseReport(
         "applied", len(new), sum(r.end_s - r.start_s for r in new), longest, before_longest,
-        over, guard_dropped, guard_trimmed, capped, None,
+        over, guard_dropped, guard_trimmed, capped, reason,
     )  # fmt: skip
 
 
@@ -447,11 +500,13 @@ def apply_tight_pauses(
     if samples is None or len(samples) < int(SAMPLE_RATE * FRAME_S):
         return _unavailable(plan, "audio_unavailable")
     kria_spans = [tuple(s) for s in result.spans]
+    measured = measure_silence_spans(media_path, duration_s=duration_s)
     return tighten_pauses(
         plan,
         words,
         kria_spans,
         duration_s,
         samples=samples,
-        measure_silences=measure_silence_spans(media_path, duration_s=duration_s) or kria_spans,
+        measure_silences=measured,
+        measurable=measured is not None,
     )

@@ -5628,7 +5628,7 @@ _TIGHT_KIND_LONG_ONLY = (
 )
 _TIGHT_RENDER_LONG_ONLY = "Speech cleanup cut only the long pauses, so shorter pauses stay"
 _TIGHT_UNMEASURED = (
-    "I couldn't measure the quiet parts of your take, so only the long pauses were cut"
+    "I couldn't measure the quiet parts of your take, so I didn't shorten the shorter pauses"
 )
 _TIGHT_NOISY = "There's background sound in your take, so I only cut the long pauses"
 # Start of the measured "some pauses are still long" reason (dynamic tail, so prefix-matched).
@@ -6012,7 +6012,7 @@ _REASON_TR: dict[str, str] = {
         "Konuşma temizliği yalnızca uzun duraklamaları kesti, daha kısa duraklamalar kalıyor"
     ),
     _TIGHT_UNMEASURED: (
-        "Çekimindeki sessiz kısımları ölçemedim, o yüzden yalnızca uzun duraklamalar kesildi"
+        "Çekimindeki sessiz kısımları ölçemedim, o yüzden kısa duraklamaları kısaltmadım"
     ),
     _TIGHT_NOISY: ("Çekiminde arka plan sesi var, o yüzden yalnızca uzun duraklamaları kestim"),
     _TIGHT_OVER_LIMIT: "Konuşma temizliği duraklamaları sıkılaştırdı ama",
@@ -7086,7 +7086,8 @@ def _tight_draft_lead(facts: PlanFacts, lead: str) -> str:
     """The draft line for a tight ask: only a phone Talking edit cuts pauses down to 0.3 s."""
     if facts.speech_cleanup_enabled is not True and facts.speech_cleanup_offered is False:
         return lead  # cleanup unavailable: today's line
-    if not facts.phone_talking:
+    if not facts.phone_talking or facts.video_clip_count != 1:
+        # The render cuts a single-clip Talking take only (cutaways and inserts skip it).
         return _TIGHT_KIND_LONG_ONLY
     if facts.speech_cleanup_enabled:
         return _TIGHT_PLANNED
@@ -7102,6 +7103,8 @@ def _tight_rendered_lead(facts: PlanFacts, lead: str, status: str) -> tuple[str,
         return _loc(_TIGHT_RENDER_LONG_ONLY), "partial"
     if report.get("reason") == "noisy_take":
         return _loc(_TIGHT_NOISY), "partial"
+    if report.get("reason") == "unmeasured":
+        return _loc(_TIGHT_UNMEASURED), "partial"
     over = report.get("pauses_over_limit")
     over = over if isinstance(over, int) and not isinstance(over, bool) else None
     if report.get("status") not in ("applied", "no_change") or over is None:
@@ -7109,6 +7112,16 @@ def _tight_rendered_lead(facts: PlanFacts, lead: str, status: str) -> tuple[str,
     if over <= 0:
         return _loc(lead), status
     longest = report.get("longest_pause_s")
+    if report.get("status") == "no_change":
+        # Nothing was shortened, so never "cut your pauses tight".
+        en = f"I couldn't safely shorten {over} " + ("pauses" if over != 1 else "pause")
+        tr = f"{over} duraklamayı güvenle kısaltamadım"
+        if isinstance(longest, int | float) and not isinstance(longest, bool):
+            en += f" (the longest is {_round_s(longest)} s)"
+            tr += f" (en uzunu {_round_s(longest).replace('.', ',')} sn)"
+        en += ", so they stay" if over != 1 else ", so it stays"
+        tr += ", o yüzden kalıyorlar" if over != 1 else ", o yüzden kalıyor"
+        return say(en=en, tr=tr), "partial"
     raw_limit = report.get("limit_s")
     limit = f"{float(raw_limit):g}" if isinstance(raw_limit, int | float) else "0.35"
     en = f"{_TIGHT_OVER_LIMIT} " + (
@@ -7237,6 +7250,32 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
     return _receipt(req, status, "; ".join(notes))
 
 
+def _merge_touching_silences(rows: list[Any]) -> list[Any]:
+    """One pause cut as two rows (a tight cut's sliver touching a consented row) is one pause.
+
+    Merges ``silence`` rows whose gap is <= 1 ms; consented plans never hold touching rows, so
+    their count is unchanged. Rows without numeric bounds pass through as they are.
+    """
+
+    def span(row: Any) -> tuple[float, float] | None:
+        if not isinstance(row, Mapping) or row.get("reason") != "silence":
+            return None
+        start, end = row.get("start_s"), row.get("end_s")
+        if all(isinstance(v, int | float) and not isinstance(v, bool) for v in (start, end)):
+            return float(start), float(end)
+        return None
+
+    others = [row for row in rows if span(row) is None]
+    spans = sorted(sp for row in rows if (sp := span(row)) is not None)
+    merged: list[list[float]] = []
+    for start, end in spans:
+        if merged and start - merged[-1][1] <= 0.001:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return others + [{"reason": "silence", "start_s": start, "end_s": end} for start, end in merged]
+
+
 def _cleanup_counts(variant: Mapping[str, Any]) -> tuple[int, int, int, float | None] | None:
     """Pauses, filler sounds and retakes a variant's cut record removed, and their length.
 
@@ -7252,7 +7291,7 @@ def _cleanup_counts(variant: Mapping[str, Any]) -> tuple[int, int, int, float | 
         return None
     pauses = fillers = retakes = 0
     seconds = 0.0
-    for row in rows:
+    for row in _merge_touching_silences(rows):
         reason = row.get("reason") if isinstance(row, Mapping) else None
         if reason == "silence":
             pauses += 1
@@ -7304,8 +7343,15 @@ def speech_cleanup_review_note(
         pauses, fillers, retakes, seconds = counts
         parts_en: list[str] = []
         parts_tr: list[str] = []
+        tight = variant.get("tight_pauses")
+        added = tight.get("added_cuts") if isinstance(tight, Mapping) else None
+        if isinstance(added, int) and not isinstance(added, bool) and added > 0:
+            # Qendresa 13: tight cuts added short pauses, so none of them is a "long" pause.
+            pause_one, pause_many, pause_tr = "pause", "pauses", "duraklama"
+        else:
+            pause_one, pause_many, pause_tr = "long pause", "long pauses", "uzun duraklama"
         for count, one, many, tr in (
-            (pauses, "long pause", "long pauses", "uzun duraklama"),
+            (pauses, pause_one, pause_many, pause_tr),
             (fillers, "filler sound", "filler sounds", "dolgu sesi"),
             (retakes, "restarted sentence", "restarted sentences", "baştan başlanan cümle"),
         ):

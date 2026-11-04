@@ -36,11 +36,16 @@ PLAIN_ASK = "cut the long pauses"
 KEEP_ASK = "keep my pauses"
 
 
+def _facts(text: str) -> dict:
+    """What the model records (KRI-667): a tight ask carries ``pauses: "tight"``."""
+    return {"speech_cleanup": True, **({"pauses": "tight"} if text == TIGHT_ASK else {})}
+
+
 def _snapshot(text: str | None) -> dict:
     if text is None:
         return {}
     req = BriefRequirement(
-        id="r1", kind="audio", scope="global", description=text, facts={"speech_cleanup": True}
+        id="r1", kind="audio", scope="global", description=text, facts=_facts(text)
     )
     brief = CreativeBrief(version=1, requirements=[req])
     binding = BriefBinding.create(uuid.uuid4(), brief)
@@ -122,7 +127,7 @@ def test_a_failing_cutter_keeps_the_consented_plan_and_reports_unavailable(monke
 
 def _cleanup_req(text: str) -> BriefRequirement:
     return BriefRequirement(
-        id="r1", kind="audio", scope="global", description=text, facts={"speech_cleanup": True}
+        id="r1", kind="audio", scope="global", description=text, facts=_facts(text)
     )
 
 
@@ -204,3 +209,12 @@ def test_worker_with_flag_off_writes_no_receipt_and_never_calls_the_cutter(monke
 
     assert "tight_pauses" not in variant
     assert variant["_speech_cleanup_outcome_context"]["output_removal_count"] == 2
+
+
+def test_touching_removals_count_as_one_cut():
+    r = sc.Removal
+    assert gb._merged_removal_count([]) == 0
+    assert gb._merged_removal_count([r(1.0, 1.5, "a"), r(1.5, 1.7, "b")]) == 1
+    assert gb._merged_removal_count([r(1.0, 1.5, "a"), r(1.5005, 1.7, "b")]) == 1
+    assert gb._merged_removal_count([r(1.0, 1.5, "a"), r(1.6, 1.7, "b")]) == 2
+    assert gb._merged_removal_count([r(3.0, 3.2, "b"), r(1.0, 4.0, "a")]) == 1
