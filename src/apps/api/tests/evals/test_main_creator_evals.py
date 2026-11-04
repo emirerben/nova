@@ -114,6 +114,15 @@ def test_main_creator_eval(
         assert not any(fact.get("display_mode") for fact in facts if "insert_clip" in fact)
         assert not any(fact.get("clip_sound") == "on" for fact in facts)
 
+    restart = fixture.meta.get("restart_brief")
+    if restart:
+        # KRI-1189: an unquoted restart ask is `cut_restarts`, and `cut_lines` hold only the
+        # creator's words (Green 3 copied the take's transcript there). Replay = the golden.
+        from .runners.restart_brief import restart_brief_failures
+
+        assert result.output is not None
+        assert not restart_brief_failures(result.output.get("brief_updates") or [], restart)
+
     copy_meta = fixture.meta.get("creative_copy_decision")
     if copy_meta:
         assert result.output is not None

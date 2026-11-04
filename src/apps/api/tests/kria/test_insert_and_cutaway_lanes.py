@@ -75,11 +75,13 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # requirement fact (KRI-1161 honesty); removing that one sentence reproduces the values above.
 # Re-pinned for KRI-1177 / KRI-1164 (caption look facts, `audio_intent: no_music`) and KRI-1173
 # (one `background_color` clause); removing those passages reproduces the values above.
+# Re-pinned for KRI-1189 (creator v119): the brief section's cleanup sentence teaches
+# `cut_restarts`; restoring v118's sentence reproduces 1eec0bfc / 6b81466c / 483dac4e / efb5da5d.
 MAIN_PROMPT_SHA = {
-    "neither": "1eec0bfcffd3f13afb269819404a3e578e845a21695861a6164641303b6fecae",
-    (True, True): "6b81466c27091dfe1e1dfcccb9ebe8f9cc3719ff1524bb60a0276c86d75316f5",
-    (True, False): "483dac4e1d5f2b8258360db94ad6812edc275a80214cb0b61f778b4f2c67b62b",
-    (False, True): "efb5da5d0301957886a5b1e3734b5bd94bf395e67519d31145263028442c7e3f",
+    "neither": "e632c3123ed1938eea58d6492ce058fa5d3a94bc7647ba491c64a4a0834116bf",
+    (True, True): "cd66c5b586d77b8b3120a719dff7127f7ca665cdcccc53cbeecce4bdea9e4cca",
+    (True, False): "09c8a8cc93e0eb0a9a864a4ec516901addada16df89fe95d2e3009f4452e5d57",
+    (False, True): "e86242d53d0dcd3a46e0e38292099b5d93ae20756171768ed36d2533ca5dbb05",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (

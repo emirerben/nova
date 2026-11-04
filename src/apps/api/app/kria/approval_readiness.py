@@ -24,6 +24,7 @@ from app.kria.brief_checks import (
     _CLEANUP_IF_OFFERED,
     _CLEANUP_PLANNED,
     _NAMED_CUT_AT_RENDER,
+    _RESTART_CUT_AT_APPROVAL,
     _has_checker,
     _loc,
     _wants_cleanup,
@@ -131,7 +132,9 @@ def _cleanup_deferred(req: BriefRequirement, receipt: RequirementReceipt) -> boo
     choice (its facts never say, so its lead is always the "if offered" one); the draft reply's
     receipt can, and says when it does not (`_CLEANUP_UNAVAILABLE`). Anything else in the reason
     keeps the hold: cleanup unavailable, a named line that "may still be in your video", a
-    length the take cannot reach.
+    restarted sentence that stays in because retake detection is off, a length the take cannot
+    reach. With detection on, "also cuts a sentence you restarted if it finds one" (KRI-1189) is
+    the render's to do, like a named line.
     """
     if receipt.status != "partial" or not receipt.reason or not _wants_cleanup(req):
         return False
@@ -142,6 +145,8 @@ def _cleanup_deferred(req: BriefRequirement, receipt: RequirementReceipt) -> boo
             _CLEANUP_AT_APPROVAL,
             _CLEANUP_IF_OFFERED,
             _NAMED_CUT_AT_RENDER,
+            # KRI-1189: a restart nobody named, cut by cleanup's retake detection if it finds one.
+            _RESTART_CUT_AT_APPROVAL,
         )
     }
     return all(part in deferred for part in receipt.reason.split("; "))

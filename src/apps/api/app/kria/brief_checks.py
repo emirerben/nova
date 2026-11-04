@@ -567,6 +567,13 @@ class PlanFacts:
     # "no_change" (it ran and found nothing to cut), "not_run" (the render kept the whole
     # take). None = unknown or a draft.
     speech_cleanup_outcome: str | None = None
+    # KRI-1189: restarted sentences that cleanup's cut record holds (``retake`` rows) on a
+    # rendered variant where cleanup ran; None = unknown or a draft.
+    speech_cleanup_retakes: int | None = None
+    # KRI-1189: whether this render's cleanup could have cut a restarted sentence, read off the
+    # job's cleanup contract the way the finished-render note reads it
+    # (`kria_runtime._cleanup_note_retake_cut_possible`). None = not given: the live levers decide.
+    speech_cleanup_retake_possible: bool | None = None
     # KRI-??? Explicit source phrase removals.  Empty means the finished variant recorded no
     # receipt; that absence is never evidence a phrase was removed.
     explicit_speech_cuts: tuple[ExplicitSpeechCutFact, ...] = ()
@@ -2687,6 +2694,8 @@ def _rendered_speech_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
     if outcome in ("applied", "no_change"):
         facts["speech_cleanup_enabled"] = True
         facts["speech_cleanup_outcome"] = outcome
+        counts = _cleanup_counts(variant)
+        facts["speech_cleanup_retakes"] = counts[2] if counts else 0
     elif outcome is None and device:
         facts["speech_cleanup_enabled"] = False
         facts["speech_cleanup_outcome"] = "not_run"
@@ -4224,6 +4233,9 @@ def _cleanup_wording(req: BriefRequirement) -> bool:
     stated = _fact_flag(req, "speech_cleanup")
     if stated is not None:
         return stated
+    if _wants_restart_cut(req):
+        # KRI-1189: a recorded restart cut is a cleanup ask even if `speech_cleanup` was left out.
+        return True
     text = _req_text(req)
     if _KEEP_PAUSES_RE.search(text) or not _CLEANUP_VERB_RE.search(text):
         return False
@@ -5288,17 +5300,35 @@ def _single_quotes_as_double(text: str) -> str:
     )
 
 
+def _wants_restart_cut(req: BriefRequirement) -> bool:
+    """KRI-1189: the ask cuts a sentence the creator restarted without saying which one.
+
+    The model that read the message records it as ``facts["cut_restarts"]`` ("the sentence I
+    restarted", "my retakes", "tekrar aldığım cümle"); a restart the creator quotes or names is a
+    ``cut_lines`` entry instead. Only consented cleanup's retake detection can cut one.
+    """
+    return _fact_flag(req, "cut_restarts") is True
+
+
 def _wants_named_cuts(req: BriefRequirement) -> bool:
     """The ask names a stretch of speech to remove, not just pauses and sounds.
 
     KRI-792: the model records each such stretch in ``facts["cut_lines"]``; a recorded line
     decides. The fact only ever adds a named cut: without it the words still decide, since a
     missed named cut is a "Done" for a cut that never happens.
+    KRI-1189: with ``cut_restarts`` recorded, the restart is not a named stretch: only a line
+    the ask itself says (the render's own test, `named_cut_asks`) or quotes still is. A
+    ``cut_lines`` entry copied from the take (Green 3 r2) is one the render drops.
     """
-    if _cut_lines(req):
+    restart = _wants_restart_cut(req)
+    if restart:
+        from app.kria.opening_cut_ask import named_cut_asks  # noqa: PLC0415
+
+        if named_cut_asks([req]):
+            return True
+    elif _cut_lines(req):
         return True
-    text = _req_text(req)
-    if _NAMED_CUT_RE.search(text):
+    elif _NAMED_CUT_RE.search(_req_text(req)):
         return True
     # A quoted line is a spoken stretch; a quoted "um" is a filler sound.
     return any(
@@ -5585,6 +5615,18 @@ _NAMED_CUT_STILL_IN = "Still in your video"
 # KRI-821: a phone Talking draft cuts each named line the render finds said once.
 _NAMED_CUT_AT_RENDER = (
     "I'll cut the line you named out of your take if I find it said once, and tell you after"
+)
+# KRI-1189: "the sentence I restarted" with no line named (`_wants_restart_cut`). Consented
+# cleanup cuts one only while retake detection is on (`speech_cleanup_retakes_enabled`).
+_RESTART_STAYS = (
+    "Clean up speech looks only for pauses and filler sounds, so a sentence you restarted stays in"
+)
+_RESTART_CUT_AT_APPROVAL = (
+    "Clean up speech also cuts a sentence you restarted if it finds one, and I'll tell you after"
+)
+# KRI-1189: a finished render whose cleanup could detect restarts and cut none.
+_RESTART_NOT_FOUND = (
+    "Speech cleanup didn't find a sentence you restarted, so it may still be in your video"
 )
 # Neutral: the speaker may be someone the creator filmed (KRI-1008).
 _CAPTIONS_WORD_BY_WORD = "words light up as they're spoken"
@@ -5911,6 +5953,17 @@ _REASON_TR: dict[str, str] = {
     _NAMED_CUT_AT_RENDER: (
         "Söylediğin cümleyi çekiminde bir kez geçiyorsa keseceğim ve sonra sana söyleyeceğim"
     ),
+    _RESTART_STAYS: (
+        "“Konuşmayı temizle” yalnızca duraklamaları ve dolgu seslerini arar, "
+        "o yüzden baştan başladığın bir cümle videoda kalır"
+    ),
+    _RESTART_CUT_AT_APPROVAL: (
+        "“Konuşmayı temizle” baştan başladığın bir cümle bulursa onu da keser "
+        "ve sonra sana söylerim"
+    ),
+    _RESTART_NOT_FOUND: (
+        "Konuşma temizliği baştan başladığın bir cümle bulmadı, o yüzden videoda kalmış olabilir"
+    ),
     _NAMED_CUTS_STAY: (
         "belirli bir cümleyi henüz tam olarak kesemiyorum ve çıkarıldığını doğrulayamıyorum, "
         "o yüzden videoda kalmış olabilir"
@@ -6075,6 +6128,9 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _CLEANUP_NOT_RUN,
     _NAMED_CUT_STILL_IN,
     _NAMED_CUT_AT_RENDER,
+    _RESTART_STAYS,
+    _RESTART_CUT_AT_APPROVAL,
+    _RESTART_NOT_FOUND,
     _BED_STILL_PLAYS,
     _NO_CLIP_SPEED,
     _NO_CLIP_SPEED_SONG,
@@ -6992,15 +7048,36 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         else:
             notes.append(_loc(_NAMED_CUTS_STAY))
             status = "partial"
+    if _wants_restart_cut(req) and facts.speech_cleanup_offered is not False:
+        # KRI-1189: only cleanup's own retake detection can cut a restart nobody named, and only
+        # once the render finds one, so never "Done" before it.
+        notes.append(_loc(_RESTART_CUT_AT_APPROVAL if _retake_detection_on() else _RESTART_STAYS))
+        status = "partial"
     cleanup = _receipt(req, status, "; ".join(notes) if status == "partial" else None)
     return _merge_cleanup_timing(req, facts, cleanup)
+
+
+def _retake_detection_on(facts: PlanFacts | None = None) -> bool:
+    """KRI-1189: whether speech cleanup looks for restarted sentences.
+
+    A finished render says so itself (``speech_cleanup_retake_possible``, off its job's cleanup
+    contract); a draft is approved into consented cleanup, which needs both levers.
+    """
+    if facts is not None and facts.speech_cleanup_retake_possible is not None:
+        return facts.speech_cleanup_retake_possible
+    from app.services.plan_item_media import speech_cleanup_retakes_enabled  # noqa: PLC0415
+
+    return speech_cleanup_retakes_enabled()
 
 
 def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """KRI-541: the cleanup ask against what a finished render's speech cleanup did."""
     outcome = facts.speech_cleanup_outcome
     named = _named_cut_notes(req, facts) if _wants_named_cuts(req) else None
-    if named is not None and not _CLEANUP_NOUN_RE.search(_req_text(req)):
+    restart = _wants_restart_cut(req)
+    # KRI-1189: cleanup's cut record holds the restart it found (a `retake` row).
+    restart_cut = outcome == "applied" and (facts.speech_cleanup_retakes or 0) > 0
+    if named is not None and not restart and not _CLEANUP_NOUN_RE.search(_req_text(req)):
         # KRI-821: an ask that only names lines to cut is answered by the render's own
         # per-line receipts, whatever speech cleanup did (it never cuts a named line).
         return _receipt(req, "met" if named[1] else "partial", "; ".join(named[0]))
@@ -7011,7 +7088,7 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
     elif outcome == "not_run":
         lead, status = _CLEANUP_NOT_RUN, "partial"
     else:
-        if named is not None:
+        if named is not None and not restart:
             # KRI-821: cleanup off (no cleanup record), but the named lines were cut on their own.
             return _receipt(req, "met" if named[1] else "partial", "; ".join(named[0]))
         return _receipt(req, "partial", _CANT_CHECK_CLEANUP)
@@ -7022,12 +7099,16 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
             notes.extend(named[0])
             if not named[1]:
                 status = "partial"
-            elif outcome == "applied":
+            elif outcome == "applied" and (restart_cut or not restart):
                 return _receipt(req, "met", "; ".join(named[0]))
         else:
             # The generic cut record cannot prove that this requested line was the removed span.
             notes.append(_loc(_NAMED_CUTS_STAY))
             status = "partial"
+    if restart and not restart_cut and outcome != "not_run":
+        # "Didn't run" already says the restart stays; otherwise say whether cleanup looked.
+        notes.append(_loc(_RESTART_NOT_FOUND if _retake_detection_on(facts) else _RESTART_STAYS))
+        status = "partial"
     if status == "met" and outcome == "applied":
         return _receipt(req, "met", None)
     return _receipt(req, status, "; ".join(notes))
@@ -7125,7 +7206,12 @@ def speech_cleanup_review_note(
                 ),
             )
         ]
-    if not retakes and not retake_cut_possible and _loc(_NAMED_CUTS_STAY) not in text:
+    if (
+        not retakes
+        and not retake_cut_possible
+        and _loc(_NAMED_CUTS_STAY) not in text
+        and _loc(_RESTART_STAYS) not in text
+    ):
         sentences.append(
             say(
                 # KRI-970: what it looks for, never a promise of what it cut. Its filler

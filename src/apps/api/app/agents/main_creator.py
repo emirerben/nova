@@ -220,12 +220,18 @@ log = structlog.get_logger()
 # shared brief section records the creator's caption look (`caption_size`, `caption_position`,
 # `caption_color`, `caption_case`) and "no music" as `audio_intent: no_music`; the speaker's own
 # corner is never a caption position. On top of v114.
+# v117 (KRI-1189, Green 3; v115 is #2088's): the shared brief section records an unquoted "cut the
+# sentence I restarted" / "my retakes" / "tekrar aldığım cümle" as `cut_restarts: true` and never
+# copies the take's words into `cut_lines` (Green 3 r2 did); a named restart stays a cut line and
+# "start over" about the edit or a clip is no restart. On top of v116.
 # v118 (KRI-1173; v117 is held by #2092): a plain colour behind the speaker, on top of v116.
 # `background_media` takes `color` ("#RRGGBB") instead of `media_id`, taught in one extra
 # paragraph only where the manifest advertises `speaker_background_color`; the shared brief
 # section records `background_color` beside `speaker_background` (brief_extractor v53 shares
 # it). Every other creator prompt is byte-identical.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-03-v118"
+# v119 (KRI-1189 lands after #2088): v117's `cut_restarts` teaching on top of v118. The
+# KRI-1189 replay fixtures keep the `2026-11-03-v117` label they were recorded under.
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-04-v119"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -1031,9 +1037,16 @@ Merope" => a text requirement, literal "MEROPE", facts {"triggers": ["Merope"], 
 the creator says neither; two photos shown differently in one message => ONE requirement per
 photo, each with its own display_mode; keep a take whole, uncut =>
 {"keep_whole_take": true}; end on a
-particular shot, photo or badge => {"closing": "<the creator's words for it>"}; remove pauses,
-filler sounds or retakes from the speech => {"speech_cleanup": true}, keep them =>
-{"speech_cleanup": false}; cut out particular spoken words (a slip, a half question, a line, "the
+particular shot, photo or badge => {"closing": "<the creator's words for it>"}; remove pauses or
+filler sounds from the speech => {"speech_cleanup": true}, keep them => {"speech_cleanup": false};
+remove a sentence they restarted, their retakes or false starts without quoting or naming which
+one ("the sentence I restarted", "the places I restarted", "my retakes", "yanlış başladığım
+cümleleri", "tekrar aldığım cümleyi") => {"speech_cleanup": true, "cut_restarts": true} and no
+`cut_lines` for it: never copy words from the take or its transcript into `cut_lines`, which hold
+only the creator's own words. A restart they quote or name ("the part where I restart the
+kilometer thirty sentence") is a cut line, not `cut_restarts`; "start over" about the edit or a
+clip ("start over with a clip", "make it again from scratch", "videoyu baştan yap") is no restart;
+cut out particular spoken words (a slip, a half question, a line, "the
 part where I say ...") => {"speech_cleanup": true, "cut_lines": ["with bread, no,"]}, one item per
 stretch in the creator's exact words, quoted or described, never translated; when they say
 which time a repeated line to cut ("cut the FIRST take of 'welcome to my channel'", "the last

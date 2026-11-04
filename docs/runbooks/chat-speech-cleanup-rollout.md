@@ -39,11 +39,15 @@ setting the flag:
    Pass = every negative (real takes with no restart) returns no span, and
    `test_positive_fixtures_cut_only_the_abandoned_take` passes on Green 3 and N3: no span
    touches a kept word. Any failure blocks the flag.
-2. Land KRI-1189 (the `cut_restarts` brief fact; child of KRI-1174, related to KRI-1176) first. Until
-   then a real retake cut leaves "Cut the sentence I restarted" at "Partly ... may still be in
-   your video" while the finished-render note says what was cut. Its new "also cuts a sentence
-   you restarted" receipt must also be in `approval_readiness._cleanup_deferred` (KRI-1178), so
-   it never holds a draft.
+   **Run 2026-11-03 (`retake-precision-2026-11-03-r5`): PASS.** 8/8 restart-free real takes
+   returned no span in both calls each; Green 3 cut only words 44..53, N3 only 28..31. 28 calls,
+   $0.047 actual. One sample per take: rerun after any change to `prompts/retake_detector.txt`.
+2. Land KRI-1189 (the `cut_restarts` brief fact; child of KRI-1174, related to KRI-1176) first. The
+   brief model records an unquoted restart ask as `cut_restarts: true` (Main Creator v119, brief
+   extractor v54) and receipts key on it: before render "Clean up speech also cuts a sentence you
+   restarted if it finds one" (detection on, approvable via `_cleanup_deferred`) or "... stays in"
+   (off, held); after render a `retake` row is "Done", none is "didn't find" (on) or "stays in"
+   (off). Briefs written before it carry no fact and keep "may still be in your video".
 3. `fly secrets set SPEECH_CLEANUP_RETAKES_ENABLED=true --app nova-video` and restart api and
    worker (every ready analysis is retired once and consent is asked again), then the canary
    above on an iPhone: the Green 3 take (`IMG_7231.MOV`) as the retake-positive source and one
