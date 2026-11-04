@@ -1,0 +1,55 @@
+{
+  "id": "b14_two_changes_one_card",
+  "why_bad": "one mute card spanning two clips",
+  "expect": "fail",
+  "expect_failures": [
+    "arity"
+  ],
+  "input": {
+    "state": "ready",
+    "language": "en",
+    "creator_request": "",
+    "issued": [
+      {
+        "kind": "mute_clip",
+        "targets": [
+          {
+            "id": "c3",
+            "evidence": [
+              "e1"
+            ]
+          },
+          {
+            "id": "c5",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e1": {
+        "signal": "audio_quality",
+        "fact": "wind rumble in clips 3 and 5"
+      }
+    },
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": []
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "mute_clip",
+        "target_ids": [
+          "c3",
+          "c5"
+        ],
+        "why": "Wind noise in clips 3 and 5",
+        "copy": null,
+        "rank": 1
+      }
+    ]
+  }
+}

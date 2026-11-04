@@ -1,0 +1,96 @@
+{
+  "id": "g03_en_first_prompt_hook_grounded",
+  "description": "default_edit first, hook copy grounded in the opening visual, not the transcript.",
+  "expect": "pass",
+  "input": {
+    "state": "first_prompt",
+    "language": "en",
+    "creator_request": "",
+    "issued": [
+      {
+        "kind": "default_edit",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e0"
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "captions",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "hook",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e2"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e0": {
+        "signal": "media",
+        "fact": "5 clips uploaded"
+      },
+      "e1": {
+        "signal": "speech",
+        "fact": "creator talks to camera in clip 1"
+      },
+      "e2": {
+        "signal": "visual",
+        "fact": "opening clip shows hands pouring matcha into a bowl"
+      }
+    },
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": [
+      "Matcha Monday",
+      "okay so today I am showing you my matcha routine"
+    ]
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "default_edit",
+        "target_ids": [
+          "all"
+        ],
+        "why": "5 clips, ready to cut",
+        "copy": null,
+        "rank": 1
+      },
+      {
+        "kind": "hook",
+        "target_ids": [
+          "all"
+        ],
+        "why": "Opening shows matcha being poured",
+        "copy": "Matcha, poured slow",
+        "rank": 2
+      },
+      {
+        "kind": "captions",
+        "target_ids": [
+          "all"
+        ],
+        "why": "Speech to camera in clip 1",
+        "copy": null,
+        "rank": 3
+      }
+    ]
+  }
+}

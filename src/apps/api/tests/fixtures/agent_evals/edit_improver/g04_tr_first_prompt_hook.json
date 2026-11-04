@@ -1,0 +1,48 @@
+{
+  "id": "g04_tr_first_prompt_hook",
+  "description": "Turkish hook copy: concrete subject and action, no transcript words reused.",
+  "expect": "pass",
+  "input": {
+    "state": "first_prompt",
+    "language": "tr",
+    "creator_request": "",
+    "issued": [
+      {
+        "kind": "hook",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e1": {
+        "signal": "visual",
+        "fact": "elleri börek hamurunu açıyor"
+      }
+    },
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": [
+      "bugün size börek yapacağım",
+      "Börek Günü"
+    ]
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "hook",
+        "target_ids": [
+          "all"
+        ],
+        "why": "Açılışta hamur açan eller var",
+        "copy": "Hamuru açan eller",
+        "rank": 1
+      }
+    ]
+  }
+}
