@@ -137,6 +137,8 @@ import UIKit
         captureQueue.async { [weak self] in self?.wantsCinematic = requested }
     }
 
+    static let cinematicFallbackNote = "Cinematic couldn’t start on this camera, so you’re recording in standard mode."
+
     /// Reads whether the graph really records Cinematic, after it was built or changed.
     private nonisolated func publishCinematicState() {
         var active = false
@@ -145,7 +147,7 @@ import UIKit
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.cinematicActive = active
-            self.cinematicNote = fellBack ? "Cinematic couldn’t start on this camera, so you’re recording in standard mode." : nil
+            self.cinematicNote = fellBack ? Self.cinematicFallbackNote : nil
         }
     }
 
@@ -166,14 +168,21 @@ import UIKit
         stopReason = nil
         finalizedURL = nil
 
-        if Self.usesUnavailableUITestFixture {
-            fail(message: "The camera is unavailable in this test environment. Use a physical iPhone to record.")
+        if let refusal = Self.unavailableUITestFixture {
+            fail(message: refusal.message, kind: refusal.kind)
             return
         }
 
         #if DEBUG
         // UI-test/screenshot fixture: the simulator has no camera, so show the ready controls over a dark preview.
-        if Self.usesReadyUITestFixture { phase = .ready; return }
+        if Self.usesReadyUITestFixture {
+            phase = .ready
+            if let cinematic = Self.cinematicUITestFixture {
+                cinematicActive = cinematic == .on && cinematicRequested
+                cinematicNote = cinematic == .fallback && cinematicRequested ? Self.cinematicFallbackNote : nil
+            }
+            return
+        }
         #endif
 
         guard await requestPermissionsIfNeeded(generation: generation) else { return }
@@ -661,11 +670,35 @@ import UIKit
     }
     #endif
 
-    private static var usesUnavailableUITestFixture: Bool {
+    /// UI-test fixture: the camera refuses, as a creator who turned access off (or a managed iPhone) sees it.
+    /// `1` is the unavailable-hardware card; `camera_access`, `microphone_access` and `restricted` are the privacy ones.
+    private static var unavailableUITestFixture: (kind: ErrorKind, message: String)? {
         let process = ProcessInfo.processInfo
-        return process.arguments.contains("-ui-testing-chat")
-            && process.environment["KRIA_TELEPROMPTER_CAMERA_UNAVAILABLE"] == "1"
+        guard process.arguments.contains("-ui-testing-chat"),
+              let value = process.environment["KRIA_TELEPROMPTER_CAMERA_UNAVAILABLE"] else { return nil }
+        switch value {
+        case "camera_access": return (.cameraAccess, "Turn it on in Settings to record here, or upload a video you already have.")
+        case "microphone_access": return (.microphoneAccess, "Turn it on in Settings to record with sound, or upload a video.")
+        case "restricted": return (.restricted, "Camera or microphone access is restricted on this iPhone. Upload a video instead.")
+        case "1": return (.other, "The camera is unavailable in this test environment. Use a physical iPhone to record.")
+        default: return nil
+        }
     }
+
+    #if DEBUG
+    enum CinematicFixture { case on, fallback }
+    /// Simulators have no Cinematic camera: `on` shows a graph that records Cinematic, `fallback` one that fell back.
+    /// Either makes the Cinematic capsule available. Only with the ready fixture.
+    static var cinematicUITestFixture: CinematicFixture? {
+        let process = ProcessInfo.processInfo
+        guard process.arguments.contains("-ui-testing-chat") else { return nil }
+        switch process.environment["KRIA_TELEPROMPTER_CINEMATIC_FIXTURE"] {
+        case "on": return .on
+        case "fallback": return .fallback
+        default: return nil
+        }
+    }
+    #endif
 }
 
 extension TeleprompterCamera: AVCaptureFileOutputRecordingDelegate {

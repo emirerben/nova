@@ -57,6 +57,28 @@ struct KriaCaptureButton: View {
     }
 }
 
+/// 44pt white-20% disc with a white close mark, 16pt in from the edge (Paper S3.08). The paper glass close button
+/// is ink on white, which reads grey over a camera preview.
+struct KriaCameraCloseButton: View {
+    var identifier = "teleprompter-close"
+    var label = "Close"
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            KriaCloseMark()
+                .stroke(Color.white, style: StrokeStyle(lineWidth: 1.9, lineCap: .round))
+                .frame(width: 10, height: 10)
+                .frame(width: 44, height: 44)
+                .kriaCameraGlass(Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
 /// 44pt glass icon (flip camera).
 struct KriaCameraIconButton: View {
     let symbol: String
@@ -84,7 +106,6 @@ struct KriaCameraCapsule: View {
     var identifier: String?
     /// The control is switched on: ink on white, the camera's version of the selected state.
     var isOn = false
-    var hidesTitle = false
     var action: (() -> Void)?
 
     var body: some View {
@@ -101,10 +122,10 @@ struct KriaCameraCapsule: View {
     private var label: some View {
         HStack(spacing: 8) {
             if let symbol { Image(systemName: symbol).font(.system(size: 15, weight: .regular)) }
-            if !hidesTitle { Text(title).kriaType(.button).lineLimit(1) }
+            Text(title).kriaType(.button).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
         }
         .foregroundStyle(isOn ? KriaColor.ink : Color.white)
-        .padding(.horizontal, 16).frame(minHeight: 44)
+        .padding(.horizontal, 16).padding(.vertical, 6).frame(minHeight: 44)
         .background { if isOn { Capsule().fill(Color.white) } }
         .kriaCameraGlass(Capsule())
         .contentShape(Capsule())
@@ -149,16 +170,20 @@ struct CameraAccessCard: View {
     private var symbol: String { kind == .microphoneAccess ? "mic.slash" : "video.slash" }
     private var needsSettings: Bool { kind == .cameraAccess || kind == .microphoneAccess }
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Image(systemName: symbol).font(.system(size: 20)).foregroundStyle(Color.white)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).kriaType(.button).foregroundStyle(Color.white)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(message).kriaType(.label).foregroundStyle(Color.white.opacity(0.8))
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("teleprompter-camera-error")
             }
-            HStack(spacing: 8) {
+            // Two short actions sit side by side; at accessibility sizes they stack and each keeps its whole label.
+            let actions = Group {
                 if needsSettings {
                     Button("Open Settings", action: openSettings)
                         .buttonStyle(KriaButtonStyle(role: .primary, size: .medium, fullWidth: true))
@@ -172,28 +197,37 @@ struct CameraAccessCard: View {
                     Button(action: upload) {
                         HStack(spacing: 8) {
                             Image(systemName: KriaSourceOption.uploadSymbol).font(.system(size: 15))
-                            Text("Upload").kriaType(.button)
+                            Text("Upload").kriaType(.button).multilineTextAlignment(.center)
                         }
-                        .foregroundStyle(Color.white).frame(maxWidth: .infinity, minHeight: 44)
-                        .background(Color.white.opacity(0.14), in: Capsule())
+                        .foregroundStyle(Color.white).padding(.vertical, 8).frame(maxWidth: .infinity, minHeight: 44)
+                        .background(Color.white.opacity(0.2), in: Capsule())
+                        .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Upload")
                     .accessibilityIdentifier("camera-upload")
                 }
+            }
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 8) { actions }
+            } else {
+                HStack(spacing: 8) { actions }
             }
             if needsSettings {
                 Text("Come back and tap Record. It works as soon as access is on.")
                     .kriaType(.caption).foregroundStyle(Color.white.opacity(0.8))
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(white: 0.15), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(Color.white.opacity(0.14), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .padding(.horizontal, 24)
     }
 }
 
-/// The optional script (Paper S3.11). Scrolls inside a faded field, and Expand gives it the full height.
+/// The optional script (Paper S3.11). Scrolls inside a faded field, and Expand gives it the full height. At
+/// accessibility sizes the sheet opens full height and scrolls as a whole, so no line of it can be cut off.
 struct TeleprompterScriptSheet: View {
     @ObservedObject var script: TeleprompterScript
     let save: () -> Void
@@ -201,41 +235,66 @@ struct TeleprompterScriptSheet: View {
     let skip: () -> Void
     @State private var detent: PresentationDetent = .medium
     @FocusState private var focused: Bool
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var trimmed: String { script.text.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var expanded: Bool { detent == .large }
+    private var largeText: Bool { dynamicTypeSize.isAccessibilitySize }
+
+    private static func spoken(_ seconds: Int) -> String {
+        seconds < 60 ? "\(seconds) \(seconds == 1 ? "second" : "seconds")"
+            : "\(seconds / 60) minute\(seconds / 60 == 1 ? "" : "s")" + (seconds % 60 == 0 ? "" : " \(seconds % 60) seconds")
+    }
 
     private var caption: String {
-        guard !trimmed.isEmpty else { return "Your words scroll over the camera while you record." }
+        // An empty field shows the pace on a typical 90 word script, so the speed has a meaning before anything is typed.
+        guard !trimmed.isEmpty else {
+            return "About \(Self.spoken(Int((90 * 60 / Double(script.wordsPerMinute)).rounded()))) at \(script.wordsPerMinute) words per minute"
+        }
         let words = script.readingUnitCount
-        let seconds = Int(ceil(script.estimatedReadTime))
-        let duration = seconds < 60 ? "\(seconds) \(seconds == 1 ? "second" : "seconds")"
-            : "\(seconds / 60) minute\(seconds / 60 == 1 ? "" : "s")" + (seconds % 60 == 0 ? "" : " \(seconds % 60) seconds")
-        let base = "\(words) \(words == 1 ? "word" : "words"), about \(duration) at \(script.wordsPerMinute) words per minute."
+        let base = "\(words) \(words == 1 ? "word" : "words"), about \(Self.spoken(Int(ceil(script.estimatedReadTime)))) at \(script.wordsPerMinute) words per minute."
         return words > 90 ? base + " Scroll to read the rest." : base
     }
 
     var body: some View {
+        Group {
+            if largeText {
+                ScrollView { content.padding(.bottom, 12) }.scrollBounceBehavior(.basedOnSize)
+            } else {
+                content
+            }
+        }
+        .padding(.horizontal, 24).padding(.top, 24).padding(.bottom, 12)
+        .background(KriaColor.paper)
+        .presentationDetents(largeText ? [.large] : [.medium, .large], selection: $detent)
+        .presentationDragIndicator(largeText ? .visible : .hidden)
+        .presentationCornerRadius(24)
+        .onAppear { if largeText { detent = .large } }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Script").kriaType(.heading).foregroundStyle(KriaColor.ink).accessibilityAddTraits(.isHeader)
-                Spacer()
-                Button {
-                    detent = expanded ? .medium : .large
-                } label: {
-                    Label(expanded ? "Collapse" : "Expand",
-                          systemImage: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                        .labelStyle(.titleAndIcon)
-                }
-                .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium))
-                .accessibilityIdentifier("teleprompter-script-expand")
+            let heading = Text("Script").kriaType(.heading).foregroundStyle(KriaColor.ink).accessibilityAddTraits(.isHeader)
+            let expand = Button {
+                detent = expanded ? .medium : .large
+            } label: {
+                Label(expanded ? "Collapse" : "Expand",
+                      systemImage: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                    .labelStyle(.titleAndIcon)
+            }
+            .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium))
+            .accessibilityIdentifier("teleprompter-script-expand")
+            if largeText {
+                heading
+            } else {
+                HStack { heading; Spacer(); expand }
             }
             TextEditor(text: Binding(get: { script.text }, set: { script.updateText($0); save() }))
                 .scrollContentBackground(.hidden)
                 .kriaType(.body).foregroundStyle(KriaColor.ink).tint(KriaColor.sky)
                 .focused($focused)
                 .padding(.horizontal, 12).padding(.vertical, 8)
-                .frame(maxWidth: .infinity, minHeight: 200, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, minHeight: 200, maxHeight: largeText ? 280 : .infinity)
                 .background(focused || !trimmed.isEmpty ? KriaColor.selectionSoft : KriaColor.fill,
                             in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .overlay(alignment: .topLeading) {
@@ -249,6 +308,7 @@ struct TeleprompterScriptSheet: View {
                                      startPoint: .top, endPoint: .bottom).clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous)))
                 .accessibilityLabel("Script").accessibilityIdentifier("teleprompter-script-editor")
             Text(caption).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                .fixedSize(horizontal: false, vertical: true)
             VStack(spacing: 6) {
                 Button("Use script", action: useScript)
                     .buttonStyle(KriaButtonStyle(role: trimmed.isEmpty ? .secondary : .primary, fullWidth: true))
@@ -259,11 +319,6 @@ struct TeleprompterScriptSheet: View {
                     .accessibilityIdentifier("teleprompter-no-script")
             }
         }
-        .padding(.horizontal, 24).padding(.top, 24).padding(.bottom, 12)
-        .background(KriaColor.paper)
-        .presentationDetents([.medium, .large], selection: $detent)
-        .presentationDragIndicator(.hidden)
-        .presentationCornerRadius(24)
     }
 }
 
@@ -276,25 +331,37 @@ struct ReviewTakePlayer: View {
     @State private var elapsed: Double = 0
     @State private var duration: Double = 0
     @State private var scrubbing = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var elapsedLabel: some View { Text(DurationFormatter.clock(elapsed)).kriaType(.label).monospacedDigit().fixedSize() }
+    private var durationLabel: some View { Text(DurationFormatter.clock(duration)).kriaType(.label).monospacedDigit().fixedSize() }
 
     var body: some View {
         ZStack(alignment: .bottom) {
             ReviewPlayerSurface(player: player).background(Color.black)
-            if !isPlaying {
-                Button(action: toggle) {
-                    Image(systemName: "play.fill").font(.system(size: 22)).foregroundStyle(KriaColor.ink)
-                        .frame(width: 56, height: 56).background(KriaColor.paper.opacity(0.95), in: Circle())
+            Button(action: toggle) {
+                ZStack {
+                    Color.clear
+                    if !isPlaying {
+                        Image(systemName: "play.fill").font(.system(size: 22)).foregroundStyle(KriaColor.ink)
+                            .frame(width: 56, height: 56).background(KriaColor.paper.opacity(0.95), in: Circle())
+                    }
                 }
-                .buttonStyle(.plain).frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityLabel("Play take").accessibilityIdentifier("review-play")
-            } else {
-                Color.clear.contentShape(Rectangle()).onTapGesture(perform: toggle)
-                    .accessibilityLabel("Pause take").accessibilityAddTraits(.isButton)
+                .contentShape(Rectangle())
             }
-            HStack(spacing: 10) {
-                Text(DurationFormatter.clock(elapsed)).kriaType(.label).monospacedDigit()
-                scrubber
-                Text(DurationFormatter.clock(duration)).kriaType(.label).monospacedDigit()
+            .buttonStyle(.plain).frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityLabel(isPlaying ? "Pause take" : "Play take")
+            .accessibilityIdentifier(isPlaying ? "review-pause" : "review-play")
+            // The player can be narrow beside tall controls at accessibility sizes, so the times drop under the scrubber.
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(spacing: 4) {
+                        scrubber
+                        HStack { elapsedLabel; Spacer(minLength: 8); durationLabel }
+                    }
+                } else {
+                    HStack(spacing: 10) { elapsedLabel; scrubber; durationLabel }
+                }
             }
             .foregroundStyle(Color.white)
             .padding(.horizontal, 16).padding(.top, 28).padding(.bottom, 12)
@@ -336,9 +403,18 @@ struct ReviewTakePlayer: View {
             })
         }
         .frame(height: 28)
-        .accessibilityElement().accessibilityLabel("Playback position")
-        .accessibilityValue("\(DurationFormatter.clock(elapsed)) of \(DurationFormatter.clock(duration))")
-        .accessibilityIdentifier("review-scrubber")
+        // VoiceOver gets a real slider, so the position can be swiped to seek instead of dragged.
+        .accessibilityRepresentation {
+            Slider(value: Binding(get: { elapsed }, set: { seek(to: $0) }), in: 0...max(duration, 1))
+                .accessibilityLabel("Playback position")
+                .accessibilityValue("\(DurationFormatter.clock(elapsed)) of \(DurationFormatter.clock(duration))")
+                .accessibilityIdentifier("review-scrubber")
+        }
+    }
+
+    private func seek(to seconds: Double) {
+        elapsed = min(duration, max(0, seconds))
+        player.seek(to: CMTime(seconds: elapsed, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
     private func toggle() {
