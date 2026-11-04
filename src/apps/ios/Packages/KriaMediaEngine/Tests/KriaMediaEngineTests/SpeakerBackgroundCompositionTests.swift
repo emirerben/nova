@@ -438,6 +438,9 @@ final class SpeakerBackgroundCompositionTests: XCTestCase {
         return scene
     }
 
+    // H.264's 4:2:0 chroma lifts the magenta room's green to about 73, so room checks use tolerance 90 (as
+    // `testRecipeWithoutABackgroundRendersTheRoom` does).
+
     /// S70/S71: inside the opening the speaker's own take is the whole frame (the magenta room is visible, the blue
     /// background is not, and nobody is cut out), and the segmenter is never asked. After it the background shows and
     /// the speaker sits in the corner.
@@ -449,7 +452,7 @@ final class SpeakerBackgroundCompositionTests: XCTestCase {
         XCTAssertEqual(segmenter.calls, 0, "no person mask is computed inside the opening")
         XCTAssertTrue(isColor(opening.rgb(fx: personCenter.0, fy: personCenter.1), SpeakerColor.person), "the speaker's own colour, full-frame: \(opening.rgb(fx: personCenter.0, fy: personCenter.1))")
         for (fx, fy) in corners {
-            XCTAssertTrue(isColor(opening.rgb(fx: fx, fy: fy), SpeakerColor.room), "the room is untouched at (\(fx), \(fy)): \(opening.rgb(fx: fx, fy: fy))")
+            XCTAssertTrue(isColor(opening.rgb(fx: fx, fy: fy), SpeakerColor.room, tolerance: 90), "the room is untouched at (\(fx), \(fy)): \(opening.rgb(fx: fx, fy: fy))")
             XCTAssertFalse(isColor(opening.rgb(fx: fx, fy: fy), SpeakerColor.background), "no background inside the opening at (\(fx), \(fy))")
         }
         let after = try await previewFrame(scene.recipe, urls: scene.urls, at: 1.5)
@@ -466,14 +469,14 @@ final class SpeakerBackgroundCompositionTests: XCTestCase {
         useSpeakerSegmenter(self, GreenPersonSegmenter())
         let scene = try await openingScene(opening: 1)
         let last = try await previewFrame(scene.recipe, urls: scene.urls, at: 29.0 / 30.0)
-        XCTAssertTrue(isColor(last.rgb(fx: 0.04, fy: 0.04), SpeakerColor.room), "the last frame before end is raw: \(last.rgb(fx: 0.04, fy: 0.04))")
+        XCTAssertTrue(isColor(last.rgb(fx: 0.04, fy: 0.04), SpeakerColor.room, tolerance: 90), "the last frame before end is raw: \(last.rgb(fx: 0.04, fy: 0.04))")
         XCTAssertTrue(isColor(last.rgb(fx: personCenter.0, fy: personCenter.1), SpeakerColor.person))
         let first = try await previewFrame(scene.recipe, urls: scene.urls, at: 1.0)
         XCTAssertTrue(isColor(first.rgb(fx: 0.04, fy: 0.04), SpeakerColor.background), "the frame at end is the corner layout: \(first.rgb(fx: 0.04, fy: 0.04))")
         XCTAssertTrue(isColor(first.rgb(fx: personInCorner.0, fy: personInCorner.1), SpeakerColor.person))
         XCTAssertTrue(isColor(first.rgb(fx: personCenter.0, fy: personCenter.1), SpeakerColor.background))
         let start = try await previewFrame(scene.recipe, urls: scene.urls, at: 0)
-        XCTAssertTrue(isColor(start.rgb(fx: 0.04, fy: 0.04), SpeakerColor.room), "the very first frame is raw")
+        XCTAssertTrue(isColor(start.rgb(fx: 0.04, fy: 0.04), SpeakerColor.room, tolerance: 90), "the very first frame is raw")
     }
 
     /// S71: the mask fails on the first corner frame (the switch). The fallback is today's `.original` answer: the plain
@@ -488,7 +491,7 @@ final class SpeakerBackgroundCompositionTests: XCTestCase {
         XCTAssertTrue(isColor(frame.rgb(fx: personCenter.0, fy: personCenter.1), SpeakerColor.background), "not full-frame")
         XCTAssertTrue(isColor(frame.rgb(fx: personInCorner.0, fy: personInCorner.1), SpeakerColor.person), "the speaker is visible in the corner")
         // Unmasked, so the room around the person inside the box is drawn too.
-        XCTAssertTrue(isColor(frame.rgb(fx: 0.76 - 0.42 * 0.4, fy: personInCorner.1), SpeakerColor.room), "the plain take, not a cut-out: \(frame.rgb(fx: 0.76 - 0.42 * 0.4, fy: personInCorner.1))")
+        XCTAssertTrue(isColor(frame.rgb(fx: 0.76 - 0.42 * 0.4, fy: personInCorner.1), SpeakerColor.room, tolerance: 90), "the plain take, not a cut-out: \(frame.rgb(fx: 0.76 - 0.42 * 0.4, fy: personInCorner.1))")
     }
 }
 #endif
