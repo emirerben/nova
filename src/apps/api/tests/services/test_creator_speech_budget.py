@@ -144,7 +144,9 @@ async def test_fb1_long_talking_take_reaches_the_planner_prompt_whole() -> None:
 
     prompt = MainCreatorAgent(None).render_prompt(
         MainCreatorInput(
-            user_message="Arkamda hangi fotoğraftan bahsediyorsam o olsun, ben sağ altta küçük olayım.",
+            user_message=(
+                "Arkamda hangi fotoğraftan bahsediyorsam o olsun, ben sağ altta küçük olayım."
+            ),
             media_context=media_context,
             capability_manifest=manifest,
         )
