@@ -35,7 +35,7 @@ from typing import Any
 
 import structlog
 
-from app.services.suggestion_chips import RING_KEY
+from app.services.suggestion_chips import RING_KEY, RING_SIZE
 from app.services.suggestions import registry
 from app.services.suggestions.context import NO_TARGET, SuggestionContext, Target, snapshot_digest
 from app.services.suggestions.models import (
@@ -230,6 +230,102 @@ def stamp_pin(
     if _norm(message) != _norm(card.suggestion.prompt):
         return None
     return {"set_id": set_id, "id": chip_id, "action_digest": card.action_digest}
+
+
+def _entry(state: Mapping[str, Any] | None, set_id: str) -> Mapping[str, Any] | None:
+    ring = state.get(RING_KEY) if isinstance(state, Mapping) else None
+    index = _entry_index(ring, set_id) if isinstance(ring, list) else None
+    return ring[index] if index is not None else None
+
+
+def pin_marks(
+    state: Mapping[str, Any] | None, set_id: str
+) -> tuple[frozenset[str], frozenset[str]]:
+    """``(consumed ids, refused ids)`` a tap marked on the entry of ``set_id``."""
+    entry = _entry(state, set_id)
+    if entry is None:
+        return frozenset(), frozenset()
+
+    def ids(field: str) -> frozenset[str]:
+        found = entry.get(field)
+        return frozenset(str(k) for k in found) if isinstance(found, Mapping) else frozenset()
+
+    return ids(CONSUMED_FIELD), ids(REFUSED_FIELD)
+
+
+def minted_set_id(set_id: str, refused: frozenset[str]) -> str:
+    """The id of the set that replaces ``set_id`` once a tap on one of its cards was refused.
+
+    Stable for the same refusals, new for any other, so the phone (which hides a tapped card until
+    the set id changes) lets go, and a second read finds the set the first one stored.
+    """
+    raw = "|".join([set_id, *sorted(refused)])
+    return f"sg_{hashlib.sha256(raw.encode()).hexdigest()[:16]}"
+
+
+@dataclass(frozen=True)
+class Walk:
+    """Where a served set stands after the taps made on it (and on the sets minted from it)."""
+
+    set_id: str  # the id to serve: the served one, or the newest set minted from it
+    hidden: frozenset[str]  # card ids to leave out (applied or refused anywhere on the chain)
+    # ``(from_id, new_id)`` when the newest set on the chain has a refusal and nothing replaced it
+    # yet: the caller stores a derived entry under ``new_id`` and serves it.
+    mint: tuple[str, str] | None = None
+
+
+def walk(state: Mapping[str, Any] | None, served_set_id: str) -> Walk:
+    """Follow the chain ``served -> minted -> minted ...`` that refusals started.
+
+    Each link is an ordinary ring entry, so a tap on a card of a minted set is marked on that entry
+    and the next read mints one more. Bounded by the ring size.
+    """
+    current, hidden = served_set_id, frozenset[str]()
+    for _ in range(RING_SIZE):
+        consumed, refused = pin_marks(state, current)
+        hidden |= consumed | refused
+        if not refused:
+            return Walk(current, hidden)
+        following = minted_set_id(current, refused)
+        if _entry(state, following) is None:
+            return Walk(following, hidden, mint=(current, following))
+        current = following
+    return Walk(current, hidden)
+
+
+def derive_entry(
+    state: Mapping[str, Any] | None, set_id: str, new_set_id: str, hidden: frozenset[str]
+) -> tuple[dict[str, Any] | None, str]:
+    """``(new state, outcome)``: the ring with a copy of ``set_id``'s entry under ``new_set_id``,
+    minus the cards in ``hidden`` and minus every tap mark.
+
+    The stored cards keep their proven actions (every tap proves them again), so the derived set
+    is exactly the old one without what was applied or refused. ``current`` when it is already
+    there; ``gone`` when the source entry rolled out of the ring.
+    """
+    ring = state.get(RING_KEY) if isinstance(state, Mapping) else None
+    if not isinstance(ring, list) or not isinstance(state, Mapping):
+        return None, "gone"
+    if _entry_index(ring, new_set_id) is not None:
+        return None, "current"
+    source = _entry(state, set_id)
+    if source is None:
+        return None, "gone"
+    kept = [
+        c
+        for c in source.get("suggestions") or []
+        if isinstance(c, Mapping) and c.get("id") not in hidden
+    ]
+    derived = {
+        key: value
+        for key, value in source.items()
+        if key not in {CONSUMED_FIELD, REFUSED_FIELD, "dismissed"}
+    }
+    derived.update(
+        set_id=new_set_id,
+        suggestions=[{**card, "rank": index + 1} for index, card in enumerate(kept)],
+    )
+    return {**state, RING_KEY: [*ring, derived][-RING_SIZE:]}, "written"
 
 
 @dataclass(frozen=True)
@@ -665,6 +761,11 @@ __all__ = [
     "kind_enabled",
     "mark_consumed",
     "mark_refused",
+    "Walk",
+    "derive_entry",
+    "walk",
+    "minted_set_id",
+    "pin_marks",
     "parse_ops",
     "projected_digest",
     "proves",

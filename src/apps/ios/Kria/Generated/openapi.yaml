@@ -13343,6 +13343,15 @@
             "title": "Status",
             "type": "string"
           },
+          "suggestion_outcome": {
+            "default": null,
+            "enum": [
+              "refused"
+            ],
+            "nullable": true,
+            "title": "Suggestion Outcome",
+            "type": "string"
+          },
           "thread_revision": {
             "title": "Thread Revision",
             "type": "integer"

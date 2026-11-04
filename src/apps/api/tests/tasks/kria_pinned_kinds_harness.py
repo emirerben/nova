@@ -276,3 +276,23 @@ def seed_duplicate_pair(seeded: base.Seeded) -> None:
                 },
             },
         )
+
+
+async def get_suggestions(seeded: base.Seeded):  # noqa: ANN201
+    """The real ``GET /creation-threads/{id}/suggestions`` for this thread (Redis down: the
+    deterministic set; the cards' ids and the set id are the ones the serve would store)."""
+    from types import SimpleNamespace
+
+    from starlette.responses import Response
+
+    from app.routes import creation_threads as ct
+
+    async with AsyncSessionLocal() as db:
+        return await ct.thread_suggestions(
+            SimpleNamespace(headers={}),
+            str(seeded.thread_id),
+            SimpleNamespace(id=seeded.user_id),
+            db,
+            Response(),
+            None,
+        )

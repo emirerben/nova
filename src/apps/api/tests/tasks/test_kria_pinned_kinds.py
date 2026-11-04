@@ -497,3 +497,155 @@ async def test_duplicates_a_changed_group_is_not_what_the_creator_tapped(world, 
     assert last_reply(seeded.thread_id) == NO_LONGER_FITS
     assert h.counts(seeded) == before
     assert pin_record(accepted.turn_id)["reason"] == "base_moved"
+
+
+# ── Refusals: a typed signal, a new set, and no card offered twice ───────────────────
+
+
+def signal_of(thread_id):  # noqa: ANN001, ANN201
+    """The typed record the phone reads off the last assistant event."""
+    return [e for e in h.events(thread_id) if e.role == "assistant"][-1].payload.get(
+        "suggestion_pin"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_refused_tap_tells_the_phone_in_a_typed_field(world, monkeypatch):
+    """R1/K12: planner-side and commit-side refusals carry the same record; an old build that
+    ignores it still reads the refusal from the reply."""
+    k.install_inputs(monkeypatch)
+    seeded = h.seed_ready_thread(k.ready_variant_without_title())
+    await k.serve_cards(seeded, k.pick("hook", copy_text=HOOK_TEXT), k.pick("sfx", rank=2))
+    monkeypatch.setattr(settings, "kria_suggestion_hook_copy_enabled", False)
+    accepted, _ = await tap_and_run(seeded, "hook")  # planner-side: the kind was pulled
+    assert signal_of(seeded.thread_id) == {
+        "set_id": seeded.set_id,
+        "id": seeded.cards["hook"].id,
+        "outcome": "refused",
+        "reason": "op_not_allowed",
+    }
+    assert last_reply(seeded.thread_id) == NO_LONGER_FITS
+
+    # Commit-side: the editor moved between the plan and the row lock.
+    def reorder(variant):
+        slots = variant["ai_timeline"]["slots"]
+        variant["ai_timeline"]["slots"] = [slots[1], slots[0], slots[2]]
+
+    h.after_planning(monkeypatch, lambda: h.edit_variant(seeded, reorder))
+    await tap_and_run(seeded, "sfx")
+    assert signal_of(seeded.thread_id)["outcome"] == "refused"
+    assert signal_of(seeded.thread_id)["id"] == seeded.cards["sfx"].id
+    assert signal_of(seeded.thread_id)["reason"] == "base_moved"
+
+
+@pytest.mark.asyncio
+async def test_a_tap_that_applied_carries_no_refusal_record(world):
+    seeded = h.seed_ready_thread()
+    await h.serve(seeded)
+    await tap_and_run(seeded, "sfx")
+    assert signal_of(seeded.thread_id) is None
+
+
+@pytest.mark.asyncio
+async def test_the_ack_says_refused_for_a_card_the_thread_never_had_and_nothing_else(world):
+    """R1/K11: additive, and absent everywhere else (an old build sees the ack it always did)."""
+    seeded = h.seed_ready_thread()
+    await h.serve(seeded)
+    unknown_pin = {"set_id": seeded.set_id, "chip_id": "ss_000000000000"}
+    asked_at = h.revision(seeded.thread_id)
+    unknown, _ = await h.tap(
+        seeded, "sfx", message="Make it punchier", tap=unknown_pin, expected_revision=asked_at
+    )
+    assert unknown.suggestion_outcome == "refused"
+    assert '"suggestion_outcome":"refused"' in unknown.model_dump_json()
+    # A replay of the turn that was refused says so too, once the worker has answered it.
+    await h.run(unknown.turn_id)
+    replay, _ = await h.submit(
+        seeded,
+        "Make it punchier",
+        tap=unknown_pin,
+        event_id=h.turn_row(unknown.turn_id).client_event_id,
+        expected_revision=asked_at,
+    )
+    assert replay.replayed and replay.suggestion_outcome == "refused"
+    # An ordinary tap: no field at all, so an old build reads the ack it always did.
+    good, _ = await h.tap(seeded, "sfx")
+    assert good.suggestion_outcome is None
+    assert "suggestion_outcome" not in good.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_mints_a_new_set_and_the_refused_card_is_not_offered_again(
+    world, monkeypatch
+):
+    """R2: the phone hides a tapped card until the set id changes, so a refusal must change it;
+    the new set is stored, so a tap on a card in it resolves."""
+    seeded = h.seed_ready_thread()
+    await k.serve_cards(seeded)  # the deterministic set: what the GET serves with no agent
+    served = await k.get_suggestions(seeded)
+    assert served.set_id == seeded.set_id and {c.id for c in served.suggestions} == {
+        c.id for c in seeded.cards.values()
+    }
+    refused = seeded.cards["sfx"]
+    # Refused: the stored op no longer proves (tampered ring), on the exact base.
+    with sync_session() as db:
+        thread = db.get(h.CreationThread, seeded.thread_id, with_for_update=True)
+        state = h.copy.deepcopy(thread.state)
+        for entry in state["suggestion_sets"]:
+            for stored in entry["suggestions"]:
+                if stored["id"] == refused.id:
+                    stored["action"]["ops"][0]["effect_id"] = "fx-not-in-the-catalog"
+        thread.state = state
+        db.commit()
+    accepted, _ = await tap_and_run(seeded, "sfx")
+    assert signal_of(seeded.thread_id)["reason"] in {"ring_changed", "op_refused"}
+    entry = k.ring_entry(seeded.thread_id, seeded.set_id)
+    assert entry["refused"] == {refused.id: accepted.turn_id}
+
+    again = await k.get_suggestions(seeded)
+    assert again.set_id != seeded.set_id, "a new set, so the phone's ledger lets go"
+    assert refused.id not in {c.id for c in again.suggestions}
+    assert {c.id for c in again.suggestions} == {
+        c.id for c in seeded.cards.values() if c.id != refused.id
+    }
+    assert [c.rank for c in again.suggestions] == list(range(1, len(again.suggestions) + 1))
+    # The same read twice is the same set (stable), and it is in the ring with its cards.
+    assert (await k.get_suggestions(seeded)).set_id == again.set_id
+    minted = k.ring_entry(seeded.thread_id, again.set_id)
+    assert {c["id"] for c in minted["suggestions"]} == {c.id for c in again.suggestions}
+    assert "refused" not in minted and "consumed" not in minted
+    # A tap on a card of the new set resolves and applies.
+    seeded.set_id = again.set_id
+    _, result = await tap_and_run(seeded, "transition")
+    assert result["status"] == "completed"
+    assert h.counts(seeded)["drafts"] == 1
+
+
+@pytest.mark.asyncio
+async def test_an_applied_card_is_hidden_by_id_even_with_the_editor_triggers_flag_off(world):
+    """R3: the card the creator just applied is not offered again from the same set."""
+    seeded = h.seed_ready_thread()
+    await k.serve_cards(seeded)
+    assert not settings.kria_suggestion_editor_triggers_enabled
+    before = await k.get_suggestions(seeded)
+    assert {c.id for c in before.suggestions} == {c.id for c in seeded.cards.values()}
+    await tap_and_run(seeded, "sfx")
+    after = await k.get_suggestions(seeded)
+    assert seeded.cards["sfx"].id not in {c.id for c in after.suggestions}
+    assert seeded.cards["transition"].id in {c.id for c in after.suggestions}
+
+
+@pytest.mark.asyncio
+async def test_a_transient_refusal_keeps_the_card_tappable(world, monkeypatch):
+    """R1: a render in flight says nothing about the card; it is not marked and no set is minted."""
+    seeded = h.seed_ready_thread()
+    await h.serve(seeded)
+
+    def in_flight(variant):
+        variant["render_status"] = "rendering"
+
+    h.edit_variant(seeded, in_flight)
+    accepted, _ = await tap_and_run(seeded, "sfx")
+    assert pin_record(accepted.turn_id)["reason"] == "target_unavailable"
+    assert signal_of(seeded.thread_id)["reason"] == "target_unavailable"
+    assert "refused" not in k.ring_entry(seeded.thread_id, seeded.set_id)
