@@ -104,4 +104,63 @@ when told `-l sr`, and labels half the speakers Croatian.
 
 ## 4. Evidence
 
-Filled in with the change (see below).
+### 4.1 Language decisions on real speech (free, reproducible)
+
+`src/apps/api/scripts/dev/kri1192_fleurs_eval.py` streams the FLEURS clips, runs
+whisper.cpp large-v3-turbo with auto-detect, then Nova's real decisions: whisper's language
+as whisper-1 reports it (a full name) through `_normalize_lang`, the cross-check against the
+FLEURS transcript, and, when the cross-check asks for one, a whisper re-run with that hint
+(the text the worker would ship). Caption text goes through the Serbian one-alphabet step,
+`build_plain_cues` and `resplit_cues_into_sentences`. Error is jiwer WER (CER for ko, ar)
+after Whisper-style normalisation on both sides; Serbian is compared in Latin. lingua
+(offline, restricted to the 13 table languages plus Croatian/Bosnian, which it uses for
+Latin Serbian) is the independent language check.
+
+**Before (main 8331ed910):** 36 of 144 clips re-run in another language: Portuguese 9,
+Spanish 7, German 6, French 7, Italian 2, Danish 5. On those 36 clips the shipped text's
+error rate goes from 0.062 to 0.514. Danish comes out in English ("Finland is a fantastic
+destination for the Sejlore"), and 9 Romance/German clips come out written in Turkish.
+Greek, Danish, Serbian and Croatian were stored as `"greek"`, `"danish"`, `"serbian"`,
+`"croatian"`.
+
+**After:**
+
+| Language | Clips | Caption language = spoken | Re-run in another language | Script ok | Text-ID wrong | Raw whisper error | Final caption error | lingua agrees |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| pt | 12 | 12 | 0 | 12 | 0 | 0.049 | 0.049 | 11/11 |
+| es | 12 | 12 | 0 | 12 | 0 | 0.021 | 0.021 | 9/9 |
+| el | 12 | 12 | 0 | 12 | 0 | 0.111 | 0.111 | 12/12 |
+| de | 12 | 12 | 0 | 12 | 0 | 0.030 | 0.030 | 12/12 |
+| ko | 12 | 12 | 0 | 12 | 0 | 0.060 | 0.060 | 12/12 |
+| it | 12 | 12 | 0 | 12 | 0 | 0.019 | 0.019 | 12/12 |
+| fr | 12 | 12 | 0 | 12 | 0 | 0.101 | 0.101 | 11/11 |
+| ar | 12 | 12 | 0 | 12 | 0 | 0.024 | 0.024 | 12/12 |
+| da | 12 | 12 | 0 | 12 | 0 | 0.168 | 0.168 | 12/12 |
+| sr | 12 | 12 | 0 | 12 | 0 | 0.167 | 0.167 | 10/10 |
+| en | 12 | 12 | 0 | 12 | 0 | 0.059 | 0.059 | 12/12 |
+| tr | 12 | 12 | 0 | 12 | 0 | 0.068 | 0.068 | 12/12 |
+
+"Final = raw" is the point: no deterministic step changes a word. Serbian's 0.167 is
+measured in Latin; against the Cyrillic FLEURS text it would read 0.99, which is the
+alphabet, not the words. The text language-ID (`detect_text_language`) makes 0 wrong calls
+on all 288 texts (reference + whisper) and abstains ("unknown") on 12.
+
+**Not measured (paid):** whisper-1 itself and the gpt-4o caption-correction pass. The free
+run proves the decisions and every deterministic step; the correction prompt is
+language-neutral with a never-translate rule and a same-tokens guard.
+
+### 4.2 Greek all-caps
+
+`text_fold.upper` against ICU (`toLocaleUpperCase("el")` in Node 22): 0 mismatches on 309
+Greek words (every word of the 24 Greek FLEURS texts plus accent, dialytika, disjunctive ή
+and polytonic edge cases). Python, web and the shared parity fixture agree.
+
+### 4.3 Guards
+
+- `tests/pipeline/test_kri1192_caption_languages.py`: the fixture of all 144 real clips:
+  no cross-check re-run, 0 wrong language-ID calls, whisper names → codes, Serbian one
+  alphabet, mixed takes, the brief side's Greek/Korean/Danish/Serbian asks.
+- `tests/pipeline/test_kri1192_script_fallback.py`: every choosable face draws every new
+  language in one face; Latin text keeps the KRI-785 face exactly; the registry hash still
+  matches `registry-embeddings.npz`.
+- `tests/fixtures/text-element-parity/text_case.json`: 8 Greek cases (Python, web, iOS).

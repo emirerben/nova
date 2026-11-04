@@ -243,6 +243,16 @@ def _script_fallbacks() -> tuple[str, ...]:
     return tuple(name for name in raw if isinstance(name, str))
 
 
+def script_fallback_files() -> frozenset[str]:
+    """The font FILES of the registry's script-fallback faces (Noto Sans KR / Arabic): the
+    phone bundles them from protocol 35 (capability ``scriptFonts``, KRI-1192)."""
+    return frozenset(
+        str(entry["file"])
+        for entry in _registry().get("fonts", {}).values()
+        if entry.get("script_fallback") is True and entry.get("file")
+    )
+
+
 def needs_non_latin_letter(text: str) -> bool:
     """True when ``text`` has a letter outside the Latin script (Greek, Cyrillic, Hangul,
     Arabic...). Digits, punctuation and symbols are script-neutral."""

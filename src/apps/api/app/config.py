@@ -930,6 +930,12 @@ class Settings(BaseSettings):
     # `speaker_background_color_phone_fallback`) and the creator keeps their own room.
     # Design: docs/reviews/speaker-background-color-failure-modes.md.
     speaker_background_color_min_client_protocol: int = 34
+    # KRI-1192: the app bundles Noto Sans KR / Noto Sans Arabic (the script-fallback faces that
+    # draw Hangul and Arabic captions) from protocol 35. A phone recipe naming one requires
+    # `scriptFonts` (verified in PHONE_RENDER_VERIFIED_FEATURES after the device check) and an
+    # app build at this protocol; an older build polling or saving one is told to update (426
+    # `script_fonts`), and the phone caption compile keeps declining Hangul/Arabic for it.
+    script_fonts_min_client_protocol: int = 35
     # KRI-1134: tilt a clip or photo to any angle (`transform.rotation_degrees`, clockwise on
     # screen) with a blank, colour or blurred backdrop behind it (`TimelineClip.backdrop`),
     # drawn ON DEVICE by `KriaMediaEngine`. Capability `clipTilt` (derived from the clips). The
