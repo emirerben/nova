@@ -1,0 +1,82 @@
+# AI suggestion blocks (scaffold)
+
+Evolves the KRI-756 chips ([`suggestion-chips`](suggestion-chips.md)) into "Improve" cards on the
+iPhone app. iOS and the iOS-required backend only; `src/apps/web` is untouched. Everything here is
+dark: every flag defaults to false and flag off is byte-identical to the chips.
+
+**The agent picks, the server builds.** A model returns only `{kind, target_ids, why, copy?, rank}`
+(`SuggestionAgentOutput`). The server turns a pick into an `Action` through the kind's
+`build_action` and proves it with the kind's `witness`; a card that fails its witness never reaches
+the phone. The `Action` stays server-side; a tap pins `{set_id, chip_id}`.
+
+## Layout
+
+| path | what |
+| --- | --- |
+| `services/suggestions/models.py` | `SuggestionKind` row, `Action` union, `Suggestion`, `SuggestionSet`, `SuggestionDigest`, `SuggestionAgentOutput` + `agent_response_schema` / `parse_agent_output`, wire `SuggestionOut` |
+| `services/suggestions/context.py` | `SuggestionContext` and the read-only snapshot readers every kind shares; `snapshot_digest` (the `EditorOpsAction.base_digest`) |
+| `services/suggestions/registry.py` | `all_kinds()`, `legacy_gate()` (the engine's `CHIP_KIND_GATE`, original order), `enabled()`, `kinds_for()`, `problems()` |
+| `services/suggestions/kinds/*.py` | ONE module per kind; the explicit list is `kinds/__init__.py` |
+| `services/clip_signals/` | per-clip measured signals, stored at `analysis["signals"]` next to `analysis["understanding"]` |
+| `app/cli/backfill_clip_signals.py` | read-only skeleton; `--write` is refused until a store is wired |
+
+## Adding or changing a kind
+
+A kind is `kinds/<kind>.py` exporting `KIND` plus one line in `kinds/__init__.py`. Required: a
+`witness` and a non-empty `surfaces` subset of `{phone, cloud}` (`registry.problems()`, guard test).
+`flag` names the `Settings` attribute that gates the kind in v2 sets (the legacy chip engine ignores
+it). `required_signals` also needs `KRIA_SUGGESTION_SIGNALS_ENABLED`. A kind with `legacy` set is
+still driven by the KRI-756 engine unchanged; the v2 path uses `build_action` (None = not offered).
+
+| module | kind | v2 action | state |
+| --- | --- | --- | --- |
+| `captions`, `sfx`, `transition`, `music_level` | KRI-756 kinds | `EditorOpsAction` from the row's own `op`, proved by `editor_ops_witness` | ported, live in the engine |
+| `default_edit`, `opener_clip`, `title_animation`, `pinned_text` | KRI-756 kinds | none | ported, legacy only |
+| `hook` | KRI-756 kind | `CopyDecisionAction` (stub) | legacy ported; v2 stub |
+| `mute_clip` | new | `BriefUpdateAction` (`clip_sound` off, `clip:<media_id>`) | stub |
+| `filler_words` | new | `ItemSettingAction` (`speech_cleanup_enabled`) + re-render | stub |
+| `duplicates` | new | `EditorOpsAction` (`remove_clip`) | stub |
+| `generated_overlay` | new | `AsyncGenerateAction` | stub |
+
+## Wire (additive)
+
+`SuggestionSetOut` gains `suggestions: [SuggestionOut]` and `digest` (`SuggestionDigest`). Both are
+left out of the JSON while empty, so a legacy set serializes byte-for-byte as before. Old builds and
+web ignore them. iOS contract: `python -m app.cli.kria_contracts --write`; `SuggestionSetOut` is a
+mobile-only model, so the web contract is unchanged. The tap field stays `suggestion: {set_id,
+chip_id}` (`SuggestionTapIn`); under `KRIA_SUGGESTION_PINNED_TAPS_ENABLED` a present pin joins
+`request_digest`, off or pin-less it is unchanged.
+
+## Flags (all default off; subordinate to `KRIA_SUGGESTION_CHIPS_ENABLED`)
+
+`KRIA_SUGGESTION_PINNED_TAPS_ENABLED`, `KRIA_SUGGESTION_SIGNALS_ENABLED`,
+`KRIA_SUGGESTION_EDITOR_TRIGGERS_ENABLED`, `KRIA_SUGGESTION_{HOOK_COPY,MUTE_CLIP,FILLER_WORDS,
+DUPLICATES,GENERATED_OVERLAY}_ENABLED`. Settings: `KRIA_SUGGESTER_MODEL` (default `gpt-6.1-sol`),
+`KRIA_SUGGESTER_MAX_USD`, `AI_OPENAI_SUGGESTIONS_BUDGET_USD` (0 = no spend),
+`KRIA_SUGGESTION_REFRESH_DEBOUNCE_S`. Skill: `agents/skills/edit-improver` (placeholder body).
+
+## Ready-state editor target on phone threads (checked by reading the code)
+
+A ready card needs `planner._load_editor_target` to return a target. For phone-rendered edits (and
+every edit under `IOS_DEVICE_ONLY_MODE`, which only forces `phone_rendering_for`) it does, once
+three things hold: the turn that started the render linked `thread.active_creator_agent_session_id`,
+the session's `target_job_id` is the item's current job, and the phone's export completion set the
+variant `render_status = "ready"` (`routes/device_render._complete_device_export`). `build_editor_snapshot`
+is already device-aware (a phone Talking cut is projected from its pinned recipe). Not every ready
+edit has a target: `allowed_op_families` can come back empty (`no_allowed_families`), and a device
+Talking / Voiceover variant keeps `sfx` closed until a Save has written `sound_effects`. Those
+threads show no ready cards (the safe failure). Not exercised on a device or against a database.
+
+## Failure modes this scaffold was written against
+
+1. A kind with no witness or surface ships unchecked (`registry.problems`, guard test + negative controls).
+2. An unregistered kind module, or a stub that starts offering (explicit list, disk-vs-list guard).
+3. The engine's kind order moving, which re-ranks ties (order pinned; golden dump of 136 fixture
+   contexts byte-identical before and after the move).
+4. An import cycle engine <-> registry <-> kinds (context/models import nothing from the engine;
+   each entry point is imported first in a subprocess).
+5. A mistyped or default-on kind flag (every `kind.flag` must be a real `Settings` field, default off).
+6. The model returning an op, an unissued kind or an unissued target (closed schema; `extra="forbid"`).
+7. A stored signal outliving its thresholds (per-signal `v`; `signals_version` feeds the set digest).
+8. Flag-off wire or `request_digest` bytes drifting (omit-when-empty serializer; digests pinned to
+   values captured before the change).

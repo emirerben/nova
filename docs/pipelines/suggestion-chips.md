@@ -24,7 +24,9 @@ Footage-aware starter and follow-up chips for the Kria creation chat in the **iO
    agent runs, no payload keys.
 
 Code: [`services/suggestion_chips.py`](../../src/apps/api/app/services/suggestion_chips.py)
-(models, candidates, assembly, tap detection, ring, loader),
+(models, candidates, assembly, tap detection, ring, loader; the kind rows and the shared snapshot
+readers live in [`services/suggestions/`](../../src/apps/api/app/services/suggestions), see
+[`suggestion-blocks`](suggestion-blocks.md)),
 [`services/suggestion_chip_copy.py`](../../src/apps/api/app/services/suggestion_chip_copy.py)
 (label and `why` validators),
 [`services/suggestion_serve.py`](../../src/apps/api/app/services/suggestion_serve.py)
@@ -151,10 +153,11 @@ when a new text-carrying op enters the editor op vocabulary without an explicit 
 
 ### Adding a kind
 
-1. Add the `ChipKind`, copy in `_COPY` (en + tr), lexicon stems in
-   `suggestion_chip_copy.LEXICON`, and a `ChipKindSpec` row in `CHIP_KIND_GATE` (`available`,
-   `already_present`, `ground`, `dry_run` per state, `expects`, `claimed_op`, `witness_op`,
-   `min_protocol`).
+1. Add the `ChipKind` (`suggestions/models.py`), copy in `_COPY` (en + tr), lexicon stems in
+   `suggestion_chip_copy.LEXICON`, and a `ChipKindSpec` row in `suggestions/kinds/<kind>.py`
+   (`available`, `already_present`, `ground`, `dry_run` per state, `expects`, `claimed_op`,
+   `witness_op`, `min_protocol`) registered in `suggestions/kinds/__init__.py`; `CHIP_KIND_GATE`
+   is built from the registry in its original order.
 2. Decide the op in `CHIP_OP_ALLOW` / `CHIP_OP_DENY`; prove it with a strategy or editor witness
    (or an explicit allow-list entry and a reason).
 3. Extend the replay eval ([`suggested-chips`](suggested-chips.md)) and this table.
