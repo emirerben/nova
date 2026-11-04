@@ -44,7 +44,7 @@ struct KriaField: View {
                     }
                     Spacer(minLength: 0)
                     if let maxCount {
-                        Text("\(text.count) / \(maxCount)").foregroundStyle(KriaColor.mutedInk).monospacedDigit()
+                        Text(verbatim: "\(text.count) / \(maxCount)").foregroundStyle(KriaColor.mutedInk).monospacedDigit()
                     }
                 }
                 .kriaType(.caption)

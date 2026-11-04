@@ -118,9 +118,13 @@ import XCTest
         XCTAssertTrue(app.staticTexts["Your 2 overlays"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.buttons["overlay-edit-2"].exists && app.buttons["overlay-redo-2"].exists && app.buttons["overlay-remove-2"].exists)
         useOverlays(in: app, screenshotName: "Two overlays")
-        let edits = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "generate-image-edit-"))
-        XCTAssertTrue(edits.firstMatch.waitForExistence(timeout: 10))
-        XCTAssertEqual(edits.count, 2, "Both overlays reach the visual pool, each as its own image")
+        // Each image is a media row whose menu carries Edit image.
+        let menus = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Actions for "))
+        XCTAssertTrue(menus.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertEqual(menus.count, 2, "Both overlays reach the visual pool, each as its own image")
+        menus.firstMatch.tap()
+        XCTAssertTrue(app.buttons["Edit image"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Remove"].exists)
     }
 
     func testImageRecoveryAfterProcessRelaunchNeverPostsAgain() {
@@ -176,7 +180,8 @@ import XCTest
         preview.lifetime = .keepAlways
         add(preview)
         use.tap()
-        let title = app.staticTexts["A coastal village in warm sunlight"]
+        // The media row reads as one element: the prompt title, then "Photo · Ready".
+        let title = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "A coastal village in warm sunlight")).firstMatch
         XCTAssertTrue(title.waitForExistence(timeout: 15))
         reveal(title, in: app)
         let pool = XCTAttachment(screenshot: app.screenshot())
