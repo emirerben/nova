@@ -677,7 +677,18 @@ enum NativeEditorRenderError: Error, Equatable {
             let talkingCaptionFrame = document.editFormat == "subtitled" || deviceCaptions
             let captionFont = ["Inter": "Inter-Bold", "Fraunces": "Fraunces-Bold", "Space Grotesk": "SpaceGrotesk-Bold"]
             let family = meta["font"]?.stringValue ?? "TikTok Sans"
-            let font = try resolveFont(captionFont[family] ?? family)
+            // KRI-1192: like the cloud's `glyph_safe_overlays`, each requested family draws in ONE face that covers
+            // the union of its cues' texts (`NativeGlyphFallback`: Greek, Cyrillic, Hangul and Arabic go to a
+            // covering script face), so no letter borrows a system face and the face never flips cue by cue.
+            var cueTexts: [String: [String]] = [:]
+            for cue in document.captionCues where !cue.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                cueTexts[cue.raw["font_family"]?.stringValue ?? family, default: []].append(cue.text)
+            }
+            let captionFaces = cueTexts.reduce(into: [String: String]()) { faces, entry in
+                faces[entry.key] = glyphFallback.family(entry.key, for: entry.value.joined(separator: " "))
+            }
+            let defaultFace = captionFaces[family] ?? family
+            let font = try resolveFont(captionFont[defaultFace] ?? defaultFace)
             let fontID = try registerFont(font)
             let wordStyle = meta["style"]?.stringValue == "word"
             let appearance = meta["appearance"]?.objectValue ?? [:]
@@ -689,7 +700,7 @@ enum NativeEditorRenderError: Error, Equatable {
                 alignment: captionAlignment,
                 color: try ink(meta["color"], fallback: "#FFFFFF"), stroke: try ink(appearance["stroke_color"], fallback: "#000000"), strokeWidth: meta["stroke_width"]?.numberValue ?? 4,
                 shadows: meta["shadow_enabled"] == .bool(false) ? [] : [TextBlurLayer(color: try ink(appearance["shadow_color"], fallback: "#000000", alpha: appearance["shadow_opacity"]?.numberValue ?? 0.5), sigma: 0, dx: 1, dy: 1)],
-                bottomAligned: appearance["position_y_frac"] == nil, fontVariations: fontInstances[family] ?? [:])
+                bottomAligned: appearance["position_y_frac"] == nil, fontVariations: fontInstances[defaultFace] ?? [:])
             // KRI-1007: a cue's own phases win over the all-captions default (`phone_captions.compile_caption_layers`).
             let defaultCaptionPhases = Self.captionPhases(meta["animation_phases"])
             var previousWordEnd = 0.0
@@ -712,7 +723,8 @@ enum NativeEditorRenderError: Error, Equatable {
             for cue in document.captionCues where !cue.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 let own = appearance["line_overrides"]?.objectValue?[cue.id]?.objectValue ?? [:]
                 var captionStyle = defaultCaptionStyle
-                let cueFamily = cue.raw["font_family"]?.stringValue ?? family
+                let requested = cue.raw["font_family"]?.stringValue ?? family
+                let cueFamily = captionFaces[requested] ?? requested
                 let font = try resolveFont(captionFont[cueFamily] ?? cueFamily)
                 captionStyle.fontAssetID = try registerFont(font)
                 captionStyle.fontVariations = fontInstances[cueFamily] ?? [:]
@@ -1348,7 +1360,8 @@ enum NativeEditorRenderError: Error, Equatable {
 /// casing in app/text_fold.py) and `applyTextCase` (web src/lib/overlay-layout.ts); shared fixture
 /// tests/fixtures/text-element-parity/text_case.json. KRI-781: Turkish i rules ("istanbul" -> "İSTANBUL",
 /// "IŞIK" -> "ışık") apply to the whole text when the language is Turkish, otherwise only to words
-/// with a Turkish-only letter (ı İ ğ Ğ ş Ş); every other word is cased exactly as before.
+/// with a Turkish-only letter (ı İ ğ Ğ ş Ş); every other word is cased exactly as before. KRI-1192: a word
+/// with a Greek letter upper-cases with the Greek rule (no accents in all caps).
 enum KriaTextCase {
     private static let turkishOnlyLetters: Set<Character> = ["ı", "İ", "ğ", "Ğ", "ş", "Ş"]
     private static let nonSpaceRun = try! NSRegularExpression(pattern: #"\S+"#)
@@ -1381,6 +1394,28 @@ enum KriaTextCase {
             .lowercased()
     }
 
+    /// KRI-1192: Greek and Coptic + Greek Extended, `_GREEK_LETTER` in app/text_fold.py and `GREEK_LETTER` on the web.
+    private static func hasGreekLetter(_ text: String) -> Bool {
+        text.unicodeScalars.contains { (0x0370...0x03FF).contains($0.value) || (0x1F00...0x1FFF).contains($0.value) }
+    }
+
+    private static let greek = Locale(identifier: "el")
+
+    /// `uppercased()`, except that a word with a Greek letter takes ICU's Greek rule like the server and the web
+    /// (`toLocaleUpperCase("el")`): accents and breathings drop, a dialytika is kept or added ("ρολόι" -> "ΡΟΛΟΪ"),
+    /// the one-letter word ή keeps its accent. Text without Greek is cased exactly as before.
+    private static func upperWithGreek(_ text: String) -> String {
+        guard hasGreekLetter(text) else { return text.uppercased() }
+        return mapWords(text) { hasGreekLetter($0) ? $0.uppercased(with: greek) : $0.uppercased() }
+    }
+
+    /// `lowercased()`, except that a Greek word ends in ς like Python's `str.lower` and JS `toLowerCase`
+    /// (Swift's locale-free `lowercased()` leaves a final σ: "ΟΔΟΣ" -> "οδοσ").
+    private static func lowerWithGreek(_ text: String) -> String {
+        guard hasGreekLetter(text) else { return text.lowercased() }
+        return mapWords(text) { hasGreekLetter($0) ? $0.lowercased(with: greek) : $0.lowercased() }
+    }
+
     /// Each whitespace-delimited run replaced by `transform(word)`.
     private static func mapWords(_ text: String, _ transform: (String) -> String) -> String {
         var output = text
@@ -1401,18 +1436,21 @@ enum KriaTextCase {
     }
 
     static func upper(_ text: String, language: String? = nil) -> String {
-        perWord(text, language, turkish: trUpper, english: { $0.uppercased() })
+        perWord(text, language, turkish: trUpper, english: upperWithGreek)
     }
 
     static func lower(_ text: String, language: String? = nil) -> String {
-        perWord(text, language, turkish: trLower, english: { $0.lowercased() })
+        perWord(text, language, turkish: trLower, english: lowerWithGreek)
     }
 
     /// First character of each whitespace-delimited run upper, the rest lower (never after apostrophes).
+    /// A Greek capital keeps its accent there ("όπως" -> "Όπως"); only all caps drops it.
     static func title(_ text: String, language: String? = nil) -> String {
         mapWords(text) { word in
             let lang: String? = usesTurkishCase(word, language: language) ? "tr" : nil
-            return upper(String(word.prefix(1)), language: lang) + lower(String(word.dropFirst()), language: lang)
+            let initial = String(word.prefix(1))
+            return (hasGreekLetter(initial) ? initial.uppercased() : upper(initial, language: lang))
+                + lower(String(word.dropFirst()), language: lang)
         }
     }
 

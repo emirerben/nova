@@ -595,6 +595,12 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "feature": "drawing",
             "minimum_client_protocol": settings.freehand_drawing_min_client_protocol,
         }
+    from app.services.phone_rollout import script_fonts_update_detail  # noqa: PLC0415
+
+    script_fonts = script_fonts_update_detail(recipe)
+    if script_fonts is not None:
+        # KRI-1192: a build below protocol 35 has no Noto Sans KR / Arabic file to draw it.
+        return script_fonts
     if not text_bend_client_supported() and any(
         layer.bend for layer in getattr(recipe, "text_layers", None) or []
     ):

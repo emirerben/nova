@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.86.0.0] - 2026-11-04
+
+### Added
+- feat(captions): spoken captions in 10 more languages — pt, es, el, de, ko, it, fr, ar, da, sr (KRI-1192) (#2094) <!-- release-pr: 2094 -->
+
 ## [0.85.2.0] - 2026-11-04
 
 ### Changed

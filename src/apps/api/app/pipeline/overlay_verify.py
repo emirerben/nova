@@ -44,6 +44,8 @@ Detector verdicts (per overlay)
 - glyphs (KRI-785): FAIL if the resolved face (after the whole-run glyph
   fallback in `font_coverage`) lacks a letter, digit or punctuation mark of
   the text. Tofu boxes pass the bbox check and usually OCR too.
+- shaping (KRI-1192): FAIL if Arabic (right-to-left, joining) text would be
+  drawn by the unshaped path: isolated letters in left-to-right order.
 
          recipe overlay
               │
@@ -429,6 +431,23 @@ def missing_rendered_glyphs(overlay: dict) -> list[str]:
     return missing
 
 
+def drawn_unshaped(overlay: dict) -> bool:
+    """True when right-to-left/joining text (Arabic) would be drawn unshaped (KRI-1192 F7).
+
+    The unshaped drawString path sets Arabic as isolated letters, left to right: no
+    box, no clipping, often a passable OCR read, so the other detectors pass it.
+    """
+    from app.pipeline.portable_text_layout import needs_text_shaping  # noqa: PLC0415
+
+    text = tos._overlay_text(overlay)
+    if not needs_text_shaping(text):
+        return False
+    resolution = tos._resolved_typeface_for_render(overlay)
+    if resolution.source == "authored_centerline":
+        return False
+    return not _uses_shaped_paragraph(overlay, resolution.typeface, text)
+
+
 def _uses_shaped_paragraph(overlay: dict, typeface=None, text: str = "") -> bool:  # noqa: ANN001
     """Mirror of the renderer's shaped-text switch (`_draw_frame`).
 
@@ -535,6 +554,10 @@ def verify_overlay(
             f"glyph fallback {res.resolved_typeface.get('requested_font_family')!r} -> "
             f"{res.resolved_typeface.get('name')!r} (font lacks characters of this text)"
         )
+
+    if drawn_unshaped(overlay):
+        res.clipping = _worst(res.clipping, "FAIL")
+        res.reasons.append("right-to-left/joining text drawn unshaped (isolated letters, LTR)")
 
     font_fallback = bool(res.resolved_typeface.get("fallback"))
     if font_fallback:

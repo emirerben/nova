@@ -445,6 +445,42 @@
       "css_family": "'Alte Haas Grotesk', sans-serif",
       "vibe": "clean_captions",
       "note": "Helvetica-inspired grotesque. All extended Latin covered. 100% Free by Yann le Coroller."
+    },
+    "Noto Sans KR": {
+      "file": "NotoSansKR-Regular.ttf",
+      "ass_name": "Noto Sans KR",
+      "weight": 400,
+      "category": "sans",
+      "css_family": "'Noto Sans KR', sans-serif",
+      "deprecated": true,
+      "script_fallback": true
+    },
+    "Noto Sans KR Bold": {
+      "file": "NotoSansKR-Bold.ttf",
+      "ass_name": "Noto Sans KR",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'Noto Sans KR', sans-serif",
+      "deprecated": true,
+      "script_fallback": true
+    },
+    "Noto Sans Arabic": {
+      "file": "NotoSansArabic-Regular.ttf",
+      "ass_name": "Noto Sans Arabic",
+      "weight": 400,
+      "category": "sans",
+      "css_family": "'Noto Sans Arabic', sans-serif",
+      "deprecated": true,
+      "script_fallback": true
+    },
+    "Noto Sans Arabic Bold": {
+      "file": "NotoSansArabic-Bold.ttf",
+      "ass_name": "Noto Sans Arabic",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'Noto Sans Arabic', sans-serif",
+      "deprecated": true,
+      "script_fallback": true
     }
   },
   "style_defaults": {

@@ -216,6 +216,11 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if let target = audio.targetLUFS { guard target.isFinite, (-40 ... -5).contains(target) else { throw RecipeError.invalidTimeline } }
     }
 
+    /// The bundled script-fallback font files (`font-registry.json` entries with `script_fallback: true`).
+    public static let scriptFontFiles: Set<String> = [
+        "NotoSansKR-Regular.ttf", "NotoSansKR-Bold.ttf", "NotoSansArabic-Regular.ttf", "NotoSansArabic-Bold.ttf",
+    ]
+
     /// Derive requirements from content too: an omitted server capability must not drop an effect.
     public var effectiveCapabilities: Set<MediaCapability> {
         var result = requiredCapabilities
@@ -232,6 +237,15 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if textLayers.contains(where: { ($0.bend ?? 0) != 0 }) { result.insert(.textBend) }
         if textLayers.contains(where: { $0.karaoke?.singleWord == true }) { result.insert(.singleWordText) }
         if textLayers.contains(where: { $0.behindSubject == true }) { result.insert(.behindSubject) }
+        // KRI-1192: a run drawn in a script-fallback face (Noto Sans KR / Arabic) needs a build that bundles it.
+        // Mirrors `EditRecipeV2`, which reads the run's font asset file from the manifest.
+        let scriptFontAssets = Set((assetManifest?.assets ?? []).compactMap { asset -> String? in
+            if case .library(.font, let file, _) = asset.source, Self.scriptFontFiles.contains(file) { return asset.id }
+            return nil
+        })
+        if !scriptFontAssets.isEmpty, textLayers.contains(where: { $0.runs.contains { scriptFontAssets.contains($0.fontAssetID) } }) {
+            result.insert(.scriptFonts)
+        }
         for asset in assetManifest?.assets ?? [] {
             if case .visual(_, _, let mediaKind) = asset.source { result.insert(mediaKind == .video ? .visualVideos : .stillImages) }
         }
@@ -538,7 +552,7 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
          soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, singleWordText, freezeFrame,
          behindSubject, speakerBackground, clipTilt, clipBackdropMedia,
-         speakerBackgroundWindows, speakerBackgroundColor
+         speakerBackgroundWindows, speakerBackgroundColor, scriptFonts
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }

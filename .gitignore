@@ -108,3 +108,7 @@ brand/social/dist/**/*.mov
 
 # Intent review qualification harness outputs (python -m app.cli.qualify_intent_review, KRI-1171)
 .intent-review-qualification/
+
+# KRI-1192 caption-language evidence (renders, FLEURS audio, reports)
+.caption-verify/
+.ios-caption-verify/
