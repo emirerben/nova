@@ -214,9 +214,9 @@ def test_q1_two_white_words_the_spoken_one_bright_the_other_dimmed(monkeypatch):
 
     assert variant["caption_shape"] == {"version": 1, "words": 2, "dim": True}
     assert all(len(cue["text"].split()) <= 2 for cue in variant["caption_cues"])
-    receipt = _receipt(Q1_CAPTIONS, variant)
-    assert receipt.status == "met", receipt
-    assert "two words at a time" in receipt.reason, receipt.reason
+    # Met. A met look combined with the met word-by-word part carries no reason (KRI-558
+    # `combine_receipts` keeps reasons of unmet parts only); the gate tests below pin the text.
+    assert _receipt(Q1_CAPTIONS, variant).status == "met"
 
 
 # ------------------------------------------------------------------------------------ Q2
@@ -257,9 +257,7 @@ def test_q2_black_words_in_a_light_grey_rounded_box_low_and_off_her_face(monkeyp
 
     assert variant["caption_shape"] == {"version": 1, "words": 2, "box": "#E5E5E5"}
     assert variant["caption_text_color"] == "#000000"
-    receipt = _receipt(Q2_CAPTIONS, variant)
-    assert receipt.status == "met", receipt
-    assert "light grey box" in receipt.reason, receipt.reason
+    assert _receipt(Q2_CAPTIONS, variant).status == "met"
 
 
 def test_an_editor_save_recompiles_the_same_shape(monkeypatch):

@@ -1621,3 +1621,94 @@ ScaledBorderAndShadow: yes
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding  # noqa: E501
 Style: Default,Arial,72,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,50,50,120,1  # noqa: E501
 """
+
+
+_MIN_SPLIT_CUE_S = 0.05
+
+
+def split_cues_by_words(cues: list[dict], max_words: int) -> list[dict]:
+    """Split every cue into groups of at most ``max_words`` consecutive words (item 12: a caption
+    shows one or two words at a time).
+
+    Group boundaries land on the cue's own word starts when its ``words`` still spell its text;
+    otherwise the text tokens are spread over the cue in proportion to their length. The groups
+    tile the cue exactly (no caption-free gap inside it), none is shorter than 0.05 s, and each
+    keeps the cue's other keys plus its own ``words``. The first group keeps the cue ``id``;
+    later ones get ``f"{id}-{k}"``. A cue of ``max_words`` words or fewer is returned unchanged.
+    """
+    if max_words < 1:
+        return cues
+    out: list[dict] = []
+    for cue in cues:
+        text = str(cue.get("text", "")).strip()
+        tokens = text.split()
+        if len(tokens) <= max_words:
+            out.append(cue)
+            continue
+        start = float(cue.get("start_s", 0.0))
+        end = float(cue.get("end_s", start))
+        chunks = [tokens[i : i + max_words] for i in range(0, len(tokens), max_words)]
+        # A cue too short for 0.05 s per group keeps fewer, longer groups.
+        while len(chunks) > 1 and (end - start) < _MIN_SPLIT_CUE_S * len(chunks):
+            chunks[-2] = chunks[-2] + chunks[-1]
+            chunks.pop()
+        words = cue.get("words")
+        aligned = (
+            isinstance(words, list)
+            and len(words) == len(tokens)
+            and all(isinstance(w, dict) for w in words)
+            and [str(w.get("text", "")).strip() for w in words] == tokens
+        )
+        offsets = [0]
+        for chunk in chunks:
+            offsets.append(offsets[-1] + len(chunk))
+        starts: list[float] = [start]
+        for k in range(1, len(chunks)):
+            if aligned:
+                try:
+                    starts.append(float(words[offsets[k]]["start_s"]))
+                except (KeyError, TypeError, ValueError):
+                    starts.append(starts[-1])
+            else:
+                before = sum(len(t) for t in tokens[: offsets[k]]) + offsets[k]
+                total = sum(len(t) for t in tokens) + len(tokens)
+                starts.append(start + (end - start) * before / max(1, total))
+        # Ordered, at least 0.05 s each, ending inside the cue.
+        for k in range(1, len(starts)):
+            starts[k] = max(starts[k], starts[k - 1] + _MIN_SPLIT_CUE_S)
+        for k in range(len(starts) - 1, 0, -1):
+            starts[k] = min(starts[k], end - _MIN_SPLIT_CUE_S * (len(starts) - k))
+        bounds = [*starts, end]
+        base_id = cue.get("id")
+        for k, chunk in enumerate(chunks):
+            group_start, group_end = round(bounds[k], 3), round(bounds[k + 1], 3)
+            piece = {key: value for key, value in cue.items() if key != "words"}
+            piece["text"] = " ".join(chunk)
+            piece["start_s"] = group_start
+            piece["end_s"] = group_end
+            if isinstance(base_id, str) and k > 0:
+                piece["id"] = f"{base_id}-{k}"
+            if aligned:
+                piece["words"] = [
+                    {
+                        **words[i],
+                        "start_s": min(max(float(words[i]["start_s"]), group_start), group_end),
+                        "end_s": min(max(float(words[i]["end_s"]), group_start), group_end),
+                    }
+                    for i in range(offsets[k], offsets[k + 1])
+                ]
+            elif "words" in cue:
+                spread, cursor = [], group_start
+                share = (group_end - group_start) / len(chunk)
+                for token in chunk:
+                    spread.append(
+                        {
+                            "text": token,
+                            "start_s": round(cursor, 3),
+                            "end_s": round(cursor + share, 3),
+                        }
+                    )
+                    cursor += share
+                piece["words"] = spread
+            out.append(piece)
+    return out

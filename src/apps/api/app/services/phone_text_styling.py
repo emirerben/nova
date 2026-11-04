@@ -133,6 +133,13 @@ def stamp_phone_text_style(job) -> None:
     }
     # KRI-1177: the look the creator typed onto the brief rides beside the parsed `requested`.
     ask = _brief_caption_ask(current)
+    if ask is not None and ask.has_shape:
+        # Qendresa item 12: the shape is drawn only for the approving app build that can edit it.
+        from app.services.phone_rollout import caption_shape_planned_for, stamped_client_protocol
+
+        protocol = stamped_client_protocol(candidates.get("creator_client_protocol"))
+        if not caption_shape_planned_for(protocol):
+            ask = ask.without_shape()
     if ask is not None:
         stamped["caption_ask"] = ask.as_dict()
     current[PHONE_TEXT_STYLE_FIELD] = stamped
@@ -360,6 +367,8 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
     if ask is not None:
         if ask.color is not None:
             rule["color"] = ask.color
+        elif ask.box is not None:
+            rule["color"] = "#000000"  # text on the box; the contrast colour never repaints it
         if ask.position is not None:
             rule["position"] = ask.position
     if (
@@ -536,9 +545,13 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
                 resolved = replace(resolved, text_color=fill)
             if ask is not None:
                 over_face = _caption_over_face(row, rows, policy.get("_face_boxes") or [], canvas)
+    resolved, over_face = _apply_caption_shape(resolved, ask, over_face, cues, canvas)
     if ask is not None:
         policy["_caption_look_receipt"] = {
             **ask.as_dict(),
+            **(
+                {"words": policy["_caption_shape"]["words"]} if policy.get("_caption_shape") else {}
+            ),
             "size_px": resolved.text_size_px,
             # Where the block was drawn, so a later move (a KRI-827 mark, an editor Save) is seen.
             "position_x_frac": round(float(resolved.position_x_frac), 5),
@@ -547,6 +560,87 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
         }
     policy["caption_look"] = resolved
     return resolved
+
+
+def _apply_caption_shape(resolved, ask, over_face: bool, cues: list[dict], canvas):
+    """Qendresa item 12: the look of the caption SHAPE the stamp kept (words and / or box).
+
+    A box look: black bold text on a rounded box, low (0.79) or middle (0.62). A words-only
+    look: the not-yet-spoken word dimmed, no lime, under the face (0.62) or low (0.79). Records
+    the shape on the policy for `generation_style_fields` and the receipt; ``resolved`` and
+    ``over_face`` come back unchanged when the stamped ask carries no shape."""
+    from dataclasses import replace
+
+    if ask is None or not ask.has_shape:
+        return resolved, over_face
+    policy = _POLICY.get()
+    words = int(policy.get("_caption_shape_words") or ask.shape_words)
+    # Her spots: under the face (V4/V7 0.61-0.62) for "middle", low (V5/V6 0.76-0.77, V1 0.87)
+    # for "bottom" and for a box with no spot. A words-only ask with no spot keeps today's
+    # face-aware placement.
+    spot = ask.position or ("bottom" if ask.box is not None else None)
+    placed_y = {"middle": 0.62, "bottom": 0.79}.get(spot) if spot is not None else None
+    updates: dict = {}
+    if ask.box is not None:
+        updates.update(
+            text_color=ask.color or "#000000",
+            outline_px=0,
+            shadow_enabled=False,
+            box_color=ask.box,
+        )
+        if ask.size is None:
+            updates["text_size_px"] = 64
+        if ask.position in (None, "bottom", "middle"):
+            updates.update(position_x_frac=0.5, text_anchor="center")
+        policy["_caption_shape"] = {"words": words, "box": ask.box}
+    else:
+        updates.update(dim_words=True, highlight_color=resolved.text_color)
+        policy["_caption_shape"] = {"words": words, "dim": True}
+    if placed_y is not None:
+        updates["position_y_frac"] = placed_y
+    resolved = replace(resolved, **updates)
+    faces = policy.get("_face_boxes") or []
+    if not cues or not faces:
+        return resolved, False
+    from app.agents._schemas.text_element import TextElement
+    from app.pipeline.canvas import PORTRAIT
+    from app.pipeline.phone_text_style import _overlap, _same_window, animation_box, measure_box
+
+    canvas = canvas or PORTRAIT
+    timed = [c for c in cues if str(c.get("text") or "").strip()]
+    if not timed:
+        return resolved, over_face
+    widest = max(timed, key=lambda c: len(str(c["text"])))
+    row = TextElement(
+        id="caption-shape",
+        text=str(widest["text"]),
+        start_s=min(float(c.get("start_s", 0)) for c in timed),
+        end_s=max(float(c.get("end_s", 0)) for c in timed),
+        font_family=resolved.font_family,
+        size_px=resolved.text_size_px,
+        color=resolved.text_color,
+        stroke_width=resolved.outline_px,
+        shadow_enabled=resolved.shadow_enabled,
+        max_width_frac=resolved.max_width_frac,
+        effect="pop-in",
+    ).model_dump(mode="json", exclude_none=True)
+    row.update(
+        x_frac=resolved.position_x_frac,
+        y_frac=resolved.position_y_frac,
+        alignment=resolved.text_anchor,
+    )
+    block = list(animation_box(row, measure_box(dict(row), canvas), canvas))
+    if resolved.box_color is not None:
+        pad_x = 0.40 * resolved.text_size_px / canvas.width
+        pad_y = 0.18 * resolved.text_size_px / canvas.height
+        block = [block[0] - pad_x, block[1] - pad_y, block[2] + pad_x, block[3] + pad_y]
+    cue_windows = [dict(start_s=c.get("start_s", 0), end_s=c.get("end_s", 0)) for c in timed]
+    hit = any(
+        _overlap(block, face["box"] if isinstance(face, dict) else face)
+        and (not isinstance(face, dict) or any(_same_window(face, w) for w in cue_windows))
+        for face in faces
+    )
+    return resolved, hit
 
 
 def _caption_over_face(row: dict, rows: list[dict], faces: list, canvas) -> bool:
@@ -568,10 +662,27 @@ def generation_caption_cues(cues: list[dict], *, language: str | None = None) ->
     shows it and a Save keeps it); ``cues`` unchanged when no case was asked."""
     from app.kria.caption_look_ask import CaptionLookAsk, apply_caption_case
 
-    ask = CaptionLookAsk.from_dict((_POLICY.get() or {}).get("caption_ask"))
-    if ask is None or ask.case is None:
+    policy = _POLICY.get() or {}
+    ask = CaptionLookAsk.from_dict(policy.get("caption_ask"))
+    if ask is None:
         return cues
-    return apply_caption_case(cues, ask.case, language)
+    if ask.case is not None:
+        cues = apply_caption_case(cues, ask.case, language)
+    words = ask.shape_words
+    if words is None:
+        return cues
+    # Qendresa item 12: one or two words at a time. Splitting here, after the sentence re-split
+    # (which would re-merge short cues), keeps every later step on the split cues.
+    from app.pipeline.captions import split_cues_by_words
+    from app.pipeline.phone_captions import MAX_CAPTION_LAYERS
+
+    used = words
+    split = split_cues_by_words(cues, used)
+    while len(split) > MAX_CAPTION_LAYERS and used < 8:
+        used += 1
+        split = split_cues_by_words(cues, used)
+    policy["_caption_shape_words"] = used
+    return split
 
 
 def remember_caption_bounds(layers, *, canvas):
@@ -598,6 +709,10 @@ def remember_caption_bounds(layers, *, canvas):
     for layer in layers:
         ink = [caption_ink_box(run, typeface) for run in layer.runs]
         ink = [box for box in ink if box is not None]
+        if ink and getattr(layer, "background", None) is not None:
+            # A caption box is part of the caption: titles and cards avoid the whole box.
+            back = layer.background
+            ink.append((back.left, back.top, back.left + back.width, back.top + back.height))
         if ink:
             boxes.append(
                 {
@@ -806,6 +921,9 @@ def generation_style_fields() -> dict:
     look = policy.get("caption_look")
     if policy.get("_caption_look_receipt") is not None:
         result["caption_look_receipt"] = copy.deepcopy(policy["_caption_look_receipt"])
+    shape = policy.get("_caption_shape")
+    if shape and look is not None:
+        result["caption_shape"] = {"version": 1, **shape}
     if look is not None:
         result.update(
             voiceover_caption_font=look.font_family,
