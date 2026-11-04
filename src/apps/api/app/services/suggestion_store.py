@@ -16,6 +16,8 @@ Keys (all TTL 24h, all fail-open: a Redis outage degrades to the deterministic s
                                               (``KRIA_SUGGESTER_MAX_RUNS_PER_THREAD``)
 * ``kria:suggester:hint:{thread}``             language/protocol the GET last saw (the worker
                                               has no request headers)
+* ``kria:suggester:debounce:{thread}:-``       one pending freshness refresh per debounce window
+                                              (``KRIA_SUGGESTION_EDITOR_TRIGGERS_ENABLED``)
 
 The functions are synchronous; async callers use ``asyncio.to_thread``.
 """
@@ -154,6 +156,16 @@ def try_lock(thread_id: str, digest: str, ttl_s: int = LOCK_TTL_S, scope: str = 
     return bool(
         _guard(lambda: _redis().set(_key(scope, thread_id, digest), "1", nx=True, ex=ttl_s))
     )
+
+
+def claim_refresh_slot(thread_id: str, window_s: int) -> bool:
+    """True for exactly one caller per debounce window: the one that must enqueue the refresh.
+
+    A refresh enqueued with a countdown of ``window_s`` reads the thread when it runs, so any
+    trigger that lands inside the window is already covered by it and is dropped here. The slot
+    expires with the window, so a trigger that lands after the run read the thread starts the next.
+    """
+    return try_lock(thread_id, "-", ttl_s=max(1, window_s), scope="debounce")
 
 
 def release_lock(thread_id: str, digest: str, scope: str = "lock") -> None:

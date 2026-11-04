@@ -7660,6 +7660,17 @@ async def set_source_audio_mix(
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
 
+async def _refresh_suggestions_after_save(item_id: str) -> None:
+    """A Save changes the Job without a draft revision: warm the Improve cards for it.
+
+    Flag-gated (KRIA_SUGGESTION_EDITOR_TRIGGERS_ENABLED), debounced, never raises, and only ever
+    called after the commit so no row lock is held.
+    """
+    from app.services.suggestion_serve import arefresh_for_item  # noqa: PLC0415
+
+    await arefresh_for_item(item_id, trigger="editor_save")
+
+
 @router.post(
     "/{item_id}/variants/{variant_id}/editor-commit",
     response_model=EditorCommitResponse,
@@ -8130,6 +8141,7 @@ async def _editor_commit_item(
             section_flags=section_flags,
         )
         await db.commit()
+        await _refresh_suggestions_after_save(item_id)
         log.info(
             "plan_item_editor_commit_empty_draft",
             item_id=item_id,
@@ -8251,6 +8263,7 @@ async def _editor_commit_item(
             body=commit_body,
         )
     await db.commit()
+    await _refresh_suggestions_after_save(item_id)
     # Kick AFTER the commit so a worker that grabs the task instantly always
     # observes the committed sections + generation token. If the kick fails the
     # persist stands — the honest partial state ("saved, rendering didn't
