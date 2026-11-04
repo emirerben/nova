@@ -415,7 +415,10 @@ def _build(
     block_h = _union([b for b in (probe[1], probe[3], probe[5]) if b is not None]).height
 
     candidates: list[float] = []
-    if faces:
+    if faces and face_receipt.get("faces") != "fallback":
+        # Just under a face the sampler saw. The unconfirmed fallback face (KRI-183's
+        # centre-top box) ends at 0.52, above a real talking-head chin (hers reach ~0.60),
+        # so with it the block starts at her own spot instead.
         candidates.append(max(f.bottom for f in faces) + _BELOW_FACE_GAP)
     candidates.append(_DEFAULT_TOP_FRAC)
     steps = []
