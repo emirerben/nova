@@ -222,7 +222,7 @@
       "KriaUITests/GeneratedMediaUITests/testGeneratedImagePreviewUseRefreshesVisualPool",
       "KriaUITests/GeneratedMediaUITests/testImageRecoveryAfterProcessRelaunchNeverPostsAgain",
       "KriaUITests/CreationUITests/testSuggestionCardsInChatAndTheEditorImproveSheetShareOneSet",
-      "KriaUITests/CreationUITests/testStaleSuggestionCardShowsNoLongerFitsThenTheRefreshedSet",
+      "KriaUITests/CreationUITests/testDeclinedSuggestionCardRepliesNoLongerFitsThenTheRefreshedSet",
       "KriaUITests/CreationUITests/testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize"
     ],
     "projects": [
