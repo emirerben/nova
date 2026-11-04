@@ -109,7 +109,10 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         self.script = script
         self.viewRemovalGrace = viewRemovalGrace
         self.photoSaver = photoSaver
-        let availability = cinematicAvailability ?? TeleprompterCinematic.availability()
+        var availability = cinematicAvailability ?? TeleprompterCinematic.availability()
+        #if DEBUG
+        if cinematicAvailability == nil, TeleprompterCamera.cinematicUITestFixture != nil { availability = .available }
+        #endif
         self.cinematicAvailability = availability
         self.defaults = defaults
         // A saved "on" only counts where Cinematic can actually record.

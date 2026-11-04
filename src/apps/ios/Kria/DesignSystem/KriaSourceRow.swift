@@ -149,6 +149,8 @@ private struct KriaSourceStyle: ButtonStyle {
 struct KriaCameraUploadButton: View {
     var title = "Upload"
     var identifier = "camera-upload"
+    /// Fills the row (the camera at accessibility sizes, where the label needs the width).
+    var fullWidth = false
     let action: () -> Void
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
@@ -156,11 +158,11 @@ struct KriaCameraUploadButton: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: KriaSourceOption.uploadSymbol).font(.system(size: 18, weight: .regular))
-                Text(title).kriaType(.button)
+                Text(title).kriaType(.button).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             }
             .foregroundStyle(Color.white)
-            .padding(.horizontal, 16)
-            .frame(minHeight: 44)
+            .padding(.horizontal, 16).padding(.vertical, 6)
+            .frame(maxWidth: fullWidth ? .infinity : nil, minHeight: 44)
             .background {
                 ZStack {
                     if !KriaTransparency.isReduced(reduceTransparency) { Capsule().fill(.ultraThinMaterial) }
