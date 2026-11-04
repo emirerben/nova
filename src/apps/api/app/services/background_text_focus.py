@@ -62,6 +62,10 @@ class TextColumn(BaseModel):
     right: float = Field(ge=0.0, le=1.0)
     line_pitch: float | None = Field(default=None, gt=0.0, le=1.0)  # of picture HEIGHT
     version: int = TEXT_COLUMN_VERSION
+    # The upright (display) size the fractions refer to, so a focus can be computed later
+    # without the file (a photo's binding does not keep its size).
+    source_width: int | None = Field(default=None, gt=0)
+    source_height: int | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def _right_after_left(self) -> TextColumn:
@@ -90,7 +94,9 @@ def should_measure(
 # ---------------------------------------------------------------------------- frames
 
 
-def _image_frame(path: str, width: int | None, height: int | None) -> np.ndarray | None:
+def _image_frame(
+    path: str, width: int | None, height: int | None
+) -> tuple[np.ndarray, int, int] | None:
     from PIL import Image, ImageOps
 
     try:  # HEIC stills from iPhones
@@ -102,10 +108,12 @@ def _image_frame(path: str, width: int | None, height: int | None) -> np.ndarray
     with Image.open(path) as im:
         im.load()
         im = ImageOps.exif_transpose(im)
-        if not should_measure(width or im.width, height or im.height):
+        upright_w, upright_h = width or im.width, height or im.height
+        if not should_measure(upright_w, upright_h):
             return None
         gray = im.convert("L").resize((_SAMPLE_W, _SAMPLE_H), Image.BILINEAR)
-        return np.asarray(gray, dtype=np.uint8).reshape(1, _SAMPLE_H, _SAMPLE_W)
+        frame = np.asarray(gray, dtype=np.uint8).reshape(1, _SAMPLE_H, _SAMPLE_W)
+        return frame, upright_w, upright_h
 
 
 def _probe_duration(path: str) -> float | None:
@@ -225,14 +233,20 @@ def measure_text_column(
         if kind == "image":
             if (width or height) and not should_measure(width, height):
                 return None
-            frames = _image_frame(path, width, height)
+            measured = _image_frame(path, width, height)
+            if measured is None:
+                return None
+            frames, width, height = measured
         else:
             if not should_measure(width, height):
                 return None
             frames = _video_frames(path)
         if frames is None:
             return None
-        return _column_from_frames(frames)
+        column = _column_from_frames(frames)
+        if column is None:
+            return None
+        return column.model_copy(update={"source_width": width, "source_height": height})
     except Exception as exc:  # noqa: BLE001 -- best-effort, never fails a render
         log.warning("background_text_focus.measure_failed", error_type=type(exc).__name__)
         return None

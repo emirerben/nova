@@ -73,6 +73,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.kria.portable_speaker_background import (
+    SpeakerBackgroundFocus,
     SpeakerBackgroundLayer,
     SpeakerBackgroundWindow,
     SpeakerFrame,
@@ -113,6 +114,7 @@ from app.pipeline.phone_subtitled_lanes import (
     PhoneSubtitledLanes,
     ResolvedSoundEffect,
     SubtitledBackground,
+    SubtitledBackgroundFocus,
     SubtitledEndingClip,
     SubtitledOverlayCard,
     _lane_error,
@@ -861,6 +863,7 @@ def compile_phone_subtitled_plan(
                 assets=assets,
                 manifest=manifest,
                 timeline_duration_s=timeline_end,
+                canvas=canvas,
             )
         except UnsupportedPhonePlan:
             raise
@@ -995,6 +998,7 @@ def _compile_background(
     assets: dict[str, MediaAsset],
     manifest: dict[str, object],
     timeline_duration_s: float | None = None,
+    canvas: Canvas = _STORY_CANVAS,
 ) -> SpeakerBackgroundLayer:
     """The recipe layer for the background, pinning its visuals (KRI-1117, S9; KRI-1162).
 
@@ -1006,9 +1010,15 @@ def _compile_background(
     ``timeline_duration_s`` (the compiled edit): one starting at or past it is dropped,
     one overrunning it is shortened (S39). KRI-1173: a colour fill pins nothing and the
     layer carries ``color`` instead of an asset id; windows over it pin as above (S52).
+
+    Qendresa item 18: the fill and each window may be aimed at the readable text of their
+    recording (`_resolve_background_focus`); ``canvas`` is the recipe canvas the picture is
+    cover-fitted to.
     """
+    focus_for = _FocusResolver(visuals, canvas)
     # KRI-1173: a colour fill names no pool media -- nothing to pin, no manifest entry.
     fill_asset_id: str | None = None
+    fill_focus: SpeakerBackgroundFocus | None = None
     if not background.uses_color:
         fill_asset_id = _pin_background_visual(
             media_id=background.media_id,
@@ -1020,6 +1030,7 @@ def _compile_background(
             assets=assets,
             manifest=manifest,
         )
+        fill_focus = focus_for(background.media_id, background.focus)
     windows: list[SpeakerBackgroundWindow] = []
     for window in background.windows:
         # Pin every window first (a missing/unplayable one fails the lane even when its
@@ -1049,6 +1060,7 @@ def _compile_background(
                 source_start=window.source_start_s if window.kind == "video" else 0.0,
                 start=start,
                 end=end,
+                focus=focus_for(window.media_id, window.focus),
             )
         )
     # Qendresa item 16: the full-screen spans pin nothing; clip them to the edit like windows.
@@ -1074,6 +1086,7 @@ def _compile_background(
         source_start=background.source_start_s if background.kind == "video" else 0.0,
         windows=windows or None,
         full_screen_windows=full_screen or None,
+        focus=fill_focus,
         speaker_frame=(
             SpeakerFrame(
                 width_fraction=frame.width_fraction,
@@ -1084,6 +1097,63 @@ def _compile_background(
             else None
         ),
     )
+
+
+class _FocusResolver:
+    """Qendresa item 18: the recipe focus of one background picture, or None.
+
+    Lane parts win (``x`` / ``zoom``; ``y`` is the lane's); a missing part comes from the
+    measure on the bound visual (``visual.text_column``, set in memory by the bind step, read
+    with ``getattr`` so a binding without it simply has none) via `focus_for_text_column` on
+    the recipe canvas; else today's 0.5 / 1.0. No lane focus and no measure -> None. Exactly
+    today's drawing (0.5, 0.5, 1.0) -> None. The rollout gate is asked at most once per compile
+    and only when there is something to write; closed, the lane's own focus is dropped too so the
+    recipe equals one that never asked.
+    """
+
+    def __init__(self, visuals: tuple[PhoneVisualBinding, ...], canvas: Canvas) -> None:
+        self._visuals = {visual.media_id: visual for visual in visuals}
+        self._canvas = canvas
+        self._open: bool | None = None
+
+    def _gate_open(self) -> bool:
+        if self._open is None:
+            from app.services import phone_rollout  # noqa: PLC0415
+
+            self._open = phone_rollout.background_focus_unavailable_reason() is None
+        return self._open
+
+    def __call__(
+        self, media_id: str | None, lane: SubtitledBackgroundFocus | None
+    ) -> SpeakerBackgroundFocus | None:
+        column = getattr(self._visuals.get(media_id or ""), "text_column", None)
+        if lane is None and column is None:
+            return None
+        if not self._gate_open():
+            return None
+        auto = None
+        if column is not None and column.source_width and column.source_height:
+            from app.services.background_text_focus import focus_for_text_column  # noqa: PLC0415
+
+            auto = focus_for_text_column(
+                column,
+                source_w=column.source_width,
+                source_h=column.source_height,
+                canvas_w=self._canvas.width,
+                canvas_h=self._canvas.height,
+            )
+        if lane is None and auto is None:
+            return None
+        x = lane.x if lane is not None and lane.x is not None else (auto.x if auto else 0.5)
+        zoom = (
+            lane.zoom
+            if lane is not None and lane.zoom is not None
+            else (auto.zoom if auto else 1.0)
+        )
+        y = lane.y if lane is not None else (auto.y if auto else 0.5)
+        if (x, y, zoom) == (0.5, 0.5, 1.0):
+            return None
+        return SpeakerBackgroundFocus(x=x, y=y, zoom=zoom)
 
 
 def _pin_background_visual(

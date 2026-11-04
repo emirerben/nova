@@ -23,6 +23,7 @@ from app.kria.media_sources import (
     is_analysis_proxy_path,
 )
 from app.kria.render_assets import OriginalRenderAsset, RenderFingerprint, VisualRenderAsset
+from app.services.background_text_focus import TextColumn
 
 PHONE_SOURCES_FIELD = "_phone_sources_v1"
 PHONE_VISUALS_FIELD = "_phone_visuals_v1"
@@ -140,6 +141,24 @@ class PhoneVisualBinding(BaseModel):
     width: int | None = Field(default=None, gt=0)
     height: int | None = Field(default=None, gt=0)
     orientation_degrees: int = 0
+    # Qendresa item 18: where the readable text sits, measured while the file was on disk.
+    # In memory only: excluded from every dump (so the persisted `_phone_visuals_v1` receipts and
+    # their equality checks stay byte-identical) and from ==/hash (identity is the file, not
+    # whether it was measured).
+    text_column: TextColumn | None = Field(default=None, exclude=True)
+
+    def _identity(self) -> tuple:
+        return tuple(
+            getattr(self, name) for name in type(self).model_fields if name != "text_column"
+        )
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, PhoneVisualBinding):
+            return NotImplemented
+        return self._identity() == other._identity()
+
+    def __hash__(self) -> int:
+        return hash(self._identity())
 
     @model_validator(mode="after")
     def require_video_probe(self) -> PhoneVisualBinding:

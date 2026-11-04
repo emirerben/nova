@@ -43,6 +43,10 @@ TILT_ZOOM_PROTOCOL = 33
 # `speakerFrameWindows` capability: the speaker full screen in their own take, then the corner).
 SPEAKER_FULL_OPENING_PROTOCOL = 38
 
+# Qendresa item 18: the first build that decodes `speaker_background.focus` /
+# `windows[i].focus` (the `backgroundFocus` capability: the picture aimed at its text column).
+BACKGROUND_FOCUS_PROTOCOL = 39
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()
