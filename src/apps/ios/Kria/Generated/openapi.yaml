@@ -12039,6 +12039,20 @@
         "title": "SuggestionDigest",
         "type": "object"
       },
+      "SuggestionDismissOut": {
+        "description": "What happened to a dismiss. Every value is a normal outcome, never an error.",
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "SuggestionDismissOut",
+        "type": "object"
+      },
       "SuggestionOut": {
         "description": "Wire projection of a ``Suggestion``: no action, no witness (those stay server-side).",
         "properties": {
@@ -15319,6 +15333,78 @@
           }
         }
       ]
+    },
+    "/creation-threads/{thread_id}/suggestions/dismiss": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "dismissCreationSuggestion",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuggestionTapIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuggestionDismissOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
+          "422": {
+            "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
     },
     "/creation-threads/{thread_id}/turns": {
       "parameters": [

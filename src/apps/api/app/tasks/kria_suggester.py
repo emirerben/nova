@@ -10,7 +10,10 @@ Triggers (all enqueue-only, see ``app/services/suggestion_serve.py``):
 
 * clip understanding finished for a plan item (first_prompt picks),
 * a render settled ready (ready picks; the run is wrapped in ``pipeline_trace_for(job_id)``),
-* lazily from the GET on a cache miss (deduped by a Redis lock).
+* lazily from the GET on a cache miss (deduped by a Redis lock),
+* behind ``KRIA_SUGGESTION_EDITOR_TRIGGERS_ENABLED``: a draft revision commit, a native editor
+  Save, a clip's signals computed. They are debounced and arrive with a countdown; a run that
+  finds a turn or a render still running tries again later instead of generating.
 
 Contract: best-effort and NEVER fatal. Every exit that is not a cached agent result writes a
 fallback marker, so the GET serves the deterministic set immediately instead of waiting out its
@@ -55,11 +58,20 @@ from app.services.suggestion_chips import (
     CandidatePlan,
     SuggestionContext,
     build_agent_input,
-    build_candidates,
     load_suggestion_context,
     pick_stats,
 )
-from app.services.suggestion_serve import needs_wording, with_transcripts
+from app.services.suggestion_serve import (
+    BUSY_DEFERRALS_MAX,
+    BUSY_RETRY_MIN_S,
+    REFRESH_TRIGGERS,
+    editor_triggers_on,
+    enqueue_suggester,
+    needs_wording,
+    plan_for,
+    thread_busy,
+    with_transcripts,
+)
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -104,7 +116,7 @@ def _fallback_reason(exc: BaseException) -> str:
 
 
 async def _prepare(
-    thread_id: str, language: str | None, protocol: int | None
+    thread_id: str, language: str | None, protocol: int | None, *, defer_when_busy: bool = False
 ) -> tuple[SuggestionContext, CandidatePlan] | str:
     """Load the thread and build its candidates. A str is a skip reason."""
     # Each run plans inside a fresh `asyncio.run` loop and asyncpg connections cannot cross
@@ -117,9 +129,12 @@ async def _prepare(
                 return "ignored"
             if not settings.suggestion_chips_for(thread.creator_id):
                 return "flag_off"
+            if defer_when_busy and await thread_busy(db, thread):
+                return "busy"
             ctx = await load_suggestion_context(db, thread, None, protocol, language_hint=language)
             ctx = await with_transcripts(db, thread, ctx)
-            return ctx, build_candidates(ctx)
+            # The same call the GET makes, so both sides always key the cache identically.
+            return ctx, await plan_for(db, thread, ctx)
     finally:
         await engine.dispose()
 
@@ -142,6 +157,7 @@ def kria_suggester(  # noqa: ANN201
     expected_digest: str | None = None,
     language: str | None = None,
     protocol: int | None = None,
+    attempt: int = 0,
 ):
     """Rank the cards for one thread and cache the picks. Idempotent per digest."""
     if not (settings.kria_suggestion_chips_enabled or settings.kria_suggestion_chips_user_ids):
@@ -152,13 +168,20 @@ def kria_suggester(  # noqa: ANN201
         hint = store.get_hint(thread_id)
         language = language or hint.get("language")
         protocol = protocol if protocol is not None else hint.get("protocol")
+    refresh = trigger in REFRESH_TRIGGERS and editor_triggers_on()
     try:
-        prepared = asyncio.run(_prepare(thread_id, language, protocol))
+        prepared = asyncio.run(
+            _prepare(thread_id, language, protocol, defer_when_busy=True)
+            if refresh
+            else _prepare(thread_id, language, protocol)
+        )
     except Exception:  # noqa: BLE001 - best-effort background work
         log.warning(
             "suggestion_chips.error", stage="worker_load", thread_id=thread_id, exc_info=True
         )
         return {"thread_id": thread_id, "status": "failed"}
+    if prepared == "busy":
+        return _defer(thread_id, trigger, language, protocol, attempt)
     if isinstance(prepared, str):
         return {"thread_id": thread_id, "status": prepared}
     ctx, plan = prepared
@@ -203,6 +226,24 @@ def kria_suggester(  # noqa: ANN201
     finally:
         if held:
             store.release_lock(thread_id, digest, scope="inflight")
+
+
+def _defer(
+    thread_id: str, trigger: str, language: str | None, protocol: int | None, attempt: int
+) -> dict[str, Any]:
+    """A turn or render is running: never generate now, look again shortly, a bounded number of
+    times (the render that ends it also fires its own trigger, so giving up loses nothing)."""
+    if attempt >= BUSY_DEFERRALS_MAX:
+        return {"thread_id": thread_id, "status": "busy_gave_up"}
+    queued = enqueue_suggester(
+        thread_id,
+        trigger=trigger,
+        language=language,
+        protocol=protocol,
+        countdown=max(int(settings.kria_suggestion_refresh_debounce_s), BUSY_RETRY_MIN_S),
+        attempt=attempt + 1,
+    )
+    return {"thread_id": thread_id, "status": "busy_deferred" if queued else "busy_gave_up"}
 
 
 def _run_agent(

@@ -4925,6 +4925,16 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                 enqueue_for_thread(
                     snapshot["thread_id"], trigger="pinned_stale", creator_id=snapshot["creator_id"]
                 )
+            if (planned.plan.mode != "respond" and not completion.response_only) or (
+                planned.brief_updates
+            ):
+                # A draft revision or a brief version just committed: warm the next set
+                # (flag-checked, debounced, enqueue-only; the turn's row lock is long released).
+                from app.services.suggestion_serve import refresh_for_thread  # noqa: PLC0415
+
+                refresh_for_thread(
+                    snapshot["thread_id"], trigger="draft_commit", creator_id=snapshot["creator_id"]
+                )
             if planned.defer_brief:
                 try:
                     extract_kria_brief.apply_async(

@@ -20,6 +20,7 @@ from app.kria.api_schemas import (
     RenderRetryBody,
     RenderRetryOut,
     SubmitTurnBody,
+    SuggestionTapIn,
     ThreadDeltaOut,
     TurnAccepted,
     TurnCancelBody,
@@ -65,6 +66,7 @@ from app.routes.creation_threads import (
     CreationCapabilitiesOut,
     CreationThreadOut,
     MessageBody,
+    SuggestionDismissOut,
     SuggestionSetOut,
     UploadBody,
     UploadTarget,
@@ -240,6 +242,7 @@ MOBILE_API_MODELS = (
     EditorCommitResponse,
     EditorSourceRequest,
     EditorSourceOut,
+    SuggestionDismissOut,
     *API_MODELS,
 )
 
@@ -638,6 +641,15 @@ def mobile_openapi_json() -> str:
                     "operationId": "getCreationSuggestions",
                     "security": bearer,
                     "responses": _json_responses(SuggestionSetOut),
+                },
+            },
+            "/creation-threads/{thread_id}/suggestions/dismiss": {
+                "parameters": [thread_id],
+                "post": {
+                    "operationId": "dismissCreationSuggestion",
+                    "security": bearer,
+                    "requestBody": _json_request(SuggestionTapIn),
+                    "responses": _json_responses(SuggestionDismissOut),
                 },
             },
             "/creation-threads/{thread_id}/turns": {
