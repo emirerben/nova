@@ -14,7 +14,11 @@ model.
 
 `compare` scores the two rendered MP4s with whisper.cpp: pauses measured the way the acceptance
 tool measures them (PASS when the longest pause is <= 0.35 s), a word-by-word diff of consented vs
-tight, and a negative control proving the word check can see a lost word.
+tight, and a hard negative control: one whole word removed from the consented render must be
+heard as missing (exit 3 if not). Partial clips (0.4 s mid-word, last 0.15 s of a word) are
+recorded in report.json as informational only: whisper cannot see partial clipping (it fills a
+partly cut word in from context), which is why the cutter's quiet-floor rule and a listening
+check exist.
 
 Usage (repo root):
   src/apps/api/.venv/bin/python scripts/ios/qendresa-13-tight-pauses-e2e.py prepare OUT \
@@ -493,19 +497,31 @@ def _negative_control(
     model: Path,
     work: Path,
     *,
-    tail: bool = False,
+    mode: str = "word",
 ) -> dict:
+    """Cut audio out of the consented render and see whether the word diff notices.
+
+    ``word`` (the hard control): one WHOLE word (its span +-30 ms), a word of >= 3 letters from
+    the middle of the render, chosen deterministically. ``mid`` / ``tail``: partial clips,
+    informational only."""
     dur = _duration(consented_wav)
     candidates = [w for w in words if w["start_s"] > 1.0 and w["end_s"] < dur - 2.0]
+    if mode == "word":
+        candidates = [w for w in candidates if len(_norm(w["text"])) >= 3]
     if not candidates:
-        return {"caught": False, "note": "no usable word for the control"}
-    pick = max(candidates, key=lambda w: w["end_s"] - w["start_s"])
-    if tail:
-        cut_a, cut_b = pick["end_s"] - TAIL_CONTROL_CUT_S, pick["end_s"]
+        return {"mode": mode, "caught": False, "note": "no usable word for the control"}
+    if mode == "word":
+        pick = candidates[len(candidates) // 2]
+        cut_a, cut_b = pick["start_s"] - 0.03, pick["end_s"] + 0.03
     else:
-        mid = (pick["start_s"] + pick["end_s"]) / 2
-        cut_a, cut_b = mid - CONTROL_CUT_S / 2, mid + CONTROL_CUT_S / 2
-    control = work / ("control_tail.wav" if tail else "control.wav")
+        pick = max(candidates, key=lambda w: w["end_s"] - w["start_s"])
+        if mode == "tail":
+            cut_a, cut_b = pick["end_s"] - TAIL_CONTROL_CUT_S, pick["end_s"]
+        else:
+            mid = (pick["start_s"] + pick["end_s"]) / 2
+            cut_a, cut_b = mid - CONTROL_CUT_S / 2, mid + CONTROL_CUT_S / 2
+    cut_a = max(0.0, cut_a)
+    control = work / f"control_{mode}.wav"
     _run(
         [
             "ffmpeg",
@@ -534,6 +550,7 @@ def _negative_control(
         if any(w["end_s"] > cut_a and w["start_s"] < cut_b for w in op["consented"])
     ]
     return {
+        "mode": mode,
         "caught": bool(hits),
         "cut_word": pick["text"],
         "cut_span_s": [round(cut_a, 3), round(cut_b, 3)],
@@ -583,10 +600,11 @@ def compare(args: argparse.Namespace) -> int:
         report["control"] = _negative_control(
             consented_wav, words_by_case["q13_consented"], model, work
         )
-        # Informational only: can the word check see a clipped word tail at all?
-        report["control_tail"] = _negative_control(
-            consented_wav, words_by_case["q13_consented"], model, work, tail=True
-        )
+        # Informational only: whisper fills in a partly cut word from context.
+        for mode in ("mid", "tail"):
+            report[f"control_{mode}"] = _negative_control(
+                consented_wav, words_by_case["q13_consented"], model, work, mode=mode
+            )
 
     (out / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     for case_id, info in report["cases"].items():
@@ -603,12 +621,13 @@ def compare(args: argparse.Namespace) -> int:
         after = " ".join(f"{w['text']}@{w['start_s']:.2f}" for w in op["tight"])
         print(f"  {op['op']}: [{before}] -> [{after}]")
     control = report["control"]
-    print(f"negative control caught: {control['caught']} ({control.get('cut_word')})")
-    tail = report["control_tail"]
-    print(
-        f"tail control (last {TAIL_CONTROL_CUT_S}s of a word) caught: {tail['caught']} "
-        f"({tail.get('cut_word')}) [informational]"
-    )
+    print(f"whole-word control caught: {control['caught']} ({control.get('cut_word')})")
+    for mode in ("mid", "tail"):
+        info = report[f"control_{mode}"]
+        print(
+            f"partial control {mode} caught: {info['caught']} ({info.get('cut_word')}) "
+            "[informational]"
+        )
     print(f"wrote {out / 'report.json'}")
     if not control["caught"]:
         return 3
