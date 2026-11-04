@@ -53,13 +53,15 @@ struct ChoiceQuestionCard: View {
                     if let chosen = question.option(key: option.id) { submit(question.submission(for: chosen), question.message(for: chosen)) }
                 }
                 if let note {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    // The note, then "Change" under it on the left (Paper S2.07).
+                    VStack(alignment: .leading, spacing: 0) {
                         Text(note).kriaType(.label).foregroundStyle(KriaColor.ink)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("choice-batch-note")
                         if let changeHeld {
                             Button("Change", action: changeHeld)
                                 .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium))
+                                .padding(.leading, -12)
                                 .accessibilityIdentifier("choice-batch-change")
                         }
                     }

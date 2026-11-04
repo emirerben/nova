@@ -5,8 +5,10 @@ import SwiftUI
 enum ClipSelectionCardMode {
     /// The latest unanswered question: interactive. `submit` receives the structured answer and its readable message.
     case active(isSending: Bool, submit: (ClipSelectionSubmission, String) -> Void)
-    /// Already answered (or superseded): read-only, collapsed. `summary` is nil after a relaunch.
+    /// Already answered: read-only, collapsed. `summary` is nil after a relaunch.
     case answered(summary: String?)
+    /// A newer question replaced this one before it was answered.
+    case superseded
 }
 
 /// The clip question under the assistant's text: a compact summary card whose "Choose clips" button opens a
@@ -57,6 +59,8 @@ struct ClipSelectionCard: View {
         case .answered(let summary):
             KriaAnsweredReceipt(text: summary ?? "Clips chosen")
                 .accessibilityIdentifier("clip-card-answered")
+        case .superseded:
+            KriaSupersededLine().accessibilityIdentifier("clip-card-superseded")
         case .active(let isSending, let submit):
             activeCard(isSending: isSending, submit: submit)
         }
@@ -79,9 +83,13 @@ struct ClipSelectionCard: View {
         let chosen = chosenMedia
         return HStack(spacing: 8) {
             ForEach(chosen.prefix(4), id: \.id) { item in
+                // A paper tile with the glyph centred when there is no poster yet, so the strip never looks empty.
                 CreationAttachmentThumbnail(media: item)
+                    .foregroundStyle(KriaColor.mutedInk)
+                    .dynamicTypeSize(.large)
+                    .background(KriaColor.paper)
                     .scaleEffect(0.8125)
-                    .frame(width: 42, height: 52)
+                    .frame(width: 40, height: 52)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             if chosen.count > 4 {
@@ -378,10 +386,10 @@ struct ClipPickerSheet: View {
                             Image(systemName: none ? "checkmark.circle.fill" : "circle")
                             Text("None of these")
                         }
-                        .font(KriaFont.body(14).weight(.medium)).foregroundStyle(KriaColor.ink)
+                        .font(KriaFont.body(14).weight(.medium)).foregroundStyle(none ? KriaColor.paper : KriaColor.ink)
                         .padding(.horizontal, 12).frame(minHeight: 44)
-                        .background(none ? KriaColor.selectionSoft : KriaColor.paper, in: Capsule())
-                        .overlay(Capsule().stroke(none ? KriaColor.ink : KriaColor.line, lineWidth: none ? 1.5 : 1))
+                        // A fill, not a stroke: ink when chosen (the selected look everywhere), fill otherwise.
+                        .background(none ? KriaColor.ink : KriaColor.fill, in: Capsule())
                         .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
@@ -411,7 +419,6 @@ struct ClipPickerSheet: View {
         }
         .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 10)
         .background(.regularMaterial)
-        .overlay(alignment: .top) { Divider() }
     }
 }
 

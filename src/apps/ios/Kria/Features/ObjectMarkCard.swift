@@ -13,6 +13,8 @@ enum ObjectMarkCardMode {
     case active(isSending: Bool, problem: String?, submit: (ProtectedRegionAnswer) -> Void)
     /// Answered by a `protected_region` message: one read-only line ("Marked the plate").
     case answered(summary: String)
+    /// A newer question replaced this one before it was answered.
+    case superseded
 }
 
 /// Finds a clip's original on this iPhone (phone projects keep originals in the project directory).
@@ -39,6 +41,8 @@ struct ObjectMarkCard: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(summary)
                 .accessibilityIdentifier("object-mark-answered")
+        case .superseded:
+            KriaSupersededLine().accessibilityIdentifier("object-mark-superseded")
         case .active(let isSending, let problem, let submit):
             ObjectMarkActiveCard(question: question, projectID: projectID, isSending: isSending, problem: problem, submit: submit)
         }

@@ -1572,7 +1572,12 @@ final class CreationUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(chronological.frame.height, 44)
         attachScreenshot(app, "choice-question-blocks")
         grouped.tap()
-        XCTAssertTrue(app.staticTexts["You: Group by sport, chronological inside each sport"].waitForExistence(timeout: 10))
+        // Answered: the "You chose" capsule is the one place the choice shows. The echoed bubble carries the same
+        // text, so it is not drawn as well.
+        let answered = app.descendants(matching: .any)["choice-card-answered"]
+        XCTAssertTrue(answered.waitForExistence(timeout: 10))
+        XCTAssertEqual(answered.label, "You chose: Group by sport, chronological inside each sport")
+        XCTAssertFalse(app.staticTexts["You: Group by sport, chronological inside each sport"].exists)
         let echo = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "choice[group_first]")).firstMatch
         XCTAssertTrue(echo.waitForExistence(timeout: 10), "server received the structured choice_selection")
         // Answered: the card collapses to a read-only summary and the options are gone.

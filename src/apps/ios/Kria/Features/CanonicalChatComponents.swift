@@ -201,6 +201,8 @@ struct ChatMessageRow: View {
     var projectID: UUID? = nil
     /// KRI-282: how to present `message.choiceQuestion`. nil (old server, flag off, not a question) = text question only.
     var choiceQuestionMode: ChoiceQuestionCardMode? = nil
+    /// True for the user message whose text is the "You chose" capsule of the choice question it answered.
+    var hidesAnswerEcho = false
     /// KRI-802: set when this reply asks the choice card and the clip picker together; their answers wait here and
     /// go out on one turn. The cards then follow the reply's own order: the choice first, then the clips.
     var questionBatch: QuestionBatch? = nil
@@ -238,7 +240,10 @@ struct ChatMessageRow: View {
     )
 
     var body: some View {
-        if message.role == .user {
+        if message.role == .user && hidesAnswerEcho {
+            // The question above already shows this exact text as its "You chose" capsule: one of them is enough.
+            EmptyView()
+        } else if message.role == .user {
             HStack {
                 Spacer(minLength: 54)
                 Text(message.content)
@@ -1440,12 +1445,13 @@ struct ChatComposer: View {
         .onDisappear { dictation?.cancel() }
     }
 
-    /// Just the question, with no prefix; it wraps to two lines and the whole capsule stays at least 44pt.
+    /// Just the question, with no prefix. It grows with the whole question (never cut off) and stays at least 44pt.
     private func answeringCapsule(_ question: String) -> some View {
         HStack(alignment: .center, spacing: 0) {
             Text(question)
                 .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
-                .lineLimit(2).multilineTextAlignment(.leading)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.leading, 16).padding(.vertical, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button(action: cancelAnswering) {
