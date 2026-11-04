@@ -13,7 +13,7 @@ struct EditorOriginalsRecoveryView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Find your originals").font(KriaFont.display(26))
+                Text("Find your originals").font(KriaFont.headline(26))
                 Text("Choose the original files used for this project. Kria checks that they match and keeps them on this iPhone.")
                     .font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
                 if loading { ProgressView().accessibilityLabel("Checking original files") }

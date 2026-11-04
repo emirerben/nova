@@ -1059,7 +1059,7 @@ private struct NativeEditorLoadSurface: View {
             NativeEditorTopBar(title: projectTitle, onBack: onBack)
             VStack(alignment: .leading, spacing: 14) {
                 if isLoading { ProgressView().tint(KriaColor.ink) }
-                Text(title).font(KriaFont.display(29))
+                Text(title).font(KriaFont.headline(29))
                 Text(detail).font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
                 if let retry {
                     Button("Try again", action: retry)
@@ -1175,7 +1175,7 @@ private struct NativeKriaInspector: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Text("A considered next move")
-                    .font(KriaFont.display(29))
+                    .font(KriaFont.headline(29))
                 Text("Kria keeps proposals reversible. Pick one to make a small, visible change, then decide whether to save.")
                     .font(KriaFont.body(15))
                     .foregroundStyle(KriaColor.zinc)

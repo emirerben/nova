@@ -277,7 +277,7 @@ struct CreationConfirmationStage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(isFailure ? "Your project is safe" : "Here’s the direction I’ll use")
-                .font(KriaFont.display(24))
+                .font(KriaFont.headline(24))
             if let storyShapeLabel {
                 Text(storyShapeLabel)
                     .font(KriaFont.body(12).weight(.medium))

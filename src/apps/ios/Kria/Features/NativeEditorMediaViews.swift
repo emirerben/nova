@@ -1746,24 +1746,28 @@ struct NativeMiniStrip: View {
         let hasAudioLane = !clips.isEmpty
         return VStack(spacing: rowGap) {
             Color.clear.frame(height: 18)
-            Text("VIDEO")
+            Text("Video")
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(height: filmstripHeight)
                 .accessibilityIdentifier(rowsList.isEmpty && !hasAudioLane ? "native-editor-lane-label-last" : "native-editor-lane-label-video")
             ForEach(Array(rowsList.enumerated()), id: \.element.id) { index, row in
-                laneLabel(row.title)
+                laneLabel(Self.laneDisplayName(row.title))
                     .frame(height: CGFloat(rowCount(row)) * secondaryLaneHeight + CGFloat(rowCount(row) - 1) * rowGap, alignment: .top)
                     .accessibilityIdentifier(
                         index == rowsList.count - 1 && !hasAudioLane
                             ? "native-editor-lane-label-last" : "native-editor-lane-label-\(row.id)"
                     )
             }
-            if hasAudioLane { laneLabel("AUDIO").accessibilityIdentifier("native-editor-lane-label-last") }
+            if hasAudioLane { laneLabel("Audio").accessibilityIdentifier("native-editor-lane-label-last") }
         }
         .font(.system(size: laneLabelSize, weight: .bold, design: .rounded))
-        .tracking(0.8)
         .foregroundStyle(KriaColor.zinc)
+    }
+
+    /// Row ids stay upper-case keys; the label the creator reads is sentence case ("SFX" is an acronym and stays).
+    private static func laneDisplayName(_ key: String) -> String {
+        key == "SFX" ? key : key.prefix(1) + key.dropFirst().lowercased()
     }
 
     private func laneLabel(_ title: String) -> some View {
