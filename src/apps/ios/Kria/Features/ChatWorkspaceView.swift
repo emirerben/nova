@@ -1085,14 +1085,26 @@ private struct CreationWorkspaceView: View {
 
     private var timelineUpdateToken: String {
         let feed = planFeed.paced(by: deviceBuildStage)
-        let liveThoughtToken = liveThoughtSummaries.map { "\($0.id):\($0.status.rawValue):\($0.text.count)" }.joined(separator: "|")
-        return timeline.map(\.id).joined(separator: "|") + "|\(isThinking)|\(isSending)|\(failure?.message ?? "")"
-            + "|upNext\(upNext?.turnID ?? "")/\(steerNote ?? "")"
-            + "|feed\(feed.decidedCount)/\(feed.totalCount)"
-            + "|thoughts\(liveThoughtToken)"
-            + "|finishedEdits\(finishedEditSuggestionUpdate)"
-            // KRI-769: the after-render chips arrive after the card, below the fold; a reader at the bottom follows them in.
-            + "|readyChips\(suggestionChips(for: .ready).map(\.id).joined(separator: ","))"
+        let liveThoughtToken: String = liveThoughtSummaries.map { "\($0.id):\($0.status.rawValue):\($0.text.count)" }.joined(separator: "|")
+        let timelineIDs: String = timeline.map(\.id).joined(separator: "|")
+        let failureMessage: String = failure?.message ?? ""
+        let upNextTurnID: String = upNext?.turnID ?? ""
+        let steerNoteText: String = steerNote ?? ""
+        // KRI-769: the after-render chips arrive after the card, below the fold; a reader at the bottom follows them in.
+        let readyChipIDs: String = suggestionChips(for: .ready).map(\.id).joined(separator: ",")
+        // Separate parts keep this within the compiler's type-check time limit on CI.
+        let parts: [String] = [
+            timelineIDs,
+            "\(isThinking)",
+            "\(isSending)",
+            failureMessage,
+            "upNext\(upNextTurnID)/\(steerNoteText)",
+            "feed\(feed.decidedCount)/\(feed.totalCount)",
+            "thoughts\(liveThoughtToken)",
+            "finishedEdits\(finishedEditSuggestionUpdate)",
+            "readyChips\(readyChipIDs)",
+        ]
+        return parts.joined(separator: "|")
     }
 
     private var streamingThoughtSummaries: [KriaThoughtSummary] {
