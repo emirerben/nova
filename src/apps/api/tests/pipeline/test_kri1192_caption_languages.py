@@ -395,3 +395,36 @@ def test_smart_captions_close_on_arabic_and_greek_question_marks(words, first_cu
     }
     cues = build_smart_caption_cues([cue], policy)
     assert cues[0]["text"] == first_cue
+
+
+# --- F13: the promise before approval matches what the iPhone can draw ---------------
+
+
+def test_greek_danish_serbian_asks_are_deliverable():
+    from app.pipeline.caption_language import can_deliver_caption_language
+
+    for code in ("el", "da", "sr", "pt", "es", "de", "it", "fr"):
+        assert can_deliver_caption_language(code)
+
+
+def test_korean_and_arabic_are_promised_only_once_the_phone_draws_them(monkeypatch):
+    # Hangul and Arabic need the scriptFonts faces on the phone. Until the device check
+    # verifies the token, a request is answered "I can't make Korean captions yet" instead
+    # of promised and then dropped by the phone compile.
+    from app.config import settings
+    from app.pipeline.caption_language import can_deliver_caption_language
+
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [f for f in settings.phone_render_verified_features if f != "scriptFonts"],
+    )
+    assert not can_deliver_caption_language("ko")
+    assert not can_deliver_caption_language("ar")
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [*settings.phone_render_verified_features, "scriptFonts"],
+    )
+    assert can_deliver_caption_language("ko")
+    assert can_deliver_caption_language("ar")

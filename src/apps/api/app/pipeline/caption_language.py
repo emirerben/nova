@@ -199,11 +199,12 @@ def serbian_latin(text: str | None) -> str:
 # What the whisper language hint alone has always delivered. With translation off,
 # only these two keep being promised (the hint plus the text check decide the rest).
 _HINT_ONLY_LANGUAGES: frozenset[str] = frozenset({"en", "tr"})
-# In the table (names, language-ID, the parser) but never promised or rendered: the cloud
-# renderer's caption fonts (Playfair Display and the rest) and right-to-left shaping were
-# never verified for Arabic, so promising Arabic captions risks a promise followed by empty
-# boxes. The draft says "can't" before approval and the worker never hears the request.
-_NOT_DELIVERABLE: frozenset[str] = frozenset({"ar"})
+# KRI-1192: Hangul and Arabic are drawn in the script-fallback faces (Noto Sans KR / Noto Sans
+# Arabic), which the iPhone has only once the device check verifies `scriptFonts` (the cloud
+# renderers, right-to-left shaping included, are verified by tests/pipeline/
+# test_kri1192_caption_render.py). Until then a request for them is answered "can't" before
+# approval instead of promised and then dropped by the phone caption compile.
+_NEEDS_SCRIPT_FONTS: frozenset[str] = frozenset({"ar", "ko"})
 
 # Sources reported by ``resolve_spoken_caption_language``.
 SOURCE_DETECTED = "detected"
@@ -232,7 +233,11 @@ def can_deliver_caption_language(code: str | None) -> bool:
     from app.config import settings  # noqa: PLC0415 - keeps this module import-light
 
     key = (code or "").strip().casefold()
-    if key not in SUPPORTED_CAPTION_LANGUAGES or key in _NOT_DELIVERABLE:
+    if key not in SUPPORTED_CAPTION_LANGUAGES:
+        return False
+    if key in _NEEDS_SCRIPT_FONTS and "scriptFonts" not in set(
+        getattr(settings, "phone_render_verified_features", None) or ()
+    ):
         return False
     return bool(getattr(settings, "caption_translation_enabled", False)) or (
         key in _HINT_ONLY_LANGUAGES
@@ -461,8 +466,8 @@ def coerce_caption_language_request(value: object) -> str | None:
     The dispatcher parses any table language, but the worker honours only what
     ``can_deliver_caption_language`` says it can: with translation off that is exactly the
     legacy en/tr world (so the draft's "I can't make Spanish captions yet" is also what the
-    render does), and Arabic never. A stray or legacy value must never silently become a
-    caption-language override.
+    render does), and Korean/Arabic only once the phone draws them (``scriptFonts``). A
+    stray or legacy value must never silently become a caption-language override.
     """
     if not isinstance(value, str):
         return None
