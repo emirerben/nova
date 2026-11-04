@@ -220,7 +220,12 @@
       "KriaUITests/GeneratedMediaUITests/testDisabledCapabilitiesPreserveRecordImportAndHideGeneration",
       "KriaUITests/GeneratedMediaUITests/testValidationRejectionRequiresEditAndExplicitNewSubmission",
       "KriaUITests/GeneratedMediaUITests/testGeneratedImagePreviewUseRefreshesVisualPool",
-      "KriaUITests/GeneratedMediaUITests/testImageRecoveryAfterProcessRelaunchNeverPostsAgain"
+      "KriaUITests/GeneratedMediaUITests/testImageRecoveryAfterProcessRelaunchNeverPostsAgain",
+      "KriaUITests/UploadPlaceHintUITests/testLandscapeRecordingNextToTalkingTakeShowsHintAndMovesToOverlays",
+      "KriaUITests/UploadPlaceHintUITests/testPortraitScreenRecordingByNameShowsHint",
+      "KriaUITests/UploadPlaceHintUITests/testSingleTalkingTakeShowsNoHint",
+      "KriaUITests/UploadPlaceHintUITests/testSeveralTalkingTakesShowNoHint",
+      "KriaUITests/UploadPlaceHintUITests/testSwitchOffLeavesFootageUnchanged"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -537,6 +542,9 @@
     "src/apps/ios/Kria/Core/WhatsNewReleases.swift": "projects",
     "src/apps/ios/Kria/Features/WhatsNewView.swift": "projects",
     "src/apps/ios/Kria/Features/AccountUITestTransport.swift": "projects",
-    "src/apps/ios/Tests/KriaUITests/WhatsNewUITests.swift": "projects"
+    "src/apps/ios/Tests/KriaUITests/WhatsNewUITests.swift": "projects",
+    "src/apps/ios/Tests/KriaUITests/UploadPlaceHintUITests.swift": "creation",
+    "src/apps/ios/Kria/Features/UploadPlaceHintFixture.swift": "creation",
+    "src/apps/ios/Kria/Core/FootagePlacement.swift": "creation"
   }
 }

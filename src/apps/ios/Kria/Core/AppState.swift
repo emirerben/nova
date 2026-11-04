@@ -283,7 +283,11 @@ enum WorkspaceDestination: Equatable, Sendable {
         self.localOwner = renderOwner
         self.api = api
         self.editorOperations = editorOperations
+        #if DEBUG
+        self.uploads = ChatUITestTransport.placeHintUploads(api: api) ?? BackgroundUploadCoordinator(api: api)
+        #else
         self.uploads = BackgroundUploadCoordinator(api: api)
+        #endif
         self.deviceRenders = DeviceRenderSessions(api: api, ownerIdentity: renderOwner)
         self.cache = cache
         Perf.begin("cache.load")
