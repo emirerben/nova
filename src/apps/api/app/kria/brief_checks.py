@@ -355,7 +355,8 @@ class SpeakerBackgroundFact:
     fill; ``media_count`` how many DISTINCT photos / videos those windows show (the windows
     cycle the sequence, so 8 windows over 5 photos is 5; None = the record did not say, as on a
     render written before it was recorded); ``asked_windows`` / ``asked_frame`` what the
-    strategy asked for before the repair dropped any; ``frame`` the corner preset the speaker
+    strategy asked for before the repair dropped any, ``asked_media_count`` the distinct photos /
+    videos among those asked windows (None = unknown); ``frame`` the corner preset the speaker
     sits in (None = full size).
     """
 
@@ -366,6 +367,7 @@ class SpeakerBackgroundFact:
     window_count: int = 0
     media_count: int | None = None
     asked_windows: int = 0
+    asked_media_count: int | None = None
     windows_open: bool = False
     frame: str | None = None
     asked_frame: str | None = None
@@ -979,6 +981,9 @@ def _speaker_background_facts(
         return {}
     asked = parsed.background_media
     asked_windows = len(asked.sequence) if asked is not None else 0
+    asked_media_count = (
+        len({entry.media_id for entry in asked.sequence}) if asked is not None else None
+    )
     asked_frame = (
         asked.speaker_frame if asked is not None and asked.speaker_frame != "full" else None
     )
@@ -1002,6 +1007,7 @@ def _speaker_background_facts(
                 "none",
                 pool_count=len(pool),
                 asked_windows=asked_windows,
+                asked_media_count=asked_media_count,
                 windows_open=windows_open,
                 asked_frame=asked_frame,
                 color_code=color_code,
@@ -1016,6 +1022,7 @@ def _speaker_background_facts(
             # Green 3: a sequence that names a photo twice still shows it once.
             media_count=len({entry.media_id for entry in kept.sequence}),
             asked_windows=asked_windows,
+            asked_media_count=asked_media_count,
             windows_open=windows_open,
             frame=kept.speaker_frame if kept.speaker_frame != "full" else None,
             asked_frame=asked_frame,
@@ -4469,6 +4476,28 @@ def _sb(text: str, suffix: str = ".") -> str:
     return say(en=text + suffix, tr=_REASON_TR[text] + suffix)
 
 
+def _background_media_shown(fact: SpeakerBackgroundFact) -> int:
+    """How many photos / videos the creator sees take turns: the windows cycle the sequence, so
+    8 windows over 5 photos is 5 (Green 3). An older record without the distinct count falls
+    back to the windows."""
+    return fact.media_count or fact.window_count
+
+
+def _background_never_changes(fact: SpeakerBackgroundFact) -> bool:
+    """No windows, or one photo repeated in every window: nothing changes behind the speaker."""
+    return fact.window_count == 0 or fact.media_count == 1
+
+
+def _background_media_shortfall(fact: SpeakerBackgroundFact) -> tuple[int, int] | None:
+    """(shown, asked) when the plan shows fewer DISTINCT photos / videos than the strategy asked
+    for (a window that repeats a photo is not a photo lost), else None."""
+    shown = _background_media_shown(fact)
+    asked = fact.asked_media_count or fact.asked_windows
+    if fact.window_count and asked > shown:
+        return shown, asked
+    return None
+
+
 def _colour_extras_shortfalls(
     req: BriefRequirement, fact: SpeakerBackgroundFact, *, rendered: bool
 ) -> list[str]:
@@ -4476,22 +4505,24 @@ def _colour_extras_shortfalls(
     (``background_changes``) parts are missing, judged the way the photo / video ask judges them
     in `_check_speaker_background`, in colour wording."""
     out: list[str] = []
-    if _asks_changing_backgrounds(req) and fact.window_count == 0:
+    shortfall = _background_media_shortfall(fact)
+    if _asks_changing_backgrounds(req) and _background_never_changes(fact):
         if fact.pool_count == 0:
             out.append(_sb(_SBC_NOTHING_TO_SWITCH))
         elif not rendered and not fact.windows_open:
             out.append(_sb(_SBC_NO_SWITCHING))
         else:
             out.append(_sb(_SBC_NO_CHANGE))
-    elif fact.asked_windows > fact.window_count > 0 and not rendered:
+    elif shortfall is not None and not rendered:
+        shown, asked = shortfall
         out.append(
             say(
                 en=(
-                    f"Only {fact.window_count} of your {fact.asked_windows} photos or videos "
+                    f"Only {shown} of your {asked} photos or videos "
                     "take turns over the colour; I couldn't use the rest."
                 ),
                 tr=(
-                    f"{fact.asked_windows} fotoğraf ya da videodan yalnızca {fact.window_count} "
+                    f"{asked} fotoğraf ya da videodan yalnızca {shown} "
                     "tanesi rengin üstünde sırayla değişiyor; gerisini kullanamadım."
                 ),
             )
@@ -4547,9 +4578,14 @@ def _check_background_color(
     label = ask if asked_hex is None or asked_hex != ask.upper() else fact.color
     en = f"A plain {label} background sits behind you for the whole video"
     tr = f"Bütün video boyunca arkanda düz {label} bir arka plan duruyor"
-    if fact.window_count:
-        en += f"; {fact.window_count} photos or videos take turns over it"
-        tr += f"; üstünde {fact.window_count} fotoğraf ya da video sırayla değişiyor"
+    if not _background_never_changes(fact):
+        shown = _background_media_shown(fact)
+        en += f"; {shown} photos or videos take turns over it"
+        tr += f"; üstünde {shown} fotoğraf ya da video sırayla değişiyor"
+    elif fact.window_count:
+        # One photo repeated in every window does not take turns with anything.
+        en += "; one photo or video sits over it"
+        tr += "; üstünde tek bir fotoğraf ya da video duruyor"
     corner = _FRAME_WORDS.get(fact.frame or "")
     if corner:
         en += f"; you're {corner[0]}"
@@ -4586,7 +4622,7 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
     wants_corner = _asks_small_speaker(req)
     # Green 3: the windows cycle the photos, so "8 windows" over 5 photos is 5 photos. One
     # distinct photo behind eight windows is no change at all.
-    if wants_several and (fact.window_count == 0 or fact.media_count == 1):
+    if wants_several and _background_never_changes(fact):
         if fact.pool_count == 1:
             return _receipt(req, "partial", _sb(_SB_ONLY_ONE_ATTACHED))
         if not rendered and not fact.windows_open:
@@ -4603,24 +4639,26 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
                 tr="Tam boyutta kalıyorsun, köşede küçük değilsin.",
             ),
         )
-    if fact.asked_windows > fact.window_count > 0 and not rendered:
+    shortfall = _background_media_shortfall(fact)
+    if shortfall is not None and not rendered:
+        shown, asked = shortfall
         return _receipt(
             req,
             "partial",
             say(
                 en=(
-                    f"Only {fact.window_count} of your {fact.asked_windows} photos or videos "
+                    f"Only {shown} of your {asked} photos or videos "
                     "take turns behind you; I couldn't use the rest."
                 ),
                 tr=(
-                    f"{fact.asked_windows} fotoğraf ya da videodan yalnızca {fact.window_count} "
+                    f"{asked} fotoğraf ya da videodan yalnızca {shown} "
                     "tanesi arkanda sırayla değişiyor; gerisini kullanamadım."
                 ),
             ),
         )
     corner = _FRAME_WORDS.get(fact.frame or "")
-    if fact.window_count and fact.media_count != 1:
-        shown = fact.media_count or fact.window_count
+    if not _background_never_changes(fact):
+        shown = _background_media_shown(fact)
         en = f"{shown} photos or videos take turns behind you"
         tr = f"{shown} fotoğraf ya da video arkanda sırayla değişiyor"
         if corner:

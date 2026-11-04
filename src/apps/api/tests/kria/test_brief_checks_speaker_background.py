@@ -495,7 +495,8 @@ def test_a_colour_under_windows_and_a_corner_says_so(monkeypatch):
     )
     receipt = _receipt(_colour_req(), facts)
     assert receipt.status == "met"
-    assert "1 photos or videos take turns over it" in receipt.reason
+    assert "one photo or video sits over it" in receipt.reason
+    assert "take turns" not in receipt.reason
     assert "small at the bottom right" in receipt.reason
 
 
@@ -737,3 +738,75 @@ def test_a_finished_colour_video_without_the_corner_is_partial():
     receipt = _receipt(_colour_req("green", speaker_small=True), facts)
     assert receipt.status == "partial"
     assert "full size" in receipt.reason
+
+
+# ------------------------------------------- KRI-1173 x Green 3: distinct photos, not windows
+#
+# The windows cycle the creator's photos (Green 3: 8 windows over 5 photos / videos), so what
+# the creator hears is the DISTINCT count, as the photo path already says it (#2089). Ways the
+# colour receipt can get this wrong:
+#  a. "8 photos or videos take turns over it" for 5 photos;
+#  b. one photo repeated in every window called "taking turns" (met) instead of no change;
+#  c. "Only 6 of your 8" when 3 of the 5 photos asked for are shown;
+#  d. a finished colour video with repeating windows counted by windows.
+
+FIVE = [f"asset-00000000-0000-4000-8000-00000000117{n}" for n in range(5)]
+
+
+def _cycled(ids: list[str], windows: int = 8) -> list[dict]:
+    return [{"media_id": ids[n % len(ids)]} for n in range(windows)]
+
+
+def test_green3_colour_under_8_windows_of_5_photos_says_5(monkeypatch):
+    _open_colour(monkeypatch)
+    _open_windows(monkeypatch)
+    facts = _draft_facts(
+        _manifest(*FIVE),
+        background_media={"color": "#00FF00", "sequence": _cycled(FIVE)},
+    )
+    receipt = _receipt(_colour_req("green", background_changes=True), facts)
+    assert receipt.status == "met"
+    assert "5 photos or videos take turns over it" in receipt.reason
+    assert "8 photos" not in receipt.reason
+
+
+def test_colour_under_8_windows_of_one_photo_is_no_change(monkeypatch):
+    _open_colour(monkeypatch)
+    _open_windows(monkeypatch)
+    facts = _draft_facts(
+        _manifest(*FIVE),
+        background_media={"color": "#00FF00", "sequence": _cycled(FIVE[:1])},
+    )
+    receipt = _receipt(_colour_req("green", background_changes=True), facts)
+    assert receipt.status == "partial"
+    assert "nothing changes over it" in receipt.reason
+    assert "take turns" not in receipt.reason
+
+
+def test_colour_showing_3_of_5_asked_photos_says_only_3_of_5(monkeypatch):
+    _open_colour(monkeypatch)
+    _open_windows(monkeypatch)
+    foreign = [f"asset-00000000-0000-4000-8000-0000000011f{n}" for n in range(2)]
+    facts = _draft_facts(
+        _manifest(*FIVE[:3]),
+        background_media={"color": "#00FF00", "sequence": _cycled([*FIVE[:3], *foreign])},
+    )
+    receipt = _receipt(_colour_req("green", background_changes=True), facts)
+    assert receipt.status == "partial"
+    assert "Only 3 of your 5 photos or videos" in receipt.reason
+
+
+def test_a_finished_colour_video_with_repeating_windows_counts_photos():
+    windows = [
+        {"media_id": FIVE[n % 5], "kind": "image", "start_s": 3.0 * n, "end_s": 3.0 * n + 3}
+        for n in range(8)
+    ]
+    facts = plan_facts_from_phone_variant(
+        _variant(
+            speaker_background={"kind": "color", "color": "#00FF00", "windows": windows},
+            phone_lane_receipt={"applied": ["background"], "dropped": []},
+        )
+    )
+    receipt = _receipt(_colour_req("green", background_changes=True), facts)
+    assert receipt.status == "met"
+    assert "5 photos or videos take turns over it" in receipt.reason
