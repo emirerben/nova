@@ -2,8 +2,12 @@
 
 A fixture here is a real thread on real Postgres: a ready editor target, the creator's clips, a
 served set of suggestion cards, a tap, and the real ``submit_turn`` -> ``run_kria_turn`` path.
-Nothing the seam owns is mocked; what is mocked is everything that would reach a model or a
-broker (the copilot, Main Creator, the brief extractor, Celery, the suggester queue).
+Nothing the seam owns is mocked: the copilot parser, the draft compiler, receipts, the registry
+builders and witnesses and the row-locked commit are all real. What is replaced is everything that
+would reach a model or a broker (the copilot, Main Creator, the brief extractor, Celery, the
+suggester queue) and three inputs that depend on deployment state rather than on the seam: the
+editor capability map (it follows flags and source freshness), the sound-effects catalog and the
+creator manifest.
 
 ``serve`` stands in for the serve lane that does not exist yet: it builds cards with the real
 candidate engine and the real registry builders and witnesses, and writes them to the ring in
@@ -56,8 +60,8 @@ from app.tasks.kria_runtime import run_kria_turn
 from tests.kria.test_creative_brief import _MANIFEST
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project
 
-# The cloud editor capability map the real `_editor_capabilities` derives for a plain montage:
-# every lane the five pinned ops touch is open.
+# A capability map with every lane the five pinned ops touch open. The real derivation closes them
+# unless several deployment flags are on and the sources are fresh; it is not what is under test.
 CAPABILITIES = {
     "text_elements": True,
     "timeline": True,
