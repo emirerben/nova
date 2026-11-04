@@ -568,6 +568,16 @@ def test_the_filter_is_a_no_op_without_marks():
     assert out.out.model_dump(mode="json") == before and out.needs_fold is False
 
 
+def test_the_last_card_handled_does_not_bring_its_chip_back_as_the_fallback():
+    chip = sc.SuggestionChipOut(id="c1", kind="mute_clip", rank=1, anchor=MUTE_3.anchor)
+    other = sc.SuggestionChipOut(id="c2", kind="sfx", rank=2)
+    served = _served([MUTE_3])
+    served.out = served.out.model_copy(update={"chips": [chip, other]})
+    state, _ = serve.apply_dismiss({sc.RING_KEY: [_entry("sg_1", [MUTE_3])]}, "sg_1", "ss_mute3")
+    out = serve._without_suppressed(served, SimpleNamespace(state=state)).out
+    assert [(c.id, c.rank) for c in out.chips] == [("c2", 1)]
+
+
 def test_an_empty_filtered_set_serializes_without_the_card_keys():
     state, _ = serve.apply_dismiss({sc.RING_KEY: [_entry("sg_1", [MUTE_3])]}, "sg_1", "ss_mute3")
     out = serve._without_suppressed(_served([MUTE_3]), SimpleNamespace(state=state)).out
@@ -686,7 +696,10 @@ async def test_flag_on_the_set_is_keyed_by_the_edit_frozen_per_digest_and_filter
     assert again.out.set_id == plan.set_id
     assert [s.kind for s in again.out.suggestions] == [k for k in kinds if k != "captions"]
     assert [s.rank for s in again.out.suggestions] == list(range(1, len(kinds)))
-    assert [c.kind for c in again.out.chips] == [c.kind for c in first.out.chips], "chips stay"
+    assert [c.kind for c in again.out.chips] == [
+        c.kind for c in first.out.chips if c.kind != "captions"
+    ]
+    assert [c.rank for c in again.out.chips] == list(range(1, len(again.out.chips) + 1))
     assert again.unfiltered.model_dump(mode="json") == first.out.model_dump(mode="json"), "frozen"
 
     # the creator edits (a new draft): a new digest, a new set, the dismissed card still out

@@ -621,7 +621,11 @@ def attach_cards(
 
 
 def _without_suppressed(served: Served, thread: Any) -> Served:
-    """Hide what the creator dismissed or applied. The frozen set itself is never edited."""
+    """Hide what the creator dismissed or applied, from the cards and the legacy chips alike.
+
+    The client falls back to ``chips`` once the cards run out, so a chip of a handled kind would
+    bring the card back. The frozen set itself is never edited.
+    """
     state = getattr(thread, "state", None)
     suppressed = suppressed_set(state)
     served.unfiltered = served.out
@@ -630,16 +634,20 @@ def _without_suppressed(served: Served, thread: Any) -> Served:
         e.get("set_id") == served.out.set_id and e.get("suggestions") for e in _entries(state)
     )
     out = served.out
-    if not suppressed or not out.suggestions:
+    if not suppressed:
         return served
-    kept = [
-        s
-        for s in out.suggestions
-        if fingerprint(s.kind, s.anchor.model_dump(mode="json")) not in suppressed
-    ]
-    if len(kept) != len(out.suggestions):
-        kept = [s.model_copy(update={"rank": index + 1}) for index, s in enumerate(kept)]
-        served.out = out.model_copy(update={"suggestions": kept})
+    update: dict[str, Any] = {}
+    for name in ("suggestions", "chips"):
+        items = getattr(out, name)
+        kept = [
+            item
+            for item in items
+            if fingerprint(item.kind, item.anchor.model_dump(mode="json")) not in suppressed
+        ]
+        if len(kept) != len(items):
+            update[name] = [item.model_copy(update={"rank": i + 1}) for i, item in enumerate(kept)]
+    if update:
+        served.out = out.model_copy(update=update)
     return served
 
 

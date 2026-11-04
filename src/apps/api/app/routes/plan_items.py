@@ -8263,7 +8263,6 @@ async def _editor_commit_item(
             body=commit_body,
         )
     await db.commit()
-    await _refresh_suggestions_after_save(item_id)
     # Kick AFTER the commit so a worker that grabs the task instantly always
     # observes the committed sections + generation token. If the kick fails the
     # persist stands — the honest partial state ("saved, rendering didn't
@@ -8333,6 +8332,8 @@ async def _editor_commit_item(
                 generation=prep["generation"],
             )
 
+    # After the render kick: a slow Redis or database here delays the response, never the render.
+    await _refresh_suggestions_after_save(item_id)
     log.info(
         "plan_item_editor_commit",
         item_id=item_id,

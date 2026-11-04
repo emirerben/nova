@@ -65,8 +65,13 @@ Code: `services/suggestions/pinned.py` (ring reads, lane allow-list, rebuild),
 - **A card is one offer.** The commit marks the card on its ring entry (`consumed: {id: turn_id}`) in
   the draft's own transaction. A marked card is never rebuilt: a rebuild derives a new change from
   the edit as it is now, so a relative card (music level = 60% of the current mix) would apply a
-  fresh step on every later tap. Only the exact stored action on its exact base can run again. A
-  refreshed set has a new `set_id` and offers the change again from the current edit.
+  fresh step on every later tap. Only the exact stored action on its exact base can run again.
+- **Handled cards never come back.** A refreshed set has a new `set_id`, but a dismissed or applied
+  card is hidden on read by its kind and target fingerprint (`suggestion_serve.fingerprint`: kind,
+  clip media id or ordinal, text bar, moment), from both `suggestions` and the legacy `chips`
+  (the client falls back to chips when the cards run out). The last 32 fingerprints are kept after
+  the ring rolls over. A kind with no target (captions, music level, hook) is therefore hidden for
+  that creator's thread after one apply, even if they later undo that change.
 
 Kill-switch window (accepted). The pin is stamped at submit and read again at claim. If
 `KRIA_SUGGESTION_PINNED_TAPS_ENABLED` is switched off, or the creator leaves the chips allow-list,
