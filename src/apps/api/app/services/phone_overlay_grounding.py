@@ -29,7 +29,7 @@ every video reported ``video_not_supported``.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import Any
@@ -55,9 +55,16 @@ from app.services.generated_image_grounding import (
     with_generated_grounding,
 )
 from app.services.overlay_autoplace import (
+    _MIN_ON_SCREEN_S,
     _snap_to_word_start,
     build_suggestions,
     heuristic_match,
+)
+from app.services.phone_card_layout import (
+    CardLayoutContext,
+    blockers_for_card,
+    place_card,
+    shift_past_text_windows,
 )
 
 log = structlog.get_logger()
@@ -90,6 +97,8 @@ _MAX_ARBITRATION_IOU = 0.02
 _FALLBACK_FACE_BOX = NormalizedBox(0.28, 0.02, 0.72, 0.52)
 # KRI-547: a face-filled speaker's eyes-nose-mouth core, which no card may touch.
 _FACE_CORE_KIND = "face_core"
+# Item 15: a card already laid out, protected from the cards that come after it.
+_EXTRA_CARD_KIND = "card"
 
 _MAX_FACE_ANCHORS_PER_CARD = 4
 _MAX_FACE_ANCHORS_TOTAL = 12
@@ -111,6 +120,9 @@ _FS_BEAT_GAP_S = 0.01
 _MAX_LABEL_LEN = 60
 _MAX_REASON_LEN = 160
 _MAX_WISHLIST = 5
+# Qendresa item 15: 12-14 cards per ~80 s video.
+_LAYOUT_CEILING = 14
+_LAYOUT_MAX_ANCHORS = 48
 
 
 @dataclass(frozen=True)
@@ -203,6 +215,56 @@ def _load_ready_pool_assets(
         ]
 
 
+def sample_card_faces(
+    overlays: list[dict[str, Any]],
+    *,
+    clip_path: str | None,
+    job_id: str,
+    face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
+    anchors_per_card: int = _MAX_FACE_ANCHORS_PER_CARD,
+    max_anchors: int = _MAX_FACE_ANCHORS_TOTAL,
+) -> tuple[list[ProtectedRegion], str]:
+    """Fail-safe face sampling over every card's own window (see
+    `resolve_phone_card_geometry`): ``(face_regions, "ok" | "failed" | "skipped")``."""
+    anchors: list[float] = []
+    for overlay in overlays:
+        start_s = float(overlay.get("start_s") or 0.0)
+        end_s = float(overlay.get("end_s") or start_s)
+        anchors.extend(_evenly_spaced_anchors(start_s, end_s, anchors_per_card))
+    anchors = anchors[:max_anchors]
+
+    face_regions: list[ProtectedRegion] = []
+    face_sampling = "skipped"
+    if clip_path is not None and overlays:
+        try:
+            face_regions, _receipt = sample_face_regions(
+                clip_path,
+                anchors,
+                max_samples=max(len(anchors), 1),
+                timeout_s=(
+                    _FACE_SAMPLE_TIMEOUT_BASE_S + _FACE_SAMPLE_TIMEOUT_PER_ANCHOR_S * len(anchors)
+                ),
+                count_decoded=False,
+                **({"raw_boxes": True} if face_box_to_canvas is not None else {}),
+            )
+            if face_box_to_canvas is not None:
+                face_regions = [
+                    ProtectedRegion(region.start_s, region.end_s, mapped, kind=_FACE_CORE_KIND)
+                    for region in face_regions
+                    if (mapped := face_box_to_canvas(region.box)) is not None
+                ]
+            face_sampling = "ok"
+        except Exception as exc:  # noqa: BLE001 - fail open: keep no face regions
+            log.warning(
+                "phone_overlay_grounding.face_sampling_failed",
+                job_id=job_id,
+                error=str(exc)[:200],
+            )
+            face_regions = []
+            face_sampling = "failed"
+    return face_regions, face_sampling
+
+
 def resolve_phone_card_geometry(
     overlays: list[dict[str, Any]],
     *,
@@ -212,6 +274,10 @@ def resolve_phone_card_geometry(
     face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
     anchors_per_card: int = _MAX_FACE_ANCHORS_PER_CARD,
     max_anchors: int = _MAX_FACE_ANCHORS_TOTAL,
+    sampled_faces: tuple[list[ProtectedRegion], str] | None = None,
+    caption_band: tuple[float, float] | None = None,
+    strict_geometry: bool = False,
+    extra_protected: Sequence[ProtectedRegion] = (),
 ) -> tuple[dict[str, dict[str, Any]], dict[str, str], str]:
     """Face-aware, caption-safe geometry arbitration shared by every phone
     card-placement grounding module (KRI-176 overlay grounding, KRI-178
@@ -254,53 +320,41 @@ def resolve_phone_card_geometry(
     background but never the core: those regions tolerate NO overlap
     (``strict_kinds``), and flush top corners are tried after the usual grid
     (``hug_corners``). A face outside the crop drops.
+
+    Qendresa item 15 (all default off = byte-identical): ``sampled_faces`` reuses one sampling
+    pass done by the caller (`sample_card_faces`); ``caption_band`` replaces the constant
+    protected caption region with the plan's real ``(top, bottom)`` band; ``strict_geometry``
+    makes faces, captions and the fallback face box tolerate NO overlap (a big card is no
+    longer excused by a diluted IoU); ``extra_protected`` are further regions (cards already
+    laid out) that are always strict.
     """
 
-    anchors: list[float] = []
-    for overlay in overlays:
-        start_s = float(overlay.get("start_s") or 0.0)
-        end_s = float(overlay.get("end_s") or start_s)
-        anchors.extend(_evenly_spaced_anchors(start_s, end_s, anchors_per_card))
-    anchors = anchors[:max_anchors]
-
-    face_regions: list[ProtectedRegion] = []
-    face_sampling = "skipped"
-    if clip_path is not None and overlays:
-        try:
-            face_regions, _receipt = sample_face_regions(
-                clip_path,
-                anchors,
-                max_samples=max(len(anchors), 1),
-                timeout_s=(
-                    _FACE_SAMPLE_TIMEOUT_BASE_S + _FACE_SAMPLE_TIMEOUT_PER_ANCHOR_S * len(anchors)
-                ),
-                count_decoded=False,
-                **({"raw_boxes": True} if face_box_to_canvas is not None else {}),
-            )
-            if face_box_to_canvas is not None:
-                face_regions = [
-                    ProtectedRegion(region.start_s, region.end_s, mapped, kind=_FACE_CORE_KIND)
-                    for region in face_regions
-                    if (mapped := face_box_to_canvas(region.box)) is not None
-                ]
-            face_sampling = "ok"
-        except Exception as exc:  # noqa: BLE001 - fail open: keep no face regions
-            log.warning(
-                "phone_overlay_grounding.face_sampling_failed",
-                job_id=job_id,
-                error=str(exc)[:200],
-            )
-            face_regions = []
-            face_sampling = "failed"
+    if sampled_faces is not None:
+        face_regions, face_sampling = sampled_faces
+    else:
+        face_regions, face_sampling = sample_card_faces(
+            overlays,
+            clip_path=clip_path,
+            job_id=job_id,
+            face_box_to_canvas=face_box_to_canvas,
+            anchors_per_card=anchors_per_card,
+            max_anchors=max_anchors,
+        )
 
     protected_boxes: list[ProtectedRegion] = [
         ProtectedRegion(
             0.0,
             float("inf"),
-            NormalizedBox(0.0, _CAPTION_PROTECTED_TOP_FRAC, 1.0, 1.0),
+            NormalizedBox(
+                0.0,
+                caption_band[0] if caption_band is not None else _CAPTION_PROTECTED_TOP_FRAC,
+                1.0,
+                caption_band[1] if caption_band is not None else 1.0,
+            ),
             kind="captions",
         ),
         *face_regions,
+        *extra_protected,
     ]
     if face_sampling != "ok" and overlays:
         # KRI-183: sampling never positively confirmed this frame is clear --
@@ -316,8 +370,19 @@ def resolve_phone_card_geometry(
         footprints_by_id=footprints_by_id,
         max_iou=_MAX_ARBITRATION_IOU,
         **(
-            {"strict_kinds": frozenset({_FACE_CORE_KIND}), "hug_corners": True}
-            if face_box_to_canvas is not None
+            {
+                "strict_kinds": frozenset(
+                    {_FACE_CORE_KIND}
+                    | (
+                        {"captions", "face_fallback", _EXTRA_CARD_KIND}
+                        | {region.kind for region in face_regions}
+                        if strict_geometry
+                        else set()
+                    )
+                ),
+                "hug_corners": face_box_to_canvas is not None,
+            }
+            if face_box_to_canvas is not None or strict_geometry
             else {}
         ),
     )
@@ -701,6 +766,128 @@ def _ground_fullscreen_sequence(
     return GroundedOverlayCards(cards=cards, receipt=receipt)
 
 
+def _lay_out_cards(
+    suggestion_by_id: dict[str, dict],
+    overlays: list[dict[str, Any]],
+    footprints_by_id: dict[str, MediaFootprint],
+    *,
+    assets_by_id: dict[str, dict],
+    card_layout: CardLayoutContext,
+    clip_path: str | None,
+    job_id: str,
+    face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None,
+    unplaced: list[dict],
+) -> tuple[dict[str, dict[str, Any]], dict[str, str], str, frozenset[str], list[str]]:
+    """Qendresa item 15: lay the pip cards out wide in the TOP or BOTTOM band.
+
+    ``overlays`` (mutated: a start moved past a text window) are the candidate cards in
+    ``suggestion_by_id`` order. Returns ``(resolved_by_id, reason_by_id, face_sampling,
+    caption_clear_ids, processing_order)``. A card the layout cannot place, and a transparent
+    sticker/logo (never blown up to full width), take today's corner arbitration with the real
+    caption band and zero-overlap faces/captions/cards instead.
+    """
+    reason_by_id: dict[str, str] = {}
+    live: list[dict[str, Any]] = []
+    for overlay in overlays:
+        oid = str(overlay["id"])
+        start = shift_past_text_windows(
+            float(overlay["start_s"]),
+            float(overlay["end_s"]),
+            card_layout.text_windows,
+            min_on_screen_s=_MIN_ON_SCREEN_S,
+        )
+        if start is None:
+            asset_id = str(suggestion_by_id[oid]["asset_id"])
+            asset = assets_by_id.get(asset_id)
+            unplaced.append(
+                {
+                    "media_id": asset_id,
+                    "label": _label_for_asset(asset) if asset else asset_id,
+                    "reason": "overlap",
+                    "kind": _kind_for_asset(asset) if asset else "image",
+                }
+            )
+            reason_by_id[oid] = "overlap"
+            continue
+        if start != float(overlay["start_s"]):
+            overlay["start_s"] = round(start, 3)
+        live.append(overlay)
+    # Mirror the moved start into the suggestion's own overlay dict (the video trim stays).
+    for overlay in live:
+        suggestion_by_id[str(overlay["id"])]["overlay"]["start_s"] = overlay["start_s"]
+    live.sort(key=lambda o: (float(o["start_s"]), str(o["id"])))
+
+    per_card = 2 if len(live) > 6 else _MAX_FACE_ANCHORS_PER_CARD
+    sampled = sample_card_faces(
+        live,
+        clip_path=clip_path,
+        job_id=job_id,
+        face_box_to_canvas=face_box_to_canvas,
+        anchors_per_card=per_card,
+        max_anchors=min(len(live) * per_card, _LAYOUT_MAX_ANCHORS),
+    )
+    face_regions, face_sampling = sampled
+    caption_top, caption_bottom = card_layout.caption_band or (_CAPTION_PROTECTED_TOP_FRAC, 1.0)
+    caption_box = NormalizedBox(0.0, caption_top, 1.0, caption_bottom)
+
+    resolved: dict[str, dict[str, Any]] = {}
+    clear_ids: set[str] = set()
+    placed_boxes: list[tuple[float, float, NormalizedBox]] = []
+    fallback: list[dict[str, Any]] = []
+    for overlay in live:
+        oid = str(overlay["id"])
+        asset = assets_by_id.get(str(suggestion_by_id[oid]["asset_id"])) or {}
+        start, end = float(overlay["start_s"]), float(overlay["end_s"])
+        spot = None
+        if not (asset.get("analysis") or {}).get("has_alpha"):
+            spot = place_card(
+                footprints_by_id[oid].aspect_ratio,
+                blockers_for_card(
+                    start,
+                    end,
+                    face_regions=face_regions,
+                    face_sampling=face_sampling,
+                    fallback_face_box=_FALLBACK_FACE_BOX,
+                    caption_box=caption_box,
+                    placed=placed_boxes,
+                ),
+            )
+        if spot is None:
+            fallback.append(overlay)
+            continue
+        resolved[oid] = {
+            **overlay,
+            "x_frac": spot.x_frac,
+            "y_frac": spot.y_frac,
+            "scale": spot.scale,
+        }
+        clear_ids.add(oid)
+        placed_boxes.append((start, end, spot.box))
+
+    if fallback:
+        fb_resolved, fb_reasons, _sampling = resolve_phone_card_geometry(
+            fallback,
+            clip_path=clip_path,
+            job_id=job_id,
+            footprints_by_id=footprints_by_id,
+            face_box_to_canvas=face_box_to_canvas,
+            sampled_faces=sampled,
+            # Today's corner card keeps today's protected region (0.60 down): its centre is
+            # clamped to `CAPTION_BAND_TOP_FRAC` below, so a spot accepted lower would be pulled
+            # up onto the captions. The real band is protected on top of it.
+            caption_band=None,
+            strict_geometry=True,
+            extra_protected=[
+                ProtectedRegion(0.0, float("inf"), caption_box, kind="captions"),
+                *(ProtectedRegion(s, e, box, kind=_EXTRA_CARD_KIND) for s, e, box in placed_boxes),
+            ],
+        )
+        resolved.update(fb_resolved)
+        reason_by_id.update(fb_reasons)
+    order = [str(o["id"]) for o in live]
+    return resolved, reason_by_id, face_sampling, frozenset(clear_ids), order
+
+
 def ground_phone_subtitled_overlays(
     open_session: Callable[[], AbstractContextManager[Session]],
     *,
@@ -716,6 +903,7 @@ def ground_phone_subtitled_overlays(
     chronological: bool = False,
     face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
     spoken_language: str = "",
+    card_layout: CardLayoutContext | None = None,
 ) -> GroundedOverlayCards:
     """Match the speaker's transcript against the item's ready Visuals pool
     and resolve face-aware, caption-safe PiP card geometry (KRI-176).
@@ -877,6 +1065,7 @@ def ground_phone_subtitled_overlays(
         fullscreen_enabled=False,
         caption_cues=None,
         stats=None,
+        **({"ceiling": _LAYOUT_CEILING, "hook_any_tier": True} if card_layout is not None else {}),
     )
 
     # Default upper-right corner geometry for arbitration -- the cloud slot's
@@ -908,16 +1097,37 @@ def ground_phone_subtitled_overlays(
             }
         )
 
-    resolved_by_id, arbitration_reason_by_id, face_sampling = resolve_phone_card_geometry(
-        overlays_for_arbitration,
-        clip_path=clip_path,
-        job_id=job_id,
-        footprints_by_id=footprints_by_id,
-        **({"face_box_to_canvas": face_box_to_canvas} if face_box_to_canvas is not None else {}),
-    )
+    if card_layout is not None:
+        layout_result = _lay_out_cards(
+            suggestion_by_id,
+            overlays_for_arbitration,
+            footprints_by_id,
+            assets_by_id=assets_by_id,
+            card_layout=card_layout,
+            clip_path=clip_path,
+            job_id=job_id,
+            face_box_to_canvas=face_box_to_canvas,
+            unplaced=unplaced,
+        )
+        resolved_by_id, arbitration_reason_by_id, face_sampling, clear_ids, geometry_order = (
+            layout_result
+        )
+    else:
+        resolved_by_id, arbitration_reason_by_id, face_sampling = resolve_phone_card_geometry(
+            overlays_for_arbitration,
+            clip_path=clip_path,
+            job_id=job_id,
+            footprints_by_id=footprints_by_id,
+            **(
+                {"face_box_to_canvas": face_box_to_canvas} if face_box_to_canvas is not None else {}
+            ),
+        )
+        clear_ids = frozenset()
+        geometry_order = list(suggestion_by_id)
 
     cards: list[SubtitledOverlayCard] = []
-    for oid, suggestion in suggestion_by_id.items():
+    for oid in geometry_order:
+        suggestion = suggestion_by_id[oid]
         asset_id = str(suggestion["asset_id"])
         asset = assets_by_id.get(asset_id)
         label = _label_for_asset(asset) if asset else asset_id
@@ -936,7 +1146,12 @@ def ground_phone_subtitled_overlays(
         # Defensive clamp -- arbitration's own candidate ladder already keeps
         # every accepted spot clear of the caption protected region, but the
         # compiler's own invariant is asserted here too rather than trusted.
-        y_frac = min(float(resolved_overlay["y_frac"]), CAPTION_BAND_TOP_FRAC)
+        caption_clear = oid in clear_ids
+        y_frac = (
+            float(resolved_overlay["y_frac"])
+            if caption_clear
+            else min(float(resolved_overlay["y_frac"]), CAPTION_BAND_TOP_FRAC)
+        )
         card = SubtitledOverlayCard(
             id=f"pip-{len(cards)}",
             media_id=asset_id,
@@ -950,7 +1165,12 @@ def ground_phone_subtitled_overlays(
             fade=True,
             z=0,
             kind=asset_kind,
-            source_start_s=0.0,
+            source_start_s=(
+                float(suggestion["overlay"].get("clip_trim_start_s") or 0.0)
+                if card_layout is not None and asset_kind == "video"
+                else 0.0
+            ),
+            caption_clear=caption_clear,
         )
         cards.append(card)
         placed.append(

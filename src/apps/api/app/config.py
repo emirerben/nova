@@ -862,6 +862,16 @@ class Settings(BaseSettings):
     # otherwise captions are byte-identical to before and the receipt says what was not drawn.
     # Apply: `fly secrets set PHONE_CAPTION_SHAPE_ENABLED=true` (api + worker) + restart.
     phone_caption_shape_enabled: bool = False
+    # Qendresa item 15: the card layout on phone Talking edits. Screenshot / recording cards
+    # take her size and place (up to full width, in the band above her face or below her
+    # caption row, never on her face or captions), up to 14 cards, a named screenshot may open
+    # the video, recordings start at their best moment. Default FALSE. Applied only when
+    # `cardLayout` is in PHONE_RENDER_VERIFIED_FEATURES AND the approving app build declares >=
+    # `client_protocol.CARD_LAYOUT_PROTOCOL` (its editor keeps a `caption_clear` card below
+    # y 0.62); portrait pip layout without a speaker background only. Otherwise cards are
+    # byte-identical to before.
+    # Apply: `fly secrets set TALKING_CARD_LAYOUT_ENABLED=true` (api + worker) + restart.
+    talking_card_layout_enabled: bool = False
     # KRI-1007: caption entrance/exit/loop/speed (`animation_phases` on a caption row, or
     # the all-captions default `caption_meta.animation_phases`). Drawn on device from the
     # recipe's existing `animationPhases`. Default TRUE; the editor capability
