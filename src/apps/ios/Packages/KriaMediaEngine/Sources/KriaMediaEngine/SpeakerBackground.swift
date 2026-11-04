@@ -89,38 +89,70 @@ public struct SpeakerFrame: Codable, Equatable, Sendable {
     }
 }
 
-/// One picture or looping video composited behind the speaker for the whole edit. KRI-1162 adds timed
+/// KRI-1173: what fills the layer behind the speaker. `VisualMediaKind` is shared with manifest `.visual`
+/// sources and windows and must not gain a colour case, so the fill has its own kind.
+public enum SpeakerBackgroundFillKind: String, Codable, Sendable { case image, video, color }
+
+/// One picture or looping video, or (KRI-1173) one solid colour, composited behind the speaker for the whole edit. KRI-1162 adds timed
 /// `windows` that override it in their span and a `speakerFrame` that draws the speaker small; both are
 /// absent from the wire while unused, so a first-cut layer encodes exactly as before.
 public struct SpeakerBackgroundLayer: Codable, Equatable, Sendable {
-    /// Names a `VisualRenderAsset` in the recipe's manifest.
-    public let assetID: String
-    public let mediaKind: VisualMediaKind
-    /// Seconds into a video background where playback starts. Always 0 for a photo.
+    /// Names a `VisualRenderAsset` in the recipe's manifest. Nil exactly when the fill is a solid colour.
+    public let assetID: String?
+    public let mediaKind: SpeakerBackgroundFillKind
+    /// Seconds into a video background where playback starts. Always 0 for a photo or a colour.
     public let sourceStart: Double
     public let loop: Bool
     public let subjectTrackID: String
     /// Sorted by `start`, non-overlapping, 1...40 entries; nil while unused (never empty).
     public let windows: [SpeakerBackgroundWindow]?
     public let speakerFrame: SpeakerFrame?
+    /// `#RRGGBB` (uppercase) when the fill is a solid colour (KRI-1173); nil for a photo or video.
+    public let color: String?
 
+    public init(assetID: String?, mediaKind: SpeakerBackgroundFillKind, sourceStart: Double = 0, loop: Bool = true,
+                subjectTrackID: String = SpeakerBackgroundLimits.defaultSubjectTrackID,
+                windows: [SpeakerBackgroundWindow]? = nil, speakerFrame: SpeakerFrame? = nil, color: String? = nil) {
+        self.assetID = assetID; self.mediaKind = mediaKind; self.sourceStart = sourceStart
+        self.loop = loop; self.subjectTrackID = subjectTrackID
+        self.windows = windows; self.speakerFrame = speakerFrame; self.color = color
+    }
+
+    /// A photo or video fill, as before KRI-1173 (source compatible with call sites that pass a `VisualMediaKind`).
     public init(assetID: String, mediaKind: VisualMediaKind, sourceStart: Double = 0, loop: Bool = true,
                 subjectTrackID: String = SpeakerBackgroundLimits.defaultSubjectTrackID,
                 windows: [SpeakerBackgroundWindow]? = nil, speakerFrame: SpeakerFrame? = nil) {
-        self.assetID = assetID; self.mediaKind = mediaKind; self.sourceStart = sourceStart
-        self.loop = loop; self.subjectTrackID = subjectTrackID
-        self.windows = windows; self.speakerFrame = speakerFrame
+        self.init(assetID: assetID, mediaKind: mediaKind == .video ? SpeakerBackgroundFillKind.video : .image, sourceStart: sourceStart,
+                  loop: loop, subjectTrackID: subjectTrackID, windows: windows, speakerFrame: speakerFrame, color: nil)
+    }
+
+    /// A solid-colour fill; `hex` is `#RRGGBB` in uppercase (checked by `validate()`).
+    public static func color(_ hex: String, subjectTrackID: String = SpeakerBackgroundLimits.defaultSubjectTrackID,
+                             windows: [SpeakerBackgroundWindow]? = nil, speakerFrame: SpeakerFrame? = nil) -> SpeakerBackgroundLayer {
+        SpeakerBackgroundLayer(assetID: nil, mediaKind: .color, subjectTrackID: subjectTrackID, windows: windows,
+                               speakerFrame: speakerFrame, color: hex)
+    }
+
+    /// The manifest kind of a photo/video fill; nil for a colour, which has no manifest asset.
+    public var visualMediaKind: VisualMediaKind? {
+        switch mediaKind {
+        case .image: return .image
+        case .video: return .video
+        case .color: return nil
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
-        case assetID = "assetId", mediaKind, sourceStart, loop, subjectTrackID = "subjectTrackId", windows, speakerFrame
+        case assetID = "assetId", mediaKind, sourceStart, loop, subjectTrackID = "subjectTrackId", windows, speakerFrame, color
     }
 
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["assetId", "mediaKind", "sourceStart", "loop", "subjectTrackId", "windows", "speakerFrame"])
+        try rejectUnknownAssetFields(decoder, allowed: ["assetId", "mediaKind", "sourceStart", "loop", "subjectTrackId", "windows", "speakerFrame", "color"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        assetID = try c.decode(String.self, forKey: .assetID)
-        mediaKind = try c.decode(VisualMediaKind.self, forKey: .mediaKind)
+        // KRI-1173: `assetId` / `color` are absent when unused. A JSON `null` is INVALID for both (it is not "absent" here).
+        assetID = c.contains(.assetID) ? try c.decode(String.self, forKey: .assetID) : nil
+        color = c.contains(.color) ? try c.decode(String.self, forKey: .color) : nil
+        mediaKind = try c.decode(SpeakerBackgroundFillKind.self, forKey: .mediaKind)
         sourceStart = try c.decodeIfPresent(Double.self, forKey: .sourceStart) ?? 0
         loop = try c.decodeIfPresent(Bool.self, forKey: .loop) ?? true
         subjectTrackID = try c.decodeIfPresent(String.self, forKey: .subjectTrackID) ?? SpeakerBackgroundLimits.defaultSubjectTrackID
@@ -130,10 +162,22 @@ public struct SpeakerBackgroundLayer: Codable, Equatable, Sendable {
         try validate()
     }
 
+    /// Exactly `#` + six uppercase hex digits (the recipe wire; case and names are normalised before it).
+    static func isStrictHexColor(_ value: String) -> Bool {
+        let digits = Array(value.utf8)
+        return digits.count == 7 && digits[0] == UInt8(ascii: "#")
+            && digits[1...].allSatisfy { ($0 >= 48 && $0 <= 57) || ($0 >= 65 && $0 <= 70) }
+    }
+
     public func validate() throws {
-        guard !assetID.isEmpty, assetID.count <= SpeakerBackgroundLimits.maxIDLength,
-              !assetID.contains(where: \.isWhitespace),
-              !subjectTrackID.isEmpty, subjectTrackID.count <= SpeakerBackgroundLimits.maxIDLength,
+        // KRI-1173: `mediaKind == .color` <=> `color != nil` <=> `assetID == nil`.
+        if mediaKind == .color {
+            guard assetID == nil, let color, Self.isStrictHexColor(color) else { throw RecipeError.invalidTimeline }
+        } else {
+            guard color == nil, let assetID, !assetID.isEmpty, assetID.count <= SpeakerBackgroundLimits.maxIDLength,
+                  !assetID.contains(where: \.isWhitespace) else { throw RecipeError.invalidTimeline }
+        }
+        guard !subjectTrackID.isEmpty, subjectTrackID.count <= SpeakerBackgroundLimits.maxIDLength,
               sourceStart.isFinite, (0...SpeakerBackgroundLimits.maxSourceStart).contains(sourceStart),
               mediaKind == .video || sourceStart == 0
         else { throw RecipeError.invalidTimeline }
@@ -169,8 +213,16 @@ extension AVPlayerPreviewComposer {
     /// or past the end builds nothing.
     static func speakerBackgroundLayers(_ background: SpeakerBackgroundLayer, assetURLs: [String: URL], composition: AVMutableComposition,
                                         canvas: CGSize, duration: Double) async throws -> [RecipeVideoLayer] {
-        guard let url = assetURLs[background.assetID] else { throw MediaEngineError.missingAsset(background.assetID) }
-        var layers = [try await speakerBackgroundLayer(background, url: url, composition: composition, canvas: canvas, duration: duration)]
+        var layers: [RecipeVideoLayer]
+        if background.mediaKind == .color {
+            // KRI-1173: a solid colour needs no asset, no composition track and no sample window.
+            layers = [try speakerBackgroundColorLayer(background, canvas: canvas, duration: duration)]
+        } else {
+            guard let assetID = background.assetID, let url = assetURLs[assetID] else {
+                throw MediaEngineError.missingAsset(background.assetID ?? "")
+            }
+            layers = [try await speakerBackgroundLayer(background, url: url, composition: composition, canvas: canvas, duration: duration)]
+        }
         for (index, window) in (background.windows ?? []).enumerated() where window.start < duration {
             guard let windowURL = assetURLs[window.assetID] else { throw MediaEngineError.missingAsset(window.assetID) }
             var layer = try await backgroundMediaLayer(assetID: window.assetID, mediaKind: window.mediaKind, sourceStart: window.sourceStart,
@@ -189,9 +241,23 @@ extension AVPlayerPreviewComposer {
     /// `sourceStart`, or held on its last frame when `loop` is false; its audio is never inserted (S11).
     static func speakerBackgroundLayer(_ background: SpeakerBackgroundLayer, url: URL, composition: AVMutableComposition,
                                        canvas: CGSize, duration: Double) async throws -> RecipeVideoLayer {
-        try await backgroundMediaLayer(assetID: background.assetID, mediaKind: background.mediaKind, sourceStart: background.sourceStart,
+        guard let assetID = background.assetID, let kind = background.visualMediaKind else { throw RecipeError.invalidTimeline }
+        return try await backgroundMediaLayer(assetID: assetID, mediaKind: kind, sourceStart: background.sourceStart,
                                        loop: background.loop, url: url, composition: composition, canvas: canvas,
                                        start: 0, end: duration, clipID: speakerBackgroundClipID)
+    }
+
+    /// KRI-1173: the solid-colour fill as one flat sRGB layer spanning the edit. Preview and export both draw this one
+    /// image, so they show the same colour.
+    static func speakerBackgroundColorLayer(_ background: SpeakerBackgroundLayer, canvas: CGSize, duration: Double) throws -> RecipeVideoLayer {
+        guard let hex = background.color, let rgb = ClipBackdrop.components(hex),
+              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let color = CIColor(red: rgb.red, green: rgb.green, blue: rgb.blue, alpha: 1, colorSpace: space) else { throw RecipeError.invalidTimeline }
+        var layer = RecipeVideoLayer(trackID: nil, image: CIImage(color: color).cropped(to: CGRect(origin: .zero, size: canvas)),
+                                     transform: .identity, start: 0, end: duration, fadeIn: 0, isPrimary: false,
+                                     clipID: speakerBackgroundClipID, naturalSize: canvas)
+        layer.speakerRole = .background
+        return layer
     }
 
     /// One background medium shown from `start` to `end` seconds. A video window is its own composition

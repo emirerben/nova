@@ -77,17 +77,18 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v106 (prompt fidelity, animation): the two brief-enabled hashes re-pinned (one added paragraph).
 # v109 (KRI-1161) teaches the `speaker_background` brief fact: the two brief-on hashes re-pinned;
 # brief-off unchanged.
-# v113 (KRI-1177 / KRI-1164) teaches the caption look facts (`caption_size`, `caption_position`,
-# `caption_color`, `caption_case`) and `audio_intent: no_music`: the two brief-on hashes re-pinned
-# (removing exactly those two inserted passages restores the v112 hashes); brief-off unchanged.
-# v117 (KRI-1189) teaches `cut_restarts` in the brief section's cleanup sentence: the two brief-on
-# hashes re-pinned (v116's sentence restores 065dbc15 / 610a0650); brief-off unchanged.
+# v113 (KRI-1177 / KRI-1164) teaches the caption look facts and `audio_intent: no_music`, and
+# KRI-1173 adds the `background_color` brief fact: the two brief-on hashes re-pinned (main had
+# 065dbc15… / 610a0650… before the colour clause); brief-off unchanged.
+# v119 (KRI-1189, was v117 on its branch) teaches `cut_restarts` in the brief section's
+# cleanup sentence: the two brief-on hashes re-pinned (v118's sentence restores ea4b279f /
+# a855f01d); brief-off unchanged.
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "66a1abcc615f8f52f766cfe14845944921ae96028473ffe8d41f357137bc5d9c",
+    (True, True): "10202eb7ab0d90f34a6463517c176093a3e1eccc3ebf61c191d925676e583b0b",
     (True, False): "e3de37c194b88bd906568375111a33a5d8ec8bdab981a29ff6f377162710e87e",
-    (False, True): "b9c1d82a904fb2e9a7c3f23099dcdc0141398f2e8ec9e9732f4de5dbe5e47108",
+    (False, True): "d3a50520d939eacc8dda736ad774546ef7892d6808b6b9ac0692f21e83af5285",
     (False, False): "e804c3135cb2e6eae9093216bee3ee0d97159aa120c2b1eef8e34e61a3d37240",
 }
 
@@ -169,7 +170,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-03-v117"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-04-v119"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

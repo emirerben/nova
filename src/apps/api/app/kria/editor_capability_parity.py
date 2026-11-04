@@ -210,11 +210,12 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     # (`speaker_background` in the editor commit), only while the editor capability is open.
     "speaker_background": _g(
         "agent_ops",
-        "setSpeakerBackground removeSpeakerBackground setSpeakerBackgroundWindows "
-        "addSpeakerBackgroundWindow removeSpeakerBackgroundWindow setSpeakerFrame "
-        "clearSpeakerFrame",
+        "setSpeakerBackground setSpeakerBackgroundColor removeSpeakerBackground "
+        "setSpeakerBackgroundWindows addSpeakerBackgroundWindow removeSpeakerBackgroundWindow "
+        "setSpeakerFrame clearSpeakerFrame",
         (
             "set_background",
+            "set_background_color",
             "remove_background",
             "set_background_sequence",
             "set_speaker_frame",

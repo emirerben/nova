@@ -86,13 +86,18 @@ class EditRecipeV2(EditRecipeV1):
             self.required_capabilities |= {"singleWordText"}
         manifest = {asset.id: asset for asset in self.asset_manifest.assets}
         if self.speaker_background is not None:
-            source = manifest.get(self.speaker_background.asset_id)
-            if (
-                not isinstance(source, VisualRenderAsset)
-                or source.media_kind != self.speaker_background.media_kind
-            ):
-                raise ValueError("a speaker background requires a matching Visuals asset")
-            self.required_capabilities |= {"speakerBackground"}
+            if self.speaker_background.uses_color:
+                # KRI-1173: a flat colour names no asset and downloads nothing; it has its own
+                # capability (the new drawing), beside the base one.
+                self.required_capabilities |= {"speakerBackground", "speakerBackgroundColor"}
+            else:
+                source = manifest.get(self.speaker_background.asset_id)
+                if (
+                    not isinstance(source, VisualRenderAsset)
+                    or source.media_kind != self.speaker_background.media_kind
+                ):
+                    raise ValueError("a speaker background requires a matching Visuals asset")
+                self.required_capabilities |= {"speakerBackground"}
             # KRI-1162: every timed window names its own Visuals asset of the same kind and
             # ends inside the timeline; windows or a speaker frame add their own capability.
             for window in self.speaker_background.windows or ():

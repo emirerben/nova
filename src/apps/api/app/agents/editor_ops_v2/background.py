@@ -22,6 +22,15 @@ leaves every snapshot and prompt byte-identical):
 ``set_background`` still means one fill and now clears the windows; ``remove_background``
 clears everything.
 
+KRI-1173 (a plain colour behind the speaker), same family as ``set_background``:
+
+* ``set_background_color {color}``: a flat colour instead of a photo or video. ``color`` is a
+  hex in any case or one of the named presets (EN and TR, `BACKGROUND_COLOR_PRESETS`), normalised to
+  ``#RRGGBB`` uppercase here; anything else is refused in words. It keeps the timed
+  backgrounds and the corner the speaker sits in (windows play over the colour). While the
+  snapshot says ``color_available: false`` it answers as an unmet request with the section's
+  ``color_reason`` (S59), never the generic "can't change that" sentence.
+
 All of them compile into the editor Save's ``speaker_background`` section. The Save
 (`generative_jobs._validate_speaker_background_section`, after
 `phone_speaker_background.pin_pool_visual_for_background`) stays the authority on what the
@@ -38,7 +47,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.agents._schemas.reaction_beats import normalise_background_color
 from app.agents.editor_ops_v2 import OpSpec
+from app.kria.reply_language import say
 
 # A looping background never needs a start far into a video; the Save bounds it by the
 # video's own duration.
@@ -85,6 +96,41 @@ def _coerce_set_background(name: str, payload: dict, snapshot: dict, state: Any)
         "kind": row["kind"],
         "source_start_s": start,
     }
+
+
+def _coerce_set_background_color(
+    name: str, payload: dict, snapshot: dict, state: Any
+) -> dict | None:
+    section = snapshot.get("background") if isinstance(snapshot, dict) else None
+    if isinstance(section, dict) and section.get("color_available") is not True:
+        # S59: the lane is open but the colour gate is not -- say the snapshot's reason as an
+        # unmet request, never the generic "can't change that on this edit".
+        reason = str(section.get("color_reason") or "").strip() or (
+            "a plain colour behind you isn't available right now"
+        )
+        detail = say(
+            en=f"I can't put a plain colour behind you: {reason}.",
+            tr="Arkana düz bir renk koyamıyorum: bu uygulama sürümünde henüz açık değil.",
+        )
+        state.reject(op=name, reason="capability_unavailable", detail=detail)
+        state.reply_notes.append(detail)
+        return None
+    color = normalise_background_color(payload.get("color"))
+    if color is None:
+        detail = say(
+            en=(
+                "That isn't a colour I can use. Say white, black, green, blue, red, yellow "
+                "or grey, or give a hex like #FFFFFF."
+            ),
+            tr=(
+                "Bu, kullanabileceğim bir renk değil. Beyaz, siyah, yeşil, mavi, kırmızı, sarı "
+                "ya da gri de, ya da #FFFFFF gibi bir kod ver."
+            ),
+        )
+        state.reject(op=name, reason="invalid_value", detail=detail)
+        state.invalid_value(detail)
+        return None
+    return {"op": name, "color": color}
 
 
 def _coerce_set_background_sequence(
@@ -155,6 +201,15 @@ SPECS: list[OpSpec] = [
         family=frozenset({"background", "speaker_background"}),
         coerce=_coerce_set_background,
     ),
+    # KRI-1173: the same family as set_background; availability is the snapshot's
+    # `color_available`, answered in the coerce step so a closed gate is an unmet request.
+    OpSpec(
+        name="set_background_color",
+        required=frozenset({"color"}),
+        fields=frozenset({"color"}),
+        family=frozenset({"background", "speaker_background"}),
+        coerce=_coerce_set_background_color,
+    ),
     OpSpec(
         name="remove_background",
         required=frozenset(),
@@ -220,6 +275,28 @@ def _op_set_background(state: Any, op: dict[str, Any]) -> None:
     )
 
 
+def _op_set_background_color(state: Any, op: dict[str, Any]) -> None:
+    from app.services.kria_editor_ops import (  # noqa: PLC0415
+        KriaEditorOpError,
+        background_current,
+    )
+
+    document: dict[str, Any] = {"kind": "color", "color": str(op["color"])}
+    working = _working_document(state)
+    # A colour only changes the fill: the timed backgrounds play over it and the corner the
+    # speaker sits in stays (KRI-1173).
+    if isinstance(working, dict):
+        if working.get("windows"):
+            document["windows"] = [dict(window) for window in working["windows"]]
+        if working.get("speaker_frame"):
+            document["speaker_frame"] = dict(working["speaker_frame"])
+    if document == background_current(state.job, state.variant):
+        raise KriaEditorOpError("That colour is already behind you")
+    state.speaker_background = document
+    state.changed.add("speaker_background")
+    state.summary = f"Put a plain {op['color']} background behind you"
+
+
 def _op_set_background_sequence(state: Any, op: dict[str, Any]) -> None:
     from app.services import phone_background_sequence as sequence  # noqa: PLC0415
     from app.services.kria_editor_ops import (  # noqa: PLC0415
@@ -243,15 +320,16 @@ def _op_set_background_sequence(state: Any, op: dict[str, Any]) -> None:
     if not layout.windows:
         raise KriaEditorOpError("This video is too short to change backgrounds")
     working = _working_document(state)
-    fill = (
-        {
+    if isinstance(working, dict) and working.get("color"):
+        fill: dict[str, Any] = {"kind": "color", "color": working["color"]}  # KRI-1173
+    elif isinstance(working, dict) and working.get("media_id"):
+        fill = {
             "media_id": working["media_id"],
             "kind": working["kind"],
             "source_start_s": working.get("source_start_s", 0.0),
         }
-        if isinstance(working, dict) and working.get("media_id")
-        else {"media_id": ids[0], "kind": kinds[0], "source_start_s": 0.0}
-    )
+    else:
+        fill = {"media_id": ids[0], "kind": kinds[0], "source_start_s": 0.0}
     document: dict[str, Any] = {
         **fill,
         "windows": [
@@ -284,7 +362,7 @@ def _op_set_speaker_frame(state: Any, op: dict[str, Any]) -> None:
     from app.services.kria_editor_ops import KriaEditorOpError  # noqa: PLC0415
 
     working = _working_document(state)
-    if not isinstance(working, dict) or not working.get("media_id"):
+    if not isinstance(working, dict) or not (working.get("media_id") or working.get("color")):
         raise KriaEditorOpError(
             "Put a photo or video behind you first, then I can place you small in a corner"
         )
@@ -325,6 +403,7 @@ def register_handlers() -> None:
     from app.services import kria_editor_ops  # noqa: PLC0415
 
     kria_editor_ops.register_handler("set_background", _op_set_background)
+    kria_editor_ops.register_handler("set_background_color", _op_set_background_color)
     kria_editor_ops.register_handler("remove_background", _op_remove_background)
     kria_editor_ops.register_handler("set_background_sequence", _op_set_background_sequence)
     kria_editor_ops.register_handler("set_speaker_frame", _op_set_speaker_frame)

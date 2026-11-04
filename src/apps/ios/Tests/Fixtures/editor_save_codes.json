@@ -30,6 +30,8 @@
     "phone_rendering_unavailable",
     "song_shorter_than_video",
     "sources_expired",
+    "speaker_background_color_disabled",
+    "speaker_background_color_invalid",
     "speaker_background_disabled",
     "speaker_background_kind_mismatch",
     "speaker_background_media_not_in_pool",

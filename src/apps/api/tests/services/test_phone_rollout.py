@@ -1077,3 +1077,52 @@ def test_phone_timed_cards_off_by_default():
 
     assert settings.phone_timed_cards_enabled is False
     assert phone_timed_cards_supported() is False
+
+
+# --- KRI-1173: the solid-colour background gate ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("enabled", "features", "protocol", "supported", "reason"),
+    [
+        (True, ["speakerBackground", "speakerBackgroundColor"], 34, True, None),
+        (
+            True,
+            ["speakerBackground", "speakerBackgroundColor"],
+            33,
+            False,
+            "client_protocol_below_min",
+        ),
+        (
+            True,
+            ["speakerBackground", "speakerBackgroundColor"],
+            None,
+            False,
+            "client_protocol_below_min",
+        ),
+        (True, ["speakerBackground"], 34, False, "color_token_not_verified"),
+        (True, ["speakerBackgroundColor"], 34, False, "token_not_verified"),
+        (False, ["speakerBackground", "speakerBackgroundColor"], 34, False, "disabled"),
+    ],
+)
+def test_speaker_background_color_gate_truth_table(
+    monkeypatch, enabled, features, protocol, supported, reason
+):
+    from app.services.client_protocol import clear_request_context, set_client_protocol
+    from app.services.phone_rollout import (
+        speaker_background_color_supported,
+        speaker_background_color_unavailable_reason,
+    )
+
+    clear_request_context()
+    try:
+        set_client_protocol(protocol)
+        monkeypatch.setattr(settings, "speaker_background_enabled", enabled)
+        monkeypatch.setattr(settings, "phone_render_verified_features", features)
+        assert speaker_background_color_supported(require_client=True) is supported
+        assert speaker_background_color_unavailable_reason(require_client=True) == reason
+        # A worker has no app build: the protocol half never applies without a request.
+        if reason == "client_protocol_below_min":
+            assert speaker_background_color_unavailable_reason(require_client=False) is None
+    finally:
+        clear_request_context()

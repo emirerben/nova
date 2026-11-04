@@ -249,7 +249,7 @@ def test_the_planner_is_taught_the_field_only_while_the_rollout_is_open(monkeypa
     from app.agents.main_creator import MAIN_CREATOR_PROMPT_VERSION, _insert_clip_section
 
     section = _insert_clip_section(cutaways_open=False)
-    assert MAIN_CREATOR_PROMPT_VERSION.endswith("-v117")
+    assert MAIN_CREATOR_PROMPT_VERSION.endswith("-v119")
     _open(monkeypatch, insert=True)
     manifest = _julio_manifest()
     open_prompt = _render_prompt(manifest)
@@ -414,12 +414,12 @@ def _extractor_prompt(**kw) -> str:
 # KRI-1162 (PR #2045) adds the `speaker_background` requirement fact to the brief
 # section (KRI-1161); without that sentence the digest is
 # a3798035e169f3aeff144526a6d8f9bf3f044b0d0985267fb1547831f17a4386.
-# KRI-1177 / KRI-1164 (creator v113) adds the caption look facts and `audio_intent: no_music`;
-# without those two passages the digest is
+# KRI-1177 / KRI-1164 add the caption look facts and `audio_intent: no_music`, and KRI-1173 one
+# `background_color` clause; without those passages the digest is
 # 90ef88660728fd8938da0de42c9874b73d52e25664c5633a6c8b2fd63066a718.
-# KRI-1189 (creator v117) teaches `cut_restarts` in the cleanup sentence; with v116's sentence the
-# digest is 7eda3337971e0813aa1c84b1e79c04eb4e9e0e5082167c6189feb60ec93b97b5.
-_BRIEF_SECTION_BEFORE_INSERTS = "12fb14edbf9c48693ffe948612b3848511709e98a0729871fe22f30c516f59d3"
+# KRI-1189 (creator v119) teaches `cut_restarts` in the cleanup sentence; with v118's sentence the
+# digest is c3c94cd31f4cdd6dcea91de409be84016351caaa111403fb43258c7c24c0114c.
+_BRIEF_SECTION_BEFORE_INSERTS = "562441ab494ae1bf4c0f79dd9811163c782b8548712f05ed7334ceaba675ffe6"
 
 
 def test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inserts():

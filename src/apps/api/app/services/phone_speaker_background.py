@@ -62,6 +62,15 @@ BACKGROUND_REFUSALS: dict[str, tuple[str, str]] = {
         "Couldn't use those background times: they overlap or are too short",
         "Bu arka plan sürelerini kullanamadım: üst üste biniyor ya da çok kısa",
     ),
+    # KRI-1173: a solid-colour fill.
+    "speaker_background_color_disabled": (
+        "Couldn't put a colour behind you: it isn't available right now",
+        "Arkana renk koyamadım: şu anda kullanılamıyor",
+    ),
+    "speaker_background_color_invalid": (
+        "Couldn't use that colour as your background",
+        "Bu rengi arka plan olarak kullanamadım",
+    ),
     "speaker_background_media_unavailable": (
         "Couldn't read that photo or video",
         "Bu fotoğraf ya da videoyu okuyamadım",
@@ -188,7 +197,8 @@ def pin_pool_visual_for_background_sync(
 def background_pin_requests(job: Any, variant_id: str, payload: Any) -> list[tuple[str, str]]:
     """Every ``(media_id, kind)`` a Save that SETS a background needs pinned first.
 
-    The fill first, then each ``windows`` entry (KRI-1162, S35), de-duplicated by id.
+    The fill first (none for a colour fill, KRI-1173), then each ``windows`` entry
+    (KRI-1162, S35), de-duplicated by id.
     Empty for a Save the validator can accept nothing of: a clear, an untouched lane, a
     closed gate or a variant that cannot carry one reach `_validate_speaker_background_section`
     and get their own refusal there. Window ids are only worth a download while the windows
@@ -215,7 +225,10 @@ def background_pin_requests(job: Any, variant_id: str, payload: Any) -> list[tup
         return []
     if speaker_background_unavailable_reason() is not None:
         return []
-    requests: dict[str, str] = {section.media_id: section.kind}
+    # KRI-1173: a colour fill is never pinned (S54); its windows still are.
+    requests: dict[str, str] = {}
+    if section.media_id is not None and section.kind != "color":
+        requests[section.media_id] = section.kind
     if (
         getattr(section, "windows", None)
         and speaker_background_windows_unavailable_reason() is None

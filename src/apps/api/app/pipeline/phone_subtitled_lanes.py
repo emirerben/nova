@@ -50,6 +50,7 @@ from pydantic import (
     ConfigDict,
     Field,
     SerializerFunctionWrapHandler,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -82,6 +83,8 @@ MAX_BACKGROUND_WINDOWS = 40
 MIN_BACKGROUND_WINDOW_S = 0.5
 MAX_BACKGROUND_TIMELINE_S = 1800.0
 MIN_SPEAKER_FRAME_WIDTH_FRACTION = 0.2
+# KRI-1173: the colour is stored exactly as the recipe wire spells it.
+_COLOR_PATTERN = r"^#[0-9A-F]{6}$"
 
 
 class _LaneModel(BaseModel):
@@ -245,23 +248,58 @@ class SubtitledBackground(_LaneModel):
     fill in their spans; ``speaker_frame`` (None while unused, omitted) draws the matted
     speaker small in a corner. Windows must be sorted by ``start_s`` and never overlap
     (touching is fine). A background with neither dumps exactly as before.
+
+    KRI-1173: the fill may instead be a flat ``color`` (``kind == "color"``): no pool media,
+    so ``media_id`` / ``gcs_path`` / ``generation`` are absent and nothing is pinned or
+    bound for it; windows and the speaker frame still apply. A media fill dumps exactly as
+    before (``color`` omitted).
     """
 
-    media_id: str = Field(min_length=1, max_length=160, pattern=_ID_PATTERN)
-    gcs_path: str = Field(min_length=1)
-    generation: str = Field(min_length=1, max_length=160, pattern=_ID_PATTERN)
-    kind: Literal["image", "video"] = "image"
+    # KRI-1173: required for ``image`` | ``video``; ABSENT (omitted from every dump) for ``color``.
+    media_id: str | None = Field(default=None, min_length=1, max_length=160, pattern=_ID_PATTERN)
+    gcs_path: str | None = Field(default=None, min_length=1)
+    generation: str | None = Field(default=None, min_length=1, max_length=160, pattern=_ID_PATTERN)
+    kind: Literal["image", "video", "color"] = "image"
+    # KRI-1173: required for ``color`` (``#RRGGBB``, stored UPPERCASE; lowercase is accepted
+    # here and normalised -- the recipe wire itself stays strict); omitted otherwise.
+    color: str | None = Field(default=None, pattern=_COLOR_PATTERN)
     source_start_s: float = Field(default=0.0, ge=0, le=MAX_BACKGROUND_SOURCE_START_S)
     windows: tuple[SubtitledBackgroundWindow, ...] = Field(
         default=(), max_length=MAX_BACKGROUND_WINDOWS
     )
     speaker_frame: SubtitledSpeakerFrame | None = None
 
+    @field_validator("color", mode="before")
+    @classmethod
+    def _uppercase_color(cls, value: object) -> object:
+        return value.strip().upper() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def _fill_matches_its_kind(self) -> SubtitledBackground:
+        if self.kind == "color":
+            if self.color is None:
+                raise ValueError("a colour background needs a color")
+            if any(v is not None for v in (self.media_id, self.gcs_path, self.generation)):
+                raise ValueError("a colour background names no pool media")
+            if self.source_start_s != 0:
+                raise ValueError("a colour background has no source start")
+        else:
+            if self.color is not None:
+                raise ValueError("only a colour background carries a color")
+            if self.media_id is None or self.gcs_path is None or self.generation is None:
+                raise ValueError("a photo or video background needs its pinned pool media")
+        return self
+
     @model_validator(mode="after")
     def _photo_has_no_timeline(self) -> SubtitledBackground:
         if self.kind == "image" and self.source_start_s != 0:
             raise ValueError("a photo background has no source start")
         return self
+
+    @property
+    def uses_color(self) -> bool:
+        """True when the fill is a flat colour (the ``speakerBackgroundColor`` gate)."""
+        return self.kind == "color"
 
     @model_validator(mode="after")
     def _windows_sorted_and_disjoint(self) -> SubtitledBackground:
@@ -278,6 +316,9 @@ class SubtitledBackground(_LaneModel):
     @model_serializer(mode="wrap")
     def _omit_unused(self, handler):  # noqa: ANN001, ANN202
         data = handler(self)
+        for key in ("media_id", "gcs_path", "generation", "color"):
+            if data.get(key) is None:
+                data.pop(key, None)
         if not data.get("windows"):
             data.pop("windows", None)
         if data.get("speaker_frame") is None:
@@ -489,6 +530,7 @@ def _remap_background_windows(
 
 SPEAKER_BACKGROUND_FALLBACK_EVENT = "speaker_background_phone_fallback"
 SPEAKER_BACKGROUND_WINDOWS_FALLBACK_EVENT = "speaker_background_windows_phone_fallback"
+SPEAKER_BACKGROUND_COLOR_FALLBACK_EVENT = "speaker_background_color_phone_fallback"
 
 
 def strip_unsupported_background(lanes: _BackgroundCarrier | None) -> _BackgroundCarrier | None:
@@ -501,6 +543,14 @@ def strip_unsupported_background(lanes: _BackgroundCarrier | None) -> _Backgroun
     still gets the edit (with their own background). The fallback is recorded for the
     job-debug view. Works on the resolved lanes and on the persisted request alike.
 
+    KRI-1173 (S49/S50): when the FILL is a solid colour and the colour gate is closed
+    (`phone_rollout.speaker_background_color_unavailable_reason`: the
+    ``speakerBackgroundColor`` token is not verified, or the build is below its protocol)
+    the WHOLE background is dropped -- there is no media fill to fall back to and windows
+    cannot exist without a fill -- and `SPEAKER_BACKGROUND_COLOR_FALLBACK_EVENT` is traced
+    with ``reason``, ``color``, ``window_count`` and ``had_frame``. The result equals a
+    request that never asked: never a wrong colour.
+
     KRI-1162 (S33): when only the windows gate is closed
     (`phone_rollout.speaker_background_windows_unavailable_reason`: the
     ``speakerBackgroundWindows`` token is not verified, or the build is below its
@@ -511,44 +561,58 @@ def strip_unsupported_background(lanes: _BackgroundCarrier | None) -> _Backgroun
     if lanes is None or lanes.background is None:
         return lanes
     from app.services.phone_rollout import (  # noqa: PLC0415
+        speaker_background_color_unavailable_reason,
         speaker_background_unavailable_reason,
         speaker_background_windows_unavailable_reason,
     )
 
+    background = lanes.background
     reason = speaker_background_unavailable_reason()
     if reason is None:
-        if not lanes.background.uses_windows:
+        if background.uses_color:
+            color_reason = speaker_background_color_unavailable_reason()
+            if color_reason is not None:
+                _trace_background_fallback(
+                    SPEAKER_BACKGROUND_COLOR_FALLBACK_EVENT,
+                    {
+                        "reason": color_reason,
+                        "color": background.color,
+                        "window_count": len(background.windows),
+                        "had_frame": background.speaker_frame is not None,
+                    },
+                )
+                return lanes.model_copy(update={"background": None})
+        if not background.uses_windows:
             return lanes
         windows_reason = speaker_background_windows_unavailable_reason()
         if windows_reason is None:
             return lanes
-        import structlog  # noqa: PLC0415
-
-        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
-
         detail = {
-            "media_id": lanes.background.media_id,
             "reason": windows_reason,
-            "window_count": len(lanes.background.windows),
-            "had_frame": lanes.background.speaker_frame is not None,
+            "window_count": len(background.windows),
+            "had_frame": background.speaker_frame is not None,
         }
-        structlog.get_logger(__name__).info(SPEAKER_BACKGROUND_WINDOWS_FALLBACK_EVENT, **detail)
-        record_pipeline_event("phone", SPEAKER_BACKGROUND_WINDOWS_FALLBACK_EVENT, detail)
-        fill_only = lanes.background.model_copy(update={"windows": (), "speaker_frame": None})
+        if background.media_id is not None:
+            detail = {"media_id": background.media_id, **detail}
+        _trace_background_fallback(SPEAKER_BACKGROUND_WINDOWS_FALLBACK_EVENT, detail)
+        fill_only = background.model_copy(update={"windows": (), "speaker_frame": None})
         return lanes.model_copy(update={"background": fill_only})
+    detail = {"reason": reason}
+    if background.uses_color:
+        detail = {"color": background.color, **detail}
+    else:
+        detail = {"media_id": background.media_id, **detail}
+    _trace_background_fallback(SPEAKER_BACKGROUND_FALLBACK_EVENT, detail)
+    return lanes.model_copy(update={"background": None})
+
+
+def _trace_background_fallback(event: str, detail: dict) -> None:
     import structlog  # noqa: PLC0415
 
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
-    structlog.get_logger(__name__).info(
-        SPEAKER_BACKGROUND_FALLBACK_EVENT, media_id=lanes.background.media_id, reason=reason
-    )
-    record_pipeline_event(
-        "phone",
-        SPEAKER_BACKGROUND_FALLBACK_EVENT,
-        {"media_id": lanes.background.media_id, "reason": reason},
-    )
-    return lanes.model_copy(update={"background": None})
+    structlog.get_logger(__name__).info(event, **detail)
+    record_pipeline_event("phone", event, detail)
 
 
 def background_media_refs(
@@ -556,21 +620,21 @@ def background_media_refs(
 ) -> tuple[tuple[str, str, str, str], ...]:
     """Every pool visual a background names, as ``(media_id, gcs_path, generation, kind)``.
 
-    The fill first, then each window's visual, de-duplicated by ``media_id`` (the same
-    photo may fill and open). The worker binds exactly these (S35) and keeps them as
-    referenced receipts; `background_pins` is the same set in `bind_phone_visual_assets`'
-    ``pins`` shape.
+    The fill first (none for a colour fill, KRI-1173), then each window's visual,
+    de-duplicated by ``media_id`` (the same photo may fill and open). The worker binds
+    exactly these (S35) and keeps them as referenced receipts; `background_pins` is the same
+    set in `bind_phone_visual_assets`' ``pins`` shape.
     """
     if background is None:
         return ()
-    refs: dict[str, tuple[str, str, str, str]] = {
-        background.media_id: (
+    refs: dict[str, tuple[str, str, str, str]] = {}
+    if not background.uses_color:  # KRI-1173: a colour names no pool media (S60)
+        refs[background.media_id] = (
             background.media_id,
             background.gcs_path,
             background.generation,
             background.kind,
         )
-    }
     for window in background.windows:
         refs.setdefault(
             window.media_id,
