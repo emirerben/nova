@@ -61,6 +61,7 @@ from app.services.overlay_autoplace import (
     heuristic_match,
 )
 from app.services.phone_card_layout import (
+    WATERMARK_BOX,
     CardLayoutContext,
     blockers_for_card,
     place_card,
@@ -864,6 +865,8 @@ def _lay_out_cards(
                     placed=placed_boxes,
                     complete=complete,
                 ),
+                # KRI-548: the phone's wordmark keeps its corner; a card sits beside it.
+                side_blockers=(WATERMARK_BOX,),
             )
         if spot is None:
             fallback.append(overlay)

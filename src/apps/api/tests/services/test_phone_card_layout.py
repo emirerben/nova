@@ -18,6 +18,9 @@ Written BEFORE the code. Ways this goes wrong, each covered below:
 - (review) samples that cover only part of a card's window counted as the whole window;
 - (review) a timed-out / partial sampling pass counted as clean;
 - (review) the corner-card fallback path trusting "ok but no face seen".
+- (simulator) a bottom-band card under the Kria watermark the phone draws over every export
+  (KRI-548: the mark's corner is brand-approved, things make room for it), so the mark is
+  printed over the screenshot's text.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from app.pipeline.phone_subtitled_lanes import CAPTION_BAND_TOP_FRAC
 from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
 from app.services.phone_card_layout import (
     CANVAS_RATIO,
+    WATERMARK_BOX,
     CardLayoutContext,
     blockers_for_card,
     boxes_intersect,
@@ -176,6 +180,27 @@ def test_sampling_that_saw_no_face_anywhere_still_protects_the_fallback_box():
     assert fb in blockers
 
 
+def test_watermark_box_is_the_phone_marks_keep_out():
+    # Mirrors KriaBranding (x 60-193, y 1416-1475 on 1080x1920) plus the caption keep-out gap.
+    assert WATERMARK_BOX.left < 60 / 1080 < 193 / 1080 < WATERMARK_BOX.right
+    assert WATERMARK_BOX.top < 1416 / 1920 < 1475 / 1920 < WATERMARK_BOX.bottom
+
+
+def test_a_bottom_card_makes_room_for_the_watermark_and_stays_big():
+    spot = place_card(16 / 9, [FACE, caption(0.60, 0.64)], side_blockers=[WATERMARK_BOX])
+    assert spot is not None and spot.zone == "bottom"
+    assert not boxes_intersect(spot.box, WATERMARK_BOX), spot.box
+    assert spot.scale >= 0.75, spot  # beside the mark, not shrunk under it
+    assert spot.box.right <= 1.0 and spot.box.bottom <= 1.0
+
+
+def test_the_watermark_changes_nothing_for_a_card_that_misses_it():
+    blockers = [NormalizedBox(0.30, 0.40, 0.70, 0.66), caption(0.76, 0.82)]
+    assert place_card(16 / 9, blockers, side_blockers=[WATERMARK_BOX]) == place_card(
+        16 / 9, blockers
+    )
+
+
 def test_text_window_moves_start_or_reports_overlap():
     assert shift_past_text_windows(0.0, 6.0, [(0.0, 2.0)], min_on_screen_s=1.5) == 2.0
     # chained windows
@@ -281,6 +306,7 @@ def test_cards_are_wide_off_the_face_the_caption_and_each_other(monkeypatch):
         assert card.scale >= 0.7  # the widest the band under her captions allows
         assert not boxes_intersect(box, face), card
         assert not boxes_intersect(box, caption(*band)), card
+        assert not boxes_intersect(box, WATERMARK_BOX), card
         assert box.left >= 0 and box.right <= 1 and box.top >= 0 and box.bottom <= 1
 
 

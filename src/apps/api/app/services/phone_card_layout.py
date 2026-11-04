@@ -42,6 +42,19 @@ EDGE_INSET = 0.02
 GAP = 0.015
 MIN_ZONE_HEIGHT = 0.10
 MIN_WIDTH = 0.15
+
+
+def _watermark_box() -> NormalizedBox:
+    """The Kria wordmark the phone draws over every export (KRI-548), plus its keep-out gap, as
+    canvas fractions of the 1080x1920 story canvas. Its corner is brand-approved: cards make
+    room for it, exactly as captions do (`phone_captions.watermark_keepout_rect`)."""
+    from app.pipeline.phone_captions import watermark_keepout_rect  # noqa: PLC0415
+
+    left, top, right, bottom = watermark_keepout_rect(1080.0, 1920.0)
+    return NormalizedBox(left / 1080.0, top / 1920.0, right / 1080.0, bottom / 1920.0)
+
+
+WATERMARK_BOX = _watermark_box()
 _TIE_FRACTION = 0.01  # areas within 1% of each other count as a tie (top wins)
 _EPS = 1e-9
 
@@ -83,11 +96,35 @@ def boxes_intersect(a: NormalizedBox, b: NormalizedBox) -> bool:
     )
 
 
-def place_card(aspect: float | None, blockers: Sequence[NormalizedBox]) -> CardPlacement | None:
+def _fit(
+    name: str, zone_top: float, zone_bottom: float, left: float, right: float, aspect: float
+) -> CardPlacement | None:
+    """The widest card, aspect kept, top-aligned in ``[zone_top, zone_bottom]`` and centred in
+    ``[left, right]``; ``None`` when the zone or the card is too small."""
+    zone_h = zone_bottom - zone_top
+    if zone_h < MIN_ZONE_HEIGHT:
+        return None
+    width = min(MAX_WIDTH, right - left, zone_h * aspect / CANVAS_RATIO)
+    if width < MIN_WIDTH:
+        return None
+    height = card_height_fraction(width, aspect)
+    return CardPlacement((left + right) / 2, zone_top + height / 2, width, name, height)
+
+
+def place_card(
+    aspect: float | None,
+    blockers: Sequence[NormalizedBox],
+    *,
+    side_blockers: Sequence[NormalizedBox] = (),
+) -> CardPlacement | None:
     """The widest card that fits the TOP or BOTTOM band around every blocker, else ``None``.
 
     A full-width card spans x, so a blocker anywhere in x bounds the band: the top zone ends just
     above the highest blocker, the bottom zone starts just under the lowest one.
+
+    ``side_blockers`` are small fixed marks a card may sit BESIDE instead (the Kria watermark):
+    they never bound a band, but a card that would cover one is moved beside it (narrower, its
+    side of the frame) or past it (the band shortened), whichever leaves the bigger card.
     """
     aspect = float(aspect) if aspect and float(aspect) > 0 else 1.0
     if blockers:
@@ -97,16 +134,34 @@ def place_card(aspect: float | None, blockers: Sequence[NormalizedBox]) -> CardP
         }
     else:
         zones = {"top": (EDGE_INSET, 1.0 - EDGE_INSET)}
+    everything = [*blockers, *side_blockers]
     fits: dict[str, CardPlacement] = {}
     for name, (zone_top, zone_bottom) in zones.items():
-        zone_h = zone_bottom - zone_top
-        if zone_h < MIN_ZONE_HEIGHT:
+        full = _fit(name, zone_top, zone_bottom, 0.0, 1.0, aspect)
+        if full is None:
             continue
-        width = min(MAX_WIDTH, zone_h * aspect / CANVAS_RATIO)
-        if width < MIN_WIDTH:
+        hit = [m for m in side_blockers if boxes_intersect(full.box, m)]
+        if not hit:
+            fits[name] = full
             continue
-        height = card_height_fraction(width, aspect)
-        fits[name] = CardPlacement(0.5, zone_top + height / 2, width, name, height)
+        right_of = max(m.right for m in hit) + GAP
+        left_of = min(m.left for m in hit) - GAP
+        candidates = [
+            _fit(name, zone_top, zone_bottom, right_of, 1 - EDGE_INSET, aspect),
+            _fit(name, zone_top, zone_bottom, EDGE_INSET, left_of, aspect),
+            (
+                _fit(name, max(m.bottom for m in hit) + GAP, zone_bottom, 0.0, 1.0, aspect)
+                if name == "bottom"
+                else _fit(name, zone_top, min(m.top for m in hit) - GAP, 0.0, 1.0, aspect)
+            ),
+        ]
+        clear = [
+            c
+            for c in candidates
+            if c is not None and not any(boxes_intersect(c.box, m) for m in everything)
+        ]
+        if clear:
+            fits[name] = max(clear, key=lambda c: c.scale * c.height)
     if not fits:
         return None
     top, bottom = fits.get("top"), fits.get("bottom")
@@ -121,7 +176,7 @@ def place_card(aspect: float | None, blockers: Sequence[NormalizedBox]) -> CardP
     inside = (
         box.left >= -_EPS and box.top >= -_EPS and box.right <= 1 + _EPS and box.bottom <= 1 + _EPS
     )
-    if not inside or any(boxes_intersect(box, b) for b in blockers):
+    if not inside or any(boxes_intersect(box, b) for b in everything):
         return None
     return chosen
 

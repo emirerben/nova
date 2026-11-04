@@ -51,7 +51,22 @@ VENV_PYTHON = Path(
 CASES = ("q1_before", "q1_after")
 IGNORE_TAIL_S = "1.6"
 FPS = 2.0
-MUST_FLIP = ("screen", "hook")
+MUST_FLIP = ("screen",)
+# The kit's `hook` counts ANY two non-caption words in the first 3 s; item 12's dimmed next word
+# is often misread ("This sign" -> "This siốn"), and the misread caption then counts as a title,
+# so `hook` passes before any card exists. `card_hook` asks the item's own question instead:
+# is a card's screen text (the kit's own "screen" class: small text, box h < 0.026) on screen
+# in the first 3 s? Both are recorded; `card_hook` must flip.
+# KRI-548: the Kria wordmark the phone draws over every export (KriaBranding: x 60-193,
+# y 1416-1475 of 1080x1920) plus the 12 px keep-out gap. Cards make room for it.
+WATERMARK = (
+    48 / 1080,
+    1404 / 1920,
+    205 / 1080,
+    1487 / 1920,
+)  # left, top, right, bottom
+HOOK_BY_S = 3.0
+CARD_HOOK_MIN_WORDS = 8  # the kit's own screen-word bar for a hook
 TEST_ENV = {
     "STORAGE_BUCKET": "nova-test",
     "STORAGE_PROVIDER": "gcs",
@@ -134,6 +149,24 @@ def load_frames(movie: Path) -> list[list[list[float]]]:
     return [json.loads(line).get("faces", []) for line in path.read_text().splitlines()]
 
 
+def card_hook(movie: Path) -> tuple[bool, int]:
+    """(any frame in the first `HOOK_BY_S` s shows >= `CARD_HOOK_MIN_WORDS` small screen-text
+    words, the most such words in one frame) from the kit's OCR of the rendered movie."""
+    path = movie.with_suffix(".check") / "frames.jsonl"
+    best = 0
+    for index, line in enumerate(path.read_text().splitlines()):
+        if index / 2.0 > HOOK_BY_S:
+            break
+        texts = json.loads(line).get("texts", [])
+        words = sum(
+            len(t["text"].split())
+            for t in texts
+            if t["conf"] >= 0.5 and t["box"][3] < 0.026
+        )
+        best = max(best, words)
+    return best >= CARD_HOOK_MIN_WORDS, best
+
+
 def card_box(card: dict[str, Any]) -> tuple[float, float, float, float]:
     return (
         card["x"] - card["width"] / 2,
@@ -182,7 +215,9 @@ def score(out: Path, kit: Path) -> int:
             continue
         report = run_check(kit, movie)
         frames_by_case[name] = load_frames(movie)
+        hooked, hook_words = card_hook(movie)
         results[name] = {
+            "card_hook": {"pass": hooked, "measured": hook_words},
             "passed": sum(bool(r["pass"]) for r in report["rules"]),
             "total": len(report["rules"]),
             "rules": {
@@ -197,6 +232,30 @@ def score(out: Path, kit: Path) -> int:
                 failures.append(f"{rid} should FAIL before")
             if not after["rules"].get(rid, {}).get("pass", False):
                 failures.append(f"{rid} should PASS after")
+        under_mark = []
+        for card in json.loads((out / "cases" / "q1_after" / "cards.json").read_text())[
+            "cards"
+        ]:
+            left, top, right, bottom = card_box(card)
+            mark_left, mark_top, mark_right, mark_bottom = WATERMARK
+            if (
+                left < mark_right
+                and mark_left < right
+                and top < mark_bottom
+                and mark_top < bottom
+            ):
+                under_mark.append(card.get("media_key"))
+        after["watermark_clear"] = {"pass": not under_mark, "measured": under_mark}
+        if under_mark:
+            failures.append(f"q1_after: card(s) under the Kria watermark: {under_mark}")
+        if before["card_hook"]["pass"]:
+            failures.append(
+                "card_hook should FAIL before (a card's text in the first 3 s)"
+            )
+        if not after["card_hook"]["pass"]:
+            failures.append(
+                "card_hook should PASS after (a card's text in the first 3 s)"
+            )
         if not after["rules"].get("full_speaker", {}).get("pass", False):
             failures.append("full_speaker should PASS after")
         for rid, rule in before["rules"].items():
@@ -241,6 +300,10 @@ def score(out: Path, kit: Path) -> int:
     for name, data in results.items():
         for rid, rule in data["rules"].items():
             print(f"{name:10} {rid:14} {rule['pass']!s:5} {rule['measured']}")
+        hook = data["card_hook"]
+        print(
+            f"{name:10} {'card_hook':14} {hook['pass']!s:5} {hook['measured']} words by 3 s"
+        )
         print(f"{name:10} {'TOTAL':14} {data['passed']}/{data['total']}")
     for key, row in faces.items():
         print(

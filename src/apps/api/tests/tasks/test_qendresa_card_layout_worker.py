@@ -57,6 +57,7 @@ from app.pipeline.phone_subtitled_plan import _STORY_CANVAS, compile_phone_subti
 from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
 from app.services import phone_text_styling as styling
 from app.services.client_protocol import clear_request_context
+from app.services.phone_card_layout import WATERMARK_BOX
 from app.services.phone_sources import PhoneVisualBinding
 from app.services.phone_subtitled_editor import (
     lanes_from_editor_sections,
@@ -411,6 +412,17 @@ def test_her_cards_are_wide_top_or_bottom_off_her_face_and_off_her_captions(monk
     receipt = variant["phone_overlay_receipt"]
     assert [row["reason"] for row in receipt["unplaced"]] == ["density_cap"], receipt["unplaced"]
 
+    # Her rule: the top or the bottom part, whichever the captions don't use. Measured from the
+    # captions this plan actually draws, never a fixed third.
+    drawn = caption_boxes(
+        variant["caption_cues"],
+        window=(0.0, TALK_S),
+        caption_style=style,
+        canvas=_STORY_CANVAS,
+        look=look,
+    )
+    band_top = min(c.top for c in drawn)
+    band_bottom = max(c.bottom for c in drawn)
     tops = bottoms = 0
     for clip in clips:
         box = _box(clip)
@@ -423,10 +435,14 @@ def test_her_cards_are_wide_top_or_bottom_off_her_face_and_off_her_captions(monk
         # than today's 0.36 for a wide one.
         if aspect >= 1.3:
             assert place.width_fraction > 0.36, (clip.id, place.width_fraction)
+        # A bottom card makes room for the Kria watermark the phone draws at the lower left
+        # (KRI-548), so it sits beside it a little narrower.
+        low = (box.top + box.bottom) / 2 > 0.5
         if captions == "q1_shape" and aspect >= 1.7:
-            assert place.width_fraction >= 0.9, (clip.id, place.width_fraction)
+            assert place.width_fraction >= (0.75 if low else 0.9), (clip.id, place.width_fraction)
         elif captions == "q1_shape" and aspect >= 1.3:
             assert place.width_fraction >= 0.7, (clip.id, place.width_fraction)
+        assert not _hits(box, WATERMARK_BOX), (clip.id, box)
         # F1/F5: never on her face, wherever she sits during the card (no tolerance).
         for t in (
             place.window_start,
@@ -443,9 +459,8 @@ def test_her_cards_are_wide_top_or_bottom_off_her_face_and_off_her_captions(monk
             look=look,
         ):
             assert not _hits(box, caption), (clip.id, box, caption)
-        centre = (box.top + box.bottom) / 2
-        tops += centre < 1 / 3
-        bottoms += centre > 2 / 3
+        tops += box.bottom <= band_top
+        bottoms += box.top >= band_bottom
     if captions == "q1_shape":
         # Top AND bottom thirds, as she does (the face moves at 40 s, so both bands open up).
         assert tops >= 2 and bottoms >= 2, _geometry(recipe)
