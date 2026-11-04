@@ -44,7 +44,12 @@ from app.db_locks import (
     acquire_locked_rows,
     transient_sqlstate,
 )
-from app.kria.api_schemas import EDITOR_STATE_MAX_BYTES, KriaProblemOut, ThreadDeltaOut
+from app.kria.api_schemas import (
+    EDITOR_STATE_MAX_BYTES,
+    KriaProblemOut,
+    SuggestionTapIn,
+    ThreadDeltaOut,
+)
 from app.kria.device_render import DeviceRenderCapabilities
 from app.kria.http import KriaFailureRoute, problem_response
 from app.kria.language import is_status_question
@@ -156,7 +161,12 @@ from app.services.suggestion_chips import (
     suggestion_tap_payload,
     unavailable_set,
 )
-from app.services.suggestion_serve import serve_suggestion_set
+from app.services.suggestion_serve import (
+    dismiss_suggestion,
+    editor_triggers_on,
+    persist_served_set,
+    serve_suggestion_set,
+)
 
 log = structlog.get_logger()
 
@@ -3432,6 +3442,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
     public_state.pop("_creator_direction_snapshot_v1", None)
     # KRI-756: the offered-chip ring is server bookkeeping for tap detection.
     public_state.pop("suggestion_sets", None)
+    public_state.pop("suggestion_suppressed", None)
     private_direction = (
         thread.creator_direction_snapshot
         if isinstance(getattr(thread, "creator_direction_snapshot", None), dict)
@@ -4403,7 +4414,11 @@ async def list_threads(
                 title=getattr(row, "title", None) or _DEFAULT_TITLE,
                 status=row.status,
                 revision=row.revision,
-                state={k: v for k, v in (row.state or {}).items() if k != "suggestion_sets"},
+                state={
+                    k: v
+                    for k, v in (row.state or {}).items()
+                    if k not in {"suggestion_sets", "suggestion_suppressed"}
+                },
                 content_plan_id=str(row.content_plan_id) if row.content_plan_id else None,
                 active_plan_item_id=str(row.active_plan_item_id)
                 if row.active_plan_item_id
@@ -4646,15 +4661,18 @@ async def thread_suggestions(
         )
         # Release the read transaction, then take the ring write on its own.
         await db.rollback()
-        await persist_suggestion_set(
-            db,
-            owner_thread_id,
-            served.out,
-            media_digest=served.media_digest,
-            protocol=client_protocol,
-            input_digest=served.input_digest,
-            witness_tiers=served.witness_tiers,
-        )
+        if editor_triggers_on():
+            await persist_served_set(db, owner_thread_id, served, protocol=client_protocol)
+        else:
+            await persist_suggestion_set(
+                db,
+                owner_thread_id,
+                served.out,
+                media_digest=served.media_digest,
+                protocol=client_protocol,
+                input_digest=served.input_digest,
+                witness_tiers=served.witness_tiers,
+            )
         return served.out
     except Exception:  # noqa: BLE001 - chips are an enhancement; never fail the screen
         log.warning(
@@ -4668,6 +4686,49 @@ async def thread_suggestions(
         except Exception:  # noqa: BLE001
             pass
         return unavailable_set()
+
+
+class SuggestionDismissOut(BaseModel):
+    """What happened to a dismiss. Every value is a normal outcome, never an error."""
+
+    # dismissed | already_dismissed | unknown | busy | unavailable
+    status: str
+
+
+@router.post("/{thread_id}/suggestions/dismiss", response_model=SuggestionDismissOut)
+async def dismiss_thread_suggestion(
+    thread_id: str,
+    body: SuggestionTapIn,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    response: Response,
+) -> SuggestionDismissOut:
+    """Hide a suggestion card for good. Additive, idempotent, owner-checked, revision-neutral.
+
+    ``set_id`` / ``chip_id`` are the card's own ids from the GET. The card is looked up in this
+    thread's own offered-set ring, so an id from another thread resolves to nothing. Flag off:
+    ``unavailable``. An id the ring does not hold (a card that already rolled out, or one that was
+    never offered) is ``unknown`` and writes nothing. ``busy`` means a turn held the thread for
+    the whole retry window; the app hides the card locally and may send it again.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    if not settings.suggestion_chips_for(user.id) or not editor_triggers_on():
+        return SuggestionDismissOut(status="unavailable")
+    thread = await _load(thread_id, user, db)
+    owner_thread_id = thread.id
+    await db.rollback()
+    try:
+        outcome = await dismiss_suggestion(db, owner_thread_id, body.set_id, body.chip_id)
+    except Exception:  # noqa: BLE001 - a dismiss is a nicety; never fail the screen
+        log.warning(
+            "suggestion_chips.error", stage="dismiss", thread_id=str(owner_thread_id), exc_info=True
+        )
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return SuggestionDismissOut(status="busy")
+    return SuggestionDismissOut(status=outcome)
 
 
 @router.get("/{thread_id}", response_model=CreationThreadOut | ThreadDeltaOut)
