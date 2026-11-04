@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.85.2.0] - 2026-11-04
+
+### Changed
+- fix(kria): "Cut the sentence I restarted" reads "Done" after a real retake cut (KRI-1189) (#2092) <!-- release-pr: 2092 -->
+
 ## [0.85.1.0] - 2026-11-04
 
 ### Changed

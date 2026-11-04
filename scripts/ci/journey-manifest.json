@@ -1932,7 +1932,7 @@
     {
       "id": "kri-551-consented-retakes",
       "needs_native": true,
-      "api_tests": "tests/agents/test_retake_detector.py tests/services/test_speech_cleanup_preflight.py tests/services/test_speech_cleanup_retakes_consent.py tests/services/test_speech_cleanup_decision.py tests/tasks/test_speech_cleanup_analysis.py tests/routes/test_creation_threads_speech_cleanup.py tests/kria/test_runtime_v2.py tests/kria/test_runtime_speech_cleanup_approval.py tests/kria/test_kri520_receipts.py tests/kria/test_brief_talking_receipts.py tests/kria/test_brief_marathon_receipts.py tests/tasks/test_kri551_cleanup_review_note.py tests/tasks/test_kri978_cleanup_review_seconds.py tests/routes/test_creator_agent.py tests/tasks/test_marathon_render_ready_review.py tests/kria/test_brief_rendered_speech_facts.py tests/kria/test_runtime_talking_first_draft.py tests/kria/test_kri787_merope_t1_runtime_postgres.py tests/kria/test_kri1176_restart_cut_receipts.py tests/pipeline/test_kri1176_green3_retake_replay.py tests/evals/test_retake_detector_evals.py",
+      "api_tests": "tests/agents/test_retake_detector.py tests/services/test_speech_cleanup_preflight.py tests/services/test_speech_cleanup_retakes_consent.py tests/services/test_speech_cleanup_decision.py tests/tasks/test_speech_cleanup_analysis.py tests/routes/test_creation_threads_speech_cleanup.py tests/kria/test_runtime_v2.py tests/kria/test_runtime_speech_cleanup_approval.py tests/kria/test_kri520_receipts.py tests/kria/test_brief_talking_receipts.py tests/kria/test_brief_marathon_receipts.py tests/tasks/test_kri551_cleanup_review_note.py tests/tasks/test_kri978_cleanup_review_seconds.py tests/routes/test_creator_agent.py tests/tasks/test_marathon_render_ready_review.py tests/kria/test_brief_rendered_speech_facts.py tests/kria/test_runtime_talking_first_draft.py tests/kria/test_kri787_merope_t1_runtime_postgres.py tests/kria/test_kri1176_restart_cut_receipts.py tests/pipeline/test_kri1176_green3_retake_replay.py tests/evals/test_retake_detector_evals.py tests/kria/test_kri1189_cut_restarts_receipts.py tests/evals/test_brief_extractor_evals.py",
       "xctests": [
         "KriaTests/SpeechCleanupOfferTests/testLegacyStatsWithoutRetakesKeepTheOriginalDisclosure",
         "KriaTests/SpeechCleanupOfferTests/testSummarySentenceNamesRestartedSentencesWhenTheyAreIncludedInTheCount",
@@ -1994,7 +1994,24 @@
         "src/apps/api/tests/fixtures/kri1176_green3_restart.json",
         "src/apps/api/tests/kria/test_kri1176_restart_cut_receipts.py",
         "src/apps/api/tests/pipeline/test_kri1176_green3_retake_replay.py",
-        "src/apps/api/tests/evals/test_retake_detector_evals.py"
+        "src/apps/api/tests/evals/test_retake_detector_evals.py",
+        "src/apps/api/tests/kria/test_kri1189_cut_restarts_receipts.py",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_bastan_basla_tr.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_green3_restart_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_keep_retakes_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_n3_named_restart_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_quoted_restart_cue_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_s1_dead_air_restart_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_start_over_from_scratch_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_start_over_with_a_clip_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_t1_yanlis_basladigim_tr.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_t2_tekrar_aldigim_tr.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_t3_okays_and_restarts_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/brief_extractor/kri1189_followup_cut_restart_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/brief_extractor/kri1189_followup_start_over_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/brief_extractor/kri1189_followup_tekrar_aldigim_tr.json",
+        "src/apps/api/tests/evals/test_brief_extractor_evals.py",
+        "src/apps/api/tests/evals/runners/restart_brief.py"
       ]
     },
     {
