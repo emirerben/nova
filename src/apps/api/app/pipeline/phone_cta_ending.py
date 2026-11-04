@@ -47,6 +47,7 @@ _LEAD_SIZE_FRAC = 0.0625
 _KEYWORD_SIZE_FRAC = 0.11
 _KEYWORD_MIN_SIZE_FRAC = 0.055
 _KEYWORD_MAX_WIDTH_FRAC = 0.62
+_KEYWORD_ONE_LINE_HEIGHT = 1.3
 _SHRINK_STEP = 0.9
 _GAP_FRAC = 0.012
 _DEFAULT_TOP_FRAC = 0.60
@@ -60,32 +61,23 @@ _ARROW_RIGHT_MAX = 0.96
 _ROW_LEFT_MIN = 0.04
 _CURVE_POINTS = 24
 
-_QUOTES = '"“”«»'
-_SINGLE_QUOTES = "'‘’"
-_PARTS_RE = re.compile(r"^(comment)\b[\s:,.\-–—]*(.+)$", re.IGNORECASE)
-_KEYWORD_STRIP = "\"“”«»'‘’()[]{}"
-
-
-def _unwrap(text: str) -> str:
-    if len(text) >= 2 and (
-        (text[0] in _QUOTES and text[-1] in _QUOTES)
-        or (text[0] in _SINGLE_QUOTES and text[-1] in _SINGLE_QUOTES)
-    ):
-        return text[1:-1].strip()
-    return text
+_PARTS_RE = re.compile(r"^(comment)\s+(\S.*)$", re.IGNORECASE)
 
 
 def cta_ending_parts(text: str | None) -> tuple[str, str] | None:
-    """("comment", KEYWORD) from "comment KEYWORD", else None."""
+    """("comment", KEYWORD) from "comment KEYWORD", else None.
+
+    The two parts joined by one space equal the whitespace-collapsed text exactly (the
+    approved contract matches the creator's exact closing text), so the keyword keeps its
+    punctuation and quotes. "Comment: READ" or a text wrapped in quotes is not split."""
     if not text:
         return None
-    collapsed = _unwrap(" ".join(str(text).split()))
+    collapsed = " ".join(str(text).split())
     match = _PARTS_RE.match(collapsed)
     if match is None:
         return None
-    keyword = match.group(2).strip().strip(_KEYWORD_STRIP).rstrip(".!:").strip(_KEYWORD_STRIP)
-    keyword = keyword.strip()
-    if not keyword or not any(ch.isalnum() for ch in keyword):
+    keyword = match.group(2)
+    if not any(ch.isalnum() for ch in keyword):
         return None
     if len(keyword.split()) > 3 or len(keyword) > 24:
         return None
@@ -98,14 +90,34 @@ _ARROW_RES = (
     re.compile(r"\bok işaret", re.IGNORECASE),
     re.compile(r"\bbir ok\b", re.IGNORECASE),
     re.compile(r"\bok çiz", re.IGNORECASE),
+    re.compile(r"\bok ekle\b", re.IGNORECASE),
+    re.compile(r"\bok koy\b", re.IGNORECASE),
+    re.compile(r"\boklu\b", re.IGNORECASE),
+    re.compile(r"\bokla\b", re.IGNORECASE),
     # Not a bare "oku": it is also "read!", a likely keyword ("yorum yaz OKU").
     re.compile(r"[→↘⤵➡⬇↓➜➝↗]"),
+)
+# Refusals: "no arrow", "without an arrow", "don't add an arrow", and the Turkish "oksuz",
+# "ok olmasın", "ok koyma", "ok ekleme".
+_NEGATED_RES = (
+    # Only plain refusals: "no arrow(s)", "without an arrow", "don't add an arrow". A wider
+    # window would swallow real asks ("no captions and an arrow", "not just text but an
+    # arrow", "don't forget the arrow").
+    re.compile(r"\b(?:no|without)\s+(?:an?\s+|any\s+|the\s+)?arrows?\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:don['’]?t|do not|never)\s+(?:add|put|draw|use|include|want|need)\s+"
+        r"(?:an?\s+|any\s+|the\s+)?arrows?\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\boksuz", re.IGNORECASE),
+    re.compile(r"\bok (?:olmas[ıi]n|koyma|ekleme)", re.IGNORECASE),
 )
 
 
 def requirement_asks_arrow(req: Any) -> bool:
     """Does this brief requirement ask for an arrow? Quoted text and the literal are
-    the creator's words to show, not a request, so they are ignored."""
+    the creator's words to show, not a request, so they are ignored; a negated mention
+    ("no arrow", "oksuz") is not an ask."""
     try:
         pieces = [getattr(req, "description", None)]
         facts = getattr(req, "facts", None)
@@ -118,6 +130,8 @@ def requirement_asks_arrow(req: Any) -> bool:
             text = _QUOTED_RE.sub(" ", piece)
             if isinstance(literal, str) and literal:
                 text = re.sub(re.escape(literal), " ", text, flags=re.IGNORECASE)
+            for rx in _NEGATED_RES:
+                text = rx.sub(" ", text)
             if any(rx.search(text) for rx in _ARROW_RES):
                 return True
     except Exception:  # noqa: BLE001 - detection never breaks a draft
@@ -125,9 +139,46 @@ def requirement_asks_arrow(req: Any) -> bool:
     return False
 
 
-def closing_arrow_asked(requirements: Iterable[Any]) -> bool:
+_ENDING_NAMED_RES = (
+    re.compile(r"\b(?:end|ending|ends|last|closing|close|finish|outro)\b", re.IGNORECASE),
+    re.compile(r"\b(?:son|sonunda|sonda|kapanış|bitiş)", re.IGNORECASE),
+)
+
+
+def _fold(text: str) -> str:
+    return " ".join(text.split()).casefold()
+
+
+def _is_about_ending(req: Any, closing_text: str) -> bool:
+    target = _fold(closing_text)
+    if not target:
+        return False
+    literal = getattr(req, "literal", None)
+    if isinstance(literal, str) and _fold(literal) == target:
+        return True
+    facts = getattr(req, "facts", None)
+    if isinstance(facts, dict):
+        closing = facts.get("closing")
+        if isinstance(closing, str) and _fold(closing) == target:
+            return True
+    description = getattr(req, "description", None)
+    if not isinstance(description, str) or not description:
+        return False
+    if target in _fold(description):
+        return True
+    unquoted = _QUOTED_RE.sub(" ", description)
+    return any(rx.search(unquoted) for rx in _ENDING_NAMED_RES)
+
+
+def closing_arrow_asked(requirements: Iterable[Any], closing_text: str) -> bool:
+    """An arrow asked for the ENDING: a requirement about the closing text (its literal or
+    closing fact is that text, or its description names it or the ending) that asks for one.
+    An arrow asked for other text ("MENU" pointing at the board) is not the closing arrow."""
     try:
-        return any(requirement_asks_arrow(req) for req in requirements)
+        return any(
+            _is_about_ending(req, closing_text) and requirement_asks_arrow(req)
+            for req in requirements
+        )
     except Exception:  # noqa: BLE001
         return False
 
@@ -202,30 +253,64 @@ def _arrow_points(
     height: float,
     h_scale: float,
 ) -> list[list[tuple[float, float]]]:
-    """Curl + open triangle head as pixel-space strokes."""
+    """Curl + open-triangle head as pixel-space strokes.
+
+    The phone draws each stroke as midpoint-smoothed curves through its points, so a
+    corner inside a stroke renders as a loop: the head is three 2-point strokes (straight
+    lines), and the curl turns gently between its points. The head clears the keyword's
+    right edge; for a keyword wider than the room beside "comment" the curl runs above the
+    keyword and ends at its top-right instead of crossing it."""
     sx = lead.right * width + 0.025 * width
     sy = (lead.top + lead.bottom) / 2 * height
-    ex = sx + 0.065 * width * h_scale
-    ey = (keyword.top + keyword.bottom) / 2 * height + 0.01 * height
-    c1 = (sx + 0.09 * width * h_scale, sy + 0.01 * height)
-    c2 = (sx + 0.10 * width * h_scale, ey - 0.04 * height)
-    curve = []
-    for i in range(_CURVE_POINTS + 1):
-        t = i / _CURVE_POINTS
-        u = 1 - t
-        curve.append(
-            (
-                u**3 * sx + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t**3 * ex,
-                u**3 * sy + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t**3 * ey,
+    head_h = 0.018 * height
+    ex = max(sx + 0.065 * width * h_scale, keyword.right * width + 0.02 * width)
+    span = ex - sx
+
+    def curl(c1, c2, ey):
+        pts = []
+        for i in range(_CURVE_POINTS + 1):
+            t = i / _CURVE_POINTS
+            u = 1 - t
+            pts.append(
+                (
+                    u**3 * sx + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t**3 * ex,
+                    u**3 * sy + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t**3 * ey,
+                )
             )
-        )
-    head = [
-        (ex, ey - 0.018 * height),
-        (ex + 0.035 * width * h_scale, ey),
-        (ex, ey + 0.018 * height),
-        (ex, ey - 0.018 * height),
-    ]
-    return [curve, head]
+        tip = (ex + 0.035 * width * h_scale, ey)
+        top = (ex, ey - head_h)
+        bottom = (ex, ey + head_h)
+        return [pts, [top, tip], [tip, bottom], [bottom, top]]
+
+    # The usual curl: right of "comment", down to the keyword's middle.
+    ey = (keyword.top + keyword.bottom) / 2 * height + 0.01 * height
+    strokes = curl(
+        (sx + 1.385 * span, sy + 0.01 * height), (sx + 1.54 * span, ey - 0.04 * height), ey
+    )
+    if not _ink_crosses(strokes, keyword, width=width, height=height):
+        return strokes
+    # A keyword wider than the room beside "comment": the usual curl would cross it, so the
+    # curl runs above the keyword and ends at its top-right.
+    ey = max(sy, keyword.top * height - head_h - 0.004 * height)
+    return curl((sx + 0.4 * span, sy - 0.03 * height), (sx + 0.85 * span, ey - 0.3 * (ey - sy)), ey)
+
+
+def _ink_crosses(
+    strokes: list[list[tuple[float, float]]], box: NormalizedBox, *, width: float, height: float
+) -> bool:
+    """Does the arrow's line (not its bounding box) touch ``box``? Each segment is walked in
+    small steps against the box grown by the stroke's half width plus a little air."""
+    pad = (_ARROW_WIDTH_FRAC * min(width, height)) / 2 + 0.006 * width
+    left, right = box.left * width - pad, box.right * width + pad
+    top, bottom = box.top * height - pad, box.bottom * height + pad
+    for pts in strokes:
+        for (ax, ay), (bx, by) in zip(pts, pts[1:], strict=False):
+            for step in range(9):
+                t = step / 8
+                x, y = ax + (bx - ax) * t, ay + (by - ay) * t
+                if left <= x <= right and top <= y <= bottom:
+                    return True
+    return False
 
 
 def _build_arrow(
@@ -377,7 +462,8 @@ def _build(
             **common,
         )
         keyword_box = pst._measure_title_box(keyword_row, canvas=canvas)
-        if keyword_box.width <= _KEYWORD_MAX_WIDTH_FRAC or size <= min_size:
+        one_line = keyword_box.height * height <= _KEYWORD_ONE_LINE_HEIGHT * size
+        if (keyword_box.width <= _KEYWORD_MAX_WIDTH_FRAC and one_line) or size <= min_size:
             break
         size = max(min_size, round(size * _SHRINK_STEP))
     lead_box = pst._measure_title_box(lead_row, canvas=canvas)

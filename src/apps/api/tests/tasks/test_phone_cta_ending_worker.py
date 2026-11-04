@@ -314,3 +314,112 @@ def test_switched_off_the_job_is_exactly_todays(monkeypatch):
     assert "drawings" not in variant
     assert variant == {**expected_variant, "render_generation_id": variant["render_generation_id"]}
     assert _recipe(job) == expected_recipe
+
+
+# --- Review findings (written before the fix; each failed on the first version) ---------------
+
+
+def _ink_on(drawing: dict, box: NormalizedBox) -> bool:
+    """Does any point along the drawing's strokes fall inside ``box``?"""
+    for stroke in drawing["strokes"]:
+        pts = stroke["points"]
+        for (ax, ay), (bx, by) in zip(pts, pts[1:], strict=False):
+            for step in range(9):
+                x, y = ax + (bx - ax) * step / 8, ay + (by - ay) * step / 8
+                if box.left <= x <= box.right and box.top <= y <= box.bottom:
+                    return True
+    return False
+
+
+def _turns(points) -> list[float]:
+    """Degrees the pen turns at each inner point of a stroke."""
+    import math
+
+    out = []
+    for (ax, ay), (bx, by), (cx, cy) in zip(points, points[1:], points[2:], strict=False):
+        a1, a2 = math.atan2(by - ay, bx - ax), math.atan2(cy - by, cx - bx)
+        out.append(abs((math.degrees(a2 - a1) + 180) % 360 - 180))
+    return out
+
+
+def test_the_arrow_head_keeps_its_corners_on_the_phone(monkeypatch):
+    """The phone draws every stroke as midpoint-smoothed curves through its points
+    (`NativeDrawingPainter.smoothPath`), so a stroke that turns a sharp corner comes out as a
+    loop. The head's corners must be ends of straight strokes, never inner points."""
+    _faces(monkeypatch)
+    job = _cta_job(monkeypatch)
+
+    gb._run_generative_job(str(job.id))
+
+    [arrow] = job.assembly_plan["variants"][0]["drawings"]
+    for stroke in arrow["strokes"]:
+        assert max(_turns(stroke["points"]), default=0.0) <= 45.0, stroke["points"]
+
+
+@pytest.mark.parametrize("closing", ["comment READ!", "Comment: READ", 'comment "READ"'])
+def test_a_closing_text_with_punctuation_still_renders_and_matches_the_contract(
+    monkeypatch, closing
+):
+    """The approved contract wants the creator's exact closing text; the rows drawn for it
+    (her ending, or the tag) must still read as exactly that text."""
+    _faces(monkeypatch)
+    job = _cta_job(monkeypatch, closing=closing)
+
+    gb._run_generative_job(str(job.id))
+
+    assert _closes_with(job, closing)
+
+
+@pytest.mark.parametrize("keyword", ["READ", "MASTERCLASS", "RECIPE", "FREE GUIDE"])
+def test_a_wide_keyword_keeps_the_arrow_off_it_and_stays_one_line(monkeypatch, keyword):
+    _faces(monkeypatch)
+    job = _cta_job(monkeypatch, closing=f"comment {keyword}")
+
+    gb._run_generative_job(str(job.id))
+
+    variant = job.assembly_plan["variants"][0]
+    lead, key = _closing_rows(variant)
+    assert key["text"] == keyword
+    key_box = _drawn_box(key)
+    # One line: the ink is no taller than one line of its own size.
+    assert (key_box.bottom - key_box.top) * 1920 <= 1.3 * key["size_px"]
+    [arrow] = variant["drawings"]
+    # The arrow's line never crosses the keyword (its bounding box may wrap a corner of it).
+    assert not _ink_on(arrow, key_box), arrow["strokes"]
+    for box in (_drawn_box(lead), key_box, _arrow_box(arrow)):
+        assert box.coverage_by(_FACE) <= 0.05
+        assert 0.0 <= box.left and box.right <= 1.0
+
+
+def test_an_arrow_asked_for_other_text_is_not_drawn_at_the_ending(monkeypatch):
+    menu = BriefRequirement(
+        id="menu",
+        kind="text",
+        scope="global",
+        description='Put "MENU" with an arrow pointing at the board',
+        literal="MENU",
+    )
+    _faces(monkeypatch)
+    job = _cta_job(monkeypatch, requirement=_ENDING_NO_ARROW)
+    binding_dump = BriefBinding.create(
+        uuid.uuid4(), CreativeBrief(version=1, requirements=[_ENDING_NO_ARROW, menu])
+    ).model_dump(mode="json")
+    job.assembly_plan["creator_brief_binding"] = binding_dump
+
+    gb._run_generative_job(str(job.id))
+
+    assert not job.assembly_plan["variants"][0].get("drawings")
+
+
+def test_no_arrow_draws_no_arrow(monkeypatch):
+    no_arrow = _ENDING.model_copy(
+        update={"description": 'End with "comment READ" for the last 3 seconds, no arrow'}
+    )
+    _faces(monkeypatch)
+    job = _cta_job(monkeypatch, requirement=no_arrow)
+
+    gb._run_generative_job(str(job.id))
+
+    variant = job.assembly_plan["variants"][0]
+    assert [row["text"] for row in _closing_rows(variant)] == ["comment", "READ"]
+    assert not variant.get("drawings")

@@ -9030,7 +9030,7 @@ def _run_phone_subtitled_job(
         cta_planned = cta_ending_planned_for(
             stamped_client_protocol(all_candidates.get("creator_client_protocol"))
         )
-        cta_arrow = cta_planned and closing_arrow_asked(talking_requirements)
+        cta_arrow = cta_planned and closing_arrow_asked(talking_requirements, talking_closing_text)
     closing_text_rows: list[dict] = []
     closing_drawings: list[dict] = []
     closing_text_receipt: dict[str, Any] | None = None
@@ -10201,6 +10201,7 @@ def _run_phone_subtitled_job(
                         # The captions run on the whole timeline; this ending's window is
                         # on the last speaker's own clock.
                         caption_offset_s=talking_timeline_s - last_duration_s,
+                        caption_look=protected_caption_look,
                         **text_canvas,
                     )
                     offset_s = talking_timeline_s - last_duration_s
@@ -10236,6 +10237,7 @@ def _run_phone_subtitled_job(
                     cues=cues,
                     caption_style=caption_style,
                     caption_look=protected_caption_look,
+                    insert_points=tuple(float(i.at_take_s) for i in inserts),
                     **text_canvas,
                 )
                 closing_drawings[:] = drawings
@@ -12287,6 +12289,7 @@ def _phone_talking_closing_rows(
     caption_style: str = "",
     caption_look: Any = None,
     caption_offset_s: float = 0.0,
+    insert_points: tuple[float, ...] = (),
 ) -> tuple[list[dict], dict[str, Any] | None, list[dict]]:
     """The phone Talking edit's closing text row (KRI-514) plus its placement
     receipt and its drawings (item 14's arrow; ``[]`` for the tag); ``([], None, [])``
@@ -12324,7 +12327,14 @@ def _phone_talking_closing_rows(
     else:
         display_width, display_height = display_dims(binding.original)
         fit_scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
-        if cta and (protected is None or not _protected_placement_kwargs(protected)):
+        # An inserted clip (take-timeline ``insert_points``) inside the ending pauses the
+        # take and would split the two rows and play the arrow over the clip: keep the tag.
+        insert_in_ending = any(start_s + 1e-3 < point < end_s - 1e-3 for point in insert_points)
+        if (
+            cta
+            and not insert_in_ending
+            and (protected is None or not _protected_placement_kwargs(protected))
+        ):
             from app.pipeline.phone_cta_ending import (  # noqa: PLC0415
                 build_cta_ending,
                 cta_ending_parts,

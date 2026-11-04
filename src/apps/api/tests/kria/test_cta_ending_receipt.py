@@ -203,3 +203,80 @@ def test_the_reason_is_turkish_on_a_turkish_turn():
     assert receipt.status == "partial"
     assert "ok" in (receipt.reason or "").lower()
     assert "arrow" not in (receipt.reason or "").lower()
+
+
+# --- Review findings (written before the fix; each failed on the first version) ---------------
+
+_MENU = BriefRequirement(
+    id="menu",
+    kind="text",
+    scope="global",
+    description='Put "MENU" with an arrow pointing at the board',
+    literal="MENU",
+)
+
+
+def test_her_ending_arrow_never_marks_another_arrow_ask_as_met():
+    """Only the ending's arrow is drawn; an arrow asked next to other text is not."""
+    rows = [*_HER_ENDING, {**_row("menu", "MENU", None), "source_params": {"source": "pin"}}]
+    facts = bc.plan_facts_from_phone_variant(_variant(rows, [_ARROW]))
+    receipt = bc.check_requirement(_MENU, facts)
+    assert receipt.status == "partial"
+    assert "arrow" in (receipt.reason or "").lower()
+
+
+def test_no_arrow_is_not_an_arrow_ask():
+    plain = ENDING.model_copy(
+        update={"description": 'End with "comment READ" for the last 3 seconds, no arrow'}
+    )
+    facts = bc.plan_facts_from_phone_variant(_variant(_HER_ENDING))
+    assert bc.check_requirement(plain, facts).status == "met"
+
+
+def test_an_arrow_she_draws_herself_over_the_ending_counts():
+    """The receipt tells her to draw it with the pen; once she has, it is met."""
+    own = {**_ARROW, "id": "6F1C2E9A-0B7D-4C1E-9A55-0D2B3C4D5E6F"}
+    facts = bc.plan_facts_from_phone_variant(_variant([_row("closing-title", _CTA, None)], [own]))
+    assert bc.check_requirement(ENDING, facts).status == "met"
+
+
+def test_a_drawing_elsewhere_in_the_video_is_not_the_ending_arrow():
+    early = {**_ARROW, "id": "doodle", "start_s": 2.0, "end_s": 4.0}
+    facts = bc.plan_facts_from_phone_variant(_variant([_row("closing-title", _CTA, None)], [early]))
+    assert bc.check_requirement(ENDING, facts).status == "partial"
+
+
+def test_her_two_rows_still_count_after_an_editor_timing_nudge():
+    nudged = [_HER_ENDING[0], {**_HER_ENDING[1], "start_s": 77.4}]
+    facts = bc.plan_facts_from_phone_variant(_variant(nudged, [_ARROW]))
+    assert bc.check_requirement(ENDING, facts).status == "met"
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        'No captions, end with "comment READ" and an arrow',
+        'End with "comment READ", not just text but an arrow too',
+        'End with "comment READ" and don\'t forget the arrow',
+        'Sonunda "comment READ" yaz ve bir ok çiz',
+    ],
+)
+def test_real_arrow_asks_near_a_no_are_still_asks(description):
+    ask = ENDING.model_copy(update={"description": description})
+    facts = bc.plan_facts_from_phone_variant(_variant([_row("closing-title", _CTA, None)]))
+    assert bc.check_requirement(ask, facts).status == "partial"
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        'End with "comment READ", no arrow',
+        'End with "comment READ" without an arrow',
+        'End with "comment READ" but don\'t add an arrow',
+        'Sonunda "comment READ" olsun, ok koyma',
+    ],
+)
+def test_refusing_the_arrow_is_not_an_ask(description):
+    plain = ENDING.model_copy(update={"description": description})
+    facts = bc.plan_facts_from_phone_variant(_variant([_row("closing-title", _CTA, None)]))
+    assert bc.check_requirement(plain, facts).status == "met"

@@ -2315,35 +2315,71 @@ def plan_facts_from_editor_payload(
 
 
 def _cta_joined_texts(rows: Iterable[object]) -> list[str]:
-    """Item 14: "comment" + "READ" rows (same window) are on screen as "comment READ"."""
+    """Item 14: "comment" + "READ" rows are on screen as "comment READ".
+
+    The pair is matched by role (`cta_part`) and by overlapping windows, so an editor timing
+    nudge on one row does not split the ending.
+    """
     from app.pipeline.phone_cta_ending import CTA_PART_KEY  # noqa: PLC0415
 
-    parts: dict[str, dict[tuple[object, object], str]] = {"lead": {}, "keyword": {}}
+    parts: dict[str, list[tuple[float, float, str]]] = {"lead": [], "keyword": []}
+    for row in _closing_rows(rows):
+        params = row["source_params"]
+        part = params.get(CTA_PART_KEY)
+        text = row.get("text")
+        window = _row_window(row)
+        if part in parts and isinstance(text, str) and text.strip() and window:
+            parts[part].append((window[0], window[1], text.strip()))
+    joined: list[str] = []
+    for lead_start, lead_end, lead in parts["lead"]:
+        for key_start, key_end, keyword in parts["keyword"]:
+            if lead_start < key_end and key_start < lead_end:
+                joined.append(f"{lead} {keyword}")
+    return joined
+
+
+def _closing_rows(rows: Iterable[object]) -> list[Mapping[str, Any]]:
+    out: list[Mapping[str, Any]] = []
     for row in rows:
         if not isinstance(row, Mapping) or row.get("removed"):
             continue
         params = row.get("source_params")
-        if not isinstance(params, Mapping) or params.get("source") != "closing_title":
-            continue
-        part = params.get(CTA_PART_KEY)
-        text = row.get("text")
-        if part in parts and isinstance(text, str) and text.strip():
-            parts[part][(row.get("start_s"), row.get("end_s"))] = text.strip()
-    return [
-        f"{lead} {parts['keyword'][window]}"
-        for window, lead in parts["lead"].items()
-        if window in parts["keyword"]
-    ]
+        if isinstance(params, Mapping) and params.get("source") == "closing_title":
+            out.append(row)
+    return out
+
+
+def _row_window(row: Mapping[str, Any]) -> tuple[float, float] | None:
+    start, end = row.get("start_s"), row.get("end_s")
+    if isinstance(start, (int, float)) and isinstance(end, (int, float)) and end > start:
+        return float(start), float(end)
+    return None
 
 
 def _has_closing_arrow(payload: Mapping[str, Any]) -> bool:
-    """Item 14: the payload's drawings hold the CTA ending's `closing-arrow`."""
+    """Item 14: the payload's drawings hold the CTA ending's arrow.
+
+    Either Kria's `closing-arrow`, or a drawing the creator made herself that overlaps the
+    closing text rows' window.
+    """
     from app.pipeline.phone_cta_ending import CTA_ARROW_ID  # noqa: PLC0415
 
     drawings = payload.get("drawings")
-    return isinstance(drawings, list) and any(
-        isinstance(d, Mapping) and d.get("id") == CTA_ARROW_ID for d in drawings
-    )
+    if not isinstance(drawings, list):
+        return False
+    windows = [
+        w for w in (_row_window(r) for r in _closing_rows(payload.get("text_elements") or ())) if w
+    ]
+    closing = (min(w[0] for w in windows), max(w[1] for w in windows)) if windows else None
+    for d in drawings:
+        if not isinstance(d, Mapping):
+            continue
+        if d.get("id") == CTA_ARROW_ID:
+            return True
+        window = _row_window(d)
+        if closing and window and window[0] < closing[1] and closing[0] < window[1]:
+            return True
+    return False
 
 
 def _editor_clip_durations(payload: Mapping[str, Any]) -> tuple[float, ...] | None:
@@ -10825,9 +10861,12 @@ def _closing_arrow_reason(req: BriefRequirement, facts: PlanFacts) -> str | None
         requirement_asks_arrow,
     )
 
-    if facts.closing_arrow or not requirement_asks_arrow(req):
+    if not requirement_asks_arrow(req):
         return None
-    if not facts.rendered_variant and facts.phone_talking and cta_ending_parts(req.literal):
+    is_ending = cta_ending_parts(req.literal) is not None
+    if facts.closing_arrow and is_ending:
+        return None
+    if not facts.rendered_variant and facts.phone_talking and is_ending:
         from app.services.phone_rollout import cta_ending_available  # noqa: PLC0415
 
         if cta_ending_available():
