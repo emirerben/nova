@@ -4,7 +4,7 @@ import AVFoundation
 import KriaMediaEngine
 
 /// Qendresa item 15 (Talking card layout), opt-in: renders every
-/// `KRIA_E2E_DIR/cases/<name>/recipe.json` that the prepare step compiled with
+/// `KRIA_CARD_LAYOUT_E2E_DIR/cases/<name>/recipe.json` that the prepare step compiled with
 /// the real phone Talking chain (`q1_before`, `q1_after`, ...) through the
 /// production exporter on the simulator, to `cases/<name>/phone.mp4`. The
 /// prepare script's score step then checks where the picture cards landed.
@@ -14,10 +14,10 @@ import KriaMediaEngine
 /// `.standard` (watermark + outro tail), so this does too; the kit scorer is
 /// run with `--ignore-tail-s 1.6` for the tail. The duration assertion adds the
 /// bundled outro's own length to the recipe duration.
-/// Skipped unless `KRIA_E2E_DIR` is set (`documents:` prefix supported).
+/// Skipped unless `KRIA_CARD_LAYOUT_E2E_DIR` is set (`documents:` prefix supported).
 @MainActor final class DeviceTalkingCardLayoutRenderE2ETests: XCTestCase {
     func testRendersEveryPreparedCardLayoutCase() async throws {
-        guard let path = ProcessInfo.processInfo.environment["KRIA_E2E_DIR"] else { throw XCTSkip("Set KRIA_E2E_DIR to run") }
+        guard let path = ProcessInfo.processInfo.environment["KRIA_CARD_LAYOUT_E2E_DIR"] else { throw XCTSkip("Set KRIA_CARD_LAYOUT_E2E_DIR to run") }
         let root: URL
         if path.hasPrefix("documents:") {
             root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]

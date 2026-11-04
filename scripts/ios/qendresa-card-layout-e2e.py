@@ -11,7 +11,7 @@ Run from the repo root (any worktree):
 
   src/apps/api/.venv/bin/python scripts/ios/qendresa-card-layout-e2e.py \
     prepare OUT --foot FOOT_DIR
-  KRIA_E2E_DIR=OUT xcodebuild test ... \
+  KRIA_CARD_LAYOUT_E2E_DIR=OUT xcodebuild test ... \
     -only-testing:KriaTests/DeviceTalkingCardLayoutRenderE2ETests/testRendersEveryPreparedCardLayoutCase
   src/apps/api/.venv/bin/python scripts/ios/qendresa-card-layout-e2e.py score OUT --kit KIT_DIR
 
