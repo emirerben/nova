@@ -488,7 +488,7 @@ def test_dry_run_reports_without_downloading(monkeypatch):
         raise AssertionError("dry run must not measure")
 
     monkeypatch.setattr(cli, "_measure", no_download)
-    report = cli.run()
+    report = cli.run(only=frozenset({nd.NAME}))
     assert report["mode"] == "dry_run"
     assert report["clips_needing_signals"] == 2
     assert report["missing_by_signal"] == {nd.NAME: 2}

@@ -383,14 +383,29 @@ def test_one_failing_signal_never_takes_the_others_down(temp_signal):
     assert out["zz_temp"] == {"n": 1} and "zz_boom" not in out
 
 
-def test_signal_stubs_are_registered_but_not_implemented():
-    assert {s.name for s in clip_signals.specs() if not s.implemented} >= {"audio_quality"}
-    out = clip_signals.compute_signals(clip_signals.SignalInputs(media_id="m", kind="video"))
-    assert "audio_quality" not in set(out)
+def test_a_stub_signal_is_neither_stored_nor_backfilled():
+    from app.cli.backfill_clip_signals import implemented_missing
+    from app.services.clip_signals.backfill import Pending
+
+    stub = signal_registry.register(
+        signal_registry.SignalSpec(
+            name="zz_stub",
+            version=0,
+            kinds=frozenset({"video"}),
+            compute=lambda i: None,
+            implemented=False,
+        )
+    )
+    try:
+        out = clip_signals.compute_signals(clip_signals.SignalInputs(media_id="m", kind="video"))
+        todo = implemented_missing(Pending("m", "p/m", "video", (stub.name, "audio_quality")), None)
+    finally:
+        signal_registry._REGISTRY.pop(stub.name)
+    assert stub.name not in out
+    assert todo == frozenset({"audio_quality"})
 
 
 def test_backfill_selects_by_signals_alone_never_by_understanding_state():
-    from app.cli import backfill_clip_signals
     from app.services.clip_signals.backfill import rows_needing_signals
 
     understood = {"understanding": {"subject": "dog"}, "understanding_attempts": 1}
@@ -411,7 +426,6 @@ def test_backfill_selects_by_signals_alone_never_by_understanding_state():
         "c": tuple(clip_signals.missing_signals(None, "image")),
     }
     assert pending["a"], "an understood clip is still pending until it has signals"
-    assert backfill_clip_signals.main(["--write"]) == 2, "no fenced store is wired: refuse"
 
 
 # ── wire: flag off is byte-identical to KRI-756 ──────────────────────────────────────

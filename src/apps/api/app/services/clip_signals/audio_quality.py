@@ -25,10 +25,12 @@ Failure modes this is built around (each is exercised by the calibration set, se
 * silent / near-silent clip (peak, loud level or audible frame count): no division by zero,
   ``noisy`` is False, ``silent`` is True.
 * very short clip (< ``MIN_DURATION_S``): too few frames for a floor or a periodicity estimate,
-  so the signal is absent rather than a guess.
+  so it stores ``{"measured": False, "reason": "too_short"}`` rather than a guess.
 * mono vs stereo: both are downmixed for the spectral features; clipping is read per file.
-* missing audio stream, unreadable file, ffmpeg failure or timeout: the signal is absent
-  (``compute`` returns None), never an exception.
+* missing audio stream or unreadable file: stores ``{"measured": False, "reason":
+  "no_usable_audio"}``, so the backfill does not download the same clip on every run. ffmpeg
+  missing or timing out is the tool failing, not the clip: the signal is absent (``compute``
+  returns None) and the next run tries again. Never an exception.
 * a quiet gust (inaudible rumble) is not wind: the low-band level, relative to the clip's speech
   level, has to be audible.
 * recording loudness: the same content read as noisier the louder it was recorded, because an
@@ -248,6 +250,14 @@ def _astats(path: str) -> tuple[float, float] | None:
 
 def extract_features(path: str) -> AudioFeatures | None:
     """Measure one clip. None when the audio is missing, unreadable or too short to judge."""
+    found = _extract(path)
+    return found if isinstance(found, AudioFeatures) else None
+
+
+def _extract(path: str) -> AudioFeatures | str | None:
+    """Features, or why there are none: a reason string when the clip itself has nothing to
+    measure (final: re-measuring the same bytes gives the same answer), None when the tool failed
+    (ffmpeg missing or timed out), which may pass."""
     try:
         stats = _astats(path)
         pcm = decode_pcm_f32(path, ANALYSIS_SR, timeout_s=FFMPEG_TIMEOUT_S)
@@ -255,13 +265,13 @@ def extract_features(path: str) -> AudioFeatures | None:
         logger.warning("audio_quality_ffmpeg_unavailable", extra={"error": str(exc)[:200]})
         return None
     if stats is None or pcm.size == 0:
-        return None
+        return "no_usable_audio"
     pcm = pcm[: int(MAX_ANALYZED_S * ANALYSIS_SR)]
     if not np.isfinite(pcm).all():
         pcm = np.nan_to_num(pcm, nan=0.0, posinf=0.0, neginf=0.0)
     duration_s = pcm.size / ANALYSIS_SR
     if duration_s < MIN_DURATION_S:
-        return None
+        return "too_short"
     peak_db, at_peak = stats
     clip_fraction = at_peak if peak_db >= CLIP_PEAK_DB else 0.0
 
@@ -373,8 +383,12 @@ def score(features: AudioFeatures) -> dict[str, Any]:
 def compute(inputs: SignalInputs) -> Mapping[str, Any] | None:
     if inputs.kind != "video" or not inputs.local_path:
         return None
-    features = extract_features(inputs.local_path)
-    return None if features is None else score(features)
+    found = _extract(inputs.local_path)
+    if isinstance(found, AudioFeatures):
+        return score(found)
+    # A clip with nothing to measure is stored as such, so the backfill does not download it again
+    # on every run. No consumer reads a score from it: ``noisy`` and ``silent`` are absent.
+    return None if found is None else {"measured": False, "reason": found}
 
 
 SPEC = register(

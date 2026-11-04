@@ -124,23 +124,23 @@ def _ffmpeg(*args: str) -> None:
     subprocess.run(["ffmpeg", "-v", "error", "-y", *args], check=True)
 
 
-def test_a_video_with_no_audio_stream_has_no_signal(tmp_path):
+def test_a_video_with_no_audio_stream_is_recorded_as_unmeasurable(tmp_path):
     path = tmp_path / "silent_video.mp4"
     _ffmpeg("-f", "lavfi", "-i", "color=c=black:s=64x64:d=2", "-an", str(path))
-    assert _record(path) is None
+    assert _record(path) == {"measured": False, "reason": "no_usable_audio"}
 
 
-def test_a_clip_too_short_to_judge_has_no_signal(tmp_path):
+def test_a_clip_too_short_to_judge_is_recorded_as_unmeasurable(tmp_path):
     path = tmp_path / "short.wav"
     _ffmpeg("-f", "lavfi", "-i", "sine=f=300:d=0.4", str(path))
-    assert _record(path) is None
+    assert _record(path) == {"measured": False, "reason": "too_short"}
 
 
-def test_unreadable_or_missing_media_has_no_signal(tmp_path):
+def test_unreadable_or_missing_media_is_recorded_as_unmeasurable(tmp_path):
     junk = tmp_path / "junk.m4a"
     junk.write_bytes(b"\x00not audio" * 200)
-    assert _record(junk) is None
-    assert _record(tmp_path / "absent.m4a") is None
+    assert _record(junk) == {"measured": False, "reason": "no_usable_audio"}
+    assert _record(tmp_path / "absent.m4a") == {"measured": False, "reason": "no_usable_audio"}
 
 
 def test_a_missing_ffmpeg_binary_is_a_missing_signal_not_a_crash(monkeypatch):
