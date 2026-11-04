@@ -1,20 +1,20 @@
 """The read path behind ``GET /creation-threads/{id}/suggestions`` (KRI-756).
 
-Never calls a model. It recomputes the deterministic candidates, looks up the wording the
-worker cached for this input digest, joins them, and decides what the creator is served:
+Never calls a model. It recomputes the deterministic candidates, looks up the picks the worker
+cached for this input digest, joins them, and decides what the creator is served:
 
 * understanding still running           -> ``pending``, ``default_edit`` only, retry in 3 s
-* understanding settled-empty           -> ``ok``, ``default_edit`` only, template label
-* wording cached (agent or fallback)    -> ``ok``, labels from the cache, FROZEN for the digest
-* wording not cached yet                -> ``pending`` (``default_edit`` only at first_prompt,
+* understanding settled-empty           -> ``ok``, ``default_edit`` only
+* picks cached (agent or fallback)      -> ``ok``, cards from the cache, FROZEN for the digest
+* picks not cached yet                  -> ``pending`` (``default_edit`` only at first_prompt,
                                            nothing at ready) for at most 6 s after the digest
-                                           was first seen, then template labels, FROZEN
-* kill lever (max runs per thread = 0)  -> template labels immediately
+                                           was first seen, then the deterministic set, FROZEN
+* kill lever (max runs per thread = 0)  -> the deterministic set immediately
 
 "Frozen" means the final set is stored once per digest (``suggestion_store.put_served``) and
-every later GET returns it unchanged, so a chip's label never changes under the creator's
-finger. A new ``set_id`` appears only when the input digest changes. A Redis outage degrades to
-template labels without freezing.
+every later GET returns it unchanged, so a card never changes under the creator's finger. A new
+``set_id`` appears only when the input digest changes. A Redis outage degrades to the
+deterministic set without freezing.
 
 Also owns the enqueue helpers the triggers call (clip understanding done, render ready, lazy
 from this GET). They are enqueue-only and never raise.
@@ -23,6 +23,7 @@ from this GET). They are enqueue-only and never raise.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -40,8 +41,8 @@ from app.services.suggestion_chips import (
     SuggestionSetOut,
     assemble_set,
     build_candidates,
+    issued_for,
     load_suggestion_context,
-    wording_from_dict,
 )
 
 log = structlog.get_logger()
@@ -58,14 +59,52 @@ class Served:
     witness_tiers: dict[str, str] = field(default_factory=dict)
 
 
+def transcripts_of(item: Any) -> dict[str, str]:
+    """``{media_id: transcript}`` of a plan item's clips, for the agent and for the checks that
+    keep the agent's wording from echoing them. Untrusted text: it never reaches a message."""
+    from app.services.clip_understanding import clip_record  # noqa: PLC0415
+
+    out: dict[str, str] = {}
+    for assignment in getattr(item, "clip_assignments", None) or []:
+        if not isinstance(assignment, dict) or not isinstance(assignment.get("media_id"), str):
+            continue
+        kind = assignment.get("kind") if assignment.get("kind") in {"video", "image"} else "video"
+        text = clip_record(assignment.get("analysis"), kind=kind).speech.transcript
+        if text:
+            out[assignment["media_id"]] = text
+    return out
+
+
+async def with_transcripts(db: Any, thread: Any, ctx: SuggestionContext) -> SuggestionContext:
+    """``ctx`` plus the clips' transcripts under ``kind_inputs["transcripts"]``.
+
+    Both the worker (the agent's input) and the GET (the transcript-echo check on the picks it
+    joins) need them, and the loader does not carry them. Best effort: a miss changes nothing,
+    and nothing here feeds the input digest, so no set is re-keyed.
+    """
+    from app.models import PlanItem  # noqa: PLC0415
+
+    try:
+        item_id = getattr(thread, "active_plan_item_id", None)
+        item = await db.get(PlanItem, item_id) if item_id else None
+        if item is None:
+            return ctx
+        return dataclasses.replace(
+            ctx, kind_inputs={**ctx.kind_inputs, "transcripts": transcripts_of(item)}
+        )
+    except Exception:  # noqa: BLE001 - the wording checks degrade, the set still serves
+        log.warning("suggestion_chips.error", stage="transcripts", exc_info=True)
+        return ctx
+
+
 def agent_enabled() -> bool:
     """False when ``KRIA_SUGGESTER_MAX_RUNS_PER_THREAD=0``: template labels only."""
     return settings.kria_suggester_max_runs_per_thread > 0
 
 
-def needs_wording(plan: CandidatePlan) -> bool:
-    """Only a set with at least one lever has anything for the agent to rank."""
-    return bool(plan.levers)
+def needs_wording(ctx: SuggestionContext, plan: CandidatePlan) -> bool:
+    """Only a set with at least one issued kind has anything for the agent to rank."""
+    return bool(issued_for(ctx, plan))
 
 
 def enqueue_suggester(
@@ -138,10 +177,7 @@ def enqueue_for_thread(thread_id: object, *, trigger: str, creator_id: object = 
 def _final(
     ctx: SuggestionContext, plan: CandidatePlan, result: dict[str, Any] | None
 ) -> SuggestionSetOut:
-    wording = None
-    if result and result.get("status") == "ok":
-        wording = wording_from_dict(result.get("wording"))
-    return assemble_set(ctx, plan, wording)
+    return assemble_set(ctx, plan, store.picks_from_result(result))
 
 
 async def _freeze(thread_id: str, plan: CandidatePlan, out: SuggestionSetOut) -> SuggestionSetOut:
@@ -174,6 +210,7 @@ async def serve_suggestion_set(
         locale=locale,
         language_hint=hint.get("language") if isinstance(hint, dict) else None,
     )
+    ctx = await with_transcripts(db, thread, ctx)
     plan = build_candidates(ctx)
     served = Served(
         out=SuggestionSetOut(),
@@ -195,7 +232,7 @@ async def serve_suggestion_set(
     if plan.state == "first_prompt" and ctx.understanding == "pending":
         served.out = assemble_set(ctx, plan, None, pending=True, retry_after_s=PENDING_RETRY_S)
         return served
-    if not needs_wording(plan) or not agent_enabled():
+    if not needs_wording(ctx, plan) or not agent_enabled():
         served.out = assemble_set(ctx, plan)
         return served
 

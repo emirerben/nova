@@ -1,0 +1,33 @@
+{
+ "id": "duplicate_pick",
+ "description": "The same (kind, targets) twice.",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "sfx",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 1
+   },
+   {
+    "kind": "sfx",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 2
+   }
+  ]
+ },
+ "expect": {
+  "fallback_reason": "schema_error"
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

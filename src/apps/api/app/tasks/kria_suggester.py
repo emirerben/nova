@@ -1,22 +1,25 @@
-"""Word the suggestion chips for one Kria creation thread (KRI-756).
+"""Rank the suggestion cards for one Kria creation thread (KRI-756, AI suggestion blocks).
 
-``tasks.kria_suggester`` runs the text-only wording agent (``nova.chat.suggester``) over the
-candidates the deterministic generator allowed, validates its output, and caches the result in
-Redis under ``kria:suggester:{thread}:{input_digest}`` (24 h). The GET route only ever reads
-that cache; nothing is written to ``thread.state`` from here.
+``tasks.kria_suggester`` runs the suggestion agent (``nova.chat.suggestion_agent``, OpenAI
+``KRIA_SUGGESTER_MODEL`` with a strict schema) over the kinds the server issued, and caches its
+picks in Redis under ``kria:suggester:{thread}:{input_digest}`` (24 h). The agent only picks;
+the GET route rebuilds every card from the registry and proves it with the kind's witness, so a
+stored pick can never carry an action. Nothing is written to ``thread.state`` from here.
 
 Triggers (all enqueue-only, see ``app/services/suggestion_serve.py``):
 
-* clip understanding finished for a plan item (first_prompt wording),
-* a render settled ready (ready wording; the run is wrapped in ``pipeline_trace_for(job_id)``),
+* clip understanding finished for a plan item (first_prompt picks),
+* a render settled ready (ready picks; the run is wrapped in ``pipeline_trace_for(job_id)``),
 * lazily from the GET on a cache miss (deduped by a Redis lock).
 
 Contract: best-effort and NEVER fatal. Every exit that is not a cached agent result writes a
-fallback marker, so the GET serves template labels immediately instead of waiting out its
+fallback marker, so the GET serves the deterministic set immediately instead of waiting out its
 6 s window. Each run re-checks the flag, the per-thread run cap
-(``KRIA_SUGGESTER_MAX_RUNS_PER_THREAD``) and, in ``ai_cost_control``, the per-user daily limit
-(``KRIA_SUGGESTER_DAILY_LIMIT_PER_USER``). Kill switch: ``KRIA_SUGGESTION_CHIPS_ENABLED=false``
-(everything) or ``KRIA_SUGGESTER_MAX_RUNS_PER_THREAD=0`` (agent only) + a worker restart.
+(``KRIA_SUGGESTER_MAX_RUNS_PER_THREAD``), the per-call cap (``KRIA_SUGGESTER_MAX_USD``) and, in
+``ai_cost_control``, the ``suggestions`` credit budget (``AI_OPENAI_SUGGESTIONS_BUDGET_USD``, 0 =
+no spend) and the per-user daily limit (``KRIA_SUGGESTER_DAILY_LIMIT_PER_USER``). Kill switch:
+``KRIA_SUGGESTION_CHIPS_ENABLED=false`` (everything) or ``KRIA_SUGGESTER_MAX_RUNS_PER_THREAD=0``
+(agent only) + a worker restart.
 """
 
 from __future__ import annotations
@@ -33,11 +36,15 @@ from sqlalchemy.pool import NullPool
 
 from app.agents._runtime import (
     AiBudgetExceededError,
+    AiCostControlPolicyError,
+    CostControlUnavailableError,
     ProviderOutcomeUnknownError,
     ProviderQuotaExceededError,
+    RefusalError,
     RunContext,
     SchemaError,
     TerminalError,
+    TerminalOutputTruncatedError,
 )
 from app.config import settings
 from app.models import CreationThread
@@ -50,9 +57,9 @@ from app.services.suggestion_chips import (
     build_agent_input,
     build_candidates,
     load_suggestion_context,
-    resolve_wording,
-    wording_to_dict,
+    pick_stats,
 )
+from app.services.suggestion_serve import needs_wording, with_transcripts
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -63,18 +70,36 @@ INFLIGHT_TTL_S = 90
 
 
 def _fallback_marker(reason: str) -> dict[str, Any]:
-    return {"status": "fallback", "reason": reason, "prompt_version": PROMPT_VERSION}
+    return store.fallback_result(reason, prompt_version=PROMPT_VERSION)
 
 
 def _fallback_reason(exc: BaseException) -> str:
+    """Why a run produced no picks. Closed set: budget | refusal | truncated | schema_error |
+    provider_error | timeout. Every one of them serves the deterministic set; the slug is
+    telemetry. The agent is ``sensitive_io``, so the runtime rewraps a refusal and any other
+    uncategorised terminal failure into a plain ``TerminalError`` named by its message; an
+    exhausted transient retry ("exhausted 1 model(s)") is the timeout / rate-limit case."""
     if isinstance(
-        exc, (AiBudgetExceededError, ProviderQuotaExceededError, ProviderOutcomeUnknownError)
+        exc,
+        (
+            AiBudgetExceededError,
+            AiCostControlPolicyError,
+            CostControlUnavailableError,
+            ProviderQuotaExceededError,
+            ProviderOutcomeUnknownError,
+        ),
     ):
         return "budget"
+    if isinstance(exc, RefusalError) or str(exc).endswith(": refusal"):
+        return "refusal"
+    if isinstance(exc, TerminalOutputTruncatedError):
+        return "truncated"
     if isinstance(exc, SchemaError) or (
         isinstance(exc, TerminalError) and "schema" in type(exc).__name__.lower()
     ):
         return "schema_error"
+    if type(exc) is TerminalError and "exhausted" not in str(exc):
+        return "provider_error"
     return "timeout"
 
 
@@ -93,6 +118,7 @@ async def _prepare(
             if not settings.suggestion_chips_for(thread.creator_id):
                 return "flag_off"
             ctx = await load_suggestion_context(db, thread, None, protocol, language_hint=language)
+            ctx = await with_transcripts(db, thread, ctx)
             return ctx, build_candidates(ctx)
     finally:
         await engine.dispose()
@@ -117,7 +143,7 @@ def kria_suggester(  # noqa: ANN201
     language: str | None = None,
     protocol: int | None = None,
 ):
-    """Rank + word the chips for one thread and cache the result. Idempotent per digest."""
+    """Rank the cards for one thread and cache the picks. Idempotent per digest."""
     if not (settings.kria_suggestion_chips_enabled or settings.kria_suggestion_chips_user_ids):
         return {"thread_id": thread_id, "status": "flag_off"}
     if settings.kria_suggester_max_runs_per_thread <= 0:
@@ -136,7 +162,7 @@ def kria_suggester(  # noqa: ANN201
     if isinstance(prepared, str):
         return {"thread_id": thread_id, "status": prepared}
     ctx, plan = prepared
-    if plan.state == "none" or not plan.levers:
+    if plan.state == "none" or not needs_wording(ctx, plan):
         return {"thread_id": thread_id, "status": "nothing_to_word"}
     if plan.state == "first_prompt" and ctx.understanding != "complete":
         return {"thread_id": thread_id, "status": "not_ready"}
@@ -183,28 +209,24 @@ def _run_agent(
     thread_id: str, ctx: SuggestionContext, plan: CandidatePlan, trigger: str
 ) -> dict[str, Any]:
     from app.agents._model_client import default_client  # noqa: PLC0415
-    from app.agents.chip_suggester import ChipSuggesterAgent  # noqa: PLC0415
+    from app.agents.suggestion_agent import SuggestionAgent, SuggestionAgentInput  # noqa: PLC0415
 
     digest = plan.input_digest
     request_id = f"kria-suggest:{thread_id}:{digest}"
-    agent = ChipSuggesterAgent(default_client())
+    agent = SuggestionAgent(default_client())
     run_ctx = RunContext(
         creator_id=ctx.creator_id,
         request_id=request_id,
         usage_purpose="optional_background",
-        # A ready run belongs to the render it words chips for (admin job-debug view).
+        # A ready run belongs to the render it ranks cards for (admin job-debug view).
         job_id=ctx.job_id if plan.state == "ready" else None,
     )
     started = time.monotonic()
-    payload = build_agent_input(ctx, plan)
     trace = (
         pipeline_trace_for(ctx.job_id) if plan.state == "ready" and ctx.job_id else nullcontext()
     )
-    try:
-        with trace:
-            output = agent.run(payload, ctx=run_ctx)
-    except Exception as exc:  # noqa: BLE001 - a failed run is a template-label set, never an error
-        reason = _fallback_reason(exc)
+
+    def fail(reason: str, **extra: Any) -> dict[str, Any]:
         store.put_result(thread_id, digest, _fallback_marker(reason))
         _event(
             "agent_run",
@@ -218,33 +240,32 @@ def _run_agent(
             n_in=len(plan.pool),
             cost_usd=getattr(agent, "last_run", {}).get("cost_usd"),
             fallback_reason=reason,
+            **extra,
         )
         return {"status": "fallback", "fallback_reason": reason}
 
-    wording, stats = resolve_wording(
-        ctx,
-        plan,
-        default_label=output.default_label,
-        ranked=[(r.cid, r.label_template, r.why) for r in output.ranked],
+    try:
+        payload = SuggestionAgentInput.model_validate(build_agent_input(ctx, plan))
+        # The per-call cap is checked before any ledger or provider contact: an oversized
+        # payload is a deterministic set, not a spend.
+        if agent.estimated_cost_usd(payload) > settings.kria_suggester_max_usd:
+            return fail("budget", over_call_cap=True)
+        with trace:
+            output = agent.run(payload, ctx=run_ctx)
+    except Exception as exc:  # noqa: BLE001 - a failed run is a deterministic set, never an error
+        return fail(_fallback_reason(exc))
+
+    stats = pick_stats(ctx, plan, output)
+    if stats.n_out == 0:
+        reason = "empty_ranking" if not output.ranked else "no_usable_picks"
+        return fail(reason, n_out=0, n_dropped=stats.n_in, drop_reasons=stats.drops)
+    store.put_result(
+        thread_id,
+        digest,
+        store.ok_result(
+            output, prompt_version=PROMPT_VERSION, model=getattr(agent, "last_run", {}).get("model")
+        ),
     )
-    for reason, count in output.drop_reasons.items():
-        stats.n_dropped += count
-        stats.drop_reasons[reason] = stats.drop_reasons.get(reason, 0) + count
-    if wording.status != "agent":
-        store.put_result(
-            thread_id, digest, _fallback_marker(wording.fallback_reason or "schema_error")
-        )
-    else:
-        store.put_result(
-            thread_id,
-            digest,
-            {
-                "status": "ok",
-                "wording": wording_to_dict(wording),
-                "prompt_version": PROMPT_VERSION,
-                "model": getattr(agent, "last_run", {}).get("model"),
-            },
-        )
     _event(
         "agent_run",
         agent_run_id=request_id,
@@ -256,9 +277,8 @@ def _run_agent(
         latency_ms=int((time.monotonic() - started) * 1000),
         n_in=len(plan.pool),
         n_out=stats.n_out,
-        n_dropped=stats.n_dropped,
-        drop_reasons=stats.drop_reasons,
+        n_dropped=stats.n_in - stats.n_out,
+        drop_reasons=stats.drops,
         cost_usd=getattr(agent, "last_run", {}).get("cost_usd"),
-        **({"fallback_reason": wording.fallback_reason} if wording.fallback_reason else {}),
     )
-    return {"status": "ok" if wording.status == "agent" else "fallback"}
+    return {"status": "ok"}

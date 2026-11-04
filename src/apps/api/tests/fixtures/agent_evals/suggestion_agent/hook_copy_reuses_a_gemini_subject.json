@@ -1,0 +1,27 @@
+{
+ "id": "hook_copy_reuses_a_gemini_subject",
+ "description": "Hook copy equal to a Gemini subject never reaches a builder (the Gemini-metadata invariant).",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "hook",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": "Whisking close-up",
+    "rank": 1
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "drops": {
+   "copy_reused_footage_text": 1
+  }
+ },
+ "tags": [
+  "adversarial"
+ ]
+}
