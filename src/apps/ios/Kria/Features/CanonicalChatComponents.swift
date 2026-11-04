@@ -13,7 +13,7 @@ struct CanonicalPrimaryButtonStyle: ButtonStyle {
             .frame(maxWidth: .infinity, minHeight: 48)
             .padding(.horizontal, 16)
             .background(fill)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .clipShape(Capsule())
             .opacity(isEnabled ? (configuration.isPressed ? 0.72 : 1) : 0.45)
     }
 }
@@ -26,13 +26,9 @@ struct CanonicalSecondaryButtonStyle: ButtonStyle {
             .foregroundStyle(KriaColor.ink)
             .frame(maxWidth: .infinity, minHeight: 48)
             .padding(.horizontal, 16)
-            .background(Color.white)
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(KriaColor.line, lineWidth: 1)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .opacity(isEnabled ? (configuration.isPressed ? 0.65 : 1) : 0.45)
+            .background(configuration.isPressed ? KriaColor.fillPressed : KriaColor.fill)
+            .clipShape(Capsule())
+            .opacity(isEnabled ? 1 : 0.45)
     }
 }
 
@@ -384,7 +380,7 @@ private struct AssistantHeading: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(title)
-                .font(isFormatHeading ? KriaFont.display(28) : KriaFont.body(20))
+                .font(isFormatHeading ? KriaFont.headline(28) : KriaFont.body(20))
                 .foregroundStyle(KriaColor.ink)
                 .fixedSize(horizontal: false, vertical: true)
             Text(bodyText)
@@ -505,7 +501,7 @@ private struct FormatVideoCard: View {
                     .accessibilityIdentifier("format-preview-playback-\(format.serverValue)")
                 }
             }
-            Text(format.title).font(KriaFont.display(18)).foregroundStyle(KriaColor.ink)
+            Text(format.title).font(KriaFont.headline(18)).foregroundStyle(KriaColor.ink)
         }
         .frame(width: FormatTileMetrics.image.width, alignment: .leading)
     }
@@ -551,7 +547,7 @@ private struct SlidePostFormatCard: View {
                 .accessibilityIdentifier("slide-format-cover-playback")
             }
             Text("Slider")
-                .font(KriaFont.display(18))
+                .font(KriaFont.headline(18))
                 .foregroundStyle(KriaColor.ink)
         }
         .frame(width: 156, alignment: .leading)
@@ -814,10 +810,9 @@ struct DirectionStage: View {
             )
 
             VStack(alignment: .leading, spacing: 14) {
-                Text("CREATIVE DIRECTION")
-                    .font(KriaFont.body(10).weight(.bold))
-                    .tracking(1.3)
-                    .foregroundStyle(KriaColor.ink)
+                Text("Creative direction")
+                    .kriaType(.label)
+                    .foregroundStyle(KriaColor.mutedInk)
                 ChatResponseText(content: directionTitle.isEmpty ? "A considered first cut" : directionTitle, startedAt: responseStartedAt)
                     .font(KriaFont.body(22))
                     .foregroundStyle(KriaColor.ink)
@@ -832,10 +827,6 @@ struct DirectionStage: View {
             }
             .padding(16)
             .background(KriaColor.sage)
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(KriaColor.border, lineWidth: 1)
-            }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             if let researchPreview {
@@ -943,11 +934,7 @@ struct RenderingStage: View {
                 )
             }
             .padding(16)
-            .background(KriaColor.paper)
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(KriaColor.border, lineWidth: 1)
-            }
+            .background(KriaColor.fill)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             HStack(alignment: .top, spacing: 10) {
@@ -1020,6 +1007,7 @@ struct ReadyStage: View {
     /// server owns this row: its chips are sent on tap, and the fixed ones are gone.
     var serverSuggestions: [SuggestionChip]? = nil
     var sendSuggestion: (SuggestionChip) -> Void = { _ in }
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1028,7 +1016,10 @@ struct ReadyStage: View {
                 bodyText: "Watch it through, then tell me what you want to refine or open the editor for hands-on changes."
             )
 
-            HStack(spacing: 13) {
+            let cardLayout = dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 13))
+                : AnyLayout(HStackLayout(spacing: 13))
+            cardLayout {
                 Group {
                     if let posterURL = project.posterURL {
                         AsyncImage(url: posterURL) { phase in
@@ -1049,17 +1040,16 @@ struct ReadyStage: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 7) {
-                    Text("READY")
-                        .font(KriaFont.body(9).weight(.bold))
-                        .tracking(1.1)
+                    Text("Ready")
+                        .kriaType(.label)
                         .foregroundStyle(KriaColor.ink)
-                        .padding(.horizontal, 7)
+                        .padding(.horizontal, 10)
                         .padding(.vertical, 4)
                         .background(KriaColor.sage)
                         .clipShape(Capsule())
                     Text(project.workspaceTitle)
                         .font(KriaFont.body(14).weight(.semibold))
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text("First cut")
                         .font(KriaFont.body(11))
                         .foregroundStyle(KriaColor.zinc)
@@ -1070,11 +1060,7 @@ struct ReadyStage: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(12)
-            .background(KriaColor.paper)
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(KriaColor.border, lineWidth: 1)
-            }
+            .background(KriaColor.fill)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             // KRI-769: no chips to offer (capability on, set empty or still loading) = no dangling question either.
@@ -1471,7 +1457,7 @@ struct ChatComposer: View {
         VStack(alignment: .leading, spacing: 0) {
             if showsTray, let attachMenu {
                 ChatAttachTray(menu: attachMenu) { showsTray = false }
-                    .padding(.horizontal, 14).padding(.top, 8)
+                    .padding(.top, 8)
                     .transition(.opacity)
             }
             composer
@@ -1532,10 +1518,7 @@ struct ChatComposer: View {
         .padding(7).kriaFloatingSurface(shape)
         .background(answering != nil ? KriaColor.selectionSoft : Color.clear, in: shape)
         .tint(answering != nil ? KriaColor.sky : nil)
-        .padding(.horizontal, 14).padding(.vertical, 12)
         .onChange(of: isSending) { _, sending in if sending { showsTray = false } }
-        .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: dictation?.phase)
-        .onDisappear { dictation?.cancel() }
     }
 
     private func toggleDictation(_ dictation: DictationController) {

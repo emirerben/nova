@@ -390,7 +390,7 @@ private struct WorkspaceEmptyView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Start your first video.").font(KriaFont.display(29))
+            Text("Start your first video.").font(KriaFont.headline(29))
             Text("Create a project, then tell Kria what you want the finished cut to feel like.")
                 .font(KriaFont.body(14))
                 .foregroundStyle(KriaColor.zinc)
@@ -428,7 +428,7 @@ private struct WorkspaceRecoveryView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Your workspace couldn’t open.").font(KriaFont.display(29))
+            Text("Your workspace couldn’t open.").font(KriaFont.headline(29))
             Text(model.errorMessage ?? "Check your connection, then try again. Your projects are safe.")
                 .font(KriaFont.body(14))
                 .foregroundStyle(KriaColor.zinc)
