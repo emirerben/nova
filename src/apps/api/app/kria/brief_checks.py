@@ -539,6 +539,8 @@ class PlanFacts:
     # a title, captions, a start cut and speech cleanup; an ask outside that set is answered
     # with a plain "can't" before approval and after render (`_talking_honest_receipt`).
     phone_talking: bool = False
+    # Item 14: a `closing-arrow` drawing is on the finished video / in the editor payload.
+    closing_arrow: bool = False
     phone_voiceover_spoken_text: bool = False
     # KRI-793: True when this draft renders through the phone Talking writer, which captions
     # the take, spells the creator's listed words their way and records every caption line
@@ -2257,6 +2259,7 @@ def plan_facts_from_editor_payload(
         composed["text"] for composed in complete_sequences(sequence_fragments)
     )
     strings.extend(composed_sequences)
+    strings.extend(_cta_joined_texts(timing_rows))
     for entry in text_diff or ():
         if not isinstance(entry, Mapping) or not isinstance(entry.get("after"), str):
             continue
@@ -2307,6 +2310,39 @@ def plan_facts_from_editor_payload(
             else None
         ),
         clip_output_durations=_editor_clip_durations(payload),
+        closing_arrow=_has_closing_arrow(payload),
+    )
+
+
+def _cta_joined_texts(rows: Iterable[object]) -> list[str]:
+    """Item 14: "comment" + "READ" rows (same window) are on screen as "comment READ"."""
+    from app.pipeline.phone_cta_ending import CTA_PART_KEY  # noqa: PLC0415
+
+    parts: dict[str, dict[tuple[object, object], str]] = {"lead": {}, "keyword": {}}
+    for row in rows:
+        if not isinstance(row, Mapping) or row.get("removed"):
+            continue
+        params = row.get("source_params")
+        if not isinstance(params, Mapping) or params.get("source") != "closing_title":
+            continue
+        part = params.get(CTA_PART_KEY)
+        text = row.get("text")
+        if part in parts and isinstance(text, str) and text.strip():
+            parts[part][(row.get("start_s"), row.get("end_s"))] = text.strip()
+    return [
+        f"{lead} {parts['keyword'][window]}"
+        for window, lead in parts["lead"].items()
+        if window in parts["keyword"]
+    ]
+
+
+def _has_closing_arrow(payload: Mapping[str, Any]) -> bool:
+    """Item 14: the payload's drawings hold the CTA ending's `closing-arrow`."""
+    from app.pipeline.phone_cta_ending import CTA_ARROW_ID  # noqa: PLC0415
+
+    drawings = payload.get("drawings")
+    return isinstance(drawings, list) and any(
+        isinstance(d, Mapping) and d.get("id") == CTA_ARROW_ID for d in drawings
     )
 
 
@@ -5729,6 +5765,12 @@ _VOICEOVER_SPOKEN_TEXT_PLAN = (
     "I'll place that text on the matching words in your recording. If they repeat, I'll need "
     "the occurrence you mean."
 )
+# Item 14: an ending that asks for an arrow next to its text. The phone Talking writer draws
+# one with the "comment READ" ending when the switch is on; otherwise the creator draws it.
+_CLOSING_ARROW_PLAN = "I'll draw a curly arrow next to your ending text"
+_CLOSING_ARROW_MISSING = (
+    "The arrow isn't in the video yet; you can draw one with the pen in the editor"
+)
 _TALKING_SPOKEN_TEXT_PLAN = (
     "I'll show it the moment you say that word in your take; if I don't hear the word, it "
     "won't appear"
@@ -5801,6 +5843,8 @@ _TALKING_HONEST_EN: tuple[str, ...] = (
     _TALKING_OPENING_CUT_PLAN,
     _TALKING_WINDOW_PLAN,
     _TALKING_SPOKEN_TEXT_PLAN,
+    _CLOSING_ARROW_PLAN,
+    _CLOSING_ARROW_MISSING,
     _TALKING_CAPTIONS_EVERY_VOICE,
     _TALKING_SPOKEN_TEXT_ANY_VOICE,
     _TALKING_SPOKEN_TEXT_PINNED,
@@ -6005,6 +6049,8 @@ _REASON_TR: dict[str, str] = {
         "Motor gürültüsünü azaltma yalnızca tek klipli Konuşmalı düzenlemede yapılabiliyor"
     ),
     _NOISE_REDUCTION_MISSED: "Motor gürültüsünü azaltamadım",
+    _CLOSING_ARROW_PLAN: "Kapanış yazının yanına kıvrımlı bir ok çizeceğim",
+    _CLOSING_ARROW_MISSING: "Ok henüz videoda yok; editörde kalemle bir ok çizebilirsin",
     _TALKING_SPOKEN_TEXT_PLAN: (
         "Çekiminde o kelimeyi söylediğin anda yazıyı gösteririm; kelimeyi duymazsam yazı çıkmaz"
     ),
@@ -10720,6 +10766,9 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
             "duration_s",
         }:
             return _receipt(req, "partial", _NO_CHECKER)
+        arrow_reason = _closing_arrow_reason(req, facts)
+        if arrow_reason is not None:
+            return _receipt(req, "partial", arrow_reason)
         return _receipt(req, "met", None)
     if _is_spoken_text_cue(req) and facts.edit_format in {"subtitled", "talking_head"}:
         spoken = _spoken_text_fact(facts, req)
@@ -10767,6 +10816,23 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         "partial",
         say(en="That exact text isn't in this draft.", tr="Bu tam yazı bu taslakta yok."),
     )
+
+
+def _closing_arrow_reason(req: BriefRequirement, facts: PlanFacts) -> str | None:
+    """Item 14: why a found ending text is not "met" when its ask also wants an arrow."""
+    from app.pipeline.phone_cta_ending import (  # noqa: PLC0415
+        cta_ending_parts,
+        requirement_asks_arrow,
+    )
+
+    if facts.closing_arrow or not requirement_asks_arrow(req):
+        return None
+    if not facts.rendered_variant and facts.phone_talking and cta_ending_parts(req.literal):
+        from app.services.phone_rollout import cta_ending_available  # noqa: PLC0415
+
+        if cta_ending_available():
+            return _CLOSING_ARROW_PLAN
+    return _CLOSING_ARROW_MISSING
 
 
 def _drawn_by_contract(req: BriefRequirement, facts: PlanFacts) -> bool:

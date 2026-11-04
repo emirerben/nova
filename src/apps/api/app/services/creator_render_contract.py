@@ -2574,6 +2574,12 @@ def _verify_hidden_parts(
                 )
 
 
+def _text_layer_index(layer_id: str) -> int | None:
+    """N of a compiled `text-N` layer id (None for any other id)."""
+    head, _, tail = layer_id.rpartition("-")
+    return int(tail) if head == "text" and tail.isdigit() else None
+
+
 def verify_phone_recipe(
     contract: CreatorRenderContract,
     recipe: EditRecipeV2,
@@ -2754,6 +2760,35 @@ def verify_phone_recipe(
         {"element_id": layer_id, "text": text, "start_s": start, "end_s": end}
         for layer_id, text, start, end in rendered
     ]
+    # Item 14: Qendresa's "comment READ" ending is drawn as two layers (a small "comment"
+    # over a big keyword) in the same window, so the confirmed closing text is never ONE
+    # layer. A recipe carries only `text-<index>` layer ids (no element ids), so the pair is
+    # recognised structurally: two visible layers that follow each other in the text lane,
+    # share a window (within a frame), and read "comment <keyword>". One joined row is added.
+    from app.pipeline.phone_cta_ending import cta_ending_parts  # noqa: PLC0415
+
+    for (lead_id, lead_text, lead_start, lead_end), (
+        key_id,
+        key_text,
+        key_start,
+        key_end,
+    ) in zip(rendered, rendered[1:], strict=False):
+        lead_index = _text_layer_index(lead_id)
+        if (
+            lead_index is not None  # `text-0` is a real layer: never `or` the index
+            and _text_layer_index(key_id) == lead_index + 1
+            and abs(lead_start - key_start) <= frame
+            and abs(lead_end - key_end) <= frame
+            and cta_ending_parts(f"{lead_text} {key_text}") == (lead_text, key_text)
+        ):
+            rendered_evidence.append(
+                {
+                    "element_id": f"{lead_id}+{key_id}",
+                    "text": _normal(f"{lead_text} {key_text}"),
+                    "start_s": lead_start,
+                    "end_s": lead_end,
+                }
+            )
     for requirement in contract.exact_texts:
         matches = text_matches(
             rendered_evidence,
