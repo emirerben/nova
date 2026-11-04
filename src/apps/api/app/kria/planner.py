@@ -6510,7 +6510,7 @@ async def plan_pinned_suggestion_turn(
         not pinned.kind_enabled(suggestion)
     ):
         return _no_longer_fits(pinned.OP_NOT_ALLOWED)
-    if restate and editor_state_has_lanes(editor_state):
+    if restate and editor_state is not None and editor_state_has_lanes(editor_state):
         # The creator's hand edits are not saved yet. Restating the plan would re-plan over them.
         return _no_longer_fits(pinned.UNSAVED_EDITS)
 

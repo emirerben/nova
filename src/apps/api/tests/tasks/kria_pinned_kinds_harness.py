@@ -113,6 +113,21 @@ def install_inputs(  # noqa: ANN001
             for a in item.clip_assignments
             if isinstance(a, dict)
         ]
+        # The clip rows keep their completeness marks (the mute kind refuses an unmarked clip).
+        marks = {r["media_id"]: r for r in sc._clip_rows(item)}
+        ctx = dataclasses.replace(
+            ctx,
+            clips=[
+                {
+                    **c,
+                    "_empty": marks[c["media_id"]]["_empty"],
+                    "_incomplete": marks[c["media_id"]]["_incomplete"],
+                }
+                if c.get("media_id") in marks
+                else c
+                for c in ctx.clips
+            ],
+        )
         inputs = {
             **ctx.kind_inputs,
             "hook": hook.hook_inputs(
@@ -296,3 +311,73 @@ async def get_suggestions(seeded: base.Seeded):  # noqa: ANN201
             Response(),
             None,
         )
+
+
+# ── The thread's own plan (what a restating tap re-drafts) ───────────────────────────
+
+
+def seed_strategy_draft(seeded: base.Seeded) -> uuid.UUID:
+    """The strategy draft the current video was made from: the head of the thread's drafts."""
+    from app.kria.drafts import KriaDraftDocument, canonical_snapshot
+    from app.models import CreatorEditDraft
+
+    from app.agents._schemas.creator_agent import CreativeStrategy
+
+    strategy = CreativeStrategy(rationale="A matcha ritual in three beats.").model_dump(
+        mode="json", exclude_none=True
+    )
+    document = KriaDraftDocument(
+        kind="strategy",
+        intent="A matcha ritual in three beats.",
+        edit_format="montage",
+        strategy=strategy,
+        changes=[],
+    )
+    snapshot, digest = canonical_snapshot(document)
+    with sync_session() as db:
+        draft = CreatorEditDraft(
+            creator_id=seeded.user_id,
+            thread_id=seeded.thread_id,
+            item_id=seeded.item_id,
+            variant_key="original_text",
+            base_job_id=seeded.job_id,
+            base_generation_id="generation-1",
+            draft_revision=0,
+            snapshot_json=snapshot,
+            snapshot_hash=digest,
+            is_head=True,
+        )
+        db.add(draft)
+        db.commit()
+        return draft.id
+
+
+def noisy_audio(seeded: base.Seeded, media_id: str) -> dict[str, Any]:
+    """Give a clip the REAL ``audio_quality`` measurement of a committed wind recording.
+
+    The clip also gets a complete understanding without speech, so the mute kind may consider it.
+    """
+    from pathlib import Path
+
+    from app.services.clip_signals import audio_quality
+    from app.services.clip_signals.registry import SignalInputs
+
+    path = (
+        Path(__file__).resolve().parents[1] / "fixtures" / "clip_signals" / "audio" / "wind_00.m4a"
+    )
+    record = audio_quality.compute(
+        SignalInputs(media_id=media_id, kind="video", local_path=str(path))
+    )
+    assert record is not None and record.get("noisy") is True, record
+    set_analysis(
+        seeded,
+        media_id,
+        {
+            "duration_s": 8.0,
+            "understanding": {"subject": "a street", "speech": {"has_speech": False}},
+            "signals": {
+                audio_quality.SPEC.name: {"v": audio_quality.SPEC.version, "data": dict(record)}
+            },
+        },
+    )
+    return dict(record)

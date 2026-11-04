@@ -649,3 +649,293 @@ async def test_a_transient_refusal_keeps_the_card_tappable(world, monkeypatch):
     assert pin_record(accepted.turn_id)["reason"] == "target_unavailable"
     assert signal_of(seeded.thread_id)["reason"] == "target_unavailable"
     assert "refused" not in k.ring_entry(seeded.thread_id, seeded.set_id)
+
+
+# ── Mute a noisy clip: a typed brief update, re-planned from the thread's own plan ───
+
+
+def mute_world(monkeypatch):  # noqa: ANN001, ANN201
+    """The kind's dark constant is patched on only here, to BUILD the card and run its tap; as
+    shipped (False) nothing is ever offered (see the last mute fixture)."""
+    from app.services.suggestions.kinds import mute_clip
+
+    monkeypatch.setattr(mute_clip, "PINNED_TAP_APPLIES_CLIP_SOUND", True)
+    k.install_inputs(monkeypatch)
+
+
+async def serve_mute(seeded):  # noqa: ANN001, ANN201
+    k.seed_strategy_draft(seeded)
+    k.noisy_audio(seeded, "clip-b")
+    await k.serve_cards(seeded, k.pick("mute_clip", targets=("c2",)))
+    return seeded.cards["mute_clip"]
+
+
+@pytest.mark.asyncio
+async def test_mute_tap_restates_the_plan_with_the_typed_update_and_asks_for_approval(
+    world, monkeypatch
+):
+    mute_world(monkeypatch)
+    seeded = h.seed_ready_thread()
+    card = await serve_mute(seeded)
+    assert card.action.type == "brief_update" and card.prompt == "Mute the sound of clip 2"
+    parent = head(seeded.thread_id)
+    before = h.counts(seeded)
+
+    accepted, result = await tap_and_run(seeded, "mute_clip")
+
+    assert result["status"] == "awaiting_approval", result
+    assert pin_record(accepted.turn_id)["kind"] == "mute_clip"
+    # The typed update the card carries is the brief version this turn owns (K7 bound it).
+    version = h.briefs(seeded.thread_id)[-1]
+    [req] = version.requirements
+    assert req["kind"] == "audio" and req["scope"] == "clip:clip-b"
+    assert req["facts"] == {"clip_sound": "off"} and req["source_turn_id"] == accepted.turn_id
+    # A new draft revision restating the plan (strategy kind), a render approval, no Job yet.
+    after = h.counts(seeded)
+    assert after["drafts"] == before["drafts"] + 1 and after["approvals"] == 1
+    assert after["jobs"] == before["jobs"]
+    new = head(seeded.thread_id)
+    assert new["snap"]["kind"] == "strategy" and new["parent"] == parent["id"]
+    assert new["snap"]["strategy"] == parent["snap"]["strategy"], "the plan itself is unchanged"
+    plan = h.turn_row(accepted.turn_id).plan_json
+    assert [i["tool_name"] for i in plan["intents"]] == ["draft.apply_strategy", "render.request"]
+    assert h.events(seeded.thread_id, "approval_requested")
+    # The chat line is the card's closed sentence; no model ran.
+    assert h.events(seeded.thread_id, "user_message")[-1].content == card.prompt
+    assert world.extracted == []
+
+
+def approvals_pending(thread_id) -> int:  # noqa: ANN001
+    with sync_session() as db:
+        return len(
+            db.execute(
+                h.select(h.CreatorAgentApproval).where(
+                    h.CreatorAgentApproval.thread_id == thread_id,
+                    h.CreatorAgentApproval.status == "pending",
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+
+@pytest.mark.asyncio
+async def test_mute_undo_restores_the_parent_plan_and_withdraws_the_approval(world, monkeypatch):
+    from app.kria.drafts import undo_draft
+
+    mute_world(monkeypatch)
+    seeded = h.seed_ready_thread()
+    await serve_mute(seeded)
+    parent = head(seeded.thread_id)
+    await tap_and_run(seeded, "mute_clip")
+    assert approvals_pending(seeded.thread_id) == 1
+    async with h.AsyncSessionLocal() as db:
+        await undo_draft(
+            db,
+            thread_id=seeded.thread_id,
+            creator_id=seeded.user_id,
+            expected_revision=head(seeded.thread_id)["rev"],
+        )
+    assert head(seeded.thread_id)["snap"] == parent["snap"]
+    assert approvals_pending(seeded.thread_id) == 0
+    assert k.item_row(seeded)["speech_cleanup_enabled"] is False  # nothing else was touched
+
+
+@pytest.mark.asyncio
+async def test_mute_as_shipped_nothing_is_offered_and_a_stored_card_is_refused(world, monkeypatch):
+    """K14: PINNED_TAP_APPLIES_CLIP_SOUND is False in the code. An unproven surface never reaches
+    a creator, and a card stored while it was patched on stops working the moment it is off."""
+    from app.services.suggestions.kinds import mute_clip
+
+    assert mute_clip.PINNED_TAP_APPLIES_CLIP_SOUND is False
+    k.install_inputs(monkeypatch)
+    seeded = h.seed_ready_thread()
+    k.seed_strategy_draft(seeded)
+    k.noisy_audio(seeded, "clip-b")
+    await k.serve_cards(seeded, k.pick("mute_clip", targets=("c2",)))
+    assert "mute_clip" not in seeded.cards
+
+    monkeypatch.setattr(mute_clip, "PINNED_TAP_APPLIES_CLIP_SOUND", True)
+    await k.serve_cards(seeded, k.pick("mute_clip", targets=("c2",)))
+    monkeypatch.setattr(mute_clip, "PINNED_TAP_APPLIES_CLIP_SOUND", False)
+    before = h.counts(seeded)
+    accepted, _ = await tap_and_run(seeded, "mute_clip")
+    assert last_reply(seeded.thread_id) == NO_LONGER_FITS
+    assert h.counts(seeded) == before
+
+
+@pytest.mark.asyncio
+async def test_mute_a_brief_that_moved_since_serve_is_rebuilt_at_the_current_version(
+    world, monkeypatch
+):
+    """K1: the update is bound to a brief version; an unrelated requirement landed since."""
+    from app.kria.brief import BriefUpdate
+
+    mute_world(monkeypatch)
+    seeded = h.seed_ready_thread()
+    card = await serve_mute(seeded)
+    assert card.action.expected_version == 0
+    k.write_brief(
+        seeded, BriefUpdate(operation="add", kind="style", scope="global", description="warmer")
+    )
+    accepted, result = await tap_and_run(seeded, "mute_clip")
+    assert result["status"] == "awaiting_approval", result
+    assert pin_record(accepted.turn_id)["exact"] is False
+    version = h.briefs(seeded.thread_id)[-1]
+    assert version.version == 2 and version.requirements[-1]["facts"] == {"clip_sound": "off"}
+
+
+@pytest.mark.asyncio
+async def test_mute_a_brief_that_moves_between_plan_and_lock_is_a_refusal_not_a_crash(
+    world, monkeypatch
+):
+    """K7: expected_version conflict inside the lock: no retry error, no brief version, no draft."""
+    from app.kria.brief import BriefUpdate
+
+    mute_world(monkeypatch)
+    seeded = h.seed_ready_thread()
+    await serve_mute(seeded)
+    moved = {"done": False}
+
+    def brief_moves():
+        if not moved["done"]:
+            moved["done"] = True
+            k.write_brief(
+                seeded, BriefUpdate(operation="add", kind="style", scope="global", description="x")
+            )
+
+    h.after_planning(monkeypatch, brief_moves)
+    before = h.counts(seeded)
+    accepted, result = await tap_and_run(seeded, "mute_clip")
+    assert result["status"] == "completed", result
+    assert last_reply(seeded.thread_id) == NO_LONGER_FITS
+    after = h.counts(seeded)
+    assert after["drafts"] == before["drafts"] and after["approvals"] == 0
+    assert after["briefs"] == before["briefs"] + 1, "only the version that moved it"
+    assert signal_of(seeded.thread_id)["reason"] == "base_moved"
+
+
+@pytest.mark.asyncio
+async def test_mute_a_live_sound_ask_blocks_the_card(world, monkeypatch):
+    """K6 (KRI-129): the creator said to keep that clip's sound after the card was served."""
+    from app.kria.brief import BriefUpdate
+
+    mute_world(monkeypatch)
+    seeded = h.seed_ready_thread()
+    await serve_mute(seeded)
+    k.write_brief(
+        seeded,
+        BriefUpdate(
+            operation="add",
+            kind="audio",
+            scope="clip:clip-b",
+            description="keep the sound of clip 2",
+            facts={"clip_sound": "on"},
+        ),
+    )
+    before = h.counts(seeded)
+    await tap_and_run(seeded, "mute_clip")
+    assert last_reply(seeded.thread_id) == NO_LONGER_FITS
+    assert h.counts(seeded) == before
+
+
+@pytest.mark.asyncio
+async def test_mute_a_second_tap_on_the_applied_card_changes_nothing(world, monkeypatch):
+    """K4: while the first tap's approval waits, the identical re-send is answered in one line
+    (KRI-552); after the draft is withdrawn the card is a deliberate new ask on a changed brief
+    and is refused as already applied. Neither writes anything."""
+    from app.kria.drafts import undo_draft
+
+    mute_world(monkeypatch)
+    seeded = h.seed_ready_thread()
+    await serve_mute(seeded)
+    await tap_and_run(seeded, "mute_clip")
+    applied = h.counts(seeded)
+    second, publish = await h.tap(seeded, "mute_clip")
+    assert not publish and second.status == "completed"
+    assert "same message as the draft waiting" in last_reply(seeded.thread_id)
+    assert h.counts(seeded) == applied
+    async with h.AsyncSessionLocal() as db:
+        await undo_draft(
+            db,
+            thread_id=seeded.thread_id,
+            creator_id=seeded.user_id,
+            expected_revision=head(seeded.thread_id)["rev"],
+        )
+    undone = h.counts(seeded)
+    accepted, _ = await tap_and_run(seeded, "mute_clip")
+    assert last_reply(seeded.thread_id) == NO_LONGER_FITS
+    assert h.counts(seeded) == undone
+    assert pin_record(accepted.turn_id)["reason"] == "consumed"
+
+
+@pytest.mark.asyncio
+async def test_mute_unsaved_editor_edits_are_never_re_planned_over(world, monkeypatch):
+    """K2: restating the plan would drop the creator's hand edits, so it refuses instead."""
+    mute_world(monkeypatch)
+    seeded = h.seed_ready_thread()
+    await serve_mute(seeded)
+    hand_edited = {
+        "base_generation": "generation-1",
+        "client_state_id": "state-1",
+        "lanes": {"text_elements": [{**h.HOOK, "text": "Creator hook"}]},
+    }
+    before = h.counts(seeded)
+    accepted, _ = await tap_and_run(seeded, "mute_clip", editor_state=hand_edited)
+    assert last_reply(seeded.thread_id) == NO_LONGER_FITS
+    assert pin_record(accepted.turn_id)["reason"] == "unsaved_edits"
+    assert h.counts(seeded) == before
+
+
+@pytest.mark.asyncio
+async def test_mute_a_thread_with_no_plan_to_restate_refuses(world, monkeypatch):
+    mute_world(monkeypatch)
+    seeded = h.seed_ready_thread()
+    k.noisy_audio(seeded, "clip-b")  # no strategy draft was ever written
+    await k.serve_cards(seeded, k.pick("mute_clip", targets=("c2",)))
+    before = h.counts(seeded)
+    accepted, _ = await tap_and_run(seeded, "mute_clip")
+    assert pin_record(accepted.turn_id)["reason"] == "no_strategy"
+    assert h.counts(seeded) == before
+
+
+@pytest.mark.asyncio
+async def test_mute_a_newer_head_draft_under_the_lock_refuses_and_a_requeue_applies_once(
+    world, monkeypatch
+):
+    """K3/K17: another turn moved the head draft after planning; and a message that lands between
+    claim and commit requeues the turn, which then applies exactly once."""
+    mute_world(monkeypatch)
+    seeded = h.seed_ready_thread()
+    await serve_mute(seeded)
+    accepted, _ = await h.tap(seeded, "mute_clip")
+    moved = {"done": False}
+
+    def a_real_change():
+        if moved["done"]:
+            return
+        moved["done"] = True
+        with sync_session() as db:
+            thread = db.get(h.CreationThread, seeded.thread_id, with_for_update=True)
+            thread.revision = int(thread.revision) + 1
+            db.add(
+                h.CreationThreadEvent(
+                    thread_id=seeded.thread_id,
+                    sequence=int(thread.revision) + 50,
+                    revision=int(thread.revision),
+                    role="system",
+                    event_type="media_added",
+                    content=None,
+                    payload=None,
+                )
+            )
+            db.commit()
+
+    h.after_planning(monkeypatch, a_real_change)
+    before = h.counts(seeded)
+    assert (await h.run(accepted.turn_id))["status"] == "requeued"
+    assert h.counts(seeded) == before, "a requeued turn writes no draft and no brief version"
+    assert (await h.run(accepted.turn_id))["status"] == "awaiting_approval"
+    after = h.counts(seeded)
+    assert after["drafts"] == before["drafts"] + 1 and after["approvals"] == 1
+    assert after["briefs"] == before["briefs"] + 1
