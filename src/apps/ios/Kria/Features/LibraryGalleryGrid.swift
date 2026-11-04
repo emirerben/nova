@@ -75,8 +75,9 @@ struct LibraryGalleryGrid: View {
         Button(action: record) {
             VStack(spacing: 8) {
                 Image(systemName: KriaSourceOption.recordSymbol).font(.system(size: 24)).foregroundStyle(KriaColor.ink)
-                Text("Record").kriaType(.label).foregroundStyle(KriaColor.ink)
+                Text("Record").kriaType(.label).foregroundStyle(KriaColor.ink).lineLimit(1).minimumScaleFactor(0.5)
             }
+            .padding(.horizontal, 4)
             .frame(maxWidth: .infinity).aspectRatio(1, contentMode: .fit)
             .background(KriaColor.fill).contentShape(Rectangle())
         }

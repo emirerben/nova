@@ -510,13 +510,6 @@ private struct TeleprompterSavingLabel: View {
     }
 }
 
-/// KRI-1160: the Cinematic switch's state, owned by the recording flow.
-struct TeleprompterCinematicChoice {
-    let availability: TeleprompterCinematic.Availability
-    let enabled: Bool
-    let set: (Bool) -> Void
-}
-
 private struct TeleprompterCaptureControlsHeight: PreferenceKey {
     static let defaultValue: CGFloat = 220
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }

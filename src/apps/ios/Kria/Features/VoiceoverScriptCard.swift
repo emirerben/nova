@@ -56,11 +56,17 @@ struct VoiceoverScriptCard: View {
                 .disabled(isSending)
                 .accessibilityIdentifier("voiceover-script-plan")
             } else {
+                let tr = script.turkish
                 KriaSourceRow(options: [
-                    script.isDraft ? .record(caption: "Use your mic", identifier: "voiceover-script-record", isEnabled: !isSending) { record(script) } : nil,
-                    .upload(caption: "Use an audio file", identifier: "voiceover-script-import", isEnabled: !isSending) { importVoiceover(script) },
+                    script.isDraft ? KriaSourceOption(id: "record", symbol: "mic.fill", title: tr ? "Kaydet" : "Record",
+                                                      caption: tr ? "Mikrofonunu kullan" : "Use your mic",
+                                                      identifier: "voiceover-script-record", isEnabled: !isSending) { record(script) } : nil,
+                    KriaSourceOption(id: "upload", symbol: KriaSourceOption.uploadSymbol, title: tr ? "Yükle" : "Upload",
+                                     caption: tr ? "Bir ses dosyası kullan" : "Use an audio file",
+                                     identifier: "voiceover-script-import", isEnabled: !isSending) { importVoiceover(script) },
                     script.isDraft ? generateNarration.map { generate in
-                        KriaSourceOption(id: "ai-voice", symbol: "waveform", title: "AI voice", caption: "Read by AI",
+                        KriaSourceOption(id: "ai-voice", symbol: "waveform", title: tr ? "Yapay zeka sesi" : "AI voice",
+                                         caption: tr ? "Yapay zeka okur" : "Read by AI",
                                          identifier: "voiceover-script-ai-voice", isEnabled: !isSending) { generate(script) }
                     } : nil
                 ].compactMap { $0 }, onFill: true)

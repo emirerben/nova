@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The look shared by every selectable media grid (the Photos gallery and the saved-uploads grid): pick-order
-/// number or empty ring top-trailing, video length bottom-trailing, and a sky wash once chosen.
+/// number (white on ink) or empty ring top-trailing, video length bottom-trailing, and a sky wash once chosen.
 struct GalleryTileChrome: ViewModifier {
     /// 1-based pick number; nil when not chosen.
     let number: Int?
@@ -16,6 +16,8 @@ struct GalleryTileChrome: ViewModifier {
                 if let duration {
                     Text(Self.duration(duration))
                         .font(KriaFont.body(11).weight(.semibold)).foregroundStyle(Color.white)
+                        // Badges ride on a small thumbnail: past this size they would cover it.
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                         .padding(.horizontal, 5).padding(.vertical, 2)
                         .background(KriaColor.ink.opacity(0.7), in: Capsule())
                         .padding(4)
@@ -30,9 +32,10 @@ struct GalleryTileChrome: ViewModifier {
                             .background(KriaColor.mutedInk, in: Circle())
                     } else if let number {
                         Text("\(number)")
-                            .font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.ink)
+                            .font(KriaFont.body(13).weight(.semibold)).foregroundStyle(Color.white)
+                            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                             .frame(minWidth: 24, minHeight: 24).padding(.horizontal, 2)
-                            .background(KriaColor.butter, in: Capsule())
+                            .background(KriaColor.ink, in: Capsule())
                     } else {
                         Circle().stroke(Color.white.opacity(0.9), lineWidth: 1.5).frame(width: 22, height: 22)
                             .background(Circle().fill(Color.black.opacity(0.15)))

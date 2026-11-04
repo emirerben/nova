@@ -564,15 +564,16 @@ enum FootageStageCopy {
     /// while the creator talks when the server allows more than one.
     static func talkingBody(maximumClipCount: Int) -> String {
         maximumClipCount > 1
-            ? "Choose the video of you talking, plus any clips to show while you talk."
-            : "Choose one clear take. I’ll keep your voice at the center."
+            ? "Record yourself talking, or upload that video. Add clips to show while you talk."
+            : "Record one clear take, or upload one you already have. I’ll keep your voice at the center."
     }
 
     /// The Add media sheet's footage subtitle.
     static func attachmentSubtitle(talking: Bool, maximumClipCount: Int) -> String {
-        talking && maximumClipCount > 1
-            ? "The video of you talking, plus any clips to show while you talk."
-            : "Choose the clips you want Kria to work with."
+        guard talking else { return "Choose the clips you want Kria to work with." }
+        return maximumClipCount > 1
+            ? "Record yourself, or upload a video you already have. Add clips to show while you talk."
+            : "Record yourself, or upload a video you already have."
     }
 }
 
@@ -581,16 +582,6 @@ enum FootageStageCopy {
 /// a second for as long as anything uploaded. Observation re-runs only the bodies that read `values`.
 @Observable final class UploadProgressStore {
     var values: [UUID: Double] = [:]
-}
-
-/// One upload's progress bar. Reading the store here, not in the parent, keeps a tick local to the bar.
-struct UploadProgressBar: View {
-    let store: UploadProgressStore
-    let recordID: UUID
-
-    var body: some View {
-        ProgressView(value: store.values[recordID] ?? 0).frame(width: 60).tint(KriaColor.ink)
-    }
 }
 
 struct FootageStage: View {
@@ -608,10 +599,9 @@ struct FootageStage: View {
     let addFootage: () -> Void
     /// Record: opens the camera. Nil on a surface that cannot film.
     var recordFootage: (() -> Void)?
-    let changeFormat: () -> Void
-    var attachedMedia: [CreationAttachedMedia] = []
+    /// Opens Add media on its clip list, where clips can be removed. Offered once the edit holds its most clips.
+    var manageFootage: (() -> Void)?
     var isBusy = false
-    var removeMedia: (String) -> Void = { _ in }
     /// Clips that failed to add. They are otherwise only shown inside the picker sheet, so a clip that
     /// fails after the sheet was closed would silently leave Continue enabled with fewer clips than
     /// the user chose.
@@ -622,15 +612,12 @@ struct FootageStage: View {
     /// Ready photos and videos in the PlanItemAsset Visuals pool.
     var visualCount = 0
 
+    @Environment(\.dynamicTypeSize) private var typeSize
+
     private var readiness: FootageReadiness {
         FootageReadiness(attachedCount: mediaCount, pendingCount: uploads.count + preparingCount)
     }
 
-    /// One bar for every clip on its way. With uploads overlapping, showing only the first upload's
-    /// progress would misrepresent the rest; a clip still being prepared counts as 0.
-    private var overallProgress: Double {
-        FootageReadiness.overallProgress(uploads: uploads.map { progress.values[$0.id] ?? 0 }, preparingCount: preparingCount)
-    }
     private var visualsReadiness: FootageReadiness {
         FootageReadiness(attachedCount: format.usesVisualPool ? visualCount : 0, pendingCount: uploads.count + preparingCount)
     }
@@ -677,43 +664,50 @@ struct FootageStage: View {
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier(readiness.pendingCount > 0 ? "footage-upload-progress" : "footage-ready-count")
-                if !attachedMedia.isEmpty || !uploads.isEmpty {
+                if !uploads.isEmpty {
                     VStack(spacing: 8) {
-                        ForEach(attachedMedia) { media in
-                            KriaMediaRow(name: media.displayName, status: .ready("Video · Ready"),
-                                         trailing: .remove(label: "Remove \(media.displayName)") { removeMedia(media.id) }) {
-                                CreationAttachmentThumbnail(media: media)
-                            }
-                            .disabled(isBusy || !uploads.isEmpty)
-                        }
                         ForEach(uploads) { record in
                             KriaMediaRow(name: BackgroundUploadCoordinator.displayFilename(record.filename),
-                                         status: .uploading(progress.values[record.id] ?? 0)) {
+                                         status: .uploading(progress.values[record.id] ?? 0), onFill: true) {
                                 CreationRecordThumbnail(recordID: record.id, version: previewVersion)
                             }
                         }
                     }
-                    .padding(4).background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                     .accessibilityIdentifier("footage-uploading-clips")
                 }
             }
 
-            if hasMedia {
-                HStack(spacing: 12) {
-                    Text("Add more").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
-                    KriaSourceRow(options: sourceOptions, layout: .compact)
+            if hasMedia, reachedLimit {
+                // At the most clips there is nothing to add: say so, and offer the place where a clip can be removed.
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("You’ve added \(FootageStageCopy.count(maximumClipCount, "clip")), the most for this format. Remove one to add another.")
+                        .kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                    if let manageFootage {
+                        Button("Manage clips", action: manageFootage)
+                            .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium))
+                            .disabled(isBusy).accessibilityIdentifier("manage-footage")
+                    }
+                }
+            } else if hasMedia {
+                let addMore = Text("Add more").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                if typeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 8) {
+                        addMore
+                        KriaSourceRow(options: sourceOptions, layout: .compact)
+                    }
+                } else {
+                    HStack(spacing: 12) {
+                        addMore
+                        KriaSourceRow(options: sourceOptions, layout: .compact)
+                    }
                 }
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    KriaSourceRow(options: sourceOptions, leadsWithFirst: talkingLeads && recordFootage != nil)
+                    // A failure notice never sits under the butter lead tile.
+                    KriaSourceRow(options: sourceOptions, leadsWithFirst: talkingLeads && recordFootage != nil && failures.isEmpty)
                     Text(limitText).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
                 }
             }
-            if reachedLimit {
-                Text("You’ve added \(FootageStageCopy.count(maximumClipCount, "clip")), the most for this format.")
-                    .kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
-            }
-
             if !failures.isEmpty {
                 // One notice, not one per file (KRI-211): a file that couldn't be sent never holds up the rest.
                 KriaNoticeCard(
@@ -744,13 +738,6 @@ struct FootageReadiness: Equatable, Sendable {
 
     var canContinue: Bool { attachedCount > 0 && pendingCount == 0 }
 
-    /// Mean progress across every clip still on its way: each upload's own fraction, and 0 for a
-    /// clip that has not started uploading yet.
-    static func overallProgress(uploads: [Double], preparingCount: Int) -> Double {
-        let total = uploads.count + max(0, preparingCount)
-        guard total > 0 else { return 0 }
-        return min(1, max(0, uploads.reduce(0, +) / Double(total)))
-    }
 }
 
 private struct FootageThumbnail: View {
@@ -1398,7 +1385,7 @@ enum UploadFailureBanner {
         case (true, false, false):
             return "\(files(unreadable)) couldn’t be read and won’t be sent"
         case (false, true, false):
-            return "\(files(failedUpload)) didn’t upload and won’t be sent unless you retry"
+            return "\(files(failedUpload)) couldn’t upload"
         case (false, false, true):
             return "\(files(cannotResume)) couldn’t be resumed and won’t be sent"
         default:

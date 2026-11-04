@@ -47,25 +47,18 @@ struct KriaSourceRow: View {
     var onFill = false
     var disabledReason: String?
 
+    @Environment(\.dynamicTypeSize) private var typeSize
+
     var body: some View {
         VStack(spacing: 8) {
-            HStack(spacing: layout == .tiles && options.count > 2 ? 8 : 12) {
-                ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
-                    let leads = leadsWithFirst && index == 0
-                    Button(action: option.action) {
-                        switch layout {
-                        case .tiles: tile(option, leads: leads)
-                        case .compact: capsule(option)
-                        }
-                    }
-                    .buttonStyle(KriaSourceStyle(layout: layout, onFill: onFill, leads: leads, tight: options.count > 2))
-                    .disabled(!option.isEnabled || option.isPreparing)
-                    .accessibilityLabel(option.caption.map { "\(option.title), \($0)" } ?? option.title)
-                    .accessibilityIdentifier(option.identifier ?? "source-\(option.id)")
-                }
+            // At accessibility sizes two tiles can't hold "Record" side by side, so they stack and each takes the full width.
+            if typeSize.isAccessibilitySize {
+                VStack(spacing: 12) { buttons }
+            } else {
+                HStack(spacing: layout == .tiles && options.count > 2 ? 8 : 12) { buttons }
+                    // Equal tile heights: the tallest caption sets the row, and every tile stretches to it.
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            // Equal tile heights: the tallest caption sets the row, and every tile stretches to it.
-            .fixedSize(horizontal: false, vertical: true)
             if let disabledReason {
                 Text(disabledReason).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -73,8 +66,24 @@ struct KriaSourceRow: View {
         }
     }
 
+    @ViewBuilder private var buttons: some View {
+        ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
+            let leads = leadsWithFirst && index == 0
+            Button(action: option.action) {
+                switch layout {
+                case .tiles: tile(option, leads: leads)
+                case .compact: capsule(option)
+                }
+            }
+            .buttonStyle(KriaSourceStyle(layout: layout, onFill: onFill, leads: leads, tight: options.count > 2))
+            .disabled(!option.isEnabled || option.isPreparing)
+            .accessibilityLabel(option.caption.map { "\(option.title), \($0)" } ?? option.title)
+            .accessibilityIdentifier(option.identifier ?? "source-\(option.id)")
+        }
+    }
+
     private func tile(_ option: KriaSourceOption, leads: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 0) {
             ZStack {
                 Circle().fill(onFill && !leads ? KriaColor.fill : KriaColor.paper)
                 if option.isPreparing {
@@ -84,7 +93,7 @@ struct KriaSourceRow: View {
                 }
             }
             .frame(width: 40, height: 40)
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
             VStack(alignment: .leading, spacing: 2) {
                 Text(option.title).kriaType(.button).foregroundStyle(KriaColor.ink)
                 if let caption = option.caption {

@@ -54,21 +54,24 @@ struct FormatReselectStage: View {
     let formats: [CreationFormat]
     let selected: CreationFormat
     let isBusy: Bool
+    /// Why this type can't hold the clips already added (nil when it can). Such a row can't be chosen and says why.
+    var unavailableReason: (CreationFormat) -> String? = { _ in nil }
     let select: (CreationFormat) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Choose your video type").kriaType(.heading).foregroundStyle(KriaColor.ink).accessibilityAddTraits(.isHeader)
-            Text("You can switch any time. Clips you already added stay.").kriaType(.body).foregroundStyle(KriaColor.mutedInk)
+            Text("Clips you already added stay. A type that can’t hold them says why.").kriaType(.body).foregroundStyle(KriaColor.mutedInk)
             ForEach(formats) { format in
                 let isSelected = format == selected
+                let blocked = isSelected ? nil : unavailableReason(format)
                 Button { select(format) } label: {
                     HStack(spacing: 12) {
                         Image(systemName: format.rowSymbol).font(.system(size: 17)).foregroundStyle(KriaColor.ink)
                             .frame(width: 40, height: 40).background(KriaColor.paper, in: Circle())
                         VStack(alignment: .leading, spacing: 2) {
                             Text(format.title).kriaType(.button).foregroundStyle(isSelected ? KriaColor.paper : KriaColor.ink)
-                            Text(format.rowDetail).kriaType(.label).foregroundStyle(isSelected ? KriaColor.fill : KriaColor.mutedInk)
+                            Text(blocked ?? format.rowDetail).kriaType(.label).foregroundStyle(isSelected ? KriaColor.fill : KriaColor.mutedInk)
                                 .multilineTextAlignment(.leading)
                         }
                         Spacer(minLength: 0)
@@ -81,7 +84,7 @@ struct FormatReselectStage: View {
                     .background(isSelected ? KriaColor.ink : KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                     .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 }
-                .buttonStyle(.plain).disabled(isBusy)
+                .buttonStyle(.plain).disabled(isBusy || blocked != nil)
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
                 .accessibilityIdentifier("reselect-format-\(format.rawValue)")
             }
@@ -109,10 +112,34 @@ struct ChatAttachTray: View {
     let close: () -> Void
     @State private var choosingSource = false
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     private var enabled: Bool { menu.disabledReason == nil }
 
     var body: some View {
+        Group {
+            if typeSize.isAccessibilitySize {
+                // The rows grow with the text: scroll them rather than clip or truncate.
+                ScrollView { rows }.frame(maxHeight: 440).scrollBounceBehavior(.basedOnSize)
+            } else {
+                rows
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: 296, alignment: .leading)
+        .background {
+            let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
+            ZStack {
+                if !KriaTransparency.isReduced(reduceTransparency) { shape.fill(.regularMaterial) }
+                shape.fill(KriaColor.paper.opacity(KriaTransparency.isReduced(reduceTransparency) ? 1 : 0.86))
+            }
+            .shadow(color: KriaColor.ink.opacity(0.14), radius: 16, y: 4)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("attach-tray")
+    }
+
+    private var rows: some View {
         VStack(alignment: .leading, spacing: 2) {
             if choosingSource {
                 HStack(spacing: 12) {
@@ -145,18 +172,6 @@ struct ChatAttachTray: View {
                 }
             }
         }
-        .padding(8)
-        .frame(maxWidth: 340, alignment: .leading)
-        .background {
-            let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
-            ZStack {
-                if !KriaTransparency.isReduced(reduceTransparency) { shape.fill(.regularMaterial) }
-                shape.fill(KriaColor.paper.opacity(KriaTransparency.isReduced(reduceTransparency) ? 1 : 0.86))
-            }
-            .shadow(color: KriaColor.ink.opacity(0.14), radius: 16, y: 4)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("attach-tray")
     }
 
     private func row(_ symbol: String, _ title: String, _ detail: String, id: String, action: @escaping () -> Void) -> some View {

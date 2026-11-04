@@ -334,6 +334,54 @@ final class CreationUITests: XCTestCase {
             "A loader failure means the Photos asset could not be read")
     }
 
+    /// Cancel in the Kria gallery puts back what was ticked when it opened: a clip ticked this visit is not kept,
+    /// and the host does not move on as if footage had been chosen.
+    func testGalleryCancelRevertsThisVisitsTicks() {
+        let app = XCUIApplication()
+        app.resetAuthorizationStatus(for: .photos)
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach", "-ui-testing-seed-photo-video", "-ui-testing-seed-photo-videos"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launch()
+        createFreshChat(in: app)
+        let card = app.buttons["format-montage"]
+        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.tap()
+        let chooseVideos = app.buttons["choose-videos"]
+        XCTAssertTrue(chooseVideos.waitForExistence(timeout: 5))
+        chooseVideos.tap()
+        func allowFullAccess(_ alert: XCUIElement) -> Bool {
+            guard alert.buttons.count == 3 else { return false }
+            alert.buttons.element(boundBy: 1).tap()
+            return true
+        }
+        let monitor = addUIInterruptionMonitor(withDescription: "Photos access", handler: allowFullAccess)
+        defer { removeUIInterruptionMonitor(monitor) }
+        let photos = app.buttons["upload-source-photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 3))
+        photos.tap()
+        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
+
+        let tile0 = app.buttons["gallery-tile-0"]
+        XCTAssertTrue(tile0.waitForExistence(timeout: 40), app.debugDescription)
+        let count = app.staticTexts["gallery-count"]
+        tile0.tap()
+        XCTAssertTrue(eventually { count.label.hasPrefix("1 of") }, count.label)
+        XCTAssertEqual(app.buttons["photos-picker-done"].label, "Add 1 clip")
+        app.buttons["gallery-cancel"].tap()
+
+        let upload = app.buttons["source-upload"]
+        XCTAssertTrue(upload.waitForExistence(timeout: 5), "Cancel returns to Add media on the same step")
+        XCTAssertTrue(eventually(timeout: 10) { upload.isHittable })
+        upload.tap()
+        XCTAssertTrue(photos.waitForExistence(timeout: 5))
+        photos.tap()
+        XCTAssertTrue(tile0.waitForExistence(timeout: 20))
+        XCTAssertTrue(eventually { count.label.hasPrefix("0 of") }, "the cancelled tick was undone: \(count.label)")
+        XCTAssertFalse(app.buttons["photos-picker-done"].isEnabled)
+    }
+
     /// Full-access Photos returns to the attachment flow on Done. A selected
     /// talking-to-camera clip advances to overlays; Done there returns to chat.
     /// The single pick closes Apple's picker on its own only while the server
@@ -448,13 +496,13 @@ final class CreationUITests: XCTestCase {
         if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
         XCTAssertTrue(card.waitForExistence(timeout: 5))
         card.tap()
-        XCTAssertTrue(app.staticTexts["Choose the video of you talking, plus any clips to show while you talk."].waitForExistence(timeout: 5),
+        XCTAssertTrue(app.staticTexts["Record yourself talking, or upload that video. Add clips to show while you talk."].waitForExistence(timeout: 5),
                       app.debugDescription)
         XCTAssertTrue(app.staticTexts["Up to 10 clips"].exists)
         let chooseVideos = app.buttons["choose-videos"]
         XCTAssertTrue(chooseVideos.waitForExistence(timeout: 5))
         chooseVideos.tap()
-        XCTAssertTrue(app.staticTexts["The video of you talking, plus any clips to show while you talk."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Record yourself, or upload a video you already have. Add clips to show while you talk."].waitForExistence(timeout: 5))
         func allowFullAccess(_ alert: XCUIElement) -> Bool {
             guard alert.buttons.count == 3 else { return false }
             alert.buttons.element(boundBy: 1).tap()
@@ -746,9 +794,9 @@ final class CreationUITests: XCTestCase {
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
 
-        let banner = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@", "won\u{2019}t be sent", "couldn\u{2019}t be")).firstMatch
+        let banner = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@", "couldn\u{2019}t upload", "couldn\u{2019}t be")).firstMatch
         XCTAssertTrue(banner.waitForExistence(timeout: 8))
-        XCTAssertEqual(banner.label, "1 file didn’t upload and won’t be sent unless you retry")
+        XCTAssertEqual(banner.label, "1 file couldn’t upload")
         XCTAssertFalse(banner.label.contains("read"))
         XCTAssertTrue(app.buttons["Retry"].exists)
 

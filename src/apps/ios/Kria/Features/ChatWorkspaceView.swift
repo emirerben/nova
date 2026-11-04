@@ -1083,10 +1083,10 @@ private struct CreationWorkspaceView: View {
         case .pendingUpload(let recordID):
             KriaMediaRow(name: uploadRecords.first { $0.id == recordID }.map { BackgroundUploadCoordinator.displayFilename($0.filename) }
                             ?? uploadInFlight[recordID]?.filename ?? "Preparing media…",
-                         status: uploadRecords.contains { $0.id == recordID } ? .uploading(uploadProgress.values[recordID] ?? 0) : .preparing) {
+                         status: uploadRecords.contains { $0.id == recordID } ? .uploading(uploadProgress.values[recordID] ?? 0) : .preparing,
+                         onFill: true) {
                 CreationRecordThumbnail(recordID: recordID, version: previewVersion)
             }
-            .padding(4).background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .accessibilityIdentifier("chat-upload-\(recordID.uuidString)")
             .id(entry.id)
         case .thoughts(let summaries):
@@ -1370,18 +1370,16 @@ private struct CreationWorkspaceView: View {
             let current = Dictionary(CreationAttachedMedia.parse(threadState).map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
             return CreationAttachedMedia.parse(event.payload ?? [:]).map { current[$0.id] ?? $0 }
         }
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: 10) {
-                ForEach(Array(media.enumerated()), id: \.offset) { _, attachment in
-                    VStack(alignment: .leading, spacing: 5) {
-                        CreationAttachmentThumbnail(media: attachment)
-                        Text(attachment.displayName).font(KriaFont.body(11)).lineLimit(2)
-                    }
-                    .frame(width: 92, alignment: .leading)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Uploaded \(attachment.displayName)")
-                    .accessibilityIdentifier("chat-media-\(attachment.id)")
+        return VStack(spacing: 8) {
+            ForEach(Array(media.enumerated()), id: \.offset) { _, attachment in
+                KriaMediaRow(name: attachment.displayName,
+                             status: .ready(attachment.isSong ? "Song · Ready" : attachment.isVoiceover ? "Voiceover · Ready" : "Video · Ready"),
+                             trailing: .check, onFill: true) {
+                    CreationAttachmentThumbnail(media: attachment)
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Uploaded \(attachment.displayName)")
+                .accessibilityIdentifier("chat-media-\(attachment.id)")
             }
         }
     }
@@ -1428,6 +1426,14 @@ private struct CreationWorkspaceView: View {
         attachmentScript = nil
         scrollRequest += 1
         showsAttachments = true
+    }
+
+    /// "Record again" / "Upload another" after a silent video. When the edit already holds its most clips (a one-clip
+    /// Talk to camera), a new take would be refused, so open Add media on its clip list where the silent one can be removed.
+    private func openAttachmentsToReplaceFootage(launch: AttachmentLaunch) {
+        let pendingClips = uploadRecords.filter { $0.projectID == project.id && $0.role == .clip }.count
+        let isFull = attachedClipCount + pendingClips >= selectedMaximumClipCount
+        openAttachments(launch: isFull ? nil : launch)
     }
 
     private func rememberUploadAnchors() {
@@ -1850,7 +1856,7 @@ private struct CreationWorkspaceView: View {
         switch workspaceStage {
         case .format:
             if let selectedFormat {
-                FormatReselectStage(formats: availableFormats, selected: selectedFormat, isBusy: isActing || !capabilitiesAreAuthoritative) { format in
+                FormatReselectStage(formats: availableFormats, selected: selectedFormat, isBusy: isActing || !capabilitiesAreAuthoritative, unavailableReason: formatSwitchBlock) { format in
                     if format == selectedFormat { isChoosingFormat = false } else { selectFormat(format) }
                 }
                 .id("format-reselect")
@@ -1874,10 +1880,8 @@ private struct CreationWorkspaceView: View {
                     progress: uploadProgress,
                     addFootage: { openAttachments(launch: .chooseSource) },
                     recordFootage: canAttachMedia ? { openAttachments(launch: .record) } : nil,
-                    changeFormat: { isChoosingFormat = true },
-                    attachedMedia: [],
+                    manageFootage: { openAttachments() },
                     isBusy: isSending || isActing || isThinking,
-                    removeMedia: { mediaID in performAction("remove_media", payload: ["media_id": .string(mediaID)]) },
                     failures: uploadFailures.filter { $0.projectID == project.id },
                     dismissFailure: { model.uploads.dismissFailure(id: $0) },
                     retryFailure: { id in Task { await model.uploads.retryUpload(recordID: id) } },
@@ -1895,8 +1899,8 @@ private struct CreationWorkspaceView: View {
         case .direction:
             if let approval {
                 DirectionStage(
-                    recordAgain: canAttachMedia ? { openAttachments(launch: .record) } : nil,
-                    chooseAnother: canAttachMedia ? { openAttachments(launch: .chooseSource) } : nil,
+                    recordAgain: canAttachMedia ? { openAttachmentsToReplaceFootage(launch: .record) } : nil,
+                    chooseAnother: canAttachMedia ? { openAttachmentsToReplaceFootage(launch: .chooseSource) } : nil,
                     approval: approval,
                     format: selectedFormat,
                     speechCleanup: approval.retryOfExecutionID == nil ? fullThread?.speechCleanup : nil,
@@ -1916,8 +1920,8 @@ private struct CreationWorkspaceView: View {
                 .id("approval-\(approval.id)")
             } else if let thread = fullThread {
                 CreationConfirmationStage(
-                    recordAgain: canAttachMedia ? { openAttachments(launch: .record) } : nil,
-                    chooseAnother: canAttachMedia ? { openAttachments(launch: .chooseSource) } : nil,
+                    recordAgain: canAttachMedia ? { openAttachmentsToReplaceFootage(launch: .record) } : nil,
+                    chooseAnother: canAttachMedia ? { openAttachmentsToReplaceFootage(launch: .chooseSource) } : nil,
                     thread: thread,
                     isBusy: isActing || isSending || pendingUploadCount > 0,
                     responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
@@ -2018,8 +2022,8 @@ private struct CreationWorkspaceView: View {
         case .failed:
             if failedWorkspacePresentation == .legacyCreationConfirmation, let thread = fullThread {
                 CreationConfirmationStage(
-                    recordAgain: canAttachMedia ? { openAttachments(launch: .record) } : nil,
-                    chooseAnother: canAttachMedia ? { openAttachments(launch: .chooseSource) } : nil,
+                    recordAgain: canAttachMedia ? { openAttachmentsToReplaceFootage(launch: .record) } : nil,
+                    chooseAnother: canAttachMedia ? { openAttachmentsToReplaceFootage(launch: .chooseSource) } : nil,
                     thread: thread,
                     isBusy: isActing || isSending || pendingUploadCount > 0,
                     responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
@@ -2475,15 +2479,19 @@ private struct CreationWorkspaceView: View {
         if !completed.isEmpty { completedThoughtSummaries[requestID] = completed }
     }
 
-    private func selectFormat(_ format: CreationFormat) {
-        guard capabilitiesAreAuthoritative, availableFormats.contains(format) else { return }
+    /// Why the project can't switch to `format` right now (the clips it already holds don't fit), or nil.
+    private func formatSwitchBlock(_ format: CreationFormat) -> String? {
         if format.usesVisualPool, attachedClipCount > 0 {
-            failure = ChatFailure("Sliders use Photos & videos. Remove primary footage before switching formats.")
-            return
+            return "Sliders use Photos & videos. Remove primary footage before switching formats."
         }
         let pendingClips = model.uploads.records.filter { $0.projectID == project.id && $0.role == .clip }.count
-        if let capacityError = formatClipCapacityError(format: format, clipLimit: CreationFormat.maximumClipCount(for: format, serverLimits: maximumClipsByFormat), occupiedClipCount: attachedClipCount + pendingClips) {
-            failure = ChatFailure(capacityError)
+        return formatClipCapacityError(format: format, clipLimit: CreationFormat.maximumClipCount(for: format, serverLimits: maximumClipsByFormat), occupiedClipCount: attachedClipCount + pendingClips)
+    }
+
+    private func selectFormat(_ format: CreationFormat) {
+        guard capabilitiesAreAuthoritative, availableFormats.contains(format) else { return }
+        if let blocked = formatSwitchBlock(format) {
+            failure = ChatFailure(blocked)
             return
         }
         performAction("select_format", payload: ["format": .string(format.serverValue)])

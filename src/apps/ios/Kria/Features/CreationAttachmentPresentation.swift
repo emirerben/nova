@@ -33,14 +33,6 @@ struct AttachmentHeading: View {
     }
 }
 
-struct AttachmentPrimaryButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(KriaFont.body(16).weight(.semibold)).foregroundStyle(KriaColor.paper)
-            .frame(maxWidth: .infinity, minHeight: 52).background(KriaColor.ink, in: Capsule())
-            .opacity(configuration.isPressed ? 0.78 : 1)
-    }
-}
-
 struct FootageDurationSummary {
     let count: Int
     let duration: TimeInterval
@@ -56,17 +48,6 @@ struct FootageDurationSummary {
         if hasPendingMetadata { return "Checking duration" }
         if hasUnavailableDuration { return "Duration unavailable" }
         return DurationFormatter.clock(duration)
-    }
-}
-
-struct FootageDurationCard: View {
-    let summary: FootageDurationSummary
-    var body: some View {
-        HStack(spacing: 8) {
-            KriaCheckDisc(size: 20)
-            Text("\(summary.label) · \(summary.value)").kriaType(.label).foregroundStyle(KriaColor.ink)
-        }
-        .accessibilityElement(children: .combine)
     }
 }
 
