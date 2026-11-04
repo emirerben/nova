@@ -88,9 +88,7 @@ def _manifest(fx: dict[str, Any], item_id: str):  # noqa: ANN202
         edit_format="montage",
         render_program="guided",
         media=[
-            CreatorMediaRef(
-                media_id=c["id"], kind=c["kind"], duration_s=c["duration_s"]
-            )
+            CreatorMediaRef(media_id=c["id"], kind=c["kind"], duration_s=c["duration_s"])
             for c in fx["clips"]
         ],
         capabilities={
@@ -143,9 +141,7 @@ def _planner_item(fx: dict[str, Any]):  # noqa: ANN202
         clip_assignments=rows,
     )
     creator_id = uuid.uuid4()
-    plan = SimpleNamespace(
-        id=item.content_plan_id, user_id=creator_id, persona_id=uuid.uuid4()
-    )
+    plan = SimpleNamespace(id=item.content_plan_id, user_id=creator_id, persona_id=uuid.uuid4())
     persona = SimpleNamespace(user_id=creator_id)
     thread = SimpleNamespace(active_creator_agent_session_id=None)
 
@@ -164,21 +160,20 @@ def _planner_item(fx: dict[str, Any]):  # noqa: ANN202
 
     db = SimpleNamespace(
         get=AsyncMock(side_effect=get),
-        execute=AsyncMock(
-            return_value=SimpleNamespace(all=lambda: [], scalars=lambda: _Rows())
-        ),
+        execute=AsyncMock(return_value=SimpleNamespace(all=lambda: [], scalars=lambda: _Rows())),
         rollback=AsyncMock(),
         commit=AsyncMock(),
     )
     return db, item, creator_id
 
 
-def _cassette(raw_text: str, prompts: list[str]):  # noqa: ANN202
-    """A model client that answers every call with the authored answer and records the prompt."""
+def _cassette(raw_texts: list[str], prompts: list[str]):  # noqa: ANN202
+    """A model client that answers call N with ``raw_texts[min(N, len - 1)]``, recording prompts."""
     from app.agents._runtime import ModelClient, ModelInvocation
 
     class _Authored(ModelClient):
         def invoke(self, *, prompt: str, **_kwargs: Any) -> ModelInvocation:
+            raw_text = raw_texts[min(len(prompts), len(raw_texts) - 1)]
             prompts.append(prompt)
             return ModelInvocation(raw_text=raw_text)
 
@@ -198,12 +193,14 @@ def _brief_shape(updates: Any) -> list[dict[str, Any]]:
     ]
 
 
-def run_turn(*, long_request: bool) -> dict[str, Any]:
+def run_turn(*, long_request: bool, raw_texts: list[str] | None = None) -> dict[str, Any]:
     """One first chat turn through the real planner and Main Creator, model replaced by a cassette.
 
     ``long_request`` sets ``settings.brief_long_request_enabled``. The flag-off run leaves an
     absent attribute alone (it is the default); the flag-on run raises ``FlagNotAvailable`` on
-    code that has no such setting.
+    code that has no such setting. ``raw_texts`` scripts the model: call N gets
+    ``raw_texts[min(N, len - 1)]`` (default: the fixture's single answer for every call); when
+    given, the result also carries every ``prompts`` the model saw.
     """
     from app.config import settings
     from app.kria import planner
@@ -217,14 +214,11 @@ def run_turn(*, long_request: bool) -> dict[str, Any]:
     db, item, creator_id = _planner_item(fx)
     manifest = _manifest(fx, str(item.id))
     media_context = [
-        {"media_id": c["id"], "kind": c["kind"], "duration_s": c["duration_s"]}
-        for c in fx["clips"]
+        {"media_id": c["id"], "kind": c["kind"], "duration_s": c["duration_s"]} for c in fx["clips"]
     ]
 
     def _blocked(*args: Any, **kwargs: Any):  # noqa: ANN202
-        raise OfflineViolation(
-            "network access is blocked in the q2-long-prompt harness"
-        )
+        raise OfflineViolation("network access is blocked in the q2-long-prompt harness")
 
     # The real RunContext, with only the two persistence/tracing side channels switched off.
     real_run_context = planner.RunContext
@@ -246,9 +240,7 @@ def run_turn(*, long_request: bool) -> dict[str, Any]:
         if has_flag:
             enter(patch.object(settings, FLAG, long_request))
         enter(patch.object(planner, "_load_thread_events", AsyncMock(return_value=[])))
-        enter(
-            patch.object(planner, "_change_request_turn", AsyncMock(return_value=None))
-        )
+        enter(patch.object(planner, "_change_request_turn", AsyncMock(return_value=None)))
         enter(patch.object(planner, "load_latest_brief", AsyncMock(return_value=None)))
         enter(
             patch.object(
@@ -258,22 +250,16 @@ def run_turn(*, long_request: bool) -> dict[str, Any]:
             )
         )
         enter(patch.object(planner, "creator_context", lambda *_a: ("creator", "item")))
-        enter(
-            patch.object(planner, "_plan_editor_revision", AsyncMock(return_value=None))
-        )
+        enter(patch.object(planner, "_plan_editor_revision", AsyncMock(return_value=None)))
         enter(
             patch.object(
                 planner,
                 "default_client",
-                lambda: _cassette(fx["main_creator_raw_text"], prompts),
+                lambda: _cassette(raw_texts or [fx["main_creator_raw_text"]], prompts),
             )
         )
         enter(patch.object(planner, "RunContext", run_context))
-        enter(
-            patch.object(
-                planner, "paid_call_request_id", lambda _thread_id: "q2-offline"
-            )
-        )
+        enter(patch.object(planner, "paid_call_request_id", lambda _thread_id: "q2-offline"))
 
         async def go():  # noqa: ANN202
             return await planner.plan_live_turn(
@@ -291,7 +277,7 @@ def run_turn(*, long_request: bool) -> dict[str, Any]:
     applied = apply_updates(None, planned.brief_updates, source_turn_id=None)
     effective_request = render_brief_request(applied, latest_message=fx["user_message"])
     first_cap = re.search(r"at most (\d+) objects", prompts[0]) if prompts else None
-    return {
+    result = {
         "long_request": long_request,
         "model_calls": len(prompts),
         "first_prompt_cap": int(first_cap.group(1)) if first_cap else None,
@@ -308,6 +294,9 @@ def run_turn(*, long_request: bool) -> dict[str, Any]:
         "brief_updates": updates,
         "effective_request_chars": len(effective_request),
     }
+    if raw_texts is not None:
+        result["prompts"] = prompts
+    return result
 
 
 def asks_kept(result: dict[str, Any], fx: dict[str, Any]) -> tuple[int, list[str]]:
@@ -356,15 +345,11 @@ def main(argv: list[str] | None = None) -> int:
     fx = load_fixture()
     off = run_turn(long_request=False)
     if args.write_golden:
-        GOLDEN.write_text(
-            json.dumps(off, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        GOLDEN.write_text(json.dumps(off, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(f"wrote {GOLDEN}")
         print(_line("flag off", off, fx))
         return 0
-    print(
-        f"Q2 long prompt: {len(fx['expected_asks'])} separate asks in one first message"
-    )
+    print(f"Q2 long prompt: {len(fx['expected_asks'])} separate asks in one first message")
     print(_line("flag off", off, fx))
     golden = json.loads(GOLDEN.read_text(encoding="utf-8"))
     off_ok = off == golden

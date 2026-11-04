@@ -12,8 +12,13 @@ from app.agents._schemas.brief_extractor import (
     BriefExtractionInput,
     BriefExtractionOutput,
 )
-from app.agents.main_creator import _BRIEF_PROMPT_SECTION, with_insert_clip_brief
+from app.agents.main_creator import (
+    _BRIEF_PROMPT_SECTION,
+    with_insert_clip_brief,
+    with_long_request_cap,
+)
 from app.agents.prompt_vocab import render_vocab_tokens
+from app.config import settings
 from app.kria.brief import (
     BriefUpdateBatchError,
     CreativeBrief,
@@ -81,7 +86,10 @@ from app.pipeline.prompt_loader import load_prompt
 # `background_color` on a plain-colour background ask.
 # v54 (KRI-1189 lands after #2088): v52's `cut_restarts` teaching on top of v53. The
 # KRI-1189 replay fixtures keep the `2026-11-03-v52` label they were recorded under.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-04-v54"
+# v66 (item 23, Related KRI-1129; v55-v65 are held by other open PRs): with
+# BRIEF_LONG_REQUEST_ENABLED the shared brief section says "at most 32 objects" instead of 16.
+# Flag off: byte-identical.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-05-v66"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
@@ -193,17 +201,20 @@ class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
     max_output_tokens = 4_096
 
     def render_prompt(self, input: BriefExtractionInput) -> str:  # noqa: A002
+        section = (
+            with_insert_clip_brief(_NARROW_BRIEF_SECTION)
+            if input.insert_clips_open
+            else _NARROW_BRIEF_SECTION
+        )
+        if settings.brief_long_request_enabled:
+            section = with_long_request_cap(section)
         return load_prompt(
             "brief_extractor",
             creator_request=input.creator_request or "(none)",
             user_message=input.user_message,
             conversation=json.dumps(input.conversation, ensure_ascii=False),
             # Parent KRI-1151: the planner says whether the item can pause the take for a clip.
-            brief_section=(
-                with_insert_clip_brief(_NARROW_BRIEF_SECTION)
-                if input.insert_clips_open
-                else _NARROW_BRIEF_SECTION
-            ),
+            brief_section=section,
         )
 
     def parse(self, raw_text: str, input: BriefExtractionInput) -> BriefExtractionOutput:  # noqa: A002, ARG002

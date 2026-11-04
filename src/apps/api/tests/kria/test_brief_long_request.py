@@ -2,12 +2,14 @@
 
 Ways this can fail (each one is pinned below or named as not pinned):
 
-1. The flag is on but the Main Creator prompt still says "at most 16 objects", so the model
-   keeps merging asks to stay under a bound the server no longer enforces.
+1. The flag is on but the Main Creator or brief extractor (follow-up turns) prompt still says
+   "at most 16 objects", so the model keeps merging asks to stay under a bound the server no
+   longer enforces.
 2. The flag is off and a single byte changes: the prompt, the retry feedback or the recovery
    turn. Flag off must stay exactly today's behavior.
 3. The higher count removes the runaway guard: a batch over 32 entries, or a 17..32 batch whose
-   size blows the 9,000-character budget, must still be refused.
+   size blows the 9,000-character budget, must still be refused, and the refusal must tell
+   the model how to recover (shorten, keep every ask) instead of letting it drop asks.
 4. The size budget refuses a batch of 16 or fewer that is accepted today.
 5. Partial acceptance: the batch is cut at the limit and its tail is dropped. It must be
    all-or-nothing.
@@ -33,9 +35,13 @@ c. Parse guard with the flag on: 33 entries refused whole, 17 over 9,000 charact
    order, and no error text carries entry content.
 d. Parse with the flag off: 17 refused with exactly "brief_updates exceeds 16 entries", 16 ok.
 e. Prompt: flag off is byte-identical (section and full prompt); flag on differs only by one
-   "at most 16 objects" -> "at most 32 objects"; the brief extractor prompt never changes;
-   MAIN_CREATOR_PROMPT_VERSION is bumped.
-f. Flag on, follow-up path: BriefExtractorAgent.parse accepts a 17-entry batch (shared bound).
+   "at most 16 objects" -> "at most 32 objects", in the Main Creator prompt and in the brief
+   extractor prompt (also with insert clips open); both prompt versions are bumped.
+f. Flag on, follow-up path: BriefExtractorAgent.parse accepts a 17-entry batch (shared bound),
+   and its prompt now says 32, so a long follow-up request is not merged to 16.
+g. Size refusal recovery: the first answer (17 entries, over 9,000 characters) is refused whole
+   with a message that says how to recover; the retry prompt carries it, the second (normal)
+   answer keeps all 17 asks in order in exactly 2 model calls, with no recovery turn.
 """
 
 from __future__ import annotations
@@ -48,13 +54,18 @@ import pytest
 
 from app.agents._schemas.brief_extractor import BriefExtractionInput
 from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
-from app.agents.brief_extractor import BriefExtractorAgent
+from app.agents.brief_extractor import (
+    _NARROW_BRIEF_SECTION,
+    BRIEF_EXTRACTOR_PROMPT_VERSION,
+    BriefExtractorAgent,
+)
 from app.agents.main_creator import (
     _BRIEF_PROMPT_SECTION,
     MAIN_CREATOR_PROMPT_VERSION,
     MainCreatorAgent,
     brief_prompt_section,
     with_insert_clip_brief,
+    with_long_request_cap,
 )
 from app.config import settings
 from app.kria import brief as brief_mod
@@ -163,7 +174,10 @@ def test_flag_on_refuses_33_entries_whole(flag_on: None) -> None:
 def test_flag_on_refuses_17_entries_over_the_character_budget_whole(flag_on: None) -> None:
     with pytest.raises(BriefUpdateBatchError) as err:
         parse_brief_updates(_entries(17, pad=1_000))
-    assert str(err.value) == "brief_updates over 16 entries exceed 9000 characters"
+    assert str(err.value) == (
+        "brief_updates over 16 entries exceed 9000 characters: "
+        "shorten descriptions and facts, keep every ask"
+    )
     assert SECRET not in str(err.value)
 
 
@@ -252,16 +266,31 @@ def test_flag_on_changes_only_the_cap_in_the_main_creator_prompt(
     )
 
 
-def test_flag_never_changes_the_brief_extractor_prompt(
-    monkeypatch: pytest.MonkeyPatch, fx: dict
+@pytest.mark.parametrize("insert_open", [False, True])
+def test_brief_extractor_prompt_flag_off_is_byte_identical_and_on_changes_only_the_cap(
+    monkeypatch: pytest.MonkeyPatch, fx: dict, insert_open: bool
 ) -> None:
     agent = BriefExtractorAgent(object())
-    extraction = BriefExtractionInput(creator_request="", user_message=fx["user_message"])
+    extraction = BriefExtractionInput(
+        creator_request="", user_message=fx["user_message"], insert_clips_open=insert_open
+    )
     if hasattr(settings, FLAG):
         _set_flag(monkeypatch, False)
     off = agent.render_prompt(extraction)
+    section = (
+        with_insert_clip_brief(_NARROW_BRIEF_SECTION) if insert_open else _NARROW_BRIEF_SECTION
+    )
+    assert section in off
+    assert off.count(CAP_16) == 1 and CAP_32 not in off
     _set_flag(monkeypatch, True)
-    assert agent.render_prompt(extraction) == off
+    on = agent.render_prompt(extraction)
+    assert on == off.replace(CAP_16, CAP_32)
+    assert on.count(CAP_32) == 1 and CAP_16 not in on
+    assert with_long_request_cap(section) in on
+
+
+def test_brief_extractor_prompt_version_is_bumped() -> None:
+    assert BRIEF_EXTRACTOR_PROMPT_VERSION == "2026-11-05-v66"
 
 
 def test_main_creator_prompt_version_is_bumped() -> None:
@@ -281,3 +310,36 @@ def test_flag_on_brief_extractor_accepts_17_entries(flag_on: None, fx: dict) -> 
     assert [(u.kind, u.scope, u.literal, u.description) for u in out.brief_updates] == [
         (w["kind"], w["scope"], w["literal"], w["description"]) for w in want
     ]
+
+
+# ------------------------------------------------------------------ g. size refusal recovery
+
+
+def test_flag_on_oversized_first_answer_is_retried_and_keeps_all_17_asks(
+    monkeypatch: pytest.MonkeyPatch, fx: dict
+) -> None:
+    normal = json.loads(fx["main_creator_raw_text"])
+    padded = json.loads(fx["main_creator_raw_text"])
+    for entry in padded["brief_updates"]:
+        entry["description"] = (entry["description"] + " " + "w" * 300)[:300]
+        entry["facts"] = {**entry.get("facts", {}), "pad": "x" * 400}
+    assert (
+        brief_mod.brief_batch_chars(
+            [BriefUpdate.model_validate(e) for e in padded["brief_updates"]]
+        )
+        > 9_000
+    )
+    turn = score.run_turn(
+        long_request=True,
+        raw_texts=[
+            json.dumps(padded, ensure_ascii=False),
+            json.dumps(normal, ensure_ascii=False),
+        ],
+    )
+    assert turn["model_calls"] == 2
+    assert "shorten descriptions and facts, keep every ask" in turn["prompts"][1]
+    assert "shorten descriptions and facts" not in turn["prompts"][0]
+    assert turn["outcome"]["recovery_reason"] is None
+    assert turn["outcome"]["mode"] == "act"
+    assert score.asks_kept(turn, fx) == (17, [])
+    assert turn["brief_update_count"] == 17

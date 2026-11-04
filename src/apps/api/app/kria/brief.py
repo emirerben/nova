@@ -504,7 +504,8 @@ def parse_brief_updates(raw: object) -> list[BriefUpdate]:
     if len(out) > MAX_UPDATES_PER_TURN and brief_batch_chars(out) > LONG_REQUEST_MAX_CHARS:
         raise BriefUpdateBatchError(
             f"brief_updates over {MAX_UPDATES_PER_TURN} entries exceed "
-            f"{LONG_REQUEST_MAX_CHARS} characters"
+            f"{LONG_REQUEST_MAX_CHARS} characters: shorten descriptions and facts, "
+            "keep every ask"
         )
     return out
 
