@@ -234,6 +234,10 @@ enum NativeEditorUITestFixtures {
         // save has been kept (reset forgets it), seeds the lane with a photo fill and two windows (a photo 0-2 s, a video 2.5-5 s).
         let windowsOn = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background-windows")
         if windowsOn { caps["speaker_background_windows"] = .object(["editable": .bool(true)]) }
+        // Qendresa item 18: the Aim and Zoom controls (`background_focus`) open with the windows gate or on their own.
+        if windowsOn || ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background-focus") {
+            caps["background_focus"] = .object(["editable": .bool(true)])
+        }
         value.serverSnapshot["editor_capabilities"] = .object(caps)
         var lane: JSONValue?
         if let data = defaults.data(forKey: savedSpeakerBackgroundKey), let saved = try? JSONDecoder().decode(JSONValue.self, from: data) {

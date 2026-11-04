@@ -110,6 +110,11 @@ private struct NativeSelectedBackgroundWindowInspector: View {
                     timeRow("Starts", seconds: window.startS, id: "native-editor-selected-\(selection.kind.rawValue)-start")
                     timeRow("Ends", seconds: window.endS, id: "native-editor-selected-\(selection.kind.rawValue)-end")
                 }
+                if let index = session.speakerBackgroundWindows.firstIndex(where: { $0.localID == selection.id }),
+                   session.canEditSpeakerBackgroundFocus || session.speakerBackgroundWindows[index].focus != nil {
+                    // Qendresa item 18: aim this window's picture at its text (read-only while the server does not open it).
+                    Section { NativeBackgroundAimControls(session: session, windowIndex: index) }
+                }
                 Section {
                     Button("Open Background tool") {
                         dismiss()

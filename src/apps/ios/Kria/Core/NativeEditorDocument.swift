@@ -185,12 +185,14 @@ struct EditorSpeakerBackground: Equatable, Sendable {
     var speakerFrame: EditorSpeakerFrame?
     /// Sorted by `startS`, non-overlapping, at most `SpeakerBackgroundLimits.maxFullScreenWindows`; empty = key absent.
     var fullScreenWindows: [EditorFullScreenWindow]
+    /// Qendresa item 18: where a photo/video FILL is aimed (nil = the centre cover-fit, key absent). Never set while the fill is a colour.
+    var focus: SpeakerBackgroundFocus?
 
     init(mediaID: String, kind: VisualMediaKind, sourceStartS: Double = 0,
          windows: [EditorSpeakerBackgroundWindow] = [], speakerFrame: EditorSpeakerFrame? = nil,
-         fullScreenWindows: [EditorFullScreenWindow] = []) {
+         fullScreenWindows: [EditorFullScreenWindow] = [], focus: SpeakerBackgroundFocus? = nil) {
         self.fill = .media(mediaID: mediaID, kind: kind, sourceStartS: kind == .video ? sourceStartS : 0)
-        self.windows = windows; self.speakerFrame = speakerFrame; self.fullScreenWindows = fullScreenWindows
+        self.windows = windows; self.speakerFrame = speakerFrame; self.fullScreenWindows = fullScreenWindows; self.focus = focus
     }
 
     /// A solid-colour fill. `color` is stored as given; `init?(json:)` and `isValid` hold the `#RRGGBB` rule, and
@@ -198,6 +200,7 @@ struct EditorSpeakerBackground: Equatable, Sendable {
     init(color: String, windows: [EditorSpeakerBackgroundWindow] = [], speakerFrame: EditorSpeakerFrame? = nil,
          fullScreenWindows: [EditorFullScreenWindow] = []) {
         self.fill = .color(color); self.windows = windows; self.speakerFrame = speakerFrame; self.fullScreenWindows = fullScreenWindows
+        self.focus = nil
     }
 
     /// The pool visual behind the speaker; nil while the fill is a colour.
@@ -228,7 +231,7 @@ struct EditorSpeakerBackground: Equatable, Sendable {
         guard case .object(let fields) = json, case .string(let rawKind)? = fields["kind"] else { return nil }
         let isColor = rawKind == "color"
         let allowed: Set<String> = isColor ? ["kind", "color", "windows", "speaker_frame", "full_screen_windows"]
-                                           : ["media_id", "kind", "source_start_s", "windows", "speaker_frame", "full_screen_windows"]
+                                           : ["media_id", "kind", "source_start_s", "windows", "speaker_frame", "full_screen_windows", "focus"]
         guard Set(fields.keys).isSubset(of: allowed) else { return nil }
         var windows: [EditorSpeakerBackgroundWindow] = []
         if let raw = fields["windows"] {
@@ -253,6 +256,11 @@ struct EditorSpeakerBackground: Equatable, Sendable {
             }
             guard Self.fullScreenWindowsAreOrdered(fullScreen) else { return nil }
         }
+        var fillFocus: SpeakerBackgroundFocus?
+        if let raw = fields["focus"] {
+            guard let value = SpeakerBackgroundFocus(json: raw) else { return nil }
+            fillFocus = value
+        }
         if isColor {
             guard case .string(let hex)? = fields["color"], Self.isStrictHexColor(hex) else { return nil }
             self.init(color: hex, windows: windows, speakerFrame: frame, fullScreenWindows: fullScreen)
@@ -268,7 +276,7 @@ struct EditorSpeakerBackground: Equatable, Sendable {
         default: return nil
         }
         guard start.isFinite, (0...SpeakerBackgroundLimits.maxSourceStart).contains(start), kind == .video || start == 0 else { return nil }
-        self.init(mediaID: id, kind: kind, sourceStartS: start, windows: windows, speakerFrame: frame, fullScreenWindows: fullScreen)
+        self.init(mediaID: id, kind: kind, sourceStartS: start, windows: windows, speakerFrame: frame, fullScreenWindows: fullScreen, focus: fillFocus)
     }
 
     var json: JSONValue {
@@ -282,6 +290,7 @@ struct EditorSpeakerBackground: Equatable, Sendable {
         if !windows.isEmpty { fields["windows"] = .array(windows.map(\.json)) }
         if let speakerFrame { fields["speaker_frame"] = speakerFrame.json }
         if !fullScreenWindows.isEmpty { fields["full_screen_windows"] = .array(fullScreenWindows.map(\.json)) }
+        if case .media = fill, let focus { fields["focus"] = focus.json }
         return .object(fields)
     }
 
@@ -295,7 +304,7 @@ struct EditorSpeakerBackground: Equatable, Sendable {
             return SpeakerBackgroundLayer(assetID: Self.assetID(forMediaID: mediaID), mediaKind: kind, sourceStart: sourceStartS,
                                           loop: true, subjectTrackID: SpeakerBackgroundLimits.defaultSubjectTrackID,
                                           windows: layerWindows, speakerFrame: speakerFrame?.layerFrame,
-                                          fullScreenWindows: layerFullScreen)
+                                          fullScreenWindows: layerFullScreen, focus: focus)
         case .color(let hex):
             return .color(hex, subjectTrackID: SpeakerBackgroundLimits.defaultSubjectTrackID,
                           windows: layerWindows, speakerFrame: speakerFrame?.layerFrame, fullScreenWindows: layerFullScreen)
@@ -334,6 +343,19 @@ struct EditorSpeakerBackground: Equatable, Sendable {
     }
 }
 
+/// Qendresa item 18: the editor wire spelling of a background focus (`{x, y, zoom}`; strict keys, bounds as the server's).
+extension SpeakerBackgroundFocus {
+    init?(json: JSONValue) {
+        guard case .object(let fields) = json, Set(fields.keys) == ["x", "y", "zoom"],
+              case .number(let x)? = fields["x"], case .number(let y)? = fields["y"], case .number(let zoom)? = fields["zoom"] else { return nil }
+        guard x.isFinite, y.isFinite, zoom.isFinite, (0...1).contains(x), (0...1).contains(y),
+              (SpeakerBackgroundLimits.minFocusZoom...SpeakerBackgroundLimits.maxFocusZoom).contains(zoom) else { return nil }
+        self.init(x: x, y: y, zoom: zoom)
+    }
+
+    var json: JSONValue { .object(["x": .number(x), "y": .number(y), "zoom": .number(zoom)]) }
+}
+
 /// Qendresa item 16: one span (cut-timeline seconds) in which the speaker's own take fills the frame, unmasked.
 struct EditorFullScreenWindow: Equatable, Sendable {
     var startS: Double
@@ -369,22 +391,32 @@ struct EditorSpeakerBackgroundWindow: Equatable, Sendable {
     var sourceStartS: Double
     var startS: Double
     var endS: Double
+    /// Qendresa item 18: where this window's picture is aimed (nil = centre cover-fit, key absent).
+    var focus: SpeakerBackgroundFocus?
 
     /// The shortest window the wire accepts.
     static let minDuration = SpeakerBackgroundLimits.minWindowSeconds
 
-    init(localID: String, mediaID: String, kind: VisualMediaKind, sourceStartS: Double = 0, startS: Double, endS: Double) {
+    init(localID: String, mediaID: String, kind: VisualMediaKind, sourceStartS: Double = 0, startS: Double, endS: Double,
+         focus: SpeakerBackgroundFocus? = nil) {
         self.localID = localID; self.mediaID = mediaID; self.kind = kind
-        self.sourceStartS = kind == .video ? sourceStartS : 0; self.startS = startS; self.endS = endS
+        self.sourceStartS = kind == .video ? sourceStartS : 0; self.startS = startS; self.endS = endS; self.focus = focus
     }
 
     init?(json: JSONValue, localID: String) {
-        guard case .object(let fields) = json, Set(fields.keys) == ["media_id", "kind", "source_start_s", "start_s", "end_s"],
+        let required: Set<String> = ["media_id", "kind", "source_start_s", "start_s", "end_s"]
+        guard case .object(let fields) = json, Set(fields.keys) == required || Set(fields.keys) == required.union(["focus"]),
               case .string(let id)? = fields["media_id"], case .string(let rawKind)? = fields["kind"],
               let kind = VisualMediaKind(rawValue: rawKind),
               case .number(let sourceStart)? = fields["source_start_s"],
               case .number(let start)? = fields["start_s"], case .number(let end)? = fields["end_s"] else { return nil }
-        let window = EditorSpeakerBackgroundWindow(localID: localID, mediaID: id, kind: kind, sourceStartS: sourceStart, startS: start, endS: end)
+        var focus: SpeakerBackgroundFocus?
+        if let raw = fields["focus"] {
+            guard let value = SpeakerBackgroundFocus(json: raw) else { return nil }
+            focus = value
+        }
+        let window = EditorSpeakerBackgroundWindow(localID: localID, mediaID: id, kind: kind, sourceStartS: sourceStart, startS: start, endS: end,
+                                                   focus: focus)
         guard window.isValid, kind == .video || sourceStart == 0 else { return nil }
         self = window
     }
@@ -397,18 +429,20 @@ struct EditorSpeakerBackgroundWindow: Equatable, Sendable {
     }
 
     var json: JSONValue {
-        .object(["media_id": .string(mediaID), "kind": .string(kind.rawValue), "source_start_s": .number(sourceStartS),
-                 "start_s": .number(startS), "end_s": .number(endS)])
+        var fields: [String: JSONValue] = ["media_id": .string(mediaID), "kind": .string(kind.rawValue), "source_start_s": .number(sourceStartS),
+                                           "start_s": .number(startS), "end_s": .number(endS)]
+        if let focus { fields["focus"] = focus.json }
+        return .object(fields)
     }
 
     var layerWindow: SpeakerBackgroundWindow {
         SpeakerBackgroundWindow(assetID: EditorSpeakerBackground.assetID(forMediaID: mediaID), mediaKind: kind,
-                                sourceStart: sourceStartS, start: startS, end: endS)
+                                sourceStart: sourceStartS, start: startS, end: endS, focus: focus)
     }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.mediaID == rhs.mediaID && lhs.kind == rhs.kind && lhs.sourceStartS == rhs.sourceStartS
-            && lhs.startS == rhs.startS && lhs.endS == rhs.endS
+            && lhs.startS == rhs.startS && lhs.endS == rhs.endS && lhs.focus == rhs.focus
     }
 }
 

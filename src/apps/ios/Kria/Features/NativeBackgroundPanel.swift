@@ -1,5 +1,6 @@
 import KriaMediaEngine
 import SwiftUI
+import UIKit
 
 /// KRI-1118: the Background tool of a Talk-to-camera edit. One photo or video from the item's Visuals pool sits
 /// behind the speaker for the whole video (the Fill); "None" clears it. The pool grid is the editor's shared
@@ -37,6 +38,10 @@ struct NativeBackgroundPanel: View {
                 // A colour fill is neither a pool visual nor nothing: no tile is lit for it.
                 noneSelected: session.speakerBackground == nil
             )
+            // Qendresa item 18: aim a photo or video fill at its text. A colour has no picture to aim.
+            if session.canEditSpeakerBackgroundFocus, session.speakerBackground?.mediaID != nil {
+                NativeBackgroundAimControls(session: session, windowIndex: nil)
+            }
             if session.canEditSpeakerBackgroundWindows {
                 sequenceSection
                 speakerSection
@@ -269,5 +274,124 @@ struct NativeBackgroundPanel: View {
                     .accessibilityIdentifier("native-editor-background-speaker-custom")
             }
         }
+    }
+}
+
+/// Qendresa item 18: aim a photo or video background at its readable text. Three buttons pick the side (the picture is
+/// cover-fitted and slid so the left edge, the middle or the right edge of it shows) and a Zoom slider goes from 0.3x
+/// (the whole picture, with black bands) to 3x. `windowIndex` nil aims the fill; otherwise that timed background.
+/// Used by this panel (fill) and by the selected-background inspector (window). Disabled while the server does not
+/// open `background_focus`. The caller hides it for a colour-only background.
+struct NativeBackgroundAimControls: View {
+    @ObservedObject var session: NativeEditorSession
+    let windowIndex: Int?
+
+    /// The buttons: x on the wire. A button is lit only when the current aim is within 0.005 of it.
+    static let sides: [(token: String, label: String, x: Double)] = [("left", "Left", 0), ("center", "Centre", 0.5), ("right", "Right", 1)]
+    static let litBand = 0.005
+
+    private var idPrefix: String { windowIndex == nil ? "native-editor-background-aim-fill" : "native-editor-background-aim" }
+    private var zoomID: String { windowIndex == nil ? "native-editor-background-fill-zoom" : "native-editor-background-zoom" }
+    private var focus: SpeakerBackgroundFocus? { session.speakerBackgroundFocus(windowIndex: windowIndex) }
+    private var x: Double { focus?.x ?? 0.5 }
+    private var zoom: Double { focus?.zoom ?? 1 }
+
+    /// The lit button for an aim: a never-aimed picture is the centre (today's drawing).
+    static func lit(x: Double) -> String? {
+        sides.first { abs($0.x - x) <= litBand }?.token
+    }
+
+    var body: some View {
+        let lit = Self.lit(x: x)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Aim").font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.mutedInk)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityAddTraits(.isHeader)
+            HStack(spacing: 4) {
+                ForEach(Self.sides, id: \.token) { side in
+                    let selected = lit == side.token
+                    Button { session.endTransaction(); _ = session.setSpeakerBackgroundFocus(x: side.x, windowIndex: windowIndex) } label: {
+                        Text(side.label).font(KriaFont.body(12).weight(selected ? .semibold : .regular))
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .foregroundStyle(KriaColor.ink)
+                            .background(selected ? KriaColor.sage : KriaColor.ink.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                            .contentShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!session.canEditSpeakerBackgroundFocus)
+                    .accessibilityLabel("Aim " + side.label.lowercased())
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                    .accessibilityIdentifier("\(idPrefix)-\(side.token)")
+                }
+            }
+            if focus != nil, lit == nil {
+                Text("Aimed at the text").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("\(idPrefix)-custom")
+            }
+            HStack {
+                Text("Zoom").font(KriaFont.body(13)).foregroundStyle(KriaColor.ink)
+                Spacer()
+                Text(BackgroundZoomSlider.readout(zoom)).font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                    .accessibilityHidden(true)
+                    .accessibilityIdentifier("\(zoomID)-value")
+            }
+            BackgroundZoomSlider(zoom: zoom, id: zoomID,
+                                 onEditingChanged: { editing in editing ? session.beginTransaction() : session.endTransaction() }) {
+                _ = session.setSpeakerBackgroundFocus(zoom: $0, windowIndex: windowIndex)
+            }
+            .disabled(!session.canEditSpeakerBackgroundFocus)
+        }
+    }
+}
+
+/// `TiltZoomSlider`'s twin for a background's zoom: 0.3x to 3x in hundredths with a detent at 1x (a drag within
+/// `holdBand` of 1x lands on exactly 1x, with a light haptic on entering it).
+struct BackgroundZoomSlider: View {
+    let zoom: Double
+    let id: String
+    var onEditingChanged: (Bool) -> Void = { _ in }
+    let onChange: (Double) -> Void
+    @State private var held = false
+    private let haptic = UISelectionFeedbackGenerator()
+
+    static let range = NativeEditorSession.backgroundFocusZoomRange
+    static let holdBand = 0.05
+    static let step = 0.01
+
+    static func readout(_ zoom: Double) -> String { String(format: "%gx", (zoom * 100).rounded() / 100) }
+
+    /// `raw` snapped to the detent at 1x, else clamped and rounded to hundredths.
+    static func snapped(_ raw: Double) -> Double {
+        guard abs(raw - 1) >= holdBand else { return 1 }
+        return min(range.upperBound, max(range.lowerBound, (raw * 100).rounded() / 100))
+    }
+
+    var body: some View {
+        let binding = Binding<Double>(
+            get: { zoom },
+            set: { raw in
+                let next = Self.snapped(raw)
+                if next == 1, !held { haptic.selectionChanged() }
+                held = next == 1
+                onChange(next)
+            }
+        )
+        Slider(value: binding, in: Self.range, step: Self.step) { editing in
+            if editing { haptic.prepare() }
+            onEditingChanged(editing)
+        }
+        .tint(KriaColor.ink)
+        .frame(minHeight: 44)
+        .accessibilityLabel("Zoom")
+        .accessibilityValue(Self.readout(zoom))
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: onChange(Self.snapped(zoom + 0.1))
+            case .decrement: onChange(Self.snapped(zoom - 0.1))
+            @unknown default: break
+            }
+        }
+        .accessibilityIdentifier(id)
     }
 }

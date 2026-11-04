@@ -938,4 +938,181 @@ import KriaMediaEngine
     func testTheProtocolDeclaresTheOpeningBuild() {
         XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, 38, "38 = decodes, draws and round-trips speaker_background.full_screen_windows")
     }
+
+    // MARK: - Qendresa item 18: aim the background (rows F1, F11, F12, F15 in `docs/reviews/background-focus-failure-modes.md`)
+
+    private func focusRow(_ x: Double, _ zoom: Double, y: Double = 0.5) -> JSONValue {
+        .object(["x": .number(x), "y": .number(y), "zoom": .number(zoom)])
+    }
+
+    /// A Talking session that opens the single background, the timed ones and (unless `focusOpen` is false) the aim controls.
+    private func focusSession(lane: JSONValue? = nil, focusOpen: Bool = true) -> NativeEditorSession {
+        var draft = NativeEditorUITestFixtures.speakerBackground
+        var caps = draft.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
+        caps["speaker_background_windows"] = .object(["editable": .bool(true)])
+        if focusOpen { caps["background_focus"] = .object(["editable": .bool(true)]) }
+        draft.serverSnapshot["editor_capabilities"] = .object(caps)
+        if let lane {
+            var payload = draft.serverSnapshot["editor_payload"]?.objectValue ?? [:]
+            var sections = payload["sections"]?.objectValue ?? [:]
+            sections["speaker_background"] = lane
+            payload["sections"] = .object(sections)
+            draft.serverSnapshot["editor_payload"] = .object(payload)
+        }
+        return NativeEditorSession(draft: draft)
+    }
+
+    private func focusLane(fill: JSONValue? = nil, windows: [JSONValue] = []) -> JSONValue {
+        var fields: [String: JSONValue] = ["media_id": .string("fill"), "kind": .string("image"), "source_start_s": .number(0)]
+        if let fill { fields["focus"] = fill }
+        if !windows.isEmpty { fields["windows"] = .array(windows) }
+        return .object(fields)
+    }
+
+    private func focusWindow(_ id: String, start: Double, end: Double, focus: JSONValue? = nil) -> JSONValue {
+        guard case .object(var fields) = windowRow(id, start: start, end: end) else { return .null }
+        if let focus { fields["focus"] = focus }
+        return .object(fields)
+    }
+
+    func testFocusRoundTripsOnTheFillAndOnWindows() throws {
+        let lane = focusLane(fill: focusRow(0.2, 1.2), windows: [focusWindow("a", start: 0, end: 4, focus: focusRow(0, 2.5)), focusWindow("b", start: 4, end: 8)])
+        let decoded = EditorDocument.decode(snapshot: snapshot(lane: lane))
+        XCTAssertFalse(decoded.unreadableSpeakerBackground)
+        let background = try XCTUnwrap(decoded.speakerBackground)
+        XCTAssertEqual(background.focus, SpeakerBackgroundFocus(x: 0.2, y: 0.5, zoom: 1.2))
+        XCTAssertEqual(background.windows[0].focus, SpeakerBackgroundFocus(x: 0, y: 0.5, zoom: 2.5))
+        XCTAssertNil(background.windows[1].focus)
+        XCTAssertEqual(decoded.encodeSnapshot(), snapshot(lane: lane), "an unchanged lane saves as it loaded, focus included")
+        XCTAssertEqual(EditorSpeakerBackground(json: background.json), background)
+        // Strict shapes: extra keys, a word, a missing part, an out-of-range part and a colour with a focus are unreadable.
+        for bad in [JSONValue.object(["x": .number(0.5), "y": .number(0.5), "zoom": .number(1), "angle": .number(1)]), .string("left"),
+                    .object(["x": .number(0.5), "y": .number(0.5)]), focusRow(1.01, 1), focusRow(0.5, 4.5), focusRow(0.5, 0.1)] {
+            XCTAssertTrue(EditorDocument.decode(snapshot: snapshot(lane: focusLane(fill: bad))).unreadableSpeakerBackground, "\(bad)")
+        }
+        XCTAssertNil(EditorSpeakerBackground(json: .object(["kind": .string("color"), "color": .string("#112233"), "focus": focusRow(0.5, 1.2)])))
+    }
+
+    func testALaneWithoutFocusEncodesExactlyAsBefore() throws {
+        let plain = EditorSpeakerBackground(mediaID: "1a2b", kind: .video, sourceStartS: 2.5,
+                                            windows: [EditorSpeakerBackgroundWindow(localID: "bg-0", mediaID: "c", kind: .image, startS: 0, endS: 2)])
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let text = String(decoding: try encoder.encode(plain.json), as: UTF8.self)
+        XCTAssertFalse(text.contains("focus"))
+        XCTAssertNil(plain.layer.focus)
+        XCTAssertNil(plain.layer.windows?.first?.focus)
+        XCTAssertFalse(String(decoding: try RecipeJSON.encoder().encode(plain.layer), as: UTF8.self).contains("focus"))
+    }
+
+    func testFocusIsPartOfDocumentEqualityAndCompilesToTheSharedV5Layer() throws {
+        let a = EditorSpeakerBackground(mediaID: "fill", kind: .image)
+        var b = a; b.focus = SpeakerBackgroundFocus(x: 0.2, y: 0.5, zoom: 1.2)
+        XCTAssertNotEqual(a, b, "a fill focus edit must mark the document dirty")
+        let w = EditorSpeakerBackgroundWindow(localID: "x", mediaID: "a", kind: .image, startS: 0, endS: 4)
+        var wf = w; wf.focus = SpeakerBackgroundFocus(x: 0, y: 0.5, zoom: 2.5)
+        XCTAssertNotEqual(w, wf, "a window focus edit must mark the document dirty")
+
+        var url = URL(fileURLWithPath: #filePath)
+        for _ in 0..<6 { url.deleteLastPathComponent() }
+        let data = try Data(contentsOf: url.appendingPathComponent("tests/fixtures/speaker-background-parity/v5.json"))
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let mixed = try XCTUnwrap((root["valid"] as? [[String: Any]])?.first { $0["name"] as? String == "photo-fill-focus-and-mixed-windows" })
+        let expected = try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: JSONSerialization.data(withJSONObject: XCTUnwrap(mixed["normalized"])))
+
+        let lane = EditorSpeakerBackground(
+            mediaID: "fill", kind: .image,
+            windows: [EditorSpeakerBackgroundWindow(localID: "bg-0", mediaID: "a", kind: .image, startS: 0, endS: 4, focus: SpeakerBackgroundFocus(x: 0, y: 0.5, zoom: 2.5)),
+                      EditorSpeakerBackgroundWindow(localID: "bg-1", mediaID: "b", kind: .image, startS: 4, endS: 8)],
+            speakerFrame: EditorSpeakerFrame.preset("small_bottom_right"), focus: SpeakerBackgroundFocus(x: 0.2, y: 0.5, zoom: 1.2))
+        XCTAssertEqual(lane.layer, expected)
+        let recipe = try compile(document(background: lane), backgroundSources: backgroundSource("fill").merging(backgroundSource("a")) { $1 }.merging(backgroundSource("b")) { $1 })
+        XCTAssertEqual(recipe.speakerBackground, expected)
+        XCTAssertTrue(recipe.effectiveCapabilities.contains(.backgroundFocus))
+        try recipe.validate()
+    }
+
+    func testSetSpeakerBackgroundFocusChangesAndDirtiesTheDocument() throws {
+        let session = focusSession(lane: focusLane(windows: [focusWindow("a", start: 0, end: 4), focusWindow("b", start: 4, end: 8)]))
+        XCTAssertTrue(session.canEditSpeakerBackgroundFocus)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        // The fill.
+        XCTAssertTrue(session.setSpeakerBackgroundFocus(x: 1, zoom: nil, windowIndex: nil))
+        XCTAssertEqual(session.speakerBackground?.focus, SpeakerBackgroundFocus(x: 1, y: 0.5, zoom: 1))
+        XCTAssertTrue(session.hasUnsavedChanges)
+        // A nil part keeps the other part; the zoom is clamped to 0.3...3.
+        XCTAssertTrue(session.setSpeakerBackgroundFocus(x: nil, zoom: 9, windowIndex: nil))
+        XCTAssertEqual(session.speakerBackground?.focus, SpeakerBackgroundFocus(x: 1, y: 0.5, zoom: 3))
+        XCTAssertTrue(session.setSpeakerBackgroundFocus(x: nil, zoom: 0.01, windowIndex: nil))
+        XCTAssertEqual(session.speakerBackground?.focus?.zoom, 0.3)
+        // x is clamped to 0...1.
+        XCTAssertTrue(session.setSpeakerBackgroundFocus(x: -4, zoom: nil, windowIndex: nil))
+        XCTAssertEqual(session.speakerBackground?.focus?.x, 0)
+        // One window only.
+        XCTAssertTrue(session.setSpeakerBackgroundFocus(x: 0, zoom: 1.5, windowIndex: 1))
+        XCTAssertNil(session.speakerBackgroundWindows[0].focus)
+        XCTAssertEqual(session.speakerBackgroundWindows[1].focus, SpeakerBackgroundFocus(x: 0, y: 0.5, zoom: 1.5))
+        // The same value again, a missing window, a missing value and non-finite values change nothing.
+        XCTAssertFalse(session.setSpeakerBackgroundFocus(x: 0, zoom: 1.5, windowIndex: 1))
+        XCTAssertFalse(session.setSpeakerBackgroundFocus(x: 0.5, zoom: nil, windowIndex: 7))
+        XCTAssertFalse(session.setSpeakerBackgroundFocus(x: nil, zoom: nil, windowIndex: 0))
+        XCTAssertFalse(session.setSpeakerBackgroundFocus(x: .nan, zoom: nil, windowIndex: 0))
+        // The centre at 1x is today's drawing: the aim goes (key absent).
+        XCTAssertTrue(session.setSpeakerBackgroundFocus(x: 0.5, zoom: 1, windowIndex: 1))
+        XCTAssertNil(session.speakerBackgroundWindows[1].focus)
+        // Undo walks back.
+        session.undo()
+        XCTAssertEqual(session.speakerBackgroundWindows[1].focus, SpeakerBackgroundFocus(x: 0, y: 0.5, zoom: 1.5))
+    }
+
+    func testTheAimControlsFollowTheCapabilityAndAColourHasNothingToAim() {
+        let closed = focusSession(lane: focusLane(), focusOpen: false)
+        XCTAssertFalse(closed.canEditSpeakerBackgroundFocus)
+        XCTAssertFalse(closed.setSpeakerBackgroundFocus(x: 0, zoom: nil, windowIndex: nil))
+        XCTAssertNil(closed.speakerBackground?.focus)
+        let colour = focusSession(lane: .object(["kind": .string("color"), "color": .string("#112233")]))
+        XCTAssertFalse(colour.setSpeakerBackgroundFocus(x: 0, zoom: nil, windowIndex: nil), "a colour fill has no picture")
+        XCTAssertNil(colour.speakerBackground?.focus)
+    }
+
+    func testFocusIsCarriedThroughOtherBackgroundEdits() throws {
+        let session = focusSession(lane: focusLane(fill: focusRow(0.2, 1.2), windows: [focusWindow("a", start: 0, end: 4, focus: focusRow(0, 2.5))]))
+        // The same photo again keeps the fill aim; another photo drops it.
+        XCTAssertTrue(session.setSpeakerBackground(mediaID: "fill", kind: .image))
+        XCTAssertEqual(session.speakerBackground?.focus, SpeakerBackgroundFocus(x: 0.2, y: 0.5, zoom: 1.2))
+        XCTAssertTrue(session.setSpeakerBackground(mediaID: "other", kind: .image))
+        XCTAssertNil(session.speakerBackground?.focus)
+        XCTAssertEqual(session.speakerBackgroundWindows.first?.focus, SpeakerBackgroundFocus(x: 0, y: 0.5, zoom: 2.5), "the windows keep theirs")
+        // A colour drops the fill aim and keeps the windows' (Colour needs the colour gate).
+        var draft = NativeEditorUITestFixtures.speakerBackground
+        var caps = draft.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
+        caps["speaker_background_windows"] = .object(["editable": .bool(true)])
+        caps["background_focus"] = .object(["editable": .bool(true)])
+        draft.serverSnapshot["editor_capabilities"] = .object(caps)
+        var payload = draft.serverSnapshot["editor_payload"]?.objectValue ?? [:]
+        var sections = payload["sections"]?.objectValue ?? [:]
+        sections["speaker_background"] = focusLane(fill: focusRow(0.2, 1.2), windows: [focusWindow("a", start: 0, end: 4, focus: focusRow(0, 2.5))])
+        payload["sections"] = .object(sections)
+        draft.serverSnapshot["editor_payload"] = .object(payload)
+        let coloured = NativeEditorSession(draft: draft)
+        XCTAssertTrue(coloured.setSpeakerBackgroundColor(hex: "#112233"))
+        XCTAssertNil(coloured.speakerBackground?.focus)
+        XCTAssertEqual(coloured.speakerBackgroundWindows.first?.focus, SpeakerBackgroundFocus(x: 0, y: 0.5, zoom: 2.5))
+    }
+
+    func testANewWindowOfAnAimedRecordingStartsAimedTheSame() throws {
+        let session = focusSession(lane: focusLane(fill: focusRow(0.2, 1.2), windows: [focusWindow("a", start: 0, end: 2, focus: focusRow(1, 2))]))
+        // Same media as the fill -> the fill's aim; same media as an existing window -> that window's aim; unknown media -> none.
+        func fresh(_ id: String, _ mediaID: String, _ start: Double) -> EditorSpeakerBackgroundWindow {
+            EditorSpeakerBackgroundWindow(localID: id, mediaID: mediaID, kind: .image, startS: start, endS: start + 1)
+        }
+        XCTAssertTrue(session.setSpeakerBackgroundWindows(session.speakerBackgroundWindows
+            + [fresh("bg-5", "fill", 2), fresh("bg-6", "a", 3), fresh("bg-7", "fresh", 4)]))
+        let focuses = session.speakerBackgroundWindows.map(\.focus)
+        XCTAssertEqual(focuses, [SpeakerBackgroundFocus(x: 1, y: 0.5, zoom: 2), SpeakerBackgroundFocus(x: 0.2, y: 0.5, zoom: 1.2),
+                                 SpeakerBackgroundFocus(x: 1, y: 0.5, zoom: 2), nil])
+    }
+
+    func testTheProtocolDeclaresTheFocusBuild() {
+        XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, 39, "39 = decodes, draws and round-trips speaker_background focus")
+    }
 }
