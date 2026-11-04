@@ -6517,7 +6517,10 @@ async def plan_pinned_suggestion_turn(
     exact = pinned.snapshot_digest(target.snapshot) == action.base_digest
     if not exact:
         # The editor moved since the card was served: build it again from the registry and the
-        # current facts. A card the registry cannot prove now is a card that no longer fits.
+        # current facts. A card the registry cannot prove now is a card that no longer fits, and
+        # so is one a tap already applied: its rebuild would be a new change, not the offer.
+        if pinned.is_consumed(thread.state, set_id, suggestion_id):
+            return _no_longer_fits(pinned.CONSUMED)
         rebuilt = await pinned.rebuild_action(
             db,
             suggestion=card.suggestion,

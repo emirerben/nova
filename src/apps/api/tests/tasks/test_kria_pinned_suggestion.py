@@ -47,9 +47,22 @@ Execution
        card is "no longer fits", never a second change.
   FM18 a failed render's recovery target, or a render in flight: no apply, an honest reply.
   FM19 Creative Brief off for the creator: the draft applies with no brief rows, like the copilot.
+
+Applied cards (a card is one offer)
+  FM21 a card whose value is relative to the current edit (music level: 60% of whatever the mix is
+       now) tapped again after it applied: every later tap sees a moved base and would rebuild a
+       new value, so one card would stack changes the creator was never offered. The applied card
+       is marked on its ring entry in the same transaction as the draft; a rebuild of a marked
+       card is refused ("no longer fits") and the suggester is asked for a fresh set.
+  FM22 a tap that applied nothing (refused at the row lock) never marks its card: it stays
+       tappable once the cause is gone.
+  FM23 the suggester writes a new set into the ring between the turn's first read of the thread and
+       its row lock: the mark is written from the row as it is under the lock, so that set survives.
 """
 
 from __future__ import annotations
+
+import sys
 
 import pytest
 import pytest_asyncio
@@ -842,6 +855,157 @@ async def test_fm17_the_same_card_tapped_again_changes_nothing_twice(world):
     assert h.counts(seeded) == applied
     head = next(d for d in h.drafts(seeded.thread_id) if d["head"])
     assert len(_lanes(head["snap"])["sound_effects"]) == 1
+
+
+# ── An applied card is one offer ─────────────────────────────────────────────────────
+
+
+def _loud_music_variant() -> dict:
+    return {**h.ready_variant(), "mix": 0.9}
+
+
+def _head_mix(seeded: h.Seeded) -> float:
+    head = next(d for d in h.drafts(seeded.thread_id) if d["head"])
+    return _lanes(head["snap"])["mix"]["music_level"]
+
+
+def _ring(thread_id) -> list[dict]:  # noqa: ANN001
+    with sync_session() as db:
+        state = db.execute(
+            text("select state from creation_threads where id = :id"), {"id": thread_id}
+        ).scalar_one()
+    return state["suggestion_sets"]
+
+
+def _ring_entry(thread_id, set_id: str) -> dict:  # noqa: ANN001
+    return next(e for e in _ring(thread_id) if e["set_id"] == set_id)
+
+
+@pytest.mark.asyncio
+async def test_fm21_a_relative_card_tapped_again_never_stacks(world):
+    seeded = h.seed_ready_thread(_loud_music_variant())
+    await h.serve(seeded)
+    first, result = await _tap_and_run(seeded, "music")
+    assert result["status"] == "completed" and _pin_record(first.turn_id)["exact"] is True
+    applied, level = h.counts(seeded), _head_mix(seeded)
+    assert level == seeded.cards["music"].action.ops[0]["music_level"] < 0.9
+    for _ in range(2):
+        again, result = await _tap_and_run(seeded, "music")
+        assert result["status"] == "completed", result
+        assert _pin_record(again.turn_id)["reason"] == "consumed"
+        assert _last_reply(seeded.thread_id) == NO_LONGER_FITS
+        assert h.counts(seeded) == applied and _head_mix(seeded) == level
+    assert h.world_refreshes(world) == ["pinned_stale", "pinned_stale"]
+    assert world.extracted == []
+
+
+@pytest.mark.asyncio
+async def test_fm21_red_control_without_the_applied_mark_each_tap_steps_the_level_again(
+    world, monkeypatch
+):
+    """The fixture is sensitive: ignore the mark and the same card stacks 0.9 -> 0.54 -> 0.32."""
+    from app.services.suggestions import pinned
+
+    monkeypatch.setattr(pinned, "is_consumed", lambda *_a: False)
+    seeded = h.seed_ready_thread(_loud_music_variant())
+    await h.serve(seeded)
+    levels = []
+    for _ in range(3):
+        await _tap_and_run(seeded, "music")
+        levels.append(_head_mix(seeded))
+    assert levels[0] > levels[1] > levels[2], levels
+
+
+@pytest.mark.asyncio
+async def test_fm21_a_fresh_set_offers_the_change_again(world):
+    seeded = h.seed_ready_thread(_loud_music_variant())
+    await h.serve(seeded)
+    await _tap_and_run(seeded, "music")
+    old_set, old_card = seeded.set_id, seeded.cards["music"]
+    await h.serve(seeded)  # the refresh: a new set, built from the edit as it is now
+    assert seeded.set_id != old_set and seeded.cards["music"].id != old_card.id
+    accepted, result = await _tap_and_run(seeded, "music")
+    assert result["status"] == "completed", result
+    assert _pin_record(accepted.turn_id)["outcome"] == "planned"
+    assert _head_mix(seeded) < 0.54
+    assert h.counts(seeded)["drafts"] == 2
+
+
+@pytest.mark.asyncio
+async def test_fm21_the_mark_names_the_card_and_the_turn_that_applied_it(world):
+    seeded = h.seed_ready_thread(_loud_music_variant())
+    await h.serve(seeded)
+    accepted, _ = await _tap_and_run(seeded, "music")
+    entry = _ring_entry(seeded.thread_id, seeded.set_id)
+    assert entry["consumed"] == {seeded.cards["music"].id: accepted.turn_id}
+    assert len(entry["suggestions"]) == len(seeded.cards)
+
+
+@pytest.mark.asyncio
+async def test_fm22_a_tap_refused_at_the_row_lock_leaves_its_card_tappable(world, monkeypatch):
+    h.install_dedupe_kind(monkeypatch)
+    seeded = h.seed_ready_thread()
+    base = await h.current_digest(seeded)
+    h.put_cards(
+        seeded,
+        h.card(
+            "duplicates",
+            "Remove clip 3, it repeats clip 2",
+            [{"op": "remove_clip", "slot_index": 2}],
+            base_digest=base,
+            media_id="clip-c",
+        ),
+    )
+
+    def reorder(variant):
+        slots = variant["ai_timeline"]["slots"]
+        variant["ai_timeline"]["slots"] = [slots[0], slots[2], slots[1]]
+
+    raced: list[bool] = []
+
+    def race_once():
+        if not raced:
+            raced.append(True)
+            h.edit_variant(seeded, reorder)
+
+    h.after_planning(monkeypatch, race_once)
+    await _tap_and_run(seeded, "duplicates")
+    assert _last_reply(seeded.thread_id) == NO_LONGER_FITS
+    assert "consumed" not in _ring_entry(seeded.thread_id, seeded.set_id)
+    # The race is over: the same card is asked about the edit as it now stands.
+    accepted, result = await _tap_and_run(seeded, "duplicates")
+    assert result["status"] == "completed", result
+    assert _pin_record(accepted.turn_id)["outcome"] == "planned"
+    assert h.counts(seeded)["drafts"] == 1
+
+
+@pytest.mark.asyncio
+async def test_fm23_a_set_written_while_the_turn_commits_survives_the_mark(world, monkeypatch):
+    from app.tasks import kria_runtime
+
+    seeded = h.seed_ready_thread(_loud_music_variant())
+    await h.serve(seeded)
+    newer = {}
+
+    real = kria_runtime._owns_turn_lease
+
+    def lease_after_a_ring_write(*args, **kwargs):  # noqa: ANN002, ANN003
+        # Only the draft commit's check: after it first read the thread, before it locks the row.
+        if not newer and sys._getframe(1).f_code.co_name == "_complete_draft_turn":
+            card = h.card("music", "Turn the music down", [{"op": "set_mix", "music_level": 0.2}])
+            newer["set_id"] = h.put_cards(seeded, card)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(kria_runtime, "_owns_turn_lease", lease_after_a_ring_write)
+    set_before_tap = seeded.set_id
+    chosen = seeded.cards["music"]
+    accepted, _ = await h.tap(
+        seeded, "music", tap={"set_id": set_before_tap, "chip_id": chosen.id}, message=chosen.prompt
+    )
+    assert (await h.run(accepted.turn_id))["status"] == "completed"
+    ring = {entry["set_id"]: entry for entry in _ring(seeded.thread_id)}
+    assert newer["set_id"] in ring, "the mark overwrote the set the suggester wrote meanwhile"
+    assert "consumed" in ring[set_before_tap]
 
 
 @pytest.mark.asyncio

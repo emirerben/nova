@@ -47,6 +47,27 @@ mobile-only model, so the web contract is unchanged. The tap field stays `sugges
 chip_id}` (`SuggestionTapIn`); under `KRIA_SUGGESTION_PINNED_TAPS_ENABLED` a present pin joins
 `request_digest`, off or pin-less it is unchanged.
 
+## Pinned taps (`KRIA_SUGGESTION_PINNED_TAPS_ENABLED`)
+
+A tap on a v2 card (`ss_` id) runs the action the thread was offered, never the card's sentence.
+Code: `services/suggestions/pinned.py` (ring reads, lane allow-list, rebuild),
+`kria/planner.plan_pinned_suggestion_turn`, and the row-locked commit in
+`tasks/kria_runtime._complete_draft_turn`, which is the only apply path.
+
+- **Submit** stamps `pinned_suggestion` on the creator's event when the flag is on, the creator is
+  on the chips allow-list and the message is the card's own prompt. An `ss_` id the thread was never
+  offered is stamped `unresolved`, so the worker answers "no longer fits" instead of planning it.
+- **Plan** builds `[draft.apply_editor_ops]` from the stored action when the editor still matches
+  its `base_digest`, otherwise from the registry's rebuild against the current facts. Any failure is
+  the "no longer fits" reply plus a suggester refresh, never a fall-through to the free planner.
+- **Commit** re-checks `projected_digest` inside the row lock (an index-addressed op must not land on
+  whichever clip now sits there) and refuses a tap that compiles to no real change.
+- **A card is one offer.** The commit marks the card on its ring entry (`consumed: {id: turn_id}`) in
+  the draft's own transaction. A marked card is never rebuilt: a rebuild derives a new change from
+  the edit as it is now, so a relative card (music level = 60% of the current mix) would apply a
+  fresh step on every later tap. Only the exact stored action on its exact base can run again. A
+  refreshed set has a new `set_id` and offers the change again from the current edit.
+
 ## Flags (all default off; subordinate to `KRIA_SUGGESTION_CHIPS_ENABLED`)
 
 `KRIA_SUGGESTION_PINNED_TAPS_ENABLED`, `KRIA_SUGGESTION_SIGNALS_ENABLED`,

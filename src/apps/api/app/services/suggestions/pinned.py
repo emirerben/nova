@@ -12,6 +12,13 @@ offers v2 cards carries ``"suggestions": [Suggestion.model_dump(mode="json"), ..
 legacy ``chips``; ``ring_suggestions`` is the one serializer. The action is server-side only: it
 is never on the wire and never in a chat event.
 
+The seam writes one thing back to an entry: ``"consumed": {<suggestion id>: <turn id>}``, set in
+the same transaction that commits the draft the card produced (``mark_consumed``). A card is one
+offer. Its stored action is the exact change it was proven for, so it may run again only against
+the exact base it was built for; a rebuild derives a new change from the edit as it is now, and
+for a relative card (the music level is 60% of whatever it is now) every rebuild would be a new
+change the creator was never offered. A rebuild of a consumed card is refused (``is_consumed``).
+
 A v2 card id starts with ``ss_`` (``models.suggestion_id``); a KRI-756 chip id starts with
 ``sc_`` and is never pinned.
 """
@@ -43,6 +50,8 @@ log = structlog.get_logger()
 V2_ID_PREFIX = "ss_"
 # The key a submitted pin is stamped under on the creator's ``user_message`` event.
 PIN_KEY = "pinned_suggestion"
+# The key on a ring entry that records the cards a tap already applied.
+CONSUMED_KEY = "consumed"
 
 # The editor ops a pinned tap may run in this lane. A stored action with any other op is refused,
 # so nothing that carries text (add_text, rewrite_text, set_title ...) or runs server-async
@@ -58,6 +67,7 @@ PROMPT_CHANGED = "prompt_changed"
 ACTION_UNSUPPORTED = "action_unsupported"
 OP_NOT_ALLOWED = "op_not_allowed"
 BASE_MOVED = "base_moved"
+CONSUMED = "consumed"
 OP_REFUSED = "op_refused"
 NO_CHANGE = "no_change"
 BRIEF_UNAVAILABLE = "brief_unavailable"
@@ -128,6 +138,41 @@ def stored_card(
                 return None
             return StoredCard(set_id, suggestion, action_digest(suggestion.action))
     return None
+
+
+def _entry_index(ring: Sequence[Any], set_id: str) -> int | None:
+    for index in range(len(ring) - 1, -1, -1):
+        entry = ring[index]
+        if isinstance(entry, Mapping) and entry.get("set_id") == set_id:
+            return index
+    return None
+
+
+def is_consumed(state: Mapping[str, Any] | None, set_id: str, suggestion_id: str) -> bool:
+    """True once a tap has applied this card from this set."""
+    ring = state.get(RING_KEY) if isinstance(state, Mapping) else None
+    index = _entry_index(ring, set_id) if isinstance(ring, list) else None
+    consumed = ring[index].get(CONSUMED_KEY) if index is not None else None
+    return isinstance(consumed, Mapping) and suggestion_id in consumed
+
+
+def mark_consumed(
+    state: Mapping[str, Any] | None, set_id: str, suggestion_id: str, turn_id: object
+) -> dict[str, Any] | None:
+    """``state`` with the card marked as applied by ``turn_id``; None when its entry is gone.
+
+    Returns new containers all the way down to the entry. ``thread.state`` is a plain JSONB
+    column, so a nested in-place edit compares equal to the loaded value and is never written.
+    """
+    ring = state.get(RING_KEY) if isinstance(state, Mapping) else None
+    index = _entry_index(ring, set_id) if isinstance(ring, list) else None
+    if index is None or not isinstance(state, Mapping):
+        return None
+    entry = ring[index]
+    prior = entry.get(CONSUMED_KEY)
+    prior = prior if isinstance(prior, Mapping) else {}
+    marked = {**entry, CONSUMED_KEY: {**prior, suggestion_id: str(turn_id)}}
+    return {**state, RING_KEY: [*ring[:index], marked, *ring[index + 1 :]]}
 
 
 def stamp_pin(
@@ -378,8 +423,10 @@ __all__ = [
     "brief_updates_for",
     "disallowed_op",
     "editor_ops",
+    "is_consumed",
     "is_pin_id",
     "kind_enabled",
+    "mark_consumed",
     "parse_ops",
     "projected_digest",
     "rebuild_action",

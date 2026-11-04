@@ -558,6 +558,28 @@ def _pinned_tap_no_longer_fits(
     return replace(completed, response_only=True)
 
 
+def _mark_pinned_card_applied(
+    db,  # noqa: ANN001 - SQLAlchemy sync Session
+    thread: CreationThread,
+    pin: dict[str, Any],
+    turn_id: uuid.UUID,
+) -> None:
+    """Record that the tapped card ran, in the transaction that commits its draft.
+
+    ``thread.state`` was loaded before the thread row lock and can predate a newer set the
+    suggester wrote since, so the ring is read again here, under the lock, and only the marked
+    copy of it is written back.
+    """
+    from app.services.suggestions import pinned as _pinned  # noqa: PLC0415
+
+    current = db.execute(
+        select(CreationThread.state).where(CreationThread.id == thread.id)
+    ).scalar_one()
+    marked = _pinned.mark_consumed(current, str(pin["set_id"]), str(pin["id"]), turn_id)
+    if marked is not None:
+        thread.state = marked
+
+
 def _complete_response_turn(
     turn_id: uuid.UUID,
     *,
@@ -3321,6 +3343,8 @@ def _complete_draft_turn(
         )
         db.add(draft)
         db.flush()
+        if planned.suggestion_pin is not None:
+            _mark_pinned_card_applied(db, thread, planned.suggestion_pin, turn.id)
         draft_execution.target_draft_id = draft.id
         draft_execution.target_draft_revision = draft.draft_revision
         draft_execution.result = {
