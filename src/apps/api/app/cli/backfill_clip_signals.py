@@ -207,6 +207,17 @@ def _process(
         return f"error:{type(exc).__name__}"
 
 
+def _notify(item_id: uuid.UUID) -> None:
+    """Tell the suggestion triggers a clip's signals were stored. Called only after the store's
+    own transaction has committed and released the plan item row, never inside it."""
+    try:
+        from app.services.suggestion_serve import on_signals_computed  # noqa: PLC0415
+
+        on_signals_computed(item_id)
+    except Exception:  # noqa: BLE001 - freshness is an enhancement; the next GET recomputes
+        pass
+
+
 def run(
     *,
     item_id: uuid.UUID | None = None,
@@ -237,15 +248,20 @@ def run(
             break
         items += 1
         clips += len(assignments)
+        stored_here = 0
         for pending, todo in todo_rows:
             pending_clips += 1
             missing_by_signal.update(todo)
             if not write:
                 continue
             attempted += 1
-            outcomes[_process(row_id, by_media[pending.media_id], pending, todo, max_bytes)] += 1
+            outcome = _process(row_id, by_media[pending.media_id], pending, todo, max_bytes)
+            outcomes[outcome] += 1
+            stored_here += outcome == "stored"
             if pause:
                 time.sleep(pause)
+        if stored_here:
+            _notify(row_id)  # once per item, after every clip's own commit
         resume_after = row_id
     return {
         "mode": "write" if write else "dry_run",
