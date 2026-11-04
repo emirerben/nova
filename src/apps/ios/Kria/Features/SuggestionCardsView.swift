@@ -5,14 +5,15 @@ import SwiftUI
 /// show the same cards and the same state.
 struct SuggestionCardsPresentation {
     let cards: [SuggestionCard]
-    let notice: SuggestionStaleNotice?
-    let tap: (SuggestionCard) -> Void
+    /// Returns whether the tap went out. A refused tap (a send already in flight, no set id) changes nothing, so a
+    /// surface that closes on a tap must not close on a refusal.
+    let tap: (SuggestionCard) -> Bool
     let dismiss: (SuggestionCard) -> Void
     let refresh: () -> Void
     /// The card now sending, so its row can say so and the others wait.
     let sendingID: String?
 
-    var isEmpty: Bool { cards.isEmpty && notice == nil }
+    var isEmpty: Bool { cards.isEmpty }
 }
 
 /// One suggestion: what it does, why it is offered, the measured fact behind it, and (hook and title cards) the exact
@@ -125,28 +126,6 @@ private struct CardPill: View {
     }
 }
 
-/// "No longer fits" in place of the card the server refused, until the refreshed set arrives.
-struct SuggestionStaleNoticeView: View {
-    let identifier: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 13, weight: .semibold))
-            Text(SuggestionStaleNotice.message)
-                .font(KriaFont.body(13).weight(.medium))
-                .multilineTextAlignment(.leading)
-        }
-        .foregroundStyle(KriaColor.ink)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(minHeight: 44)
-        .background(KriaColor.butterPale, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier(identifier)
-    }
-}
-
 /// The cards in rank order. Used by the chat's ready stage (`idPrefix` "suggestion-card") and the editor's Improve
 /// sheet ("improve-card"): the two prefixes keep the identifiers unique while the editor sits above the chat.
 struct SuggestionCardList: View {
@@ -156,15 +135,12 @@ struct SuggestionCardList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if presentation.notice != nil {
-                SuggestionStaleNoticeView(identifier: "\(idPrefix)-stale-notice")
-            }
             ForEach(Array(presentation.cards.enumerated()), id: \.element.id) { index, card in
                 SuggestionCardView(
                     card: card, identifier: "\(idPrefix)-\(index)",
                     isSending: presentation.sendingID == card.id,
                     isBusy: presentation.sendingID != nil,
-                    tap: { presentation.tap(card) }, dismiss: { presentation.dismiss(card) }
+                    tap: { _ = presentation.tap(card) }, dismiss: { presentation.dismiss(card) }
                 )
                 .transition(.opacity)
             }

@@ -175,7 +175,7 @@ final class CreationChatFixture: @unchecked Sendable {
     private var answeredCapabilitiesRead = false
     /// KRI-756: how many times each thread asked for its first-prompt chips (the first answer is `pending`).
     private var suggestionAsks: [String: Int] = [:]
-    /// Threads whose stale suggestion was refused (`KRIA_SUGGESTION_CARDS=stale`); the next set they get is the refreshed one.
+    /// Threads whose stale suggestion was answered with "no longer fits" (`KRIA_SUGGESTION_CARDS=stale`); the next set they get is the refreshed one.
     private var staleSuggestionThreads: Set<String> = []
     private var dismissedSuggestions: [String: Set<String>] = [:]
     /// `KRIA_CHAT_SLOW_READS` (KRI-640): GETs of one chat (or anything under it) and every capabilities read but the
@@ -815,12 +815,6 @@ final class CreationChatFixture: @unchecked Sendable {
                 if mode == "offline" || mode == "offline-structured" { return nil }
                 return response(["detail": "Fixture rejected this prompt"], status: 422)
             }
-            // AI suggestion blocks: like the pinned-tap seam, a card the edit has outgrown is refused before any turn exists.
-            if ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CARDS"] == "stale",
-               (body["suggestion"] as? [String: Any])?["chip_id"] as? String == SuggestionCardsMocks.staleCardID {
-                staleSuggestionThreads.insert(id)
-                return response(["problem": ["code": SuggestionTap.staleConflictCode, "message": "This suggestion no longer fits your edit."]], status: 409)
-            }
             if events.contains(where: { $0["client_event_id"] as? String == turnID && $0["event_type"] as? String == "user_message" }) {
                 if parts.last == "turns" {
                     return response(["turn_id": turnID, "thread_revision": revision, "status": "completed"])
@@ -915,6 +909,12 @@ final class CreationChatFixture: @unchecked Sendable {
                 append("assistant_response", text: "Your draft is ready for review.", payload: ["turn_id": turnID, "turn_value": "response"])
                 append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
                 append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
+            } else if ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CARDS"] == "stale",
+                      (body["suggestion"] as? [String: Any])?["chip_id"] as? String == SuggestionCardsMocks.staleCardID {
+                // The real pinned-tap refusal (`plan_pinned_suggestion_turn`): an ordinary accepted turn whose reply says the
+                // card no longer fits, then a new set. No 409 and no error code, so the phone has to cope with a plain reply.
+                staleSuggestionThreads.insert(id)
+                append("assistant_response", text: SuggestionCardsMocks.noLongerFitsReply, payload: ["turn_id": turnID, "turn_value": "recovery"])
             } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS_ECHO"] == "1" {
                 let tap = body["suggestion"] as? [String: Any]
                 append("assistant_response", text: "Got it. suggestion[\(tap?["set_id"] as? String ?? "none")/\(tap?["chip_id"] as? String ?? "none")]",

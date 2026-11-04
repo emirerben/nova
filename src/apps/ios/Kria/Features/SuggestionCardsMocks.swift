@@ -12,8 +12,10 @@ enum SuggestionCardsMocks {
         ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CARDS_NONCE"].map { " \($0)" } ?? ""
     }
 
-    /// The card whose tap the fixture server refuses with `suggestion_stale`.
+    /// The card whose tap the fixture server answers with the "no longer fits" reply, as `plan_pinned_suggestion_turn` does.
     static let staleCardID = "ss_fixture_stale"
+    /// The server's English reply for a pin it will not run (`_NO_LONGER_FITS`).
+    static let noLongerFitsReply = "This suggestion no longer fits your edit. Nothing was changed, and I'm refreshing the ideas."
 
     /// One card per kind the registry knows, each with the fields that kind really carries.
     static var everyKind: [[String: Any]] { [
@@ -72,7 +74,7 @@ enum SuggestionCardsMocks {
         return set("sg_fixture_unknown", cards: [future, broken])
     }
 
-    /// A set whose first card the server will refuse as stale when tapped.
+    /// A set whose first card the server will answer with "no longer fits" when tapped.
     static func stale() -> [String: Any] {
         set("sg_fixture_stale", cards: [
             card("mute_clip", "Mute clip 3", why: "Wind drowns the audio", evidence: ["Wind in clip 3"],
@@ -82,7 +84,7 @@ enum SuggestionCardsMocks {
         ])
     }
 
-    /// What the server answers after it refused the stale card: a new `set_id` without it.
+    /// What the server answers after it declined the stale card: a new `set_id` without it.
     static func refreshed() -> [String: Any] {
         set("sg_fixture_refreshed", cards: [
             card("captions", "Add captions", why: "People talk in 4 clips", evidence: ["Speech in 4 of 6 clips"],

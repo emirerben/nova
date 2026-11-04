@@ -1927,25 +1927,23 @@ final class CreationUITests: XCTestCase {
         app.terminate()
     }
 
-    /// The server refuses a pinned card the edit has outgrown: no chat message, a readable "no longer fits", then the
-    /// refreshed set (new set_id, without that card).
-    func testStaleSuggestionCardShowsNoLongerFitsThenTheRefreshedSet() {
+    /// The server declines a pinned card the edit has outgrown the way it really does: an ordinary turn whose reply says
+    /// so (no error code). The reply is the notice, the card is gone, and the refreshed set (new set_id, without that
+    /// card) replaces it.
+    func testDeclinedSuggestionCardRepliesNoLongerFitsThenTheRefreshedSet() {
         let nonce = "s" + UUID().uuidString.prefix(6)
         let app = launchSuggestionCards("stale", nonce: nonce)
         let stale = app.buttons["suggestion-card-0"]
         XCTAssertTrue(stale.waitForExistence(timeout: 30))
         XCTAssertTrue(stale.label.contains("Mute clip 3"))
-        let sent = app.staticTexts["You: Mute clip 3, it has wind noise \(nonce)"]
         stale.tap()
 
-        let notice = app.descendants(matching: .any)["suggestion-card-stale-notice"].firstMatch
-        XCTAssertTrue(notice.waitForExistence(timeout: 10), "the refusal is shown, not swallowed")
-        XCTAssertEqual(notice.label, "That suggestion no longer fits your edit. Refreshing.")
-        keepScreenshot(app, "Stale suggestion notice")
-        XCTAssertFalse(sent.exists, "a refused pin makes no chat message")
+        let reply = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "no longer fits your edit")).firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 15), "the server's reply is the notice")
+        keepScreenshot(app, "Declined suggestion reply")
         let refreshed = app.buttons["suggestion-card-0"]
         XCTAssertTrue(refreshed.waitForExistence(timeout: 10))
-        XCTAssertTrue(eventually(timeout: 10) { refreshed.label.contains("Add captions") }, "the refreshed set replaced the stale card")
+        XCTAssertTrue(eventually(timeout: 10) { refreshed.label.contains("Add captions") }, "the refreshed set replaced the declined card")
         XCTAssertFalse(app.buttons["suggestion-card-1"].exists)
         XCTAssertTrue(app.buttons["Open editor"].exists, "the chat is intact")
         app.terminate()

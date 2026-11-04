@@ -958,6 +958,7 @@ private struct CreationWorkspaceView: View {
 
     private var timelineUpdateToken: String {
         let feed = planFeed.paced(by: deviceBuildStage)
+        let readyCardsToken = readyCardsPresentation?.cards.map(\.id).joined(separator: ",") ?? ""
         let liveThoughtToken = liveThoughtSummaries.map { "\($0.id):\($0.status.rawValue):\($0.text.count)" }.joined(separator: "|")
         return timeline.map(\.id).joined(separator: "|") + "|\(isThinking)|\(isSending)|\(failure?.message ?? "")"
             + "|feed\(feed.decidedCount)/\(feed.totalCount)"
@@ -965,7 +966,7 @@ private struct CreationWorkspaceView: View {
             + "|finishedEdits\(finishedEditSuggestionUpdate)"
             // KRI-769: the after-render chips arrive after the card, below the fold; a reader at the bottom follows them in.
             + "|readyChips\(suggestionChips(for: .ready).map(\.id).joined(separator: ","))"
-            + "|readyCards\(readyCardsPresentation.map { $0.cards.map(\.id).joined(separator: ",") + ($0.notice == nil ? "" : "!") } ?? "")"
+            + "|readyCards\(readyCardsToken)"
     }
 
     private var streamingThoughtSummaries: [KriaThoughtSummary] {
@@ -2119,7 +2120,7 @@ private struct CreationWorkspaceView: View {
               suggestionSetKey == suggestionScopeKey,
               case .cards(let cards) = SuggestionReadyContent.resolve(set: suggestionSet) else { return nil }
         return SuggestionCardsPresentation(
-            cards: suggestionLedger.visible(cards), notice: suggestionLedger.staleNotice,
+            cards: suggestionLedger.visible(cards),
             tap: { sendSuggestionCard($0) }, dismiss: { dismissSuggestionCard($0) },
             refresh: { suggestionLedger.requestRefresh() },
             sendingID: cards.first { suggestionLedger.phase(of: $0.id) == .sending }?.id
@@ -2156,19 +2157,20 @@ private struct CreationWorkspaceView: View {
     /// A card tap is the creator's chat message (`prompt`) pinned to the card it came from. It rides the ordinary
     /// send path, so the bubble, idempotency key and revision handling are shared. The pin names the set the creator
     /// SAW, not whatever set the chat holds by the time the request goes out; the server decides if it still fits.
-    private func sendSuggestionCard(_ card: SuggestionCard) {
-        guard !isSending, !isActing, !isThinking, let setID = suggestionSet?.setID, suggestionLedger.begin(card) else { return }
+    /// A refused pin comes back as an ordinary accepted turn whose reply says the card no longer fits, so the card
+    /// is handled either way and the reply in the chat is the notice.
+    /// Returns whether the tap started, so the editor's Improve sheet closes only for a tap that is going out.
+    private func sendSuggestionCard(_ card: SuggestionCard) -> Bool {
+        guard !isSending, !isActing, !isThinking, let setID = suggestionSet?.setID, suggestionLedger.begin(card) else { return false }
         let tap = SuggestionTap(setID: setID, chipID: card.id)
         Task {
-            await send(message: card.prompt, suggestion: tap, keepsDraft: true) { outcome in
-                switch outcome {
-                case .accepted: suggestionLedger.finish(card, accepted: true)
-                case .stale: suggestionLedger.markStale(card, setID: setID)
-                }
+            await send(message: card.prompt, suggestion: tap, keepsDraft: true) { _ in
+                suggestionLedger.finish(card, accepted: true)
             }
             // Nothing reached the server (offline, rejected, blocked): the card is tappable again.
             suggestionLedger.finish(card, accepted: false)
         }
+        return true
     }
 
     private func dismissSuggestionCard(_ card: SuggestionCard) {
@@ -2360,12 +2362,6 @@ private struct CreationWorkspaceView: View {
             submissionAnchor = nil
             clearSubmissionReceipt()
             if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
-            // AI suggestion blocks: the pinned card no longer fits the edit. No turn was created; the card turns into
-            // a "no longer fits" notice and the chat asks for a fresh set. Nothing here is the creator's to fix.
-            if suggestion != nil, error.conflictCode == SuggestionTap.staleConflictCode {
-                suggestionOutcome?(.stale)
-                return
-            }
             // KRI-588: the question is already closed on the server. Refresh and close the card here too, with
             // no alert: there is nothing left for the creator to fix.
             if staleSongRange, let songRangeQuestionID {

@@ -218,11 +218,12 @@ struct NativeEditorView: View {
                 if let improve {
                     ImproveSheet(
                         presentation: SuggestionCardsPresentation(
-                            cards: improve.cards, notice: improve.notice,
+                            cards: improve.cards,
                             tap: { card in
+                                guard improve.tap(card) else { return false }
                                 opensConversationAfterImprove = true
                                 showsImprove = false
-                                improve.tap(card)
+                                return true
                             },
                             dismiss: improve.dismiss, refresh: improve.refresh, sendingID: improve.sendingID
                         ),

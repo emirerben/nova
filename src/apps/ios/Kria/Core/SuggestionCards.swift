@@ -146,47 +146,27 @@ enum SuggestionCardPhase: Equatable, Sendable {
     /// The tap was accepted. The card leaves until the next set.
     case applied
     case dismissed
-    /// The server said the card no longer fits the edit.
-    case stale
 }
 
 /// What happened to a card's tap once it left the phone. A tap that never reached the server reports nothing.
 enum SuggestionTapOutcome: Equatable, Sendable {
     case accepted
-    /// The server refused the pin with `suggestion_stale`: the card no longer fits the edit.
-    case stale
-}
-
-/// The "no longer fits" outcome of a pinned tap, shown in place of the card until the refreshed set arrives.
-struct SuggestionStaleNotice: Equatable, Sendable {
-    static let message = "That suggestion no longer fits your edit. Refreshing."
-    let cardID: String
-    let setID: String
 }
 
 /// The decisions the card surfaces make, kept apart from the views so unit tests can pin them.
 @MainActor
 final class SuggestionCardLedger: ObservableObject {
     @Published private(set) var phases: [String: SuggestionCardPhase] = [:]
-    @Published private(set) var staleNotice: SuggestionStaleNotice?
-    /// Bumped to make the chat ask the server again (after a stale tap and after an editor Save).
+    /// Bumped to make the chat ask the server again (after an editor Save or the Improve sheet's "Check again").
     @Published private(set) var refreshToken = 0
     /// The set the phases belong to. A new set clears everything but dismissals, which stay for the chat's life.
     private var setID: String?
     private var dismissed: Set<String> = []
-    /// How long "no longer fits" stays readable. The refresh it triggers can land in a blink, and a notice nobody
-    /// had time to read is the card vanishing for no reason.
-    private let noticeDuration: Duration
-    private var noticeTask: Task<Void, Never>?
-
-    init(noticeDuration: Duration = .seconds(4)) { self.noticeDuration = noticeDuration }
-
     func phase(of id: String) -> SuggestionCardPhase { dismissed.contains(id) ? .dismissed : phases[id] ?? .idle }
 
-    /// Cards still worth drawing, in the order given. A card in `.sending` stays so the creator sees it settle;
-    /// a stale one stays only as the notice.
+    /// Cards still worth drawing, in the order given. A card in `.sending` stays so the creator sees it settle.
     func visible(_ cards: [SuggestionCard]) -> [SuggestionCard] {
-        cards.filter { switch phase(of: $0.id) { case .idle, .sending: true; case .applied, .dismissed, .stale: false } }
+        cards.filter { switch phase(of: $0.id) { case .idle, .sending: true; case .applied, .dismissed: false } }
     }
 
     /// A set arrived. Handled cards come back only for a different set: a tapped card is still the same card in
@@ -212,19 +192,6 @@ final class SuggestionCardLedger: ObservableObject {
         phases[card.id] = accepted ? .applied : .idle
     }
 
-    func markStale(_ card: SuggestionCard, setID: String) {
-        phases[card.id] = .stale
-        let notice = SuggestionStaleNotice(cardID: card.id, setID: setID)
-        staleNotice = notice
-        noticeTask?.cancel()
-        noticeTask = Task { [noticeDuration] in
-            try? await Task.sleep(for: noticeDuration)
-            guard !Task.isCancelled, staleNotice == notice else { return }
-            staleNotice = nil
-        }
-        refreshToken += 1
-    }
-
     func dismiss(_ card: SuggestionCard) {
         dismissed.insert(card.id)
         phases[card.id] = .dismissed
@@ -242,11 +209,6 @@ extension SuggestionSet {
         guard state == wanted, status == "ok" else { return [] }
         return cards.filter { ($0.requiresProtocol ?? 0) <= appProtocol }
     }
-}
-
-extension SuggestionTap {
-    /// A 409 with this code means the pinned card no longer fits the edit. The server sent no turn for it.
-    static let staleConflictCode = "suggestion_stale"
 }
 
 /// What the ready stage draws for the server's set: cards when the set carries v2 suggestions, otherwise the

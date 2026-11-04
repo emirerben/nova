@@ -161,22 +161,6 @@ final class SuggestionCardsTests: XCTestCase {
         XCTAssertFalse(ledger.begin(a), "an applied card cannot be sent twice")
     }
 
-    func testAStaleTapShowsTheNoticeLongEnoughToReadAndAsksForAFreshSet() async throws {
-        let ledger = SuggestionCardLedger(noticeDuration: .milliseconds(120))
-        let a = card(id: "a"), b = card(id: "b")
-        let tokenBefore = ledger.refreshToken
-        XCTAssertTrue(ledger.begin(a))
-        ledger.markStale(a, setID: "sg_1")
-        XCTAssertEqual(ledger.staleNotice, SuggestionStaleNotice(cardID: "a", setID: "sg_1"))
-        XCTAssertEqual(ledger.visible([a, b]).map(\.id), ["b"])
-        XCTAssertGreaterThan(ledger.refreshToken, tokenBefore)
-        // The refresh can land at once; the notice must still be there to read.
-        ledger.reconcile(with: SuggestionSet(setID: "sg_2", state: "ready", status: "ok", chips: [], cards: [b]))
-        XCTAssertNotNil(ledger.staleNotice, "a fast refresh does not swallow the notice")
-        try await Task.sleep(for: .milliseconds(400))
-        XCTAssertNil(ledger.staleNotice, "and it goes by itself")
-    }
-
     func testANewSetBringsBackHandledCardsExceptDismissedOnes() {
         let ledger = SuggestionCardLedger()
         let a = card(id: "a"), b = card(id: "b")
@@ -220,12 +204,11 @@ final class SuggestionCardsTests: XCTestCase {
         }
     }
 
-    func testTheCardTapReusesThePinnedWireShapeAndTheStaleCodeIsTheServersName() throws {
+    func testTheCardTapReusesThePinnedWireShape() throws {
         let tap = SuggestionTap(setID: "sg_1", chipID: "ss_9")
         let request = SubmitTurnRequest(message: "Mute clip 3, it has wind noise", clientEventID: "c", expectedThreadRevision: 4, suggestion: tap)
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
         XCTAssertEqual(body["suggestion"] as? [String: String], ["set_id": "sg_1", "chip_id": "ss_9"])
         XCTAssertEqual(body["message"] as? String, "Mute clip 3, it has wind noise")
-        XCTAssertEqual(SuggestionTap.staleConflictCode, "suggestion_stale")
     }
 }
