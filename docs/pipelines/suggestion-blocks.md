@@ -68,6 +68,13 @@ Code: `services/suggestions/pinned.py` (ring reads, lane allow-list, rebuild),
   fresh step on every later tap. Only the exact stored action on its exact base can run again. A
   refreshed set has a new `set_id` and offers the change again from the current edit.
 
+Kill-switch window (accepted). The pin is stamped at submit and read again at claim. If
+`KRIA_SUGGESTION_PINNED_TAPS_ENABLED` is switched off, or the creator leaves the chips allow-list,
+between those two points, the stamp is ignored and the card's words go to the legacy planner, the
+same as a KRI-756 chip. Turning the flag off therefore means "legacy behavior from now on", not
+"finish what was pinned". `request_digest` follows the flag too, so a client retry of the same
+`client_event_id` across a flip is a digest conflict, not a replay.
+
 ## Flags (all default off; subordinate to `KRIA_SUGGESTION_CHIPS_ENABLED`)
 
 `KRIA_SUGGESTION_PINNED_TAPS_ENABLED`, `KRIA_SUGGESTION_SIGNALS_ENABLED`,

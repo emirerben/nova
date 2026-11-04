@@ -4132,6 +4132,8 @@ def _claim(
         pin = source_payload.get("pinned_suggestion") if isinstance(source_payload, dict) else None
         if isinstance(pin, dict) and pin and settings.kria_suggestion_pinned_taps_enabled:
             # A tapped suggestion card: only with the flag on, so every other snapshot is unchanged.
+            # Read again here on purpose: switching the flag off must stop pinned plans even for
+            # a tap stamped before it (the card's words then take the legacy path).
             claimed_snapshot["pinned_suggestion"] = pin
         if _previous_turn_hit_provider_deadline(db, turn, _model_message(source)):
             # KRI-1037: only when true, so every other snapshot is unchanged.
