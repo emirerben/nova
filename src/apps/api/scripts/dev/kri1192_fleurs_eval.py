@@ -81,19 +81,19 @@ def _fetch(url: str):
     return urllib.request.urlopen(request, timeout=60)  # noqa: S310 - fixed https host
 
 
-def download(out: Path, config: str, per_language: int) -> list[dict]:
+def download(out: Path, config: str, per_language: int, split: str = "test") -> list[dict]:
     folder = out / "audio" / config
     manifest_path = folder / "manifest.json"
     if manifest_path.exists():
         return json.loads(manifest_path.read_text(encoding="utf-8"))
     folder.mkdir(parents=True, exist_ok=True)
     rows = {}
-    tsv = _fetch(f"{FLEURS}/{config}/test.tsv").read().decode("utf-8")
+    tsv = _fetch(f"{FLEURS}/{config}/{split}.tsv").read().decode("utf-8")
     for r in csv.reader(io.StringIO(tsv), delimiter="\t", quoting=csv.QUOTE_NONE):
         rows[r[1]] = {"id": r[0], "file": r[1], "raw": r[2], "samples": int(r[5])}
     kept: list[dict] = []
     seen: set[str] = set()
-    with _fetch(f"{FLEURS}/{config}/audio/test.tar.gz") as response:
+    with _fetch(f"{FLEURS}/{config}/audio/{split}.tar.gz") as response:
         with tarfile.open(fileobj=response, mode="r|gz") as archive:
             for member in archive:
                 row = rows.get(member.name.rsplit("/", 1)[-1])
@@ -202,12 +202,15 @@ def main() -> int:
     parser.add_argument("--model", required=True, help="whisper.cpp ggml model path")
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--per-language", type=int, default=12)
+    parser.add_argument(
+        "--split", default="test", choices=("test", "dev"), help="dev = a held-out second set"
+    )
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     lingua = lingua_detector()
     rows: list[dict] = []
     for config, language in CONFIGS.items():
-        for clip in download(args.out, config, args.per_language):
+        for clip in download(args.out, config, args.per_language, args.split):
             stem = clip["file"].rsplit(".", 1)[0]
             wav = args.out / "audio" / config / clip["file"]
             heard = whisper(args.model, wav, args.out / "asr" / config / stem)

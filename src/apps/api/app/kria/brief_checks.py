@@ -79,8 +79,8 @@ from app.pipeline.caption_language import (
     ASK_END,
     LANGUAGE_NAMES,
     LANGUAGE_WORDS,
-    canonical_caption_language,
     can_deliver_caption_language,
+    canonical_caption_language,
     caption_language_decision,
     caption_language_verdict,
 )
