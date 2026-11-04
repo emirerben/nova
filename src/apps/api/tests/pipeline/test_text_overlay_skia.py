@@ -296,6 +296,11 @@ _TR_UNSAFE_FONTS: set[str] = {
     # the form matcher's TR hint biases toward simpler effects which sharply
     # narrows this exposure.
     "PermanentMarker-Regular.ttf",
+    # KRI-1192 Hangul script-fallback faces: the Noto Sans KR source has no ş ğ ı İ.
+    # Never chosen for Turkish: they are deprecated (never offered) and the whole-run
+    # glyph fallback only reaches them for text with Hangul (font_coverage._script_face).
+    "NotoSansKR-Regular.ttf",
+    "NotoSansKR-Bold.ttf",
     # Satisfy added in v0.4.94.0 — script font lacks Turkish diacritics (İ ı Ş ş Ğ ğ).
     # Great Vibes and Patrick Hand DO cover the TR diacritic set and are NOT listed here.
     # Same TODO(tr-cycle-filter) applies.

@@ -32,7 +32,11 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.pipeline.caption_language import crosscheck_detected_language
+from app.pipeline.caption_language import (
+    canonical_caption_language,
+    crosscheck_detected_language,
+    serbian_latin,
+)
 from app.services.speech_segments import sentence_groups
 from app.services.transcript_quality import (
     exceeds_speech_rate,
@@ -99,10 +103,19 @@ def heard_share(text: str | None, reference: str | None) -> float:
     return sum(1 for token in tokens if token in heard) / len(tokens)
 
 
+def _one_alphabet(detected: str | None, text: str | None) -> str:
+    """Serbian is compared in Latin letters (KRI-1192): whisper writes Serbian in Latin,
+    Gemini may write it in Cyrillic, and the same words must count as the same words."""
+    if canonical_caption_language(detected) == "sr":
+        return serbian_latin(text)
+    return str(text or "")
+
+
 def suspect_reason(text: str, detected: str | None, reference: str | None) -> str | None:
     """Why whisper's ``text`` is probably not what was said, or None when nothing says so."""
     if not str(text or "").strip() or not str(reference or "").strip():
         return None
+    text, reference = _one_alphabet(detected, text), _one_alphabet(detected, reference)
     if crosscheck_detected_language(detected, reference_text=reference) is not None:
         return "language"
     ours, theirs = dominant_script(text), dominant_script(reference)
@@ -133,6 +146,7 @@ def pick_spoken_words(
     only skips that language.
     """
     words = clean_words(words, duration_s=duration_s)
+    reference = _one_alphabet(detected, reference) if reference else reference
     reason = suspect_reason(_text(words), detected, reference)
     if reason is None:
         return SpokenWords(words=words, language=detected, outcome="kept")

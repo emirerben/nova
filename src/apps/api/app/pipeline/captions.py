@@ -7,7 +7,9 @@ which produces the "karaoke" caption effect common on TikTok/Reels.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+import unicodedata
+from dataclasses import dataclass, replace
+from functools import lru_cache
 from typing import Any
 
 from app.pipeline.ass_utils import format_ass_time, sanitize_ass_text
@@ -15,11 +17,56 @@ from app.pipeline.transcribe import Transcript, Word
 
 # A word ends a sentence when its text ends in terminal punctuation, allowing a
 # trailing closing quote/bracket ("...better!" or "...over."). Used to start a new
-# caption cue at every sentence boundary.
-_SENTENCE_END_RE = re.compile(r"[.!?]+[\"'’”)\]]*$")
-# A word ends a clause (comma/semicolon/colon) — the preferred break point when a
-# single long sentence has to be split across caption blocks.
-_CLAUSE_END_RE = re.compile(r"[,;:]+[\"'’”)\]]*$")
+# caption cue at every sentence boundary. KRI-1192: the Arabic question mark "؟" and
+# the Greek question mark U+037E (which NFC folds into ";", see `ends_sentence`) never
+# occur in English or Turkish text.
+_SENTENCE_END_RE = re.compile(r"[.!?؟;]+[\"'’”)\]]*$")
+# Greek writes its question mark as ";". It ends a sentence only on a Greek word, so
+# an English/Turkish semicolon stays a clause break (see `ends_sentence`).
+_GREEK_QUESTION_RE = re.compile(r";[\"'’”)\]]*$")
+# A word ends a clause (comma/semicolon/colon, and the Arabic comma "،" and semicolon
+# "؛") — the preferred break point when a single long sentence has to be split across
+# caption blocks.
+_CLAUSE_END_RE = re.compile(r"[,;:،؛]+[\"'’”)\]]*$")
+
+
+def _has_greek_letter(token: str) -> bool:
+    return any(ch.isalpha() and unicodedata.name(ch, "").startswith("GREEK") for ch in token)
+
+
+def ends_sentence(token: str) -> bool:
+    """True when the caption word ``token`` ends a sentence (KRI-1192).
+
+    Terminal ``.!?`` and the Arabic ``؟``, plus ``;`` on a word written in Greek
+    letters (the Greek question mark). The cue builders do not know the caption
+    language, so the word's own script is the signal: an English or Turkish
+    ``;`` is never a sentence end.
+    """
+    token = token.strip()
+    if _SENTENCE_END_RE.search(token):
+        return True
+    return bool(_GREEK_QUESTION_RE.search(token)) and _has_greek_letter(token)
+
+
+def text_ends_sentence(text: str) -> bool:
+    """:func:`ends_sentence` for the last word of ``text``."""
+    words = str(text or "").split()
+    return bool(words) and ends_sentence(words[-1])
+
+
+def caption_display_width(text: str) -> int:
+    """Characters as a caption line spends them: an East Asian wide letter counts two.
+
+    A Hangul syllable is about as wide as two Latin letters, so a character budget
+    that counts it once lets a Korean cue run twice as wide (KRI-1192 F9). Every
+    other character counts one, so Latin, Greek, Cyrillic and Arabic widths equal
+    ``len(text)``.
+    """
+    if text.isascii():
+        return len(text)
+    return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in text)
+
+
 # A token carrying no word characters (a stray "." or "…") — attach it to the
 # previous word instead of letting it float as its own token / cue.
 _PURE_PUNCT_RE = re.compile(r"^[^\w]+$")
@@ -60,13 +107,17 @@ def generate_ass(
     if not words:
         _write_empty_ass(output_path, font_name=font_name)
         return
+    # KRI-1192: one covering face (None keeps the legacy Arial header untouched).
+    font_name, size_scale = _burn_face(
+        font_name, " ".join(w.text for w in words), legacy_header=True
+    )
 
     if style == "plain":
         lines = _build_plain_lines(words, offset_s=start_s)
     else:
         lines = _build_dialogue_lines(words, offset_s=start_s)
 
-    _write_ass(lines, output_path, font_name=font_name)
+    _write_ass(lines, output_path, font_name=font_name, size_scale=size_scale)
 
 
 def _coalesce_words(words: list[Word]) -> list[tuple[str, float, float]]:
@@ -156,10 +207,11 @@ def _split_sentence_by_budget(sentence: list[Word], budget: CueBudget) -> list[l
     """
     n = len(sentence)
     texts = [w.text.strip() for w in sentence]
-    # prefix[i] = characters of words[:i] joined by single spaces (excluding the lead space)
+    # prefix[i] = characters of words[:i] joined by single spaces (excluding the lead
+    # space); a wide (Hangul) letter counts two, see `caption_display_width`.
     prefix = [0]
     for t in texts:
-        prefix.append(prefix[-1] + len(t) + 1)
+        prefix.append(prefix[-1] + caption_display_width(t) + 1)
 
     def chars(i: int, j: int) -> int:
         return prefix[j] - prefix[i] - 1
@@ -298,7 +350,7 @@ def build_plain_cues(
 
     for w in words:
         sentence.append(w)
-        if _SENTENCE_END_RE.search(w.text.strip()):
+        if ends_sentence(w.text):
             _emit()
     _emit()
     return cues
@@ -540,6 +592,205 @@ def _cue_keep_together_pairs(cue: dict[str, Any]) -> list[tuple[int, int]]:
     return pairs
 
 
+# ── KRI-1192: one covering face per caption burn ────────────────────────────
+#
+# libass draws a letter its face lacks from whatever fontconfig finds (DejaVu in the
+# prod image, nothing at all for Hangul), so a Korean caption burned as boxes and a
+# Greek word in Montserrat mixed two faces. Every ASS writer below resolves the face
+# it burns through `glyph_safe_ass_family`: the SAME `font_coverage.glyph_safe_family`
+# rule (partner -> `_script_fallbacks`) the phone and the Skia renderer use, applied to
+# the union of the burn's text so one burn never flips faces cue by cue. Text with no
+# letter outside the Latin script is never re-faced: English and Turkish ASS files
+# stay byte-identical, libass's own fallback included.
+
+
+@lru_cache(maxsize=64)
+def _registry_key_for_ass_family(family: str) -> str | None:
+    """The registry face libass burns for ASS family ``family``.
+
+    Captions burn with ``Bold=-1``, so among the registry keys sharing that
+    ``ass_name`` the non-deprecated face closest to weight 700 wins
+    ("TikTok Sans" -> "TikTok Sans Bold"). None for a family the bundle lacks.
+    """
+    from app.pipeline.font_coverage import _registry  # noqa: PLC0415
+
+    ranked = sorted(
+        (bool(entry.get("deprecated")), abs(int(entry.get("weight", 400)) - 700), index, key)
+        for index, (key, entry) in enumerate(_registry().get("fonts", {}).items())
+        if entry.get("ass_name") == family
+    )
+    return ranked[0][3] if ranked else None
+
+
+def glyph_safe_ass_family(family: str | None, text: str) -> str | None:
+    """The ASS family that draws every letter of ``text`` in ONE face (KRI-1192).
+
+    ``family`` is a burn-ready libass family name (a registry ``ass_name``, the
+    output of ``narrated_assembler.resolve_caption_font``). When ``text`` needs a
+    letter outside the Latin script and that face lacks one, the whole burn moves
+    to the `font_coverage.glyph_safe_family` face (TikTok Sans for Greek/Cyrillic,
+    Noto Sans KR for Hangul, Noto Sans Arabic for Arabic) and its ``ass_name`` is
+    returned. Latin-only text, a covering face, and a family the registry does not
+    know all return ``family`` unchanged.
+    """
+    if not family or not text:
+        return family
+    from app.pipeline.font_coverage import (  # noqa: PLC0415
+        _registry,
+        glyph_safe_family,
+        needs_non_latin_letter,
+    )
+
+    if not needs_non_latin_letter(text):
+        return family
+    key = _registry_key_for_ass_family(family)
+    if key is None:
+        return family
+    safe = glyph_safe_family(key, text)
+    if not safe or safe == key:
+        return family
+    ass_name = _registry().get("fonts", {}).get(safe, {}).get("ass_name")
+    return str(ass_name) if ass_name else family
+
+
+def _burn_text(cues: list[dict]) -> str:
+    return " ".join(str(cue.get("text") or "") for cue in cues)
+
+
+def _burn_face(
+    font_name: str | None, text: str, *, legacy_header: bool
+) -> tuple[str | None, float]:
+    """``(face, size_scale)``: ``font_name`` made glyph-safe for the burn's ``text``.
+
+    ``None`` burns TikTok Sans in every header except the legacy Arial one
+    (``_ASS_HEADER``), which is left alone (Arial is not a bundled face).
+    ``size_scale`` is :func:`_face_size_scale` (1.0 when the face is kept).
+    """
+    effective = font_name or ("Arial" if legacy_header else "TikTok Sans")
+    safe = glyph_safe_ass_family(effective, text)
+    if safe == effective:
+        return font_name, 1.0
+    return safe, _face_size_scale(effective, safe)
+
+
+def _face_size_scale(requested: str | None, burned: str | None) -> float:
+    """ASS font-size factor that keeps the em of ``requested`` when ``burned`` draws.
+
+    libass sizes a face so its OS/2 win ascent + descent spans the ASS Fontsize, and
+    Noto Sans Arabic's win height (it leaves room for stacked marks) is far taller
+    than TikTok Sans's: at the same Fontsize its letters drew at 63% of the caption's
+    size, while the phone (CoreText sizes by em) drew them full size. Scaling every
+    size of a re-faced burn by the em ratio keeps the creator's caption size.
+    """
+    if not requested or not burned or requested == burned:
+        return 1.0
+    from app.pipeline.render_geometry import libass_em_scale_for  # noqa: PLC0415
+
+    old = libass_em_scale_for(_registry_key_for_ass_family(requested))
+    new = libass_em_scale_for(_registry_key_for_ass_family(burned))
+    return old / new if old and new else 1.0
+
+
+_ASS_FONT_SIZE_TAG_RE = re.compile(r"\\fs(\d+(?:\.\d+)?)")
+
+
+def _scaled_font_sizes(header: str, lines: list[str], scale: float) -> tuple[str, list[str]]:
+    """The Default style's Fontsize and every ``\\fsN`` tag multiplied by ``scale``."""
+
+    def size(value: str) -> str:
+        return str(max(1, round(float(value) * scale)))
+
+    out = header.splitlines(keepends=True)
+    for index, line in enumerate(out):
+        if line.startswith("Style: Default,"):
+            fields = line.split(",")
+            fields[2] = size(fields[2])
+            out[index] = ",".join(fields)
+    return "".join(out), [
+        _ASS_FONT_SIZE_TAG_RE.sub(lambda m: "\\fs" + size(m.group(1)), line) for line in lines
+    ]
+
+
+def _needs_auto_base_direction(lines: list[str]) -> bool:
+    """True when a dialogue line holds a right-to-left letter (Arabic, Hebrew)."""
+    return any(
+        not line.isascii() and any(unicodedata.bidirectional(ch) in ("R", "AL") for ch in line)
+        for line in lines
+    )
+
+
+def _with_auto_base_direction(header: str) -> str:
+    """Set the Default style's ``Encoding`` to -1 (KRI-1192 F7).
+
+    libass gives every paragraph a left-to-right base direction for any Encoding
+    other than -1; -1 detects it from the first strong letter. With a forced LTR
+    base an Arabic sentence ended with its "؟" on the right and a word-pop line
+    (one colour run per word) laid its words out left to right. Only written when a
+    caption holds a right-to-left letter, so every other ASS file is unchanged.
+    """
+    lines = header.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if line.startswith("Style: Default,"):
+            fields = line.rstrip("\n").split(",")
+            fields[-1] = "-1"
+            lines[index] = ",".join(fields) + "\n"
+    return "".join(lines)
+
+
+# The one-big-word look (`_ass_header_word`): 120 px with a 6 px outline on the
+# 1080-wide PlayRes. A single long word cannot wrap, so a German/Portuguese/Danish
+# compound ran off both frame edges (KRI-1192 F9).
+_WORD_STYLE_SIZE_PX = 120
+_WORD_STYLE_OUTLINE_PX = 6
+_PLAY_RES_X = 1080
+# A shrunk word is sized to this width, leaving air inside the frame.
+_WORD_FIT_WIDTH_PX = 1000
+_MIN_WORD_SIZE_PX = 36
+
+
+def _fit_long_words(
+    cues: list[dict],
+    font_name: str | None,
+    appearance: CaptionStyleOverrides | None,
+    size_scale: float = 1.0,
+) -> list[dict]:
+    """Burn copies of ``cues`` with a per-cue ``size_px`` for a word that would leave
+    the frame in the one-big-word style.
+
+    Only a word whose drawn width (libass's own size model, see
+    `render_geometry.libass_line_width`) plus its outline is wider than the frame is
+    shrunk; every word that fits today keeps its exact bytes. A creator's own
+    per-cue size is never touched. The persisted cues are never changed.
+    """
+    from app.pipeline.render_geometry import libass_line_width  # noqa: PLC0415
+
+    size = (
+        appearance.font_size_px if appearance and appearance.font_size_px else _WORD_STYLE_SIZE_PX
+    )
+    outline = (
+        appearance.stroke_width
+        if appearance and appearance.stroke_width is not None
+        else _WORD_STYLE_OUTLINE_PX
+    )
+    fitted: list[dict] = []
+    for cue in cues:
+        if _cue_size_override(cue) is None:
+            face = _cue_font_family_override(cue) or font_name or "TikTok Sans"
+            key = _registry_key_for_ass_family(face)
+            width = (
+                libass_line_width(
+                    str(cue.get("text") or "").strip(), registry_key=key, size_px=size * size_scale
+                )
+                if key
+                else None
+            )
+            if width and width + 2 * outline > _PLAY_RES_X:
+                fit = int(size * _WORD_FIT_WIDTH_PX / width)
+                cue = {**cue, "size_px": max(_MIN_WORD_SIZE_PX, min(size, fit))}
+        fitted.append(cue)
+    return fitted
+
+
 # Per-cue style overrides (plan PR-A "This caption" section). A cue's font_family/
 # text_color/size_px are OPTIONAL — absent (the common case) means "inherit the
 # variant defaults" and must burn byte-identical to pre-feature output. The three
@@ -556,12 +807,18 @@ def _cue_font_family_override(cue: dict[str, Any]) -> str | None:
     `voiceover_caption_font` is resolved once at the same call site). The
     metacharacter strip here is defense in depth, matching
     `SmartCaptionRenderPolicy.font_family`'s cleaning.
+
+    KRI-1192: the override is made glyph-safe for the cue's own text
+    (`glyph_safe_ass_family`), so a Greek cue set in Montserrat burns in a face
+    that has Greek letters. Latin text keeps the creator's face.
     """
     font_family = cue.get("font_family")
     if not font_family:
         return None
     safe = re.sub(r"[,{}\[\]\r\n]", "", str(font_family)).strip()
-    return safe or None
+    if not safe:
+        return None
+    return glyph_safe_ass_family(safe, str(cue.get("text") or ""))
 
 
 def _cue_size_override(cue: dict[str, Any]) -> int | None:
@@ -655,8 +912,10 @@ def prepare_smart_caption_cues(
 
 # Splits corrected text into display sentences at terminal punctuation. The
 # negative lookbehind keeps Turkish ordinals/abbreviations together: "3. gün"
-# must not split into a dangling "3." caption.
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])(?<!\d\.)\s+")
+# must not split into a dangling "3." caption. KRI-1192: also after the Arabic "؟"
+# and after a ";" that closes a Greek word (the Greek question mark, see
+# `ends_sentence`), never after an English/Turkish ";".
+_SENTENCE_SPLIT_RE = re.compile(r"(?:(?<=[.!?…؟;])(?<!\d\.)|(?<=[Ͱ-Ͽἀ-῿];))\s+")
 
 
 def resplit_cues_into_sentences(cues: list[dict]) -> list[dict]:
@@ -741,7 +1000,7 @@ def resplit_cues_into_sentences(cues: list[dict]) -> list[dict]:
         p = pieces[i]
         text = str(p["text"]).strip()
         is_fragment = (
-            not _SENTENCE_END_RE.search(text) and len(text.split()) <= 2 and i + 1 < len(pieces)
+            not text_ends_sentence(text) and len(text.split()) <= 2 and i + 1 < len(pieces)
         )
         if is_fragment:
             nxt = pieces[i + 1]
@@ -821,6 +1080,26 @@ def generate_ass_from_cues(
             appearance=style_overrides,
         )
         return
+    # KRI-1192: the whole burn (and the Smart Caption measure) in ONE face that has
+    # every letter of every cue; Latin-only text keeps its face byte-for-byte.
+    burn_text = _burn_text(valid)
+    font_name, size_scale = _burn_face(
+        font_name,
+        burn_text,
+        legacy_header=(
+            style not in ("word", "word_pop")
+            and margin_v is None
+            and style_overrides is None
+            and policy is None
+        ),
+    )
+    if policy is not None:
+        # The Smart header draws the policy face, so its size follows that swap.
+        safe_policy_face = glyph_safe_ass_family(policy.font_family, burn_text)
+        size_scale = 1.0
+        if safe_policy_face and safe_policy_face != policy.font_family:
+            size_scale = _face_size_scale(policy.font_family, safe_policy_face)
+            policy = replace(policy, font_family=safe_policy_face)
     if style_overrides and style_overrides.highlight_spoken_word is not None:
         _write_editor_caption_cues(
             valid,
@@ -830,10 +1109,13 @@ def generate_ass_from_cues(
             appearance=style_overrides,
             pop_in=pop_in,
             smart_policy=policy,
+            size_scale=size_scale,
         )
         return
     if policy:
         valid = prepare_smart_caption_cues(valid, policy)
+    elif style == "word":
+        valid = _fit_long_words(valid, font_name, style_overrides, size_scale)
     lines = _format_cue_lines(
         valid,
         prefix_tags=_SENTENCE_POP_TAGS if pop_in else "",
@@ -847,6 +1129,7 @@ def generate_ass_from_cues(
         margin_v=margin_v,
         smart_policy=policy,
         appearance=style_overrides,
+        size_scale=size_scale,
     )
 
 
@@ -928,6 +1211,8 @@ def generate_word_pop_ass(
     :func:`_word_windows_for_cue` (real when unedited, synthesized per edited cue).
     """
     style_overrides = CaptionStyleOverrides.from_value(appearance)
+    # KRI-1192: one covering face for the whole burn (see `glyph_safe_ass_family`).
+    font_name, size_scale = _burn_face(font_name, _burn_text(cues), legacy_header=False)
     if style_overrides and style_overrides.highlight_spoken_word is not None:
         _write_editor_caption_cues(
             cues,
@@ -935,6 +1220,7 @@ def generate_word_pop_ass(
             font_name=font_name,
             margin_v=margin_v if margin_v is not None else SUBTITLED_CAPTION_MARGIN_V,
             appearance=style_overrides,
+            size_scale=size_scale,
         )
         return
     active_ass_color = (
@@ -977,6 +1263,7 @@ def generate_word_pop_ass(
         style="word_pop",
         margin_v=mv,
         appearance=style_overrides,
+        size_scale=size_scale,
     )
 
 
@@ -989,6 +1276,7 @@ def _write_editor_caption_cues(
     appearance: CaptionStyleOverrides,
     pop_in: bool = False,
     smart_policy: SmartCaptionRenderPolicy | None = None,
+    size_scale: float = 1.0,
 ) -> None:
     """Independent sentence/word display and highlighting, opted into by the editor.
 
@@ -1038,6 +1326,7 @@ def _write_editor_caption_cues(
         margin_v=margin_v,
         appearance=appearance,
         smart_policy=smart_policy,
+        size_scale=size_scale,
     )
 
 
@@ -1080,6 +1369,7 @@ def _write_ass(
     margin_v: int | None = None,
     smart_policy: SmartCaptionRenderPolicy | None = None,
     appearance: CaptionStyleOverrides | None = None,
+    size_scale: float = 1.0,
 ) -> None:
     if smart_policy is not None:
         header = _ass_header_smart(smart_policy)
@@ -1104,8 +1394,14 @@ def _write_ass(
         header = _ASS_HEADER
     else:
         header = _ass_header_for(font_name or "TikTok Sans", appearance=appearance)
+    header = _editor_caption_header(header, appearance)
+    if size_scale != 1.0:
+        # KRI-1192: a re-faced burn keeps the caption's em size (`_face_size_scale`).
+        header, lines = _scaled_font_sizes(header, lines, size_scale)
+    if _needs_auto_base_direction(lines):
+        header = _with_auto_base_direction(header)
     with open(output_path, "w", encoding="utf-8") as f:
-        f.write(_editor_caption_header(header, appearance))
+        f.write(header)
         f.write("\n[Events]\n")
         f.write("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
         for line in lines:

@@ -101,12 +101,33 @@ _LANG_NAME_TO_ISO = {
 
 
 def _normalize_lang(value: str) -> str:
+    """ISO code for whisper's reported language.
+
+    KRI-1192: the caption-language table's names and aliases first ("greek" -> "el",
+    "croatian"/"hr" -> "sr": whisper labels half of Serbian speakers Croatian), so a
+    caption language is never stored as a name nothing downstream recognises.
+    """
+    from app.pipeline.caption_language import canonical_caption_language  # noqa: PLC0415
+
     v = (value or "").strip().lower()
     if not v:
         return ""
     if v in _LANG_NAME_TO_ISO:
-        return _LANG_NAME_TO_ISO[v]
-    return v  # already an ISO code (e.g. "en", "tr") or an uncommon language
+        v = _LANG_NAME_TO_ISO[v]
+    return canonical_caption_language(v)  # an uncommon language is kept as written
+
+
+def _one_alphabet(transcript: Transcript) -> Transcript:
+    """Serbian is captioned in Latin letters (what whisper writes even with an ``sr``
+    hint); a Cyrillic word is turned Latin so a video never mixes alphabets (KRI-1192)."""
+    if transcript.language != "sr":
+        return transcript
+    from app.pipeline.caption_language import serbian_latin  # noqa: PLC0415
+
+    for word in transcript.words:
+        word.text = serbian_latin(word.text)
+    transcript.full_text = serbian_latin(transcript.full_text)
+    return transcript
 
 
 def transcribe(
@@ -328,15 +349,19 @@ def transcribe_whisper(
         _extract_audio(video_path, audio_path)
 
         if settings.whisper_backend == "openai-api":
-            return _transcribe_openai(
-                audio_path,
-                language=language,
-                verbatim_prompt=verbatim_prompt,
-                **({"run_context": run_context} if run_context is not None else {}),
+            return _one_alphabet(
+                _transcribe_openai(
+                    audio_path,
+                    language=language,
+                    verbatim_prompt=verbatim_prompt,
+                    **({"run_context": run_context} if run_context is not None else {}),
+                )
             )
         else:
-            return _transcribe_local(
-                audio_path, model=model, language=language, verbatim_prompt=verbatim_prompt
+            return _one_alphabet(
+                _transcribe_local(
+                    audio_path, model=model, language=language, verbatim_prompt=verbatim_prompt
+                )
             )
     finally:
         if os.path.exists(audio_path):

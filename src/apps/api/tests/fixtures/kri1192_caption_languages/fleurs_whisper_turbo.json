@@ -1,0 +1,2782 @@
+{
+ "_source": "Google FLEURS test split (https://huggingface.co/datasets/google/fleurs), CC BY 4.0. Native read speech, 12 distinct sentences per language. `reference` is the FLEURS human transcript (raw_transcription). `whisper_*` is whisper.cpp large-v3-turbo q5_0, language auto-detect, run locally on the clip (the free stand-in for prod's whisper-1). Audio is NOT in git; scripts/dev/kri1192_fleurs_eval.py re-downloads it.",
+ "clips": [
+  {
+   "fleurs_config": "pt_br",
+   "language": "pt",
+   "fleurs_id": "1960",
+   "file": "10008174856218516817.wav",
+   "duration_s": 17.76,
+   "gender": "MALE",
+   "reference": "Segundo informações, ele estava na casa dos 20 anos. Em uma declaração, Bieber disse que, \"embora eu não estivesse presente nem diretamente envolvido neste trágico incidente, meus pensamentos e orações estão com a família da vítima\".",
+   "whisper_language": "pt",
+   "whisper_text": "Segundo informações, ele estava na casa dos 20 anos. Em uma declaração, Bieber disse que, embora eu não tivesse presente nem diretamente envolvido neste trágico incidente, meus pensamentos e orações estão com a família da vítima.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 4.0,
+     "text": "Segundo informações, ele estava na casa dos 20 anos."
+    },
+    {
+     "start_s": 4.0,
+     "end_s": 17.76,
+     "text": "Em uma declaração, Bieber disse que, embora eu não tivesse presente nem diretamente envolvido neste trágico incidente, meus pensamentos e orações estão com a família da vítima."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "pt_br",
+   "language": "pt",
+   "fleurs_id": "1769",
+   "file": "10047022047800689031.wav",
+   "duration_s": 13.62,
+   "gender": "MALE",
+   "reference": "Construída pelos egípcios no século 3 A.C., a Grande Pirâmide é uma das muitas grandes estruturas de pirâmide construídas para honrar faraós mortos.",
+   "whisper_language": "pt",
+   "whisper_text": "Construída pelos egípcios no século 3 a.C., a grande pirâmide é uma das muitas grandes estruturas da pirâmide construídas para honrar faraós mortos.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 13.62,
+     "text": "Construída pelos egípcios no século 3 a.C., a grande pirâmide é uma das muitas grandes estruturas da pirâmide construídas para honrar faraós mortos."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "pt_br",
+   "language": "pt",
+   "fleurs_id": "1853",
+   "file": "10083615766068544069.wav",
+   "duration_s": 8.4,
+   "gender": "MALE",
+   "reference": "Giancarlo Fisichella perdeu o controle do carro e acabou a corrida logo após a largada.",
+   "whisper_language": "pt",
+   "whisper_text": "Jean Carlos fez aquela, perdeu o controle do carro e acabou a corrida logo após a largada.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 8.4,
+     "text": "Jean Carlos fez aquela, perdeu o controle do carro e acabou a corrida logo após a largada."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "pt_br",
+   "language": "pt",
+   "fleurs_id": "1660",
+   "file": "10103427908302527934.wav",
+   "duration_s": 10.68,
+   "gender": "MALE",
+   "reference": "O romantismo tinha um grande elemento de determinismo cultural, extraído de escritores como Goethe, Fichte e Schlegel.",
+   "whisper_language": "pt",
+   "whisper_text": "O romantismo tinha um grande elemento de determinismo cultural, extraído de escritores como Goethe, Fichte e Skellige.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 9.36,
+     "text": "O romantismo tinha um grande elemento de determinismo cultural, extraído de escritores como Goethe, Fichte e Skellige."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "pt_br",
+   "language": "pt",
+   "fleurs_id": "1785",
+   "file": "10116774789336634117.wav",
+   "duration_s": 12.72,
+   "gender": "MALE",
+   "reference": "O scaffolding não é um método de aprendizado, mas sim uma ajuda para alunos que estão passando por uma nova experiência de aprendizado, como usar um novo computador ou começar um novo projeto.",
+   "whisper_language": "pt",
+   "whisper_text": "O scaffolding não é um método de aprendizado, mas sim uma ajuda para alunos que estão passando por uma nova experiência de aprendizado, como usar um computador ou começar um novo projeto.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 12.1,
+     "text": "O scaffolding não é um método de aprendizado, mas sim uma ajuda para alunos que estão passando por uma nova experiência de aprendizado, como usar um computador ou começar um novo projeto."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "pt_br",
+   "language": "pt",
+   "fleurs_id": "1863",
+   "file": "10123292114373653004.wav",
+   "duration_s": 19.32,
+   "gender": "MALE",
+   "reference": "A parte central da meditação tibetana é o Deity Yoga. Através da visualização de várias divindades, os canais de energia são limpos, os chacras são ativados e a consciência da iluminação é criada.",
+   "whisper_language": "pt",
+   "whisper_text": "A parte central da meditação tibetana é o Deity Yoga. Através da visualização de várias divindades, os canais de energia são limpos, os chakras são ativados e a consciência da iluminação é criada.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 5.64,
+     "text": "A parte central da meditação tibetana é o Deity Yoga."
+    },
+    {
+     "start_s": 5.64,
+     "end_s": 16.04,
+     "text": "Através da visualização de várias divindades, os canais de energia são limpos, os chakras são ativados e a consciência da iluminação é criada."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "pt_br",
+   "language": "pt",
+   "fleurs_id": "1869",
+   "file": "10124265429093233069.wav",
+   "duration_s": 14.4,
+   "gender": "MALE",
+   "reference": "Suas longas mandíbulas eram cravejadas com mais de 70 dentes afiados, junto com um conjunto extra no céu da boca, o que mostra que nada que cruzasse seu caminho poderia escapar.",
+   "whisper_language": "pt",
+   "whisper_text": "Suas longas mandíbulas eram cravejadas com mais de 70 dentes afiados, junto com um conjunto extra no céu da boca, o que mostra que nada que cruzasse seu caminho poderia escapar.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 13.2,
+     "text": "Suas longas mandíbulas eram cravejadas com mais de 70 dentes afiados, junto com um conjunto extra no céu da boca, o que mostra que nada que cruzasse seu caminho poderia escapar."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "pt_br",
+   "language": "pt",
+   "fleurs_id": "1987",
+   "file": "101298017130488094.wav",
+   "duration_s": 8.82,
+   "gender": "MALE",
+   "reference": "O acidente ocorreu em grande altitude no terreno montanhoso, e acredita-se que tenha sido causado por fogo inimigo.",
+   "whisper_language": "pt",
+   "whisper_text": "O acidente ocorreu em grande altitude no terreno montanhoso e acredita-se que tenha sido causado por fogo inimigo.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 8.82,
+     "text": "O acidente ocorreu em grande altitude no terreno montanhoso e acredita-se que tenha sido causado por fogo inimigo."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "pt_br",
+   "language": "pt",
+   "fleurs_id": "1989",
+   "file": "10134749222604455839.wav",
+   "duration_s": 17.4,
+   "gender": "MALE",
+   "reference": "Ele também estava envolvido na gravação de cédulas para muitos países, e exemplos recentes de seu trabalho incluíram os retratos do primeiro-ministro nas novas notas de 5 e 100 dólares canadenses.",
+   "whisper_language": "pt",
+   "whisper_text": "Ele também estava envolvido na gravação de cédulas para muitos países e exemplos recentes do seu trabalho incluíram os retratos do primeiro-ministro nas novas notas de 5 e 100 dólares canadenses.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 17.4,
+     "text": "Ele também estava envolvido na gravação de cédulas para muitos países e exemplos recentes do seu trabalho incluíram os retratos do primeiro-ministro nas novas notas de 5 e 100 dólares canadenses."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "pt_br",
+   "language": "pt",
+   "fleurs_id": "1752",
+   "file": "10181435093488396236.wav",
+   "duration_s": 14.4,
+   "gender": "MALE",
+   "reference": "Consequentemente, duas espécies de peixe entraram em extinção, e duas outras passaram a correr risco, como a espécie Gila cypha.",
+   "whisper_language": "pt",
+   "whisper_text": "Consequentemente, duas espécies de peixe entraram em extinção e duas outras passaram a correr risco, como a espécie gilacifa.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 12.72,
+     "text": "Consequentemente, duas espécies de peixe entraram em extinção e duas outras passaram a correr risco, como a espécie gilacifa."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "pt_br",
+   "language": "pt",
+   "fleurs_id": "1696",
+   "file": "10182869931433112315.wav",
+   "duration_s": 11.4,
+   "gender": "MALE",
+   "reference": "Os dois compostos reagem um com o outro para formar cristais que podem bloquear a função renal, afirmaram os pesquisadores da universidade.",
+   "whisper_language": "pt",
+   "whisper_text": "Os dois compostos reagem um com o outro para formar cristais, que podem bloquear a função renal, afirmaram os pesquisadores da universidade.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 10.22,
+     "text": "Os dois compostos reagem um com o outro para formar cristais, que podem bloquear a função renal, afirmaram os pesquisadores da universidade."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "pt_br",
+   "language": "pt",
+   "fleurs_id": "1968",
+   "file": "10250542229422804450.wav",
+   "duration_s": 15.12,
+   "gender": "MALE",
+   "reference": "Alguns cruzeiros mostram Berlim, Alemanha, nos panfletos. Como você pode ver no mapa acima, Berlim não fica perto do mar, e uma visita à cidade não está incluída no preço do cruzeiro.",
+   "whisper_language": "pt",
+   "whisper_text": "Alguns cruzeiros mostram Berlim, Alemanha nos panfletos. Como você pode ver no mapa acima, Berlim não fica perto do mar. E uma visita à cidade não está incluída no preço do cruzeiro.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 4.92,
+     "text": "Alguns cruzeiros mostram Berlim, Alemanha nos panfletos."
+    },
+    {
+     "start_s": 4.92,
+     "end_s": 9.68,
+     "text": "Como você pode ver no mapa acima, Berlim não fica perto do mar."
+    },
+    {
+     "start_s": 9.68,
+     "end_s": 14.22,
+     "text": "E uma visita à cidade não está incluída no preço do cruzeiro."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "es_419",
+   "language": "es",
+   "fleurs_id": "2001",
+   "file": "1001146817223348054.wav",
+   "duration_s": 12.84,
+   "gender": "MALE",
+   "reference": "Se recomienda enfáticamente a los viajeros que se informen sobre cualquier riesgo de clima extremo en el área que visitan, dado que ello puede afectar sus planes de viaje.",
+   "whisper_language": "es",
+   "whisper_text": "Se recomienda enfáticamente a los viajeros que se informen sobre cualquier riesgo del clima extremo en el área que visitan, dado que ello puede afectar sus planes de viaje.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 12.84,
+     "text": "Se recomienda enfáticamente a los viajeros que se informen sobre cualquier riesgo del clima extremo en el área que visitan, dado que ello puede afectar sus planes de viaje."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "es_419",
+   "language": "es",
+   "fleurs_id": "1764",
+   "file": "1008205615316519958.wav",
+   "duration_s": 9.72,
+   "gender": "MALE",
+   "reference": "Fue tanta la cantidad de gente que se concentró, que no todos pudieron acceder al funeral en la Plaza de San Pedro.",
+   "whisper_language": "es",
+   "whisper_text": "Fue tanta la cantidad de gente que se concentró que no todos pudieron acceder al funeral en la plaza de San Pedro.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 9.72,
+     "text": "Fue tanta la cantidad de gente que se concentró que no todos pudieron acceder al funeral en la plaza de San Pedro."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "es_419",
+   "language": "es",
+   "fleurs_id": "1770",
+   "file": "10084850086754329587.wav",
+   "duration_s": 8.58,
+   "gender": "MALE",
+   "reference": "Esto parece tener sentido, ya que en la Tierra no se percibe su movimiento, ¿cierto?",
+   "whisper_language": "es",
+   "whisper_text": "Esto parece tener sentido, ya que en la Tierra no se percibe su movimiento, ¿cierto?",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 6.4,
+     "text": "Esto parece tener sentido, ya que en la Tierra no se percibe su movimiento, ¿cierto?"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "es_419",
+   "language": "es",
+   "fleurs_id": "1799",
+   "file": "10107325335956726764.wav",
+   "duration_s": 10.62,
+   "gender": "MALE",
+   "reference": "Carpanedo participó en dos carreras individuales del campeonato aparte de la competencia del miércoles.",
+   "whisper_language": "es",
+   "whisper_text": "Carpaneo participó en dos carreras individuales del campeonato aparte de la competencia del miércoles.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 10.62,
+     "text": "Carpaneo participó en dos carreras individuales del campeonato aparte de la competencia del miércoles."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "es_419",
+   "language": "es",
+   "fleurs_id": "1820",
+   "file": "1013662909103347734.wav",
+   "duration_s": 9.78,
+   "gender": "MALE",
+   "reference": "Hoy en día, las personas escriben mensajes en las pantallas de sus computadoras. No tienen la necesidad de, siquiera, aproximarse a un sacapuntas.",
+   "whisper_language": "es",
+   "whisper_text": "Hoy en día las personas escriben mensajes en las pantallas de sus computadoras, no tienen la necesidad de siquiera aproximarse a un sacapuntas.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 6.18,
+     "text": "Hoy en día las personas escriben mensajes en las pantallas de sus computadoras, no tienen"
+    },
+    {
+     "start_s": 6.18,
+     "end_s": 9.78,
+     "text": "la necesidad de siquiera aproximarse a un sacapuntas."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "es_419",
+   "language": "es",
+   "fleurs_id": "1747",
+   "file": "10149016836336603986.wav",
+   "duration_s": 5.64,
+   "gender": "FEMALE",
+   "reference": "Los luchadores compañeros de Luna también le rindieron homenaje.",
+   "whisper_language": "es",
+   "whisper_text": "Los luchadores compañeros de luna también le rindieron homenaje.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 5.64,
+     "text": "Los luchadores compañeros de luna también le rindieron homenaje."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "es_419",
+   "language": "es",
+   "fleurs_id": "1816",
+   "file": "10150624747569080019.wav",
+   "duration_s": 10.26,
+   "gender": "FEMALE",
+   "reference": "Duvall, que está casado y tiene dos hijos adultos, no causó una buena impresión a Miller, que fue a quien le relató la historia.",
+   "whisper_language": "es",
+   "whisper_text": "Duval que está casado y tiene dos hijos adultos no causó una buena impresión a Miller que fue a quien le relató la historia",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 10.26,
+     "text": "Duval que está casado y tiene dos hijos adultos no causó una buena impresión a Miller que fue a quien le relató la historia"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "es_419",
+   "language": "es",
+   "fleurs_id": "1783",
+   "file": "10155332265364188477.wav",
+   "duration_s": 10.68,
+   "gender": "MALE",
+   "reference": "Entre los fenómenos climáticos regionales y estacionales extremos encontramos los ventarrones, las tormentas de nieve, hielo o polvo.",
+   "whisper_language": "es",
+   "whisper_text": "Entre los fenómenos climáticos regionales y estacionales extremos encontramos los ventarrones, las tormentas de nieve, hielo o polvo.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 9.0,
+     "text": "Entre los fenómenos climáticos regionales y estacionales extremos encontramos los ventarrones, las tormentas de nieve, hielo o polvo."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "es_419",
+   "language": "es",
+   "fleurs_id": "1794",
+   "file": "10192388533260519980.wav",
+   "duration_s": 12.12,
+   "gender": "FEMALE",
+   "reference": "Se puede definir a una civilización como una cultura específica de la que forma parte un extenso grupo de personas que viven y trabajan en conjunto; es decir, una sociedad.",
+   "whisper_language": "es",
+   "whisper_text": "Se puede definir a una civilización como una cultura específica de que forma parte un extenso grupo de personas que viven y trabajan en conjunto, es decir, una sociedad.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 12.12,
+     "text": "Se puede definir a una civilización como una cultura específica de que forma parte un extenso grupo de personas que viven y trabajan en conjunto, es decir, una sociedad."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "es_419",
+   "language": "es",
+   "fleurs_id": "1965",
+   "file": "10206659851013694932.wav",
+   "duration_s": 12.18,
+   "gender": "MALE",
+   "reference": "Las playas son casi todas de arena con lugares seguros para nadar y en su mayoría tienen árboles pohutukawa que ofrecen lugares de sombra.",
+   "whisper_language": "es",
+   "whisper_text": "Las playas son casi todas de arena con lugares seguros para nadar y en su mayoría tienen árboles Poutukawa que ofrecen lugares de sombra.",
+   "whisper_segments": [
+    {
+     "start_s": 0.78,
+     "end_s": 10.66,
+     "text": "Las playas son casi todas de arena con lugares seguros para nadar y en su mayoría tienen árboles Poutukawa que ofrecen lugares de sombra."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "es_419",
+   "language": "es",
+   "fleurs_id": "1835",
+   "file": "10234623649795772963.wav",
+   "duration_s": 13.26,
+   "gender": "MALE",
+   "reference": "No se ha emitido ni se emitirá ninguna alerta de tsunami ya que, según la agencia geofísica de Yakarta, el terremoto no alcanzó la magnitud de 6,5 exigida a tal fin.",
+   "whisper_language": "es",
+   "whisper_text": "No se ha emitido ni se emitirá ninguna alerta de tsunami ya que según la agencia geofísica de Jakarta el terremoto no alcanzó la magnitud de 6,5 exigida a tal fin.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 13.26,
+     "text": "No se ha emitido ni se emitirá ninguna alerta de tsunami ya que según la agencia geofísica de Jakarta el terremoto no alcanzó la magnitud de 6,5 exigida a tal fin."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "es_419",
+   "language": "es",
+   "fleurs_id": "1697",
+   "file": "10236991702517253859.wav",
+   "duration_s": 7.68,
+   "gender": "FEMALE",
+   "reference": "No ha podido tomarse medicamentos para aliviar el dolor, porque está prohibido su uso en los Juegos.",
+   "whisper_language": "es",
+   "whisper_text": "No ha podido tomarse medicamentos para aliviar el dolor porque está prohibido su uso en los juegos",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 7.68,
+     "text": "No ha podido tomarse medicamentos para aliviar el dolor porque está prohibido su uso en los juegos"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "el_gr",
+   "language": "el",
+   "fleurs_id": "1993",
+   "file": "10055043144368529343.wav",
+   "duration_s": 11.04,
+   "gender": "FEMALE",
+   "reference": "Η δέκατη καταιγίδα της εποχής των ατλαντικών τυφώνων που απέκτησε όνομα, η Υποτροπική Καταιγίδα Τζέρι, σχηματίσθηκε σήμερα στον Ατλαντικό Ωκεανό.",
+   "whisper_language": "el",
+   "whisper_text": "Η δέκατη καταιγίδα της εποχής των Ατλαντικών τυφώνων που απέκτησε όνομα η υποτροπική καταιγίδα Τζέρι σχηματίστηκε σήμερα στον Ατλαντικό ωκεανό.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 11.04,
+     "text": "Η δέκατη καταιγίδα της εποχής των Ατλαντικών τυφώνων που απέκτησε όνομα η υποτροπική καταιγίδα Τζέρι σχηματίστηκε σήμερα στον Ατλαντικό ωκεανό."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "el_gr",
+   "language": "el",
+   "fleurs_id": "1706",
+   "file": "1012934966458711671.wav",
+   "duration_s": 12.78,
+   "gender": "MALE",
+   "reference": "Πιο παραδοσιακές εκκλησίες συχνά πραγματοποιούν την ακολουθία της Ανάστασης το βράδυ του Σαββάτου μέσα στο σαββατοκύριακο του Πάσχα, με το εκκλησίασμα να ξεσπά σε εορτασμούς ακριβώς τα μεσάνυχτα υμνώντας την ανάσταση του Χριστού.",
+   "whisper_language": "el",
+   "whisper_text": "Πιο παραδοσιακές εκκλησίες συχνά πραγματοποιούν την ακολουθία της Ανάστασης το βράδυ του Σαββάτου μέσα στο Σαββατοκύριακο του Πάσχα με το εκκλησίασμα να ξεσπάσει ορτασμούς ακριβώς στα μεσάνυχτα υμνώντας την Ανάσταση του Χριστού.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 12.78,
+     "text": "Πιο παραδοσιακές εκκλησίες συχνά πραγματοποιούν την ακολουθία της Ανάστασης το βράδυ του Σαββάτου μέσα στο Σαββατοκύριακο του Πάσχα με το εκκλησίασμα να ξεσπάσει ορτασμούς ακριβώς στα μεσάνυχτα υμνώντας την Ανάσταση του Χριστού."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "el_gr",
+   "language": "el",
+   "fleurs_id": "1766",
+   "file": "10144476447854605907.wav",
+   "duration_s": 7.44,
+   "gender": "MALE",
+   "reference": "Κάποια άτομα έχουν μη σταθερούς πυρήνες και αυτό τα οδηγεί στη διάσπαση αν τους ασκηθεί μικρή ή ακόμα και καθόλου πίεση.",
+   "whisper_language": "el",
+   "whisper_text": "Κάποια άτομα έχουν μη σταθερούς πυρήνες και αυτό το οδηγεί στη διάσπαση αν τους ασκεθεί μικρή ή ακόμη καθόλου πίεση.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 7.44,
+     "text": "Κάποια άτομα έχουν μη σταθερούς πυρήνες και αυτό το οδηγεί στη διάσπαση αν τους ασκεθεί μικρή ή ακόμη καθόλου πίεση."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "el_gr",
+   "language": "el",
+   "fleurs_id": "1959",
+   "file": "10173305255567609881.wav",
+   "duration_s": 8.16,
+   "gender": "MALE",
+   "reference": "Παρ' όλα αυτά, λαμβάνετε συμβουλές από τις αρχές, υπακούτε σε όλες τις σημάνσεις και δίνετε μεγάλη προσοχή στις προειδοποιήσεις ασφαλείας.",
+   "whisper_language": "el",
+   "whisper_text": "Παρ' όλα αυτά λαμβάνετε συμβουλές από τις αρχές, υπακούτε σε όλες τις σημάσεις και δίνετε μεγάλη προσοχή σε προειδοποιήσεις ασφαλείας.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 8.16,
+     "text": "Παρ' όλα αυτά λαμβάνετε συμβουλές από τις αρχές, υπακούτε σε όλες τις σημάσεις και δίνετε μεγάλη προσοχή σε προειδοποιήσεις ασφαλείας."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "el_gr",
+   "language": "el",
+   "fleurs_id": "1749",
+   "file": "10193145226429128656.wav",
+   "duration_s": 12.48,
+   "gender": "MALE",
+   "reference": "Διοικούταν από την Κυβέρνηση του Βισύ. Αυτή αποτελούνταν από Γάλλους που είχαν συνάψει ειρήνη με τους Γερμανούς το 1940 και συνεργάζονταν με τους εισβολείς αντί να μάχονται εναντίον τους.",
+   "whisper_language": "el",
+   "whisper_text": "Διεκούταν από την κυβέρνηση του ΒΣΥΣΥ Αυτοί αποτελούνταν από Γάλλους που είχαν συνάψει ειρήνη με τους Γερμανούς το 1940 και συνεργάζονταν με τους εισβολείς αντί να μάχονται εναντίον τους.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 12.48,
+     "text": "Διεκούταν από την κυβέρνηση του ΒΣΥΣΥ Αυτοί αποτελούνταν από Γάλλους που είχαν συνάψει ειρήνη με τους Γερμανούς το 1940 και συνεργάζονταν με τους εισβολείς αντί να μάχονται εναντίον τους."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "el_gr",
+   "language": "el",
+   "fleurs_id": "1832",
+   "file": "10198025225359694502.wav",
+   "duration_s": 11.88,
+   "gender": "MALE",
+   "reference": "Στα δημοφιλή αθλήματα συγκαταλέγονται το ποδόσφαιρο, το μπάσκετ, το βόλεϊ, το πόλο, η ξιφασκία, το ράγκμπι, η ποδηλασία, το χόκεϊ σε πάγο, το χόκεϊ με πατίνια και οι αγώνες αυτοκινήτου Φόρμουλα 1.",
+   "whisper_language": "el",
+   "whisper_text": "Στα δημοφιλή αθλήματα συγκαταλέγονται το ποδόσφαιρο, το μπάσκετ, το βόλι, το πόλο, η ξηφασκία, το ράγμι, η ποδηλασία, το χόκκι σε πάγο, το χόκκι με πατίνια και οι αγώνες αυτοκινή του Φόρμουλα 1.",
+   "whisper_segments": [
+    {
+     "start_s": 0.36,
+     "end_s": 10.82,
+     "text": "Στα δημοφιλή αθλήματα συγκαταλέγονται το ποδόσφαιρο, το μπάσκετ, το βόλι, το πόλο, η ξηφασκία, το ράγμι, η ποδηλασία, το χόκκι σε πάγο, το χόκκι με πατίνια και οι αγώνες αυτοκινή του Φόρμουλα 1."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "el_gr",
+   "language": "el",
+   "fleurs_id": "1756",
+   "file": "1023138910747614103.wav",
+   "duration_s": 11.94,
+   "gender": "MALE",
+   "reference": "Ο πρόεδρος των Ηνωμένων πολιτειών Donald Trump σε δήλωση που διατυπώθηκε από την εκπρόσωπο Τύπου αργά την Κυριακή, ανακοίνωσε ότι τα στρατεύματα των ΗΠΑ θα αποχωρήσουν από τη Συρία.",
+   "whisper_language": "el",
+   "whisper_text": "Ο πρόεδρος των Ηνωμένων Πολιτείων, Ντόναλτ Τραμπ, σε δήλωση που διατυπώθηκε από την εκπρόσωπο τύπου αργά την Κυριακή, ανακοίνωσε ότι τα στρατεύματα των ΙΠΑ θα αποχωρήσουν από τη Συρία.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 10.56,
+     "text": "Ο πρόεδρος των Ηνωμένων Πολιτείων, Ντόναλτ Τραμπ, σε δήλωση που διατυπώθηκε από την εκπρόσωπο τύπου αργά την Κυριακή, ανακοίνωσε ότι τα στρατεύματα των ΙΠΑ θα αποχωρήσουν από τη Συρία."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "el_gr",
+   "language": "el",
+   "fleurs_id": "1886",
+   "file": "10233457079389783132.wav",
+   "duration_s": 7.98,
+   "gender": "MALE",
+   "reference": "Οι αρχαίοι πολιτισμοί και φυλές αρχίζουν να τα κρατάνε για εύκολη πρόσβαση στο γάλα, το μαλλί, το κρέας και το δέρμα.",
+   "whisper_language": "el",
+   "whisper_text": "Οι αρχαίοι πολιτισμοί και φιλές αρχίζουν να τα κρατάνε για εύκολη πρόσβαση στο γάλλο, το μαλλί, το κρέας και το δέρμα.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 7.98,
+     "text": "Οι αρχαίοι πολιτισμοί και φιλές αρχίζουν να τα κρατάνε για εύκολη πρόσβαση στο γάλλο, το μαλλί, το κρέας και το δέρμα."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "el_gr",
+   "language": "el",
+   "fleurs_id": "1910",
+   "file": "10253681552761381507.wav",
+   "duration_s": 7.26,
+   "gender": "FEMALE",
+   "reference": "Οι κάτοικοι του Παρισιού φημίζονται για τον εγωκεντρισμό, την αγένεια και την αλαζονεία τους.",
+   "whisper_language": "el",
+   "whisper_text": "Οι κάτοικοι του Παρισιού φημίζονται για τον εγκεντρισμό, την αγένεια και την αλαζονία τους.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 6.5,
+     "text": "Οι κάτοικοι του Παρισιού φημίζονται για τον εγκεντρισμό, την αγένεια και την αλαζονία τους."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "el_gr",
+   "language": "el",
+   "fleurs_id": "1939",
+   "file": "10256461431433856059.wav",
+   "duration_s": 10.8,
+   "gender": "FEMALE",
+   "reference": "Επίσης, μετά την Επανάσταση τα επαγγέλματα ήταν προσβάσιμα σε όλους τους άνδρες αιτούντες εργασία, δίνοντας τη δυνατότητα στους πιο φιλόδοξους και πετυχημένους να πετύχουν.",
+   "whisper_language": "el",
+   "whisper_text": "Επίσης μετά την επανάσταση τα επαγγέλματα ήταν προσβάσιμα σε όλους τους άνδρες ετούντες εργασία δίνοντας τη δυνατότητα στους πιο φιλόδοξους και πετυχημένους να πετύχουν.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 10.8,
+     "text": "Επίσης μετά την επανάσταση τα επαγγέλματα ήταν προσβάσιμα σε όλους τους άνδρες ετούντες εργασία δίνοντας τη δυνατότητα στους πιο φιλόδοξους και πετυχημένους να πετύχουν."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "el_gr",
+   "language": "el",
+   "fleurs_id": "1869",
+   "file": "1028563597315482308.wav",
+   "duration_s": 13.32,
+   "gender": "MALE",
+   "reference": "Οι μακριές σιαγόνες του διέθεταν πάνω από 70 δόντια αιχμηρά σαν ξυράφι σε συνδυασμό με μια επιπλέον σειρά δοντιών στην κορυφή του στόματός του, που υποδεικνύει ότι δεν υπάρχει διέξοδος για οτιδήποτε περνούσε από τον δρόμο του.",
+   "whisper_language": "el",
+   "whisper_text": "Οι μακριές σχιαγόνες του διέθεταν πάνω από 70 δόντια αχμύρα σαν ξυράφι σε συνδυασμό με μια επιπλέον σειρά δοντιών στην κορυφή του στόματός του που υποδεικνύει ότι δεν υπάρχει διέξοδος για οτιδήποτε περνούσε από το δρόμο του.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 13.32,
+     "text": "Οι μακριές σχιαγόνες του διέθεταν πάνω από 70 δόντια αχμύρα σαν ξυράφι σε συνδυασμό με μια επιπλέον σειρά δοντιών στην κορυφή του στόματός του που υποδεικνύει ότι δεν υπάρχει διέξοδος για οτιδήποτε περνούσε από το δρόμο του."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "el_gr",
+   "language": "el",
+   "fleurs_id": "1800",
+   "file": "10353782092090224703.wav",
+   "duration_s": 11.94,
+   "gender": "FEMALE",
+   "reference": "Η γέφυρα προγραμματίζεται ότι θα είναι πλήρως λειτουργική τον Σεπτέμβριο του 2017, όταν αναμένεται ότι θα έχουν ολοκληρωθεί τα βραζιλιάνικα σημεία τελωνειακού ελέγχου.",
+   "whisper_language": "el",
+   "whisper_text": "Η γέφυρα προγραμματίζεται ότι θα είναι πλήρως λειτουργική τον Σεπτέμβριο του 2017 όταν αναμένεται ότι θα έχουν ολοκληρωθεί τα βραζιλιάνικα σημεία τελωνιακού ελέγχου.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 10.62,
+     "text": "Η γέφυρα προγραμματίζεται ότι θα είναι πλήρως λειτουργική τον Σεπτέμβριο του 2017 όταν αναμένεται ότι θα έχουν ολοκληρωθεί τα βραζιλιάνικα σημεία τελωνιακού ελέγχου."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "de_de",
+   "language": "de",
+   "fleurs_id": "2003",
+   "file": "10004059102127011984.wav",
+   "duration_s": 17.94,
+   "gender": "MALE",
+   "reference": "Für die besten Aussichten auf Hongkong sollten Sie die Insel verlassen und zum gegenüberliegenden Ufer von Kowloon fahren.",
+   "whisper_language": "de",
+   "whisper_text": "Für die besten Aussichten auf Hongkong, sollten sie die Insel verlassen und zum gegenüberliegenden Ufer von Kowloon fahren.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 17.94,
+     "text": "Für die besten Aussichten auf Hongkong, sollten sie die Insel verlassen und zum gegenüberliegenden Ufer von Kowloon fahren."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "de_de",
+   "language": "de",
+   "fleurs_id": "1738",
+   "file": "10009182821551087671.wav",
+   "duration_s": 11.16,
+   "gender": "MALE",
+   "reference": "Er griff auch alles an, was ins Wasser kam; selbst ein großer Dinosaurier wie der T. Rex war ihm nicht gewachsen.",
+   "whisper_language": "de",
+   "whisper_text": "Er griff auch alles an, was ins Wasser kam. Selbst ein großer Dinosaurier wie der T-Rex war ihm nicht gewachsen.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 5.26,
+     "text": "Er griff auch alles an, was ins Wasser kam."
+    },
+    {
+     "start_s": 5.26,
+     "end_s": 11.16,
+     "text": "Selbst ein großer Dinosaurier wie der T-Rex war ihm nicht gewachsen."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "de_de",
+   "language": "de",
+   "fleurs_id": "1849",
+   "file": "10014044777125235464.wav",
+   "duration_s": 12.42,
+   "gender": "MALE",
+   "reference": "Wenn Sie den Film „Das Vermächtnis der Tempelritter“ gesehen haben, denken Sie vielleicht, dass auf die Rückseite der Unabhängigkeitserklärung eine Schatzkarte gezeichnet wurde.",
+   "whisper_language": "de",
+   "whisper_text": "Wenn Sie den Film Das Vermächtnis der Tempelritter gesehen haben, denken Sie vielleicht, dass auf der Rückseite der Unabhängigkeitserklärung eine Schatzkarte gezeichnet wurde.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 7.3,
+     "text": "Wenn Sie den Film Das Vermächtnis der Tempelritter gesehen haben, denken Sie vielleicht, dass"
+    },
+    {
+     "start_s": 7.3,
+     "end_s": 12.42,
+     "text": "auf der Rückseite der Unabhängigkeitserklärung eine Schatzkarte gezeichnet wurde."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "de_de",
+   "language": "de",
+   "fleurs_id": "1683",
+   "file": "10030056357041867775.wav",
+   "duration_s": 10.68,
+   "gender": "MALE",
+   "reference": "Es leben noch viele Männer und Frauen, die ihre Zeit hier überlebt haben, und viele weitere mit Angehörigen, die dort ermordet wurden oder sich zu Tode arbeiteten, Juden und Nichtjuden gleichermaßen.",
+   "whisper_language": "de",
+   "whisper_text": "Es leben noch viele Männer und Frauen, die ihre Zeit hier überlebt haben und viele weitere Mitangehörigen, die dort ermordet wurden oder sich zu Tode arbeiteten, Juden und Nichtjuden gleichermaßen.",
+   "whisper_segments": [
+    {
+     "start_s": 0.26,
+     "end_s": 4.4,
+     "text": "Es leben noch viele Männer und Frauen, die ihre Zeit hier überlebt haben und viele weitere"
+    },
+    {
+     "start_s": 4.4,
+     "end_s": 9.32,
+     "text": "Mitangehörigen, die dort ermordet wurden oder sich zu Tode arbeiteten, Juden und Nichtjuden"
+    },
+    {
+     "start_s": 9.32,
+     "end_s": 10.68,
+     "text": "gleichermaßen."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "de_de",
+   "language": "de",
+   "fleurs_id": "1739",
+   "file": "10058186628567796965.wav",
+   "duration_s": 9.9,
+   "gender": "MALE",
+   "reference": "Die Höhle befindet sich auf der Spitze eines der Berge nördlich von Mekka und ist vom Rest der Welt völlig isoliert.",
+   "whisper_language": "de",
+   "whisper_text": "Die Höhle befindet sich auf der Spitze eines der Berge nördlich von Mekka und ist vom Rest der Welt völlig isoliert.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 9.9,
+     "text": "Die Höhle befindet sich auf der Spitze eines der Berge nördlich von Mekka und ist vom Rest der Welt völlig isoliert."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "de_de",
+   "language": "de",
+   "fleurs_id": "1796",
+   "file": "10058299886985225661.wav",
+   "duration_s": 8.4,
+   "gender": "MALE",
+   "reference": "Dieses Sediment war nötig, um Sandbänke und Strände zu bilden, die als Lebensräume für Wildtiere dienten.",
+   "whisper_language": "de",
+   "whisper_text": "Dieses Sediment war nötig, um Sandbänke und Strände zu bilden, die als Lebensräume für Wildtiere dienten.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 8.4,
+     "text": "Dieses Sediment war nötig, um Sandbänke und Strände zu bilden, die als Lebensräume für Wildtiere dienten."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "de_de",
+   "language": "de",
+   "fleurs_id": "1990",
+   "file": "10095057775426831514.wav",
+   "duration_s": 12.96,
+   "gender": "MALE",
+   "reference": "Blogs können auch dazu beitragen, die Schreibfertigkeiten von Schülern zu verbessern. Zwar haben Schüler am Anfang ihrer Blogerfahrung oft eine schlampige Grammatik und Rechtschreibung, aber das ändert sich normalerweise, wenn es ein Publikum gibt.",
+   "whisper_language": "de",
+   "whisper_text": "Blogs können auch dazu beitragen, die Schreibfertigkeiten von Schülern zu verbessern. Zwar haben Schüler am Anfang ihrer Blog-Erfahrung oft eine schlampige Grammatik- und Rechtschreibung, aber das ändert sich normalerweise, wenn es ein Publikum gibt.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 5.12,
+     "text": "Blogs können auch dazu beitragen, die Schreibfertigkeiten von Schülern zu verbessern."
+    },
+    {
+     "start_s": 5.12,
+     "end_s": 9.68,
+     "text": "Zwar haben Schüler am Anfang ihrer Blog-Erfahrung oft eine schlampige Grammatik- und Rechtschreibung,"
+    },
+    {
+     "start_s": 9.68,
+     "end_s": 12.96,
+     "text": "aber das ändert sich normalerweise, wenn es ein Publikum gibt."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "de_de",
+   "language": "de",
+   "fleurs_id": "1721",
+   "file": "10159541282515887574.wav",
+   "duration_s": 19.68,
+   "gender": "MALE",
+   "reference": "Nachdem der Damm 1963 erbaut worden war, kamen die jahreszeitlichen Überflutungen, die Sedimente im Fluss verteilen, zum Stillstand.",
+   "whisper_language": "de",
+   "whisper_text": "Nachdem der Darm 1963 erbaut worden war, kamen die jahreszeitlichen Überflutungen, die Sedimente im Fluss verteilen, zum Stillstand.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 19.68,
+     "text": "Nachdem der Darm 1963 erbaut worden war, kamen die jahreszeitlichen Überflutungen, die Sedimente im Fluss verteilen, zum Stillstand."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "de_de",
+   "language": "de",
+   "fleurs_id": "1884",
+   "file": "10166547362714956625.wav",
+   "duration_s": 11.04,
+   "gender": "MALE",
+   "reference": "Insbesondere wird behauptet, dass man erkennen kann, ob jemand lügt, indem man minimale Veränderungen des Gesichtsausdrucks richtig deutet.x",
+   "whisper_language": "de",
+   "whisper_text": "Insbesondere wird behauptet, dass man erkennen kann, ob jemand lügt, indem man minimale Veränderungen des Gesichtsausdrucks richtig deutet.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 10.0,
+     "text": "Insbesondere wird behauptet, dass man erkennen kann, ob jemand lügt, indem man minimale Veränderungen des Gesichtsausdrucks richtig deutet."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "de_de",
+   "language": "de",
+   "fleurs_id": "1797",
+   "file": "10229344228128634115.wav",
+   "duration_s": 7.14,
+   "gender": "MALE",
+   "reference": "Jeder nimmt an der Gesellschaft teil und benutzt Transportsysteme. Fast jeder beklagt sich über die Transportsysteme.x",
+   "whisper_language": "de",
+   "whisper_text": "Jeder nimmt an der Gesellschaft teil und benutzt Transportsysteme. Fast jeder beklagt sich über die Transportsysteme.",
+   "whisper_segments": [
+    {
+     "start_s": 0.34,
+     "end_s": 7.14,
+     "text": "Jeder nimmt an der Gesellschaft teil und benutzt Transportsysteme. Fast jeder beklagt sich über die Transportsysteme."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "de_de",
+   "language": "de",
+   "fleurs_id": "1862",
+   "file": "10240730312646485406.wav",
+   "duration_s": 16.86,
+   "gender": "MALE",
+   "reference": "NextGen ist ein System, von dem die FAA behauptet, dass es Flugzeugen erlauben würde, kürzere Strecken zu fliegen und jedes Jahr Millionen Gallonen an Treibstoff zu sparen und die Kohlenstoffemissionen zu reduzieren.",
+   "whisper_language": "de",
+   "whisper_text": "NextGen ist ein System, von dem die FAA behauptet, dass es Flugzeugen erlauben würde, kürzere Strecken zu fliegen und jedes Jahr Millionen Galonen an Treibstoff zu sparen und die Kohlenstoffemissionen zu reduzieren.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 14.96,
+     "text": "NextGen ist ein System, von dem die FAA behauptet, dass es Flugzeugen erlauben würde, kürzere Strecken zu fliegen und jedes Jahr Millionen Galonen an Treibstoff zu sparen und die Kohlenstoffemissionen zu reduzieren."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "de_de",
+   "language": "de",
+   "fleurs_id": "1777",
+   "file": "10243976286554101786.wav",
+   "duration_s": 14.88,
+   "gender": "MALE",
+   "reference": "Ottawa ist Kanadas bezaubernde, zweisprachige Hauptstadt und zeichnet sich durch eine Reihe von Kunstgalerien und Museen aus, die Kanadas Vergangenheit und Gegenwart präsentieren.",
+   "whisper_language": "de",
+   "whisper_text": "Ottawa ist Kanadas bezaubernde zweisprachige Hauptstadt und zeichnet sich durch eine Reihe von Kunstgalerien und Museen aus, die Kanadas Vergangenheit und Gegenwart präsentieren.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 13.3,
+     "text": "Ottawa ist Kanadas bezaubernde zweisprachige Hauptstadt und zeichnet sich durch eine Reihe von Kunstgalerien und Museen aus, die Kanadas Vergangenheit und Gegenwart präsentieren."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ko_kr",
+   "language": "ko",
+   "fleurs_id": "1883",
+   "file": "10015989594226850325.wav",
+   "duration_s": 12.48,
+   "gender": "FEMALE",
+   "reference": "다리 밑 수직 간격은 15미터이며, 공사는 2011년 8월에 마무리되었으며, 해당 다리의 통행금지는 2017년 3월까지이다.",
+   "whisper_language": "ko",
+   "whisper_text": "다리 및 수직 간격은 15m이며 공사는 2011년 8월에 마무리되었으며 해당 다리의 통행금지는 2017년 3월까지이다.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 10.14,
+     "text": "다리 및 수직 간격은 15m이며 공사는 2011년 8월에 마무리되었으며 해당 다리의 통행금지는 2017년 3월까지이다."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ko_kr",
+   "language": "ko",
+   "fleurs_id": "1929",
+   "file": "1007237877117014760.wav",
+   "duration_s": 10.8,
+   "gender": "FEMALE",
+   "reference": "델 포트로가 2세트에서 먼저 어드밴티지를 얻었지만 6 대 6이 된 후 다시 타이 브레이크가 필요했다.",
+   "whisper_language": "ko",
+   "whisper_text": "델포트로가 2세트에서 먼저 어드벤티즈를 얻었지만 6대 6이 된 후 다시 타이 브레이크가 필요했다.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 10.8,
+     "text": "델포트로가 2세트에서 먼저 어드벤티즈를 얻었지만 6대 6이 된 후 다시 타이 브레이크가 필요했다."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ko_kr",
+   "language": "ko",
+   "fleurs_id": "1701",
+   "file": "10107571163062229727.wav",
+   "duration_s": 8.94,
+   "gender": "FEMALE",
+   "reference": "염소 사육은 대략 일만 년 전에 이란의 자그로스산맥에서 시작한 것으로 보입니다.",
+   "whisper_language": "ko",
+   "whisper_text": "염소사육은 대략 1만 년 전에 이란의 자그로스 산맥에서 시작한 것으로 보입니다.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 8.94,
+     "text": "염소사육은 대략 1만 년 전에 이란의 자그로스 산맥에서 시작한 것으로 보입니다."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ko_kr",
+   "language": "ko",
+   "fleurs_id": "2000",
+   "file": "10107840715193359973.wav",
+   "duration_s": 12.54,
+   "gender": "MALE",
+   "reference": "겨울에 북발트해를 건널 경우에는 빙판을 통과하면서 꽤 끔찍한 소음이 발생하기 때문에, 객실의 위치를 확인하는 것이 좋다.",
+   "whisper_language": "ko",
+   "whisper_text": "겨울에 북발트해를 건널 경우에는 빙판을 통과하면서 꽤 끔찍한 소음이 발생하기 때문에 객실의 위치를 확인하는 것이 좋다",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 12.54,
+     "text": "겨울에 북발트해를 건널 경우에는 빙판을 통과하면서 꽤 끔찍한 소음이 발생하기 때문에 객실의 위치를 확인하는 것이 좋다"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ko_kr",
+   "language": "ko",
+   "fleurs_id": "1801",
+   "file": "10111865575098096607.wav",
+   "duration_s": 12.12,
+   "gender": "FEMALE",
+   "reference": "홍콩의 스카이라인을 이루는 빌딩 행렬은 빅토리아 항구의 수면에 선명히 비치는 모습 때문에 반짝이는 막대그래프에 비유된다.",
+   "whisper_language": "ko",
+   "whisper_text": "홍콩의 스카이라인을 이루는 빌딩 행렬은 빅토리아 항구의 수면에 선명히 비치는 모습 때문에 반짝이는 막대 그래프에 비유된다.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 12.12,
+     "text": "홍콩의 스카이라인을 이루는 빌딩 행렬은 빅토리아 항구의 수면에 선명히 비치는 모습 때문에 반짝이는 막대 그래프에 비유된다."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ko_kr",
+   "language": "ko",
+   "fleurs_id": "1662",
+   "file": "10115200572671025618.wav",
+   "duration_s": 9.9,
+   "gender": "FEMALE",
+   "reference": "합금은 기본적으로 금속 두 개 이상의 혼합물이다. 주기율표 상에 원소가 많이 있다는 것을 잊지 마라.",
+   "whisper_language": "ko",
+   "whisper_text": "합금은 기본적으로 금속 두 개 이상의 혼합물이다. 주기율 표상의 원소가 많이 있다는 것을 잊지 마라.",
+   "whisper_segments": [
+    {
+     "start_s": 1.0,
+     "end_s": 4.02,
+     "text": "합금은 기본적으로 금속 두 개 이상의 혼합물이다."
+    },
+    {
+     "start_s": 4.02,
+     "end_s": 7.82,
+     "text": "주기율 표상의 원소가 많이 있다는 것을 잊지 마라."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ko_kr",
+   "language": "ko",
+   "fleurs_id": "1705",
+   "file": "10137428678292478399.wav",
+   "duration_s": 13.62,
+   "gender": "MALE",
+   "reference": "\"1940년 8월 15일, 연합군은 프랑스 남부를 침략했고, 이 침략은 \"\"드래군 작전\"\"이라 불렸다. \"",
+   "whisper_language": "ko",
+   "whisper_text": "천구백사십년 팔월 십오일 연합군은 프랑스 남부를 침략했고 이 침략은 드래군 작전이라 불렸다",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 13.62,
+     "text": "천구백사십년 팔월 십오일 연합군은 프랑스 남부를 침략했고 이 침략은 드래군 작전이라 불렸다"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ko_kr",
+   "language": "ko",
+   "fleurs_id": "1959",
+   "file": "10162998993480425742.wav",
+   "duration_s": 7.02,
+   "gender": "MALE",
+   "reference": "그래도 관계자의 조언을 듣고 모든 표지판을 지키고, 안전 경고에 세심한 주의를 기울여야 합니다.",
+   "whisper_language": "ko",
+   "whisper_text": "그래도 관계자의 조언을 듣고 모든 표지판을 지키고 안전 경고에 세심한 주의를 기울여야 합니다",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 7.02,
+     "text": "그래도 관계자의 조언을 듣고 모든 표지판을 지키고 안전 경고에 세심한 주의를 기울여야 합니다"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ko_kr",
+   "language": "ko",
+   "fleurs_id": "1715",
+   "file": "10189445924074497860.wav",
+   "duration_s": 18.9,
+   "gender": "MALE",
+   "reference": "지하철의 정규 안내 방송은 카탈로니아어로만 제공되나, 계획에 없던 운행 중단 시에는 자동 시스템을 통해 스페인어, 영어, 프랑스어, 아라비아어, 일본어를 포함한 다양한 언어로 방송됩니다.",
+   "whisper_language": "ko",
+   "whisper_text": "지하철의 정규 안내방송은 카탈로니아어로만 제공되나 계획이 없던 운행 중단 시에는 자동 시스템을 통해 스페인어 영어 프랑스어 아라비아어 일본어를 포함한 다양한 언어로 방송됩니다",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 18.9,
+     "text": "지하철의 정규 안내방송은 카탈로니아어로만 제공되나 계획이 없던 운행 중단 시에는 자동 시스템을 통해 스페인어 영어 프랑스어 아라비아어 일본어를 포함한 다양한 언어로 방송됩니다"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ko_kr",
+   "language": "ko",
+   "fleurs_id": "1850",
+   "file": "10257637429860465993.wav",
+   "duration_s": 17.7,
+   "gender": "MALE",
+   "reference": "기지국에 이중 라디오가 있다면 이것이 802.11a, 802.11b와 802.11g가 이전 기종이라도 호환할 수 있게 해준다.",
+   "whisper_language": "ko",
+   "whisper_text": "기지국에 이중 라디오가 있다면 이것이 802.11a, 802.11p와 802.11g가 이전 기종이라도 호환할 수 있게 해준다.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 17.7,
+     "text": "기지국에 이중 라디오가 있다면 이것이 802.11a, 802.11p와 802.11g가 이전 기종이라도 호환할 수 있게 해준다."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ko_kr",
+   "language": "ko",
+   "fleurs_id": "1702",
+   "file": "10295993752491019701.wav",
+   "duration_s": 12.48,
+   "gender": "MALE",
+   "reference": "겨우 2주 만에 미군과 자유 프랑스군은 프랑스 남부를 해방시키고 독일로 진격 방향을 틀고 있었다.",
+   "whisper_language": "ko",
+   "whisper_text": "겨우 이주 만에 미군과 자유 프랑스군은 프랑스 남부를 해방시키고 독일로 진격 방향을 틀고 있었다",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 12.48,
+     "text": "겨우 이주 만에 미군과 자유 프랑스군은 프랑스 남부를 해방시키고 독일로 진격 방향을 틀고 있었다"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ko_kr",
+   "language": "ko",
+   "fleurs_id": "1826",
+   "file": "10315643998667715978.wav",
+   "duration_s": 8.82,
+   "gender": "FEMALE",
+   "reference": "사건 발생 이후, 깁슨(Gibson)은 병원으로 이송되었으나 얼마 후 숨을 거뒀다.",
+   "whisper_language": "ko",
+   "whisper_text": "사건 발생 이후 깁스는 병원으로 이송되었으나 얼마 후 숨을 거뒀다.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 8.82,
+     "text": "사건 발생 이후 깁스는 병원으로 이송되었으나 얼마 후 숨을 거뒀다."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "it_it",
+   "language": "it",
+   "fleurs_id": "1787",
+   "file": "10000151032537989529.wav",
+   "duration_s": 11.52,
+   "gender": "MALE",
+   "reference": "Il blog è uno strumento che si prefigge di incoraggiare la collaborazione e sviluppare l'apprendimento degli studenti ben oltre la giornata scolastica normale.",
+   "whisper_language": "it",
+   "whisper_text": "Il blog è uno strumento che si prefigge di incoraggiare la collaborazione e sviluppare l'apprendimento degli studenti ben oltre la giornata scolastica normale.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 10.52,
+     "text": "Il blog è uno strumento che si prefigge di incoraggiare la collaborazione e sviluppare l'apprendimento degli studenti ben oltre la giornata scolastica normale."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "it_it",
+   "language": "it",
+   "fleurs_id": "1883",
+   "file": "10011138801715101183.wav",
+   "duration_s": 16.08,
+   "gender": "FEMALE",
+   "reference": "Sotto il ponte lo spazio in verticale libero è di 15 metri. La costruzione è terminata nell'agosto del 2011, ma l'apertura al traffico è avvenuta solo nel marzo 2017.",
+   "whisper_language": "it",
+   "whisper_text": "Sotto il ponte lo spazio in verticale libero è di 15 metri. La costruzione è terminata nell'agosto del 2011, ma l'apertura al traffico è avvenuta solo nel marzo 2017.",
+   "whisper_segments": [
+    {
+     "start_s": 0.9,
+     "end_s": 13.18,
+     "text": "Sotto il ponte lo spazio in verticale libero è di 15 metri. La costruzione è terminata nell'agosto del 2011, ma l'apertura al traffico è avvenuta solo nel marzo 2017."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "it_it",
+   "language": "it",
+   "fleurs_id": "1849",
+   "file": "10017896147709177739.wav",
+   "duration_s": 11.4,
+   "gender": "FEMALE",
+   "reference": "Se avete visto il film \"Il mistero dei Templari\", potreste pensare che sul retro della Dichiarazione d'Indipendenza sia disegnata una mappa del tesoro.",
+   "whisper_language": "it",
+   "whisper_text": "Se avete visto il film Il mistero dei Templari, potreste pensare che sul retro della dichiarazione di indipendenza sia disegnata una mappa del tesoro.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 10.42,
+     "text": "Se avete visto il film Il mistero dei Templari, potreste pensare che sul retro della dichiarazione di indipendenza sia disegnata una mappa del tesoro."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "it_it",
+   "language": "it",
+   "fleurs_id": "1814",
+   "file": "10037759924455051213.wav",
+   "duration_s": 11.28,
+   "gender": "FEMALE",
+   "reference": "Con ioni idrogeno si intendono dei protoni cui sono stati strappati via gli elettroni (dato che gli atomi di idrogeno sono formati da un protone e da un elettrone).",
+   "whisper_language": "it",
+   "whisper_text": "Con ioni idrogeno si intendono dei protoni cui sono stati strappati via gli elettroni, dato che gli atomi di idrogeno sono formati da un protone e da un elettrone.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 5.94,
+     "text": "Con ioni idrogeno si intendono dei protoni cui sono stati strappati via gli elettroni,"
+    },
+    {
+     "start_s": 5.94,
+     "end_s": 10.6,
+     "text": "dato che gli atomi di idrogeno sono formati da un protone e da un elettrone."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "it_it",
+   "language": "it",
+   "fleurs_id": "1987",
+   "file": "1006729518827641482.wav",
+   "duration_s": 7.08,
+   "gender": "FEMALE",
+   "reference": "L'incidente è avvenuto in alta montagna e si ritiene sia stato causato da fuoco nemico.",
+   "whisper_language": "it",
+   "whisper_text": "L'incidente è avvenuto in alta montagna e si ritiene sia stato causato da fuoco nemico.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 7.08,
+     "text": "L'incidente è avvenuto in alta montagna e si ritiene sia stato causato da fuoco nemico."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "it_it",
+   "language": "it",
+   "fleurs_id": "1974",
+   "file": "10127750728509182272.wav",
+   "duration_s": 12.0,
+   "gender": "FEMALE",
+   "reference": "In maniera analoga, agli uomini è richiesto di indossare pantaloni lunghi fin sotto le ginocchia.",
+   "whisper_language": "it",
+   "whisper_text": "In maniera analoga agli uomini è richiesto di indossare pantaloni lunghi fin sotto le ginocchia.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 12.0,
+     "text": "In maniera analoga agli uomini è richiesto di indossare pantaloni lunghi fin sotto le ginocchia."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "it_it",
+   "language": "it",
+   "fleurs_id": "1671",
+   "file": "10163392299961827450.wav",
+   "duration_s": 17.88,
+   "gender": "FEMALE",
+   "reference": "L'iniziativa contro le oscenità è stata finanziata dal Congresso a partire dall'anno fiscale 2005, con la specifica richiesta all'FBI di assegnare 10 agenti alla pornografia per adulti.",
+   "whisper_language": "it",
+   "whisper_text": "L'iniziativa contro le uscinità è stata finanziata dal congresso a partire dall'anno fiscale 2005, con la specifica richiesta all'FBI di assegnare 10 agenti alla pornografia per adulti.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 15.62,
+     "text": "L'iniziativa contro le uscinità è stata finanziata dal congresso a partire dall'anno fiscale 2005, con la specifica richiesta all'FBI di assegnare 10 agenti alla pornografia per adulti."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "it_it",
+   "language": "it",
+   "fleurs_id": "1830",
+   "file": "10166843301601278560.wav",
+   "duration_s": 11.88,
+   "gender": "FEMALE",
+   "reference": "Anche nelle elezioni parlamentari la maggioranza resta in mano al partito di governo, l'Organizzazione del Popolo dell'Africa del Sud-Ovest (SWAPO).",
+   "whisper_language": "it",
+   "whisper_text": "Anche nelle elezioni parlamentari la maggioranza resta in mano al partito di governo, l'Organizzazione del Popolo dell'Africa del Sud-Ovest, SUAPO.",
+   "whisper_segments": [
+    {
+     "start_s": 0.78,
+     "end_s": 6.14,
+     "text": "Anche nelle elezioni parlamentari la maggioranza resta in mano al partito di governo,"
+    },
+    {
+     "start_s": 6.14,
+     "end_s": 10.54,
+     "text": "l'Organizzazione del Popolo dell'Africa del Sud-Ovest, SUAPO."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "it_it",
+   "language": "it",
+   "fleurs_id": "1739",
+   "file": "10168148107941542925.wav",
+   "duration_s": 12.12,
+   "gender": "FEMALE",
+   "reference": "La grotta poggia sulla sommità di una delle montagne a nord della Mecca, completamente distaccata dal resto del mondo.",
+   "whisper_language": "it",
+   "whisper_text": "La grotta poggia sulla sommità di una delle montagne a nord della Mecca, completamente distaccata dal resto del mondo.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 12.12,
+     "text": "La grotta poggia sulla sommità di una delle montagne a nord della Mecca, completamente distaccata dal resto del mondo."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "it_it",
+   "language": "it",
+   "fleurs_id": "1669",
+   "file": "10173541521390065753.wav",
+   "duration_s": 9.54,
+   "gender": "FEMALE",
+   "reference": "Secondo il sovrintendente della polizia Chandra Shekhar Solanki, gli imputati sono apparsi in tribunale con il volto coperto.",
+   "whisper_language": "it",
+   "whisper_text": "Secondo il sovrintendente della polizia Chandra Sekar Solanki, gli imputati sono apparsi in tribunale con il volto coperto.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 9.54,
+     "text": "Secondo il sovrintendente della polizia Chandra Sekar Solanki, gli imputati sono apparsi in tribunale con il volto coperto."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "it_it",
+   "language": "it",
+   "fleurs_id": "2005",
+   "file": "10210638754804006465.wav",
+   "duration_s": 6.54,
+   "gender": "FEMALE",
+   "reference": "Eppure gli uccelli hanno molte caratteristiche che li accomunano ai dinosauri.",
+   "whisper_language": "it",
+   "whisper_text": "Eppure gli uccelli hanno molte caratteristiche che li accomunano ai dinosauri.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 6.54,
+     "text": "Eppure gli uccelli hanno molte caratteristiche che li accomunano ai dinosauri."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "it_it",
+   "language": "it",
+   "fleurs_id": "1960",
+   "file": "1021451608744266497.wav",
+   "duration_s": 15.18,
+   "gender": "FEMALE",
+   "reference": "Stando a quanto riferito aveva circa 20 anni. Bieber ha dichiarato \"Anche se non ero presente né direttamente coinvolto in questo terribile incidente, i miei pensieri e le mie preghiere vanno ai familiari della vittima\".",
+   "whisper_language": "it",
+   "whisper_text": "stando a quanto riferito aveva circa vent'anni biber ha dichiarato anche se non ero presente né direttamente coinvolto in questo terribile incidente i miei pensieri e le mie preghiere vanno ai familiari della vittima",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 15.18,
+     "text": "stando a quanto riferito aveva circa vent'anni biber ha dichiarato anche se non ero presente né direttamente coinvolto in questo terribile incidente i miei pensieri e le mie preghiere vanno ai familiari della vittima"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "fr_fr",
+   "language": "fr",
+   "fleurs_id": "1987",
+   "file": "10043298898524273336.wav",
+   "duration_s": 10.2,
+   "gender": "FEMALE",
+   "reference": "L’accident a eu lieu en terrain montagneux, et il semblerait que cela ait été causé par un incendie malveillant.",
+   "whisper_language": "fr",
+   "whisper_text": "L'accident a eu lieu en terrain montagneux et il semblerait que cela ait été causé par un incendie malveillant.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 8.68,
+     "text": "L'accident a eu lieu en terrain montagneux et il semblerait que cela ait été causé par un incendie malveillant."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "fr_fr",
+   "language": "fr",
+   "fleurs_id": "1857",
+   "file": "10138021779681596478.wav",
+   "duration_s": 8.28,
+   "gender": "MALE",
+   "reference": "Il a ajouté qu’« on ne devrait cependant pas leur demander d’assumer des obligations qui dépassent leur stade de développement, leur responsabilité et leurs capacités. »",
+   "whisper_language": "fr",
+   "whisper_text": "Il a ajouté qu'on ne devrait cependant pas leur demander d'assumer des obligations qui dépassent leur stade de développement, leurs responsabilités et leurs capacités.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 8.28,
+     "text": "Il a ajouté qu'on ne devrait cependant pas leur demander d'assumer des obligations qui dépassent leur stade de développement, leurs responsabilités et leurs capacités."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "fr_fr",
+   "language": "fr",
+   "fleurs_id": "1913",
+   "file": "10143749263702132703.wav",
+   "duration_s": 10.2,
+   "gender": "FEMALE",
+   "reference": "Le rugissement du tigre ne ressemble pas au rugissement ample du lion, mais plutôt à une phrase dont les mots seraient des cris et des grondements.",
+   "whisper_language": "fr",
+   "whisper_text": "Le ruissement du tigre ne ressemble pas au ruissement en plus du lion, mais plutôt à une phrase dont les mots seraient des cris et des grondements.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 8.26,
+     "text": "Le ruissement du tigre ne ressemble pas au ruissement en plus du lion, mais plutôt à une phrase dont les mots seraient des cris et des grondements."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "fr_fr",
+   "language": "fr",
+   "fleurs_id": "2004",
+   "file": "10166091086920486572.wav",
+   "duration_s": 8.34,
+   "gender": "FEMALE",
+   "reference": "Le même mois, un autre avion de ligne a fait une sortie de piste à Mashhad et a heurté un mur, tuant ainsi dix-sept personnes.",
+   "whisper_language": "fr",
+   "whisper_text": "De même mois, un autre avion de ligne a fait une sortie de piste à Machad et heurté un mur, tuant ainsi 17 personnes.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 8.34,
+     "text": "De même mois, un autre avion de ligne a fait une sortie de piste à Machad et heurté un mur, tuant ainsi 17 personnes."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "fr_fr",
+   "language": "fr",
+   "fleurs_id": "1853",
+   "file": "10174413140250646001.wav",
+   "duration_s": 7.2,
+   "gender": "MALE",
+   "reference": "Giancarlo Fisichella a perdu le contrôle de sa voiture et a terminé la course peu après le démarrage.",
+   "whisper_language": "fr",
+   "whisper_text": "Jean-Carlo Ficciela a perdu le contrôle de sa voiture et a terminé la course peu après le démarrage.",
+   "whisper_segments": [
+    {
+     "start_s": 1.0,
+     "end_s": 7.2,
+     "text": "Jean-Carlo Ficciela a perdu le contrôle de sa voiture et a terminé la course peu après le démarrage."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "fr_fr",
+   "language": "fr",
+   "fleurs_id": "1929",
+   "file": "10221277978969763776.wav",
+   "duration_s": 8.4,
+   "gender": "MALE",
+   "reference": "Malgré le net avantage de Del Potro pendant le deuxième set, il a fallu passer par un tie-break une fois que le score a atteint 6-6.",
+   "whisper_language": "fr",
+   "whisper_text": "Malgré le net avantage de Del Potro pendant le deuxième set, il a fallu passer par un tie break une fois que le score atteint 6-6.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 8.4,
+     "text": "Malgré le net avantage de Del Potro pendant le deuxième set, il a fallu passer par un tie break une fois que le score atteint 6-6."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "fr_fr",
+   "language": "fr",
+   "fleurs_id": "1980",
+   "file": "10334413597118469552.wav",
+   "duration_s": 11.64,
+   "gender": "MALE",
+   "reference": "Malheureusement, il est difficile d'étudier le flux de circulation car le comportement des conducteurs ne peut être prédit avec cent pour cent de certitude.",
+   "whisper_language": "fr",
+   "whisper_text": "Malheureusement, il est difficile d'étudier le flux de circulation car les comportements des conducteurs ne peuvent être prédits avec 100% de certitude.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 6.22,
+     "text": "Malheureusement, il est difficile d'étudier le flux de circulation car les comportements"
+    },
+    {
+     "start_s": 6.22,
+     "end_s": 9.66,
+     "text": "des conducteurs ne peuvent être prédits avec 100% de certitude."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "fr_fr",
+   "language": "fr",
+   "fleurs_id": "1696",
+   "file": "10385751433252343757.wav",
+   "duration_s": 7.68,
+   "gender": "FEMALE",
+   "reference": "Les deux composés réagissent l'un avec l'autre pour former des cristaux qui peuvent bloquer la fonction rénale, ont déclaré des chercheurs de l'université.",
+   "whisper_language": "fr",
+   "whisper_text": "Les deux composés réagissent l'un avec l'autre pour former des cristaux qui peuvent bloquer la fonction rénale, ont déclaré des chercheurs de l'université.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 6.82,
+     "text": "Les deux composés réagissent l'un avec l'autre pour former des cristaux qui peuvent bloquer la fonction rénale, ont déclaré des chercheurs de l'université."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "fr_fr",
+   "language": "fr",
+   "fleurs_id": "1729",
+   "file": "10399459061919571703.wav",
+   "duration_s": 14.82,
+   "gender": "MALE",
+   "reference": "Par exemple, des étudiants de l'école Bennet en Caroline du Nord conçoivent chaque année un site web consacré à leur visite de la capitale de l'État. Chaque année, le site est remis à jour, mais les anciennes versions sont conservées en ligne pour servir d'album.",
+   "whisper_language": "fr",
+   "whisper_text": "Par exemple, des étudiants de l'école Béné en Caroline du Nord conçoivent chaque année un site web consacré à leur visite de la capitale de l'État. Chaque année, le site est remis à jour, mais les anciennes versions sont conservées en ligne pour servir d'albums.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 9.24,
+     "text": "Par exemple, des étudiants de l'école Béné en Caroline du Nord conçoivent chaque année un site web consacré à leur visite de la capitale de l'État."
+    },
+    {
+     "start_s": 9.24,
+     "end_s": 14.82,
+     "text": "Chaque année, le site est remis à jour, mais les anciennes versions sont conservées en ligne pour servir d'albums."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "fr_fr",
+   "language": "fr",
+   "fleurs_id": "1685",
+   "file": "10451502537136425109.wav",
+   "duration_s": 8.1,
+   "gender": "FEMALE",
+   "reference": "Par exemple, le format de photographie le plus courant au monde est le 35 mm ; c'était le format de pellicule le plus répandu à la fin de l'ère des films analogiques.",
+   "whisper_language": "fr",
+   "whisper_text": "Par exemple, le format de photographie le plus courant du monde est le 35 mm. C'était le format de pellicule le plus répandu à la fin de l'ère des films analogiques.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 4.32,
+     "text": "Par exemple, le format de photographie le plus courant du monde est le 35 mm."
+    },
+    {
+     "start_s": 4.32,
+     "end_s": 7.68,
+     "text": "C'était le format de pellicule le plus répandu à la fin de l'ère des films analogiques."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "fr_fr",
+   "language": "fr",
+   "fleurs_id": "1940",
+   "file": "10473501692975174389.wav",
+   "duration_s": 14.4,
+   "gender": "MALE",
+   "reference": "Tout bien considéré, nous ne devrions pas être surpris si nos propres ancêtres ont résolu leur « problème de protéines » un peu de la même manière que les chimpanzés de la savane le font aujourd'hui.",
+   "whisper_language": "fr",
+   "whisper_text": "Tout bien considéré, nous ne devrions pas être surpris si nos propres ancêtres ont résolu leurs problèmes de protéines un peu de la même manière que les chimpanzés de la savane le font aujourd'hui.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 6.66,
+     "text": "Tout bien considéré, nous ne devrions pas être surpris si nos propres ancêtres ont"
+    },
+    {
+     "start_s": 6.66,
+     "end_s": 11.18,
+     "text": "résolu leurs problèmes de protéines un peu de la même manière que les chimpanzés"
+    },
+    {
+     "start_s": 11.18,
+     "end_s": 14.4,
+     "text": "de la savane le font aujourd'hui."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "fr_fr",
+   "language": "fr",
+   "fleurs_id": "1805",
+   "file": "10481242713503018126.wav",
+   "duration_s": 10.2,
+   "gender": "MALE",
+   "reference": "Le bus 403 de Scotturb se rend régulièrement à Sintra, avec un arrêt à Cabo da Roca.",
+   "whisper_language": "fr",
+   "whisper_text": "Le bus 403 de Scotterb se rend régulièrement à Sintra avec un arrêt à Cabo d'Aroca.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 10.2,
+     "text": "Le bus 403 de Scotterb se rend régulièrement à Sintra avec un arrêt à Cabo d'Aroca."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ar_eg",
+   "language": "ar",
+   "fleurs_id": "1993",
+   "file": "10019390257075855641.wav",
+   "duration_s": 8.16,
+   "gender": "FEMALE",
+   "reference": "تشكلت في المحيط الأطلسي اليوم عاشر عاصفة مُسماة لموسم الأعاصير الأطلسية، العاصفة شبه الاستوائية جيري.",
+   "whisper_language": "ar",
+   "whisper_text": "تشكلت في المحيط الأطلسي اليوم عاشر عاصفة مسمى لموسم الأعاصير الأطلسية العاصفة شبه الاستوائية جيري",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 8.16,
+     "text": "تشكلت في المحيط الأطلسي اليوم عاشر عاصفة مسمى لموسم الأعاصير الأطلسية العاصفة شبه الاستوائية جيري"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ar_eg",
+   "language": "ar",
+   "fleurs_id": "1730",
+   "file": "10035416633083120372.wav",
+   "duration_s": 14.16,
+   "gender": "FEMALE",
+   "reference": "تغادر الحافلات المحطة الداخلية بين المناطق (عبر النهر) في خلال اليوم على الرغم من أن معظمها وخاصة المتجهة منها إلى الشرق وجاكار/بومثانج تغادر بين 06:30 و 07:30.",
+   "whisper_language": "ar",
+   "whisper_text": "تغادر حافلات المحطة الداخلية بين المناطق عبر النهر في خلال اليوم على الرغم من أن معظمها وخاصة المتجه منها إلى الشرق وجاكارا بومثانج تغادر بين 36 و37",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 13.14,
+     "text": "تغادر حافلات المحطة الداخلية بين المناطق عبر النهر في خلال اليوم على الرغم من أن معظمها وخاصة المتجه منها إلى الشرق وجاكارا بومثانج تغادر بين 36 و37"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ar_eg",
+   "language": "ar",
+   "fleurs_id": "1995",
+   "file": "10080665469720750912.wav",
+   "duration_s": 16.02,
+   "gender": "FEMALE",
+   "reference": "يتمُّ دعْم التعلُّم التفاعليّ في البرنامج داخليًا ويهدف إلى طرح الأسئلة والتحفيز وشرح الإجراءاتِ التي قد يكون من الصعب على الطالب التعامل معها بمفرده.",
+   "whisper_language": "ar",
+   "whisper_text": "يتم دعم التعلم التفاعلي في البرنامج داخلياً ويهدف إلى طرح الأسئلة والتحفيز وشرح الإجراءات التي قد يكون من الصعب على الطالب التعامل معها بمفرده",
+   "whisper_segments": [
+    {
+     "start_s": 0.56,
+     "end_s": 14.34,
+     "text": "يتم دعم التعلم التفاعلي في البرنامج داخلياً ويهدف إلى طرح الأسئلة والتحفيز وشرح الإجراءات التي قد يكون من الصعب على الطالب التعامل معها بمفرده"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ar_eg",
+   "language": "ar",
+   "fleurs_id": "1942",
+   "file": "1021284281927612037.wav",
+   "duration_s": 10.7,
+   "gender": "FEMALE",
+   "reference": "نصنع بيوتنا وملابسنا من النباتات . معظم الطعام الذي نتناوله من النباتات كذلك. بدون النباتات، لا يمكن للحيوانات البقاء.",
+   "whisper_language": "ar",
+   "whisper_text": "نصنع بيوتنا وملابسنا من النباتات معظم الطعام الذي نتناوله من النباتات كذلك بدون النباتات لا يمكن للحيوانات البقاء",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 3.24,
+     "text": "نصنع بيوتنا وملابسنا من النباتات"
+    },
+    {
+     "start_s": 3.24,
+     "end_s": 6.9,
+     "text": "معظم الطعام الذي نتناوله من النباتات كذلك"
+    },
+    {
+     "start_s": 6.9,
+     "end_s": 10.08,
+     "text": "بدون النباتات لا يمكن للحيوانات البقاء"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ar_eg",
+   "language": "ar",
+   "fleurs_id": "1740",
+   "file": "10219273669592698682.wav",
+   "duration_s": 8.34,
+   "gender": "FEMALE",
+   "reference": "إن عرض الصوت والضوء الهرمي واحد من أمتع الأشياء الموجودة بالمنطقة للأطفال.",
+   "whisper_language": "ar",
+   "whisper_text": "إن عرض الصوت والضوء الهرمي واحدا من أمتع الأشياء الموجودة بالمنطقة للأطفال",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 8.34,
+     "text": "إن عرض الصوت والضوء الهرمي واحدا من أمتع الأشياء الموجودة بالمنطقة للأطفال"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ar_eg",
+   "language": "ar",
+   "fleurs_id": "1771",
+   "file": "10223562251993082117.wav",
+   "duration_s": 14.76,
+   "gender": "FEMALE",
+   "reference": "تذكر أنه على الرغم من أن الموسيقى في المنصات الرئيسية قد تكون انتهت، إلا أن هناك أقسام من المهرجان قد تستمر في تشغيل الموسيقى حتى وقت متأخر من الليل.",
+   "whisper_language": "ar",
+   "whisper_text": "تذكر أنه على الرغم من أن الموسيقى في المنصات الرئيسية قد تكون انتهت إلا أن هناك أقسام من المهرجان قد تستمر في تشغيل الموسيقى حتى وقت متأخر من الليل",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 6.66,
+     "text": "تذكر أنه على الرغم من أن الموسيقى في المنصات الرئيسية قد تكون انتهت"
+    },
+    {
+     "start_s": 6.66,
+     "end_s": 13.8,
+     "text": "إلا أن هناك أقسام من المهرجان قد تستمر في تشغيل الموسيقى حتى وقت متأخر من الليل"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ar_eg",
+   "language": "ar",
+   "fleurs_id": "1976",
+   "file": "10340788584398631536.wav",
+   "duration_s": 12.48,
+   "gender": "FEMALE",
+   "reference": "أدى ضاربا الكرة المتمركزين في الوسط، ساشين تيندولكار وراهول درافيد، جيدًا وأقاما شراكة أكسبت للفريق مائة نقطة.",
+   "whisper_language": "ar",
+   "whisper_text": "أدى ضارب الكرة المتمركزين في الوسط ساشين تندولكار وراهولد رافد جيدا وأقام شراكة أكسبة للفريق 100 نقطة",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 12.48,
+     "text": "أدى ضارب الكرة المتمركزين في الوسط ساشين تندولكار وراهولد رافد جيدا وأقام شراكة أكسبة للفريق 100 نقطة"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ar_eg",
+   "language": "ar",
+   "fleurs_id": "1947",
+   "file": "10361044285640817256.wav",
+   "duration_s": 6.36,
+   "gender": "FEMALE",
+   "reference": "قبل وصول القوات، لم تواجه هايتي مشاكل متعلقة بالمرض منذ القرن التاسع عشر.",
+   "whisper_language": "ar",
+   "whisper_text": "قبل وصول الكوات لم تواجه هايتي مشاكل متعلقة بالمرض منذ القونا التاسع عشر",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 6.36,
+     "text": "قبل وصول الكوات لم تواجه هايتي مشاكل متعلقة بالمرض منذ القونا التاسع عشر"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ar_eg",
+   "language": "ar",
+   "fleurs_id": "1680",
+   "file": "10366294495925707527.wav",
+   "duration_s": 10.92,
+   "gender": "FEMALE",
+   "reference": "بصفته رياضيّاً شاملاً، يمكن للنّمر التّسلق (وإن لم يكن ذلك بشكلٍ جيد) والسّباحة والقفز لمسافاتٍ طويلةٍ والسّحب بقوّة خمسة أضعاف قوّة الإنسان.",
+   "whisper_language": "ar",
+   "whisper_text": "بصفته رياضيا شاملا يمكن للنمر التسلق وإن لم يكن ذلك بشكل جيد والسباحة والقفز لمسافات طويلة والسحب بقوة خمسة أضعاف قوة الإنسان",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 10.4,
+     "text": "بصفته رياضيا شاملا يمكن للنمر التسلق وإن لم يكن ذلك بشكل جيد والسباحة والقفز لمسافات طويلة والسحب بقوة خمسة أضعاف قوة الإنسان"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ar_eg",
+   "language": "ar",
+   "fleurs_id": "2000",
+   "file": "10372562911047932559.wav",
+   "duration_s": 11.76,
+   "gender": "FEMALE",
+   "reference": "في حال كنت تعبر منطقة بحر البلطيق الشمالية في الشتاء، فيجب أن تفحص موقع الكابينة، إذ أن المرور عبر الجليد يسبب ضوضاء صاخبة للغاية للأشخاص الأكثر تضرراً.",
+   "whisper_language": "ar",
+   "whisper_text": "في حال كنت تعبر منطقة بحر البلطيق الشمالية في الشتاء فيجب أن تفحص موقع الكبينة إذ أن المرور عبر الجليد يسبب ضوضاء صخبة للغاية للأشخاص الأكثر تضررا",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 5.76,
+     "text": "في حال كنت تعبر منطقة بحر البلطيق الشمالية في الشتاء فيجب أن تفحص موقع الكبينة"
+    },
+    {
+     "start_s": 5.76,
+     "end_s": 10.9,
+     "text": "إذ أن المرور عبر الجليد يسبب ضوضاء صخبة للغاية للأشخاص الأكثر تضررا"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ar_eg",
+   "language": "ar",
+   "fleurs_id": "1714",
+   "file": "10394942145902478734.wav",
+   "duration_s": 11.4,
+   "gender": "FEMALE",
+   "reference": "أُرسل القمر الصناعي إلى الفضاء بواسطة صاروخ. يستخدم العلماء التلسكوبات في الفضاء لأن الغلاف الجوي لكوكب الأرض يشوه بعض الضوء والرؤية.",
+   "whisper_language": "ar",
+   "whisper_text": "أرسل القمر الصناعي إلى الفضاء بواسطة صاروخ يستخدم العلماء التليسكوبات في الفضاء لأن الغلاف الجوي لكوكب الأرض يشوه بعض الضوء والرؤية",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 3.44,
+     "text": "أرسل القمر الصناعي إلى الفضاء بواسطة صاروخ"
+    },
+    {
+     "start_s": 3.44,
+     "end_s": 10.28,
+     "text": "يستخدم العلماء التليسكوبات في الفضاء لأن الغلاف الجوي لكوكب الأرض يشوه بعض الضوء والرؤية"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "ar_eg",
+   "language": "ar",
+   "fleurs_id": "1667",
+   "file": "10427622000895658817.wav",
+   "duration_s": 12.24,
+   "gender": "FEMALE",
+   "reference": "بصفة عامة، يمكن أن يظهر سلوكان عندما يبدأ المديرون في قيادة أقرانهم السابقين أحدهما هو محاولة البقاء \"مثل الآخرين\" (أو الأخريات).",
+   "whisper_language": "ar",
+   "whisper_text": "بصفة عامة يمكن أن يظهر سلوكان عندما يبدأ المديرون في قيادة أقرانهم السابقين أحدهم هو محاولة البقاء مثل الآخرين أو الأخريات",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 6.84,
+     "text": "بصفة عامة يمكن أن يظهر سلوكان عندما يبدأ المديرون في قيادة أقرانهم السابقين"
+    },
+    {
+     "start_s": 6.84,
+     "end_s": 11.34,
+     "text": "أحدهم هو محاولة البقاء مثل الآخرين أو الأخريات"
+    }
+   ]
+  },
+  {
+   "fleurs_config": "da_dk",
+   "language": "da",
+   "fleurs_id": "1908",
+   "file": "10016401698104160032.wav",
+   "duration_s": 5.1,
+   "gender": "MALE",
+   "reference": "Dette er en vigtig måde at skelne mellem nogle verber og objektiver",
+   "whisper_language": "da",
+   "whisper_text": "Dette er en vigtig måde at skille mellem nogle verber og objektiver.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 3.96,
+     "text": "Dette er en vigtig måde at skille mellem nogle verber og objektiver."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "da_dk",
+   "language": "da",
+   "fleurs_id": "1842",
+   "file": "10034617623435290253.wav",
+   "duration_s": 18.24,
+   "gender": "MALE",
+   "reference": "Fordi dinosaurfjerene ikke har et veludviklet skaft, kaldet et fjerskaft, men har andre kendetegn fra fjer - stråler og bistråler - udledte forskerne, at fjerskaft sandsynligvis var en senere evolutionær udvikling end disse andre karakteristika.",
+   "whisper_language": "da",
+   "whisper_text": "Fordi dinosaurerfjerne ikke har et veludviklet skraft kaldes et fjerdskaft, men har andre kendetegn fra fjer, stråler og bistråler, udledte forskerne, at fjerdskaft sandsynligvis var en senere revolutionær udvikling end disse andre karakteristika.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 16.84,
+     "text": "Fordi dinosaurerfjerne ikke har et veludviklet skraft kaldes et fjerdskaft, men har andre kendetegn fra fjer, stråler og bistråler, udledte forskerne, at fjerdskaft sandsynligvis var en senere revolutionær udvikling end disse andre karakteristika."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "da_dk",
+   "language": "da",
+   "fleurs_id": "1876",
+   "file": "10077729101954371425.wav",
+   "duration_s": 6.84,
+   "gender": "MALE",
+   "reference": "Nordmarianernes beredskabskontor meddelte, at der ikke var rapporteret om skader i nationen.",
+   "whisper_language": "da",
+   "whisper_text": "Nordmarinianernes beredskabskontor meddeler, at der ikke var reporteret om skader i nationen.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 6.84,
+     "text": "Nordmarinianernes beredskabskontor meddeler, at der ikke var reporteret om skader i nationen."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "da_dk",
+   "language": "da",
+   "fleurs_id": "1856",
+   "file": "10085624755376094742.wav",
+   "duration_s": 11.34,
+   "gender": "MALE",
+   "reference": "Finland er et fantastisk rejsemål for sejlere. \"De tusind søers land\" har også tusindvis af øer i søerne samt i øhavene langs kysten.",
+   "whisper_language": "da",
+   "whisper_text": "Finland er et fantastisk rejsemål for sejlere. De tusind søgers land har også tusindvis af øer i søerne, samt i øhavne langs kysten.",
+   "whisper_segments": [
+    {
+     "start_s": 1.0,
+     "end_s": 3.24,
+     "text": "Finland er et fantastisk rejsemål for sejlere."
+    },
+    {
+     "start_s": 3.24,
+     "end_s": 9.82,
+     "text": "De tusind søgers land har også tusindvis af øer i søerne, samt i øhavne langs kysten."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "da_dk",
+   "language": "da",
+   "fleurs_id": "1810",
+   "file": "10092298310061000596.wav",
+   "duration_s": 9.12,
+   "gender": "MALE",
+   "reference": "Californiens guvernør Arnold Schwarzenegger underskrev et lovforslag, der forbyder salg eller udlejning af voldelige computerspil til mindreårige.",
+   "whisper_language": "da",
+   "whisper_text": "Kaliforniens guvernør Arnold Schwarzenegger underskrev et lovforslag, der forbyder salg eller udlanding af vold i computerspil til mine drøge.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 7.8,
+     "text": "Kaliforniens guvernør Arnold Schwarzenegger underskrev et lovforslag, der forbyder salg eller udlanding af vold i computerspil til mine drøge."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "da_dk",
+   "language": "da",
+   "fleurs_id": "1969",
+   "file": "1013200192580161562.wav",
+   "duration_s": 15.72,
+   "gender": "MALE",
+   "reference": "Den siger, at det mest effektive sted for hovedmotivet, er i skæringspunktet mellem linjer, der deler billedet i tredjedele lodret og vandret (se eksempel).",
+   "whisper_language": "da",
+   "whisper_text": "Den siger, at det mest effektive sted for hovedmotivet er i skæringspunktet mellem linjer, der deler billedet i tredje dele lodret og vandret. Se eksempel.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 11.76,
+     "text": "Den siger, at det mest effektive sted for hovedmotivet er i skæringspunktet mellem linjer, der deler billedet i tredje dele lodret og vandret."
+    },
+    {
+     "start_s": 11.76,
+     "end_s": 12.96,
+     "text": "Se eksempel."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "da_dk",
+   "language": "da",
+   "fleurs_id": "1761",
+   "file": "10143479267442626431.wav",
+   "duration_s": 7.98,
+   "gender": "MALE",
+   "reference": "Fotograferne tog senere en ældre dames plads, da hun skulle på toilettet. Mendoza blev skudt ned.",
+   "whisper_language": "da",
+   "whisper_text": "Fotografen tog senere en ældre dames plads, da hun skulle på toilettet, men doser blev skudt nået.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 7.98,
+     "text": "Fotografen tog senere en ældre dames plads, da hun skulle på toilettet, men doser blev skudt nået."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "da_dk",
+   "language": "da",
+   "fleurs_id": "1919",
+   "file": "10149729587964516590.wav",
+   "duration_s": 8.76,
+   "gender": "MALE",
+   "reference": "Byen er også base for bestigning af Nyiragongo-vulkanen samt et af de billigste steder at spore bjerggorillaer i Afrika.",
+   "whisper_language": "da",
+   "whisper_text": "Byen er også base for bestigning af Nyugonga vulkanen sammen med en af de billigste steder af spore bjerggorillærer i Afrika.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 8.76,
+     "text": "Byen er også base for bestigning af Nyugonga vulkanen sammen med en af de billigste steder af spore bjerggorillærer i Afrika."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "da_dk",
+   "language": "da",
+   "fleurs_id": "1898",
+   "file": "10174917388486875321.wav",
+   "duration_s": 13.14,
+   "gender": "MALE",
+   "reference": "\"Han [Wales] løj for os stort set fra starten. For det første ved at lade som om at dette var af juridiske årsager. For det andet ved at lade som om han lyttede til os helt op til hans kunstsletning.\"",
+   "whisper_language": "da",
+   "whisper_text": "Han løg for os stort set fra starten. For det første vil jeg lade som om, at dette var af juridiske årsager. For det andet vil jeg lade som om, at han lyttede til os helt op til hans kunstletning.",
+   "whisper_segments": [
+    {
+     "start_s": 0.7,
+     "end_s": 3.68,
+     "text": "Han løg for os stort set fra starten."
+    },
+    {
+     "start_s": 3.68,
+     "end_s": 7.52,
+     "text": "For det første vil jeg lade som om, at dette var af juridiske årsager."
+    },
+    {
+     "start_s": 7.52,
+     "end_s": 11.4,
+     "text": "For det andet vil jeg lade som om, at han lyttede til os helt op til hans kunstletning."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "da_dk",
+   "language": "da",
+   "fleurs_id": "1753",
+   "file": "10177414057688758835.wav",
+   "duration_s": 19.56,
+   "gender": "MALE",
+   "reference": "Selvom dette ofte kun er en upræcis stereotype, er den bedste måde at enes med folk i Paris på, stadig at opføre sig så pænt som muligt, du skal opføre dig som en der er \"bien élevé\" (velopdraget). Det vil gøre det betydeligt lettere at komme rundt.",
+   "whisper_language": "da",
+   "whisper_text": "Selvom dette ofte kun er en upræcis stereotype, er den bedste måde at enes med folk i Paris på, stadig opfører sig så pænt som muligt. Du skal jo opføre dig som en, der er bil eller velopdraget. Det vil gøre det betydeligt lettere at komme rundt.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 10.58,
+     "text": "Selvom dette ofte kun er en upræcis stereotype, er den bedste måde at enes med folk i Paris på, stadig opfører sig så pænt som muligt."
+    },
+    {
+     "start_s": 10.58,
+     "end_s": 19.58,
+     "text": "Du skal jo opføre dig som en, der er bil eller velopdraget. Det vil gøre det betydeligt lettere at komme rundt."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "da_dk",
+   "language": "da",
+   "fleurs_id": "1828",
+   "file": "1019636676625699977.wav",
+   "duration_s": 10.98,
+   "gender": "MALE",
+   "reference": "En søgning på Internettet efter \"Kursus i fjendtligt miljø\" vil sandsynligvis give adressen på en lokal virksomhed.",
+   "whisper_language": "da",
+   "whisper_text": "En søgning på internettet efter \"Kursus i fjendtlig miljø\" vil sandsynligvis give adressen på en lokal virksomhed.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 10.98,
+     "text": "En søgning på internettet efter \"Kursus i fjendtlig miljø\" vil sandsynligvis give adressen på en lokal virksomhed."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "da_dk",
+   "language": "da",
+   "fleurs_id": "1838",
+   "file": "10206519617373672484.wav",
+   "duration_s": 8.4,
+   "gender": "MALE",
+   "reference": "Den store pyramide i Giza er det eneste af de syv vidundere der stadig står i dag.",
+   "whisper_language": "da",
+   "whisper_text": "Den store pyramide i Giza er det eneste af de syv hvidunder, der stadig står i dag.",
+   "whisper_segments": [
+    {
+     "start_s": 1.0,
+     "end_s": 5.74,
+     "text": "Den store pyramide i Giza er det eneste af de syv hvidunder, der stadig står i dag."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "sr_rs",
+   "language": "sr",
+   "fleurs_id": "1969",
+   "file": "10008837294420102619.wav",
+   "duration_s": 12.3,
+   "gender": "MALE",
+   "reference": "У њему се наводи да је најупечатљивије место за главни предмет на пресеку линија које вертикално и хоризонтално деле слику на трећине (види пример).",
+   "whisper_language": "sr",
+   "whisper_text": "U njemu se navodi da je naju pečatljivije mesto za glavni predmet na preseku linija koje vertikuli horizontalno dele sliku na trećinu. U zagradi vidi primer.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 8.78,
+     "text": "U njemu se navodi da je naju pečatljivije mesto za glavni predmet na preseku linija koje vertikuli horizontalno dele sliku na trećinu."
+    },
+    {
+     "start_s": 8.78,
+     "end_s": 10.48,
+     "text": "U zagradi vidi primer."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "sr_rs",
+   "language": "sr",
+   "fleurs_id": "1858",
+   "file": "10117602722061335722.wav",
+   "duration_s": 12.4,
+   "gender": "MALE",
+   "reference": "Даниел Лантањ, експерт УН за болести, изјавила је да су избијање болести вероватно изазвали мировњаци.",
+   "whisper_language": "hr",
+   "whisper_text": "Daniel Lantanj, ekspert UM za bolesti, izjavila je da su izbijanje bolesti verovatno izazvali mirovnjaci.",
+   "whisper_segments": [
+    {
+     "start_s": 0.78,
+     "end_s": 9.98,
+     "text": "Daniel Lantanj, ekspert UM za bolesti, izjavila je da su izbijanje bolesti verovatno izazvali mirovnjaci."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "sr_rs",
+   "language": "sr",
+   "fleurs_id": "1871",
+   "file": "10133128626059240041.wav",
+   "duration_s": 5.28,
+   "gender": "MALE",
+   "reference": "У топлој клими Блиског истока кућа није била толико важна.",
+   "whisper_language": "hr",
+   "whisper_text": "U toploj klimi bliskog istuka kuća nije toliko važna.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 3.8,
+     "text": "U toploj klimi bliskog istuka kuća nije toliko važna."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "sr_rs",
+   "language": "sr",
+   "fleurs_id": "1691",
+   "file": "10133555762101302363.wav",
+   "duration_s": 8.64,
+   "gender": "MALE",
+   "reference": "На неким рутама веће компаније имају своје сопствене авионе, али за неке друге руте или за мање фирме био је проблем.",
+   "whisper_language": "hr",
+   "whisper_text": "Na nekim rutama veće kompanije imaju svoje sobstvene avione, ali za neke druge rute ili za manje firme bio je problem.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 8.64,
+     "text": "Na nekim rutama veće kompanije imaju svoje sobstvene avione, ali za neke druge rute ili za manje firme bio je problem."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "sr_rs",
+   "language": "sr",
+   "fleurs_id": "1863",
+   "file": "10143826765138067069.wav",
+   "duration_s": 17.06,
+   "gender": "MALE",
+   "reference": "Средиште тибетанске медитације је божанство Јога. Визуелизацијом различитих божанстава чисте се енергетски канали, активирају се чакре и ствара се просвећена свест.",
+   "whisper_language": "sr",
+   "whisper_text": "Središte tibetanske meditacije je božanstvo yoga. Vizualizacijom različitih božanstava čiste se energetske kanali, aktiviraju se čakre i stvara se prosvećena svest.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 5.9,
+     "text": "Središte tibetanske meditacije je božanstvo yoga."
+    },
+    {
+     "start_s": 5.9,
+     "end_s": 14.92,
+     "text": "Vizualizacijom različitih božanstava čiste se energetske kanali, aktiviraju se čakre i stvara se prosvećena svest."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "sr_rs",
+   "language": "sr",
+   "fleurs_id": "1848",
+   "file": "1014567676293749947.wav",
+   "duration_s": 11.16,
+   "gender": "MALE",
+   "reference": "Аутомобилска бомба која је јуче ујутру експлодирала у полицијској централи у Газијантепу у Турској убила је два полицајца и повредила још више од двадесет људи.",
+   "whisper_language": "sr",
+   "whisper_text": "Automobilska bomba koja je juče ujutro eksplodirao u policijskoj centrali u Gazijentepu. U Turskoj ubila je dva policajca i povredila još više od 20 ljudi.",
+   "whisper_segments": [
+    {
+     "start_s": 0.84,
+     "end_s": 6.04,
+     "text": "Automobilska bomba koja je juče ujutro eksplodirao u policijskoj centrali u Gazijentepu."
+    },
+    {
+     "start_s": 6.04,
+     "end_s": 10.2,
+     "text": "U Turskoj ubila je dva policajca i povredila još više od 20 ljudi."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "sr_rs",
+   "language": "sr",
+   "fleurs_id": "1902",
+   "file": "10163755017999304205.wav",
+   "duration_s": 7.26,
+   "gender": "MALE",
+   "reference": "У почетку је био хоспитализован у болници Џејмс Паџет у Грејт Јармуту.",
+   "whisper_language": "sr",
+   "whisper_text": "U početku je bio hospitalizovan u bolnici James Padgett u Great Jarmutu.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 7.26,
+     "text": "U početku je bio hospitalizovan u bolnici James Padgett u Great Jarmutu."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "sr_rs",
+   "language": "sr",
+   "fleurs_id": "1712",
+   "file": "10175367897611271370.wav",
+   "duration_s": 14.7,
+   "gender": "MALE",
+   "reference": "Од 1966. године Сундарбанс је резерват за дивље животиње, а процењује се да у овој области сада има 400 краљевских бенгалских тигрова и око 30.000 пегавих јелена.",
+   "whisper_language": "sr",
+   "whisper_text": "Od 1966. godine Sundarbans je rezervat za divlje životinja. Procenjuje se da u ovoj oblasti sada ima 400 krajavskih bengalskih tigrova i oko 30.000 pegavih jelena.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 14.7,
+     "text": "Od 1966. godine Sundarbans je rezervat za divlje životinja. Procenjuje se da u ovoj oblasti sada ima 400 krajavskih bengalskih tigrova i oko 30.000 pegavih jelena."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "sr_rs",
+   "language": "sr",
+   "fleurs_id": "1721",
+   "file": "1020044825563297478.wav",
+   "duration_s": 11.68,
+   "gender": "MALE",
+   "reference": "По изградњи бране 1963. године, заустављене су сезонске поплаве које су шириле седимент кроз реку.",
+   "whisper_language": "sr",
+   "whisper_text": "Po izgradnji brane 1963. godine zaustavljene su sezonske poplave koje su širile sediment kroz reju.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 9.58,
+     "text": "Po izgradnji brane 1963. godine zaustavljene su sezonske poplave koje su širile sediment kroz reju."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "sr_rs",
+   "language": "sr",
+   "fleurs_id": "1799",
+   "file": "10202869025604607158.wav",
+   "duration_s": 10.36,
+   "gender": "MALE",
+   "reference": "Поред такмичења у среду, Карпанедо се такмичио у две појединачне трке на Првенству.",
+   "whisper_language": "hr",
+   "whisper_text": "Pored takmičenja u sredu, Karpanijedo se takmiče u dve pojedinačne trke na prvenstvu.",
+   "whisper_segments": [
+    {
+     "start_s": 1.0,
+     "end_s": 8.28,
+     "text": "Pored takmičenja u sredu, Karpanijedo se takmiče u dve pojedinačne trke na prvenstvu."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "sr_rs",
+   "language": "sr",
+   "fleurs_id": "1872",
+   "file": "10230579851160291516.wav",
+   "duration_s": 13.8,
+   "gender": "MALE",
+   "reference": "Током борбе за независност у организацији покрета Мау, мирно окупљање у граду резултовало је убијањем врховног поглавара Тупуа Тамасесеса Леалофија III.",
+   "whisper_language": "hr",
+   "whisper_text": "Dokon borbe za nezavisnost u organizaciji pokreta Mao, mirno okupljanje u gradu rezultovalo je ubijanjem vrhoma Pogavara, Tupua, Tamasesesa, Lelalofija, Trečika.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 12.6,
+     "text": "Dokon borbe za nezavisnost u organizaciji pokreta Mao, mirno okupljanje u gradu rezultovalo je ubijanjem vrhoma Pogavara, Tupua, Tamasesesa, Lelalofija, Trečika."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "sr_rs",
+   "language": "sr",
+   "fleurs_id": "1825",
+   "file": "10293592125004386044.wav",
+   "duration_s": 8.7,
+   "gender": "MALE",
+   "reference": "Ако желите да будете близу акције, мораћете да дођете рано да бисте обезбедили кампинг место близу музике.",
+   "whisper_language": "hr",
+   "whisper_text": "Ako želite da budete blizu akcije, morat ćete da dođete rano da biste obezbedili kamping mjesto blizu muziki.",
+   "whisper_segments": [
+    {
+     "start_s": 0.5,
+     "end_s": 7.56,
+     "text": "Ako želite da budete blizu akcije, morat ćete da dođete rano da biste obezbedili kamping mjesto blizu muziki."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "en_us",
+   "language": "en",
+   "fleurs_id": "1904",
+   "file": "1003119935936341070.wav",
+   "duration_s": 10.56,
+   "gender": "MALE",
+   "reference": "However, due to the slow communication channels, styles in the west could lag behind by 25 to 30 year.",
+   "whisper_language": "en",
+   "whisper_text": "However, due to the slow communication channels, styles in the West could lag behind by 25-30 years.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 10.56,
+     "text": "However, due to the slow communication channels, styles in the West could lag behind by 25-30 years."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "en_us",
+   "language": "en",
+   "fleurs_id": "1675",
+   "file": "10052240106321793346.wav",
+   "duration_s": 8.76,
+   "gender": "MALE",
+   "reference": "All nouns, alongside the word Sie for you, always begin with a capital letter, even in the middle of a sentence.",
+   "whisper_language": "en",
+   "whisper_text": "All nouns alongside the words say for you always begin with a capital letter even in the middle of a sentence.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 8.74,
+     "text": "All nouns alongside the words say for you always begin with a capital letter even in the middle of a sentence."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "en_us",
+   "language": "en",
+   "fleurs_id": "1950",
+   "file": "10167324587744183095.wav",
+   "duration_s": 11.46,
+   "gender": "FEMALE",
+   "reference": "To the north and within easy reach is the romantic and fascinating town of Sintra and which was made famous to foreigners after a glowing account of its splendours recorded by Lord Byron.",
+   "whisper_language": "en",
+   "whisper_text": "To the north and within easy reach is the romantic and fascinating town of Sintra and which was made famous to foreigners after a glowing account of its splendorous recorded by Lord Byron.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 11.46,
+     "text": "To the north and within easy reach is the romantic and fascinating town of Sintra and which was made famous to foreigners after a glowing account of its splendorous recorded by Lord Byron."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "en_us",
+   "language": "en",
+   "fleurs_id": "1728",
+   "file": "10197164397713068203.wav",
+   "duration_s": 5.76,
+   "gender": "FEMALE",
+   "reference": "The cabbage juice changes color depending on how acidic or basic (alkaline) the chemical is.",
+   "whisper_language": "en",
+   "whisper_text": "The cabbage juice changes color depending on how acidic, basic, and alkaline the chemical is.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 5.76,
+     "text": "The cabbage juice changes color depending on how acidic, basic, and alkaline the chemical is."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "en_us",
+   "language": "en",
+   "fleurs_id": "1938",
+   "file": "10235738076911595987.wav",
+   "duration_s": 11.42,
+   "gender": "MALE",
+   "reference": "The hospital has followed protocol for infection control, including separating the patient from others to prevent possible infection of others.",
+   "whisper_language": "en",
+   "whisper_text": "The hospital has followed protocol for infection control, including separating the patient from others to prevent possible infection of others.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 10.22,
+     "text": "The hospital has followed protocol for infection control, including separating the patient from others to prevent possible infection of others."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "en_us",
+   "language": "en",
+   "fleurs_id": "1876",
+   "file": "10323357556845456822.wav",
+   "duration_s": 10.8,
+   "gender": "FEMALE",
+   "reference": "The Northern Marianas emergency management office said that there were no damages reported in the nation.",
+   "whisper_language": "en",
+   "whisper_text": "The Northern Marianas Emergency Management Office said that there were no damages reported in the nation.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 7.34,
+     "text": "The Northern Marianas Emergency Management Office said that there were no damages reported in the nation."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "en_us",
+   "language": "en",
+   "fleurs_id": "1914",
+   "file": "10335587906469246566.wav",
+   "duration_s": 6.96,
+   "gender": "FEMALE",
+   "reference": "Twentieth century research has shown that there are two pools of genetic variation: hidden and expressed.",
+   "whisper_language": "en",
+   "whisper_text": "20th century research has shown that there are two pools of genetic variation hidden and expressed.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 6.96,
+     "text": "20th century research has shown that there are two pools of genetic variation hidden and expressed."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "en_us",
+   "language": "en",
+   "fleurs_id": "1846",
+   "file": "10344335557154974057.wav",
+   "duration_s": 11.04,
+   "gender": "MALE",
+   "reference": "The aspect ratio of this format (dividing by twelve to obtain the simplest whole-number ratio) is therefore said to be 3:2.",
+   "whisper_language": "en",
+   "whisper_text": "The aspect ratio of this format, dividing by 12 to obtain the simplest whole number ratio, is therefore said to be 3 to 2.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 9.82,
+     "text": "The aspect ratio of this format, dividing by 12 to obtain the simplest whole number ratio, is therefore said to be 3 to 2."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "en_us",
+   "language": "en",
+   "fleurs_id": "1806",
+   "file": "1036771894648013441.wav",
+   "duration_s": 9.9,
+   "gender": "FEMALE",
+   "reference": "As light pollution in their heyday was not the kind of problem it is today, they are usually located in cities or at campuses, easier to reach than those built in modern times.",
+   "whisper_language": "en",
+   "whisper_text": "As light pollution in their heyday was not the kind of problem it is today, they are usually located in cities or at campuses easier to reach than those built in modern times.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 4.0,
+     "text": "As light pollution in their heyday was not the kind of problem it is today, they are"
+    },
+    {
+     "start_s": 4.0,
+     "end_s": 10.0,
+     "text": "usually located in cities or at campuses easier to reach than those built in modern times."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "en_us",
+   "language": "en",
+   "fleurs_id": "1729",
+   "file": "10383288285905292158.wav",
+   "duration_s": 11.28,
+   "gender": "FEMALE",
+   "reference": "For example, each year students from Bennet School in North Carolina design a website about their trip to the State Capital, each year the website gets remodeled, but old versions are kept online to serve as a scrapbook.",
+   "whisper_language": "en",
+   "whisper_text": "For example, each year students from Bennett School in North Carolina design a website about their trip to the state capitol. Each year the website gets remodeled, but old versions are kept online to serve as a scrapbook.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 6.08,
+     "text": "For example, each year students from Bennett School in North Carolina design a website about their trip to the state capitol."
+    },
+    {
+     "start_s": 6.08,
+     "end_s": 11.28,
+     "text": "Each year the website gets remodeled, but old versions are kept online to serve as a scrapbook."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "en_us",
+   "language": "en",
+   "fleurs_id": "1855",
+   "file": "10405958125670257178.wav",
+   "duration_s": 10.92,
+   "gender": "FEMALE",
+   "reference": "Lion prides act much like packs of wolves or dogs, animals surprisingly similar to lions (but not other big cats) in behavior, and also very deadly to their prey.",
+   "whisper_language": "en",
+   "whisper_text": "Lion prides act much like packs of wolves or dogs, animals surprisingly similar to lions but not other big cats in behavior and also very deadly to their prey.",
+   "whisper_segments": [
+    {
+     "start_s": 0.7,
+     "end_s": 10.92,
+     "text": "Lion prides act much like packs of wolves or dogs, animals surprisingly similar to lions but not other big cats in behavior and also very deadly to their prey."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "en_us",
+   "language": "en",
+   "fleurs_id": "1919",
+   "file": "10411016628242228511.wav",
+   "duration_s": 11.28,
+   "gender": "FEMALE",
+   "reference": "The city is also the base to climb the Nyiragongo volcano along with some of the cheapest Mountain Gorilla tracking in Africa.",
+   "whisper_language": "en",
+   "whisper_text": "The city is also the base to climb the Nairaigango volcano along with some of the cheapest mountain guerrilla trafficking in Africa.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 11.28,
+     "text": "The city is also the base to climb the Nairaigango volcano along with some of the cheapest mountain guerrilla trafficking in Africa."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "tr_tr",
+   "language": "tr",
+   "fleurs_id": "2004",
+   "file": "10000377651956138413.wav",
+   "duration_s": 14.16,
+   "gender": "MALE",
+   "reference": "Aynı ay, başka bir yolcu uçağı Meşhed'deki bir pisti aşarak bir duvara çarptı ve on yedi kişinin ölümüne neden oldu.",
+   "whisper_language": "tr",
+   "whisper_text": "Aynı ay başka bir yolcu uçağı Meşet'teki bir pisti aşarak bir duvara çarptı ve 17 kişinin ölümüne neden oldu.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 11.4,
+     "text": "Aynı ay başka bir yolcu uçağı Meşet'teki bir pisti aşarak bir duvara çarptı ve 17 kişinin ölümüne neden oldu."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "tr_tr",
+   "language": "tr",
+   "fleurs_id": "1660",
+   "file": "10002518854052673247.wav",
+   "duration_s": 12.36,
+   "gender": "MALE",
+   "reference": "Romantizm; Goethe, Fichte ve Schlegel gibi yazarlardan geçen geniş bir kültürel determinizm özelliği taşıyordu.",
+   "whisper_language": "tr",
+   "whisper_text": "Romantizm, Goethe, Fichte ve Şilegel gibi yazarlardan geçen geniş bir kültürel determinizm özelliği taşıyordu.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 12.36,
+     "text": "Romantizm, Goethe, Fichte ve Şilegel gibi yazarlardan geçen geniş bir kültürel determinizm özelliği taşıyordu."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "tr_tr",
+   "language": "tr",
+   "fleurs_id": "1692",
+   "file": "10067972835475076305.wav",
+   "duration_s": 11.1,
+   "gender": "MALE",
+   "reference": "Japonya'nın nükleer ajansına göre, tesiste radyoaktif sezyum ve iyodin tespit edildi.",
+   "whisper_language": "tr",
+   "whisper_text": "Japonya'nın nükleer ajansına göre tesiste radyoaktif sezium ve iodin tespit edilir.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 11.1,
+     "text": "Japonya'nın nükleer ajansına göre tesiste radyoaktif sezium ve iodin tespit edilir."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "tr_tr",
+   "language": "tr",
+   "fleurs_id": "1711",
+   "file": "10073710776711594036.wav",
+   "duration_s": 16.62,
+   "gender": "MALE",
+   "reference": "Bu teoriler, bazı insanların yaptıkları şeyleri arzu etmelerine sebebiyet veren şeylere ve çevrelerindeki şeylerin onlara belirli şeyleri yapıp yapmamasına sebep olan şeyler ile ilgilenir.",
+   "whisper_language": "tr",
+   "whisper_text": "Bu teoriler bazı insanların yaptıkları şeyleri arzu etmelerine sebebiyet veren şeylere ve çevrelerindeki şeylerin onlara belirli şeyleri yapıp yapmamasına sebep olan şeyler ile ilgilenir.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 14.08,
+     "text": "Bu teoriler bazı insanların yaptıkları şeyleri arzu etmelerine sebebiyet veren şeylere ve çevrelerindeki şeylerin onlara belirli şeyleri yapıp yapmamasına sebep olan şeyler ile ilgilenir."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "tr_tr",
+   "language": "tr",
+   "fleurs_id": "1689",
+   "file": "101089684978402857.wav",
+   "duration_s": 15.84,
+   "gender": "MALE",
+   "reference": "Avrupa nispeten küçük ama birçok bağımsız ülkenin bulunduğu bir kıtadır. Normal şartlar altında, birden fazla ülkeyi gezmek birçok vize uygulamalarından ve pasaport kontrollerinden geçmek anlamına gelmektedir.",
+   "whisper_language": "tr",
+   "whisper_text": "Avrupa nispeden küçük ama birçok bağımsız ülkenin bulunduğu bir kıtadır. Normal şartlar altında birden fazla ülkeyi gezmek, birçok vize uygulamalarından ve pasaport kontrollerinden geçmek anlamına gelmektedir.",
+   "whisper_segments": [
+    {
+     "start_s": 0.44,
+     "end_s": 5.5,
+     "text": "Avrupa nispeden küçük ama birçok bağımsız ülkenin bulunduğu bir kıtadır."
+    },
+    {
+     "start_s": 5.5,
+     "end_s": 15.04,
+     "text": "Normal şartlar altında birden fazla ülkeyi gezmek, birçok vize uygulamalarından ve pasaport kontrollerinden geçmek anlamına gelmektedir."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "tr_tr",
+   "language": "tr",
+   "fleurs_id": "1684",
+   "file": "10153339660659037735.wav",
+   "duration_s": 10.2,
+   "gender": "MALE",
+   "reference": "Apia, Samoa'nın başkentidir. Şehir Upolu adasındadır ve 40.000'in biraz altında bir nüfusa sahiptir.",
+   "whisper_language": "tr",
+   "whisper_text": "Apia Samoa'nın başkentidir. Şehir Upol adasındadır ve 40.000'in biraz altında bir nüfusa sahiptir.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 10.2,
+     "text": "Apia Samoa'nın başkentidir. Şehir Upol adasındadır ve 40.000'in biraz altında bir nüfusa sahiptir."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "tr_tr",
+   "language": "tr",
+   "fleurs_id": "1884",
+   "file": "10175328357718171270.wav",
+   "duration_s": 9.12,
+   "gender": "MALE",
+   "reference": "Özellikle mikro ifadeleri doğru bir şekilde yorumlama yöntemi ile bir kişinin yalan söyleyip söylemediğinin anlaşılabileceği öne sürülüyor.",
+   "whisper_language": "tr",
+   "whisper_text": "Özellikle mikro ifadeleri doğru bir şekilde yorumlama yöntemi ile bir kişinin yalan söyleyip söylemediğinin anlaşılabileceği öne sürülüyor.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 8.48,
+     "text": "Özellikle mikro ifadeleri doğru bir şekilde yorumlama yöntemi ile bir kişinin yalan söyleyip söylemediğinin anlaşılabileceği öne sürülüyor."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "tr_tr",
+   "language": "tr",
+   "fleurs_id": "1908",
+   "file": "10199707715835400660.wav",
+   "duration_s": 5.76,
+   "gender": "MALE",
+   "reference": "Bu, bazı fiiller ve nesneler arasında ayrım yapmanın önemli bir yoludur.",
+   "whisper_language": "tr",
+   "whisper_text": "Bu, bazı fiiller ve nesneler arasında ayrım yapmanın önemli bir yoludur.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 4.88,
+     "text": "Bu, bazı fiiller ve nesneler arasında ayrım yapmanın önemli bir yoludur."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "tr_tr",
+   "language": "tr",
+   "fleurs_id": "2002",
+   "file": "10213509574977034508.wav",
+   "duration_s": 8.64,
+   "gender": "MALE",
+   "reference": "Bu, oyunculara cihazı havada hareket ettirerek video oyunlarındaki hareket ve eylemleri kontrol etme imkanı sunacaktır.",
+   "whisper_language": "tr",
+   "whisper_text": "Bu, oyunculara cihazı havada hareket ettirerek video oyunlarındaki hareket ve eylemleri kontrol imkanı sunacaktır.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 8.64,
+     "text": "Bu, oyunculara cihazı havada hareket ettirerek video oyunlarındaki hareket ve eylemleri kontrol imkanı sunacaktır."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "tr_tr",
+   "language": "tr",
+   "fleurs_id": "1752",
+   "file": "10238618737057418994.wav",
+   "duration_s": 12.24,
+   "gender": "MALE",
+   "reference": "Bunun neticesinde iki balık cinsinin soyu tükendi ve aralarında kambur kefalin de yer aldığı iki balık cinsi tehlike altına girdi.",
+   "whisper_language": "tr",
+   "whisper_text": "Bunun neticesinde iki balık cinsinin soyu tükendi ve aralarında kambur kefalinde yer aldığı iki balık cinsi tehlike altına girdi.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 12.24,
+     "text": "Bunun neticesinde iki balık cinsinin soyu tükendi ve aralarında kambur kefalinde yer aldığı iki balık cinsi tehlike altına girdi."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "tr_tr",
+   "language": "tr",
+   "fleurs_id": "1740",
+   "file": "10272545259067985824.wav",
+   "duration_s": 6.78,
+   "gender": "MALE",
+   "reference": "Piramit ses ve ışık gösterisi, çocuklar için bölgedeki en ilginç şeylerden biridir.",
+   "whisper_language": "tr",
+   "whisper_text": "Piramit, ses ve ışık gösterisi çocuklar için bölgedeki en ilginç şeylerden biridir.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 6.78,
+     "text": "Piramit, ses ve ışık gösterisi çocuklar için bölgedeki en ilginç şeylerden biridir."
+    }
+   ]
+  },
+  {
+   "fleurs_config": "tr_tr",
+   "language": "tr",
+   "fleurs_id": "1790",
+   "file": "10397909750877235311.wav",
+   "duration_s": 13.32,
+   "gender": "MALE",
+   "reference": "Eserleri öylesine saygın kalite ve detaya sahiptir ki, filatelistler arasında çok az sayıdaki \"ünlü\" kişiden biridir. Bazı kişilerin tek uzmanlık alanı onun eserlerini toplamaktır.",
+   "whisper_language": "tr",
+   "whisper_text": "Eserleri öylesine saygın kalite ve detaya sahiptir ki, platilistler arasında çok az sayıdaki ünlü kişiden biridir. Bazı kişilerin tek uzmanlık alanı onun eserlerini toplamaktır.",
+   "whisper_segments": [
+    {
+     "start_s": 0.0,
+     "end_s": 7.82,
+     "text": "Eserleri öylesine saygın kalite ve detaya sahiptir ki, platilistler arasında çok az sayıdaki ünlü kişiden biridir."
+    },
+    {
+     "start_s": 7.82,
+     "end_s": 11.5,
+     "text": "Bazı kişilerin tek uzmanlık alanı onun eserlerini toplamaktır."
+    }
+   ]
+  }
+ ]
+}

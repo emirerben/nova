@@ -167,10 +167,104 @@ def _per_word(text: str, language: str | None, turkish, english) -> str:
     )
 
 
+# ── Greek all-caps (KRI-1192) ────────────────────────────────────────────────
+#
+# Greek drops its accents in ALL CAPS ("καλημέρα" -> "ΚΑΛΗΜΕΡΑ", not "ΚΑΛΗΜΈΡΑ"). Mirrors
+# ICU's el upper-casing (``toLocaleUpperCase("el")`` on the web, ``uppercased(with:)``
+# on iOS): accents and breathings go, a dialytika stays, a dialytika is ADDED to ι/υ
+# after an accented vowel whose accent kept the two apart ("ρολόι" -> "ΡΟΛΟΪ"), an iota
+# subscript becomes a capital iota ("ᾄδω" -> "ΑΙΔΩ"), and the one-letter word "ή"
+# ("or") keeps its accent ("Ή"). Applied per whitespace-delimited word with a Greek
+# letter, so text without Greek is untouched.
+
+_GREEK_LETTER = re.compile(
+    "[" + chr(0x0370) + "-" + chr(0x03FF) + chr(0x1F00) + "-" + chr(0x1FFF) + "]"
+)
+# Accents (varia, oxia/tonos, perispomeni, dialytika-tonos) and breathings.
+_GREEK_ACCENTS = frozenset(chr(c) for c in (0x0300, 0x0301, 0x0342, 0x0313, 0x0314, 0x0343, 0x0344))
+# The disjunctive "ή" keeps a real accent; a breathing alone ("ἡ") is not one.
+_TONOS_LIKE = frozenset(chr(c) for c in (0x0300, 0x0301, 0x0342))
+_DIALYTIKA = chr(0x0308)
+_YPOGEGRAMMENI = chr(0x0345)  # iota subscript
+_GREEK_VOWELS = frozenset("ΑΕΗΙΟΥΩ")
+
+
+def _clusters(word: str) -> list[tuple[str, str]]:
+    """(base, combining marks) per character of ``word`` in NFD."""
+    out: list[tuple[str, str]] = []
+    for ch in unicodedata.normalize("NFD", word):
+        if out and unicodedata.combining(ch):
+            base, marks = out[-1]
+            out[-1] = (base, marks + ch)
+        else:
+            out.append((ch, ""))
+    return out
+
+
+def _is_cased_letter(base: str) -> bool:
+    return base.isalpha() and (base.lower() != base.upper())
+
+
+def _greek_upper(word: str) -> str:
+    clusters = _clusters(word)
+    out: list[str] = []
+    after_accented_vowel = False
+    for index, (base, marks) in enumerate(clusters):
+        if not _GREEK_LETTER.match(base) and not _GREEK_LETTER.match(
+            unicodedata.normalize("NFC", base + marks)[:1]
+        ):
+            out.append(unicodedata.normalize("NFC", base + marks).upper())
+            after_accented_vowel = False
+            continue
+        upper_base = base.upper()
+        accent = any(mark in _GREEK_ACCENTS for mark in marks)
+        dialytika = _DIALYTIKA in marks
+        iota = _YPOGEGRAMMENI in marks
+        vowel = upper_base in _GREEK_VOWELS
+        if (
+            upper_base == "Η"
+            and any(mark in _TONOS_LIKE for mark in marks)
+            and not iota
+            and not (index > 0 and _is_cased_letter(clusters[index - 1][0]))
+            and not (index + 1 < len(clusters) and _is_cased_letter(clusters[index + 1][0]))
+        ):
+            out.append(chr(0x0389))  # disjunctive "ή" keeps its tonos
+            after_accented_vowel = False
+            continue
+        if vowel and upper_base in "ΙΥ" and after_accented_vowel and not dialytika:
+            dialytika = True
+        out.append(unicodedata.normalize("NFC", upper_base + (_DIALYTIKA if dialytika else "")))
+        if iota:
+            out.append("Ι")  # GREEK CAPITAL IOTA
+        after_accented_vowel = vowel and accent and not dialytika
+    return "".join(out)
+
+
+def _upper(text: str) -> str:
+    """``str.upper`` except that a word with a Greek letter follows the Greek rule."""
+    if not _GREEK_LETTER.search(text):
+        return text.upper()
+    return _NON_SPACE_RUN.sub(
+        lambda m: (
+            _greek_upper(m.group(0)) if _GREEK_LETTER.search(m.group(0)) else m.group(0).upper()
+        ),
+        text,
+    )
+
+
 def upper(text: str, language: str | None = None) -> str:
     """``str.upper`` with Turkish i rules for Turkish words: "ışıklı" -> "IŞIKLI";
-    with ``language="tr"`` also "istanbul" -> "İSTANBUL"."""
-    return _per_word(text, language, _tr_upper, str.upper)
+    with ``language="tr"`` also "istanbul" -> "İSTANBUL". Greek words drop their accents
+    ("καλημέρα" -> "ΚΑΛΗΜΕΡΑ", KRI-1192)."""
+    return _per_word(text, language, _tr_upper, _upper)
+
+
+def _initial_upper(text: str, language: str | None) -> str:
+    """Upper-case for a word's FIRST character: a Greek capital keeps its accent there
+    ("όπως" -> "Όπως"); only all-caps drops it."""
+    if _GREEK_LETTER.match(text[:1]):
+        return text.upper()
+    return upper(text, language)
 
 
 def lower(text: str, language: str | None = None) -> str:
@@ -188,7 +282,7 @@ def capitalize(text: str, language: str | None = None) -> str:
         return text
     first = _NON_SPACE_RUN.search(text)
     lang = _turkish_word(first.group(0) if first else text, language)
-    return upper(text[:1], lang) + text[1:]
+    return _initial_upper(text[:1], lang) + text[1:]
 
 
 def title_words(text: str, language: str | None = None) -> str:
@@ -203,7 +297,7 @@ def title_words(text: str, language: str | None = None) -> str:
     def _word(m: re.Match[str]) -> str:
         word = m.group(0)
         lang = _turkish_word(word, language)
-        return upper(word[:1], lang) + lower(word[1:], lang)
+        return _initial_upper(word[:1], lang) + lower(word[1:], lang)
 
     return _NON_SPACE_RUN.sub(_word, text)
 
