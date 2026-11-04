@@ -174,6 +174,12 @@ final class SuggestionCardLedger: ObservableObject {
     /// The set the phases belong to. A new set clears everything but dismissals, which stay for the chat's life.
     private var setID: String?
     private var dismissed: Set<String> = []
+    /// How long "no longer fits" stays readable. The refresh it triggers can land in a blink, and a notice nobody
+    /// had time to read is the card vanishing for no reason.
+    private let noticeDuration: Duration
+    private var noticeTask: Task<Void, Never>?
+
+    init(noticeDuration: Duration = .seconds(4)) { self.noticeDuration = noticeDuration }
 
     func phase(of id: String) -> SuggestionCardPhase { dismissed.contains(id) ? .dismissed : phases[id] ?? .idle }
 
@@ -190,7 +196,6 @@ final class SuggestionCardLedger: ObservableObject {
         defer { setID = incoming }
         guard setID != incoming else { return }
         phases = phases.filter { $0.value == .sending }
-        if staleNotice?.setID != incoming { staleNotice = nil }
     }
 
     /// Returns false when the tap must not go out: this card was handled, or any card is already sending (one tap
@@ -209,7 +214,14 @@ final class SuggestionCardLedger: ObservableObject {
 
     func markStale(_ card: SuggestionCard, setID: String) {
         phases[card.id] = .stale
-        staleNotice = SuggestionStaleNotice(cardID: card.id, setID: setID)
+        let notice = SuggestionStaleNotice(cardID: card.id, setID: setID)
+        staleNotice = notice
+        noticeTask?.cancel()
+        noticeTask = Task { [noticeDuration] in
+            try? await Task.sleep(for: noticeDuration)
+            guard !Task.isCancelled, staleNotice == notice else { return }
+            staleNotice = nil
+        }
         refreshToken += 1
     }
 
@@ -217,8 +229,6 @@ final class SuggestionCardLedger: ObservableObject {
         dismissed.insert(card.id)
         phases[card.id] = .dismissed
     }
-
-    func clearStaleNotice() { staleNotice = nil }
 
     /// An editor Save changes the Job without a thread revision, so the chat has to be told to ask again.
     func requestRefresh() { refreshToken += 1 }

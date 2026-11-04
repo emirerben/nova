@@ -63,17 +63,14 @@ struct SuggestionCardView: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 9)
                             .background(KriaColor.paper, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            .accessibilityIdentifier("\(identifier)-copy")
                     }
                     if card.evidence.first != nil || card.costLabel != nil {
                         HStack(spacing: 6) {
                             if let evidence = card.evidence.first {
                                 CardPill(text: evidence, systemImage: "waveform.path.ecg", fill: KriaColor.paper)
-                                    .accessibilityIdentifier("\(identifier)-evidence")
                             }
                             if let cost = card.costLabel {
                                 CardPill(text: "\(cost) to generate", systemImage: nil, fill: KriaColor.butter)
-                                    .accessibilityIdentifier("\(identifier)-cost")
                             }
                         }
                     }

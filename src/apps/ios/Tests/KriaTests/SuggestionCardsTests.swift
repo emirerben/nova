@@ -161,8 +161,8 @@ final class SuggestionCardsTests: XCTestCase {
         XCTAssertFalse(ledger.begin(a), "an applied card cannot be sent twice")
     }
 
-    func testAStaleTapShowsTheNoticeAndAsksForAFreshSet() {
-        let ledger = SuggestionCardLedger()
+    func testAStaleTapShowsTheNoticeLongEnoughToReadAndAsksForAFreshSet() async throws {
+        let ledger = SuggestionCardLedger(noticeDuration: .milliseconds(120))
         let a = card(id: "a"), b = card(id: "b")
         let tokenBefore = ledger.refreshToken
         XCTAssertTrue(ledger.begin(a))
@@ -170,10 +170,11 @@ final class SuggestionCardsTests: XCTestCase {
         XCTAssertEqual(ledger.staleNotice, SuggestionStaleNotice(cardID: "a", setID: "sg_1"))
         XCTAssertEqual(ledger.visible([a, b]).map(\.id), ["b"])
         XCTAssertGreaterThan(ledger.refreshToken, tokenBefore)
-        ledger.reconcile(with: SuggestionSet(setID: "sg_1", state: "ready", status: "ok", chips: [], cards: [b]))
-        XCTAssertNotNil(ledger.staleNotice, "the same set is not the refresh yet")
+        // The refresh can land at once; the notice must still be there to read.
         ledger.reconcile(with: SuggestionSet(setID: "sg_2", state: "ready", status: "ok", chips: [], cards: [b]))
-        XCTAssertNil(ledger.staleNotice, "the refreshed set clears the notice")
+        XCTAssertNotNil(ledger.staleNotice, "a fast refresh does not swallow the notice")
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertNil(ledger.staleNotice, "and it goes by itself")
     }
 
     func testANewSetBringsBackHandledCardsExceptDismissedOnes() {
