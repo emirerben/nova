@@ -59,34 +59,26 @@ def _grid(name: str) -> bytes:
 
 
 def _write_media(directory: Path) -> dict[str, Path]:
-    """One PGM still per grid, and a 30 s video of each grid for the video sources."""
+    """For each grid: a JPEG photo and a 30 s video (what a pool photo or video and the take
+    proxy are), both from the grid's own pixels."""
     files: dict[str, Path] = {}
     for name in FIXTURE["grids"]:
         still = directory / f"{name}.pgm"
         still.write_bytes(f"P5 {W} {H} 255\n".encode() + _grid(name))
-        files[name] = still
+        photo = directory / f"{name}.jpg"
         movie = directory / f"{name}.mp4"
+        scale = "scale=108:192,format="
         subprocess.run(
-            [
-                "ffmpeg",
-                "-v",
-                "error",
-                "-y",
-                "-loop",
-                "1",
-                "-i",
-                str(still),
-                "-t",
-                "30",
-                "-r",
-                "2",
-                "-vf",
-                "scale=108:192,format=yuv420p",
-                str(movie),
-            ],
+            ["ffmpeg", "-v", "error", "-y", "-i", str(still), "-frames:v", "1", "-q:v", "2"]
+            + ["-vf", scale + "yuvj420p", str(photo)],
             check=True,
         )
-        files[f"{name}.mp4"] = movie
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-loop", "1", "-i", str(still), "-t", "30", "-r", "2"]
+            + ["-vf", scale + "yuv420p", str(movie)],
+            check=True,
+        )
+        files[name], files[f"{name}.mp4"] = photo, movie
     return files
 
 
@@ -236,4 +228,33 @@ def test_switch_off_is_the_look_main_picks_over_a_background(monkeypatch, tmp_pa
     job = _job(monkeypatch, tmp_path)
     gb._run_generative_job(str(job.id))
     assert _look(job)["caption_text_color"] == "#767676"
+    assert _look(job)["caption_stroke_width"] == 0
+
+
+def test_an_unreadable_background_never_fails_the_job_and_stays_readable(monkeypatch, tmp_path):
+    """Fail-open: a background the sampler cannot read keeps the take's frames, and the
+    captions over it still carry the outline that reaches 4.5:1."""
+    job = _job(monkeypatch, tmp_path)
+    import app.storage as storage
+
+    take_only = storage.download_to_file
+
+    def no_backgrounds(remote, local, *args, **kwargs):
+        if "analysis-proxy-c0" not in str(remote):
+            raise TimeoutError(remote)
+        return take_only(remote, local, *args, **kwargs)
+
+    monkeypatch.setattr(storage, "download_to_file", no_backgrounds)
+    gb._run_generative_job(str(job.id))
+    assert job.status == "awaiting_device", job.error_detail
+    assert min(ratio for _, ratio in _caption_judgements(job)) >= 4.5
+
+
+def test_a_caption_colour_the_creator_asked_for_is_kept(monkeypatch, tmp_path):
+    """6: "captions small, white, lowercase, in the middle" keeps its white and adds nothing."""
+    from tests.tasks.test_green3_caption_look_worker import R3
+
+    job = _job(monkeypatch, tmp_path, requirements=(R1, R3))
+    gb._run_generative_job(str(job.id))
+    assert _look(job)["caption_text_color"] == "#FFFFFF"
     assert _look(job)["caption_stroke_width"] == 0

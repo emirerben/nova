@@ -2583,6 +2583,12 @@ class Settings(BaseSettings):
     creator_memory_enabled: bool = False
     # KRI-648: stamped only at dispatch; legacy generations are never restyled.
     phone_text_styling_enabled: bool = False
+    # Green 5 (2026-11-04): on a Talk-to-camera edit with a speaker background the automatic caption
+    # colour is judged against the background behind the captions (fill and timed windows, with the
+    # speaker take in its frame), not the take alone; when no plain colour reaches 4.5:1 there the
+    # captions are white with a black outline. Edits without a background are unchanged. Default
+    # TRUE; false + worker restart = byte-identical (`phone_text_styling._background_frames`).
+    caption_background_contrast_enabled: bool = True
     # KRI-336: all three rollout conditions precede owner opt-in. No public cohort.
     creator_edit_learning_enabled: bool = False
     creator_edit_learning_privacy_approved: bool = False
