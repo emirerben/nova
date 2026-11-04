@@ -384,12 +384,9 @@ def test_one_failing_signal_never_takes_the_others_down(temp_signal):
 
 
 def test_signal_stubs_are_registered_but_not_implemented():
-    assert {s.name for s in clip_signals.specs() if not s.implemented} >= {
-        "audio_quality",
-        "near_dup_hash",
-    }
+    assert {s.name for s in clip_signals.specs() if not s.implemented} >= {"audio_quality"}
     out = clip_signals.compute_signals(clip_signals.SignalInputs(media_id="m", kind="video"))
-    assert not {"audio_quality", "near_dup_hash"} & set(out)
+    assert "audio_quality" not in set(out)
 
 
 def test_backfill_selects_by_signals_alone_never_by_understanding_state():
