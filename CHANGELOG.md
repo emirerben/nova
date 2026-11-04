@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.85.1.0] - 2026-11-04
+
+### Changed
+- fix(kria): freeze the review's recipe in one order so the worker's recheck matches (KRI-1191) (#2093) <!-- release-pr: 2093 -->
+
 ## [0.85.0.0] - 2026-11-04
 
 ### Added
