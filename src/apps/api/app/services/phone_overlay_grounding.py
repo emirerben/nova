@@ -817,7 +817,13 @@ def _lay_out_cards(
         suggestion_by_id[str(overlay["id"])]["overlay"]["start_s"] = overlay["start_s"]
     live.sort(key=lambda o: (float(o["start_s"]), str(o["id"])))
 
-    per_card = 2 if len(live) > 6 else _MAX_FACE_ANCHORS_PER_CARD
+    # Every card is looked at across its whole window: a head that dips for half a second
+    # under a full-width card must be seen (4 samples tile a 4 s card; 3 when there are 13-14).
+    per_card = (
+        _MAX_FACE_ANCHORS_PER_CARD
+        if len(live) * _MAX_FACE_ANCHORS_PER_CARD <= _LAYOUT_MAX_ANCHORS
+        else 3
+    )
     sampled = sample_card_faces(
         live,
         clip_path=clip_path,
