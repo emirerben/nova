@@ -1,9 +1,17 @@
 {
-  "_doc": "KRI-785. Registry font -> stylistically close registry font used for the WHOLE text run when the chosen font lacks a letter, digit or punctuation mark the text needs (Turkish ğ ş İ ı, curly quotes). Read by app/pipeline/font_coverage.py (Skia, Pillow/libass, overlay_verify) and the iOS NativeEditorRenderCompiler. Fonts not listed fall back to the closest-weight covering font of the same registry category. Kept out of font-registry.json so registry-embeddings.npz stays valid.",
+  "_doc": "KRI-785. Registry font -> stylistically close registry font used for the WHOLE text run when the chosen font lacks a letter, digit or punctuation mark the text needs (Turkish ğ ş İ ı, curly quotes). Read by app/pipeline/font_coverage.py (Skia, Pillow/libass, overlay_verify) and the iOS NativeEditorRenderCompiler. Fonts not listed fall back to the closest-weight covering font of the same registry category. Kept out of font-registry.json so registry-embeddings.npz stays valid. KRI-1192: `_script_fallbacks` lists the faces that draw whole scripts no stylistic partner covers (Greek and Cyrillic: TikTok Sans; Hangul: Noto Sans KR; Arabic: Noto Sans Arabic). When the text needs a letter outside the Latin script and neither the chosen face nor its partner covers it, the WHOLE run uses the covering face from this list whose registry weight is closest to the chosen face's (ties keep list order). Latin-only text never reaches this step, so English and Turkish keep their faces.",
   "Alte Haas Grotesk": "Inter",
   "Permanent Marker": "Patrick Hand",
   "Satisfy": "Pacifico",
   "Big Curls": "Great Vibes",
   "Rascal": "Patrick Hand",
-  "ZT Bros Oskon 90s": "Instrument Serif"
+  "ZT Bros Oskon 90s": "Instrument Serif",
+  "_script_fallbacks": [
+    "TikTok Sans",
+    "TikTok Sans Bold",
+    "Noto Sans KR",
+    "Noto Sans KR Bold",
+    "Noto Sans Arabic",
+    "Noto Sans Arabic Bold"
+  ]
 }

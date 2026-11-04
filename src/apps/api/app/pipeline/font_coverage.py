@@ -231,14 +231,79 @@ def _candidates(name: str, entry: dict) -> list[str]:
     return out
 
 
+@lru_cache(maxsize=1)
+def _script_fallbacks() -> tuple[str, ...]:
+    """KRI-1192: the faces that draw whole scripts (``glyph-fallbacks.json._script_fallbacks``)."""
+    try:
+        with open(_FALLBACKS_PATH, encoding="utf-8") as f:
+            raw = json.load(f).get("_script_fallbacks") or []
+    except Exception as exc:  # noqa: BLE001 - fail safe: no script step
+        log.warning("font_coverage_script_fallbacks_load_failed", error=str(exc))
+        return ()
+    return tuple(name for name in raw if isinstance(name, str))
+
+
+def script_fallback_files() -> frozenset[str]:
+    """The font FILES of the registry's script-fallback faces (Noto Sans KR / Arabic): the
+    phone bundles them from protocol 35 (capability ``scriptFonts``, KRI-1192)."""
+    return frozenset(
+        str(entry["file"])
+        for entry in _registry().get("fonts", {}).values()
+        if entry.get("script_fallback") is True and entry.get("file")
+    )
+
+
+def needs_non_latin_letter(text: str) -> bool:
+    """True when ``text`` has a letter outside the Latin script (Greek, Cyrillic, Hangul,
+    Arabic...). Digits, punctuation and symbols are script-neutral."""
+    for ch in unicodedata.normalize("NFC", text or ""):
+        if ch.isalpha() and not unicodedata.name(ch, "").startswith("LATIN"):
+            return True
+    return False
+
+
+def _script_face(name: str, entry: dict, text: str) -> str | None:
+    """The covering ``_script_fallbacks`` face whose weight is closest to ``entry``'s."""
+    fonts = _registry().get("fonts", {})
+    weight = int(entry.get("weight", 400))
+    ranked = sorted(
+        (abs(int(fonts[face].get("weight", 400)) - weight), index, face)
+        for index, face in enumerate(_script_fallbacks())
+        if face in fonts and face != name
+    )
+    for _distance, _index, face in ranked:
+        if font_covers_text(face, text):
+            return face
+    return None
+
+
 @lru_cache(maxsize=1024)
 def glyph_safe_family(family: str | None, text: str) -> str | None:
-    """`family` if it covers `text`, else the whole-run fallback (see module doc)."""
+    """`family` if it covers `text`, else the whole-run fallback (see module doc).
+
+    KRI-1192: a text that needs a letter outside the Latin script goes partner ->
+    ``_script_fallbacks`` (closest weight) and never walks the registry, so the phone
+    (which only reads glyph-fallbacks.json) picks the same face. Latin-only text keeps
+    the KRI-785 order exactly.
+    """
     resolved = _entry(family)
     if resolved is None or font_covers_text(family, text):
         return family
     name, entry = resolved
     fonts = _registry().get("fonts", {})
+    if needs_non_latin_letter(text):
+        partner = _explicit_fallbacks().get(name)
+        face = partner if partner and partner in fonts and font_covers_text(partner, text) else None
+        face = face or _script_face(name, entry, text)
+        if face:
+            log.info(
+                "font_glyph_fallback",
+                font_family=name,
+                fallback=face,
+                missing="".join(missing_glyphs(name, text)),
+            )
+            return face
+        return family
     for candidate in _candidates(name, entry):
         cand_entry = fonts.get(candidate)
         if not cand_entry or cand_entry.get("deprecated") is True:

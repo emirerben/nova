@@ -307,9 +307,20 @@ def _font_registry() -> dict[str, Any]:
 
 
 def registry_sha256() -> str:
-    """Return the canonical SHA-256 for the current font registry."""
+    """Return the canonical SHA-256 for the current font registry.
+
+    Script-fallback faces (KRI-1192: Noto Sans KR / Arabic, ``"script_fallback": true``)
+    are left out: they are never a creator's or a model's font choice, only the face the
+    whole-run glyph fallback draws Hangul/Arabic in, so the CLIP registry embeddings
+    (which only rank choosable faces) stay valid without a regeneration.
+    """
+    registry = _font_registry()
+    fonts = registry.get("fonts", {})
+    choosable = {name: entry for name, entry in fonts.items() if not entry.get("script_fallback")}
+    if len(choosable) != len(fonts):
+        registry = {**registry, "fonts": choosable}
     canonical = json.dumps(
-        _font_registry(),
+        registry,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")

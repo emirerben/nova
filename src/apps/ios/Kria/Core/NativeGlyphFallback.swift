@@ -16,8 +16,28 @@ import Foundation
 /// The cloud also walks same-category registry faces for fonts the JSON does
 /// not list; every face that needs a fallback today is listed, so the two
 /// platforms pick the same face.
+///
+/// KRI-1192: text with a letter outside the Latin script (Greek, Cyrillic, Hangul,
+/// Arabic) takes the same whole-run route one step further, exactly like
+/// `glyph_safe_family`: the partner when it covers the text, else the covering
+/// `_script_fallbacks` face whose registry weight is closest to the chosen face's
+/// (ties keep the list order), else the chosen face. The script faces (Noto Sans
+/// KR / Arabic) are deprecated registry entries: never offered in a picker, but
+/// they resolve for drawing. Latin-only text keeps the KRI-785 rule above, so
+/// English and Turkish pick exactly the faces they did.
 final class NativeGlyphFallback: @unchecked Sendable {
+    /// Legacy file-root names that still name registry faces (`app/pipeline/font_aliases.py`).
+    static let legacyAliases = [
+        "PlayfairDisplay-Bold": "Playfair Display",
+        "PlayfairDisplay-Regular": "Playfair Display Regular",
+        "Inter-Bold": "Inter",
+        "Inter-Regular": "Inter Regular",
+    ]
+
     private let fallbacks: [String: String]
+    private let scriptFallbacks: [String]
+    /// Registry face -> weight (the server reads a missing weight as 400).
+    private let weights: [String: Int]
     private let fontURL: (String) -> URL?
     private let lock = NSLock()
     private var fonts: [String: CTFont] = [:]
@@ -26,15 +46,46 @@ final class NativeGlyphFallback: @unchecked Sendable {
         let data = try? Data(contentsOf: fontDirectory.appendingPathComponent("glyph-fallbacks.json"))
         let raw = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
         fallbacks = raw.compactMapValues { $0 as? String }.filter { !$0.key.hasPrefix("_") }
+        scriptFallbacks = (raw["_script_fallbacks"] as? [Any])?.compactMap { $0 as? String } ?? []
+        let registry = (try? Data(contentsOf: fontDirectory.appendingPathComponent("font-registry.json")))
+            .flatMap(NativeFontRegistry.entries) ?? [:]
+        weights = registry.mapValues { Int($0.weight ?? 400) }
         self.fontURL = fontURL
     }
 
-    /// `family` when it covers `text`, else its listed fallback when that covers it.
+    /// `family` when it covers `text`, else the whole-run fallback described above.
     func family(_ family: String, for text: String) -> String {
-        guard covers(family, text) == false, let fallback = fallbacks[family], covers(fallback, text) == true else {
+        guard covers(family, text) == false else { return family }
+        if Self.needsNonLatinLetter(text) { return scriptFamily(family, for: text) ?? family }
+        guard let fallback = fallbacks[family], covers(fallback, text) == true else {
             return family
         }
         return fallback
+    }
+
+    /// KRI-1192 (`glyph_safe_family`'s non-Latin branch): the partner, else the closest-weight covering
+    /// `_script_fallbacks` face. Nil keeps the chosen face: not a registry face, or nothing listed covers the text.
+    private func scriptFamily(_ family: String, for text: String) -> String? {
+        let name = Self.legacyAliases[family] ?? family
+        guard let weight = weights[name] else { return nil }
+        if let partner = fallbacks[name], weights[partner] != nil, covers(partner, text) == true { return partner }
+        let ranked = scriptFallbacks.enumerated().compactMap { index, face in
+            weights[face].flatMap { face == name ? nil : (distance: abs($0 - weight), index: index, face: face) }
+        }.sorted { ($0.distance, $0.index) < ($1.distance, $1.index) }
+        return ranked.first { covers($0.face, text) == true }?.face
+    }
+
+    /// Like `font_coverage.needs_non_latin_letter`: a letter (NFC) whose Unicode name is not LATIN... (Greek,
+    /// Cyrillic, Hangul, Arabic). Digits, punctuation and symbols belong to no script.
+    static func needsNonLatinLetter(_ text: String) -> Bool {
+        text.precomposedStringWithCanonicalMapping.unicodeScalars.contains { scalar in
+            switch scalar.properties.generalCategory {
+            case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter, .modifierLetter, .otherLetter:
+                return !(scalar.properties.name ?? "").hasPrefix("LATIN")
+            default:
+                return false
+            }
+        }
     }
 
     /// nil when the face can't be loaded: never swap a face we can't inspect.

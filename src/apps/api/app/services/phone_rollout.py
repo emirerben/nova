@@ -360,6 +360,15 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
             "Bent text awaits native parity and device qualification",
             capability="textBend",
         )
+    # KRI-1192: same explicit gate for text drawn in a script-fallback face (Noto Sans KR /
+    # Arabic): only a device check that verified `scriptFonts` may receive one.
+    if recipe_uses_script_fonts(recipe) and "scriptFonts" not in set(
+        settings.phone_render_verified_features
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Korean and Arabic captions await native parity and device qualification",
+            capability="scriptFonts",
+        )
     # Speaker background: same explicit gate; the compile strips the lane unless verified.
     if recipe.speaker_background is not None and "speakerBackground" not in set(
         settings.phone_render_verified_features
@@ -877,6 +886,70 @@ def speaker_background_color_client_supported(*, require_client: bool | None = N
     return (
         protocol is not None and protocol >= settings.speaker_background_color_min_client_protocol
     )
+
+
+def recipe_uses_script_fonts(recipe: Any) -> bool:
+    """True when a text run of ``recipe`` is drawn in a script-fallback face (KRI-1192).
+
+    Read from the font assets themselves, not ``required_capabilities``: a caller may mutate
+    a recipe after compile without recomputing the capability set.
+    """
+    from app.pipeline.font_coverage import script_fallback_files  # noqa: PLC0415
+
+    manifest = getattr(recipe, "asset_manifest", None)
+    assets = {asset.id: asset for asset in getattr(manifest, "assets", None) or []}
+    files = script_fallback_files()
+    return any(
+        getattr(assets.get(run.font_asset_id), "catalog_id", None) in files
+        for layer in getattr(recipe, "text_layers", None) or []
+        for run in getattr(layer, "runs", None) or []
+    )
+
+
+def script_fonts_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build bundle the script-fallback faces (KRI-1192)?
+
+    At least ``script_fonts_min_client_protocol`` (35) ships Noto Sans KR / Noto Sans Arabic;
+    an older build has no such file and would fail the render. Same ``require_client``
+    contract as `speaker_background_client_supported` (open outside an HTTP request).
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.script_fonts_min_client_protocol
+
+
+def script_fonts_planned_for(client_protocol: int | None) -> bool:
+    """May a phone plan draw Hangul/Arabic text in a script-fallback face (KRI-1192)?
+
+    ``client_protocol`` is the app build the creator acted from (read like
+    `text_bend_planned_for`). True iff ``scriptFonts`` is verified on device and that build
+    declares at least ``script_fonts_min_client_protocol``; otherwise the phone caption
+    compile keeps declining Hangul/Arabic with its honest reason.
+    """
+    return (
+        "scriptFonts" in set(settings.phone_render_verified_features)
+        and client_protocol is not None
+        and client_protocol >= settings.script_fonts_min_client_protocol
+    )
+
+
+def script_fonts_update_detail(recipe: Any) -> dict | None:
+    """The 426 detail for a build that cannot draw ``recipe``'s script faces, else None."""
+    if not recipe_uses_script_fonts(recipe) or script_fonts_client_supported():
+        return None
+    return {
+        "code": "client_update_required",
+        "feature": "script_fonts",
+        "minimum_client_protocol": settings.script_fonts_min_client_protocol,
+    }
 
 
 def speaker_background_color_supported(*, require_client: bool | None = None) -> bool:

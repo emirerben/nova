@@ -150,10 +150,15 @@ def drawable_family(family: str | None, texts, excluded=()) -> str | None:
     if not any(ch.isalpha() for ch in missing_glyphs(family, joined)):
         return None
     safe = glyph_safe_family(family, joined)
+    from app.pipeline.portable_text_layout import phone_script_face_allowed
+
     if (
         safe
         and safe != family
         and safe not in excluded
+        # KRI-1192 F16: Noto Sans KR / Arabic only for a build that bundles them;
+        # an older one keeps today's honest "no phone font can draw" decline.
+        and phone_script_face_allowed(safe)
         and all(_covers(safe, text) for text in texts)
     ):
         return safe
