@@ -97,6 +97,17 @@ enum NativeFontRegistry {
     struct Entry: Decodable {
         let file: String
         let deprecated: Bool?
+        /// Read by `NativeGlyphFallback`'s script step (KRI-1192); a value that is not a number reads as absent
+        /// rather than dropping the face.
+        let weight: Double?
+
+        private enum CodingKeys: String, CodingKey { case file, deprecated, weight }
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            file = try container.decode(String.self, forKey: .file)
+            deprecated = try container.decodeIfPresent(Bool.self, forKey: .deprecated)
+            weight = try? container.decodeIfPresent(Double.self, forKey: .weight)
+        }
     }
 
     static func entries(from data: Data) -> [String: Entry]? {

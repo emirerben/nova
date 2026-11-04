@@ -458,6 +458,17 @@ def _assemble_footage_bed(
         return None
 
 
+def caption_burn_filter(ass_path: str, fonts_dir: str) -> str:
+    """The libass ``subtitles`` filter :func:`burn_captions_on_video` burns with.
+
+    Shared with the KRI-1192 caption evidence harness and its tests so they burn
+    through exactly the production filter string.
+    """
+    ass_esc = ass_path.replace(":", "\\:").replace("'", "\\'")
+    fonts_esc = fonts_dir.replace(":", "\\:").replace("'", "\\'")
+    return f"subtitles='{ass_esc}':fontsdir='{fonts_esc}'"
+
+
 def burn_captions_on_video(
     video_path: str,
     ass_path: str,
@@ -471,8 +482,6 @@ def burn_captions_on_video(
     is `-c:a copy` (untouched). Final-output encode → preset "fast" + crf 18, matching
     the encoder policy (libx264 fast, like the fixed-intro renderer).
     """
-    ass_esc = ass_path.replace(":", "\\:").replace("'", "\\'")
-    fonts_esc = fonts_dir.replace(":", "\\:").replace("'", "\\'")
     cmd = [
         "ffmpeg",
         "-hide_banner",
@@ -482,7 +491,7 @@ def burn_captions_on_video(
         "-i",
         video_path,
         "-vf",
-        f"subtitles='{ass_esc}':fontsdir='{fonts_esc}'",
+        caption_burn_filter(ass_path, fonts_dir),
         "-c:v",
         "libx264",
         "-profile:v",

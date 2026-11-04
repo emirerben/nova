@@ -285,6 +285,9 @@ MediaCapability = Literal[
     # A clip's `backdrop` of kind `media`: a Visuals-pool photo or looping video drawn under the
     # clip (KRI-1139). Always accompanies `clipTilt`.
     "clipBackdropMedia",
+    # KRI-1192: a text run drawn in a script-fallback face (Noto Sans KR / Noto Sans Arabic),
+    # bundled in the app from protocol 35. Derived from the run's font asset file.
+    "scriptFonts",
     # Vocabulary for lanes the V2 recipe schema has no fields for yet — see
     # docs/reviews/kri-29/capability-matrix.md. Naming these does not enable
     # them: `phone_guided_plan.compile_phone_guided_plan` still rejects the

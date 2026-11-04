@@ -698,6 +698,32 @@ struct LineEditorConfiguration: Equatable {
         UITextInputMode.activeInputModes.compactMap { $0.primaryLanguage }
     }
 
+    /// The installed keyboard a caption line asks for: the first one of the caption language, except that when
+    /// the language has several (Serbian: "sr" Cyrillic and "sr-Latn" Latin) the one in the line's own script
+    /// wins. Whisper writes Serbian in Latin letters, so a Cyrillic keyboard must not be forced over a Latin
+    /// line (KRI-1192, F5). A tag without a script subtag ranks between a matching and a different script.
+    static func keyboardLanguage(_ installed: [String], _ language: String, _ text: String) -> String? {
+        let matching = installed.filter { Self.language($0, matches: language) }
+        guard matching.count > 1, let script = letterScript(text) else { return matching.first }
+        func rank(_ tag: String) -> Int {
+            let subtags = tag.split(whereSeparator: { $0 == "-" || $0 == "_" }).dropFirst()
+            guard let own = subtags.first(where: { $0.count == 4 && $0.allSatisfy(\.isLetter) }) else { return 1 }
+            return own.lowercased() == script ? 2 : 0
+        }
+        let best = matching.map(rank).max() ?? 0
+        return matching.first { rank($0) == best }
+    }
+
+    /// "latn" or "cyrl" for the first Latin or Cyrillic letter of `text`, nil when it has neither.
+    private static func letterScript(_ text: String) -> String? {
+        for scalar in text.unicodeScalars where scalar.properties.isAlphabetic {
+            let name = scalar.properties.name ?? ""
+            if name.hasPrefix("LATIN") { return "latn" }
+            if name.hasPrefix("CYRILLIC") { return "cyrl" }
+        }
+        return nil
+    }
+
     /// "tr" matches "tr-TR" / "tr_TR"; only the language subtag is compared.
     static func language(_ candidate: String, matches language: String) -> Bool {
         func subtag(_ value: String) -> String {
@@ -895,10 +921,10 @@ final class ExplicitLineTextView: UITextView {
 
     /// KRI-240: request the caption language's keyboard when one is installed.
     override var textInputMode: UITextInputMode? {
+        let modes = UITextInputMode.activeInputModes
         if let preferredLanguage,
-           let mode = UITextInputMode.activeInputModes.first(where: {
-               LineEditorConfiguration.language($0.primaryLanguage ?? "", matches: preferredLanguage)
-           }) {
+           let chosen = LineEditorConfiguration.keyboardLanguage(modes.map { $0.primaryLanguage ?? "" }, preferredLanguage, text ?? ""),
+           let mode = modes.first(where: { ($0.primaryLanguage ?? "") == chosen }) {
             return mode
         }
         return super.textInputMode

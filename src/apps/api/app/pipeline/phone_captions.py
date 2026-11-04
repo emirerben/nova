@@ -819,7 +819,20 @@ def _make_room_for_watermark(
     keepout = watermark_keepout_rect(canvas.width, canvas.height)
     try:
         typeface = cloud._resolve_typeface_for_overlay(overlays[0]).typeface
-        touching = [_layer_touches(layer, typeface, keepout) for layer in layers]
+        typefaces = [typeface] * len(overlays)
+        from app.pipeline.font_coverage import needs_non_latin_letter
+
+        if any(needs_non_latin_letter(cloud._overlay_text(overlay)) for overlay in overlays):
+            # KRI-1192: each cue's runs are glyph ids of ITS glyph-safe face (a Hangul
+            # cue in Noto Sans KR, a digits-only one in TikTok Sans), so each is measured
+            # in its own face. Latin caption sets keep the one shared face exactly.
+            typefaces = [
+                cloud._resolve_typeface_for_overlay(overlay).typeface for overlay in overlays
+            ]
+        touching = [
+            _layer_touches(layer, face, keepout)
+            for layer, face in zip(layers, typefaces, strict=True)
+        ]
     except Exception:  # noqa: BLE001 - making room is cosmetic; never fail a render on it
         return layers
     if not any(touching):
@@ -841,7 +854,7 @@ def _make_room_for_watermark(
                 layer,
                 canvas=canvas,
                 keepout=keepout,
-                typeface=typeface,
+                typeface=typefaces[index],
                 left_edge=left_edge,
             )
         except Exception:  # noqa: BLE001 - keep today's layer on any surprise
@@ -888,6 +901,7 @@ def _clear_of_watermark(
     from app.pipeline.portable_text_layout import (
         compile_text_overlay,
         legacy_glyphs_resolvable,
+        needs_text_shaping,
         resolve_legacy_glyphs,
     )
 
@@ -922,8 +936,17 @@ def _clear_of_watermark(
             if (text := str(entry.get("text", "")).strip())
         ]
         spacing = cloud._overlay_letter_spacing_px(overlay, size)
-        word_widths = [cloud._measure_line(font, word, spacing) for word in words]
-        word_inks = [_glyph_ink(font, resolve_legacy_glyphs(font, w, spacing)) for w in words]
+        # KRI-1192: Arabic karaoke words are shaped runs the phone lays out itself;
+        # bound each by its shaped advance and the font's ascent/descent.
+        shaped_words = needs_text_shaping(" ".join(words))
+        word_widths = [
+            cloud._measure_line(font, word, spacing, shape_text=shaped_words) for word in words
+        ]
+        if shaped_words:
+            metrics = font.getMetrics()
+            word_inks = [(0.0, metrics.fAscent, width, metrics.fDescent) for width in word_widths]
+        else:
+            word_inks = [_glyph_ink(font, resolve_legacy_glyphs(font, w, spacing)) for w in words]
         gap = font.measureText(" ") + 2 * spacing
 
         def measure(start: int, end: int) -> tuple[float, Box | None]:

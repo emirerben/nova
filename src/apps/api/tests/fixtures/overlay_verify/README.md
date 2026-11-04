@@ -79,3 +79,11 @@ the wrap width is the room between the anchor and the safe margins
 (`text_fit.authored_safe_width`), not a flat 0.9 x W. The server slide export draws
 through Pillow, not Skia, so `tests/pipeline/test_authored_newlines.py` renders the same
 text through the real `slide_post.build.render_text_element_png`.
+
+`kri1192_caption_scripts.json` (KRI-1192) burns real FLEURS sentences (CC BY 4.0) in the
+new caption scripts: Greek in TikTok Sans Bold and in Montserrat Bold (no Greek letters, so
+the whole run moves to TikTok Sans Bold), Korean in TikTok Sans Bold (whole run in Noto Sans
+KR Bold), Arabic as a static line and as a karaoke line (whole run in Noto Sans Arabic Bold,
+shaped right to left), and Serbian in its Latin spelling in Inter Tight. The verifier FAILs a
+missing glyph and, since KRI-1192, Arabic that would be drawn unshaped (isolated letters, left
+to right).
