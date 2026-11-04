@@ -1,0 +1,73 @@
+{
+  "name": "d12_longer_take_wins_a_tie",
+  "description": "Same sharpness; clip 2 is 7 s against 3 s.",
+  "language": "en",
+  "clips": [
+    {
+      "media_id": "m1",
+      "kind": "video",
+      "duration_s": 3.0,
+      "hashes": [
+        "dec1ede0758d8515",
+        "9e3408b2456f8785",
+        "9b9def52dd9b3d51"
+      ],
+      "sharpness": 100,
+      "mean_luma": 120.0
+    },
+    {
+      "media_id": "m2",
+      "kind": "video",
+      "duration_s": 7.0,
+      "hashes": [
+        "dec1ede0758d8516",
+        "9e3408b2456f8786",
+        "9b9def52dd9b3d52"
+      ],
+      "sharpness": 102,
+      "mean_luma": 120.0
+    },
+    {
+      "media_id": "m3",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "e9daf9c495f635b9",
+        "2f15a0a0d2b70b80",
+        "50f24a15eb3bb540"
+      ],
+      "sharpness": 100.0,
+      "mean_luma": 120.0
+    },
+    {
+      "media_id": "m4",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "64300800c7681e43",
+        "2efd92ee3cdd95b5",
+        "88adf9b95ce4c4f7"
+      ],
+      "sharpness": 100.0,
+      "mean_luma": 120.0
+    }
+  ],
+  "slots": [
+    "m1",
+    "m2",
+    "m3",
+    "m4"
+  ],
+  "needed": [],
+  "expect": {
+    "offered": true,
+    "ops": [
+      0
+    ],
+    "keep": "m2",
+    "reason": "longer",
+    "evidence": [
+      "Keeps clip 2: longer"
+    ]
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "name": "d07_below_the_clip_floor",
+  "description": "Only the two takes are in the edit: removing one leaves a single clip.",
+  "language": "en",
+  "clips": [
+    {
+      "media_id": "m1",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "dec1ede0758d8515",
+        "9e3408b2456f8785",
+        "9b9def52dd9b3d51"
+      ],
+      "sharpness": 60,
+      "mean_luma": 120.0
+    },
+    {
+      "media_id": "m2",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "dec1ede0758d8516",
+        "9e3408b2456f8786",
+        "9b9def52dd9b3d52"
+      ],
+      "sharpness": 140,
+      "mean_luma": 120.0
+    }
+  ],
+  "slots": [
+    "m1",
+    "m2"
+  ],
+  "needed": [],
+  "expect": {
+    "offered": false
+  }
+}
