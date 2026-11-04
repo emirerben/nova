@@ -419,7 +419,10 @@ def _lay_out_on_the_word(
     """
     by_index = {entry.index: entry for entry in entries}
     mentions: list[list[tuple[float, int]]] = []
-    for at, idx in sorted((at, idx) for idx, at in anchors.items()):
+    # A name heard during the full-screen opening is seated AT the switch (spoken order kept),
+    # so it shares the span from there instead of vanishing (opening 0.0: plain (at, idx)).
+    seated = sorted((max(at, opening_s), at, idx) for idx, at in anchors.items())
+    for at, _heard, idx in seated:
         # Words heard less than MIN_WINDOW_S after the previous one chain into the same mention.
         if mentions and at - mentions[-1][-1][0] <= MIN_WINDOW_S + _EPS:
             mentions[-1].append((at, idx))
@@ -557,6 +560,10 @@ def lay_out(
             opening_s=opening,
         )
     by_index = {entry.index: entry for entry in entries}
+    if opening > _EPS:
+        # An entry heard during the full-screen opening joins the cadence cycle (list order)
+        # instead of being dropped with the part of the take the opening covers.
+        anchors = {idx: at for idx, at in anchors.items() if at >= opening - _EPS}
     cycle = [e.index for e in entries if e.index not in anchors]
 
     current = cadence_s
@@ -657,6 +664,9 @@ def full_screen_opening_end(
     lo, hi = OPENING_MIN_S, float(take_s) - OPENING_MIN_S
     if hi < lo - _EPS:
         return None, "take_too_short"
+    if title_end_s is not None and title_end_s <= OPENING_TITLE_MAX_S:
+        # The switch never lands before the hook title ends (still leaving a second of take).
+        lo = min(max(lo, float(title_end_s)), hi)
     if stated_s is not None:
         target = float(stated_s)
     elif first_heard_s is not None and (

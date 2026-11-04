@@ -424,3 +424,33 @@ def test_remove_background_clears_it_in_chat(monkeypatch) -> None:
     assert compiled.payload.speaker_background is None
     _commit(job, compiled)
     assert _recipe(job).speaker_background is None
+
+
+def test_a_never_saved_variant_keeps_its_opening_when_the_gate_closed_after_the_render(
+    monkeypatch,
+) -> None:
+    job = opening_job(monkeypatch)
+    # A worker-rendered variant: the opening lives only in the pinned recipe, no stored document.
+    _variant(job).pop("speaker_background")
+    for key in (PHONE_SUBTITLED_EDITOR_LANES_FIELD, "sound_effects", "media_overlays"):
+        _variant(job).pop(key, None)
+    _open(monkeypatch, flag=False)
+    set_client_protocol(38)
+    # A fill change that echoes the spans it was shown is not a change to the opening.
+    _resave(
+        job,
+        speaker_background=_document(SECOND)
+        | {"speaker_frame": CORNER, "full_screen_windows": OPENING},
+    )
+    assert _recipe(job).speaker_background.asset_id.endswith(SECOND.media_id)
+    # The document keeps the spans; with the gate closed the compile still falls back to the
+    # corner from 0 s on the device recipe (S77), exactly as for a Saved variant.
+    assert _variant(job)["speaker_background"]["full_screen_windows"] == OPENING
+    # Changing the spans still needs the gate.
+    with pytest.raises(HTTPException) as dark:
+        _resave(
+            job,
+            speaker_background=_document(SECOND)
+            | {"speaker_frame": CORNER, "full_screen_windows": [{"start_s": 0.0, "end_s": 3.0}]},
+        )
+    assert dark.value.status_code == 422

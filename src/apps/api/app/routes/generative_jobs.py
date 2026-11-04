@@ -11706,7 +11706,13 @@ def _validate_speaker_background_section(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={"code": "speaker_background_windows_disabled", "reason": windows_reason},
             )
-    stored_spans = stored.get("full_screen_windows") if isinstance(stored, dict) else None
+    from app.services.kria_editor_ops import background_current  # noqa: PLC0415
+
+    # The spans the editor document shows NOW: the variant's own Saved row, else the pinned
+    # recipe's for a worker-rendered variant (never Saved), so an unchanged opening echoed back
+    # is not re-gated.
+    current = background_current(job, variant)
+    stored_spans = current.get("full_screen_windows") if isinstance(current, dict) else None
     new_spans = [span.model_dump() for span in requested.full_screen_windows or []]
     if new_spans:
         # Qendresa item 16 (S76, S77): the full-opening gate on top of the windows gate above.

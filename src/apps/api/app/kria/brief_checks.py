@@ -386,6 +386,8 @@ class SpeakerBackgroundFact:
     asked_full_opening: bool = False
     opening_planned: bool = False
     opening_code: str | None = None
+    # The app build the draft answers (None = unknown); the receipt reads the opening gate for it.
+    client_protocol: int | None = None
 
 
 @dataclass(frozen=True)
@@ -990,17 +992,19 @@ def _without_full_opening_keys(strategy: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _opening_closed_code(client_protocol: int | None) -> str:
-    """Why a draft that asked to start full screen cannot: the planner's gate for the build."""
+def _opening_closed_code(client_protocol: int | None) -> str | None:
+    """Why a draft that asked to start full screen cannot: the planner's gate for the build.
+
+    None = the gate is open for this build, so the opening was dropped for another reason (no
+    background survived, or the model left it out): the receipt must not say "not available".
+    """
     from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
     from app.services.phone_rollout import speaker_full_opening_planned_reason  # noqa: PLC0415
 
     # A caller that passes no build reads the one bound for this turn: the same build the
     # manifest advertised the capability for (`creator_capabilities`, `current_client_protocol`).
     build = client_protocol if client_protocol is not None else current_client_protocol()
-    # None = the gate is open for this build, so the repair dropped it for another reason (no
-    # background survived, capability not advertised): "not available" is the honest word.
-    return speaker_full_opening_planned_reason(build) or "unavailable"
+    return speaker_full_opening_planned_reason(build)
 
 
 def _speaker_background_facts(
@@ -1056,6 +1060,7 @@ def _speaker_background_facts(
                 asked_frame=asked_frame,
                 asked_full_opening=opening_ask,
                 opening_code=_opening_closed_code(client_protocol) if opening_ask else None,
+                client_protocol=client_protocol,
             )
         }
     repaired, _notices = repair_creator_speaker_background(manifest, parsed)
@@ -1074,6 +1079,7 @@ def _speaker_background_facts(
                 color_code=color_code,
                 asked_full_opening=opening_ask,
                 opening_code=_opening_closed_code(client_protocol) if opening_ask else None,
+                client_protocol=client_protocol,
             )
         }
     opening_planned = bool(getattr(kept, "full_screen_opening", False))
@@ -1099,6 +1105,7 @@ def _speaker_background_facts(
                 if opening_ask and not opening_planned
                 else None
             ),
+            client_protocol=client_protocol,
         )
     }
 
@@ -4732,6 +4739,7 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
     if fact.status not in {"applied", "planned"}:
         return receipt
     rendered = bool(facts.rendered_variant)
+    fact = _with_gate_reason(req, fact, rendered=rendered)
     state = _opening_state(fact, rendered=rendered)
     if state in {"made", "planned"}:
         extra = _opening_sentence(fact, state)
@@ -4867,6 +4875,31 @@ def _opening_state(fact: SpeakerBackgroundFact, *, rendered: bool) -> str:
     return "closed" if fact.asked_full_opening and fact.opening_code else "missing"
 
 
+def _with_gate_reason(
+    req: BriefRequirement, fact: SpeakerBackgroundFact, *, rendered: bool
+) -> SpeakerBackgroundFact:
+    """The fact with the planner's gate reason when the requirement asked for the opening but the
+    strategy / worker never carried the ask (an app build too old to be taught the field).
+
+    Gate open for the build = the model's own omission, so the fact is returned unchanged.
+    """
+    from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+    from app.services.phone_rollout import speaker_full_opening_planned_reason  # noqa: PLC0415
+
+    if (
+        not _full_opening_asked(req)
+        or fact.opening_planned
+        or fact.full_screen_opening_s is not None
+        or fact.opening_code
+    ):
+        return fact
+    build = fact.client_protocol if fact.client_protocol is not None else current_client_protocol()
+    code = speaker_full_opening_planned_reason(build)
+    if code is None:
+        return fact
+    return dataclasses.replace(fact, asked_full_opening=True, opening_code=code)
+
+
 def _opening_why(code: str | None) -> str:
     """Why an asked opening is not there, as a clause (empty when no reason was recorded)."""
     if code == "app_too_old":
@@ -4944,6 +4977,7 @@ def _check_full_screen_opening(req: BriefRequirement, facts: PlanFacts) -> Requi
             fact.code or "", _SB_NOT_TALKING
         )
         return _receipt(req, "not_possible", _sb(reason))
+    fact = _with_gate_reason(req, fact, rendered=rendered)
     if fact.status == "none":
         # Nothing is drawn behind the speaker, so there is no background to move into.
         if rendered:
@@ -4951,7 +4985,20 @@ def _check_full_screen_opening(req: BriefRequirement, facts: PlanFacts) -> Requi
         why = _opening_why(fact.opening_code)
         if why:
             return _receipt(req, "not_possible", say(en=f"{why.capitalize()}.", tr=f"{why}."))
-        return _receipt(req, "not_possible", _sb(_SB_NOT_PLANNED))
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=(
+                    "You're full screen for the whole video: there's no photo or video behind "
+                    "you to move into."
+                ),
+                tr=(
+                    "Videonun tamamında tam ekransın: geçeceğin bir arka plan fotoğrafı ya da "
+                    "videosu yok."
+                ),
+            ),
+        )
     state = _opening_state(fact, rendered=rendered)
     if state in {"made", "planned"}:
         return _receipt(req, "met", _opening_sentence(fact, state))
@@ -4979,6 +5026,20 @@ def _corner_framing_receipt(req: BriefRequirement, facts: PlanFacts) -> Requirem
     state = _opening_state(fact, rendered=rendered)
     if state in {"made", "planned"}:
         return _receipt(req, "partial", _opening_sentence(fact, state))
+    from app.config import settings  # noqa: PLC0415
+
+    corner = _corner_small(fact.frame)
+    if not (_full_opening_asked(req) and settings.speaker_full_opening_enabled) and corner:
+        # The bug fix is unconditional (a corner from 0 s never "fills the frame"), but without
+        # the typed fact (or with the feature off) it is only what the background made.
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"You're {corner[0]} over your background, so you don't fill the frame.",
+                tr=f"Arka planın üstünde {corner[1]}sın, o yüzden kadrajı doldurmuyorsun.",
+            ),
+        )
     sentence = _opening_missing_sentence(fact, rendered=rendered)
     if rendered or state == "closed":
         return _receipt(req, "not_possible", sentence)
