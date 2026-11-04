@@ -519,8 +519,13 @@ final class CreationChatFixture: @unchecked Sendable {
             if parts.last == "narration-script" { return response(script) }
             if parts.count == 3, request.httpMethod == "POST" {
                 generatedMediaPostCount += 1
-                if ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA_REJECT_ONCE"] == "1" {
-                    if generatedMediaPostCount == 1 {
+                // "1" rejects the first request; "edit" rejects the first Edit image request and lets everything before it through.
+                let rejectMode = ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA_REJECT_ONCE"]
+                if rejectMode == "1" || rejectMode == "edit" {
+                    let isRejectedRequest = rejectMode == "1"
+                        ? generatedMediaPostCount == 1
+                        : (body["capability"] as? String == "image_edit" && rejectedGeneratedMediaEvent == nil)
+                    if isRejectedRequest {
                         rejectedGeneratedMediaEvent = body["client_event_id"] as? String
                         return response(["detail": "Source changed before submission"], status: 409)
                     }
@@ -531,11 +536,17 @@ final class CreationChatFixture: @unchecked Sendable {
                 if ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA_RECOVERED"] == "1" {
                     return response(["detail": "Recovery must not POST generation again"], status: 409)
                 }
-                if body["capability"] as? String == "image", let eventID = body["client_event_id"] as? String {
+                if let capability = body["capability"] as? String, capability == "image" || capability == "image_edit",
+                   let eventID = body["client_event_id"] as? String {
                     let imageURL = "https://generated-media-image.invalid/cover.jpg"
-                    let operation: [String: Any] = ["id": eventID, "state": "ready", "capability": "image",
+                    var operation: [String: Any] = ["id": eventID, "state": "ready", "capability": capability,
                         "asset_id": "generated-" + eventID, "preview_url": imageURL, "source_url": imageURL,
                         "retryable": false, "fixture_title": body["editable_title"] ?? ""]
+                    // An edit echoes the source it was made from, which is what the approval check compares.
+                    if capability == "image_edit" {
+                        operation["source_asset_id"] = body["source_asset_id"] ?? NSNull()
+                        operation["source_generation"] = body["source_generation"] ?? NSNull()
+                    }
                     generatedMediaOperations[eventID] = operation
                     return response(operation)
                 }
@@ -560,7 +571,7 @@ final class CreationChatFixture: @unchecked Sendable {
             guard let operation = generatedMediaOperations[operationID] else { return response(["detail": "Unknown fixture request"], status: 404) }
             if request.httpMethod == "GET" { generatedMediaLookupCount += 1 }
             if parts.last == "accept", request.httpMethod == "POST" {
-                if operation["capability"] as? String == "image" {
+                if ["image", "image_edit"].contains(operation["capability"] as? String ?? "") {
                     if ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA_RECOVERED"] == "1",
                        generatedMediaPostCount != 1 || generatedMediaLookupCount < 1 {
                         return response(["detail": "Recovery counters did not prove one POST and a status lookup"], status: 409)

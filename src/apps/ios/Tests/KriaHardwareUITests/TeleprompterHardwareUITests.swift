@@ -31,7 +31,7 @@ import XCTest
         }
         defer { removeUIInterruptionMonitor(removePermissionMonitor) }
 
-        app.buttons["teleprompter-open"].tap()
+        openScriptFromTray(app)
         let script = app.textViews["teleprompter-script-editor"]
         XCTAssertTrue(script.waitForExistence(timeout: 8))
         paste("I am recording this on an iPhone. I can pause, retake, and keep an interrupted take.", into: script, app: app)
@@ -151,7 +151,7 @@ import XCTest
         }
         defer { removeUIInterruptionMonitor(removePermissionMonitor) }
 
-        app.buttons["teleprompter-open"].tap()
+        openScriptFromTray(app)
         let script = app.textViews["teleprompter-script-editor"]
         XCTAssertTrue(script.waitForExistence(timeout: 8))
         paste("Short script.", into: script, app: app)
@@ -189,7 +189,7 @@ import XCTest
         }
 
         let app = launchTalking()
-        app.buttons["teleprompter-open"].tap()
+        openScriptFromTray(app)
         let script = app.textViews["teleprompter-script-editor"]
         XCTAssertTrue(script.waitForExistence(timeout: 8))
         paste("I am recording this on an iPhone in Cinematic mode.", into: script, app: app)
@@ -280,7 +280,7 @@ import XCTest
 
     private func launchTalking() -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
+        app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         // Advertise the supported offline intake capability only. This neither replaces the real
         // camera/review path nor invokes the fixture's placeholder render in this capture test.
@@ -298,11 +298,17 @@ import XCTest
         XCTAssertTrue(talking.waitForExistence(timeout: 10))
         if !talking.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
         talking.tap()
-        let attach = app.buttons["Attach footage"]
-        XCTAssertTrue(attach.waitForExistence(timeout: 8))
-        attach.tap()
-        XCTAssertTrue(app.buttons["teleprompter-open"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["chat-attach"].waitForExistence(timeout: 8))
         return app
+    }
+
+    /// The composer's + tray, then Add script: the camera opens with the script sheet first. Closing the camera leaves
+    /// Add media open, where the Script row (`teleprompter-open`) opens it again.
+    private func openScriptFromTray(_ app: XCUIApplication) {
+        app.buttons["chat-attach"].tap()
+        let addScript = app.buttons["attach-script"]
+        XCTAssertTrue(addScript.waitForExistence(timeout: 8), "Talk to camera offers the optional script")
+        addScript.tap()
     }
 
     private func paste(_ text: String, into field: XCUIElement, app: XCUIApplication) {

@@ -81,7 +81,7 @@ final class AttachmentFlowUITests: XCTestCase {
 
     private func launchAttachments(review: String? = nil, duration: String? = nil, existingVoiceover: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
+        app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         if existingVoiceover == "attached" {
@@ -103,9 +103,13 @@ final class AttachmentFlowUITests: XCTestCase {
         XCTAssertTrue(narrated.waitForExistence(timeout: 10))
         if !narrated.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
         narrated.tap()
-        let attach = app.buttons["Attach footage"]
-        XCTAssertTrue(attach.waitForExistence(timeout: 5))
-        attach.tap()
+        // The footage stage's Upload opens Add media with the "Upload from" list over it; close the list to reach the steps.
+        let chooseVideos = app.buttons["choose-videos"]
+        XCTAssertTrue(chooseVideos.waitForExistence(timeout: 5))
+        chooseVideos.tap()
+        XCTAssertTrue(app.buttons["upload-source-photos"].waitForExistence(timeout: 5))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
+        XCTAssertTrue(app.buttons["upload-source-photos"].waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.buttons["attachment-next"].waitForExistence(timeout: 5))
         return app
     }

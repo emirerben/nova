@@ -3,13 +3,16 @@ import XCTest
 @MainActor final class GeneratedMediaUITests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
 
-    private func launch(enabled: Bool, persistent: Bool = false, rejectOnce: Bool = false) -> XCUIApplication {
+    /// `rejectOnce`: the fixture rejects the first generation request. `rejectFirstEdit`: it lets overlays through
+    /// and rejects the first Edit image request instead.
+    private func launch(enabled: Bool, persistent: Bool = false, rejectOnce: Bool = false, rejectFirstEdit: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment = ["KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_FIXTURE_MEDIA": "1",
                                  "KRIA_CHAT_VOICEOVER_SCRIPT": "1", "KRIA_GENERATED_MEDIA": enabled ? "1" : "off",
                                  "UI_TEST_REDUCE_MOTION": "1"]
         if rejectOnce { app.launchEnvironment["KRIA_GENERATED_MEDIA_REJECT_ONCE"] = "1" }
+        if rejectFirstEdit { app.launchEnvironment["KRIA_GENERATED_MEDIA_REJECT_ONCE"] = "edit" }
         if persistent { app.launchEnvironment["KRIA_GENERATED_MEDIA_PERSIST"] = UUID().uuidString }
         app.launch()
         XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 20))
@@ -92,6 +95,63 @@ import XCTest
         XCTAssertTrue(app.staticTexts["I couldn’t make this overlay"].exists)
         app.buttons["Try again"].tap()
         useOverlays(in: app, screenshotName: "Try again ran without a confirm")
+    }
+
+    /// The single-image sheet (Edit image on an overlay already in the video): a request the server rejects keeps the
+    /// creator's words but cannot be sent again as it is. Only an explicit edit reopens the form, and the next
+    /// submission is a new request, not a replay.
+    func testRejectedImageEditRequiresEditAndExplicitNewSubmission() {
+        let app = launch(enabled: true, rejectFirstEdit: true)
+        openOverlays(in: app)
+        describeOverlay(in: app)
+        useOverlays(in: app, screenshotName: "Overlay to edit")
+        let menu = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Actions for ")).firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        menu.tap()
+        let editImage = app.buttons["Edit image"]
+        XCTAssertTrue(editImage.waitForExistence(timeout: 5))
+        editImage.tap()
+
+        let prompt = app.textViews["generated-media-prompt"].exists ? app.textViews["generated-media-prompt"] : app.textFields["generated-media-prompt"]
+        XCTAssertTrue(prompt.waitForExistence(timeout: 10))
+        prompt.tap()
+        prompt.typeText("Make the sky pink")
+        let submit = app.buttons["generated-media-submit"]
+        XCTAssertTrue(submit.isEnabled)
+        submit.tap()
+
+        let problem = app.otherElements["generated-media-problem"]
+        XCTAssertTrue(problem.waitForExistence(timeout: 10), "a rejected request says so")
+        XCTAssertTrue(app.staticTexts["I couldn’t make this image"].exists)
+        XCTAssertFalse(app.buttons["generated-media-use"].exists, "nothing was made, so there is nothing to use")
+        XCTAssertFalse(submit.isEnabled, "the rejected request cannot be sent again as it is")
+        XCTAssertFalse(prompt.isEnabled, "the rejected words are held until the creator chooses to edit")
+        let rejected = XCTAttachment(screenshot: app.screenshot())
+        rejected.name = "Rejected image edit"
+        rejected.lifetime = .keepAlways
+        add(rejected)
+
+        app.buttons["Edit prompt"].tap()
+        XCTAssertTrue(eventually { prompt.isEnabled && submit.isEnabled }, "Edit prompt reopens the form")
+        XCTAssertFalse(problem.exists)
+        XCTAssertTrue(((prompt.value as? String) ?? "").contains("Make the sky pink"), "the creator's words are kept: \(String(describing: prompt.value))")
+        submit.tap()
+
+        let use = app.buttons["generated-media-use"]
+        XCTAssertTrue(use.waitForExistence(timeout: 15), "the explicit new submission is accepted")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: use)], timeout: 15), .completed)
+        use.tap()
+        let menus = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Actions for "))
+        XCTAssertTrue(eventually(timeout: 15) { menus.count == 2 }, "the edit is a second image beside the original")
+    }
+
+    private func eventually(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            guard Date() < deadline else { return false }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return true
     }
 
     func testTwoOverlaysEachWithTheirOwnPromptAreUsedTogether() {

@@ -96,7 +96,7 @@ import XCTest
 
     func testScriptIsSavedAndCameraFailureKeepsItEditable() {
         let app = launchTalking()
-        app.buttons["teleprompter-open"].tap()
+        openScriptFromTray(app)
         let field = app.textViews["teleprompter-script-editor"]
         XCTAssertTrue(field.waitForExistence(timeout: 20), "the Script row opens the camera with the script sheet first")
         XCTAssertFalse(app.buttons["teleprompter-use-script"].isEnabled, "Use script waits for words")
@@ -125,7 +125,7 @@ import XCTest
 
     func testScriptControlsAreReachableAtAccessibilitySize() {
         let app = launchTalking(largeText: true)
-        app.buttons["teleprompter-open"].tap()
+        openScriptFromTray(app)
         XCTAssertTrue(app.textViews["teleprompter-script-editor"].waitForExistence(timeout: 20))
         XCTAssertTrue(app.buttons["teleprompter-no-script"].isHittable)
         XCTAssertTrue(app.buttons["teleprompter-use-script"].exists)
@@ -178,8 +178,7 @@ import XCTest
 
     func testPreviousTakeAndFailedIntakeKeepTheRecordingRecoverable() {
         let app = launchTalking(review: true)
-        app.buttons["teleprompter-open"].tap()
-        app.buttons["teleprompter-no-script"].tap()
+        openCameraFromTray(app)
         XCTAssertTrue(app.buttons["teleprompter-previous-take"].waitForExistence(timeout: 10))
         app.buttons["teleprompter-previous-take"].tap()
         XCTAssertFalse(app.buttons["teleprompter-previous-take"].exists)
@@ -237,8 +236,7 @@ import XCTest
 
     func testReviewNamesTheBackgroundAndKeepsTheTakeUsable() {
         let app = launchTalking(review: true, speakerBackground: true)
-        app.buttons["teleprompter-open"].tap()
-        app.buttons["teleprompter-no-script"].tap()
+        openCameraFromTray(app)
         XCTAssertTrue(app.staticTexts["teleprompter-review-background"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["teleprompter-use-take"].isEnabled)
         capture(app, "Review take with a background")
@@ -246,7 +244,7 @@ import XCTest
 
     private func launchTalking(largeText: Bool = false, review: Bool = false, speakerBackground: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
+        app.launchArguments = ["-ui-testing-chat"]
         if speakerBackground {
             app.launchArguments.append("-ui-testing-speaker-background")
             app.launchEnvironment["KRIA_TELEPROMPTER_BACKGROUND_FIXTURE"] = "1"
@@ -270,11 +268,25 @@ import XCTest
         XCTAssertTrue(talking.waitForExistence(timeout: 10))
         if !talking.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
         talking.tap()
-        let attach = app.buttons["Attach footage"]
-        XCTAssertTrue(attach.waitForExistence(timeout: 5))
-        attach.tap()
-        XCTAssertTrue(app.buttons["teleprompter-open"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["chat-attach"].waitForExistence(timeout: 5))
         return app
+    }
+
+    /// The composer's + tray, then Add script: the camera opens with the script sheet first. Closing the camera leaves
+    /// Add media open, where the Script row (`teleprompter-open`) opens it again.
+    private func openScriptFromTray(_ app: XCUIApplication) {
+        app.buttons["chat-attach"].tap()
+        let addScript = app.buttons["attach-script"]
+        XCTAssertTrue(addScript.waitForExistence(timeout: 5), "Talk to camera offers the optional script")
+        addScript.tap()
+    }
+
+    /// The composer's + tray, then Record: the camera opens with no script.
+    private func openCameraFromTray(_ app: XCUIApplication) {
+        app.buttons["chat-attach"].tap()
+        let record = app.buttons["attach-record"]
+        XCTAssertTrue(record.waitForExistence(timeout: 5))
+        record.tap()
     }
 
     private func capture(_ app: XCUIApplication, _ name: String) {
@@ -285,7 +297,7 @@ import XCTest
     }
 
     private func openScriptCamera(_ app: XCUIApplication) {
-        app.buttons["teleprompter-open"].tap()
+        openScriptFromTray(app)
         let field = app.textViews["teleprompter-script-editor"]
         XCTAssertTrue(field.waitForExistence(timeout: 20))
         field.tap()

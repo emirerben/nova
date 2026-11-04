@@ -5,7 +5,7 @@ import XCTest
 final class SongOrderUITests: XCTestCase {
     private func launch(songOrder: String?, media: Bool = true) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
+        app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         if media { app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1" }
         app.launchEnvironment["KRIA_CHAT_SONG_ORDER"] = songOrder
@@ -330,23 +330,39 @@ final class SongOrderUITests: XCTestCase {
 
     func testAddYourSongStepAppearsOnlyWhenTheServerAdvertisesIt() {
         let on = launch(songOrder: "1", media: false)
-        let attach = on.buttons["Attach footage"]
+        let attach = on.buttons["chat-attach"]
         XCTAssertTrue(attach.waitForExistence(timeout: 10))
         attach.tap()
-        XCTAssertTrue(on.buttons["attachment-next"].waitForExistence(timeout: 5), "footage then song")
-        on.buttons["attachment-next"].tap()
+        XCTAssertTrue(on.buttons["attach-record"].waitForExistence(timeout: 5), "the composer + opens the tray")
+        let addSong = on.buttons["attach-song"]
+        XCTAssertTrue(addSong.exists, "the tray offers Add song where the server advertises it")
+        addSong.tap()
         XCTAssertTrue(on.staticTexts["Add your song"].waitForExistence(timeout: 5))
         XCTAssertTrue(on.staticTexts["song-rights-note"].exists)
         XCTAssertTrue(on.staticTexts["Only use songs you have the rights to."].exists)
-        XCTAssertTrue(on.buttons["source-upload"].exists, "the song comes from Files through the Upload tile")
         XCTAssertTrue(on.buttons["song-skip"].exists, "a song is optional")
+        // A song is an audio file: the Upload tile says Files, and with no saved library it goes straight to the Files
+        // picker, never to a list that offers Photos.
+        let upload = on.buttons["source-upload"]
+        XCTAssertTrue(upload.exists, "the song comes from Files through the Upload tile")
+        XCTAssertTrue(on.staticTexts["From Files"].exists, "the Upload tile names Files as the song's source")
+        upload.tap()
+        let importerOpened = NSPredicate { _, _ in !upload.isHittable }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: importerOpened, object: nil)], timeout: 10), .completed,
+                       "Upload opens the Files picker over Add media")
         XCTAssertFalse(on.buttons["upload-source-photos"].exists, "a song is an audio file, not a Photos pick")
         on.terminate()
 
         let off = launch(songOrder: nil, media: false)
-        let attachOff = off.buttons["Attach footage"]
-        XCTAssertTrue(attachOff.waitForExistence(timeout: 10))
-        attachOff.tap()
+        off.buttons["chat-attach"].tap()
+        XCTAssertTrue(off.buttons["attach-record"].waitForExistence(timeout: 5))
+        XCTAssertFalse(off.buttons["attach-song"].exists, "without media.song the tray has no Add song row")
+        off.buttons["chat-attach"].tap()
+        // Footage stage Upload opens Add media; close the "Upload from" list over it, then step on from footage.
+        off.buttons["choose-videos"].tap()
+        XCTAssertTrue(off.buttons["upload-source-photos"].waitForExistence(timeout: 5))
+        off.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
+        XCTAssertTrue(off.buttons["upload-source-photos"].waitForNonExistence(timeout: 5))
         XCTAssertTrue(off.buttons["attachment-next"].waitForExistence(timeout: 5))
         off.buttons["attachment-next"].tap()
         XCTAssertTrue(off.staticTexts["Add overlays"].waitForExistence(timeout: 5), "without media.song the step after footage is overlays")

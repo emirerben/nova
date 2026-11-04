@@ -6,7 +6,7 @@ import XCTest
 final class SongRangeUITests: XCTestCase {
     private func launch(songRange: String) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat", "-ui-testing-legacy-attach"]
+        app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_SONG_RANGE"] = songRange
@@ -25,13 +25,14 @@ final class SongRangeUITests: XCTestCase {
         return app
     }
 
-    /// Attachments sheet, on the song step where the attached song is listed.
+    /// Attachments sheet, on the song step where the attached song is listed: the composer's + tray, then Add song.
     private func openSongStep(_ app: XCUIApplication) {
-        let attach = app.buttons["Attach footage"]
+        let attach = app.buttons["chat-attach"]
         XCTAssertTrue(attach.waitForExistence(timeout: 10))
         attach.tap()
-        XCTAssertTrue(app.buttons["attachment-next"].waitForExistence(timeout: 5))
-        app.buttons["attachment-next"].tap()
+        let addSong = app.buttons["attach-song"]
+        XCTAssertTrue(addSong.waitForExistence(timeout: 5), "the tray offers Add song where the server advertises it")
+        addSong.tap()
         XCTAssertTrue(app.staticTexts["Add your song"].waitForExistence(timeout: 5))
     }
 

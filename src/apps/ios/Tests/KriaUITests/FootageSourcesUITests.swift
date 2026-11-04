@@ -71,10 +71,12 @@ import XCTest
     }
 
     func testScriptRowOpensTheCameraWithTheScriptSheetFirst() {
-        let app = launchTalking(cameraReady: true, legacyAttach: true)
-        app.buttons["Attach footage"].tap()
-        app.buttons["teleprompter-open"].tap()
+        let app = launchTalking(cameraReady: true)
+        app.buttons["chat-attach"].tap()
+        app.buttons["attach-script"].tap()
         XCTAssertTrue(app.textViews["teleprompter-script-editor"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["teleprompter-use-script"].isEnabled, "Use script waits for words")
+        XCTAssertTrue(app.buttons["teleprompter-no-script"].isHittable, "recording without a script is one tap away")
     }
 
     func testRefusedCameraOffersSettingsAndUpload() {
@@ -227,8 +229,12 @@ import XCTest
     }
 
     func testAddMediaSheetLeadsWithRecordAndUploadAndOptionalScript() {
-        let app = launchTalking(legacyAttach: true)
-        app.buttons["Attach footage"].tap()
+        let app = launchTalking()
+        // The footage stage's Upload opens Add media with the "Upload from" list over it; close the list to see the sheet.
+        app.buttons["choose-videos"].tap()
+        XCTAssertTrue(app.buttons["upload-source-photos"].waitForExistence(timeout: 5))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
+        XCTAssertTrue(app.buttons["upload-source-photos"].waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.buttons["source-record"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons["source-record"].frame.width, app.buttons["source-upload"].frame.width, accuracy: 1)
         XCTAssertTrue(app.buttons["teleprompter-open"].exists, "the script is an optional row, not a requirement")
@@ -241,10 +247,10 @@ import XCTest
 
     /// `cameraRefusal` is the camera fixture's refusal: `camera_access`, `microphone_access`, `restricted`, or `1`
     /// for hardware that is not there. `cinematic` is `on` or `fallback` and needs `cameraReady`.
-    private func launchTalking(review: Bool = false, cameraReady: Bool = false, legacyAttach: Bool = false,
+    private func launchTalking(review: Bool = false, cameraReady: Bool = false,
                                largeText: Bool = false, cameraRefusal: String = "1", cinematic: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = legacyAttach ? ["-ui-testing-chat", "-ui-testing-legacy-attach"] : ["-ui-testing-chat"]
+        app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         if cameraReady { app.launchEnvironment["KRIA_TELEPROMPTER_CAMERA_READY"] = "1" }
         else { app.launchEnvironment["KRIA_TELEPROMPTER_CAMERA_UNAVAILABLE"] = cameraRefusal }
