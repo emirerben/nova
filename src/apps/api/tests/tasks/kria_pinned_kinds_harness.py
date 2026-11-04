@@ -381,3 +381,50 @@ def noisy_audio(seeded: base.Seeded, media_id: str) -> dict[str, Any]:
         },
     )
     return dict(record)
+
+
+# ── Filler words: a Talking item with a measured cleanup analysis ────────────────────
+
+CLEANUP_FLAGS = {
+    "silence_cut_enabled": True,
+    "subtitled_archetype_enabled": True,
+    "edit_format_talking_head_enabled": True,
+    "narrated_self_narration_enabled": True,
+    "speech_cleanup_mode": "opt_in",
+    "speech_cleanup_preflight_mode": "off",
+}
+
+
+def filler_world(monkeypatch, *, analysis=None):  # noqa: ANN001, ANN201
+    """The cleanup switches on, a ready analysis with measurable fillers, and the shared loader's
+    stand-in reading it. ``analysis`` replaces the default row (the kind lane's own cafe numbers)."""
+    for name, value in CLEANUP_FLAGS.items():
+        monkeypatch.setattr(settings, name, value)
+    row = analysis or analysis_row()
+    stub_filler_analysis(monkeypatch, analysis=row)
+    install_inputs(monkeypatch, filler_evidence=True)
+    return row
+
+
+def seed_talking_item(seeded: base.Seeded) -> None:
+    """One take on a subtitled item: the shape speech cleanup can cut (the capability the PATCH
+    route checks)."""
+    set_item(
+        seeded,
+        edit_format="subtitled",
+        clip_gcs_paths=["gs://b/take.mp4"],
+        speech_cleanup_enabled=False,
+        user_edited=False,
+    )
+
+
+def queued_analyses(seeded: base.Seeded) -> list[str]:
+    from app.models import SpeechCleanupAnalysis
+
+    with sync_session() as db:
+        rows = db.execute(
+            select(SpeechCleanupAnalysis).where(
+                SpeechCleanupAnalysis.plan_item_id == seeded.item_id
+            )
+        ).scalars()
+        return [r.status for r in rows]

@@ -939,3 +939,259 @@ async def test_mute_a_newer_head_draft_under_the_lock_refuses_and_a_requeue_appl
     after = h.counts(seeded)
     assert after["drafts"] == before["drafts"] + 1 and after["approvals"] == 1
     assert after["briefs"] == before["briefs"] + 1
+
+
+# ── Filler words: an item setting, applied inside the draft's own transaction ────────
+
+FILLER_PROMPT = "Cut the filler words"
+
+
+async def serve_filler(seeded, monkeypatch, **kwargs):  # noqa: ANN001, ANN003, ANN201
+    row = k.filler_world(monkeypatch, **kwargs)
+    k.seed_talking_item(seeded)
+    k.seed_strategy_draft(seeded)
+    await k.serve_cards(seeded, k.pick("filler_words"))
+    return row, seeded.cards["filler_words"]
+
+
+@pytest.fixture
+def published(monkeypatch):
+    """Analyses handed to the publisher (the broker is not reached)."""
+    calls: list = []
+    monkeypatch.setattr(
+        "app.services.plan_item_media.publish_preflight_after_commit",
+        lambda analysis_id: calls.append(analysis_id) or True,
+    )
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_filler_tap_flips_the_setting_and_asks_for_the_normal_approval(
+    world, monkeypatch, published
+):
+    seeded = h.seed_ready_thread()
+    _, card = await serve_filler(seeded, monkeypatch)
+    assert card.action.type == "item_setting" and card.prompt == FILLER_PROMPT
+    assert k.item_row(seeded)["speech_cleanup_enabled"] is False
+    parent = head(seeded.thread_id)
+    before = h.counts(seeded)
+
+    accepted, result = await tap_and_run(seeded, "filler_words")
+
+    assert result["status"] == "awaiting_approval", result
+    # The setting flipped in the draft's own transaction, like the item PATCH does.
+    assert k.item_row(seeded) == {
+        "speech_cleanup_enabled": True,
+        "user_edited": True,
+        "edit_format": "subtitled",
+    }
+    # A new draft revision restating the plan, a render approval (the normal flow stamps the
+    # cleanup contract from the setting), one typed requirement owned by this turn, no Job yet.
+    after = h.counts(seeded)
+    assert after["drafts"] == before["drafts"] + 1 and after["approvals"] == 1
+    assert after["jobs"] == before["jobs"]
+    new = head(seeded.thread_id)
+    assert new["snap"]["kind"] == "strategy" and new["parent"] == parent["id"]
+    assert new["snap"]["strategy"] == parent["snap"]["strategy"]
+    [req] = h.briefs(seeded.thread_id)[-1].requirements
+    assert req["facts"] == {"speech_cleanup": True} and req["source_turn_id"] == accepted.turn_id
+    assert h.events(seeded.thread_id, "user_message")[-1].content == FILLER_PROMPT
+    assert h.events(seeded.thread_id, "approval_requested")
+    assert published == [], "the scheduler had nothing to queue (preflight off)"
+
+
+@pytest.mark.asyncio
+async def test_filler_undo_restores_the_parent_draft_and_withdraws_the_approval(
+    world, monkeypatch, published
+):
+    from app.kria.drafts import undo_draft
+
+    seeded = h.seed_ready_thread()
+    await serve_filler(seeded, monkeypatch)
+    parent = head(seeded.thread_id)
+    await tap_and_run(seeded, "filler_words")
+    async with h.AsyncSessionLocal() as db:
+        await undo_draft(
+            db,
+            thread_id=seeded.thread_id,
+            creator_id=seeded.user_id,
+            expected_revision=head(seeded.thread_id)["rev"],
+        )
+    assert head(seeded.thread_id)["snap"] == parent["snap"]
+    assert approvals_pending(seeded.thread_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_filler_a_queued_analysis_is_published_after_the_commit(
+    world, monkeypatch, published
+):
+    """K15: whatever the scheduler queued for the flipped setting is published once the commit
+    has landed (Beat owns durable recovery)."""
+    from app.services import speech_cleanup_preflight as preflight
+
+    seeded = h.seed_ready_thread()
+    await serve_filler(seeded, monkeypatch)
+    queued = k.uuid.uuid4()
+    monkeypatch.setattr(preflight, "schedule_item_preflight_sync", lambda _db, _item: queued)
+    accepted, result = await tap_and_run(seeded, "filler_words")
+    assert result["status"] == "awaiting_approval" and k.item_row(seeded)["speech_cleanup_enabled"]
+    assert published == [queued]
+
+
+@pytest.mark.asyncio
+async def test_filler_analysis_redone_commits_and_publishes_it_and_flips_nothing(
+    world, monkeypatch, published
+):
+    """K8: the scheduler re-opens the analysis (the language cross-check) and clears the choice.
+    The tap did not take, but the re-queued row must survive: rolling back would orphan it."""
+    from app.models import SpeechCleanupAnalysis
+    from app.services import speech_cleanup_preflight as preflight
+
+    seeded = h.seed_ready_thread()
+    await serve_filler(seeded, monkeypatch)
+    requeued = k.uuid.uuid4()
+
+    def scheduler(db, item):  # noqa: ANN001, ANN202
+        item.speech_cleanup_enabled = False  # what the real scheduler does when it re-opens a row
+        db.add(
+            SpeechCleanupAnalysis(
+                id=requeued,
+                plan_item_id=item.id,
+                source_kind="embedded_spine",
+                source_media_identity="clip-a",
+                source_storage_path="uploads/u1/clip.mp4",
+                source_generation="g1",
+                source_policy_fingerprint="policy-fp-2",
+                engine_version="e1",
+                detector_version="d1",
+                status="queued",
+            )
+        )
+        db.flush()
+        return requeued
+
+    monkeypatch.setattr(preflight, "schedule_item_preflight_sync", scheduler)
+    before = h.counts(seeded)
+    accepted, result = await tap_and_run(seeded, "filler_words")
+
+    assert result["status"] == "completed", result
+    assert last_reply(seeded.thread_id) == NO_LONGER_FITS
+    assert signal_of(seeded.thread_id)["reason"] == "analysis_redone"
+    assert k.item_row(seeded)["speech_cleanup_enabled"] is False
+    assert k.item_row(seeded)["user_edited"] is False
+    assert k.queued_analyses(seeded) == ["queued"], "the re-queued analysis was kept"
+    assert published == [requeued]
+    after = h.counts(seeded)
+    assert after["drafts"] == before["drafts"] and after["approvals"] == 0
+    assert after["briefs"] == before["briefs"]
+
+
+@pytest.mark.asyncio
+async def test_filler_the_capability_closing_after_serve_refuses_and_flips_nothing(
+    world, monkeypatch, published
+):
+    seeded = h.seed_ready_thread()
+    await serve_filler(seeded, monkeypatch)
+    k.set_item(seeded, edit_format="montage")
+    before = h.counts(seeded)
+    accepted, _ = await tap_and_run(seeded, "filler_words")
+    assert last_reply(seeded.thread_id) == NO_LONGER_FITS
+    assert k.item_row(seeded)["speech_cleanup_enabled"] is False
+    assert h.counts(seeded) == before
+
+
+@pytest.mark.asyncio
+async def test_filler_the_flip_is_atomic_with_the_draft(world, monkeypatch, published):
+    """K15: a failure after the flip rolls the setting back with the rest of the transaction."""
+    seeded = h.seed_ready_thread()
+    await serve_filler(seeded, monkeypatch)
+
+    def boom(*_a, **_k):  # noqa: ANN002, ANN003
+        raise RuntimeError("the draft could not be written")
+
+    monkeypatch.setattr("app.tasks.kria_runtime.plan_facts_from_strategy", boom)
+    before = h.counts(seeded)
+    with pytest.raises(RuntimeError, match="could not be written"):
+        await tap_and_run(seeded, "filler_words")
+    assert k.item_row(seeded)["speech_cleanup_enabled"] is False
+    assert k.item_row(seeded)["user_edited"] is False
+    assert h.counts(seeded) == before
+
+
+@pytest.mark.asyncio
+async def test_filler_a_newer_head_draft_under_the_lock_refuses_before_flipping(
+    world, monkeypatch, published
+):
+    """K17: another turn moved the head after planning; the restate must not replace it."""
+    seeded = h.seed_ready_thread()
+    await serve_filler(seeded, monkeypatch)
+
+    def another_turn_wrote_a_draft():
+        with sync_session() as db:
+            old = db.execute(
+                h.select(h.CreatorEditDraft).where(
+                    h.CreatorEditDraft.thread_id == seeded.thread_id,
+                    h.CreatorEditDraft.is_head.is_(True),
+                )
+            ).scalar_one()
+            old.is_head = False
+            db.flush()
+            db.add(
+                h.CreatorEditDraft(
+                    creator_id=seeded.user_id,
+                    thread_id=seeded.thread_id,
+                    item_id=seeded.item_id,
+                    variant_key=old.variant_key,
+                    base_job_id=old.base_job_id,
+                    base_generation_id=old.base_generation_id,
+                    draft_revision=old.draft_revision + 1,
+                    parent_draft_id=old.id,
+                    snapshot_json=old.snapshot_json,
+                    snapshot_hash="f" * 64,
+                    is_head=True,
+                )
+            )
+            db.commit()
+
+    h.after_planning(monkeypatch, another_turn_wrote_a_draft)
+    before = h.counts(seeded)
+    accepted, _ = await tap_and_run(seeded, "filler_words")
+    assert last_reply(seeded.thread_id) == NO_LONGER_FITS
+    assert signal_of(seeded.thread_id)["reason"] == "base_moved"
+    assert k.item_row(seeded)["speech_cleanup_enabled"] is False
+    after = h.counts(seeded)
+    assert after["drafts"] == before["drafts"] + 1, "only the other turn's draft"
+    assert after["approvals"] == 0
+
+
+@pytest.mark.asyncio
+async def test_filler_a_second_tap_after_it_applied_is_refused(world, monkeypatch, published):
+    from app.kria.drafts import undo_draft
+
+    seeded = h.seed_ready_thread()
+    await serve_filler(seeded, monkeypatch)
+    await tap_and_run(seeded, "filler_words")
+    async with h.AsyncSessionLocal() as db:
+        await undo_draft(
+            db,
+            thread_id=seeded.thread_id,
+            creator_id=seeded.user_id,
+            expected_revision=head(seeded.thread_id)["rev"],
+        )
+    undone = h.counts(seeded)
+    accepted, _ = await tap_and_run(seeded, "filler_words")
+    assert last_reply(seeded.thread_id) == NO_LONGER_FITS
+    assert h.counts(seeded) == undone
+    assert pin_record(accepted.turn_id)["reason"] == "consumed"
+
+
+@pytest.mark.asyncio
+async def test_filler_kind_switched_off_after_serve_refuses(world, monkeypatch, published):
+    seeded = h.seed_ready_thread()
+    await serve_filler(seeded, monkeypatch)
+    monkeypatch.setattr(settings, "kria_suggestion_filler_words_enabled", False)
+    before = h.counts(seeded)
+    await tap_and_run(seeded, "filler_words")
+    assert last_reply(seeded.thread_id) == NO_LONGER_FITS
+    assert k.item_row(seeded)["speech_cleanup_enabled"] is False
+    assert h.counts(seeded) == before
