@@ -16,6 +16,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.config import settings
 from app.database import sync_session
 from app.kria.brief_binding import BriefBinding
+from app.kria.device_render import canonical_recipe_document
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
 from app.kria.intent_review_tier import intent_review_tier, lower_tier, tier_rank
 from app.kria.render_review_context import build_render_review_context, load_review_rows
@@ -124,7 +125,7 @@ def _inputs(rows):
         draft=copy.deepcopy(d.snapshot_json),
         binding=binding.model_dump(mode="json"),
         approval_id=str(a.id),
-        recipe=status.request.recipe.model_dump(mode="json"),
+        recipe=canonical_recipe_document(status.request.recipe),
         dispatch_settings=copy.deepcopy((j.all_candidates or {}).get("creator_strategy")),
         publication=_publication_identity(j, variant_id),
         prepared=copy.deepcopy(rows.prepared.snapshot) if rows.prepared else None,
