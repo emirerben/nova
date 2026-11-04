@@ -75,6 +75,15 @@ def horizon(seed: int) -> Image.Image:
     return img
 
 
+def vignette(peak: float, base: float, seed: int) -> Image.Image:
+    """A featureless wall, sky or dark room lit from the centre: a symmetric radial falloff."""
+    x = np.linspace(-1, 1, W, dtype=np.float32)[None, :]
+    y = np.linspace(-1, 1, H, dtype=np.float32)[:, None]
+    gray = peak - (peak - base) * (x**2 + y**2)
+    gray = gray + np.random.default_rng(seed).normal(0, 0.8, gray.shape)
+    return Image.fromarray(np.clip(gray, 0, 255).astype(np.uint8)).convert("RGB")
+
+
 def black(noise: int) -> Image.Image:
     rng = np.random.default_rng(900 + noise)
     base = rng.integers(0, 3, (H, W, 3), dtype=np.uint8)
@@ -186,6 +195,9 @@ def build(dest: Path) -> dict[str, Any]:
     add_image("p_horizon1", "p_horizon1", horizon(1), "sky over a ridge")
     add_image("p_horizon2", "p_horizon2", horizon(2), "another ridge, same kind of sky")
     add_image("p_horizon3", "p_horizon3", horizon(3), "a third ridge")
+    add_image("p_vig_wall", "p_vig_wall", vignette(130, 100, 1), "vignetted grey wall")
+    add_image("p_vig_sky", "p_vig_sky", vignette(210, 170, 2), "vignetted bright sky")
+    add_image("p_vig_dark", "p_vig_dark", vignette(40, 15, 3), "vignetted dark room")
     add_image("p_black1", "p_black1", black(0), "pure black")
     add_image("p_black2", "p_black2", black(1), "near black, sensor noise")
 
@@ -204,6 +216,8 @@ def build(dest: Path) -> dict[str, Any]:
         add_video(f"v_scene{n}", f"v_scene{n}", scene(n), "unrelated scene")
     add_video("v_sky1", "v_sky1", sky(1, sun=False), "plain sky")
     add_video("v_sky2", "v_sky2", sky(2, sun=False), "another plain sky")
+    add_video("v_vig_wall", "v_vig_wall", vignette(120, 95, 4), "vignetted wall")
+    add_video("v_vig_dark", "v_vig_dark", vignette(45, 20, 5), "vignetted dark room")
     add_video("v_black", "v_black", black(0), "all black")
 
     ambiguous = [["pa", "p_cousin"]]

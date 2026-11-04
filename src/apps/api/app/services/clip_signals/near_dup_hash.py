@@ -31,7 +31,7 @@ from PIL import Image, ImageOps
 from app.services.clip_signals.registry import SignalInputs, SignalSpec, read_signals, register
 
 NAME = "near_dup_hash"
-VERSION = 1
+VERSION = 2
 
 FRAME_WIDTH = 256
 KEYFRAME_FRACTIONS = (0.15, 0.5, 0.85)
@@ -45,6 +45,10 @@ FFPROBE_TIMEOUT_S = 10
 MIN_POPCOUNT = 12
 MAX_POPCOUNT = 52
 MIN_MEAN_ABS_STEP = 1.0  # mean |left-right| difference of the 9x8 grid, 0-255 scale
+# A symmetric vignette (a wall, a sky or a dark room lit from the centre) is half 1-bits and has a
+# large step, yet every shot of it hashes to the same value: all 8 row-bytes are identical. Real
+# scenes differ from their most common row by 14+ bits in total, vignettes by 0 (see the sweep).
+MIN_ROW_VARIETY = 6
 
 # Pair decision (see the module docstring for where the numbers come from).
 MATCH_DISTANCE = 11  # Hamming distance (of 64) at or under which two keyframes are the same view
@@ -74,8 +78,19 @@ def dhash(gray: np.ndarray) -> tuple[int, float]:
     return value, float(np.abs(step).mean())
 
 
+def row_variety(value: int) -> int:
+    """Bits by which the 8 row-bytes of a hash differ from their most common row."""
+    rows = [(value >> (8 * i)) & 0xFF for i in range(8)]
+    mode = max(set(rows), key=rows.count)
+    return sum((row ^ mode).bit_count() for row in rows)
+
+
 def informative(value: int, mean_abs_step: float) -> bool:
-    return MIN_POPCOUNT <= value.bit_count() <= MAX_POPCOUNT and mean_abs_step >= MIN_MEAN_ABS_STEP
+    return (
+        MIN_POPCOUNT <= value.bit_count() <= MAX_POPCOUNT
+        and mean_abs_step >= MIN_MEAN_ABS_STEP
+        and row_variety(value) >= MIN_ROW_VARIETY
+    )
 
 
 def laplacian_variance(gray: np.ndarray) -> float:

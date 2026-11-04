@@ -4,8 +4,9 @@ Failure modes this file is written from (listed before the code):
 
 1. Rotated phone video (portrait stored as landscape + display matrix): hashed sideways, it would
    never match its upright re-encode.
-2. Unrelated low-information frames (plain sky, blank wall, black): their dHash is all-0/all-1
-   bits, so any two "match". They must produce no hash at all.
+2. Unrelated low-information frames (plain sky, blank wall, black, a symmetric vignette): their
+   dHash is all-0/all-1 bits, or one fixed pattern for a vignette, so any two "match". They must
+   produce no hash at all.
 3. Black / near-black clips: same as 2, and a dark clip must also never be the one we keep.
 4. Single-frame and very short clips: three keyframes collapse on one frame; seeking past the end
    of a wrong stored duration returns nothing.
@@ -158,7 +159,21 @@ def test_rotated_phone_video_matches_its_upright_version(world):
 
 
 @pytest.mark.parametrize(
-    "item_id", ["p_sky1", "p_sky2", "p_sky_sun", "p_black1", "p_black2", "v_sky1", "v_black"]
+    "item_id",
+    [
+        "p_sky1",
+        "p_sky2",
+        "p_sky_sun",
+        "p_black1",
+        "p_black2",
+        "p_vig_wall",
+        "p_vig_sky",
+        "p_vig_dark",
+        "v_sky1",
+        "v_black",
+        "v_vig_wall",
+        "v_vig_dark",
+    ],
 )
 def test_frames_with_no_structure_produce_no_hash(world, item_id):
     _, data = world["items"][item_id]
