@@ -175,7 +175,15 @@ def request_digest(body: SubmitTurnBody) -> str:
     # different request) but is excluded when absent so pre-existing digests hold.
     excluded = (
         # KRI-756: which chip a message came from is telemetry, never part of the request.
-        {"editor_state", "suggestion", "outcome_context"}
+        # Under KRIA_SUGGESTION_PINNED_TAPS_ENABLED the pin decides what the turn runs, so a
+        # present pin joins the digest (a different pin under one client_event_id is a different
+        # request); an absent pin, or the flag off, leaves every existing digest unchanged.
+        {"editor_state", "outcome_context"}
+        | (
+            {"suggestion"}
+            if body.suggestion is None or not settings.kria_suggestion_pinned_taps_enabled
+            else set()
+        )
         | ({"clip_selection"} if body.clip_selection is None else set())
         | ({"choice_selection"} if body.choice_selection is None else set())
         | ({"song_order"} if body.song_order is None else set())  # KRI-374: additive digest
