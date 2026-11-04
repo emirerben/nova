@@ -109,6 +109,36 @@ final class SteerNowPolicyTests: XCTestCase {
         XCTAssertFalse(canSteer([sent("A", status: "pending"), sent("B", status: "queued")]))
     }
 
+    // MARK: - Which messages the chat hides (the waiting one lives in the bar)
+
+    func testTheWaitingMessageIsHiddenFromTheChat() {
+        let events = [sent("A", status: "pending"), sent("B", status: "queued", behind: "A")]
+        XCTAssertEqual(SteerNowPolicy.hiddenMessageEventIDs(in: events), [events[1].id])
+    }
+
+    func testARemovedMessageStaysHidden() {
+        let events = [sent("A", status: "pending"), sent("B", status: "queued", behind: "A"),
+                      event("turn_cancelled", turn: "B", extra: ["removed_while_waiting": .bool(true)])]
+        XCTAssertNil(SteerNowPolicy.waiting(in: events))
+        XCTAssertEqual(SteerNowPolicy.hiddenMessageEventIDs(in: events), [events[1].id])
+    }
+
+    func testASteeredMessageJoinsTheChat() {
+        let events = [sent("A", status: "pending"), sent("B", status: "queued", behind: "A"),
+                      event("turn_cancelled", turn: "A", extra: ["steered_to_turn_id": .string("B")])]
+        XCTAssertTrue(SteerNowPolicy.hiddenMessageEventIDs(in: events).isEmpty)
+    }
+
+    func testAMessageThatRanOnItsOwnJoinsTheChat() {
+        let events = [sent("A", status: "pending"), sent("B", status: "queued", behind: "A")] + card("B")
+        XCTAssertTrue(SteerNowPolicy.hiddenMessageEventIDs(in: events).isEmpty)
+    }
+
+    func testTheBarCarriesTheWaitingWords() {
+        let events = [sent("A", status: "pending"), sent("B", status: "queued", behind: "A")]
+        XCTAssertEqual(SteerNowPolicy.waiting(in: events)?.text, "message B")
+    }
+
     // MARK: - Capability
 
     func testCapabilityDefaultsOffWhenKeyIsMissing() throws {

@@ -125,6 +125,7 @@ from app.kria.narration_notes import (
 )
 from app.kria.order_replacement import OrderReplacementProof
 from app.kria.paid_call_scope import paid_call_request_id
+from app.kria.removed_messages import is_removed, removed_turn_ids
 from app.kria.reply_language import current_reply_language, is_client_stock_message, say
 from app.kria.strategy_policy import (
     RefusedStrategy,
@@ -1362,7 +1363,14 @@ async def _load_raw_creator_request(
         .all()
     )
     # KRI-552: a re-sent copy of a message adds no instruction; read twice it doubled every ask.
-    rows = [row for row in rows if not is_duplicate_answer(getattr(row, "payload", None))]
+    # Steer now: a waiting message the creator removed adds none either.
+    removed = await removed_turn_ids(db, thread_id, (getattr(row, "payload", None) for row in rows))
+    rows = [
+        row
+        for row in rows
+        if not is_duplicate_answer(getattr(row, "payload", None))
+        and not is_removed(getattr(row, "payload", None), removed)
+    ]
     return _full_creator_request(rows, current_message=user_message)
 
 
@@ -1639,12 +1647,18 @@ async def _load_thread_events(
             .order_by(CreationThreadEvent.sequence)
         )
     ).all()
+    # Steer now: a waiting message the creator removed is not history.
+    removed = await removed_turn_ids(
+        db, thread_id, (payload for role, payload, _type, _content in rows if role == "user")
+    )
     if release:
         await db.rollback()  # no connection pinned across what follows
     # KRI-476: tagged with the event type and a user message's text so a choice question
     # is closed only by a real reply, never by an async event (see `tag_event`).
     return [
-        tag_event(role, payload, event_type, content) for role, payload, event_type, content in rows
+        tag_event(role, payload, event_type, content)
+        for role, payload, event_type, content in rows
+        if not (role == "user" and is_removed(payload, removed))
     ]
 
 
@@ -2454,8 +2468,14 @@ async def _load_editor_target(
         .scalars()
         .all()
     )
-    # KRI-552: a re-sent copy of a message is not conversation.
-    rows = [row for row in rows if not is_duplicate_answer(getattr(row, "payload", None))]
+    # KRI-552: a re-sent copy of a message is not conversation; Steer now: nor is a removed one.
+    removed = await removed_turn_ids(db, thread_id, (getattr(row, "payload", None) for row in rows))
+    rows = [
+        row
+        for row in rows
+        if not is_duplicate_answer(getattr(row, "payload", None))
+        and not is_removed(getattr(row, "payload", None), removed)
+    ]
     rows.reverse()
     conversation = [
         {"role": row.role, "content": model_text(getattr(row, "payload", None), row.content)[:1000]}
@@ -2675,10 +2695,13 @@ async def _unrecorded_creator_lines(
         .scalars()
         .all()
     )
+    removed = await removed_turn_ids(db, thread_id, (getattr(row, "payload", None) for row in rows))
     rows = [
         row
         for row in rows
-        if str(row.content).strip() and not is_duplicate_answer(getattr(row, "payload", None))
+        if str(row.content).strip()
+        and not is_duplicate_answer(getattr(row, "payload", None))
+        and not is_removed(getattr(row, "payload", None), removed)
     ]
     # Same rule as `_full_creator_request`: the newest line is the current message.
     if rows and str(rows[-1].content).strip() == user_message.strip():
@@ -2815,7 +2838,14 @@ async def _load_creator_inputs(
         .all()
     )
     # KRI-552: a re-sent copy of a message, and the one-line answer it got, are not conversation.
-    rows = [row for row in rows if not is_duplicate_answer(getattr(row, "payload", None))]
+    # Steer now: nor is a waiting message the creator removed.
+    removed = await removed_turn_ids(db, thread_id, (getattr(row, "payload", None) for row in rows))
+    rows = [
+        row
+        for row in rows
+        if not is_duplicate_answer(getattr(row, "payload", None))
+        and not is_removed(getattr(row, "payload", None), removed)
+    ]
     rows.reverse()
     creator_summary, item_summary = creator_context(persona, item)
     extra: dict = {}

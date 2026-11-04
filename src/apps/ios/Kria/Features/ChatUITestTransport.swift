@@ -719,11 +719,12 @@ final class CreationChatFixture: @unchecked Sendable {
             func problem(_ status: Int, _ code: String, _ message: String) -> (Int, Data) {
                 response(["problem": ["code": code, "message": message, "recovery": "refresh_replan"]], status: status)
             }
-            guard steerSwitchOn else { return problem(404, "steer_now_unavailable", "Steer now is unavailable.") }
-            if steerMode == "refused" {
+            let steering = body["steer"] as? Bool == true
+            if steering { guard steerSwitchOn else { return problem(404, "steer_now_unavailable", "Steer now is unavailable.") } }
+            if steering, steerMode == "refused" {
                 return problem(409, "turn_not_cancellable", "Your video is already being made.")
             }
-            if steerMode == "stale", !steerStaleServed {
+            if steering, steerMode == "stale", !steerStaleServed {
                 steerStaleServed = true
                 append("status_update", role: "system", payload: ["note": "a worker event moved the revision"])
                 thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
@@ -733,7 +734,19 @@ final class CreationChatFixture: @unchecked Sendable {
                 return problem(409, "thread_revision_stale", "The project changed before cancellation.")
             }
             let stopped = parts[3]
-            guard body["steer"] as? Bool == true, steerActive[id]?.lowercased() == stopped.lowercased(),
+            if !steering {
+                // The trash / Edit: the plain cancel of the waiting message, marked so Kria never reads it.
+                guard steerWaiting[id]?.lowercased() == stopped.lowercased() else {
+                    return problem(409, "turn_not_cancellable", "Kria already started on this message.")
+                }
+                var payload: [String: Any] = ["turn_id": stopped, "approval_ids": [String]()]
+                if steerSwitchOn { payload["removed_while_waiting"] = true }
+                append("turn_cancelled", role: "system", payload: payload)
+                steerWaiting[id] = nil
+                thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+                return response(["turn_id": stopped, "thread_revision": revision, "status": "cancelled", "approval_ids": [String]()])
+            }
+            guard steerActive[id]?.lowercased() == stopped.lowercased(),
                   let waiting = steerWaiting[id] else {
                 return problem(409, "nothing_to_steer_to", "No message is waiting behind this one.")
             }

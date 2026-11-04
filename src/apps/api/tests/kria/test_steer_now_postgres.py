@@ -788,3 +788,91 @@ async def test_the_capability_follows_the_switch(monkeypatch) -> None:  # noqa: 
     assert (await capabilities(user))["steer_now"] is True
     _switch(monkeypatch, True)
     assert (await capabilities(user))["steer_now"] is True
+
+
+# -- the trash and Edit: a removed waiting message is gone for Kria too --------------------
+
+REMOVED = "Make every caption bright red."
+
+
+async def _removed_waiting_message(user_id: uuid.UUID, thread_id: uuid.UUID) -> tuple:
+    first = await _send(user_id, thread_id, "make the intro faster")
+    waiting = await _send(user_id, thread_id, REMOVED)
+    assert waiting.status == "queued"
+    removed = await _steer(user_id, thread_id, waiting.turn_id, steer=False)  # trash or Edit
+    assert not isinstance(removed, RuntimeFailure), removed
+    return first, waiting
+
+
+@pytest.mark.asyncio
+async def test_a_removed_waiting_message_is_marked() -> None:
+    """The plain cancel of a waiting message records that the creator took it back."""
+    user_id, thread_id, _ = _seed_runtime_project()
+    first, waiting = await _removed_waiting_message(user_id, thread_id)
+
+    stop = _events(thread_id, "turn_cancelled")[-1]
+    assert stop.payload["turn_id"] == waiting.turn_id
+    assert stop.payload["removed_while_waiting"] is True
+    assert _status(first.turn_id) == "pending"  # the running turn is untouched
+    assert _events(thread_id, "status_update") == []  # no chat line for a removal
+
+
+@pytest.mark.asyncio
+async def test_kria_never_reads_a_removed_waiting_message() -> None:
+    """Trash means gone: not in the pinned request, the history, or the unread lines."""
+    user_id, thread_id, _ = _seed_runtime_project()
+    await _removed_waiting_message(user_id, thread_id)
+    with sync_session() as db:
+        last = db.execute(
+            select(CreationThreadEvent.sequence)
+            .where(CreationThreadEvent.thread_id == thread_id)
+            .order_by(CreationThreadEvent.sequence.desc())
+            .limit(1)
+        ).scalar_one()
+        pinned = rt._full_creator_request_sync(db, thread_id=thread_id, through_sequence=last)  # noqa: SLF001
+    engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+            history = await planner._load_thread_events(db, thread_id)  # noqa: SLF001
+            unread = await planner._unrecorded_creator_lines(  # noqa: SLF001
+                db, thread_id=thread_id, user_message="and use a calmer song"
+            )
+    finally:
+        await engine.dispose()
+
+    assert REMOVED not in (pinned or "")
+    assert not any(REMOVED in str(event) for event in history)
+    assert not any(REMOVED in (row.content or "") for row in unread)
+
+
+@pytest.mark.asyncio
+async def test_a_removed_line_never_holds_a_later_delegation() -> None:
+    """A delegation reads every earlier creator line; a removed one is not owed a read."""
+    from app.kria.brief import _delegation_covers_request  # noqa: PLC0415
+
+    user_id, thread_id, _ = _seed_runtime_project()
+    first, _waiting = await _removed_waiting_message(user_id, thread_id)
+    later = await _send(user_id, thread_id, "and use a calmer song")
+    first_event = _user_message(thread_id, first.turn_id)
+
+    with sync_session() as db:
+        covered = _delegation_covers_request(
+            db,
+            thread_id=thread_id,
+            turn_id=uuid.UUID(later.turn_id),
+            read_event_ids=[str(first_event.id)],
+        )
+
+    assert covered is True
+
+
+@pytest.mark.asyncio
+async def test_sending_the_removed_words_again_is_a_new_message() -> None:
+    """Edit can send the same words again: that is a new ask, never answered as a copy."""
+    user_id, thread_id, _ = _seed_runtime_project()
+    await _removed_waiting_message(user_id, thread_id)
+
+    again = await _send(user_id, thread_id, REMOVED)
+
+    assert again.status == "queued"
+    assert "inert" not in _user_message(thread_id, again.turn_id).payload

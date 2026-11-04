@@ -586,6 +586,10 @@ private struct CreationWorkspaceView: View {
     @State private var isSteering = false
     @State private var steerRefusedTurnIDs: Set<String> = []
     @State private var steerNote: String?
+    /// Steer now: a message being sent while Kria works shows in the bar at once (not as a chat bubble) until the
+    /// server's queued `user_message` takes over; cleared when the send ends.
+    @State private var pendingWaitingText: String?
+    @State private var waitingClientEventID: String?
     @State private var stopUnavailableJobID: String?
     /// The server's reason the last confirmation was rejected, shown inside the card.
     @State private var confirmationConflict: CreationConfirmationConflict?
@@ -672,11 +676,13 @@ private struct CreationWorkspaceView: View {
     }
 
     private var suppressedTimelineMessages: Set<String> {
+        // Steer now: the waiting message lives in the bar, and a message the creator took back is gone.
+        let waiting = steerNowEnabled ? SteerNowPolicy.hiddenMessageEventIDs(in: events) : []
         if workspaceStage == .format, let event = events.last(where: { $0.eventType == "format_prompt" }) {
-            return [event.id]
+            return waiting.union([event.id])
         }
-        if workspaceStage == .direction, let event = activeProposalEvent { return [event.id] }
-        return []
+        if workspaceStage == .direction, let event = activeProposalEvent { return waiting.union([event.id]) }
+        return waiting
     }
 
     private var activeUploadIDs: Set<UUID> {
@@ -703,6 +709,7 @@ private struct CreationWorkspaceView: View {
             hasher.combine(message.afterSequence); hasher.combine(message.localOrder)
         }
         hasher.combine(stage?.id); hasher.combine(stage?.afterSequence)
+        hasher.combine(waitingClientEventID)
         for id in suppressed.sorted() { hasher.combine(id) }
         for upload in uploads { hasher.combine(upload.id); hasher.combine(upload.afterSequence); hasher.combine(upload.localOrder) }
         for requestID in completedThoughtSummaries.keys.sorted() {
@@ -715,7 +722,7 @@ private struct CreationWorkspaceView: View {
         if cacheable, derived.timelineKey == key { return derived.timeline }
         Perf.event("timeline.build")
         let built = ChatTimeline.build(
-            events: events, pending: pendingMessages, stage: stage,
+            events: events, pending: pendingMessages.filter { $0.clientEventID != waitingClientEventID }, stage: stage,
             suppressedMessageIDs: suppressed, uploads: uploads, thoughtSummaries: completedThoughtSummaries
         )
         derived.timelineKey = cacheable ? key : nil
@@ -964,6 +971,64 @@ private struct CreationWorkspaceView: View {
     private var upNext: SteerNowPolicy.Waiting? { steerNowEnabled ? SteerNowPolicy.waiting(in: events) : nil }
     private var steerStrings: SteerStrings { SteerStrings(ClipAnswerLanguage(threadState: threadState)) }
 
+    /// Kria is planning, its card is up, or a video is being made: a typed message now waits.
+    private var kriaIsBusy: Bool { isThinking || approval != nil || workspaceStage == .rendering }
+
+    /// Steer now: the bar on top of the input box. Tucked 13 pt under the composer's top edge (its outer padding is 12)
+    /// and inset 12 pt from its sides, like Codex's bar.
+    @ViewBuilder private var waitingBar: some View {
+        if steerNowEnabled, let waiting = upNext {
+            WaitingMessageBar(
+                text: waiting.text, strings: steerStrings, canSteer: canSteer(waiting), isBusy: isSteering, note: steerNote,
+                steer: { steerNow(waiting) }, remove: { removeWaiting(waiting, edit: false) }, edit: { removeWaiting(waiting, edit: true) }
+            )
+            .padding(.horizontal, 26).padding(.bottom, -13)
+        } else if steerNowEnabled, let text = pendingWaitingText {
+            WaitingMessageBar(text: text, strings: steerStrings, canSteer: false, isBusy: true, note: nil,
+                              steer: {}, remove: {}, edit: {})
+                .padding(.horizontal, 26).padding(.bottom, -13)
+        }
+    }
+
+    /// The trash and Edit: the plain cancel of the waiting turn. The server marks it so Kria never reads it; Edit then
+    /// puts the words back in the box (ahead of anything already typed there).
+    private func removeWaiting(_ waiting: SteerNowPolicy.Waiting, edit: Bool) {
+        guard !isSteering else { return }
+        isSteering = true
+        steerNote = nil
+        Task {
+            defer { isSteering = false }
+            for attempt in 0..<2 {
+                do {
+                    let removed = try await model.api.cancelTurn(threadID: project.id, turnID: waiting.turnID, revision: threadRevision)
+                    threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: removed.threadRevision)
+                    if edit {
+                        let typed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                        prompt = typed.isEmpty ? waiting.text : waiting.text + " " + typed
+                        composerFocused = true
+                    }
+                    _ = try? await refreshDelta()
+                    return
+                } catch let error as APIError where error.isConflict {
+                    if error.conflictCode == "turn_not_cancellable" {
+                        steerNote = steerStrings.alreadyStarted
+                        await refreshNow()
+                        return
+                    }
+                    guard attempt == 0 else {
+                        steerNote = steerStrings.couldNotRemove
+                        await refreshNow()
+                        return
+                    }
+                    _ = try? await refreshDelta()
+                } catch {
+                    steerNote = steerStrings.couldNotRemove
+                    return
+                }
+            }
+        }
+    }
+
     private func canSteer(_ waiting: SteerNowPolicy.Waiting) -> Bool {
         guard let behind = waiting.behindTurnID, !steerRefusedTurnIDs.contains(behind) else { return false }
         return SteerNowPolicy.canSteer(waiting, events: events)
@@ -1129,17 +1194,6 @@ private struct CreationWorkspaceView: View {
 
     @ViewBuilder private func timelineRow(_ entry: ChatTimelineEntry) -> some View {
         switch entry.content {
-        case .message(let message) where upNext?.messageEventID == message.id:
-            // Steer now: the waiting message carries its Up next row (and Steer now while it can take over).
-            VStack(alignment: .trailing, spacing: 6) {
-                messageRow(message)
-                if let waiting = upNext {
-                    UpNextRow(strings: steerStrings, canSteer: canSteer(waiting), isSteering: isSteering, note: steerNote) {
-                        steerNow(waiting)
-                    }
-                }
-            }
-            .id(entry.id)
         case .message(let message):
             messageRow(message)
                 .id(entry.id)
@@ -1674,14 +1728,6 @@ private struct CreationWorkspaceView: View {
             await capabilities
         }
         .task(id: suggestionFetchKey) { await loadSuggestions() }
-        // Steer now: the Up next row (and its note) grows the newest message after the send already scrolled; bring
-        // it above the composer once it has laid out, so the creator sees it without scrolling.
-        .task(id: "\(upNext?.turnID ?? "")|\(steerNote ?? "")") {
-            guard upNext != nil else { return }
-            try? await Task.sleep(for: .milliseconds(150))
-            guard !Task.isCancelled else { return }
-            scrollRequest += 1
-        }
         .task(id: thoughtRequestID) {
             guard let requestID = thoughtRequestID else { return }
             while !Task.isCancelled, (isSending || isThinking), thoughtRequestID == requestID {
@@ -1854,6 +1900,7 @@ private struct CreationWorkspaceView: View {
                         .background(KriaColor.paper)
                         .accessibilityIdentifier("first-prompt-suggestions")
                 }
+                waitingBar
                 ChatComposer(
                     text: promptBinding,
                     isSending: isSending || isActing,
@@ -1879,10 +1926,13 @@ private struct CreationWorkspaceView: View {
             conversationContent
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            ChatComposer(
-                text: promptBinding, isSending: isSending || isActing,
-                canAttach: false, blocksSubmission: (isThinking && !steerNowEnabled) || sendReceipt != nil || pendingUploadCount > 0, isFocused: $composerFocused, dictation: dictationForComposer, dictationTerms: dictationContextTerms, attach: {}, send: { Task { await send() } }
-            )
+            VStack(spacing: 0) {
+                waitingBar
+                ChatComposer(
+                    text: promptBinding, isSending: isSending || isActing,
+                    canAttach: false, blocksSubmission: (isThinking && !steerNowEnabled) || sendReceipt != nil || pendingUploadCount > 0, isFocused: $composerFocused, dictation: dictationForComposer, dictationTerms: dictationContextTerms, attach: {}, send: { Task { await send() } }
+                )
+            }
         }
         .onAppear { activateDraftStorage() }
         .background(KriaColor.paper)
@@ -2279,6 +2329,18 @@ private struct CreationWorkspaceView: View {
         defer {
             ownsSendAttempt = false
             chatDrafts.endSubmission(clientEventID: receipt.clientEventID, for: project.id)
+        }
+        // Steer now: sent while Kria works, the message goes straight to the bar (it will wait), never a chat bubble.
+        let waitsBehindKria = steerNowEnabled && composerSend && kriaIsBusy
+        if waitsBehindKria {
+            pendingWaitingText = message
+            waitingClientEventID = submission.clientEventID
+        }
+        defer {
+            if waitsBehindKria {
+                pendingWaitingText = nil
+                waitingClientEventID = nil
+            }
         }
         nextLocalOrder += 1
         let optimistic = submissionAnchor ?? ChatPendingMessage(content: message, clientEventID: submission.clientEventID,

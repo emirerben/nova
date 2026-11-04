@@ -313,6 +313,8 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgro
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
     /// Steer now: stop the running turn `turnID` so the message waiting behind it runs now.
     func steerNow(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
+    /// The plain cancel of a turn. Steer now's trash and Edit use it on the waiting message.
+    func cancelTurn(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot
     func retryApprovedRender(threadID: UUID, executionID: UUID, expectedRevision: Int) async throws -> RenderRetryAccepted
     /// `speechCleanupAware` must always be sent `true` from this client build --
@@ -419,6 +421,7 @@ extension KriaAPIClient {
 extension KriaAPIClient {
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
     func steerNow(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
+    func cancelTurn(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
     func creationSuggestions(threadID: UUID) async throws -> SuggestionSet? { nil }
     func transcribeDictation(audio: Data, contextTerms: [String]) async throws -> DictationTranscriptResponse { throw APIError.unsupported }
     func planSnapshot(threadID: UUID) async throws -> PlanSnapshot { throw APIError.unsupported }
@@ -1708,6 +1711,10 @@ struct KriaAPI: KriaAPIClient {
     func steerNow(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled {
         try await request(path: "creation-threads/\(threadID.uuidString)/turns/\(turnID)/cancel", method: "POST",
             bodyData: try JSONEncoder().encode(SteerNowRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)
+    }
+    func cancelTurn(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled {
+        try await request(path: "creation-threads/\(threadID.uuidString)/turns/\(turnID)/cancel", method: "POST",
+            bodyData: try JSONEncoder().encode(CancelRenderRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)
     }
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled {
         try await request(path: "creation-threads/\(threadID.uuidString)/turns/\(turnID)/cancel-render", method: "POST", bodyData: try JSONEncoder().encode(CancelRenderRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)

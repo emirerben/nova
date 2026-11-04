@@ -46,6 +46,7 @@ from app.kria.contracts import (
 from app.kria.duplicate_send import duplicate_reply, find_duplicate_send
 from app.kria.intent_review_copy import INTENT_REVIEW_TURN_VALUE
 from app.kria.language import is_help_question, is_status_question
+from app.kria.removed_messages import REMOVED_WHILE_WAITING
 from app.kria.reply_language import (
     remember_reply_language,
     reply_language_for,
@@ -1473,6 +1474,10 @@ async def cancel_turn(
             current_revision=int(thread.revision),
         )
     steered_to = await _steer_target(db, thread=thread, turn=turn) if steer else None
+    # Steer now: the trash / Edit on a waiting message. Marked so planning never reads it.
+    removed_while_waiting = (
+        not steer and turn.status == "queued" and settings.steer_now_for(creator_id)
+    )
 
     now = datetime.now(UTC)
     approval_ids: list[str] = []
@@ -1518,6 +1523,7 @@ async def cancel_turn(
             "turn_id": str(turn.id),
             "approval_ids": approval_ids,
             **({"steered_to_turn_id": steered_to} if steered_to is not None else {}),
+            **({REMOVED_WHILE_WAITING: True} if removed_while_waiting else {}),
         },
     )
     if steered_to is not None:
