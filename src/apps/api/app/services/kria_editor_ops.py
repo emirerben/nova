@@ -64,6 +64,7 @@ _IMAGE_SUFFIXES = {".avif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".webp"}
 _PORTABLE_FAMILIES = {
     "automatic_cut",
     "background",
+    "background_focus",
     "background_windows",
     "caption",
     "clip",
@@ -800,6 +801,8 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
         families.append("background")
         if background_windows_open(job, variant):
             families.append("background_windows")
+        if background_focus_open(job, variant):
+            families.append("background_focus")
     return sorted(set(families) & _PORTABLE_FAMILIES)
 
 
@@ -928,6 +931,20 @@ def background_windows_open(job: Any, variant: dict[str, Any]) -> bool:
     return speaker_background_windows_unavailable_reason() is None
 
 
+def background_focus_open(job: Any, variant: dict[str, Any]) -> bool:
+    """May chat aim and zoom the recordings behind the speaker (Qendresa item 18)?
+
+    The base lane is open AND the focus gate holds (flag, ``backgroundFocus`` verified, client
+    protocol >= 39 -- `background_focus_supported`, same worker-side client rule). False adds
+    nothing to the snapshot or the prompt, so a closed gate is byte-identical to before.
+    """
+    if not background_state(job, variant)[0]:
+        return False
+    from app.services.phone_rollout import background_focus_supported  # noqa: PLC0415
+
+    return background_focus_supported(require_client=True)
+
+
 def background_color_reason(job: Any, variant: dict[str, Any]) -> str | None:
     """Why chat may not put a plain colour behind the speaker although the lane is open, in
     words for the creator; None when the colour gate holds (KRI-1173).
@@ -1003,12 +1020,15 @@ def _background_snapshot(
         if isinstance(row, dict) and row.get("kind") in {"image", "video"}
     ][:MAX_BACKGROUND_POOL_ROWS]
     current_row: dict[str, Any] | None = None
+    focus_open = background_focus_open(job, variant)
     if isinstance(current, dict) and current.get("media_id"):
         current_row = {
             "media_id": current.get("media_id"),
             "kind": current.get("kind"),
             "source_start_s": current.get("source_start_s", 0.0),
         }
+        if focus_open and current.get("focus"):
+            current_row["focus"] = dict(current["focus"])
     elif isinstance(current, dict) and current.get("color"):
         # KRI-1173: a plain colour names no pool media and has no start.
         current_row = {"kind": "color", "color": current.get("color")}
@@ -1032,6 +1052,11 @@ def _background_snapshot(
                 "media_id": window.get("media_id"),
                 "start_s": window.get("start_s"),
                 "end_s": window.get("end_s"),
+                **(
+                    {"focus": dict(window["focus"])}
+                    if focus_open and isinstance(window.get("focus"), dict)
+                    else {}
+                ),
             }
             for window in windows or []
             if isinstance(window, dict)
@@ -1039,6 +1064,8 @@ def _background_snapshot(
         section["speaker_frame"] = background_frame_preset(
             current.get("speaker_frame") if isinstance(current, dict) else None
         )
+    if focus_open:
+        section["focus_available"] = True
     # Qendresa item 16: shown only while the speaker has a full-screen opening, so every other
     # snapshot keeps its exact shape. Read-only for the model: no op sets it.
     spans = current.get("full_screen_windows") if isinstance(current, dict) else None

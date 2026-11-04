@@ -71,6 +71,15 @@ BACKGROUND_REFUSALS: dict[str, tuple[str, str]] = {
         "Couldn't use those full-screen times: they overlap, are too short or run past the end",
         "Bu tam ekran sürelerini kullanamadım: üst üste biniyor, çok kısa ya da videonun dışında",
     ),
+    # Qendresa item 18: aim a background at its text.
+    "background_focus_disabled": (
+        "Couldn't aim or zoom the recordings: it isn't available right now",
+        "Kayıtları hizalayamadım ya da yakınlaştıramadım: şu anda kullanılamıyor",
+    ),
+    "background_focus_invalid": (
+        "Couldn't aim or zoom a plain colour: only photos and videos can be aimed",
+        "Düz bir rengi hizalayamadım: yalnızca fotoğraflar ve videolar hizalanabilir",
+    ),
     # KRI-1173: a solid-colour fill.
     "speaker_background_color_disabled": (
         "Couldn't put a colour behind you: it isn't available right now",

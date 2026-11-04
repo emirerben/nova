@@ -328,7 +328,9 @@ def main() -> None:
             # What bind_phone_visual_assets does while the file is on disk (flag on).
             from app.services.background_text_focus import measure_text_column
 
-            column = measure_text_column(str(out / file), kind="video", width=width, height=height)
+            column = measure_text_column(
+                str(out / file), kind="video", width=width, height=height
+            )
             measured[pool_id] = column.model_dump(mode="json") if column else None
             extra["text_column"] = column
         visuals.append(
@@ -348,12 +350,16 @@ def main() -> None:
 
     from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes
 
+    from app.services.phone_rollout import background_focus_planned_for
+
     recipe = compile_phone_subtitled_plan(
         (speaker,),
         caption_cues=_cues(words),
         visuals=tuple(visuals),
         lanes=PhoneSubtitledLanes(background=background),
         text_elements=(title_row,) if title_row else (),
+        # As `_run_phone_subtitled_job` does: the approving build decides whether a focus is drawn.
+        background_focus_open=background_focus_planned_for(args.client_protocol),
     )
     layer = recipe.speaker_background
     assert layer is not None and layer.windows, (

@@ -103,7 +103,12 @@ log = structlog.get_logger()
 # colour behind the speaker; the BACKGROUND block lists a colour "current" and `color: available`
 # / `not available`. Taught inside speaker_background.txt, so only an edit that already offers the
 # `background` family sees it; every other prompt is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-03-v109"
+# v116 (Qendresa item 18): set_background_focus {position?, zoom?, zoom_delta?, asset_id?} aims and
+# zooms the photo / video behind the speaker (the recordings are already aimed at their text when
+# the server measured it); the BACKGROUND block prints each aimed window as `aim=left zoom=0.8x`.
+# Taught in speaker_background_focus.txt only where the snapshot offers the `background_focus`
+# family (flag + verified token + protocol 39), so every other prompt is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-05-v116"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -2027,6 +2032,7 @@ def _format_snapshot(snapshot: dict) -> str:
                     f"current: kind={_field(current.get('kind'), max_chars=20)!r} "
                     f"id={_field(current.get('media_id'), max_chars=80)!r} "
                     f"start={_fmt_round3(_first_number(current, ('source_start_s',)))}s"
+                    f"{_focus_text(current.get('focus'))}"
                 )
             else:
                 lines.append("current: (none)")
@@ -2070,6 +2076,7 @@ def _format_snapshot(snapshot: dict) -> str:
                             f"- id={_field(window.get('media_id'), max_chars=80)!r} "
                             f"{_fmt_round3(_first_number(window, ('start_s',)))}-"
                             f"{_fmt_round3(_first_number(window, ('end_s',)))}s"
+                            f"{_focus_text(window.get('focus'))}"
                         )
                 else:
                     lines.append("(none)")
@@ -4343,6 +4350,18 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
         if title_index is not None:
             return {"op": "edit_text", "bar_index": title_index, "text": parsed["title"]}
     return {"op": name, **parsed}
+
+
+def _focus_text(focus: object) -> str:
+    """Qendresa item 18: ` aim=left zoom=0.8x` for a background that is aimed ('' otherwise, so a
+    snapshot without focus prints exactly what it always did)."""
+    if not isinstance(focus, dict):
+        return ""
+    x, zoom = focus.get("x"), focus.get("zoom")
+    if not isinstance(x, (int, float)) or not isinstance(zoom, (int, float)):
+        return ""
+    named = {0.0: "left", 0.5: "center", 1.0: "right"}.get(float(x))
+    return f" aim={named or f'x{float(x):g}'} zoom={float(zoom):g}x"
 
 
 def _family_allowed(name: str, snapshot: dict) -> bool:

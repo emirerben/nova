@@ -4128,6 +4128,16 @@ out as today (corner from 0 s) and the receipt says the opening was not made; bu
 client_update_required` (`feature: "speaker_full_opening"`) only for a recipe already pinned with it. Detail:
 `docs/pipelines/speaker-background.md` "Full screen first, then the corner".
 
+Qendresa item 18 adds an optional `focus` (`{x, y, zoom}`) on the fill and on each window: a landscape recording
+is aimed at its measured text column (free, measured while the worker binds the Visual) or at the side / zoom the
+creator named in chat or in the editor. Behind `BACKGROUND_FOCUS_ENABLED` (default off), the verified token
+`backgroundFocus` and client protocol >= 39 (`BACKGROUND_FOCUS_MIN_CLIENT_PROTOCOL`). Add the token only after a
+physical-iPhone check: an aimed recording in preview and export, black bands when zoomed out below cover, the
+Left / Centre / Right buttons and the zoom slider. With the flag, the token or the build missing, recordings are
+centre-cropped as today; builds below 39 get `426 client_update_required` (`feature: "background_focus"`) only
+for a recipe already pinned with a focus. Detail: `docs/pipelines/speaker-background.md` "Aimed at the readable
+text".
+
 
 ## Clip tilt (KRI-1134)
 

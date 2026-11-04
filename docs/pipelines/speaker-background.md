@@ -298,6 +298,31 @@ cleanly, a failed mask at the switch falls back to the plain speaker in the corn
 `PHONE_RENDER_VERIFIED_FEATURES`, then the flag (api + worker, restart). Rollback: the flag off.
 Not changed: the corner preset's size (her corner face is 1.5-2x today's `small_bottom_right`).
 
+## Aimed at the readable text (`BACKGROUND_FOCUS_ENABLED`, Qendresa item 18)
+
+A landscape screen recording behind the speaker used to be cover-cropped to its middle (a 16:9 recording shows
+31.6 % of its width), so every README line was cut at its start: the frame was full of words, none readable as a
+sentence. Her own Q2 videos zoom so the text column fills the width, lines read from their first word, black above
+and below. Failure modes F1-F17 and the measured before/after: `docs/reviews/background-focus-failure-modes.md`.
+
+| Where | Shape |
+| --- | --- |
+| Recipe (`SpeakerBackgroundLayer`) | Optional `focus: {x, y, zoom}` on each `windows[i]` and on a photo/video fill (a colour fill with one is invalid), absent while unused. Meaning = `VisualMediaPlacement`: cover base, drawn scale `max(cover * zoom, contain)`, `x`/`y` align the picture (0 left/top, 0.5 centre, 1 right/bottom); zoom 0.2-4; below cover the rest of the frame is black. Capability `backgroundFocus`; shared fixture `tests/fixtures/speaker-background-parity/v5.json`. |
+| Measure (free) | `app/services/background_text_focus.py`: while `bind_phone_visual_assets` has the file on disk (flag on, picture >= 1.25x wider than the canvas aspect) a few frames are reduced to grey, the horizontal steps glyph strokes make are summed per column, the densest contiguous span is the text column and the spacing of text-row starts is the line pitch. `PhoneVisualBinding.text_column` holds it in memory only (excluded from every dump, so receipts are unchanged). No AI call. |
+| Auto focus | `focus_for_text_column`: zoom so the column fills the width, but never so far out that a text line is under ~40 px of the 1920 px canvas (her V5 measures 39-44 px) and never above 2.5x; a column wider than what shows is shown from its left edge (lines read from their start), else centred. Applied at compile (`_FocusResolver` in `phone_subtitled_plan.py`) to a fill or window without a creator focus; nothing measurable = today's centre. |
+| Lane (`SubtitledBackground`) | `focus: SubtitledBackgroundFocus(x?, y=0.5, zoom?)` on the fill and each window; missing parts are filled at compile from the measure, else 0.5 / 1.0. `remap_lanes_for_cut` keeps it; `strip_unsupported_background` drops every focus on a closed gate (trace `background_focus_phone_fallback`). |
+| Strategy | `background_media.focus` (`left`/`center`/`right`) and `focus_zoom` (0.3-3), only when the creator names a side or a zoom; "zoom in so the text is readable" needs neither (the measure does it). Main Creator v126 teaches them only while the manifest advertises `background_focus`; repair keeps them only then (notice for an old build). |
+| Chat | Edit Copilot v116 op `set_background_focus {position?, zoom?, zoom_delta?, asset_id?}` (family `background_focus`, offered only while the gate is open); the other background ops keep a recording's focus when its media stays. |
+| Editor | Document `speaker_background.focus` / `windows[i].focus` (`{x, y, zoom}`); Save checks it only when set or changed (422 `background_focus_disabled` / `_invalid`, 426 `background_focus` for a build below 39); capability `editor_capabilities.background_focus`. iPhone: Left / Centre / Right and a zoom slider (0.3-3x) on the fill and on each window. |
+
+Gates: `background_focus_supported()` (request-aware) and `background_focus_planned_for(protocol)`; the worker passes
+the approving build's stamp to the compile (`background_focus_open`), so a build below 39, a missing stamp, a closed
+flag or an unverified token get today's centre crop and a recipe byte-identical to before. Rollout: verify
+`backgroundFocus` on a device (aimed recording in preview and export, black bands below cover, the slider and the
+three buttons), add it to `PHONE_RENDER_VERIFIED_FEATURES`, then the flag (api + worker, restart). Rollback: the flag
+off. Not changed: receipts (an ask to zoom still says it can't be verified), caption and card placement (they do not
+read the background picture).
+
 ## Rollback
 
 Kill switch, never a code revert: `fly secrets set SPEAKER_BACKGROUND_ENABLED=false

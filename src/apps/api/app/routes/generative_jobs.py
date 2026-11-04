@@ -1194,6 +1194,18 @@ class EditorCommitMusicWindow(BaseModel):
         return value
 
 
+class EditorCommitBackgroundFocus(BaseModel):
+    """Where a background picture is aimed (Qendresa item 18): the document's complete
+    ``{x, y, zoom}`` (0 = left/top edge, 1 = right/bottom edge; zoom a multiple of the cover
+    scale). The same bounds as the recipe's `SpeakerBackgroundFocus`."""
+
+    model_config = {"extra": "forbid"}
+
+    x: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+    y: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+    zoom: float = Field(ge=0.2, le=4.0, allow_inf_nan=False)
+
+
 class EditorCommitSpeakerBackgroundWindow(BaseModel):
     """One timed background of the Save section (KRI-1162): a pool visual shown from
     ``start_s`` to ``end_s`` (the edit's timeline). Order, overlap and the 0.5 s minimum are
@@ -1206,6 +1218,16 @@ class EditorCommitSpeakerBackgroundWindow(BaseModel):
     source_start_s: float = Field(default=0.0, ge=0.0, le=1800.0, allow_inf_nan=False)
     start_s: float = Field(ge=0.0, le=1800.0, allow_inf_nan=False)
     end_s: float = Field(ge=0.0, le=1800.0, allow_inf_nan=False)
+    # Qendresa item 18: omitted from the dump while None (an old-shape window still equals the
+    # stored document).
+    focus: EditorCommitBackgroundFocus | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unused(self, handler):  # noqa: ANN001, ANN202
+        data = handler(self)
+        if data.get("focus") is None:
+            data.pop("focus", None)
+        return data
 
 
 class EditorCommitSpeakerFullScreenWindow(BaseModel):
@@ -1265,6 +1287,8 @@ class EditorCommitSpeakerBackground(BaseModel):
     # the stored document). No length bounds here: `_validate_speaker_full_screen_windows`
     # answers a bad list with `speaker_full_opening_invalid`.
     full_screen_windows: list[EditorCommitSpeakerFullScreenWindow] | None = None
+    # Qendresa item 18: the fill's focus (photo/video only), omitted while None.
+    focus: EditorCommitBackgroundFocus | None = None
 
     @field_validator("color", mode="before")
     @classmethod
@@ -1291,6 +1315,8 @@ class EditorCommitSpeakerBackground(BaseModel):
             data.pop("speaker_frame", None)
         if not data.get("full_screen_windows"):
             data.pop("full_screen_windows", None)
+        if data.get("focus") is None:
+            data.pop("focus", None)
         return data
 
 
@@ -7661,6 +7687,9 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         # Qendresa item 16: the speaker full screen before the corner, present only when ON.
         if _speaker_full_opening_capability(job, variant):
             capabilities["speaker_full_opening"] = True
+        # Qendresa item 18: aim a background at its text, present only when ON.
+        if _background_focus_capability(job, variant):
+            capabilities["background_focus"] = {"editable": True}
     if _caption_animation_capability(variant, capabilities):
         capabilities["caption_animation"] = True
     if _clip_tilt_capability(job, variant, capabilities):
@@ -11503,6 +11532,62 @@ def _speaker_full_opening_capability(job: Job, variant: dict) -> bool:
     )
 
 
+def _background_focus_capability(job: Job, variant: dict) -> bool:
+    """Qendresa item 18: may the app aim a background (``editor_capabilities.background_focus``)?
+    The base capability AND the focus gate (flag, ``backgroundFocus`` verified, protocol >= 39)."""
+    from app.services.phone_rollout import background_focus_supported  # noqa: PLC0415
+
+    return bool(
+        _speaker_background_capability(job, variant)
+        and background_focus_supported(require_client=True)
+    )
+
+
+def _validate_background_focus_change(
+    requested: EditorCommitSpeakerBackground, stored: object, *, is_color: bool
+) -> None:
+    """Qendresa item 18 (F1, F11): a focus on a colour fill is invalid; SETTING or CHANGING a
+    focus (compared per fill and per window with what the variant carries) needs the focus gate:
+    426 below the protocol, 422 ``background_focus_disabled`` otherwise. Unchanged focuses
+    (an echo, a fill change) are never refused by a gate closed since."""
+    from app.services.phone_rollout import background_focus_unavailable_reason  # noqa: PLC0415
+
+    if is_color and requested.focus is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "background_focus_invalid"},
+        )
+    stored_doc = stored if isinstance(stored, dict) else {}
+    stored_windows = stored_doc.get("windows") or []
+    changed = False
+    if requested.focus is not None:
+        changed = requested.focus.model_dump() != stored_doc.get("focus")
+    for index, window in enumerate(requested.windows or []):
+        if window.focus is None:
+            continue
+        old = stored_windows[index] if index < len(stored_windows) else None
+        previous = old.get("focus") if isinstance(old, dict) else None
+        if window.focus.model_dump() != previous:
+            changed = True
+    if not changed:
+        return
+    reason = background_focus_unavailable_reason()
+    if reason == "client_protocol_below_min":
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "background_focus",
+                "minimum_client_protocol": settings.background_focus_min_client_protocol,
+            },
+        )
+    if reason is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "background_focus_disabled", "reason": reason},
+        )
+
+
 def _validate_speaker_full_screen_windows(
     requested: EditorCommitSpeakerBackground, variant: dict
 ) -> None:
@@ -11603,6 +11688,7 @@ def _validate_speaker_background_section(
     """
     from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
         SubtitledBackground,
+        SubtitledBackgroundFocus,
         SubtitledBackgroundWindow,
         SubtitledFullScreenWindow,
         SubtitledSpeakerFrame,
@@ -11731,6 +11817,7 @@ def _validate_speaker_background_section(
             )
         if new_spans != stored_spans:
             _validate_speaker_full_screen_windows(requested, variant)
+    _validate_background_focus_change(requested, stored, is_color=is_color)
     fill: dict[str, Any]
     if is_color:
         # KRI-1173 (S54): a colour is not a pool visual -- nothing to look up or pin.
@@ -11764,6 +11851,8 @@ def _validate_speaker_background_section(
             "kind": binding.kind,
             "source_start_s": requested.source_start_s,
         }
+        if requested.focus is not None:
+            fill["focus"] = SubtitledBackgroundFocus(**requested.focus.model_dump())
     window_lanes: list[SubtitledBackgroundWindow] = []
     if requested.uses_windows:
         _validate_speaker_background_windows(requested, assembly)
@@ -11778,6 +11867,11 @@ def _validate_speaker_background_section(
                     source_start_s=window.source_start_s,
                     start_s=window.start_s,
                     end_s=window.end_s,
+                    focus=(
+                        SubtitledBackgroundFocus(**window.focus.model_dump())
+                        if window.focus is not None
+                        else None
+                    ),
                 )
             )
     return True, speaker_background_document(

@@ -73,6 +73,8 @@ from app.services.creator_errors import CreatorCapabilityError, CreatorStrategyE
 from app.services.phone_destination import phone_drawable_visual_kinds
 from app.services.phone_rollout import (
     TALKING_MULTI_CLIP_MAX_CLIPS,
+    background_focus_planned_for,
+    background_focus_planned_reason,
     phone_guided_narration_supported,
     phone_guided_sfx_supported,
     phone_narrated_title_supported,
@@ -142,6 +144,12 @@ CAPABILITY_SPEAKER_BACKGROUND_WINDOWS = "speaker_background_windows"
 # app build that sent the message (`client_protocol.current_client_protocol`, bound for a Kria turn
 # by `bind_sending_build`), so a closed gate leaves the dict, both hashes and the prompt identical.
 CAPABILITY_SPEAKER_FULL_OPENING = "speaker_full_opening"
+# Qendresa item 18: name a side / a zoom for the recordings behind the speaker. Present ONLY while
+# the speaker background is advertised AND `background_focus_planned_for` holds for the app build
+# that sent the message (flag on, `backgroundFocus` verified, build >= 39), so a closed gate leaves
+# the dict, both hashes and the prompt identical. One full-video recording can be aimed too, so
+# this does NOT need the windows capability.
+CAPABILITY_BACKGROUND_FOCUS = "background_focus"
 # KRI-1173: a plain colour as the fill. Present ONLY while `speaker_background` is advertised AND
 # `speaker_background_color_supported()` holds (the `speakerBackgroundColor` token + a protocol-34
 # build), so a manifest without it keeps its dict, both hashes and the creator prompt identical.
@@ -192,6 +200,13 @@ SPEAKER_FULL_OPENING_NOTICES: dict[str, str] = {
     "unavailable": (
         "Couldn't start you full screen before the background: it isn't available here right now."
     ),
+}
+# Qendresa item 18: a side / zoom was asked for but cannot be made (flag on only; flag off drops it
+# silently). Keyed by `phone_rollout.background_focus_planned_reason`. Turkish twins belong in
+# `app.kria.strategy_policy._KNOWN_TR`.
+BACKGROUND_FOCUS_NOTICES: dict[str, str] = {
+    "app_too_old": "Aiming the recordings needs the latest Kria app, so they're centred.",
+    "unavailable": "Aiming the recordings isn't available yet, so they're centred.",
 }
 TALKING_CLIP_INTENTS_DROPPED_NOTICE = (
     "Talking edits caption what you say, so I didn't add separate labels or captions "
@@ -982,6 +997,8 @@ def resolve_creator_manifest(
 
                 if speaker_full_opening_planned_for(current_client_protocol()):
                     capabilities[CAPABILITY_SPEAKER_FULL_OPENING] = _available()
+            if background_focus_planned_for(_sending_build_protocol()):
+                capabilities[CAPABILITY_BACKGROUND_FOCUS] = _available()
             if speaker_background_color_supported():
                 capabilities[CAPABILITY_SPEAKER_BACKGROUND_COLOR] = _available()
             background_pick = speaker_background_pick or None
@@ -1810,6 +1827,13 @@ def speaker_full_opening_open(manifest: ResolvedCreatorManifest) -> bool:
     )
 
 
+def background_focus_open(manifest: ResolvedCreatorManifest) -> bool:
+    """True when the manifest advertises aiming the recordings (background open, build >= 39)."""
+
+    capability = manifest.capabilities.get(CAPABILITY_BACKGROUND_FOCUS)
+    return capability is not None and capability.available and speaker_background_open(manifest)
+
+
 def speaker_background_color_open(manifest: ResolvedCreatorManifest) -> bool:
     """True when the manifest also advertises a plain colour as the fill (KRI-1173)."""
 
@@ -1962,6 +1986,23 @@ def _repair_creator_speaker_background(
     opening_fields: dict[str, Any] = (
         {"full_screen_opening": True, "full_screen_opening_s": opening_s} if opening else {}
     )
+    # Qendresa item 18: a side / zoom for the recordings. A colour fill with no windows has
+    # nothing to aim (dropped silently); a closed gate with the flag on says so once.
+    if (
+        wanted is not None
+        and (wanted.focus is not None or wanted.focus_zoom is not None)
+        and not (color is not None and not entries)
+    ):
+        if background_focus_open(manifest):
+            opening_fields["focus"] = wanted.focus
+            opening_fields["focus_zoom"] = wanted.focus_zoom
+        elif settings.background_focus_enabled:
+            focus_reason = background_focus_planned_reason(_sending_build_protocol())
+            notices.append(
+                BACKGROUND_FOCUS_NOTICES.get(
+                    focus_reason or "unavailable", BACKGROUND_FOCUS_NOTICES["unavailable"]
+                )
+            )
     if color is not None:
         # KRI-1173: the colour fill names no pool media; its windows (if any) still do.
         fill = BackgroundMedia(
@@ -2513,6 +2554,9 @@ __all__ = [
     "speaker_background_windows_open",
     "speaker_full_opening_open",
     "SPEAKER_FULL_OPENING_NOTICES",
+    "BACKGROUND_FOCUS_NOTICES",
+    "CAPABILITY_BACKGROUND_FOCUS",
+    "background_focus_open",
     "speaker_background_pick_from_state",
     "canonical_pool_media_id",
     "SPEAKER_BACKGROUND_STATE_KEY",

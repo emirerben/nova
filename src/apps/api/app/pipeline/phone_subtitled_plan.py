@@ -270,6 +270,7 @@ def compile_phone_subtitled_plan(
     strategy: Mapping[str, Any] | None = None,
     requirements: Sequence[Any] = (),
     inserts: tuple[PhoneInsert, ...] = (),
+    background_focus_open: bool | None = None,
 ) -> EditRecipeV2:
     """Compile the subtitled edit format's phone recipe.
 
@@ -864,6 +865,7 @@ def compile_phone_subtitled_plan(
                 manifest=manifest,
                 timeline_duration_s=timeline_end,
                 canvas=canvas,
+                focus_open=background_focus_open,
             )
         except UnsupportedPhonePlan:
             raise
@@ -999,6 +1001,7 @@ def _compile_background(
     manifest: dict[str, object],
     timeline_duration_s: float | None = None,
     canvas: Canvas = _STORY_CANVAS,
+    focus_open: bool | None = None,
 ) -> SpeakerBackgroundLayer:
     """The recipe layer for the background, pinning its visuals (KRI-1117, S9; KRI-1162).
 
@@ -1012,10 +1015,12 @@ def _compile_background(
     layer carries ``color`` instead of an asset id; windows over it pin as above (S52).
 
     Qendresa item 18: the fill and each window may be aimed at the readable text of their
-    recording (`_resolve_background_focus`); ``canvas`` is the recipe canvas the picture is
-    cover-fitted to.
+    recording (`_FocusResolver`); ``canvas`` is the recipe canvas the picture is cover-fitted
+    to. ``focus_open`` is the caller's gate decision for the build that will draw the recipe (the
+    worker passes `background_focus_planned_for(<the approving build's stamped protocol>)`);
+    None asks the rollout gate in this context.
     """
-    focus_for = _FocusResolver(visuals, canvas)
+    focus_for = _FocusResolver(visuals, canvas, open_=focus_open)
     # KRI-1173: a colour fill names no pool media -- nothing to pin, no manifest entry.
     fill_asset_id: str | None = None
     fill_focus: SpeakerBackgroundFocus | None = None
@@ -1109,18 +1114,37 @@ class _FocusResolver:
     today's drawing (0.5, 0.5, 1.0) -> None. The rollout gate is asked at most once per compile
     and only when there is something to write; closed, the lane's own focus is dropped too so the
     recipe equals one that never asked.
+
+    The gate must know which app build will draw the recipe (F1: an older build refuses the
+    whole layer). A caller that knows it passes ``open_``; otherwise the gate checks the client
+    whenever this context has one -- an HTTP request, or a worker that bound the sending build --
+    instead of only inside a request.
     """
 
-    def __init__(self, visuals: tuple[PhoneVisualBinding, ...], canvas: Canvas) -> None:
+    def __init__(
+        self,
+        visuals: tuple[PhoneVisualBinding, ...],
+        canvas: Canvas,
+        *,
+        open_: bool | None = None,
+    ) -> None:
         self._visuals = {visual.media_id: visual for visual in visuals}
         self._canvas = canvas
-        self._open: bool | None = None
+        self._open: bool | None = open_
 
     def _gate_open(self) -> bool:
         if self._open is None:
             from app.services import phone_rollout  # noqa: PLC0415
+            from app.services.client_protocol import (  # noqa: PLC0415
+                current_client_protocol,
+                in_http_request,
+            )
 
-            self._open = phone_rollout.background_focus_unavailable_reason() is None
+            require_client = in_http_request() or current_client_protocol() is not None
+            reason = phone_rollout.background_focus_unavailable_reason(
+                require_client=require_client
+            )
+            self._open = reason is None
         return self._open
 
     def __call__(

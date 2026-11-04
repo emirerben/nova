@@ -18,6 +18,7 @@ this module's.
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Literal
 
@@ -310,6 +311,32 @@ def _opening_seconds(value: object) -> float | None:
     return number if 1.0 <= number <= 15.0 else None
 
 
+_FOCUS_WORDS = {
+    "left": "left",
+    "center": "center",
+    "centre": "center",
+    "middle": "center",
+    "right": "right",
+}
+MIN_FOCUS_ZOOM_ASKED = 0.3
+MAX_FOCUS_ZOOM_ASKED = 3.0
+
+
+def _focus_word(value: object) -> str | None:
+    """``left`` / ``center`` / ``right`` (any case; ``centre`` / ``middle`` too), else None."""
+    return _FOCUS_WORDS.get(value.strip().casefold()) if isinstance(value, str) else None
+
+
+def _focus_zoom(value: object) -> float | None:
+    """A real, finite number clamped to 0.3..3.0 (never a bool or text), else ``None``."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number):
+        return None
+    return min(MAX_FOCUS_ZOOM_ASKED, max(MIN_FOCUS_ZOOM_ASKED, number))
+
+
 class BackgroundMedia(BaseModel):
     """The photo or looping video shown BEHIND the speaker (KRI-1117, KRI-1162).
 
@@ -355,6 +382,20 @@ class BackgroundMedia(BaseModel):
     # fails the turn).
     full_screen_opening: bool = False
     full_screen_opening_s: float | None = None
+    # Qendresa item 18: which side of the recordings behind the speaker to show, and how close.
+    # Omitted from the dump while unused; lenient on junk (a bad model value never fails the turn).
+    focus: Literal["left", "center", "right"] | None = None
+    focus_zoom: float | None = None
+
+    @field_validator("focus", mode="before")
+    @classmethod
+    def _lenient_focus(cls, value: object) -> str | None:
+        return _focus_word(value)
+
+    @field_validator("focus_zoom", mode="before")
+    @classmethod
+    def _lenient_focus_zoom(cls, value: object) -> float | None:
+        return _focus_zoom(value)
 
     @model_validator(mode="before")
     @classmethod
@@ -416,6 +457,10 @@ class BackgroundMedia(BaseModel):
             data.pop("full_screen_opening", None)
         if data.get("full_screen_opening_s") is None:
             data.pop("full_screen_opening_s", None)
+        if data.get("focus") is None:
+            data.pop("focus", None)
+        if data.get("focus_zoom") is None:
+            data.pop("focus_zoom", None)
         return data
 
 
