@@ -743,6 +743,13 @@ SUGGESTION_COPY: dict[str, dict[str, tuple[str, str]]] = {
         "en": ("Keep the better clip", "Keep the better of clips {clip}"),
         "tr": ("Daha iyi klibi tut", "{clip}. kliplerden daha iyisini tut"),
     },
+    # A v2 hook card shows the agent's text on the card itself. The chat prompt a tap sends is a
+    # closed sentence that never carries or quotes that text: a creator message that quotes copy
+    # skips the approval question (`creator_quoted`), and the tap IS the approval already.
+    "hook": {
+        "en": ("Add this hook", "Add the hook shown on the card"),
+        "tr": ("Bu kancayı ekle", "Kartta gösterilen kancayı ekle"),
+    },
     "generated_overlay": {
         "en": ("Add a generated image", "Add a generated image overlay"),
         "tr": ("Üretilmiş görsel ekle", "Üretilmiş bir görsel bindirmesi ekle"),

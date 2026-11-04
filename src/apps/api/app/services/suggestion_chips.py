@@ -814,17 +814,43 @@ def _card_copy(
             title, prompt = cand.fallback_label, cand.message
             line = _evidence(cand, ctx, plan.state)
             evidence = [line] if line else []
+            if kind == "hook":
+                # The card shows the agent's text; its tap sentence must not carry or quote it.
+                closed = render_suggestion_copy(kind, ctx.language, ordinals)
+                if closed is None:
+                    return None
+                title, prompt = closed
         else:
             rendered = render_suggestion_copy(kind, ctx.language, ordinals)
             if rendered is None:
                 return None
             title, prompt = rendered
-            evidence = []
+            evidence = _measured_evidence(ctx, kind, targets)
+            if evidence:
+                return title, prompt, evidence[:3]
         for n in ordinals[:2]:
             evidence.append(f"Klip {n}" if tr else f"Clip {n}")
         return title, prompt, evidence[:3]
 
     return render
+
+
+def _measured_evidence(ctx: SuggestionContext, kind: str, targets: Sequence[Target]) -> list[str]:
+    """Closed-form lines a kind builds from its own measurement (never a transcript word)."""
+    try:
+        if kind == "filler_words":
+            from app.services.suggestions.kinds import filler_words  # noqa: PLC0415
+
+            found = ctx.kind_inputs.get(filler_words.INPUTS_KEY)
+            if isinstance(found, filler_words.FillerEvidence):
+                return filler_words.evidence_lines(found, ctx.language)
+        elif kind == "duplicates":
+            from app.services.suggestions.kinds import duplicates  # noqa: PLC0415
+
+            return duplicates.evidence_lines(ctx, targets)
+    except Exception:  # noqa: BLE001 - a missing evidence line falls back to the clip names
+        log.warning("suggestion_chips.error", stage="measured_evidence", kind=kind, exc_info=True)
+    return []
 
 
 def _agent_texts(ctx: SuggestionContext) -> tuple[list[str], list[str]]:
@@ -884,6 +910,55 @@ def pick_stats(
     return PickStats(n_in=len(picks), n_out=len(kept), drops=drops)
 
 
+FRESHNESS_KEY = "freshness"
+
+
+def _fallback_picks(ctx: SuggestionContext, issued: Sequence[Issued]) -> list[Pick]:
+    """The deterministic order, with the clips a clip-scoped kind needs named.
+
+    A mute card is about one clip and a duplicates card about its pair; with no agent to name
+    them a whole-video pick builds nothing, so these two take the clips their own measurement
+    found (the same ones the kind would accept from an agent). Every other kind is unchanged.
+    """
+    picks: list[Pick] = []
+    for pick in deterministic_picks(issued):
+        try:
+            if pick.kind == "mute_clip":
+                from app.services.suggestions.kinds import mute_clip  # noqa: PLC0415
+
+                named = mute_clip.candidate_targets(ctx)[:1]
+                pick = Pick(kind=pick.kind, target_ids=tuple(f"c{t.clip_ordinal}" for t in named))
+            elif pick.kind == "duplicates":
+                from app.services.suggestions.kinds import duplicates  # noqa: PLC0415
+
+                plans = duplicates._plans(ctx)
+                ordinal = duplicates._ordinals(ctx)
+                if plans:
+                    members = (*plans[0].drops, plans[0].keep)  # a dropped clip is the anchor
+                    pick = Pick(kind=pick.kind, target_ids=tuple(f"c{ordinal[m]}" for m in members))
+        except Exception:  # noqa: BLE001 - that kind then builds nothing; the others still do
+            log.warning("suggestion_chips.error", stage="fallback_targets", exc_info=True)
+        picks.append(pick)
+    return picks
+
+
+def suggestion_digest(ctx: SuggestionContext, state: str) -> SuggestionDigest:
+    """What a set was computed from. The loader's ``kind_inputs["freshness"]`` (the head draft's
+    ``snapshot_hash`` and the brief version, read together with the footage) joins the digest only
+    when it was loaded; without it the digest is what it always was."""
+    fresh = ctx.kind_inputs.get(FRESHNESS_KEY) if isinstance(ctx.kind_inputs, Mapping) else None
+    fresh = fresh if isinstance(fresh, Mapping) else {}
+    return SuggestionDigest(
+        media_digest=ctx.media_digest,
+        snapshot_hash=fresh.get("snapshot_hash") or snapshot_digest(ctx.snapshot),
+        brief_version=fresh.get("brief_version"),
+        signals_version=ctx.signals_version,
+        state=state,
+        language=language_of(ctx.language),
+        prompt_version=PROMPT_VERSION,
+    )
+
+
 def assemble_suggestions(
     ctx: SuggestionContext,
     plan: CandidatePlan,
@@ -901,7 +976,7 @@ def assemble_suggestions(
     common = _build_kwargs(ctx, plan)
     cards, drops = build_suggestions(ctx, issued, _picks_of(picks), **common)
     if not cards:
-        cards, more = build_suggestions(ctx, issued, deterministic_picks(issued), **common)
+        cards, more = build_suggestions(ctx, issued, _fallback_picks(ctx, issued), **common)
         for reason, count in more.items():
             drops[reason] = drops.get(reason, 0) + count
     if not cards:
@@ -909,14 +984,7 @@ def assemble_suggestions(
     return (
         SuggestionSet(
             set_id=plan.set_id,
-            digest=SuggestionDigest(
-                media_digest=ctx.media_digest,
-                snapshot_hash=snapshot_digest(ctx.snapshot),
-                signals_version=ctx.signals_version,
-                state=plan.state,
-                language=language_of(ctx.language),
-                prompt_version=PROMPT_VERSION,
-            ),
+            digest=suggestion_digest(ctx, plan.state),
             state=plan.state,
             suggestions=cards,
         ),

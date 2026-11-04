@@ -35,10 +35,11 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import hashlib
+import inspect
 import json
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -48,6 +49,7 @@ from app.config import settings
 from app.services import suggestion_store as store
 from app.services.suggestion_chips import (
     _ACTIVE_TURN_STATUSES,
+    FRESHNESS_KEY,
     PENDING_RETRY_S,
     RING_KEY,
     WORDING_RETRY_S,
@@ -61,6 +63,7 @@ from app.services.suggestion_chips import (
     build_candidates,
     issued_for,
     load_suggestion_context,
+    suggestion_digest,
 )
 from app.services.suggestions.context import snapshot_digest
 
@@ -115,11 +118,15 @@ def transcripts_of(item: Any) -> dict[str, str]:
 
 
 async def with_transcripts(db: Any, thread: Any, ctx: SuggestionContext) -> SuggestionContext:
-    """``ctx`` plus the clips' transcripts under ``kind_inputs["transcripts"]``.
+    """``ctx`` plus what the loader does not carry, read from the thread and the plan item.
 
-    Both the worker (the agent's input) and the GET (the transcript-echo check on the picks it
-    joins) need them, and the loader does not carry them. Best effort: a miss changes nothing,
-    and nothing here feeds the input digest, so no set is re-keyed.
+    Always: the clips' transcripts under ``kind_inputs["transcripts"]`` (the agent's input and
+    the transcript-echo check on the picks the GET joins). With any v2 flag on (``v2_inputs_on``):
+    the brief and its headline, every enabled kind's own inputs (``load_kind_inputs``) and the
+    freshness key. The worker and the GET both call this, so they always see the same context.
+
+    Best effort: each read is its own failure domain. A miss never drops another kind's inputs,
+    and a kind whose input is missing simply offers nothing (every kind fails closed).
     """
     from app.models import PlanItem  # noqa: PLC0415
 
@@ -128,12 +135,265 @@ async def with_transcripts(db: Any, thread: Any, ctx: SuggestionContext) -> Sugg
         item = await db.get(PlanItem, item_id) if item_id else None
         if item is None:
             return ctx
-        return dataclasses.replace(
+        ctx = dataclasses.replace(
             ctx, kind_inputs={**ctx.kind_inputs, "transcripts": transcripts_of(item)}
         )
     except Exception:  # noqa: BLE001 - the wording checks degrade, the set still serves
         log.warning("suggestion_chips.error", stage="transcripts", exc_info=True)
         return ctx
+    if ctx.state not in ("first_prompt", "ready") or not v2_inputs_on():
+        return ctx
+    try:
+        return await _with_v2_inputs(db, thread, item, ctx)
+    except Exception:  # noqa: BLE001 - never worse than the transcripts-only context
+        log.warning("suggestion_chips.error", stage="kind_inputs", exc_info=True)
+        return ctx
+
+
+# ── The v2 kinds' inputs (each read isolated: one failing never drops the others) ────────
+
+# Kinds whose card reads something the editor snapshot and the clip rows cannot say.
+INPUT_KINDS = ("hook", "mute_clip", "filler_words", "duplicates")
+BRIEF_KEY = "brief"  # kind_inputs: the latest CreativeBrief (None = the thread has none)
+
+
+def input_kinds_on() -> frozenset[str]:
+    from app.services.suggestions import registry  # noqa: PLC0415
+
+    return frozenset(
+        k.kind for k in registry.all_kinds() if k.kind in INPUT_KINDS and registry.enabled(k)
+    )
+
+
+def v2_inputs_on() -> bool:
+    """Any v2 flag that reads more than the legacy loader gives. All off: nothing here runs.
+
+    Pinned taps alone (cards for the ported editor kinds) need nothing the engine does not
+    already read, so they do not count."""
+    return bool(input_kinds_on() or settings.kria_suggestion_editor_triggers_enabled)
+
+
+def brief_headline(brief: Any) -> str | None:
+    """The creator's live requests in one line, for the agent (KRI-129: their request wins)."""
+    live = getattr(brief, "live", None)
+    lines = [
+        f"{req.kind}: {req.text()}" for req in (live()[:6] if callable(live) else []) if req.text()
+    ]
+    return "; ".join(lines) or None
+
+
+def needed_media(brief: Any, media_ids: Sequence[str]) -> frozenset[str]:
+    """Media the creator's own request depends on: a clip a requirement names, or every clip
+    when a requirement orders, selects or labels clips in a way this cannot resolve (KRI-129).
+    Over-reporting only hides a duplicates card; it never lets one remove a requested clip."""
+    from app.kria.asset_holds import resolve_clip_scope  # noqa: PLC0415
+
+    live = getattr(brief, "live", None)
+    if not callable(live):
+        return frozenset()
+    everything = frozenset(media_ids)
+    needed: set[str] = set()
+    for req in live():
+        if req.scope.startswith("clip:"):
+            resolved = resolve_clip_scope(req.scope.split(":", 1)[1], media_ids)
+            if resolved is None:
+                return everything
+            needed.add(resolved)
+        elif req.kind in {"order", "select", "text_sequence"} or req.scope == "per_clip":
+            return everything
+    return frozenset(needed)
+
+
+def scheduler_will_redo(row: Any, item: Any, source: Any) -> bool:
+    """Would the preflight scheduler reset this analysis row the next time it is asked?
+
+    The read-only twin of ``speech_cleanup_preflight._redo_for_misheard_language`` (plus the
+    engine-version supersede that precedes it): a card offered on such a row would be
+    refused at the tap as ``analysis_redone``. A parity test pins the two together.
+    """
+    from app.pipeline.caption_language import crosscheck_detected_language  # noqa: PLC0415
+    from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+        SPEECH_CLEANUP_ENGINE_VERSION,
+        reference_transcript_for_source,
+    )
+
+    if getattr(row, "engine_version", None) != SPEECH_CLEANUP_ENGINE_VERSION:
+        return True
+    if row.status not in {"ready", "no_findings"} or row.decision is not None:
+        return False
+    payload = row.analysis_payload
+    if not isinstance(payload, dict):
+        return False
+    diagnostics = payload.get("diagnostics")
+    if isinstance(diagnostics, dict) and "language_crosscheck" in diagnostics:
+        return False
+    reference = reference_transcript_for_source(
+        item, storage_path=source.storage_path, generation=source.generation
+    )
+    language = str(payload.get("language") or "")
+    return crosscheck_detected_language(language, reference_text=reference) is not None
+
+
+async def filler_evidence(db: Any, item: Any) -> Any:
+    """``filler_words.load_evidence`` that offers nothing on a row the scheduler will redo."""
+    from app.services.plan_item_media import (  # noqa: PLC0415
+        current_detector_policy,
+        resolve_item_narration,
+    )
+    from app.services.speech_cleanup_preflight import current_analysis_async  # noqa: PLC0415
+    from app.services.suggestions.kinds import filler_words  # noqa: PLC0415
+
+    try:
+        analysis = await current_analysis_async(db, item.id)
+        source = resolve_item_narration(item, detector_policy=current_detector_policy()).source
+        fingerprint = source.source_policy_fingerprint if source is not None else None
+        if analysis is not None and source is not None:
+            if scheduler_will_redo(analysis, item, source):
+                analysis = None
+        return filler_words.evidence_for_item(item, analysis, current_fingerprint=fingerprint)
+    except Exception:  # noqa: BLE001 - a card that cannot be proven is not offered
+        log.warning("suggestion_filler.load_failed", exc_info=True)
+        return filler_words.FillerEvidence()
+
+
+def duplicates_input(item: Any, brief: Any) -> dict[str, Any]:
+    from app.kria.duplicate_uploads import _capture_time  # noqa: PLC0415
+
+    assignments = [
+        a
+        for a in getattr(item, "clip_assignments", None) or []
+        if isinstance(a, dict) and isinstance(a.get("media_id"), str)
+    ]
+    ids = [a["media_id"] for a in assignments]
+    times: dict[str, str] = {}
+    exposure: dict[str, Any] = {}
+    for a in assignments:
+        when = _capture_time(a)
+        if when is not None:
+            times[a["media_id"]] = when.isoformat()
+        analysis = a.get("analysis")
+        found = analysis.get("exposure") if isinstance(analysis, Mapping) else None
+        if isinstance(found, Mapping):
+            exposure[a["media_id"]] = dict(found)
+    return {
+        "needed": sorted(needed_media(brief, ids)),
+        "capture_times": times,
+        "exposure": exposure,
+    }
+
+
+async def _hook_input(db: Any, thread: Any, item: Any, ctx: SuggestionContext, brief: Any) -> Any:
+    from app.kria import planner  # noqa: PLC0415
+    from app.services.clip_understanding import clip_record  # noqa: PLC0415
+    from app.services.creative_copy_decisions import fold_creative_copy  # noqa: PLC0415
+    from app.services.suggestions.kinds import hook  # noqa: PLC0415
+
+    events = await planner._load_thread_events(db, thread.id, release=False)
+    states = fold_creative_copy(
+        events, dependency_digest=ctx.media_digest, include_suggestions=True
+    )
+    records = [
+        clip_record(a.get("analysis"), kind="image" if a.get("kind") == "image" else "video")
+        for a in getattr(item, "clip_assignments", None) or []
+        if isinstance(a, dict) and isinstance(a.get("media_id"), str)
+    ]
+    return hook.hook_inputs(brief=brief, copy_states=states, records=records)
+
+
+def understanding_marks(item: Any, clips: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """``clips`` with ``_empty`` / ``_incomplete`` (what the mute kind reads to know a clip's
+    record is complete). The loader strips every underscore key from its clip rows, so without
+    this a clip never reads as understood and the kind can never offer."""
+    from app.services.clip_understanding import (  # noqa: PLC0415
+        clip_record,
+        understanding_incomplete,
+    )
+
+    analyses = {
+        a["media_id"]: (a.get("analysis"), "image" if a.get("kind") == "image" else "video")
+        for a in getattr(item, "clip_assignments", None) or []
+        if isinstance(a, dict) and isinstance(a.get("media_id"), str)
+    }
+    out: list[dict[str, Any]] = []
+    for clip in clips:
+        row = dict(clip)
+        found = analyses.get(str(row.get("media_id")))
+        if found is not None:
+            analysis, kind = found
+            row["_empty"] = clip_record(analysis, kind=kind).is_empty()
+            row["_incomplete"] = understanding_incomplete(analysis, kind=kind)
+        out.append(row)
+    return out
+
+
+async def _head_snapshot_hash(db: Any, thread: Any) -> str | None:
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.models import CreatorEditDraft  # noqa: PLC0415
+
+    return (
+        await db.execute(
+            select(CreatorEditDraft.snapshot_hash)
+            .where(CreatorEditDraft.thread_id == thread.id, CreatorEditDraft.is_head.is_(True))
+            .order_by(CreatorEditDraft.updated_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+async def _with_v2_inputs(
+    db: Any, thread: Any, item: Any, ctx: SuggestionContext
+) -> SuggestionContext:
+    from app.kria.brief import load_latest_brief  # noqa: PLC0415
+    from app.services.suggestions.kinds import mute_clip  # noqa: PLC0415
+
+    kinds = input_kinds_on()
+    inputs: dict[str, Any] = dict(ctx.kind_inputs)
+    brief: Any = None
+    brief_ok = False
+    try:
+        brief = await load_latest_brief(db, thread.id)
+        brief_ok = True
+        inputs[BRIEF_KEY] = brief
+    except Exception:  # noqa: BLE001 - every brief-reading kind then offers nothing
+        log.warning("suggestion_chips.error", stage="brief", exc_info=True)
+
+    if editor_triggers_on() and brief_ok:
+        try:
+            inputs[FRESHNESS_KEY] = {
+                "snapshot_hash": await _head_snapshot_hash(db, thread),
+                "brief_version": brief.version if brief is not None else None,
+            }
+        except Exception:  # noqa: BLE001 - plan_for falls back to reading the key itself
+            log.warning("suggestion_chips.error", stage="freshness_key", exc_info=True)
+
+    if ctx.state == "ready":
+        if "mute_clip" in kinds:
+            try:
+                ctx = dataclasses.replace(ctx, clips=understanding_marks(item, ctx.clips))
+            except Exception:  # noqa: BLE001 - the kind then sees no clip as understood
+                log.warning("suggestion_chips.error", stage="understanding_marks", exc_info=True)
+        # Each kind's read is its own failure domain: one that fails offers nothing, the rest serve.
+        reads: dict[str, Callable[[], Any]] = {
+            "filler_words": lambda: filler_evidence(db, item),
+        }
+        if brief_ok:
+            reads["mute_clip"] = lambda: mute_clip.loader_input(brief)
+            reads["duplicates"] = lambda: duplicates_input(item, brief)
+            reads["hook"] = lambda: _hook_input(db, thread, item, ctx, brief)
+        for name, read in reads.items():
+            if name not in kinds:
+                continue
+            try:
+                found = read()
+                inputs[name] = await found if inspect.isawaitable(found) else found
+            except Exception:  # noqa: BLE001
+                log.warning("suggestion_chips.error", stage=name, exc_info=True)
+
+    headline = brief_headline(brief) if brief_ok and ctx.brief_headline is None else None
+    return dataclasses.replace(
+        ctx, kind_inputs=inputs, brief_headline=headline or ctx.brief_headline
+    )
 
 
 def agent_enabled() -> bool:
@@ -356,41 +616,37 @@ async def plan_for(db: Any, thread: Any, ctx: SuggestionContext) -> CandidatePla
     The GET and the worker both call this, so they always agree on the digest (the worker has no
     request headers; everything here comes from the database). The key adds what a creator can
     change without touching the footage: the head draft's ``snapshot_hash``, the brief version and
-    the editor snapshot (a native Save changes the Job and writes no draft). Flag off, or a read
-    that fails: the plan is returned untouched, byte-identical to the legacy digest.
+    the editor snapshot (a native Save changes the Job and writes no draft). Both reads come with
+    the context (``with_transcripts``); a context without them reads them here. Flag off, or a
+    read that fails: the plan is returned untouched, byte-identical to the legacy digest.
     """
     plan = build_candidates(ctx)
     if not editor_triggers_on() or plan.state == "none":
         return plan
-    try:
-        from sqlalchemy import func, select  # noqa: PLC0415
+    fresh = ctx.kind_inputs.get(FRESHNESS_KEY) if isinstance(ctx.kind_inputs, Mapping) else None
+    if not isinstance(fresh, Mapping):
+        try:
+            from sqlalchemy import func, select  # noqa: PLC0415
 
-        from app.models import CreativeBriefVersion, CreatorEditDraft  # noqa: PLC0415
+            from app.models import CreativeBriefVersion  # noqa: PLC0415
 
-        head = (
-            await db.execute(
-                select(CreatorEditDraft.snapshot_hash)
-                .where(CreatorEditDraft.thread_id == thread.id, CreatorEditDraft.is_head.is_(True))
-                .order_by(CreatorEditDraft.updated_at.desc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-        brief = (
-            await db.execute(
-                select(func.max(CreativeBriefVersion.version)).where(
-                    CreativeBriefVersion.thread_id == thread.id
+            brief = (
+                await db.execute(
+                    select(func.max(CreativeBriefVersion.version)).where(
+                        CreativeBriefVersion.thread_id == thread.id
+                    )
                 )
-            )
-        ).scalar_one_or_none()
-    except Exception:  # noqa: BLE001 - freshness is an enhancement; the legacy key still serves
-        log.warning("suggestion_chips.error", stage="freshness_key", exc_info=True)
-        return plan
+            ).scalar_one_or_none()
+            fresh = {"snapshot_hash": await _head_snapshot_hash(db, thread), "brief_version": brief}
+        except Exception:  # noqa: BLE001 - freshness is an enhancement; the legacy key serves
+            log.warning("suggestion_chips.error", stage="freshness_key", exc_info=True)
+            return plan
+        ctx = dataclasses.replace(ctx, kind_inputs={**ctx.kind_inputs, FRESHNESS_KEY: fresh})
     digest = hashlib.sha256(
         json.dumps(
             {
                 "input": plan.input_digest,
-                "head": head,
-                "brief": brief,
+                "digest": suggestion_digest(ctx, plan.state).value(),
                 "editor": snapshot_digest(ctx.snapshot),
             },
             sort_keys=True,
