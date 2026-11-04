@@ -126,7 +126,7 @@ def _planned(**kwargs: Any) -> SpeakerBackgroundFact:
 
 def test_a_corner_speaker_from_0s_never_meets_start_full_screen_by_the_words():
     receipt = _receipt(OPENING_WORDS, _finished())
-    assert receipt.status == "not_possible"
+    assert receipt.status == "partial"  # the background made the corner; not a failure
     assert "bottom-right corner" in receipt.reason
     assert "fills the frame" not in receipt.reason
 
@@ -278,7 +278,8 @@ def test_a_draft_whose_opening_was_closed_names_why(code, word):
     assert "bottom-right corner" in receipt.reason
 
 
-def test_a_draft_the_model_left_the_opening_out_of_is_partial_not_met():
+def test_a_draft_the_model_left_the_opening_out_of_is_partial_not_met(monkeypatch):
+    _gate(monkeypatch, open_from=None)  # the gate is open: the omission is the model's
     receipt = _receipt(OPENING_FACT, _draft(_planned()))
     assert receipt.status == "partial"
     assert "bottom-right corner" in receipt.reason
@@ -348,8 +349,9 @@ def test_the_words_alone_never_make_the_opening_route():
     req = OPENING_WORDS.model_copy(
         update={"description": "starts full screen, speaker_full_opening"}
     )
-    # still the KRI-547 framing route: not_possible by the corner, not the opening route
-    assert _check_requirement(req, _finished()).status == "not_possible"
+    # still the KRI-547 framing route (neutral corner answer), not the opening route
+    receipt = _check_requirement(req, _finished())
+    assert receipt.status == "partial" and "don't fill the frame" in receipt.reason
 
 
 def test_a_false_fact_is_no_ask():
@@ -424,3 +426,87 @@ def test_the_draft_facts_read_the_asked_opening_off_the_strategy(prod_profile, m
     }
     fact = plan_facts_from_strategy(strategy, clip_ids=[take], manifest=manifest).speaker_background
     assert fact is not None and fact.asked_full_opening
+
+
+# ---- review fixes: flag-off wording, old builds, no background
+
+
+def _gate(monkeypatch, *, open_from: int | None = 38, reason: str = "app_too_old"):
+    """The planner's gate: closed with ``reason`` below build ``open_from`` (None = always open)."""
+    from app.services import phone_rollout
+
+    monkeypatch.setattr(
+        phone_rollout,
+        "speaker_full_opening_planned_reason",
+        lambda build: (
+            None if open_from is None or (build is not None and build >= open_from) else reason
+        ),
+    )
+
+
+def test_the_flag_off_corner_answer_is_neutral_and_partial(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "speaker_full_opening_enabled", False)
+    receipt = _receipt(OPENING_WORDS, _finished())
+    assert receipt.status == "partial"
+    assert "bottom-right corner" in receipt.reason
+    assert "fill the frame" in receipt.reason
+    assert "fills the frame" not in receipt.reason
+    assert "not full screen first" not in receipt.reason
+    with reply_language_for("tr"):
+        tr = _receipt(OPENING_WORDS, _finished())
+    assert "sağ alt" in tr.reason and "screen" not in tr.reason
+
+
+@pytest.mark.parametrize("build", [35, 38])
+def test_a_draft_on_an_old_build_names_the_app_not_the_model(monkeypatch, build):
+    _gate(monkeypatch)
+    fact = _planned(client_protocol=build)  # the strategy never carried the ask
+    receipt = _receipt(OPENING_FACT, _draft(fact))
+    if build == 35:
+        assert receipt.status == "not_possible"
+        assert "update" in receipt.reason.lower()
+    else:
+        assert receipt.status == "partial"  # the gate is open: the model left it out
+        assert "update" not in receipt.reason.lower()
+
+
+@pytest.mark.parametrize(
+    ("reason", "word"), [("unavailable", "isn't available"), ("disabled", "isn't available")]
+)
+def test_a_draft_with_the_gate_closed_says_not_available_yet(monkeypatch, reason, word):
+    _gate(monkeypatch, reason=reason)
+    receipt = _receipt(OPENING_FACT, _draft(_planned(client_protocol=38 - 10)))
+    assert receipt.status == "not_possible" and word in receipt.reason.lower()
+
+
+@pytest.mark.parametrize("build", [35, 38])
+def test_a_finished_video_on_an_old_build_says_update_the_app(monkeypatch, build):
+    from app.services.client_protocol import bind_sending_build, unbind_sending_build
+
+    _gate(monkeypatch)
+    token = bind_sending_build(build)
+    try:
+        receipt = _receipt(OPENING_FACT, _finished())
+    finally:
+        unbind_sending_build(token)
+    assert receipt.status == "not_possible"
+    assert ("update" in receipt.reason.lower()) is (build == 35)
+
+
+def test_the_closed_code_is_none_when_the_gate_is_open(monkeypatch):
+    from app.kria.brief_checks import _opening_closed_code
+
+    _gate(monkeypatch)
+    assert _opening_closed_code(38) is None
+    assert _opening_closed_code(35) == "app_too_old"
+
+
+def test_a_draft_whose_background_did_not_survive_says_she_stays_full_screen(monkeypatch):
+    _gate(monkeypatch, open_from=None)
+    fact = SpeakerBackgroundFact("none", pool_count=0, asked_full_opening=True)
+    receipt = _receipt(OPENING_FACT, _draft(fact))
+    assert receipt.status == "partial"
+    assert "whole video" in receipt.reason
+    assert "isn't available" not in receipt.reason

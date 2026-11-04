@@ -133,10 +133,10 @@ def test_the_first_window_starts_at_the_switch():
     )
     assert rotation.windows[0].start_s == pytest.approx(x) and rotation.windows[0].index == 0
     assert rotation.windows[-1].end_s == pytest.approx(TAKE_S)
-    # A window laid out inside the opening is clipped, or dropped when under 0.5 s remains.
+    # A name heard just before the switch is seated at the switch, never dropped.
     late = _lay(AS_SPOKEN, opening_s=SAID[1] - 0.2)
     assert late.windows[0].start_s == pytest.approx(SAID[1] - 0.2)
-    assert {"lane": "background", "window": 0, "reason": "inside_full_screen_opening"} in late.notes
+    assert late.windows[0].index == 0 and {w.index for w in late.windows} == {0, 1, 2, 3, 4}
 
 
 def test_the_opening_survives_a_speech_cut():
@@ -175,3 +175,68 @@ def test_no_opening_is_byte_identical(monkeypatch, follows):
         explicit = _lay(phrases, opening_s=None)
         assert _rows(plain) == _rows(explicit) and plain.notes == explicit.notes
         assert plain == explicit
+
+
+# ---- review fixes: an opening never removes a visual, the switch waits for the title
+
+
+def _intro_talk():
+    """25 s take: she names both tools in her 6 s intro, then talks on."""
+    words, t = [], 0.0
+    for text in ["Today", "Notion", "and", "Figma"]:
+        words.append({"text": text, "start_s": t, "end_s": t + 0.4})
+        t += 0.6
+    while t < 24.5:
+        words.append({"text": "blah", "start_s": t, "end_s": t + 0.3})
+        t += 0.4
+    return words, 25.0
+
+
+@pytest.mark.parametrize("follows", [True, False])
+def test_names_heard_during_the_opening_still_show_after_it(monkeypatch, follows):
+    monkeypatch.setattr(settings, "background_follows_talk_enabled", follows)
+    words, take = _intro_talk()
+    layout = _lay(["Notion", "Figma"], words=words, take_s=take, opening_s=6.0)
+    assert layout.windows, "the opening removed every visual"
+    assert layout.windows[0].start_s == pytest.approx(6.0)
+    assert all(w.start_s >= 6.0 - 1e-9 for w in layout.windows)
+    assert {w.index for w in layout.windows} == {0, 1}
+    # Spoken order is kept.
+    assert layout.windows[0].index == 0
+
+
+def test_a_visual_dropped_inside_the_opening_returns_in_the_tail(monkeypatch):
+    monkeypatch.setattr(settings, "background_follows_talk_enabled", True)
+    words, take = _intro_talk()
+    # A third tool is named late; the other two were named during the opening.
+    words[-3]["text"] = "Linear"
+    layout = _lay(["Notion", "Figma", "Linear"], words=words, take_s=take, opening_s=6.0)
+    assert {w.index for w in layout.windows} == {0, 1, 2}
+    assert all(w.start_s >= 6.0 - 1e-9 for w in layout.windows)
+
+
+def test_an_anchored_entry_heard_in_the_opening_joins_the_rotation(monkeypatch):
+    monkeypatch.setattr(settings, "background_follows_talk_enabled", True)
+    words, take = _intro_talk()
+    entries = [
+        seq.SequenceEntry(index=0, spoken_phrase="Notion"),
+        seq.SequenceEntry(index=1),
+    ]
+    layout = seq.lay_out(
+        entries, cadence_s=4.0, take_s=take, words=words, keep_segments=None, opening_s=6.0
+    )
+    assert {w.index for w in layout.windows} == {0, 1}
+    assert layout.windows[0].start_s == pytest.approx(6.0)
+    assert all(w.start_s >= 6.0 - 1e-9 for w in layout.windows)
+
+
+def test_the_switch_waits_for_the_hook_title():
+    words = [
+        {"text": "one.", "start_s": 0.1, "end_s": 2.2},
+        {"text": "two", "start_s": 2.4, "end_s": 2.9},
+        {"text": "three", "start_s": 3.2, "end_s": 3.9},
+        {"text": "four", "start_s": 4.1, "end_s": 6.0},
+    ]
+    x, why = _open(words=words, take_s=12.0, heard=2.6, title=3.0)
+    assert why is None and x is not None and x >= 3.0 - 1e-6
+    assert not _inside_a_word(x, words, None)
