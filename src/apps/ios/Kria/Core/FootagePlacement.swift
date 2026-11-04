@@ -67,7 +67,8 @@ enum FootagePlacement {
 
     static func isScreenRecording(assetIdentifier: String) -> Bool {
         if let known = cache[assetIdentifier] { return known }
-        guard PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized else { return false }
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        guard status == .authorized || status == .limited else { return false }
         let asset = PHAsset.fetchAssets(withLocalIdentifiers: [assetIdentifier], options: nil).firstObject
         let flagged = asset?.mediaSubtypes.contains(.videoScreenRecording) ?? false
         cache[assetIdentifier] = flagged
