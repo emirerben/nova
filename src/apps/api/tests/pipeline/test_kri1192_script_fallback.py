@@ -139,3 +139,26 @@ def test_registry_hash_still_matches_the_committed_embeddings():
 
     data = np.load(Path(font_coverage.FONTS_DIR) / "registry-embeddings.npz", allow_pickle=True)
     assert json.loads(str(data["meta"]))["registry_sha256"] == registry_sha256()
+
+
+def test_the_shared_phone_parity_fixture_is_what_the_server_picks():
+    # F11: the iOS NativeGlyphFallback asserts the same file
+    # (tests/fixtures/caption-glyph-parity/script_fallback_faces.json); this keeps the
+    # server from drifting away from it silently.
+    fixture = json.loads(
+        (
+            Path(__file__).resolve().parents[5]
+            / "tests"
+            / "fixtures"
+            / "caption-glyph-parity"
+            / "script_fallback_faces.json"
+        ).read_text(encoding="utf-8")
+    )
+    mismatches = [
+        (row["id"], family, fixture["faces"].get(row["id"], {}).get(family, family), face)
+        for row in fixture["texts"]
+        for family in fixture["families"]
+        if (face := glyph_safe_family(family, row["text"]))
+        != fixture["faces"].get(row["id"], {}).get(family, family)
+    ]
+    assert not mismatches, mismatches[:10]

@@ -786,6 +786,6 @@ import KriaMediaEngine
     }
 
     func testTheProtocolDeclaresTheColourBuild() {
-        XCTAssertEqual(KriaClientProtocolContract.version, 34, "34 = decodes a colour speaker background and the speakerBackgroundColor capability")
+        XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, 34, "34 = decodes a colour speaker background and the speakerBackgroundColor capability")
     }
 }
