@@ -1,0 +1,2274 @@
+{
+ "captions_module": "/Users/yasinberkyesilyurt/projects/nova/.claude/worktrees/multi-language-captions-6feb42/src/apps/api/app/pipeline/captions.py",
+ "ffmpeg": "ffmpeg version 8.1 Copyright (c) 2000-2026 the FFmpeg developers",
+ "languages": {
+  "en": {
+   "sentences": [
+    "However, due to the slow communication channels, styles in the west could lag behind by 25 to 30 year.",
+    "All nouns, alongside the word Sie for you, always begin with a capital letter, even in the middle of a sentence."
+   ],
+   "formats": {
+    "talk_sentence": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "However, due to the slow communication channels, styles in the west could lag behind",
+     "ink_box": [
+      90,
+      1324,
+      989,
+      1533
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/en_talk_sentence.png",
+     "pass": true
+    },
+    "talk_word_pop": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "However, due to the slow communication channels, styles in the west could lag behind",
+     "ink_box": [
+      90,
+      1324,
+      989,
+      1533
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/en_talk_word_pop.png",
+     "direction": {
+      "expected": {
+       "first": "left",
+       "last": "right"
+      },
+      "first": "left",
+      "first_word_box": [
+       186,
+       1326,
+       447,
+       1376
+      ],
+      "first_row_box": [
+       186,
+       1325,
+       896,
+       1376
+      ],
+      "last": "right",
+      "last_word_box": [
+       744,
+       1479,
+       930,
+       1521
+      ],
+      "last_row_box": [
+       149,
+       1479,
+       930,
+       1525
+      ],
+      "pass": true
+     },
+     "pass": true
+    },
+    "talk_smart": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "However, due to the slow communication channels, styles in the west could lag behind",
+     "ink_box": [
+      218,
+      1467,
+      860,
+      1534
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/en_talk_smart.png",
+     "pass": true
+    },
+    "voiceover": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "However, due to the slow communication channels, styles in the west could lag behind",
+     "ink_box": [
+      90,
+      1528,
+      989,
+      1737
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/en_voiceover.png",
+     "pass": true
+    },
+    "voiceover_word": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "communication",
+     "ink_box": [
+      209,
+      1311,
+      868,
+      1378
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/en_voiceover_word.png",
+     "pass": true
+    }
+   },
+   "phone_recipe": {
+    "sentence": {
+     "layers": 6,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 12,
+     "max_rows": 2,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    },
+    "word": {
+     "layers": 6,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 40,
+     "max_rows": 2,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    }
+   }
+  },
+  "tr": {
+   "sentences": [
+    "Aynı ay, başka bir yolcu uçağı Meşhed'deki bir pisti aşarak bir duvara çarptı ve on yedi kişinin ölümüne neden oldu.",
+    "Romantizm; Goethe, Fichte ve Schlegel gibi yazarlardan geçen geniş bir kültürel determinizm özelliği taşıyordu."
+   ],
+   "formats": {
+    "talk_sentence": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Aynı ay, başka bir yolcu uçağı Meşhed'deki bir pisti aşarak bir duvara çarptı ve",
+     "ink_box": [
+      164,
+      1323,
+      916,
+      1534
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/tr_talk_sentence.png",
+     "pass": true
+    },
+    "talk_word_pop": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Aynı ay, başka bir yolcu uçağı Meşhed'deki bir pisti aşarak bir duvara çarptı ve",
+     "ink_box": [
+      164,
+      1323,
+      916,
+      1534
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/tr_talk_word_pop.png",
+     "direction": {
+      "expected": {
+       "first": "left",
+       "last": "right"
+      },
+      "first": "left",
+      "first_word_box": [
+       207,
+       1326,
+       326,
+       1376
+      ],
+      "first_row_box": [
+       207,
+       1323,
+       870,
+       1378
+      ],
+      "last": "right",
+      "last_word_box": [
+       850,
+       1491,
+       913,
+       1521
+      ],
+      "last_row_box": [
+       167,
+       1487,
+       913,
+       1525
+      ],
+      "pass": true
+     },
+     "pass": true
+    },
+    "talk_smart": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Aynı ay, başka bir yolcu uçağı Meşhed'deki bir pisti aşarak bir duvara çarptı ve",
+     "ink_box": [
+      214,
+      1463,
+      864,
+      1535
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/tr_talk_smart.png",
+     "pass": true
+    },
+    "voiceover": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Aynı ay, başka bir yolcu uçağı Meşhed'deki bir pisti aşarak bir duvara çarptı ve",
+     "ink_box": [
+      164,
+      1527,
+      916,
+      1738
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/tr_voiceover.png",
+     "pass": true
+    },
+    "voiceover_word": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Meşhed'deki",
+     "ink_box": [
+      268,
+      1311,
+      813,
+      1398
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/tr_voiceover_word.png",
+     "pass": true
+    }
+   },
+   "phone_recipe": {
+    "sentence": {
+     "layers": 7,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 16,
+     "max_rows": 3,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    },
+    "word": {
+     "layers": 7,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 34,
+     "max_rows": 3,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    }
+   }
+  },
+  "pt": {
+   "sentences": [
+    "Segundo informações, ele estava na casa dos 20 anos. Em uma declaração, Bieber disse que, \"embora eu não estivesse presente nem diretamente envolvido neste trágico incidente, meus pensamentos e orações estão com a família da vítima\".",
+    "Construída pelos egípcios no século 3 A.C., a Grande Pirâmide é uma das muitas grandes estruturas de pirâmide construídas para honrar faraós mortos."
+   ],
+   "formats": {
+    "talk_sentence": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Segundo informações, ele estava na casa dos 20 anos.",
+     "ink_box": [
+      146,
+      1401,
+      931,
+      1522
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/pt_talk_sentence.png",
+     "pass": true
+    },
+    "talk_word_pop": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Segundo informações, ele estava na casa dos 20 anos.",
+     "ink_box": [
+      146,
+      1401,
+      931,
+      1522
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/pt_talk_word_pop.png",
+     "direction": {
+      "expected": {
+       "first": "left",
+       "last": "right"
+      },
+      "first": "left",
+      "first_word_box": [
+       174,
+       1403,
+       419,
+       1455
+      ],
+      "first_row_box": [
+       174,
+       1401,
+       906,
+       1456
+      ],
+      "last": "right",
+      "last_word_box": [
+       785,
+       1491,
+       931,
+       1521
+      ],
+      "last_row_box": [
+       146,
+       1487,
+       931,
+       1522
+      ],
+      "pass": true
+     },
+     "pass": true
+    },
+    "talk_smart": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Segundo informações, ele estava na casa dos 20 anos.",
+     "ink_box": [
+      217,
+      1425,
+      860,
+      1524
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/pt_talk_smart.png",
+     "pass": true
+    },
+    "voiceover": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Segundo informações, ele estava na casa dos 20 anos.",
+     "ink_box": [
+      146,
+      1605,
+      931,
+      1726
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/pt_voiceover.png",
+     "pass": true
+    },
+    "voiceover_word": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "informações,",
+     "ink_box": [
+      259,
+      1311,
+      819,
+      1398
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/pt_voiceover_word.png",
+     "pass": true
+    }
+   },
+   "phone_recipe": {
+    "sentence": {
+     "layers": 11,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 22,
+     "max_rows": 3,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    },
+    "word": {
+     "layers": 11,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 59,
+     "max_rows": 3,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    }
+   }
+  },
+  "es": {
+   "sentences": [
+    "Se recomienda enfáticamente a los viajeros que se informen sobre cualquier riesgo de clima extremo en el área que visitan, dado que ello puede afectar sus planes de viaje.",
+    "Fue tanta la cantidad de gente que se concentró, que no todos pudieron acceder al funeral en la Plaza de San Pedro."
+   ],
+   "formats": {
+    "talk_sentence": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Se recomienda enfáticamente a los viajeros que se informen sobre cualquier riesgo de clima",
+     "ink_box": [
+      102,
+      1322,
+      977,
+      1533
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/es_talk_sentence.png",
+     "pass": true
+    },
+    "talk_word_pop": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Se recomienda enfáticamente a los viajeros que se informen sobre cualquier riesgo de clima",
+     "ink_box": [
+      102,
+      1322,
+      977,
+      1533
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/es_talk_word_pop.png",
+     "direction": {
+      "expected": {
+       "first": "left",
+       "last": "right"
+      },
+      "first": "left",
+      "first_word_box": [
+       120,
+       1325,
+       185,
+       1366
+      ],
+      "first_row_box": [
+       120,
+       1322,
+       960,
+       1366
+      ],
+      "last": "right",
+      "last_word_box": [
+       833,
+       1479,
+       977,
+       1521
+      ],
+      "last_row_box": [
+       102,
+       1479,
+       977,
+       1525
+      ],
+      "pass": true
+     },
+     "pass": true
+    },
+    "talk_smart": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Se recomienda enfáticamente a los viajeros que se informen sobre cualquier riesgo de clima",
+     "ink_box": [
+      212,
+      1470,
+      867,
+      1534
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/es_talk_smart.png",
+     "pass": true
+    },
+    "voiceover": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Se recomienda enfáticamente a los viajeros que se informen sobre cualquier riesgo de clima",
+     "ink_box": [
+      102,
+      1526,
+      977,
+      1737
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/es_voiceover.png",
+     "pass": true
+    },
+    "voiceover_word": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "enfáticamente",
+     "ink_box": [
+      228,
+      1311,
+      851,
+      1378
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/es_voiceover_word.png",
+     "pass": true
+    }
+   },
+   "phone_recipe": {
+    "sentence": {
+     "layers": 8,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 17,
+     "max_rows": 3,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    },
+    "word": {
+     "layers": 8,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 51,
+     "max_rows": 3,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    }
+   }
+  },
+  "el": {
+   "sentences": [
+    "Η δέκατη καταιγίδα της εποχής των ατλαντικών τυφώνων που απέκτησε όνομα, η Υποτροπική Καταιγίδα Τζέρι, σχηματίσθηκε σήμερα στον Ατλαντικό Ωκεανό.",
+    "Πιο παραδοσιακές εκκλησίες συχνά πραγματοποιούν την ακολουθία της Ανάστασης το βράδυ του Σαββάτου μέσα στο σαββατοκύριακο του Πάσχα, με το εκκλησίασμα να ξεσπά σε εορτασμούς ακριβώς τα μεσάνυχτα υμνώντας την ανάσταση του Χριστού."
+   ],
+   "formats": {
+    "talk_sentence": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Η δέκατη καταιγίδα της εποχής των ατλαντικών τυφώνων που απέκτησε όνομα,",
+     "ink_box": [
+      94,
+      1322,
+      988,
+      1532
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/el_talk_sentence.png",
+     "pass": true
+    },
+    "talk_word_pop": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Η δέκατη καταιγίδα της εποχής των ατλαντικών τυφώνων που απέκτησε όνομα,",
+     "ink_box": [
+      94,
+      1322,
+      988,
+      1532
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/el_talk_word_pop.png",
+     "direction": {
+      "expected": {
+       "first": "left",
+       "last": "right"
+      },
+      "first": "left",
+      "first_word_box": [
+       94,
+       1326,
+       127,
+       1365
+      ],
+      "first_row_box": [
+       94,
+       1322,
+       988,
+       1369
+      ],
+      "last": "right",
+      "last_word_box": [
+       653,
+       1478,
+       843,
+       1532
+      ],
+      "last_row_box": [
+       234,
+       1478,
+       843,
+       1532
+      ],
+      "pass": true
+     },
+     "pass": true
+    },
+    "talk_smart": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Η δέκατη καταιγίδα της εποχής των ατλαντικών τυφώνων που απέκτησε όνομα,",
+     "ink_box": [
+      219,
+      1467,
+      860,
+      1534
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/el_talk_smart.png",
+     "pass": true
+    },
+    "voiceover": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Η δέκατη καταιγίδα της εποχής των ατλαντικών τυφώνων που απέκτησε όνομα,",
+     "ink_box": [
+      94,
+      1526,
+      988,
+      1736
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/el_voiceover.png",
+     "pass": true
+    },
+    "voiceover_word": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "πραγματοποιούν",
+     "ink_box": [
+      167,
+      1311,
+      913,
+      1395
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/el_voiceover_word.png",
+     "pass": true
+    }
+   },
+   "phone_recipe": {
+    "sentence": {
+     "layers": 11,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 26,
+     "max_rows": 3,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    },
+    "word": {
+     "layers": 11,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 53,
+     "max_rows": 3,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    }
+   }
+  },
+  "de": {
+   "sentences": [
+    "Für die besten Aussichten auf Hongkong sollten Sie die Insel verlassen und zum gegenüberliegenden Ufer von Kowloon fahren.",
+    "Er griff auch alles an, was ins Wasser kam; selbst ein großer Dinosaurier wie der T. Rex war ihm nicht gewachsen."
+   ],
+   "formats": {
+    "talk_sentence": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Für die besten Aussichten auf Hongkong sollten Sie die Insel verlassen und zum gegenüberliegenden",
+     "ink_box": [
+      180,
+      1245,
+      900,
+      1533
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/de_talk_sentence.png",
+     "pass": true
+    },
+    "talk_word_pop": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Für die besten Aussichten auf Hongkong sollten Sie die Insel verlassen und zum gegenüberliegenden",
+     "ink_box": [
+      180,
+      1245,
+      900,
+      1533
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/de_talk_word_pop.png",
+     "direction": {
+      "expected": {
+       "first": "left",
+       "last": "right"
+      },
+      "first": "left",
+      "first_word_box": [
+       180,
+       1245,
+       263,
+       1287
+      ],
+      "first_row_box": [
+       180,
+       1245,
+       900,
+       1288
+      ],
+      "last": "right",
+      "last_word_box": [
+       316,
+       1479,
+       894,
+       1533
+      ],
+      "last_row_box": [
+       184,
+       1479,
+       894,
+       1533
+      ],
+      "pass": true
+     },
+     "pass": true
+    },
+    "talk_smart": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Für die besten Aussichten auf Hongkong sollten Sie die Insel verlassen und zum gegenüberliegenden",
+     "ink_box": [
+      207,
+      1474,
+      874,
+      1534
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/de_talk_smart.png",
+     "pass": true
+    },
+    "voiceover": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Für die besten Aussichten auf Hongkong sollten Sie die Insel verlassen und zum gegenüberliegenden",
+     "ink_box": [
+      180,
+      1449,
+      900,
+      1737
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/de_voiceover.png",
+     "pass": true
+    },
+    "voiceover_word": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "gegenüberliegenden",
+     "ink_box": [
+      93,
+      1312,
+      983,
+      1396
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/de_voiceover_word.png",
+     "pass": true
+    }
+   },
+   "phone_recipe": {
+    "sentence": {
+     "layers": 8,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 13,
+     "max_rows": 2,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    },
+    "word": {
+     "layers": 8,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 39,
+     "max_rows": 2,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    }
+   }
+  },
+  "ko": {
+   "sentences": [
+    "다리 밑 수직 간격은 15미터이며, 공사는 2011년 8월에 마무리되었으며, 해당 다리의 통행금지는 2017년 3월까지이다.",
+    "델 포트로가 2세트에서 먼저 어드밴티지를 얻었지만 6 대 6이 된 후 다시 타이 브레이크가 필요했다."
+   ],
+   "formats": {
+    "talk_sentence": {
+     "ass_faces": [
+      "Noto Sans KR"
+     ],
+     "missing_glyphs_in_face": {
+      "Noto Sans KR": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "NotoSansKR-Bold, 0, NotoSansKR-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "다리 밑 수직 간격은 15미터이며, 공사는 2011년 8월에 마무리되었으며, 해당 다리의 통행금지는 2017년 3월까지이다.",
+     "ink_box": [
+      87,
+      1223,
+      992,
+      1523
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/ko_talk_sentence.png",
+     "pass": true
+    },
+    "talk_word_pop": {
+     "ass_faces": [
+      "Noto Sans KR"
+     ],
+     "missing_glyphs_in_face": {
+      "Noto Sans KR": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "NotoSansKR-Bold, 0, NotoSansKR-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "다리 밑 수직 간격은 15미터이며, 공사는 2011년 8월에 마무리되었으며, 해당 다리의 통행금지는 2017년 3월까지이다.",
+     "ink_box": [
+      87,
+      1223,
+      992,
+      1523
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/ko_talk_word_pop.png",
+     "direction": {
+      "expected": {
+       "first": "left",
+       "last": "right"
+      },
+      "first": "left",
+      "first_word_box": [
+       159,
+       1223,
+       252,
+       1274
+      ],
+      "first_row_box": [
+       159,
+       1223,
+       921,
+       1278
+      ],
+      "last": "right",
+      "last_word_box": [
+       485,
+       1472,
+       793,
+       1523
+      ],
+      "last_row_box": [
+       284,
+       1472,
+       793,
+       1523
+      ],
+      "pass": true
+     },
+     "pass": true
+    },
+    "talk_smart": {
+     "ass_faces": [
+      "Noto Sans KR"
+     ],
+     "missing_glyphs_in_face": {
+      "Noto Sans KR": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "NotoSansKR-Bold, 0, NotoSansKR-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "다리 밑 수직 간격은 15미터이며, 공사는 2011년 8월에 마무리되었으며, 해당 다리의 통행금지는 2017년 3월까지이다.",
+     "ink_box": [
+      202,
+      1469,
+      877,
+      1532
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/ko_talk_smart.png",
+     "pass": true
+    },
+    "voiceover": {
+     "ass_faces": [
+      "Noto Sans KR"
+     ],
+     "missing_glyphs_in_face": {
+      "Noto Sans KR": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "NotoSansKR-Bold, 0, NotoSansKR-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "다리 밑 수직 간격은 15미터이며, 공사는 2011년 8월에 마무리되었으며, 해당 다리의 통행금지는 2017년 3월까지이다.",
+     "ink_box": [
+      87,
+      1427,
+      992,
+      1727
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/ko_voiceover.png",
+     "pass": true
+    },
+    "voiceover_word": {
+     "ass_faces": [
+      "Noto Sans KR"
+     ],
+     "missing_glyphs_in_face": {
+      "Noto Sans KR": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "NotoSansKR-Bold, 0, NotoSansKR-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "마무리되었으며,",
+     "ink_box": [
+      247,
+      1301,
+      833,
+      1392
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/ko_voiceover_word.png",
+     "pass": true
+    }
+   },
+   "phone_recipe": {
+    "sentence": {
+     "layers": 6,
+     "font_assets": [
+      "font-NotoSansKR-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 11,
+     "max_rows": 2,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    },
+    "word": {
+     "layers": 6,
+     "font_assets": [
+      "font-NotoSansKR-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 29,
+     "max_rows": 2,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    }
+   }
+  },
+  "it": {
+   "sentences": [
+    "Il blog è uno strumento che si prefigge di incoraggiare la collaborazione e sviluppare l'apprendimento degli studenti ben oltre la giornata scolastica normale.",
+    "Sotto il ponte lo spazio in verticale libero è di 15 metri. La costruzione è terminata nell'agosto del 2011, ma l'apertura al traffico è avvenuta solo nel marzo 2017."
+   ],
+   "formats": {
+    "talk_sentence": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Il blog è uno strumento che si prefigge di incoraggiare la collaborazione e sviluppare",
+     "ink_box": [
+      138,
+      1322,
+      941,
+      1532
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/it_talk_sentence.png",
+     "pass": true
+    },
+    "talk_word_pop": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Il blog è uno strumento che si prefigge di incoraggiare la collaborazione e sviluppare",
+     "ink_box": [
+      138,
+      1322,
+      941,
+      1532
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/it_talk_word_pop.png",
+     "direction": {
+      "expected": {
+       "first": "left",
+       "last": "right"
+      },
+      "first": "left",
+      "first_word_box": [
+       161,
+       1324,
+       185,
+       1365
+      ],
+      "first_row_box": [
+       161,
+       1322,
+       921,
+       1369
+      ],
+      "last": "right",
+      "last_word_box": [
+       636,
+       1479,
+       926,
+       1532
+      ],
+      "last_row_box": [
+       154,
+       1479,
+       926,
+       1532
+      ],
+      "pass": true
+     },
+     "pass": true
+    },
+    "talk_smart": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Il blog è uno strumento che si prefigge di incoraggiare la collaborazione e sviluppare",
+     "ink_box": [
+      215,
+      1463,
+      865,
+      1534
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/it_talk_smart.png",
+     "pass": true
+    },
+    "voiceover": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Il blog è uno strumento che si prefigge di incoraggiare la collaborazione e sviluppare",
+     "ink_box": [
+      138,
+      1526,
+      941,
+      1736
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/it_voiceover.png",
+     "pass": true
+    },
+    "voiceover_word": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "l'apprendimento",
+     "ink_box": [
+      187,
+      1311,
+      895,
+      1395
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/it_voiceover_word.png",
+     "pass": true
+    }
+   },
+   "phone_recipe": {
+    "sentence": {
+     "layers": 10,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 18,
+     "max_rows": 2,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    },
+    "word": {
+     "layers": 10,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 52,
+     "max_rows": 2,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    }
+   }
+  },
+  "fr": {
+   "sentences": [
+    "L’accident a eu lieu en terrain montagneux, et il semblerait que cela ait été causé par un incendie malveillant.",
+    "Le rugissement du tigre ne ressemble pas au rugissement ample du lion, mais plutôt à une phrase dont les mots seraient des cris et des grondements."
+   ],
+   "formats": {
+    "talk_sentence": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "L’accident a eu lieu en terrain montagneux, et il semblerait que cela ait été",
+     "ink_box": [
+      169,
+      1323,
+      910,
+      1532
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/fr_talk_sentence.png",
+     "pass": true
+    },
+    "talk_word_pop": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "L’accident a eu lieu en terrain montagneux, et il semblerait que cela ait été",
+     "ink_box": [
+      169,
+      1323,
+      910,
+      1532
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/fr_talk_word_pop.png",
+     "direction": {
+      "expected": {
+       "first": "left",
+       "last": "right"
+      },
+      "first": "left",
+      "first_word_box": [
+       230,
+       1322,
+       519,
+       1365
+      ],
+      "first_row_box": [
+       230,
+       1322,
+       850,
+       1366
+      ],
+      "last": "right",
+      "last_word_box": [
+       824,
+       1478,
+       909,
+       1521
+      ],
+      "last_row_box": [
+       169,
+       1478,
+       909,
+       1525
+      ],
+      "pass": true
+     },
+     "pass": true
+    },
+    "talk_smart": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "L’accident a eu lieu en terrain montagneux, et il semblerait que cela ait été",
+     "ink_box": [
+      213,
+      1463,
+      866,
+      1533
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/fr_talk_smart.png",
+     "pass": true
+    },
+    "voiceover": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "L’accident a eu lieu en terrain montagneux, et il semblerait que cela ait été",
+     "ink_box": [
+      169,
+      1527,
+      910,
+      1736
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/fr_voiceover.png",
+     "pass": true
+    },
+    "voiceover_word": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "malveillant.",
+     "ink_box": [
+      293,
+      1311,
+      785,
+      1378
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/fr_voiceover_word.png",
+     "pass": true
+    }
+   },
+   "phone_recipe": {
+    "sentence": {
+     "layers": 8,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 15,
+     "max_rows": 3,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    },
+    "word": {
+     "layers": 8,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 45,
+     "max_rows": 3,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    }
+   }
+  },
+  "ar": {
+   "sentences": [
+    "تشكلت في المحيط الأطلسي اليوم عاشر عاصفة مُسماة لموسم الأعاصير الأطلسية، العاصفة شبه الاستوائية جيري.",
+    "تغادر الحافلات المحطة الداخلية بين المناطق (عبر النهر) في خلال اليوم على الرغم من أن معظمها وخاصة المتجهة منها إلى الشرق وجاكار/بومثانج تغادر بين 06:30 و 07:30."
+   ],
+   "formats": {
+    "talk_sentence": {
+     "ass_faces": [
+      "Noto Sans Arabic"
+     ],
+     "missing_glyphs_in_face": {
+      "Noto Sans Arabic": ""
+     },
+     "ass_encoding": "-1",
+     "libass_fonts_selected": [
+      "NotoSansArabic-Bold, 0, NotoSansArabic-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "تشكلت في المحيط الأطلسي اليوم عاشر عاصفة مُسماة لموسم الأعاصير الأطلسية،",
+     "ink_box": [
+      189,
+      1195,
+      890,
+      1515
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/ar_talk_sentence.png",
+     "pass": true
+    },
+    "talk_word_pop": {
+     "ass_faces": [
+      "Noto Sans Arabic"
+     ],
+     "missing_glyphs_in_face": {
+      "Noto Sans Arabic": ""
+     },
+     "ass_encoding": "-1",
+     "libass_fonts_selected": [
+      "NotoSansArabic-Bold, 0, NotoSansArabic-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "تشكلت في المحيط الأطلسي اليوم عاشر عاصفة مُسماة لموسم الأعاصير الأطلسية،",
+     "ink_box": [
+      189,
+      1195,
+      890,
+      1515
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/ar_talk_word_pop.png",
+     "direction": {
+      "expected": {
+       "first": "right",
+       "last": "left"
+      },
+      "first": "right",
+      "first_word_box": [
+       704,
+       1204,
+       890,
+       1246
+      ],
+      "first_row_box": [
+       189,
+       1200,
+       890,
+       1250
+      ],
+      "last": "left",
+      "last_word_box": [
+       216,
+       1443,
+       453,
+       1506
+      ],
+      "last_row_box": [
+       216,
+       1443,
+       864,
+       1510
+      ],
+      "pass": true
+     },
+     "pass": true
+    },
+    "talk_smart": {
+     "ass_faces": [
+      "Noto Sans Arabic"
+     ],
+     "missing_glyphs_in_face": {
+      "Noto Sans Arabic": ""
+     },
+     "ass_encoding": "-1",
+     "libass_fonts_selected": [
+      "NotoSansArabic-Bold, 0, NotoSansArabic-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "تشكلت في المحيط الأطلسي اليوم عاشر عاصفة مُسماة لموسم الأعاصير الأطلسية،",
+     "ink_box": [
+      212,
+      1396,
+      868,
+      1522
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/ar_talk_smart.png",
+     "pass": true
+    },
+    "voiceover": {
+     "ass_faces": [
+      "Noto Sans Arabic"
+     ],
+     "missing_glyphs_in_face": {
+      "Noto Sans Arabic": ""
+     },
+     "ass_encoding": "-1",
+     "libass_fonts_selected": [
+      "NotoSansArabic-Bold, 0, NotoSansArabic-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "تشكلت في المحيط الأطلسي اليوم عاشر عاصفة مُسماة لموسم الأعاصير الأطلسية،",
+     "ink_box": [
+      189,
+      1399,
+      890,
+      1719
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/ar_voiceover.png",
+     "pass": true
+    },
+    "voiceover_word": {
+     "ass_faces": [
+      "Noto Sans Arabic"
+     ],
+     "missing_glyphs_in_face": {
+      "Noto Sans Arabic": ""
+     },
+     "ass_encoding": "-1",
+     "libass_fonts_selected": [
+      "NotoSansArabic-Bold, 0, NotoSansArabic-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "وجاكار/بومثانج",
+     "ink_box": [
+      267,
+      1271,
+      810,
+      1368
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/ar_voiceover_word.png",
+     "pass": true
+    }
+   },
+   "phone_recipe": {
+    "sentence": {
+     "layers": 8,
+     "font_assets": [
+      "font-NotoSansArabic-Regular.ttf"
+     ],
+     "shaped_runs": 16,
+     "positioned_glyph_runs": 0,
+     "max_rows": 2,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    },
+    "word": {
+     "layers": 8,
+     "font_assets": [
+      "font-NotoSansArabic-Regular.ttf"
+     ],
+     "shaped_runs": 42,
+     "positioned_glyph_runs": 0,
+     "max_rows": 2,
+     "karaoke_active_only": [
+      true
+     ],
+     "word_order_matches_direction": true
+    }
+   }
+  },
+  "da": {
+   "sentences": [
+    "Fordi dinosaurfjerene ikke har et veludviklet skaft, kaldet et fjerskaft, men har andre kendetegn fra fjer - stråler og bistråler - udledte forskerne, at fjerskaft sandsynligvis var en senere evolutionær udvikling end disse andre karakteristika.",
+    "Nordmarianernes beredskabskontor meddelte, at der ikke var rapporteret om skader i nationen."
+   ],
+   "formats": {
+    "talk_sentence": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Fordi dinosaurfjerene ikke har et veludviklet skaft, kaldet et fjerskaft,",
+     "ink_box": [
+      174,
+      1323,
+      908,
+      1532
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/da_talk_sentence.png",
+     "pass": true
+    },
+    "talk_word_pop": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Fordi dinosaurfjerene ikke har et veludviklet skaft, kaldet et fjerskaft,",
+     "ink_box": [
+      174,
+      1323,
+      908,
+      1532
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/da_talk_word_pop.png",
+     "direction": {
+      "expected": {
+       "first": "left",
+       "last": "right"
+      },
+      "first": "left",
+      "first_word_box": [
+       174,
+       1323,
+       309,
+       1365
+      ],
+      "first_row_box": [
+       174,
+       1323,
+       908,
+       1369
+      ],
+      "last": "right",
+      "last_word_box": [
+       544,
+       1478,
+       799,
+       1532
+      ],
+      "last_row_box": [
+       281,
+       1478,
+       799,
+       1532
+      ],
+      "pass": true
+     },
+     "pass": true
+    },
+    "talk_smart": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Fordi dinosaurfjerene ikke har et veludviklet skaft, kaldet et fjerskaft,",
+     "ink_box": [
+      210,
+      1449,
+      867,
+      1533
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/da_talk_smart.png",
+     "pass": true
+    },
+    "voiceover": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "Fordi dinosaurfjerene ikke har et veludviklet skaft, kaldet et fjerskaft,",
+     "ink_box": [
+      174,
+      1527,
+      908,
+      1736
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/da_voiceover.png",
+     "pass": true
+    },
+    "voiceover_word": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "beredskabskontor",
+     "ink_box": [
+      147,
+      1315,
+      936,
+      1378
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/da_voiceover_word.png",
+     "pass": true
+    }
+   },
+   "phone_recipe": {
+    "sentence": {
+     "layers": 9,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 20,
+     "max_rows": 3,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    },
+    "word": {
+     "layers": 9,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 46,
+     "max_rows": 3,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    }
+   }
+  },
+  "sr": {
+   "sentences": [
+    "U njemu se navodi da je naju pečatljivije mesto za glavni predmet na preseku linija koje vertikuli horizontalno dele sliku na trećinu. U zagradi vidi primer.",
+    "Daniel Lantanj, ekspert UM za bolesti, izjavila je da su izbijanje bolesti verovatno izazvali mirovnjaci."
+   ],
+   "formats": {
+    "talk_sentence": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "U njemu se navodi da je naju pečatljivije mesto za glavni predmet na preseku",
+     "ink_box": [
+      166,
+      1323,
+      911,
+      1533
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/sr_talk_sentence.png",
+     "pass": true
+    },
+    "talk_word_pop": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "U njemu se navodi da je naju pečatljivije mesto za glavni predmet na preseku",
+     "ink_box": [
+      166,
+      1323,
+      911,
+      1533
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/sr_talk_word_pop.png",
+     "direction": {
+      "expected": {
+       "first": "left",
+       "last": "right"
+      },
+      "first": "left",
+      "first_word_box": [
+       212,
+       1326,
+       243,
+       1365
+      ],
+      "first_row_box": [
+       212,
+       1323,
+       870,
+       1369
+      ],
+      "last": "right",
+      "last_word_box": [
+       693,
+       1481,
+       911,
+       1532
+      ],
+      "last_row_box": [
+       166,
+       1479,
+       911,
+       1533
+      ],
+      "pass": true
+     },
+     "pass": true
+    },
+    "talk_smart": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "U njemu se navodi da je naju pečatljivije mesto za glavni predmet na preseku",
+     "ink_box": [
+      211,
+      1456,
+      870,
+      1534
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/sr_talk_smart.png",
+     "pass": true
+    },
+    "voiceover": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "U njemu se navodi da je naju pečatljivije mesto za glavni predmet na preseku",
+     "ink_box": [
+      166,
+      1527,
+      911,
+      1737
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/sr_voiceover.png",
+     "pass": true
+    },
+    "voiceover_word": {
+     "ass_faces": [
+      "TikTok Sans"
+     ],
+     "missing_glyphs_in_face": {
+      "TikTok Sans": ""
+     },
+     "ass_encoding": "1",
+     "libass_fonts_selected": [
+      "TikTokSans-Bold, 0, TikTokSans-Bold"
+     ],
+     "libass_fallbacks": [],
+     "probe_cue": "pečatljivije",
+     "ink_box": [
+      411,
+      1317,
+      670,
+      1378
+     ],
+     "ink_inside_frame": true,
+     "frame": "frames/sr_voiceover_word.png",
+     "pass": true
+    }
+   },
+   "phone_recipe": {
+    "sentence": {
+     "layers": 8,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 15,
+     "max_rows": 2,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    },
+    "word": {
+     "layers": 8,
+     "font_assets": [
+      "font-TikTokSans-Regular.ttf"
+     ],
+     "shaped_runs": 0,
+     "positioned_glyph_runs": 41,
+     "max_rows": 2,
+     "karaoke_active_only": [
+      false
+     ],
+     "word_order_matches_direction": true
+    }
+   }
+  }
+ },
+ "skia_overlay_verify": {
+  "overall": "PASS",
+  "overlays": [
+   {
+    "text": "Οι αρχαίοι πολιτισμοί και φυλές αρχίζουν",
+    "effect": "static",
+    "verdict": "PASS",
+    "face": "TikTok Sans Bold",
+    "reasons": []
+   },
+   {
+    "text": "Οι αρχαίοι πολιτισμοί και φυλές αρχίζουν",
+    "effect": "static",
+    "verdict": "PASS",
+    "face": "TikTok Sans Bold",
+    "reasons": [
+     "glyph fallback 'Montserrat Bold' -> 'TikTok Sans Bold' (font lacks characters of this text)"
+    ]
+   },
+   {
+    "text": "홍콩의 스카이라인을 이루는 빌딩 행렬은 빅토리아 항구의 수면에 선명히 비",
+    "effect": "static",
+    "verdict": "PASS",
+    "face": "Noto Sans KR Bold",
+    "reasons": [
+     "glyph fallback 'TikTok Sans Bold' -> 'Noto Sans KR Bold' (font lacks characters of this text)"
+    ]
+   },
+   {
+    "text": "إن عرض الصوت والضوء الهرمي واحد من أمتع ",
+    "effect": "static",
+    "verdict": "PASS",
+    "face": "Noto Sans Arabic Bold",
+    "reasons": [
+     "glyph fallback 'TikTok Sans Bold' -> 'Noto Sans Arabic Bold' (font lacks characters of this text)"
+    ]
+   },
+   {
+    "text": "إن عرض الصوت والضوء الهرمي واحد",
+    "effect": "karaoke-line",
+    "verdict": "PASS",
+    "face": "Noto Sans Arabic Bold",
+    "reasons": [
+     "glyph fallback 'TikTok Sans Bold' -> 'Noto Sans Arabic Bold' (font lacks characters of this text)"
+    ]
+   },
+   {
+    "text": "U njemu se navodi da je naju pečatljivij",
+    "effect": "static",
+    "verdict": "PASS",
+    "face": "Inter Tight",
+    "reasons": []
+   }
+  ]
+ },
+ "summary": {
+  "cells": 60,
+  "failed_cells": 0,
+  "skia_overall": "PASS"
+ }
+}

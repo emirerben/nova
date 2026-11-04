@@ -28,6 +28,10 @@ _FONT_FILES = {
     "montserrat": "Montserrat-Regular.ttf",
     "montserrat bold": "Montserrat-Bold.ttf",
     "tiktok sans": "TikTokSans-Bold.ttf",
+    # KRI-1192 script fallbacks (`captions.glyph_safe_ass_family`): the bold file, as
+    # libass burns captions with Bold=-1 (same as TikTok Sans above).
+    "noto sans kr": "NotoSansKR-Bold.ttf",
+    "noto sans arabic": "NotoSansArabic-Bold.ttf",
 }
 
 
@@ -161,9 +165,67 @@ class PreparedMediaAsset:
 def _typeface(font_family: str) -> skia.Typeface:
     key = font_family.strip().casefold()
     filename = _FONT_FILES.get(key, _FONT_FILES["tiktok sans"])
+    return _typeface_file(filename)
+
+
+@lru_cache(maxsize=64)
+def _typeface_file(filename: str) -> skia.Typeface:
     path = _FONT_DIR / filename
     typeface = skia.Typeface.MakeFromFile(str(path))
     return typeface or skia.Typeface.MakeDefault()
+
+
+def _text_width(font: skia.Font, text: str, *, shaped: bool) -> float:
+    """Advance width of one line; shaped (HarfBuzz, right-to-left aware) for a script
+    that joins or runs right to left, where unshaped isolated letters are wider."""
+    if not shaped:
+        return font.measureText(text)
+    from app.pipeline.text_overlay_skia import _measure_line  # noqa: PLC0415
+
+    return _measure_line(font, text, 0.0, shape_text=True)
+
+
+@lru_cache(maxsize=64)
+def _libass_em_scale(filename: str) -> float:
+    """Pixels of em per pixel of ASS ``Fontsize`` for ``filename``.
+
+    libass (like VSFilter) sizes a face so its OS/2 ``usWinAscent + usWinDescent``
+    spans the ASS ``Fontsize``, not its em, so a glyph draws ``unitsPerEm / (winAscent
+    + winDescent)`` as wide as Skia at the same nominal size.
+    """
+    from fontTools.ttLib import TTFont  # noqa: PLC0415
+
+    font = TTFont(str(_FONT_DIR / filename), lazy=True)
+    os2 = font["OS/2"]
+    height = int(os2.usWinAscent) + int(os2.usWinDescent)
+    return float(font["head"].unitsPerEm) / height if height > 0 else 1.0
+
+
+def libass_em_scale_for(registry_key: str | None) -> float | None:
+    """`_libass_em_scale` of the bundled face ``registry_key`` (None when unknown)."""
+    from app.pipeline.font_coverage import _registry  # noqa: PLC0415
+
+    entry = _registry().get("fonts", {}).get(registry_key or "")
+    if not entry or not entry.get("file"):
+        return None
+    return _libass_em_scale(str(entry["file"]))
+
+
+def libass_line_width(text: str, *, registry_key: str, size_px: float) -> float | None:
+    """Advance width libass draws ``text`` with at ASS ``Fontsize`` ``size_px``.
+
+    ``registry_key`` names the bundled face (font-registry.json). None when the
+    registry does not know it. Shaped for right-to-left/joining scripts.
+    """
+    from app.pipeline.font_coverage import _registry  # noqa: PLC0415
+    from app.pipeline.portable_text_layout import needs_text_shaping  # noqa: PLC0415
+
+    entry = _registry().get("fonts", {}).get(registry_key)
+    if not entry or not entry.get("file") or not text:
+        return None
+    filename = str(entry["file"])
+    font = skia.Font(_typeface_file(filename), float(size_px) * _libass_em_scale(filename))
+    return _text_width(font, text, shaped=needs_text_shaping(text))
 
 
 # Line-layout penalties (plan 011, Feature B). All are inert unless the caller
@@ -238,6 +300,18 @@ def measure_caption(
     if not words:
         box = NormalizedBox(0.5, y_frac, 0.5, y_frac)
         return TextMeasurement(lines=(), font_size_px=font_size_px, box=box)
+    from app.pipeline.captions import glyph_safe_ass_family  # noqa: PLC0415
+    from app.pipeline.portable_text_layout import needs_text_shaping  # noqa: PLC0415
+
+    # KRI-1192: measure in the face the caption burns in (Hangul in Noto Sans KR, not
+    # TikTok Sans's empty boxes) and shape a joining/right-to-left script. Latin text
+    # keeps the exact pre-change measure.
+    font_family = glyph_safe_ass_family(font_family, text) or font_family
+    shaped = needs_text_shaping(text)
+
+    def measure(font: skia.Font, line: str) -> float:
+        return _text_width(font, line, shaped=shaped)
+
     max_width_px = canvas.width * width_frac
     pairs = _valid_keep_together(keep_together, len(words))
     apply_penalties = bool(pairs) or penalize_widows
@@ -247,11 +321,11 @@ def measure_caption(
         font = skia.Font(_typeface(font_family), float(size))
         candidates: list[tuple[float, tuple[str, ...]]] = []
         if max_lines <= 1 or len(words) == 1:
-            candidates.append((font.measureText(" ".join(words)), (" ".join(words),)))
+            candidates.append((measure(font, " ".join(words)), (" ".join(words),)))
         else:
             for split in range(1, len(words)):
                 lines = (" ".join(words[:split]), " ".join(words[split:]))
-                widths = [font.measureText(line) for line in lines]
+                widths = [measure(font, line) for line in lines]
                 score = max(widths) + abs(widths[0] - widths[1]) * 0.08
                 if apply_penalties:
                     if max(widths) > max_width_px:
@@ -262,13 +336,13 @@ def measure_caption(
                         score += _WIDOW_PENALTY
                 candidates.append((score, lines))
         _, lines = min(candidates, key=lambda candidate: candidate[0])
-        widest = max(font.measureText(line) for line in lines)
+        widest = max(measure(font, line) for line in lines)
         chosen_lines = lines
         chosen_size = size
         if widest <= max_width_px:
             break
     font = skia.Font(_typeface(font_family), float(chosen_size))
-    widest = min(max_width_px, max(font.measureText(line) for line in chosen_lines))
+    widest = min(max_width_px, max(measure(font, line) for line in chosen_lines))
     height = chosen_size * 1.18 * len(chosen_lines)
     half_w = widest / canvas.width / 2
     height_frac = height / canvas.height

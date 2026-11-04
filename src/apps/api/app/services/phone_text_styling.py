@@ -588,7 +588,13 @@ def remember_caption_bounds(layers, *, canvas):
     look = policy.get("caption_look")
     if look is None:
         return
-    typeface = _resolve_typeface_for_overlay({"font_family": look.font_family}).typeface
+    # KRI-1192: measure in the face that DRAWS the caption text (Hangul/Arabic runs carry the
+    # script face's glyphs), which the glyph-safe resolution picks from the text itself.
+    # Latin text resolves to `look.font_family` exactly as before.
+    text = " ".join(run.text for layer in layers for run in layer.runs if run.text)
+    typeface = _resolve_typeface_for_overlay(
+        {"font_family": look.font_family, "text": text}
+    ).typeface
     boxes = []
     for layer in layers:
         ink = [caption_ink_box(run, typeface) for run in layer.runs]

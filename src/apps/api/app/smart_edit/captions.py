@@ -10,12 +10,15 @@ from app.smart_edit.presets import CaptionPolicy
 from app.smart_edit.schemas import SemanticRole, SmartWord
 
 _TOKEN_RE = re.compile(r"\S+")
-_STRONG_END_RE = re.compile(r"[.!?…][\"')\]]*$")
+# KRI-1192: the Arabic question mark and the Greek one (U+037E, usually typed as ";") end
+# a sentence too; a plain ";" only on a word written in Greek letters (`_strong_end`).
+_STRONG_END_RE = re.compile(r"[.!?…\u061f\u037e][\"')\]]*$")
+_GREEK_QUESTION_RE = re.compile(r"[\u0370-\u03ff\u1f00-\u1fff][^\s]*;[\"')\]]*$")
 # A word ends a clause OR sentence (comma/semicolon/colon in addition to the
 # strong-end punctuation above) — the preferred split point when a forced close
 # would otherwise land mid-clause. Mirrors `app.pipeline.captions._CLAUSE_END_RE`
 # (kept as a separate constant: this engine's chunker is independent).
-_CLAUSE_BREAK_RE = re.compile(r"[.!?,;:…][\"')\]]*$")
+_CLAUSE_BREAK_RE = re.compile(r"[.!?,;:…\u061f\u060c\u061b\u037e][\"')\]]*$")
 # A standalone emphasis cue ("Messi" alone) shorter than this is held on screen
 # up to this floor so a single word does not strobe past unreadably.
 _STANDALONE_MIN_HOLD_S = 0.5
@@ -158,6 +161,10 @@ def _last_clause_boundary(tokens: list[_TimedToken], *, min_prefix_words: int) -
     return None
 
 
+def _strong_end(text: str) -> bool:
+    return bool(_STRONG_END_RE.search(text) or _GREEK_QUESTION_RE.search(text))
+
+
 def _should_close(
     current: list[_TimedToken],
     next_token: _TimedToken | None,
@@ -169,7 +176,7 @@ def _should_close(
         return True
     if len(current) < policy.min_words:
         return False
-    if _STRONG_END_RE.search(current[-1].text):
+    if _strong_end(current[-1].text):
         return True
     if next_token is not None and next_token.start_s - current[-1].end_s >= 0.34:
         return True

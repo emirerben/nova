@@ -113,6 +113,16 @@ class EditRecipeV2(EditRecipeV1):
                 self.required_capabilities |= {"speakerBackgroundWindows"}
         if set(manifest) != {asset.id for asset in self.assets}:
             raise ValueError("recipe and manifest must name exactly the same assets")
+        # KRI-1192: a run drawn in a script-fallback face needs a build that bundles it.
+        from app.pipeline.font_coverage import script_fallback_files  # noqa: PLC0415
+
+        script_files = script_fallback_files()
+        if any(
+            getattr(manifest.get(run.font_asset_id), "catalog_id", None) in script_files
+            for layer in self.text_layers
+            for run in layer.runs
+        ):
+            self.required_capabilities |= {"scriptFonts"}
         # Mirrors `EditRecipe.effectiveCapabilities`: a device that has not
         # verified Visuals-pool downloads of a kind must never receive one.
         for asset in manifest.values():

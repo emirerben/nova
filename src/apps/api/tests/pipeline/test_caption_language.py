@@ -343,8 +343,12 @@ def test_crosscheck_is_silent_without_a_clear_disagreement(detected: str, refere
 # ── 5. the one language table (KRI-838) ─────────────────────────────────────
 
 
-def test_the_table_covers_the_nine_languages_the_brief_side_knows() -> None:
-    assert SUPPORTED_CAPTION_LANGUAGES == {"en", "tr", "de", "es", "fr", "it", "ar", "nl", "pt"}
+def test_the_table_covers_the_languages_the_brief_side_knows() -> None:
+    # KRI-1192 added Greek, Korean, Danish and Serbian.
+    assert SUPPORTED_CAPTION_LANGUAGES == {
+        *("en", "tr", "de", "es", "fr", "it", "ar", "nl", "pt"),
+        *("el", "ko", "da", "sr"),
+    }
     assert LANGUAGE_NAMES["es"] == ("Spanish", "İspanyolca")
     assert {lang.code for lang in CAPTION_LANGUAGES} == SUPPORTED_CAPTION_LANGUAGES
 

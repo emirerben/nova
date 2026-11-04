@@ -1262,7 +1262,10 @@ enum KriaClientProtocolContract {
     /// `speakerBackgroundColor` capability. The server offers `editor_capabilities.speaker_background_color` only to this
     /// protocol (and only with `speakerBackgroundColor` verified) and answers 426 `client_update_required`
     /// (`speaker_background_color`) to an older build polling or saving a recipe that already carries one.
-    static let version = 34
+    /// 35 (KRI-1192): bundles Noto Sans KR / Noto Sans Arabic script-fallback faces and draws Greek, Cyrillic, Hangul
+    /// and Arabic captions in one covering face (`scriptFonts`). The server sends a recipe naming those faces only to
+    /// this protocol and answers 426 `client_update_required` (`script_fonts`) to an older build.
+    static let version = 35
     static let header = "X-Kria-Client-Protocol"
 }
 
