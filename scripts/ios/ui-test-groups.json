@@ -220,7 +220,10 @@
       "KriaUITests/GeneratedMediaUITests/testDisabledCapabilitiesPreserveRecordImportAndHideGeneration",
       "KriaUITests/GeneratedMediaUITests/testValidationRejectionRequiresEditAndExplicitNewSubmission",
       "KriaUITests/GeneratedMediaUITests/testGeneratedImagePreviewUseRefreshesVisualPool",
-      "KriaUITests/GeneratedMediaUITests/testImageRecoveryAfterProcessRelaunchNeverPostsAgain"
+      "KriaUITests/GeneratedMediaUITests/testImageRecoveryAfterProcessRelaunchNeverPostsAgain",
+      "KriaUITests/CreationUITests/testSuggestionCardsInChatAndTheEditorImproveSheetShareOneSet",
+      "KriaUITests/CreationUITests/testStaleSuggestionCardShowsNoLongerFitsThenTheRefreshedSet",
+      "KriaUITests/CreationUITests/testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -537,6 +540,9 @@
     "src/apps/ios/Kria/Core/WhatsNewReleases.swift": "projects",
     "src/apps/ios/Kria/Features/WhatsNewView.swift": "projects",
     "src/apps/ios/Kria/Features/AccountUITestTransport.swift": "projects",
-    "src/apps/ios/Tests/KriaUITests/WhatsNewUITests.swift": "projects"
+    "src/apps/ios/Tests/KriaUITests/WhatsNewUITests.swift": "projects",
+    "src/apps/ios/Kria/Core/SuggestionCards.swift": "creation",
+    "src/apps/ios/Kria/Features/SuggestionCardsView.swift": "creation",
+    "src/apps/ios/Kria/Features/SuggestionCardsMocks.swift": "creation"
   }
 }
