@@ -64,6 +64,28 @@ Refusals
       serve saw: the hook's clip texts, the brief, the filler evidence, the duplicates' ``needed``.
 
 Database (collection): same CI-aware guard as ``test_kria_pinned_suggestion`` (FM24).
+
+Per-kind evidence (each row: tap -> new draft revision or the documented setting flip + approval,
+the typed requirement, Undo to the parent, and a refusal path)
+  captions / sfx / transition / music  test_kria_pinned_suggestion: FM5 (applied, receipts
+                                       met), ``test_undo_restores_the_parent_draft``, FM7/8/12
+  hook         ``test_hook_tap_applies_the_cards_exact_text_...`` (editor draft, ``set_title``)
+  duplicates   ``test_duplicates_tap_removes_the_weaker_take_...`` (editor draft, ``remove_clip``)
+  mute_clip    ``test_mute_tap_restates_the_plan_...`` (strategy draft + approval, typed update)
+  filler_words ``test_filler_tap_flips_the_setting_...`` (strategy draft + approval, setting flip)
+
+The editor-ops kinds (hook, duplicates and the four above) produce a draft whose diff is a lane of
+the editor payload. mute_clip and filler_words cannot be expressed as an editor op, so the tap
+restates the thread's newest strategy draft unchanged as a new revision plus its exact render
+approval: the typed brief update (or the item setting) is what the tap adds, and the normal
+approval is the render. Known limit, by design: speech cleanup is an item setting (like the PATCH
+route), so Undo of that draft revision withdraws the revision and its approval, not the toggle.
+
+Fixture realism. The kinds' inputs (the brief, the clip texts, the filler evidence, the duplicates'
+``needed``) come from ``kria_pinned_kinds_harness.install_inputs``, a stand-in for the serve lane's
+shared loader that both the serve and the seam call; swap it for the real loader at integration.
+The measurements are real: ``audio_quality`` over a committed wind recording, the near-duplicate
+lane's recorded hashes. The filler analysis row is a stub (the engine run is the kind lane's).
 """
 
 from __future__ import annotations

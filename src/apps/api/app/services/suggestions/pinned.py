@@ -85,7 +85,6 @@ TARGET_UNAVAILABLE = "target_unavailable"
 NO_STRATEGY = "no_strategy"
 UNSAVED_EDITS = "unsaved_edits"
 SETTING_REFUSED = "setting_refused"
-PROMPT_MISMATCH = "prompt_mismatch"
 # A refusal that says nothing about the card itself: the creator can tap it again later.
 TRANSIENT_REASONS = frozenset({TARGET_UNAVAILABLE})
 

@@ -318,10 +318,9 @@ async def get_suggestions(seeded: base.Seeded):  # noqa: ANN201
 
 def seed_strategy_draft(seeded: base.Seeded) -> uuid.UUID:
     """The strategy draft the current video was made from: the head of the thread's drafts."""
+    from app.agents._schemas.creator_agent import CreativeStrategy
     from app.kria.drafts import KriaDraftDocument, canonical_snapshot
     from app.models import CreatorEditDraft
-
-    from app.agents._schemas.creator_agent import CreativeStrategy
 
     strategy = CreativeStrategy(rationale="A matcha ritual in three beats.").model_dump(
         mode="json", exclude_none=True
@@ -397,7 +396,7 @@ CLEANUP_FLAGS = {
 
 def filler_world(monkeypatch, *, analysis=None):  # noqa: ANN001, ANN201
     """The cleanup switches on, a ready analysis with measurable fillers, and the shared loader's
-    stand-in reading it. ``analysis`` replaces the default row (the kind lane's own cafe numbers)."""
+    stand-in reading it. ``analysis`` replaces the default row (the kind lane's cafe numbers)."""
     for name, value in CLEANUP_FLAGS.items():
         monkeypatch.setattr(settings, name, value)
     row = analysis or analysis_row()
