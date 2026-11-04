@@ -6,6 +6,12 @@ import Foundation
 /// runs, `KRIA_SUGGESTION_CARDS`), the unit tests that decode them, and SwiftUI previews. Every key is one the
 /// generated `openapi.yaml` names; a unit test pins that so the mocks cannot drift from the contract.
 enum SuggestionCardsMocks {
+    /// A UI test can make its prompts unique (`KRIA_SUGGESTION_CARDS_NONCE`): the offline server's chats outlive a run,
+    /// so an old identical message would otherwise pass for the one the test just sent.
+    static var promptSuffix: String {
+        ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CARDS_NONCE"].map { " \($0)" } ?? ""
+    }
+
     /// The card whose tap the fixture server refuses with `suggestion_stale`.
     static let staleCardID = "ss_fixture_stale"
 
@@ -94,7 +100,7 @@ enum SuggestionCardsMocks {
                      anchor: [String: Any] = [:], id: String? = nil) -> [String: Any] {
         [
             "id": id ?? "ss_fixture_\(kind)", "kind": kind, "title": title, "why": why ?? "", "evidence": evidence,
-            "prompt": prompt, "copy_text": copy ?? NSNull(), "rank": 1, "anchor": anchor, "action_type": action,
+            "prompt": prompt + promptSuffix, "copy_text": copy ?? NSNull(), "rank": 1, "anchor": anchor, "action_type": action,
             "cost_usd": cost ?? NSNull(), "requires_protocol": NSNull(),
         ]
     }

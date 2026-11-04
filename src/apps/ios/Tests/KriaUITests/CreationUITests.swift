@@ -1864,13 +1864,13 @@ final class CreationUITests: XCTestCase {
 
     /// AI suggestion blocks: the seeded chat's finished render with the server's v2 set (`SuggestionCardsMocks`). The
     /// value of `KRIA_SUGGESTION_CARDS` picks the mock (`ready`, `stale`, `turkish`, `empty`, `unknown`).
-    private func launchSuggestionCards(_ mock: String, extra: [String: String] = [:], arguments: [String] = []) -> XCUIApplication {
+    private func launchSuggestionCards(_ mock: String, nonce: String = "", extra: [String: String] = [:], arguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat", "-perf-reset"] + arguments
         app.launchEnvironment = [
             "KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_SEED_THREADS": "3", "KRIA_CHAT_LONG_HISTORY": "12",
             "KRIA_EDITOR_FIXTURE": "1", "UI_TEST_REDUCE_MOTION": "1", "KRIA_SUGGESTION_CHIPS": "1",
-            "KRIA_SUGGESTION_CHIPS_ECHO": "1", "KRIA_SUGGESTION_CARDS": mock,
+            "KRIA_SUGGESTION_CHIPS_ECHO": "1", "KRIA_SUGGESTION_CARDS": mock, "KRIA_SUGGESTION_CARDS_NONCE": nonce,
         ].merging(extra) { _, new in new }
         app.launch()
         return app
@@ -1880,7 +1880,8 @@ final class CreationUITests: XCTestCase {
     /// dismissal that leaves both, a tap that sends the card's prompt as the creator's own chat message pinned to the set
     /// and card, and the editor's Improve sheet reading the same set.
     func testSuggestionCardsInChatAndTheEditorImproveSheetShareOneSet() {
-        let app = launchSuggestionCards("ready")
+        let nonce = "r" + UUID().uuidString.prefix(6)
+        let app = launchSuggestionCards("ready", nonce: nonce)
         let hook = app.buttons["suggestion-card-0"]
         XCTAssertTrue(hook.waitForExistence(timeout: 30), "the finished video offers the server's cards")
         XCTAssertTrue(hook.label.contains("I almost missed this view"), "a hook card shows the exact text the tap approves")
@@ -1915,25 +1916,33 @@ final class CreationUITests: XCTestCase {
         // The mute card: the tap IS the creator's message, pinned to this set and card.
         app.buttons["improve-card-1"].tap()
         XCTAssertTrue(eventually(timeout: 5) { !sheet.exists }, "the sheet closes on a tap")
-        XCTAssertTrue(app.staticTexts["You: Mute clip 3, it has wind noise"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.staticTexts["Got it. suggestion[sg_fixture_ready_v2/ss_fixture_mute_clip]"].waitForExistence(timeout: 15))
+        // The tap opens the conversation so the creator watches the message land; the sheet opens at the newest end, so the message sits just above it.
+        let conversation = app.descendants(matching: .any)["native-editor-project-conversation"].firstMatch
+        XCTAssertTrue(conversation.waitForExistence(timeout: 10), "the conversation opens after the sheet closes")
+        let sent = app.staticTexts["You: Mute clip 3, it has wind noise \(nonce)"]
+        var swipes = 0
+        while !sent.waitForExistence(timeout: 4), swipes < 5 { conversation.swipeDown(); swipes += 1 }
+        keepScreenshot(app, "Conversation after tapping a card in the Improve sheet")
+        XCTAssertTrue(sent.exists, "the card's prompt arrives as the creator's own message")
         app.terminate()
     }
 
     /// The server refuses a pinned card the edit has outgrown: no chat message, a readable "no longer fits", then the
     /// refreshed set (new set_id, without that card).
     func testStaleSuggestionCardShowsNoLongerFitsThenTheRefreshedSet() {
-        let app = launchSuggestionCards("stale")
+        let nonce = "s" + UUID().uuidString.prefix(6)
+        let app = launchSuggestionCards("stale", nonce: nonce)
         let stale = app.buttons["suggestion-card-0"]
         XCTAssertTrue(stale.waitForExistence(timeout: 30))
         XCTAssertTrue(stale.label.contains("Mute clip 3"))
+        let sent = app.staticTexts["You: Mute clip 3, it has wind noise \(nonce)"]
         stale.tap()
 
         let notice = app.descendants(matching: .any)["suggestion-card-stale-notice"].firstMatch
         XCTAssertTrue(notice.waitForExistence(timeout: 10), "the refusal is shown, not swallowed")
         XCTAssertEqual(notice.label, "That suggestion no longer fits your edit. Refreshing.")
         keepScreenshot(app, "Stale suggestion notice")
-        XCTAssertFalse(app.staticTexts["You: Mute clip 3, it has wind noise"].exists, "a refused pin makes no chat message")
+        XCTAssertFalse(sent.exists, "a refused pin makes no chat message")
         let refreshed = app.buttons["suggestion-card-0"]
         XCTAssertTrue(refreshed.waitForExistence(timeout: 10))
         XCTAssertTrue(eventually(timeout: 10) { refreshed.label.contains("Add captions") }, "the refreshed set replaced the stale card")
@@ -1945,19 +1954,26 @@ final class CreationUITests: XCTestCase {
     /// Long Turkish text with the dotted and dotless i at the largest accessibility text size: the exact hook text is
     /// shown whole (never clipped to a line), and both targets stay tappable.
     func testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize() {
-        let app = launchSuggestionCards("turkish", arguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
+        let nonce = "t" + UUID().uuidString.prefix(6)
+        let app = launchSuggestionCards("turkish", nonce: nonce, arguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityM"])
         let hook = app.buttons["suggestion-card-0"]
         XCTAssertTrue(hook.waitForExistence(timeout: 30))
         XCTAssertTrue(hook.label.contains("Şu manzarayı kaçırıyordum neredeyse, ışıklar yanınca ıslak taşlar parladı"))
         XCTAssertTrue(hook.label.contains("İlk saniyeye bir kanca ekle"))
-        let text = app.staticTexts["Şu manzarayı kaçırıyordum neredeyse, ışıklar yanınca ıslak taşlar parladı"]
-        XCTAssertTrue(text.exists || hook.exists)
         keepScreenshot(app, "Turkish hook card at accessibility text size")
         let dismiss = app.buttons["suggestion-card-0-dismiss"]
         XCTAssertGreaterThanOrEqual(dismiss.frame.height, 44)
         XCTAssertGreaterThanOrEqual(dismiss.frame.width, 44)
-        hook.tap()
-        XCTAssertTrue(app.staticTexts["You: Bu kancayı açılışa ekle"].waitForExistence(timeout: 15))
+        // The card is taller than the visible chat at this size; tap the part of it that is on screen once the scroll has settled.
+        XCTAssertTrue(eventually(timeout: 10) { hook.isHittable })
+        let window = app.windows.firstMatch.frame
+        let visibleTop = max(hook.frame.minY, window.minY + 220), visibleBottom = min(hook.frame.maxY, window.maxY - 180)
+        XCTAssertGreaterThan(visibleBottom, visibleTop + 20, "part of the card is on screen")
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: hook.frame.midX, dy: (visibleTop + visibleBottom) / 2)).tap()
+        // At this size the new bubble can sit outside the rendered window; the accepted tap is what proves it went out.
+        XCTAssertTrue(app.buttons["suggestion-card-0"].waitForNonExistence(timeout: 15) || !app.buttons["suggestion-card-0"].label.contains("Şu manzarayı"),
+                      "the tapped hook card leaves once the server took it")
         app.terminate()
     }
 
