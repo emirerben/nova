@@ -100,11 +100,11 @@ final class SuggestionChipsTests: XCTestCase {
         {"state":"ready","status":"ok","chips":[
          {"id":"a","label":"Add captions","message":"Add captions","rank":1,"requires_protocol":null},
          {"id":"b","label":"Bend the title","message":"Bend the title","rank":2,"requires_protocol":9},
-         {"id":"c","label":"Newer thing","message":"Do the newer thing","rank":3,"requires_protocol":36}]}
+         {"id":"c","label":"Newer thing","message":"Do the newer thing","rank":3,"requires_protocol":39}]}
         """)
-        XCTAssertEqual(set.chips(forState: "ready").map(\.id), ["a", "b"], "Protocol 36 is above this app")
+        XCTAssertEqual(set.chips(forState: "ready").map(\.id), ["a", "b"], "Protocol 39 is above this app")
         XCTAssertEqual(set.chips(forState: "ready", appProtocol: 8).map(\.id), ["a"])
-        XCTAssertEqual(set.chips(forState: "ready", appProtocol: 36).map(\.id), ["a", "b", "c"])
+        XCTAssertEqual(set.chips(forState: "ready", appProtocol: 39).map(\.id), ["a", "b", "c"])
         XCTAssertEqual(KriaClientProtocolContract.version, 38, "Update this fixture when the app's protocol moves")
     }
 
