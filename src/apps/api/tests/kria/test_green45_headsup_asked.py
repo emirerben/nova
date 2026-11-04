@@ -80,3 +80,19 @@ def test_the_card_chips_do_not_claim_an_unasked_pace_the_route_ignores(language:
         except TypeError:  # before the fix the chips know no route: judge what they say
             chips = _strategy_changes(arguments)
     assert not any("pacing" in c.casefold() or "tempo" in c.casefold() for c in chips), chips
+
+
+def test_switch_off_brings_back_the_four_lines_and_the_chip(monkeypatch) -> None:
+    """5: off is byte-identical to before (the lines the Green 4 card showed)."""
+    from app.config import settings
+    from app.tasks.kria_runtime import _strategy_changes
+
+    monkeypatch.setattr(settings, "kria_headsup_asked_only_enabled", False)
+    case = FIXTURE["green4"]
+    disclosures = card_disclosures(_requirements(case), case["strategy"], route=TALKING)
+    assert PLANNER_ONLY <= {d.subject for d in disclosures}
+    arguments = SimpleNamespace(
+        summary=None, strategy=SimpleNamespace(pacing="balanced", edit_format="subtitled")
+    )
+    with reply_language_for("en"):
+        assert _strategy_changes(arguments, route=TALKING) == _strategy_changes(arguments)
