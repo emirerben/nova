@@ -125,7 +125,7 @@ from app.kria.narration_notes import (
 )
 from app.kria.order_replacement import OrderReplacementProof
 from app.kria.paid_call_scope import paid_call_request_id
-from app.kria.reply_language import current_reply_language, say
+from app.kria.reply_language import current_reply_language, is_client_stock_message, say
 from app.kria.strategy_policy import (
     RefusedStrategy,
     check_strategy_for_runtime_v2,
@@ -2686,6 +2686,65 @@ async def _unrecorded_creator_lines(
     return rows
 
 
+async def _steered_away_lines(db: AsyncSession, *, thread_id: uuid.UUID) -> list[str]:
+    """Steer now: the creator's messages whose turns were stopped for the one being planned.
+
+    Follows the chain (A stopped for B, B stopped for C: planning C reads A and B), oldest
+    first. A stock sentence the app sends on the creator's behalf (the "Suggest an edit."
+    chip) carries no creator words and is left out. Empty outside a worker-planned turn.
+    """
+    through = answering_through_sequence.get()
+    if through is None:
+        return []
+    rows = (
+        await db.execute(
+            select(
+                CreationThreadEvent.sequence,
+                CreationThreadEvent.event_type,
+                CreationThreadEvent.content,
+                CreationThreadEvent.payload,
+            )
+            .where(
+                CreationThreadEvent.thread_id == thread_id,
+                or_(
+                    # The Steer that handed over to this message comes after it.
+                    CreationThreadEvent.event_type == "turn_cancelled",
+                    (CreationThreadEvent.role == "user")
+                    & (CreationThreadEvent.event_type == "user_message")
+                    & (CreationThreadEvent.sequence <= through),
+                ),
+            )
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    messages: dict[str, tuple[int, str]] = {}
+    steered_to: dict[str, str] = {}
+    current: str | None = None
+    for sequence, event_type, content, payload in rows:
+        payload = payload if isinstance(payload, dict) else {}
+        turn_id = str(payload.get("turn_id") or "")
+        if event_type == "turn_cancelled":
+            if payload.get("steered_to_turn_id"):
+                steered_to[turn_id] = str(payload["steered_to_turn_id"])
+            continue
+        if sequence == through:
+            current = turn_id
+        if turn_id and isinstance(content, str) and not is_duplicate_answer(payload):
+            messages[turn_id] = (sequence, content)
+    if not current:
+        return []
+    chain: set[str] = set()
+    frontier = {current}
+    while frontier:
+        frontier = {stopped for stopped, to in steered_to.items() if to in frontier} - chain
+        chain |= frontier
+    return [
+        text
+        for _sequence, text in sorted(messages[turn] for turn in chain if turn in messages)
+        if text.strip() and not is_client_stock_message(text)
+    ]
+
+
 async def _load_creator_inputs(
     db: AsyncSession,
     *,
@@ -2764,7 +2823,19 @@ async def _load_creator_inputs(
     delegation_read_ids: tuple[str, ...] = ()
     if brief_on:
         extra["brief_enabled"] = True
-        context = brief_context(prior_brief, latest_message=user_message, max_batches=3)
+        # Steer now: the creator's own messages whose turns were stopped for this one are
+        # read with it, so their asks are not lost once a brief exists (with no brief the
+        # KRI-814 branch below already reads every unrecorded line).
+        steered = (
+            await _steered_away_lines(db, thread_id=thread_id)
+            if settings.steer_now_for(creator_id)
+            else []
+        )
+        context = brief_context(
+            prior_brief,
+            latest_message="\n".join([*steered, user_message]) if steered else user_message,
+            max_batches=3,
+        )
         batches = context.batches
         if batches:
             extra["creator_request"] = batches[0].text

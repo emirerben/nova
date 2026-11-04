@@ -225,6 +225,21 @@ final class CreationChatFixture: @unchecked Sendable {
     Checking which moment of the clip the title should land on.
     """
     private let approvalID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    /// `KRIA_CHAT_STEER_NOW` (Steer now): a message sent while Kria works on a turn waits behind it, like the server's
+    /// one queue slot (`runtime.submit_turn`), and `POST …/turns/{id}/cancel {"steer": true}` hands over to it. Modes:
+    /// `planning` (the first turn stays planning), `card` (its card is up), `rendering` (its approved video is being made),
+    /// `stale` (the first Steer finds the revision moved), `refused` (the Steer lands after the video started).
+    /// `KRIA_CHAT_STEER_NOW_CAP=0` is a server with the switch off.
+    private var steerMode: String? { ProcessInfo.processInfo.environment["KRIA_CHAT_STEER_NOW"] }
+    private var steerSwitchOn: Bool { steerMode != nil && ProcessInfo.processInfo.environment["KRIA_CHAT_STEER_NOW_CAP"] != "0" }
+    private var steerActive: [String: String] = [:]
+    private var steerWaiting: [String: String] = [:]
+    private var steerAccepted: [String: String] = [:]
+    private var steerPromotion: [String: Int] = [:]
+    private var steerStaleServed = false
+    private let steerApprovalID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    static let steerFirstSummary = "Open on the laugh and keep the pacing quick."
+    static let steerTypedSummary = "Your request: you small at the bottom right, white captions in the middle, no music."
     static var researchPreviewFixture: [String: Any] { [
         "version": 1,
         "retrieved_at": "2026-10-25T09:00:00Z",
@@ -326,6 +341,7 @@ final class CreationChatFixture: @unchecked Sendable {
             if ProcessInfo.processInfo.arguments.contains("-camera-roll-surface-fixture") { capabilities["media_collections"] = true }
             // `KRIA_SUGGESTION_CHIPS=1` (KRI-756): the server offers footage-aware suggestion chips. Unset = an old server.
             if ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS"] == "1" { capabilities["suggestion_chips"] = true }
+            if steerSwitchOn { capabilities["steer_now"] = true }
             // `KRIA_CHAT_PLAN_BLOCKS_VERSION=2`: the server speaks live-plan contract v2 (structured payloads,
             // 8 sections including post_caption, Review entry points). Absent = an older feed-only server.
             if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS"] == "1",
@@ -698,6 +714,46 @@ final class CreationChatFixture: @unchecked Sendable {
             thread["events"] = events; thread["revision"] = revision; threads[id] = thread
             return response(["turn_id": turn, "thread_revision": revision, "status": "cancelled", "approval_ids": [String]()])
         }
+        if parts.last == "cancel", parts.count == 5, parts[2] == "turns", steerMode != nil {
+            // Steer now, as `runtime.cancel_turn(steer=True)` answers it.
+            func problem(_ status: Int, _ code: String, _ message: String) -> (Int, Data) {
+                response(["problem": ["code": code, "message": message, "recovery": "refresh_replan"]], status: status)
+            }
+            guard steerSwitchOn else { return problem(404, "steer_now_unavailable", "Steer now is unavailable.") }
+            if steerMode == "refused" {
+                return problem(409, "turn_not_cancellable", "Your video is already being made.")
+            }
+            if steerMode == "stale", !steerStaleServed {
+                steerStaleServed = true
+                append("status_update", role: "system", payload: ["note": "a worker event moved the revision"])
+                thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+                return problem(409, "thread_revision_stale", "The project changed before cancellation.")
+            }
+            if (body["expected_thread_revision"] as? Int) != revision {
+                return problem(409, "thread_revision_stale", "The project changed before cancellation.")
+            }
+            let stopped = parts[3]
+            guard body["steer"] as? Bool == true, steerActive[id]?.lowercased() == stopped.lowercased(),
+                  let waiting = steerWaiting[id] else {
+                return problem(409, "nothing_to_steer_to", "No message is waiting behind this one.")
+            }
+            let cardUp = events.contains {
+                $0["event_type"] as? String == "approval_requested" && ($0["payload"] as? [String: Any])?["turn_id"] as? String == stopped
+            }
+            if cardUp { append("approval_cancelled", role: "system", payload: ["approval_id": approvalID, "turn_id": stopped]) }
+            append("turn_cancelled", role: "system", payload: ["turn_id": stopped, "approval_ids": cardUp ? [approvalID] : [String](),
+                                                              "steered_to_turn_id": waiting])
+            let turkish = state["reply_language"] as? String == "tr"
+            append("status_update", text: turkish ? "Durdurdum. Bunun yerine yeni mesajın üzerinde çalışıyorum."
+                                                  : "Stopped. Working on your newer message instead.",
+                   payload: ["turn_id": stopped])
+            steerActive[id] = waiting
+            steerWaiting[id] = nil
+            steerPromotion[id] = 0
+            thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+            return response(["turn_id": stopped, "thread_revision": revision, "status": "cancelled",
+                             "approval_ids": cardUp ? [approvalID] : [String]()])
+        }
         if parts.last == "actions" {
             let action = body["action"] as? String ?? ""
             let payload = body["payload"] as? [String: Any] ?? [:]
@@ -879,8 +935,34 @@ final class CreationChatFixture: @unchecked Sendable {
             // KRI-756: like the server, a stored user message keeps the chip tap it carried. `KRIA_SUGGESTION_CHIPS_ECHO=1`
             // answers with the received tap so the UI test can pin the wire shape (and that a plain send carries none).
             if let tap = body["suggestion"] as? [String: Any] { userPayload["suggestion"] = tap }
+            if runtime == 2, steerMode != nil, body["scope"] == nil {
+                // The server's one queue slot: a message sent while a turn runs waits behind it; a third is refused.
+                userPayload["turn_id"] = turnID
+                if let active = steerActive[id] {
+                    if steerWaiting[id] != nil {
+                        return response(["problem": ["code": "queued_successor_exists",
+                                                     "message": "A follow-up is already waiting for the current turn."]], status: 409)
+                    }
+                    userPayload["turn_status"] = "queued"
+                    if steerSwitchOn { userPayload["queued_behind_turn_id"] = active }
+                    steerWaiting[id] = turnID
+                    steerAccepted[id] = "queued"
+                } else {
+                    userPayload["turn_status"] = "pending"
+                    steerActive[id] = turnID
+                    steerAccepted[id] = "pending"
+                }
+                if let language = ProcessInfo.processInfo.environment["KRIA_CHAT_REPLY_LANGUAGE"] { state["reply_language"] = language }
+            }
             append("user_message", role: "user", text: body["message"] as? String, payload: userPayload, clientEventID: turnID)
-            if let scope = body["scope"] as? [String] {
+            if runtime == 2, let mode = steerMode, body["scope"] == nil {
+                // The first turn's card is up at once, except while it is held planning.
+                if steerAccepted[id] == "pending", !["planning", "stale"].contains(mode) {
+                    append("assistant_response", text: "Your draft is ready for review.", payload: ["turn_id": turnID])
+                    append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
+                    append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
+                }
+            } else if let scope = body["scope"] as? [String] {
                 review.scopedTurn(id: id, initial: reviewInitialBlocks, scope: scope, edits: body["manual_edits"] as? [[String: Any]] ?? [], turnID: turnID)
                 append("assistant_response", text: "Your draft is ready for review.", payload: ["turn_id": turnID, "turn_value": "response"])
                 append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
@@ -1106,6 +1188,31 @@ final class CreationChatFixture: @unchecked Sendable {
                     "plan_hash": "fixture-plan-\(version)"
                 ])
             }
+        } else if parts.contains("approvals"), steerMode != nil {
+            // Steer now: the card names its own approval (the first turn's, or the waiting message's after a Steer).
+            let approvalKey = parts.count >= 4 ? parts[3] : approvalID
+            let requested = events.last(where: {
+                $0["event_type"] as? String == "approval_requested"
+                    && (($0["payload"] as? [String: Any])?["approval_id"] as? String)?.lowercased() == approvalKey.lowercased()
+            })?["payload"] as? [String: Any]
+            let turnID = requested?["turn_id"] as? String ?? id
+            if parts.last == "approve" {
+                // Approving starts the video and holds it there: the waiting message runs after it.
+                append("approval_approved", payload: ["approval_id": approvalKey, "turn_id": turnID, "render_dispatched": false])
+                append("render_queued", role: "system", payload: ["turn_id": turnID, "job_id": id])
+                thread["active_job_id"] = id
+                thread["job"] = ["id": id, "status": "processing", "variants": []]
+                thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+                return response(["approval_id": approvalKey, "thread_id": id, "status": "approved", "thread_revision": revision])
+            }
+            let cancelled = events.contains {
+                $0["event_type"] as? String == "approval_cancelled"
+                    && (($0["payload"] as? [String: Any])?["approval_id"] as? String)?.lowercased() == approvalKey.lowercased()
+            }
+            let summary = approvalKey.lowercased() == steerApprovalID ? Self.steerTypedSummary : Self.steerFirstSummary
+            return response(["approval_id": approvalKey, "turn_id": turnID, "draft_id": id, "draft_revision": 1,
+                             "status": cancelled ? "cancelled" : "pending", "consequence_summary": summary,
+                             "expires_at": "2099-09-10T10:00:00Z", "approval_fingerprint": String(repeating: "a", count: 64)])
         } else if parts.contains("approvals") {
             if parts.last == "approve", reviewEnabled, review.hasPending(id) {
                 // The creator tapped Update video / Undo: the pending review draft starts a NEW job.
@@ -1213,6 +1320,15 @@ final class CreationChatFixture: @unchecked Sendable {
                 editorTurnTicks[id] = nil
             } else { editorTurnTicks[id] = tick + 1 }
         }
+        if parts.last == "delta", let tick = steerPromotion[id], let promoted = steerActive[id] {
+            // The promoted message plans for a few polls (the Thinking row), then its own card arrives.
+            if tick >= 3 {
+                append("assistant_response", text: "Your draft is ready for review.", payload: ["turn_id": promoted])
+                append("draft_applied", payload: ["turn_id": promoted, "draft_id": id])
+                append("approval_requested", payload: ["approval_id": steerApprovalID, "turn_id": promoted])
+                steerPromotion[id] = nil
+            } else { steerPromotion[id] = tick + 1 }
+        }
         thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
         if reviewEnabled, parts.count == 3, parts[2] == "plan" {
             // First render still deciding = planning; once the staged feed has finished, the plan is ready to review.
@@ -1233,6 +1349,9 @@ final class CreationChatFixture: @unchecked Sendable {
             // Like the server (`runtime.py`), the accepted turn id is the one stamped on that turn's events
             // (the client event id), so `ChatThinkingSettlement` can match the reply to the wait.
             let acceptedTurnID = editorTurnIDs[id] ?? (body["client_event_id"] as? String ?? id)
+            if steerMode != nil, let accepted = steerAccepted.removeValue(forKey: id) {
+                return response(["turn_id": acceptedTurnID, "thread_revision": revision, "status": accepted], status: 202)
+            }
             return response(["turn_id": acceptedTurnID, "thread_revision": revision, "status": "queued"], status: 202)
         }
         if parts.last == "approve" { return response(["approval_id": approvalID, "thread_id": id, "status": "approved", "thread_revision": revision]) }

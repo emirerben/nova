@@ -240,6 +240,9 @@ class TurnAccepted(BaseModel):
 
 class TurnCancelBody(_StrictBody):
     expected_thread_revision: int = Field(ge=0)
+    # Steer now: stop this running turn so the message waiting behind it runs now
+    # (docs/pipelines/steer-now.md). Default false = the plain cancel, unchanged.
+    steer: bool = False
 
 
 class RenderRetryBody(_StrictBody):

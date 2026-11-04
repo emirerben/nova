@@ -4445,6 +4445,11 @@
           "minimum": 0,
           "title": "Expected Thread Revision",
           "type": "integer"
+        },
+        "steer": {
+          "default": false,
+          "title": "Steer",
+          "type": "boolean"
         }
       },
       "required": [
