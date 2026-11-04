@@ -107,9 +107,12 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         }
         if let background = speakerBackground {
             try background.validate()
-            guard assetManifest?.assets.contains(where: {
-                if case .visual(_, _, let kind) = $0.source { $0.id == background.assetID && kind == background.mediaKind } else { false }
-            }) == true else { throw RecipeError.missingAssetReference }
+            // KRI-1173: a solid-colour fill has no manifest asset; its windows (media only) are still checked below.
+            if let fillKind = background.visualMediaKind {
+                guard assetManifest?.assets.contains(where: {
+                    if case .visual(_, _, let kind) = $0.source { $0.id == background.assetID && kind == fillKind } else { false }
+                }) == true else { throw RecipeError.missingAssetReference }
+            }
             for window in background.windows ?? [] {
                 guard assetManifest?.assets.contains(where: {
                     if case .visual(_, _, let kind) = $0.source { $0.id == window.assetID && kind == window.mediaKind } else { false }
@@ -224,6 +227,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if !cameraPulses.isEmpty { result.insert(.cameraEffects) }
         if !drawingLayers.isEmpty { result.insert(.freehandDrawing) }
         if speakerBackground != nil { result.insert(.speakerBackground) }
+        if speakerBackground?.mediaKind == .color { result.insert(.speakerBackgroundColor) }
         if speakerBackground?.windows != nil || speakerBackground?.speakerFrame != nil { result.insert(.speakerBackgroundWindows) }
         if textLayers.contains(where: { ($0.bend ?? 0) != 0 }) { result.insert(.textBend) }
         if textLayers.contains(where: { $0.karaoke?.singleWord == true }) { result.insert(.singleWordText) }
@@ -534,7 +538,7 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
          soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, singleWordText, freezeFrame,
          behindSubject, speakerBackground, clipTilt, clipBackdropMedia,
-         speakerBackgroundWindows
+         speakerBackgroundWindows, speakerBackgroundColor
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }

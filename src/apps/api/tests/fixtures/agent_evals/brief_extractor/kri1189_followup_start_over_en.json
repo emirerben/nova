@@ -1,0 +1,32 @@
+{
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-11-03-v52",
+  "input": {
+    "creator_request": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [style/global] Make it a talking video with small white captions in the middle.\n- [r2] [audio/global] No music.",
+    "user_message": "Start over and make the whole video again from scratch.",
+    "conversation": [
+      {
+        "role": "user",
+        "content": "Make it a talking video with small white captions in the middle. No music."
+      },
+      {
+        "role": "assistant",
+        "content": "Your video is ready."
+      },
+      {
+        "role": "user",
+        "content": "Start over and make the whole video again from scratch."
+      }
+    ],
+    "require_request_scope": true
+  },
+  "raw_text": "{\"brief_updates\": [], \"request_scope\": \"rebuild\", \"starts_fresh\": true}",
+  "output": null,
+  "meta": {
+    "source": "hand_authored_golden",
+    "note": "KRI-1189 brief-model check (follow-up on a rendered edit). Real ask: parity pair redo_from_scratch (EN) as a follow-up. Hand-authored golden answer; the paid live run measures the model.",
+    "restart_brief": {
+      "cut_restarts": false
+    }
+  }
+}

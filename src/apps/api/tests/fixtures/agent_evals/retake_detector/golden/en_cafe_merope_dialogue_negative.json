@@ -1,0 +1,56 @@
+{
+  "agent": "nova.audio.retake_detector",
+  "prompt_version": "2",
+  "input": {
+    "words": [
+      {"i": 0, "text": "Merope,", "start_s": 39.98, "end_s": 40.54},
+      {"i": 1, "text": "it's", "start_s": 40.54, "end_s": 40.82},
+      {"i": 2, "text": "a", "start_s": 40.82, "end_s": 40.89},
+      {"i": 3, "text": "Colombian", "start_s": 40.89, "end_s": 41.53},
+      {"i": 4, "text": "coffee", "start_s": 41.53, "end_s": 41.88},
+      {"i": 5, "text": "and", "start_s": 41.88, "end_s": 42.2},
+      {"i": 6, "text": "restaurant,", "start_s": 42.2, "end_s": 43.0},
+      {"i": 7, "text": "and", "start_s": 43.0, "end_s": 43.1},
+      {"i": 8, "text": "Merope", "start_s": 43.1, "end_s": 43.66},
+      {"i": 9, "text": "means", "start_s": 43.66, "end_s": 44.3},
+      {"i": 10, "text": "\"god", "start_s": 44.3, "end_s": 44.77},
+      {"i": 11, "text": "of", "start_s": 44.77, "end_s": 45.05},
+      {"i": 12, "text": "honey\".", "start_s": 45.05, "end_s": 45.66},
+      {"i": 13, "text": "Yeah,", "start_s": 45.66, "end_s": 45.9},
+      {"i": 14, "text": "we", "start_s": 45.9, "end_s": 46.06},
+      {"i": 15, "text": "definitely", "start_s": 46.06, "end_s": 46.38},
+      {"i": 16, "text": "recommend", "start_s": 46.38, "end_s": 46.76},
+      {"i": 17, "text": "coming", "start_s": 46.76, "end_s": 46.98},
+      {"i": 18, "text": "to", "start_s": 46.98, "end_s": 47.06},
+      {"i": 19, "text": "Merope,", "start_s": 47.06, "end_s": 47.38},
+      {"i": 20, "text": "right?", "start_s": 47.38, "end_s": 47.74},
+      {"i": 21, "text": "Yeah,", "start_s": 47.74, "end_s": 48.14},
+      {"i": 22, "text": "come", "start_s": 48.14, "end_s": 48.29},
+      {"i": 23, "text": "back", "start_s": 48.29, "end_s": 48.51},
+      {"i": 24, "text": "please,", "start_s": 48.51, "end_s": 48.96},
+      {"i": 25, "text": "I'm", "start_s": 48.96, "end_s": 49.12},
+      {"i": 26, "text": "gonna", "start_s": 49.12, "end_s": 49.4},
+      {"i": 27, "text": "be", "start_s": 49.4, "end_s": 49.51},
+      {"i": 28, "text": "here", "start_s": 49.51, "end_s": 49.64},
+      {"i": 29, "text": "all", "start_s": 49.64, "end_s": 49.9},
+      {"i": 30, "text": "week.", "start_s": 49.9, "end_s": 50.38}
+    ],
+    "language": "en"
+  },
+  "raw_text": "{\"retakes\": []}",
+  "output": {
+    "retakes": []
+  },
+  "meta": {
+    "source": "recorded_words_repo_fixture",
+    "source_fixture": "kri790_merope_t1_take.json",
+    "source_json_path": [
+      "words"
+    ],
+    "source_slice": [87, 118],
+    "case": "Clean NEGATIVE (en), 31 recorded words (contiguous slice 87-117 of 156 in the source; indices re-based to 0, times kept on the source timeline). Source: KRI-790 cafe T1 take (run transcript + local whisper.cpp). Why no restart: two-speaker chat about the cafe; the name 'Merope' recurs and 'Yeah' answers the other speaker, but no sentence is abandoned or re-delivered. Starts after the interviewer's half question 'how are you gonna...' (word 86) and stops before the repeated thank-yous.",
+    "expect_empty": true,
+    "language": "en",
+    "raw_text_origin": "hand_authored_expected_answer (NOT a live model capture)"
+  }
+}

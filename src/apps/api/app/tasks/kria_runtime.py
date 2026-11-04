@@ -75,6 +75,13 @@ from app.kria.editor_receipts import (
     reply_from_diff,
     reply_from_editor_receipts,
 )
+from app.kria.intent_review_repair import (
+    INTENT_REPAIR_EVENT,
+    IntentRepairRefused,
+    applied_intent_repair_receipt,
+    guard_intent_repair_head,
+    verify_intent_repair,
+)
 from app.kria.language import is_paraphrase_only
 from app.kria.order_replacement_receipts import compiled_order_preflight_sync
 from app.kria.paid_call_scope import turn_run_epoch
@@ -435,6 +442,12 @@ def _protected_regions_sync(db, *, thread_id: uuid.UUID, through_sequence: int) 
 @dataclass(frozen=True)
 class _ClaimsExhausted:
     successor_turn_id: str | None = None
+
+
+def _refuse_repair_reply(planned: PlannedKriaTurn) -> None:
+    """A system-staged repair is never answered in chat: it is refused and the reviewer decides."""
+    if planned.intent_repair is not None:
+        raise IntentRepairRefused("protected")
 
 
 @dataclass(frozen=True)
@@ -1712,6 +1725,7 @@ def _complete_draft_turn(
             resolution=planned.creative_copy_resolution,
         )
         if copy_problem:
+            _refuse_repair_reply(planned)
             log.info("kria_creative_copy_blocked", phase="draft", thread_id=str(thread.id))
             db.rollback()
             completed = _complete_response_turn(
@@ -1816,6 +1830,23 @@ def _complete_draft_turn(
                 projected=editor_base.projected,
                 brief=load_latest_brief_sync(db, thread.id),
             )
+            if planned.intent_repair is not None:
+                guard_intent_repair_head(
+                    planned.intent_repair,
+                    head=head,
+                    variant=variant,
+                    pending_approvals=int(
+                        db.scalar(
+                            select(func.count())
+                            .select_from(CreatorAgentApproval)
+                            .where(
+                                CreatorAgentApproval.thread_id == thread.id,
+                                CreatorAgentApproval.status == "pending",
+                            )
+                        )
+                        or 0
+                    ),
+                )
             prior_payload = editor_base.prior_payload
             # The session pointer goes stale after an editor Save; stamp the draft
             # with the variant's real generation so it never self-perpetuates.
@@ -1851,6 +1882,9 @@ def _complete_draft_turn(
             )
             compiled = compile_editor_ops(
                 job, editor_base.projected, arguments.operations, preserve_text=preserve_text
+            )
+            verify_intent_repair(
+                planned.intent_repair, before=compiled.before, payload=compiled.payload
             )
             if timing_only_operations(arguments.operations) or any(
                 update.facts.get("editor_timing_only") is True for update in planned.brief_updates
@@ -2783,6 +2817,7 @@ def _complete_draft_turn(
             render_requested=render_intent is not None,
         )
         if mark_gate is not None:
+            _refuse_repair_reply(planned)
             # KRI-901: "No text on the plate" with no mark on the plate: the render could only
             # report `no_selection` afterwards, so ask for the mark before approval. Same
             # rollback-then-respond pattern as the choice gate below (the old draft stays the
@@ -2830,6 +2865,7 @@ def _complete_draft_turn(
             # and the specific choice in the normal response transaction. A limit
             # of the chosen format (a Talking edit's length, speech cleanup chosen
             # at approval) is reported in the receipt instead and never asks.
+            _refuse_repair_reply(planned)
             db.rollback()
             draft_state = (
                 say(en="Your current draft is unchanged.", tr="Mevcut taslağın değişmedi.")
@@ -2987,6 +3023,7 @@ def _complete_draft_turn(
                 allow_choices=settings.kria_choice_questions_enabled,
             )
             if blocked is not None:
+                _refuse_repair_reply(planned)
                 blocked_plan, blocked_reason = blocked
                 # KRI-1068: record the clip a reply is stuck on, so "skip that" next turn
                 # drops it; never send the same stuck reply twice in a row.
@@ -3213,6 +3250,7 @@ def _complete_draft_turn(
             **(draft_execution.result or {}),
             "draft_id": str(draft.id),
             "draft_revision": draft.draft_revision,
+            **applied_intent_repair_receipt(planned.intent_repair),
         }
 
         from app.kria.editor_repair import applied_repair_receipt
@@ -3681,6 +3719,7 @@ def _append_sync_event(
     event_type: str,
     content: str | None,
     payload: dict[str, Any],
+    client_event_id: str | None = None,
 ) -> CreationThreadEvent:
     sequence = (
         int(
@@ -3701,6 +3740,7 @@ def _append_sync_event(
         event_type=event_type,
         content=content,
         payload=payload,
+        client_event_id=client_event_id,
     )
     db.add(event)
     db.flush()
@@ -3905,6 +3945,22 @@ def _claim(
             turn.completed_at = datetime.now(UTC)
             db.commit()
             return None
+        if (
+            db.scalar(
+                select(CreationThreadEvent.event_type).where(
+                    CreationThreadEvent.id == turn.source_event_id
+                )
+            )
+            == INTENT_REPAIR_EVENT
+        ):
+            # The reviewer stages and completes its own turn; the planner never reads it.
+            turn.status = "cancelled"
+            turn.completed_at = datetime.now(UTC)
+            successor = _lock_queued_successor(db, turn.thread_id)
+            if successor is not None:
+                successor.status = "pending"
+            db.commit()
+            return _ClaimsExhausted(str(successor.id) if successor is not None else None)
         if expired_read_lease:
             # A redelivered task reached the lapsed lease before the reconciler
             # reset it; the run that held it ended without a result.
@@ -7390,6 +7446,19 @@ def _source_fingerprints(job: Job) -> dict[str, str]:
     return {media_id: sha for media_id, sha in found.items() if media_id not in conflicted}
 
 
+def _cleanup_note_retake_cut_possible(contract: object) -> bool:
+    """Could this render's speech cleanup have cut a restarted sentence (KRI-1176)?
+
+    Consented cleanup (``required_v1``) detects retakes only when both levers are on; the older
+    auto path needs just ``RETAKE_CUT_ENABLED``. The review note denies a restart cut otherwise.
+    """
+    from app.services.plan_item_media import speech_cleanup_retakes_enabled  # noqa: PLC0415
+
+    if contract == "required_v1":
+        return speech_cleanup_retakes_enabled()
+    return bool(settings.retake_cut_enabled)
+
+
 def _approved_generation_review(
     db: Any,
     thread: CreationThread,
@@ -7410,9 +7479,7 @@ def _approved_generation_review(
     note = speech_cleanup_review_note(
         variant,
         text=text,
-        # Consented cleanup never runs the retake detector; the older auto path does when
-        # its lever is on, so only then must the reply not deny a restart cut.
-        retake_cut_possible=contract != "required_v1" and bool(settings.retake_cut_enabled),
+        retake_cut_possible=_cleanup_note_retake_cut_possible(contract),
     )
     if not note:
         return text, receipts
@@ -7537,6 +7604,14 @@ def _approved_generation_requirements_review(
         )
     # KRI-942: clip sound on/off asks are judged on the recipe the phone renders now.
     facts = _with_clip_sound_toggles(job, variant, facts, brief_binding=raw)
+    # KRI-1189: a restart ask with no retake cut says "didn't find" only where this render's
+    # cleanup could have cut one, read the same way as the finished-render note below.
+    facts = dataclasses.replace(
+        facts,
+        speech_cleanup_retake_possible=_cleanup_note_retake_cut_possible(
+            (job.assembly_plan or {}).get("speech_cleanup_contract")
+        ),
+    )
     if any(req.order_replacement is not None for req in live.values()):
         from app.kria.order_replacement_receipts import with_verified_order_execution
 
@@ -8030,7 +8105,20 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                     },
                 )
                 turn.observed_event_id = review.id
+                review_outbox_id = None
+                if settings.kria_intent_review_enabled:
+                    from app.services.render_review_admission import (
+                        admit_generation_review,
+                        mark_admission_demand,
+                    )
+
+                    mark_admission_demand(execution, job, session)
+                    review_outbox_id = admit_generation_review(db, execution)
                 db.commit()
+                if review_outbox_id is not None:
+                    from app.services.render_review_admission import publish_generation_review
+
+                    publish_generation_review(review_outbox_id)
                 # KRI-756: the render settled ready: word the follow-up suggestion chips for it
                 # (flag-checked, enqueue-only, never raises).
                 from app.services.suggestion_serve import enqueue_for_thread  # noqa: PLC0415

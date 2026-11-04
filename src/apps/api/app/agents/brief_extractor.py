@@ -72,7 +72,16 @@ from app.pipeline.prompt_loader import load_prompt
 # v49 (generated-image grounding): the extractor records "the <generated image> when I say W" as a
 # typed `triggers` ask, and says which videos that does NOT cover (the creator's own footage
 # clips). Extractor-only section; the shared brief section is untouched.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-03-v49"
+# v50 (KRI-1177 / KRI-1164, Green 3): the shared brief section records the creator's caption look
+# (`caption_size`, `caption_position`, `caption_color`, `caption_case`) and "no music" as
+# `audio_intent: no_music`; the speaker's own corner is never a caption position.
+# v52 (KRI-1189, Green 3; v51 is #2088's): the shared brief section records an unquoted restart ask
+# as `cut_restarts: true`, with no transcript words in `cut_lines`.
+# v53 (KRI-1173; v51-v52 are held by #2092 and others): the brief section also records
+# `background_color` on a plain-colour background ask.
+# v54 (KRI-1189 lands after #2088): v52's `cut_restarts` teaching on top of v53. The
+# KRI-1189 replay fixtures keep the `2026-11-03-v52` label they were recorded under.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-04-v54"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")

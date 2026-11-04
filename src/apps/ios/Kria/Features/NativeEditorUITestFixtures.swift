@@ -228,6 +228,8 @@ enum NativeEditorUITestFixtures {
         var value = talkingCaptions
         var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
         caps["speaker_background"] = .object(["editable": .bool(true)])
+        // KRI-1173: the colour gate is open too, so the Background tool offers the Colour section.
+        caps["speaker_background_color"] = .object(["editable": .bool(true)])
         // KRI-1162: `-ui-testing-editor-speaker-background-windows` also opens the timed-background gate and, until a
         // save has been kept (reset forgets it), seeds the lane with a photo fill and two windows (a photo 0-2 s, a video 2.5-5 s).
         let windowsOn = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background-windows")

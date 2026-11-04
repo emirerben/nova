@@ -1501,9 +1501,14 @@
     {
       "id": "kri-721-approval-readiness",
       "needs_native": false,
-      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py tests/kria/test_lev_m1_length_photo_holds_replay.py tests/kria/test_assos_request_to_recipe.py tests/kria/test_route_replays.py tests/kria/test_route_registry_flag_off.py tests/kria/test_route_lines_golden.py tests/kria/test_render_entry_pins.py tests/kria/test_lane_targets_guard.py tests/kria/test_text_animation_ask.py tests/pipeline/test_story_direction.py",
+      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py tests/kria/test_lev_m1_length_photo_holds_replay.py tests/kria/test_assos_request_to_recipe.py tests/kria/test_route_replays.py tests/kria/test_route_registry_flag_off.py tests/kria/test_route_lines_golden.py tests/kria/test_render_entry_pins.py tests/kria/test_lane_targets_guard.py tests/kria/test_text_animation_ask.py tests/pipeline/test_story_direction.py tests/kria/test_green3_pr1_receipts.py tests/tasks/test_green3_caption_look_worker.py tests/agents/test_green3_brief_prompt.py",
       "paths": [
         "src/apps/api/app/kria/approval_readiness.py",
+        "src/apps/api/app/kria/caption_look_ask.py",
+        "src/apps/api/tests/fixtures/green3_9bad2d75_caption_look_no_music.json",
+        "src/apps/api/tests/kria/test_green3_pr1_receipts.py",
+        "src/apps/api/tests/tasks/test_green3_caption_look_worker.py",
+        "src/apps/api/tests/agents/test_green3_brief_prompt.py",
         "src/apps/api/app/kria/route_disclosure.py",
         "src/apps/api/app/kria/route_capabilities/",
         "src/apps/api/app/kria/animation_ask.py",
@@ -1927,7 +1932,7 @@
     {
       "id": "kri-551-consented-retakes",
       "needs_native": true,
-      "api_tests": "tests/agents/test_retake_detector.py tests/services/test_speech_cleanup_preflight.py tests/services/test_speech_cleanup_retakes_consent.py tests/services/test_speech_cleanup_decision.py tests/tasks/test_speech_cleanup_analysis.py tests/routes/test_creation_threads_speech_cleanup.py tests/kria/test_runtime_v2.py tests/kria/test_runtime_speech_cleanup_approval.py tests/kria/test_kri520_receipts.py tests/kria/test_brief_talking_receipts.py tests/kria/test_brief_marathon_receipts.py tests/tasks/test_kri551_cleanup_review_note.py tests/tasks/test_kri978_cleanup_review_seconds.py tests/routes/test_creator_agent.py tests/tasks/test_marathon_render_ready_review.py tests/kria/test_brief_rendered_speech_facts.py tests/kria/test_runtime_talking_first_draft.py tests/kria/test_kri787_merope_t1_runtime_postgres.py",
+      "api_tests": "tests/agents/test_retake_detector.py tests/services/test_speech_cleanup_preflight.py tests/services/test_speech_cleanup_retakes_consent.py tests/services/test_speech_cleanup_decision.py tests/tasks/test_speech_cleanup_analysis.py tests/routes/test_creation_threads_speech_cleanup.py tests/kria/test_runtime_v2.py tests/kria/test_runtime_speech_cleanup_approval.py tests/kria/test_kri520_receipts.py tests/kria/test_brief_talking_receipts.py tests/kria/test_brief_marathon_receipts.py tests/tasks/test_kri551_cleanup_review_note.py tests/tasks/test_kri978_cleanup_review_seconds.py tests/routes/test_creator_agent.py tests/tasks/test_marathon_render_ready_review.py tests/kria/test_brief_rendered_speech_facts.py tests/kria/test_runtime_talking_first_draft.py tests/kria/test_kri787_merope_t1_runtime_postgres.py tests/kria/test_kri1176_restart_cut_receipts.py tests/pipeline/test_kri1176_green3_retake_replay.py tests/evals/test_retake_detector_evals.py tests/kria/test_kri1189_cut_restarts_receipts.py tests/evals/test_brief_extractor_evals.py",
       "xctests": [
         "KriaTests/SpeechCleanupOfferTests/testLegacyStatsWithoutRetakesKeepTheOriginalDisclosure",
         "KriaTests/SpeechCleanupOfferTests/testSummarySentenceNamesRestartedSentencesWhenTheyAreIncludedInTheCount",
@@ -1970,7 +1975,43 @@
         "src/apps/api/tests/tasks/test_marathon_render_ready_review.py",
         "src/apps/api/tests/kria/test_brief_rendered_speech_facts.py",
         "src/apps/api/tests/kria/test_runtime_talking_first_draft.py",
-        "src/apps/api/tests/kria/test_kri787_merope_t1_runtime_postgres.py"
+        "src/apps/api/tests/kria/test_kri787_merope_t1_runtime_postgres.py",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/clean_no_retake_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/empty_transcript_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/en_cafe_intro_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/en_cafe_merope_dialogue_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/en_restart.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/en_scripted_voiceover_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/en_walkin_dialogue_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/es_waiter_sauces_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/es_waiter_sauces_t3_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/green3_s2_restart.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/n3_marathon_restart.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/rhetorical_repetition_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/tr_community_rhetorical_negative.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/tr_restart.json",
+        "src/apps/api/tests/fixtures/agent_evals/retake_detector/golden/tr_talking_intro_negative.json",
+        "src/apps/api/tests/fixtures/kri1176_green3_restart.json",
+        "src/apps/api/tests/kria/test_kri1176_restart_cut_receipts.py",
+        "src/apps/api/tests/pipeline/test_kri1176_green3_retake_replay.py",
+        "src/apps/api/tests/evals/test_retake_detector_evals.py",
+        "src/apps/api/tests/kria/test_kri1189_cut_restarts_receipts.py",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_bastan_basla_tr.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_green3_restart_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_keep_retakes_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_n3_named_restart_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_quoted_restart_cue_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_s1_dead_air_restart_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_start_over_from_scratch_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_start_over_with_a_clip_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_t1_yanlis_basladigim_tr.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_t2_tekrar_aldigim_tr.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri1189_t3_okays_and_restarts_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/brief_extractor/kri1189_followup_cut_restart_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/brief_extractor/kri1189_followup_start_over_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/brief_extractor/kri1189_followup_tekrar_aldigim_tr.json",
+        "src/apps/api/tests/evals/test_brief_extractor_evals.py",
+        "src/apps/api/tests/evals/runners/restart_brief.py"
       ]
     },
     {
@@ -2979,7 +3020,7 @@
     {
       "id": "kri-1162-speaker-background-windows",
       "needs_native": true,
-      "api_tests": "tests/kria/test_speaker_background_windows.py tests/routes/test_speaker_background_windows_editor.py tests/kria/test_brief_checks_speaker_background.py tests/kria/test_speaker_background_chat.py tests/tasks/test_speaker_background_strategy_worker.py tests/routes/test_speaker_background_chat_ops.py tests/kria/test_editor_capability_parity.py tests/evals/test_edit_copilot_evals.py",
+      "api_tests": "tests/kria/test_speaker_background_windows.py tests/routes/test_speaker_background_windows_editor.py tests/kria/test_brief_checks_speaker_background.py tests/kria/test_speaker_background_chat.py tests/tasks/test_speaker_background_strategy_worker.py tests/tasks/test_speaker_background_on_the_word.py tests/routes/test_speaker_background_chat_ops.py tests/kria/test_editor_capability_parity.py tests/evals/test_edit_copilot_evals.py",
       "xctests": [
         "KriaTests/SpeakerBackgroundEditorTests/testTheLaneIsNotAnUnsupportedLaneAndAnUnreadableOneIs",
         "KriaTests/SpeakerBackgroundEditorTests/testTheLaneDecodesAndASnapshotWithoutItIsUntouched",
@@ -3000,6 +3041,8 @@
       ],
       "paths": [
         "src/apps/api/app/services/phone_background_sequence.py",
+        "src/apps/api/tests/tasks/test_speaker_background_on_the_word.py",
+        "src/apps/api/tests/fixtures/green3_9bad2d75_backgrounds_on_word.json",
         "src/apps/api/prompts/edit_copilot_ops/speaker_background_windows.txt",
         "src/apps/api/tests/kria/test_speaker_background_windows.py",
         "src/apps/api/tests/routes/test_speaker_background_windows_editor.py",
@@ -3008,6 +3051,18 @@
         "docs/reviews/speaker-background-windows-failure-modes.md",
         "src/apps/ios/Tests/KriaUITests/BackgroundLaneUITests.swift",
         "src/apps/ios/Kria/Features/NativeBackgroundPanel.swift"
+      ]
+    },
+    {
+      "id": "kri-1173-speaker-background-color",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_speaker_background_color.py tests/routes/test_speaker_background_color_editor.py tests/tasks/test_speaker_background_worker.py tests/kria/test_draft_projects_speaker_background.py tests/kria/test_brief_checks_speaker_background.py tests/kria/test_capability_matrix.py tests/routes/test_editor_save_code_catalog.py",
+      "paths": [
+        "src/apps/api/tests/kria/test_speaker_background_color.py",
+        "src/apps/api/tests/routes/test_speaker_background_color_editor.py",
+        "src/apps/api/tests/kria/test_draft_projects_speaker_background.py",
+        "tests/fixtures/speaker-background-parity/v3.json",
+        "docs/reviews/speaker-background-color-failure-modes.md"
       ]
     },
     {
@@ -3046,11 +3101,66 @@
     {
       "id": "canonical-generation-intent-review",
       "needs_native": false,
-      "api_tests": "tests/kria/test_render_review_context.py tests/kria/test_render_review_context_postgres.py",
+      "api_tests": "tests/services/test_render_review_evidence.py tests/kria/test_render_review_context.py tests/kria/test_render_review_context_postgres.py tests/kria/test_render_review_admission.py tests/kria/test_render_review_admission_postgres.py tests/kria/test_initial_render_review_authority_postgres.py tests/kria/test_initial_render_review_admission_postgres.py",
       "paths": [
         "src/apps/api/app/kria/render_review_context.py",
+        "src/apps/api/app/kria/review_canon.py",
+        "src/apps/api/app/kria/initial_render_review_authority.py",
+        "src/apps/api/app/migrations/versions/0131_generation_reviews.py",
+        "src/apps/api/app/services/render_review_admission.py",
+        "src/apps/api/app/services/render_review_evidence.py",
+        "src/apps/api/app/tasks/render_review.py",
+        "src/apps/api/tests/services/test_render_review_evidence.py",
         "src/apps/api/tests/kria/test_render_review_context.py",
-        "src/apps/api/tests/kria/test_render_review_context_postgres.py"
+        "src/apps/api/tests/kria/test_render_review_context_postgres.py",
+        "src/apps/api/tests/kria/test_render_review_admission.py",
+        "src/apps/api/tests/kria/test_render_review_admission_postgres.py",
+        "src/apps/api/tests/kria/test_initial_render_review_authority_postgres.py",
+        "src/apps/api/tests/kria/test_initial_render_review_admission_postgres.py"
+      ]
+    },
+    {
+      "id": "kria-intent-review",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_intent_review_tier.py tests/services/test_openai_vision_transport.py tests/services/test_ai_cost_control_intent_review.py tests/integration/test_intent_review_lifecycle_postgres.py tests/kria/test_intent_review_disposition.py tests/kria/test_intent_review_catalog_postgres.py tests/integration/test_intent_review_outcome_postgres.py tests/integration/test_intent_review_repair_postgres.py tests/evals/test_intent_review_evals.py tests/kria/test_intent_review_copy.py tests/integration/test_intent_review_posting_postgres.py tests/kria/test_intent_review_qualification.py tests/integration/test_intent_review_qualification_postgres.py",
+      "paths": [
+        "src/apps/api/app/kria/intent_review_tier.py",
+        "src/apps/api/app/agents/_openai_vision.py",
+        "src/apps/api/app/services/bounded_media_review.py",
+        "src/apps/api/app/services/intent_review_flow.py",
+        "src/apps/api/app/services/render_review_admission.py",
+        "src/apps/api/app/services/render_review_evidence.py",
+        "src/apps/api/app/tasks/render_review.py",
+        "src/apps/api/app/migrations/versions/0132_intent_review_lifecycle.py",
+        "src/apps/api/prompts/intent_review.txt",
+        "src/apps/api/app/kria/intent_review_catalog.py",
+        "src/apps/api/app/kria/intent_review_disposition.py",
+        "src/apps/api/app/agents/intent_review.py",
+        "src/apps/api/app/agents/_schemas/intent_review.py",
+        "src/apps/api/app/services/intent_review_prompt.py",
+        "src/apps/api/app/services/intent_review_repair_flow.py",
+        "src/apps/api/app/kria/intent_review_repair.py",
+        "src/apps/api/app/kria/intent_review_copy.py",
+        "src/apps/api/tests/fixtures/agent_evals/intent_review/",
+        "src/apps/api/tests/kria/test_intent_review_tier.py",
+        "src/apps/api/tests/services/test_openai_vision_transport.py",
+        "src/apps/api/tests/services/test_ai_cost_control_intent_review.py",
+        "src/apps/api/tests/integration/test_intent_review_lifecycle_postgres.py",
+        "src/apps/api/tests/evals/rubrics/intent_review.md",
+        "src/apps/api/tests/kria/test_intent_review_disposition.py",
+        "src/apps/api/tests/kria/test_intent_review_catalog_postgres.py",
+        "src/apps/api/tests/integration/test_intent_review_outcome_postgres.py",
+        "src/apps/api/tests/integration/test_intent_review_repair_postgres.py",
+        "src/apps/api/tests/evals/test_intent_review_evals.py",
+        "src/apps/api/app/kria/intent_review_posts.py",
+        "src/apps/api/app/services/intent_review_post.py",
+        "src/apps/api/tests/kria/test_intent_review_copy.py",
+        "src/apps/api/tests/integration/test_intent_review_posting_postgres.py",
+        "src/apps/api/app/kria/intent_review_qualification.py",
+        "src/apps/api/app/cli/qualify_intent_review.py",
+        "src/apps/api/tests/kria/test_intent_review_qualification.py",
+        "src/apps/api/tests/integration/test_intent_review_qualification_postgres.py",
+        "docs/reviews/intent-review/QUALIFICATION.md"
       ]
     }
   ]

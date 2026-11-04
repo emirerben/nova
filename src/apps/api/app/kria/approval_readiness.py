@@ -17,10 +17,17 @@ from pydantic import BaseModel
 
 from app.agents._schemas.creator_agent import CreativeStrategy, ResolvedCreatorManifest
 from app.config import settings
-from app.kria.brief import CreativeBrief
+from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_binding import media_identity, snapshot_media
 from app.kria.brief_checks import (
+    _CLEANUP_AT_APPROVAL,
+    _CLEANUP_IF_OFFERED,
+    _CLEANUP_PLANNED,
+    _NAMED_CUT_AT_RENDER,
+    _RESTART_CUT_AT_APPROVAL,
     _has_checker,
+    _loc,
+    _wants_cleanup,
     _wants_source_sound_kept,
     build_receipts,
     defers_caption_words_to_phone_render,
@@ -112,6 +119,37 @@ async def resolve_readiness_manifest(db, item, strategy):  # noqa: ANN001, ANN20
         runs_guided_voiceover=False,
     )
     return manifest
+
+
+def _cleanup_deferred(req: BriefRequirement, receipt: RequirementReceipt) -> bool:
+    """KRI-1178: a speech-cleanup ask whose only shortfall is what approval and the render do.
+
+    Green 3: the receipt said "If Clean up speech is offered when you approve, choose it to cut
+    the long pauses; I'll cut the line you named out of your take if I find it said once, and
+    tell you after", and the ask landed under "Make it without these" -> "Leaves out". Both
+    halves are done later, by the approval card's "Clean up speech" choice and by the render's
+    own per-line cut: neither is an omission. Readiness cannot know whether the card offers the
+    choice (its facts never say, so its lead is always the "if offered" one); the draft reply's
+    receipt can, and says when it does not (`_CLEANUP_UNAVAILABLE`). Anything else in the reason
+    keeps the hold: cleanup unavailable, a named line that "may still be in your video", a
+    restarted sentence that stays in because retake detection is off, a length the take cannot
+    reach. With detection on, "also cuts a sentence you restarted if it finds one" (KRI-1189) is
+    the render's to do, like a named line.
+    """
+    if receipt.status != "partial" or not receipt.reason or not _wants_cleanup(req):
+        return False
+    deferred = {
+        _loc(reason)
+        for reason in (
+            _CLEANUP_PLANNED,
+            _CLEANUP_AT_APPROVAL,
+            _CLEANUP_IF_OFFERED,
+            _NAMED_CUT_AT_RENDER,
+            # KRI-1189: a restart nobody named, cut by cleanup's retake detection if it finds one.
+            _RESTART_CUT_AT_APPROVAL,
+        )
+    }
+    return all(part in deferred for part in receipt.reason.split("; "))
 
 
 # The sentence the apps send for a media-only send and for the "Let Kria cut the first version"
@@ -614,6 +652,8 @@ def assess_readiness(
             if proven
             else "unsupported"
             if checked and receipt.status == "not_possible"
+            else "unverified"
+            if checked and _cleanup_deferred(req, receipt)
             else "needs_choice"
             if checked
             else "unverified"

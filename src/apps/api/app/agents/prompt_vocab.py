@@ -8,6 +8,7 @@ fails when a prompt or an AI-layer literal hand-lists part of a registered vocab
 import re
 from typing import NamedTuple, get_args
 
+from app.agents._schemas.intent_review import CONFIDENCE_LEVELS, DEFECT_KINDS, VERDICTS
 from app.agents._schemas.text_animation_phases import TEXT_ANIMATION_VOCAB, TextAnimationPhases
 
 
@@ -30,9 +31,16 @@ def _loops() -> PromptVocabulary:
     return PromptVocabulary(members, ", ".join(members))
 
 
+def _plain(members: tuple[str, ...]) -> PromptVocabulary:
+    return PromptVocabulary(members, ", ".join(members))
+
+
 PROMPT_VOCABULARIES: dict[str, PromptVocabulary] = {
     "TEXT_ANIMATION_EDGES": _edges(),
     "TEXT_ANIMATION_LOOPS": _loops(),
+    "INTENT_REVIEW_VERDICTS": _plain(VERDICTS),
+    "INTENT_REVIEW_DEFECT_KINDS": _plain(DEFECT_KINDS),
+    "INTENT_REVIEW_CONFIDENCE": _plain(CONFIDENCE_LEVELS),
 }
 
 _TOKEN = re.compile(r"\{\{([A-Z][A-Z0-9_]*)\}\}")

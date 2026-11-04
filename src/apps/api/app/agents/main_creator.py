@@ -59,6 +59,7 @@ from app.services.creator_capabilities import (
     TalkingCutawayAvailability,
     ending_clip_candidates,
     insert_clip_candidates,
+    speaker_background_color_open,
     speaker_background_open,
     speaker_background_windows_open,
     talking_footage_cutaways,
@@ -209,7 +210,28 @@ log = structlog.get_logger()
 # insert played silent (`keep_audio` false). Only the texts shown while the insert lane is open
 # change; every closed-gate prompt keeps its bytes. No live eval of this routing exists; the
 # fixtures under tests/fixtures/agent_evals/main_creator/kri1151_* are hand-authored.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-03-v112"
+# v114 (KRI-1175, prod "Green 3"): "whichever photo or video I'm talking about" gives every
+# background_media.sequence entry a spoken_phrase from the take's own words (spoken order; one
+# phrase for two visuals of one thing; a visual never talked about is left out and named in
+# summary), so the worker lays them out on the words. Only the windows section changes (shown only
+# with the speaker_background_windows capability); every other prompt keeps its bytes. v113 is used
+# by unmerged branches (PR #2089, KRI-1173).
+# v116 (KRI-1177 / KRI-1164, Green 3, PR #2089; was v113 on its branch, v115 is #2088's): the
+# shared brief section records the creator's caption look (`caption_size`, `caption_position`,
+# `caption_color`, `caption_case`) and "no music" as `audio_intent: no_music`; the speaker's own
+# corner is never a caption position. On top of v114.
+# v117 (KRI-1189, Green 3; v115 is #2088's): the shared brief section records an unquoted "cut the
+# sentence I restarted" / "my retakes" / "tekrar aldığım cümle" as `cut_restarts: true` and never
+# copies the take's words into `cut_lines` (Green 3 r2 did); a named restart stays a cut line and
+# "start over" about the edit or a clip is no restart. On top of v116.
+# v118 (KRI-1173; v117 is held by #2092): a plain colour behind the speaker, on top of v116.
+# `background_media` takes `color` ("#RRGGBB") instead of `media_id`, taught in one extra
+# paragraph only where the manifest advertises `speaker_background_color`; the shared brief
+# section records `background_color` beside `speaker_background` (brief_extractor v53 shares
+# it). Every other creator prompt is byte-identical.
+# v119 (KRI-1189 lands after #2088): v117's `cut_restarts` teaching on top of v118. The
+# KRI-1189 replay fixtures keep the `2026-11-03-v117` label they were recorded under.
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-04-v119"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -658,6 +680,22 @@ A background is only the backdrop: never also use the same photo or video in `re
 this. Say in `summary`, in plain words, that it sits behind them for the whole video.
 """.strip("\n")
 
+# KRI-1173: a plain colour instead of a photo or video. Appended after the paragraph above ONLY
+# when the manifest advertises `speaker_background_color`, so a closed colour gate keeps every
+# prompt byte-identical. The repair (`creator_capabilities.repair_creator_speaker_background`)
+# normalises names and case to `#RRGGBB` and drops anything else with a notice.
+_SPEAKER_BACKGROUND_COLOR_PROMPT_SECTION = """
+PLAIN COLOUR BEHIND THE SPEAKER (iPhone Talking only)
+When the creator wants a single flat colour behind them instead of a photo or video ("a plain
+white background", "make my background green", "arkam düz beyaz olsun"), set `background_media`:
+{"color": "#RRGGBB"} with NO `media_id` and no `source_start_s`: exactly one of `media_id` or
+`color`. Named colours are exact: white #FFFFFF, black #000000, green #00FF00, blue #0000FF, red
+#FF0000, yellow #FFFF00, grey #808080 (beyaz, siyah, yeşil, mavi, kırmızı, sarı, gri). For a hex
+the creator gives, copy it; for any other colour name use the standard hex only when you are
+sure of it, otherwise leave `background_media` out and ask which colour. A colour needs no photo
+or video from `media_context`. Say in `summary`, in plain words, which colour sits behind them.
+""".strip("\n")
+
 # KRI-1162: several backgrounds in time + the speaker small in a corner. Appended after the
 # paragraph above ONLY when the manifest advertises `speaker_background_windows`.
 _SPEAKER_BACKGROUND_WINDOWS_PROMPT_SECTION = """
@@ -668,16 +706,25 @@ photo or video I'm talking about, changing every 3-5 seconds", "her konuştuğum
 dursun"), extend `background_media` with `sequence`: an ordered list of up to 40 objects
 {"media_id": "<exact media_context IMAGE or VIDEO media_id>", "spoken_phrase": "<the words they
 say when this one should appear, in their language, optional>", "hold_s": <seconds, optional>}.
-Use `spoken_phrase` only when the creator says which photo goes with which words ("the beach
-photo when I say beach"); otherwise leave it out and the photos take turns in the order listed.
-Without a stated rhythm they change every 4 seconds; set `cadence_s` (2 to 10) when the creator
-names one ("every 3 seconds", "5 saniyede bir"), and use the midpoint of a range ("3-5 seconds"
-= 4). List each photo or video once unless the creator wants repeats; the list repeats by itself
-until the talk ends. Copy exact `media_id`s from `media_context`, never invent one, never use the
-speaker's own clips. With a `sequence`, `background_media.media_id` is the FILL shown wherever no
-window covers the time: use the first entry's id unless the creator names a different fill.
-`speaker_frame` places the speaker (cut out of their own background) as a small picture over the
-backgrounds: "small_bottom_right", "small_bottom_left", "small_top_right" or "small_top_left"
+When the creator wants each photo or video to show while they talk about it ("whichever photo or
+video I'm talking about", "when I mention it", "hangi fotoğraftan bahsediyorsam o arkamda
+olsun"), give every entry a `spoken_phrase`: the few words from THIS take that name what it shows,
+copied as spoken from the speaker clip's timed `segments` (or transcript) in
+`analysis_only_not_copy` (e.g. "the night market", "her new tablet", "drones"). List the entries
+in the order those words are spoken; each one shows on its words and stays until the next. Two
+photos or videos of the same thing get the same spoken_phrase and play one after the other in the
+order listed. Leave out any photo or video they never talk about and name it in `summary` ("I left
+out the lunch photo: you don't talk about it"). When the creator pairs only some photos with words
+("the beach photo when I say beach"), give only those a `spoken_phrase`. Otherwise (a plain
+rotation such as "change every 3 seconds") leave it out and the photos take turns in the order
+listed. Without a stated rhythm they change every 4 seconds; set `cadence_s` (2 to 10) when the
+creator names one ("every 3 seconds", "5 saniyede bir"), and use the midpoint of a range ("3-5
+seconds" = 4). List each photo or video once unless the creator wants repeats; the list repeats by
+itself until the talk ends. Copy exact `media_id`s from `media_context`, never invent one, never
+use the speaker's own clips. With a `sequence`, `background_media.media_id` is the FILL shown
+wherever no window covers the time: use the first entry's id unless the creator names a different
+fill. `speaker_frame` places the speaker (cut out of their own background) as a small picture over
+the backgrounds: "small_bottom_right", "small_bottom_left", "small_top_right" or "small_top_left"
 ("me small at the bottom right" = "small_bottom_right"). Leave it out, or "full", to keep the
 speaker full-screen. Pick only these names, never numbers. If no photo or video is attached to
 use, leave `background_media` out rather than guess an id. Say in `summary`, in plain words, how
@@ -956,7 +1003,9 @@ adding or ending on a clip keeps `last_clip` as above. A photo or video the crea
 them on a talking-to-camera edit ("put the beach photo behind me", "make it like a green screen",
 "arkamda bu fotoğraf dursun") is a `style` requirement with {"speaker_background": true}, whatever
 language they write in; add "background_changes": true when several photos or videos take turns
-behind them and "speaker_small": true when they want to be small in a corner. Sound that merely
+behind them, "speaker_small": true when they want to be small in a corner and "background_color":
+"<the colour as said, or its hex>" for a plain colour instead of a photo or video ("a plain white
+background", "arkam düz yeşil olsun"). Sound that merely
 plays in the background ("background music", "arka plan müziği") is NOT this and records no such
 fact. How on-screen text should look goes in the
 `facts` of its text requirement, only what the creator said: `animation` (an id from
@@ -988,9 +1037,16 @@ Merope" => a text requirement, literal "MEROPE", facts {"triggers": ["Merope"], 
 the creator says neither; two photos shown differently in one message => ONE requirement per
 photo, each with its own display_mode; keep a take whole, uncut =>
 {"keep_whole_take": true}; end on a
-particular shot, photo or badge => {"closing": "<the creator's words for it>"}; remove pauses,
-filler sounds or retakes from the speech => {"speech_cleanup": true}, keep them =>
-{"speech_cleanup": false}; cut out particular spoken words (a slip, a half question, a line, "the
+particular shot, photo or badge => {"closing": "<the creator's words for it>"}; remove pauses or
+filler sounds from the speech => {"speech_cleanup": true}, keep them => {"speech_cleanup": false};
+remove a sentence they restarted, their retakes or false starts without quoting or naming which
+one ("the sentence I restarted", "the places I restarted", "my retakes", "yanlış başladığım
+cümleleri", "tekrar aldığım cümleyi") => {"speech_cleanup": true, "cut_restarts": true} and no
+`cut_lines` for it: never copy words from the take or its transcript into `cut_lines`, which hold
+only the creator's own words. A restart they quote or name ("the part where I restart the
+kilometer thirty sentence") is a cut line, not `cut_restarts`; "start over" about the edit or a
+clip ("start over with a clip", "make it again from scratch", "videoyu baştan yap") is no restart;
+cut out particular spoken words (a slip, a half question, a line, "the
 part where I say ...") => {"speech_cleanup": true, "cut_lines": ["with bread, no,"]}, one item per
 stretch in the creator's exact words, quoted or described, never translated; when they say
 which time a repeated line to cut ("cut the FIRST take of 'welcome to my channel'", "the last
@@ -1006,7 +1062,14 @@ or places still use the order requirement's "start"/"end". Captions =>
 {"caption_language": "en"} (a two-letter code) when they name the captions' language
 ("Türkçe altyazı" => "tr"), plus {"spellings": ["Oblea de la Casa", "Merope"]} when they list
 words or names to spell a certain way in the captions, each exactly as the creator wrote it
-(never corrected or translated), plus
+(never corrected or translated), plus the look they ask the captions to have, each only when
+they say it: {"caption_size": "small"} or "large"; {"caption_position": "middle"} (or "top",
+"bottom", "top_left", "top_right", "bottom_left", "bottom_right"); {"caption_color": "#FFFFFF"}
+(a literal #RRGGBB hex: white #FFFFFF, black #000000, yellow #FFFF00, red #FF0000, blue
+#0000FF); {"caption_case": "lower"} or "upper"; "Captions small, white, lowercase, in the middle"
+=> {"captions": "on", "caption_size": "small", "caption_color": "#FFFFFF", "caption_case":
+"lower", "caption_position": "middle"}; where the creator puts themselves, a photo, a card or the
+background ("me small at the bottom right") is never a caption position, plus
 {"ask_if_unclear": "the third sauce he names"} (the creator's own words for WHICH word) when they
 say they could not make out a word and want to be asked instead of having it guessed ("I didn't
 catch the third sauce he names: if you can't tell what he says, ask me"), on the captions
@@ -1049,6 +1112,8 @@ Mute or remove the footage's own sound (camera, crowd, ambient, original audio) 
 voice is heard ("mute the crowd noise under my voice", "kamera sesini kapat") => an `audio`
 requirement with {"audio_intent": "source_muted"}; "keep it low / quieter under my voice" is
 not a mute and records no audio_intent.
+"No music" / "without music" / "müzik olmasın" / "müziksiz" => an `audio` requirement with
+{"audio_intent": "no_music"}; it never mutes the footage's own sound.
 Research, fact checking or sources for the on-screen explanations ("include sources for the
 historical facts", "research it online", "kaynakları ekle") => ONE `text` requirement, scope
 "global", the ask in `description`, with {"research": {"topic": "<a public topic, never a link or
@@ -1418,6 +1483,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 + (
                     "\n" + _SPEAKER_BACKGROUND_PROMPT_SECTION
                     if speaker_background_open(input.capability_manifest)
+                    else ""
+                )
+                # KRI-1173: a plain colour fill; "" unless advertised.
+                + (
+                    "\n" + _SPEAKER_BACKGROUND_COLOR_PROMPT_SECTION
+                    if speaker_background_color_open(input.capability_manifest)
                     else ""
                 )
                 # KRI-1162: timed backgrounds + the speaker frame; "" unless advertised.

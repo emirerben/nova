@@ -141,6 +141,7 @@ from app.services.job_storage_paths import JOB_POSTER_PATH_PREFIX, owned_job_out
 from app.services.music_genre import asked_genres, genre_shortlist
 from app.services.phone_text_styling import (
     current_phone_text_policy,
+    generation_caption_cues,
     generation_style_fields,
     generation_style_rows,
     phone_text_generation,
@@ -8165,6 +8166,9 @@ def _names_pool_media(visual_id: object, media_id: str) -> bool:
 def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
     """The approved strategy's ``background_media`` as ``{"media_id", "source_start_s"}``.
 
+    KRI-1173: a plain colour yields ``{"color": "#RRGGBB"}`` instead (no ``media_id``, no
+    ``source_start_s``); ``sequence`` / ``cadence_s`` / ``speaker_frame`` ride along as below.
+
     KRI-1162: plus ``sequence`` (``[{media_id, source_start_s, spoken_phrase, hold_s}]``),
     ``cadence_s`` and ``speaker_frame`` (a preset name) -- each present only when the strategy
     carries it, so a single-background strategy yields exactly the pre-KRI-1162 dict.
@@ -8174,15 +8178,21 @@ def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
     media_id = raw.get("media_id")
-    if not isinstance(media_id, str) or not media_id.strip():
+    color = raw.get("color")
+    request: dict[str, Any]
+    if isinstance(color, str) and color.strip() and not media_id:
+        # KRI-1173: the repair already normalised it to `#RRGGBB`; the lane model validates it.
+        request = {"color": color.strip().upper()}
+    elif not isinstance(media_id, str) or not media_id.strip():
         return None
-    start = raw.get("source_start_s")
-    request: dict[str, Any] = {
-        "media_id": media_id.strip(),
-        "source_start_s": float(start)
-        if isinstance(start, (int, float)) and not isinstance(start, bool)
-        else 0.0,
-    }
+    else:
+        start = raw.get("source_start_s")
+        request = {
+            "media_id": media_id.strip(),
+            "source_start_s": float(start)
+            if isinstance(start, (int, float)) and not isinstance(start, bool)
+            else 0.0,
+        }
     entries: list[dict[str, Any]] = []
     raw_sequence = raw.get("sequence")
     for item in raw_sequence if isinstance(raw_sequence, list) else []:
@@ -8257,11 +8267,18 @@ def _resolve_strategy_background(
     from app.services import phone_background_sequence as sequence_mod  # noqa: PLC0415
 
     sequence_request: list[dict[str, Any]] = list(request.get("sequence") or [])
-    reserved = _pool_media_keys(request["media_id"])
+    # KRI-1173: a plain colour names no pool media -- nothing is looked up for the fill and
+    # nothing is reserved for it (S60); only its windows' photos or videos are.
+    fill_color: str | None = request.get("color")
+    reserved = frozenset() if fill_color else _pool_media_keys(request["media_id"])
     for entry in sequence_request:
         reserved = reserved | _pool_media_keys(entry["media_id"])
     try:
-        rows = pool_mod._load_ready_pool_assets(_sync_session, job_id=job_id)
+        rows = (
+            []
+            if fill_color and not sequence_request
+            else pool_mod._load_ready_pool_assets(_sync_session, job_id=job_id)
+        )
     except OperationalError:
         raise  # transient DB -> Celery autoretry, never a lane drop
     except Exception as exc:  # noqa: BLE001 - the background never fails the job
@@ -8290,11 +8307,17 @@ def _resolve_strategy_background(
             entry_rows.append((index, entry, row))
             reserved = reserved | _pool_media_keys(str(row["id"]))
 
-    fill_row = next(
-        (r for r in rows if _names_pool_media(str(r.get("id")), request["media_id"])), None
-    )
-    fill_start = request["source_start_s"]
-    if fill_row is None and entry_rows:
+    fill_row: dict | None = None
+    fill_start = 0.0
+    fill_kind: Any = "color"
+    if fill_color is None:
+        fill_row = next(
+            (r for r in rows if _names_pool_media(str(r.get("id")), request["media_id"])), None
+        )
+        fill_start = request["source_start_s"]
+    if fill_color is not None:
+        pass  # a plain colour has no pool row to find or check
+    elif fill_row is None and entry_rows:
         # The named fill is gone but the sequence survives: its first entry fills, and the
         # drop of the named one is still on the receipt.
         lane_drops.append({"lane": "background", "reason": "not_in_ready_pool"})
@@ -8303,14 +8326,15 @@ def _resolve_strategy_background(
     elif fill_row is None:
         lane_drops.append({"lane": "background", "reason": "not_in_ready_pool"})
         return None, reserved
-    reserved = reserved | _pool_media_keys(str(fill_row["id"]))
-    fill_kind = fill_row.get("kind")
-    if fill_kind not in ("image", "video"):
-        lane_drops.append({"lane": "background", "reason": "not_a_photo_or_video"})
-        return None, reserved
-    if not fill_row.get("gcs_path") or not fill_row.get("gcs_generation"):
-        lane_drops.append({"lane": "background", "reason": "missing_generation"})
-        return None, reserved
+    if fill_row is not None:
+        reserved = reserved | _pool_media_keys(str(fill_row["id"]))
+        fill_kind = fill_row.get("kind")
+        if fill_kind not in ("image", "video"):
+            lane_drops.append({"lane": "background", "reason": "not_a_photo_or_video"})
+            return None, reserved
+        if not fill_row.get("gcs_path") or not fill_row.get("gcs_generation"):
+            lane_drops.append({"lane": "background", "reason": "missing_generation"})
+            return None, reserved
 
     windows: list[SubtitledBackgroundWindow] = []
     if entry_rows:
@@ -8360,15 +8384,20 @@ def _resolve_strategy_background(
         else None
     )
     try:
-        background = SubtitledBackground(
-            media_id=str(fill_row["id"]),
-            gcs_path=str(fill_row["gcs_path"]),
-            generation=str(fill_row["gcs_generation"]),
-            kind=fill_kind,
-            source_start_s=fill_start if fill_kind == "video" else 0.0,
-            windows=tuple(windows),
-            speaker_frame=frame,
-        )
+        if fill_row is None:
+            background = SubtitledBackground(
+                kind="color", color=fill_color, windows=tuple(windows), speaker_frame=frame
+            )
+        else:
+            background = SubtitledBackground(
+                media_id=str(fill_row["id"]),
+                gcs_path=str(fill_row["gcs_path"]),
+                generation=str(fill_row["gcs_generation"]),
+                kind=fill_kind,
+                source_start_s=fill_start if fill_kind == "video" else 0.0,
+                windows=tuple(windows),
+                speaker_frame=frame,
+            )
     except ValueError as exc:
         lane_drops.append({"lane": "background", "reason": str(exc)[:300]})
         return None, reserved
@@ -8381,7 +8410,11 @@ def _resolve_strategy_background(
     if windows and not kept.windows:
         # Only the windows gate is closed: the render equals a single-background ask, so only
         # the fill is reserved (S33).
-        reserved = _pool_media_keys(request["media_id"]) | _pool_media_keys(str(fill_row["id"]))
+        reserved = (
+            frozenset()
+            if fill_row is None
+            else _pool_media_keys(request["media_id"]) | _pool_media_keys(str(fill_row["id"]))
+        )
     return kept, reserved
 
 
@@ -9942,6 +9975,9 @@ def _run_phone_subtitled_job(
                 cut_plan,
                 extract_spelling_asks(_creator_request_text(all_candidates)),
             )
+            # KRI-1177: "captions lowercase" is the cue text itself, so the drawn layers, the
+            # editor and a Save all carry it.
+            cues = generation_caption_cues(cues, language=detected_lang)
 
             # The speaker's span exactly as the compiler plays it: the cleanup
             # cut, else the phone-measured clip (which can run a hair shorter
@@ -10825,10 +10861,20 @@ def _run_phone_subtitled_job(
                         background_lane = strategy_background_lane  # KRI-1117
                     background_visuals: tuple = ()
                     if background_lane is not None:
+                        # KRI-1173: a colour fill is no pool media and needs neither Visuals
+                        # token; `strip_unsupported_background` already enforced
+                        # `speakerBackgroundColor` for it.
                         background_feature = (
-                            "stillImages" if background_lane.kind == "image" else "visualVideos"
+                            None
+                            if background_lane.uses_color
+                            else "stillImages"
+                            if background_lane.kind == "image"
+                            else "visualVideos"
                         )
-                        if background_feature not in settings.phone_render_verified_features:
+                        if (
+                            background_feature is not None
+                            and background_feature not in settings.phone_render_verified_features
+                        ):
                             lane_drops.append(
                                 {
                                     "lane": "background",
@@ -11093,8 +11139,10 @@ def _run_phone_subtitled_job(
                     # KRI-1161: what the finished video really has behind the speaker, so the
                     # render-ready review judges the ask (omitted while the background is plain).
                     _bg = lanes.background
-                    if _bg.windows or _bg.speaker_frame is not None:
+                    if _bg.windows or _bg.speaker_frame is not None or _bg.uses_color:
                         lane_receipt["background"] = {
+                            # KRI-1173: a plain colour names itself; a media fill adds no key.
+                            **({"color": _bg.color} if _bg.uses_color else {}),
                             "windows": len(_bg.windows),
                             "speaker_frame": next(
                                 (
@@ -11106,6 +11154,12 @@ def _run_phone_subtitled_job(
                                 None,
                             ),
                         }
+                        if _bg.windows:
+                            # KRI-1177: the windows cycle the sequence, so the review counts the
+                            # distinct photos / videos behind the speaker, not the windows.
+                            lane_receipt["background"]["media"] = len(
+                                {w.media_id for w in _bg.windows}
+                            )
                 try:
                     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -13495,6 +13549,9 @@ def _run_phone_narrated_job(
                 # KRI-961: the creator's spellings (quoted asks + the approved brief's list),
                 # applied last as Talking does (KRI-793), so "Olloda bife" reads "ojo de bife".
                 cues = _apply_creator_spellings(cues, _caption_glossary(snapshot, all_candidates))
+                # KRI-1177: this writer draws the typed caption look too, so the asked case is
+                # the cue text here as well (else its receipt reads as a look later changed).
+                cues = generation_caption_cues(cues, language=detected_lang)
 
             # KRI-533: what the worker pinned, and the receipts it can judge from it
             # (a first/last clip, a clip-group timing, the caption language). Like the

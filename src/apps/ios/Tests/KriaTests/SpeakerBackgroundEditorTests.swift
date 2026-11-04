@@ -58,13 +58,16 @@ import KriaMediaEngine
         XCTAssertGreaterThanOrEqual(expressible.count, 2, "a photo and a video case")
         XCTAssertTrue(Set(expressible.map(\.layer.mediaKind)) == [.image, .video])
         for (name, layer) in expressible {
-            let mediaID = String(layer.assetID.dropFirst("visual-".count))
-            let lane = EditorSpeakerBackground(mediaID: mediaID, kind: layer.mediaKind, sourceStartS: layer.sourceStart)
+            let assetID = try XCTUnwrap(layer.assetID, name)
+            let kind = try XCTUnwrap(layer.visualMediaKind, name)
+            let mediaID = String(assetID.dropFirst("visual-".count))
+            let lane = EditorSpeakerBackground(mediaID: mediaID, kind: kind, sourceStartS: layer.sourceStart)
             let recipe = try compile(document(background: lane), backgroundSources: backgroundSource(mediaID))
             XCTAssertEqual(recipe.speakerBackground, layer, name)
             XCTAssertTrue(recipe.effectiveCapabilities.contains(.speakerBackground), name)
-            let reference = try XCTUnwrap(recipe.assetManifest?.assets.first { $0.id == layer.assetID }, name)
-            XCTAssertEqual(reference.source, .visual(visualID: mediaID, generation: "7", mediaKind: layer.mediaKind), name)
+            XCTAssertFalse(recipe.effectiveCapabilities.contains(.speakerBackgroundColor), name)
+            let reference = try XCTUnwrap(recipe.assetManifest?.assets.first { $0.id == assetID }, name)
+            XCTAssertEqual(reference.source, .visual(visualID: mediaID, generation: "7", mediaKind: kind), name)
             try recipe.validate()
         }
     }
@@ -585,5 +588,204 @@ import KriaMediaEngine
                        visual("d", "video", "failed"), visual("e", "gif", "ready")]
         XCTAssertEqual(NativeEditorSession.backgroundChoices(from: library).map(\.id), ["a", "b"])
         XCTAssertEqual(NativeEditorSession.backgroundChoices(from: NativeEditorUITestFixtures.speakerBackgroundVisuals).map(\.kind), ["image", "video"])
+    }
+
+    // MARK: - Solid-colour fill (KRI-1173)
+
+    private func v3Cases() throws -> (valid: [[String: Any]], invalid: [[String: Any]]) {
+        var url = URL(fileURLWithPath: #filePath)
+        for _ in 0..<6 { url.deleteLastPathComponent() }
+        let data = try Data(contentsOf: url.appendingPathComponent("tests/fixtures/speaker-background-parity/v3.json"))
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        return (try XCTUnwrap(root["valid"] as? [[String: Any]]), try XCTUnwrap(root["invalid"] as? [[String: Any]]))
+    }
+
+    private func colourLane(_ hex: String = "#00FF00") -> JSONValue { .object(["kind": .string("color"), "color": .string(hex)]) }
+
+    /// The editor's colour lane compiles to exactly the layer `v3.json`'s `white-fill` normalizes to, and that layer
+    /// encodes (through the engine's encoder) back to the fixture's normalized object.
+    func testAColourLaneCompilesToTheSharedFixtureLayerAndEncodesToItsNormalizedForm() throws {
+        let white = try XCTUnwrap(v3Cases().valid.first { $0["name"] as? String == "white-fill" })
+        let normalized = try XCTUnwrap(white["normalized"] as? [String: Any])
+        let expected = try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: JSONSerialization.data(withJSONObject: normalized))
+
+        let lane = EditorSpeakerBackground(color: "#FFFFFF")
+        XCTAssertEqual(lane.layer, expected)
+        let recipe = try compile(document(background: lane))
+        XCTAssertEqual(recipe.speakerBackground, expected)
+        let encoded = try JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(lane.layer)) as? [String: Any]
+        XCTAssertEqual(NSDictionary(dictionary: try XCTUnwrap(encoded)), NSDictionary(dictionary: normalized))
+        XCTAssertNil(encoded?["asset_id"], "a colour has no asset id on the wire")
+    }
+
+    func testAColourFillRegistersNoFillAssetAndTheRecipeValidates() throws {
+        let recipe = try compile(document(background: EditorSpeakerBackground(color: "#00FF00")))
+        XCTAssertNoThrow(try recipe.validate())
+        XCTAssertFalse((recipe.assetManifest?.assets ?? []).contains { $0.id.hasPrefix("visual-") }, "no pool visual is pinned for a colour")
+        XCTAssertFalse(recipe.assets.contains { $0.id.hasPrefix("visual-") })
+        XCTAssertTrue(recipe.effectiveCapabilities.isSuperset(of: [.speakerBackground, .speakerBackgroundColor]))
+        XCTAssertFalse(recipe.effectiveCapabilities.contains(.speakerBackgroundWindows))
+    }
+
+    func testAColourFillUnderWindowsStillPinsEachWindowVisual() throws {
+        let window = EditorSpeakerBackgroundWindow(localID: "bg-0", mediaID: "3c4d", kind: .video, sourceStartS: 1, startS: 0.5, endS: 2)
+        let lane = EditorSpeakerBackground(color: "#1A2B3C", windows: [window], speakerFrame: EditorSpeakerFrame.preset("small_bottom_right"))
+        XCTAssertEqual(lane.mediaRequirements.map(\.mediaID), ["3c4d"], "only the window needs bytes")
+        XCTAssertThrowsError(try compile(document(background: lane)), "the window's bytes are still required")
+        let recipe = try compile(document(background: lane), backgroundSources: backgroundSource("3c4d"))
+        XCTAssertNoThrow(try recipe.validate())
+        XCTAssertEqual(recipe.assetManifest?.assets.filter { $0.id.hasPrefix("visual-") }.map(\.id), ["visual-3c4d"])
+        XCTAssertEqual(recipe.speakerBackground?.color, "#1A2B3C")
+        XCTAssertEqual(recipe.speakerBackground?.windows?.map(\.assetID), ["visual-3c4d"])
+        XCTAssertTrue(recipe.effectiveCapabilities.isSuperset(of: [.speakerBackground, .speakerBackgroundColor, .speakerBackgroundWindows]))
+    }
+
+    func testAColourLaneRoundTripsAndEveryMalformedShapeIsUnreadable() throws {
+        let decoded = EditorDocument.decode(snapshot: snapshot(lane: colourLane()))
+        XCTAssertEqual(decoded.speakerBackground, EditorSpeakerBackground(color: "#00FF00"))
+        XCTAssertEqual(decoded.speakerBackground?.color, "#00FF00")
+        XCTAssertNil(decoded.speakerBackground?.mediaID)
+        XCTAssertFalse(decoded.unreadableSpeakerBackground)
+        XCTAssertEqual(decoded.encodeSnapshot(), snapshot(lane: colourLane()), "an unchanged colour lane saves as it loaded")
+        XCTAssertEqual(EditorSpeakerBackground(color: "#00FF00").json, colourLane())
+
+        // With windows and a frame the keys follow the media shape's rules.
+        let full: JSONValue = .object(["kind": .string("color"), "color": .string("#1A2B3C"),
+            "windows": .array([windowRow("3c4d", start: 0, end: 2)]),
+            "speaker_frame": .object(["width_fraction": .number(0.42), "x_fraction": .number(0.76), "y_fraction": .number(0.8)])])
+        let withExtras = try XCTUnwrap(EditorSpeakerBackground(json: full))
+        XCTAssertEqual(withExtras.json, full)
+        XCTAssertEqual(withExtras.windows.count, 1)
+
+        let bad: [JSONValue] = [
+            .object(["kind": .string("color"), "color": .string("#00FF00"), "media_id": .string("1a2b")]),
+            .object(["kind": .string("color"), "color": .string("#00FF00"), "source_start_s": .number(0)]),
+            .object(["kind": .string("color")]),
+            .object(["kind": .string("color"), "color": .string("#00ff00")]),
+            .object(["kind": .string("color"), "color": .string("#0F0")]),
+            .object(["kind": .string("color"), "color": .string("#00FF0080")]),
+            .object(["kind": .string("color"), "color": .string("green")]),
+            .object(["kind": .string("color"), "color": .string("00FF00")]),
+            .object(["kind": .string("color"), "color": .null]),
+            .object(["kind": .string("image"), "color": .string("#00FF00")]),
+            .object(["kind": .string("image"), "media_id": .string("1a2b"), "color": .string("#00FF00")]),
+            .object(["kind": .string("video")]),
+        ]
+        for lane in bad {
+            let document = EditorDocument.decode(snapshot: snapshot(lane: lane))
+            XCTAssertNil(document.speakerBackground, "\(lane)")
+            XCTAssertTrue(document.unreadableSpeakerBackground, "\(lane)")
+        }
+    }
+
+    private func colourSession(windows: Bool = false) -> NativeEditorSession {
+        var draft = NativeEditorUITestFixtures.speakerBackground
+        var caps = draft.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
+        caps["speaker_background_color"] = .object(["editable": .bool(true)])
+        if windows { caps["speaker_background_windows"] = .object(["editable": .bool(true)]) }
+        draft.serverSnapshot["editor_capabilities"] = .object(caps)
+        return NativeEditorSession(draft: draft)
+    }
+
+    func testTheColourControlsExistOnlyWhileTheServerOpensTheColourCapability() {
+        var draft = NativeEditorUITestFixtures.speakerBackground
+        var caps = draft.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
+        caps.removeValue(forKey: "speaker_background_color")
+        draft.serverSnapshot["editor_capabilities"] = .object(caps)
+        let closed = NativeEditorSession(draft: draft)
+        XCTAssertTrue(closed.canEditSpeakerBackground)
+        XCTAssertFalse(closed.canEditSpeakerBackgroundColor)
+        XCTAssertFalse(closed.setSpeakerBackgroundColor(hex: "#00FF00"))
+        XCTAssertNil(closed.speakerBackground)
+        XCTAssertFalse(closed.hasUnsavedChanges)
+
+        let open = colourSession()
+        XCTAssertTrue(open.canEditSpeakerBackgroundColor)
+        XCTAssertTrue(NativeEditorUITestFixtures.speakerBackground.serverSnapshot["editor_capabilities"]?.objectValue?["speaker_background_color"] != nil,
+                      "the UI-test fixture opens the colour capability")
+    }
+
+    func testSettingAColourReplacesAMediaFillKeepsWindowsAndFrameAndIsUndoable() {
+        let session = colourSession(windows: true)
+        XCTAssertTrue(session.setSpeakerBackground(mediaID: "fixture-bg-photo", kind: .image))
+        XCTAssertTrue(session.addSpeakerBackgroundWindow(mediaID: "fixture-bg-video", kind: .video, length: 2))
+        XCTAssertTrue(session.setSpeakerFrame(preset: "small_top_left"))
+        let windows = session.speakerBackgroundWindows, frame = session.speakerFrame
+
+        XCTAssertTrue(session.setSpeakerBackgroundColor(hex: "#00ff00"), "lowercase input is normalised")
+        XCTAssertEqual(session.speakerBackgroundColor, "#00FF00")
+        XCTAssertNil(session.speakerBackground?.mediaID, "the photo is replaced")
+        XCTAssertEqual(session.speakerBackgroundWindows, windows)
+        XCTAssertEqual(session.speakerFrame, frame)
+        XCTAssertTrue(session.isDirty(.speakerBackground))
+
+        XCTAssertTrue(session.setSpeakerBackgroundColor(hex: "#0000FF"), "a colour replaces a colour")
+        XCTAssertEqual(session.speakerBackgroundColor, "#0000FF")
+
+        XCTAssertTrue(session.setSpeakerBackground(mediaID: "fixture-bg-video", kind: .video, sourceStart: 1))
+        XCTAssertNil(session.speakerBackgroundColor, "a photo or video replaces the colour")
+        XCTAssertEqual(session.speakerBackground?.mediaID, "fixture-bg-video")
+        XCTAssertEqual(session.speakerBackgroundWindows, windows)
+
+        session.undo()
+        XCTAssertEqual(session.speakerBackgroundColor, "#0000FF")
+        session.undo()
+        XCTAssertEqual(session.speakerBackgroundColor, "#00FF00")
+        session.undo()
+        XCTAssertEqual(session.speakerBackground?.mediaID, "fixture-bg-photo")
+    }
+
+    func testABadColourChangesNothing() {
+        let session = colourSession()
+        for bad in ["", "green", "#0F0", "#GGGGGG", "#00FF0080", "00FF00"] {
+            XCTAssertFalse(session.setSpeakerBackgroundColor(hex: bad), bad)
+        }
+        XCTAssertNil(session.speakerBackground)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertTrue(session.setSpeakerBackgroundColor(hex: "#FFFFFF"))
+        XCTAssertTrue(session.setSpeakerBackgroundColor(hex: "#FFFFFF"), "the colour that is already there is accepted")
+        session.undo()
+        XCTAssertNil(session.speakerBackground, "and it was one edit, not two")
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
+    func testSaveSendsTheColourObjectWithoutAMediaId() async throws {
+        let threadID = UUID(), jobID = UUID()
+        var variant: [String: JSONValue] = [
+            "variant_id": .string("initial"), "render_generation_id": .string("generation-1"), "render_status": .string("ready"),
+            "duration_s": .number(2), "output_url": .string("file:///tmp/kria-editor-test.mp4"), "resolved_archetype": .string("subtitled"),
+            "base_video_path": .string("base.mp4"),
+            "user_timeline": .object(["slots": .array([.object(["slot_id": .string("slot"), "clip_index": .number(0), "in_s": .number(0),
+                "duration_s": .number(2), "source_duration_s": .number(4), "removed": .bool(false)])])]),
+        ]
+        variant["editor_capabilities"] = .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false),
+                                                  "speaker_background": .object(["editable": .bool(true)]),
+                                                  "speaker_background_color": .object(["editable": .bool(true)])])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e",
+                baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: variant)
+        fake.sourcePoolResult = NativeEditorSourcePool(clips: [], baseGeneration: "generation-1")
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: threadID)
+        XCTAssertTrue(session.canEditSpeakerBackgroundColor)
+
+        XCTAssertTrue(session.setSpeakerBackgroundColor(hex: "#00FF00"))
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-2",
+            sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: false, mix: false),
+            revisionNumber: 2, revisionHash: "h2", expectedDuration: nil)
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.speakerBackground, .replace(["kind": .string("color"), "color": .string("#00FF00")]))
+        XCTAssertNil(fake.lastRequest?.timelineSlots, "only the lane that changed is sent")
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertEqual(session.speakerBackgroundColor, "#00FF00")
+
+        XCTAssertTrue(session.removeSpeakerBackground())
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.speakerBackground, .remove)
+    }
+
+    func testTheProtocolDeclaresTheColourBuild() {
+        XCTAssertEqual(KriaClientProtocolContract.version, 34, "34 = decodes a colour speaker background and the speakerBackgroundColor capability")
     }
 }

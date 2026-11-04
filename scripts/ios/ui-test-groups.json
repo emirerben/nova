@@ -331,6 +331,7 @@
       "KriaUITests/DrawingJourneyUITests/testAnimationTabKeepsItsLayoutWhateverTheEntranceIs",
       "KriaUITests/DrawingJourneyUITests/testCancelLeavesNoDrawingAndTheToolIsHiddenWithoutTheCapability",
       "KriaUITests/SpeakerBackgroundUITests/testPickingAPhotoSelectsItAndMakesTheEditSaveable",
+      "KriaUITests/SpeakerBackgroundUITests/testPickingAColourSwatchMakesTheEditSaveable",
       "KriaUITests/SpeakerBackgroundUITests/testNoneRemovesTheBackgroundAndBothChoicesSurviveSaveAndReopen",
       "KriaUITests/SpeakerBackgroundUITests/testPickingNoneOnAnEditWithoutABackgroundIsNotAnEdit",
       "KriaUITests/SpeakerBackgroundUITests/testToolIsHiddenWhenTheServerDoesNotOpenTheCapability",

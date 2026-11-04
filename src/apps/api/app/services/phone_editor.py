@@ -107,6 +107,7 @@ from app.services.phone_rollout import (
     single_word_text_client_supported,
     single_word_text_verified,
     speaker_background_client_supported,
+    speaker_background_color_client_supported,
     speaker_background_windows_client_supported,
     text_bend_client_supported,
     validate_phone_pilot_recipe,
@@ -125,6 +126,7 @@ from app.services.phone_subtitled_editor import (
     lanes_from_recipe,
     sections_from_lanes,
     variant_carries_speaker_background,
+    variant_carries_speaker_background_color,
     variant_carries_speaker_background_windows,
 )
 from app.services.phone_voiceover_timeline import (
@@ -886,6 +888,22 @@ def prepare_phone_editor_commit(
                 "minimum_client_protocol": settings.speaker_background_windows_min_client_protocol,
             },
         )
+    if (
+        stored_variant is not None
+        and not speaker_background_color_client_supported()
+        and variant_carries_speaker_background_color(job.assembly_plan or {}, stored_variant)
+    ):
+        # KRI-1173 (S49): a recompile would pin `media_kind: "color"`, which this app build
+        # cannot decode, or (compile strips it for such a build) silently take the colour off.
+        # Nothing is committed.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_background_color",
+                "minimum_client_protocol": settings.speaker_background_color_min_client_protocol,
+            },
+        )
     try:
         _rebind_editor_render_contract(
             staged,
@@ -997,6 +1015,20 @@ def prepare_phone_editor_commit(
                 "code": "client_update_required",
                 "feature": "speaker_background_windows",
                 "minimum_client_protocol": settings.speaker_background_windows_min_client_protocol,
+            },
+        )
+    if (
+        staged_background is not None
+        and staged_background.uses_color
+        and not speaker_background_color_client_supported()
+    ):
+        # KRI-1173: the belt for a recompile that pinned a colour this build cannot decode.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_background_color",
+                "minimum_client_protocol": settings.speaker_background_color_min_client_protocol,
             },
         )
     if not freeze_frame_client_supported() and recipe_has_freeze_frame(
@@ -1223,9 +1255,12 @@ def _background_lane(
     """
     if not document:
         return None
-    binding = next((v for v in visuals if v.media_id == document["media_id"]), None)
-    if binding is None:
-        raise ValueError("that background isn't a visual Kria pinned for this Talking edit")
+    is_color = document.get("kind") == "color"
+    binding = None
+    if not is_color:
+        binding = next((v for v in visuals if v.media_id == document["media_id"]), None)
+        if binding is None:
+            raise ValueError("that background isn't a visual Kria pinned for this Talking edit")
     windows: list[SubtitledBackgroundWindow] = []
     for entry in document.get("windows") or ():
         # KRI-1162: every window is a pinned pool visual too (the route validated each id).
@@ -1244,6 +1279,14 @@ def _background_lane(
             )
         )
     frame = document.get("speaker_frame")
+    if is_color:
+        # KRI-1173: a colour fill pins nothing; the document carries the (already uppercase) hex.
+        return SubtitledBackground(
+            kind="color",
+            color=document["color"],
+            windows=tuple(windows),
+            speaker_frame=SubtitledSpeakerFrame(**frame) if frame else None,
+        )
     return SubtitledBackground(
         media_id=binding.media_id,
         gcs_path=binding.gcs_path,

@@ -73,6 +73,12 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
         None,
     ),
     "agents/montage_reviewer.py": ("agent_prompt", "montage review input/prompt", None),
+    "kria/intent_review_catalog.py": (
+        "agent_prompt",
+        "Issued-requirement labels are frame-review model context; the server decides every "
+        "outcome from the catalog, never from this prose.",
+        frozenset({"_label"}),
+    ),
     "agents/narrated_clip_alignment.py": ("agent_prompt", "alignment input/prompt", None),
     "agents/narrated_storyboard.py": ("agent_prompt", "storyboard input/prompt", None),
     "agents/narration_annotations.py": ("agent_prompt", "annotation input/prompt", None),
@@ -162,6 +168,22 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
     "services/slide_post_chat_edit.py": ("plan_time", "slide chat edit (own plan)", None),
     "tasks/edit_proposal_build.py": ("plan_time", "guided proposal drafting", None),
     # --- carry -----------------------------------------------------------------------------------
+    "kria/initial_render_review_authority.py": (
+        "carry",
+        "Checks pinned request identity without prose interpretation or output changes.",
+        frozenset({"resolve_initial_render_authority"}),
+    ),
+    "kria/intent_review_qualification.py": (
+        "content_only",
+        "Offline qualification harness: binds its own preregistered request text to a synthetic "
+        "brief to build the review cases; it reads no creator chat and decides no render.",
+        frozenset({"_packet"}),
+    ),
+    "services/render_review_admission.py": (
+        "carry",
+        "Copies request and dispatch settings into read-only admission; no prose routing.",
+        frozenset({"_inputs"}),
+    ),
     "services/generative_jobs.py": (
         "carry",
         "stores creator_request on the job; derives the caption LANGUAGE request from it "

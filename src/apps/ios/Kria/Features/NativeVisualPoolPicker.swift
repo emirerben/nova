@@ -15,6 +15,9 @@ struct NativeVisualPoolPicker: View {
     let noneTitle: String
     let onNone: () -> Void
     let onSelect: (CreationVisual) -> Void
+    /// Overrides "None is lit when nothing is selected" for a caller whose fill can be neither a pool visual nor
+    /// nothing (the Background tool's solid colour, KRI-1173).
+    var noneSelected: Bool?
     @State private var showsImporter = false
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 10, alignment: .top), count: 3)
@@ -73,7 +76,7 @@ struct NativeVisualPoolPicker: View {
     }
 
     private var noneTile: some View {
-        let selected = selectedID == nil
+        let selected = noneSelected ?? (selectedID == nil)
         return Button(action: onNone) {
             tile(selected: selected, label: noneTitle) {
                 Image(systemName: "slash.circle").font(.system(size: 22, weight: .regular)).foregroundStyle(KriaColor.ink)

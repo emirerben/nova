@@ -39,6 +39,13 @@ from app.kria.brief_route import (
     wants_filming_time_text,
     wants_hour_only_text,
 )
+from app.kria.caption_look_ask import (
+    apply_caption_case,
+    caption_alignment,
+    caption_look_ask,
+    caption_look_reason,
+    caption_over_speaker,
+)
 from app.kria.clip_sound_toggle_ask import SoundTarget, SoundToggleAsk, requirement_sound_toggle
 from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.contracts import InferredLabel, RequirementReceipt
@@ -108,6 +115,7 @@ from app.text_fold import lower as text_lower
 
 if TYPE_CHECKING:
     from app.agents._schemas.creator_agent import ResolvedCreatorManifest
+    from app.kria.caption_look_ask import CaptionLookAsk
     from app.kria.opening_cut_ask import TakeWindowEstimate
 
 DURATION_TOLERANCE = 0.10
@@ -344,8 +352,12 @@ class SpeakerBackgroundFact:
     edit cannot show one; ``code`` says why: "not_talking", "unavailable", "app_too_old").
     ``pool_count`` is how many of the item's own photos / videos exist to put there (None =
     unknown, as on a render); ``window_count`` how many timed backgrounds take turns over the
-    fill; ``asked_windows`` / ``asked_frame`` what the strategy asked for before the repair
-    dropped any; ``frame`` the corner preset the speaker sits in (None = full size).
+    fill; ``media_count`` how many DISTINCT photos / videos those windows show (the windows
+    cycle the sequence, so 8 windows over 5 photos is 5; None = the record did not say, as on a
+    render written before it was recorded); ``asked_windows`` / ``asked_frame`` what the
+    strategy asked for before the repair dropped any, ``asked_media_count`` the distinct photos /
+    videos among those asked windows (None = unknown); ``frame`` the corner preset the speaker
+    sits in (None = full size).
     """
 
     status: str
@@ -353,10 +365,16 @@ class SpeakerBackgroundFact:
     pool_count: int | None = None
     fill_id: str | None = None
     window_count: int = 0
+    media_count: int | None = None
     asked_windows: int = 0
+    asked_media_count: int | None = None
     windows_open: bool = False
     frame: str | None = None
     asked_frame: str | None = None
+    # KRI-1173: the plain colour (``#RRGGBB``) the plan / finished video holds as its fill, and
+    # why a colour is not available on this edit ("unavailable" | "app_too_old"; None = it is).
+    color: str | None = None
+    color_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -549,6 +567,13 @@ class PlanFacts:
     # "no_change" (it ran and found nothing to cut), "not_run" (the render kept the whole
     # take). None = unknown or a draft.
     speech_cleanup_outcome: str | None = None
+    # KRI-1189: restarted sentences that cleanup's cut record holds (``retake`` rows) on a
+    # rendered variant where cleanup ran; None = unknown or a draft.
+    speech_cleanup_retakes: int | None = None
+    # KRI-1189: whether this render's cleanup could have cut a restarted sentence, read off the
+    # job's cleanup contract the way the finished-render note reads it
+    # (`kria_runtime._cleanup_note_retake_cut_possible`). None = not given: the live levers decide.
+    speech_cleanup_retake_possible: bool | None = None
     # KRI-??? Explicit source phrase removals.  Empty means the finished variant recorded no
     # receipt; that absence is never evidence a phrase was removed.
     explicit_speech_cuts: tuple[ExplicitSpeechCutFact, ...] = ()
@@ -774,6 +799,24 @@ class PlanFacts:
     # KRI-1161: the background behind a Talking speaker. None = these facts cannot speak to it
     # (an editor turn, or a render that recorded nothing): a background ask stays unchecked.
     speaker_background: SpeakerBackgroundFact | None = None
+    # KRI-1177: what the phone Talking writer recorded when it drew the creator's typed caption
+    # look on the first draft (`variant["caption_look_receipt"]`: the asked size / position /
+    # colour / case, the drawn size and whether the lines touch a face), with the variant's own
+    # caption fields now (an editor Save can change them). None = no such record: the look is
+    # judged on a draft only, never on a render that did not draw it.
+    caption_look_receipt: Mapping[str, Any] | None = None
+    caption_size_px: int | None = None
+    caption_text_color: str | None = None
+    caption_alignment: str | None = None
+    caption_x_frac: float | None = None
+    caption_y_frac: float | None = None
+    # Per-caption changes the render applies over the block's look: a cue's own ``size_px`` /
+    # ``text_color`` and the editor's ``line_overrides`` (``size_px``, ``position_x_frac``,
+    # ``position_y_frac``), one mapping per changed caption (`phone_captions` compile).
+    caption_line_overrides: tuple[Mapping[str, Any], ...] = ()
+    # KRI-1164: a finished phone render that plays music under the video (a smart music bed, or
+    # a track mixed in rather than only recommended). False = none recorded.
+    music_in_render: bool = False
 
     @property
     def reaction_beat_count(self) -> int | None:
@@ -907,6 +950,16 @@ def _speaker_background_closed_code(manifest: ResolvedCreatorManifest) -> str:
     return "not_talking"  # a cloud or voiceover Talking render: the lane is advertised nowhere
 
 
+def _color_closed_code() -> str:
+    """Why a plain colour behind the speaker is closed while the photo / video lane is open."""
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        speaker_background_color_unavailable_reason,
+    )
+
+    reason = speaker_background_color_unavailable_reason()
+    return "app_too_old" if reason == "client_protocol_below_min" else "unavailable"
+
+
 def _speaker_background_facts(
     strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest
 ) -> dict[str, Any]:
@@ -919,6 +972,7 @@ def _speaker_background_facts(
     from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
     from app.services.creator_capabilities import (  # noqa: PLC0415
         repair_creator_speaker_background,
+        speaker_background_color_open,
         speaker_background_open,
         speaker_background_windows_open,
     )
@@ -934,6 +988,9 @@ def _speaker_background_facts(
         return {}
     asked = parsed.background_media
     asked_windows = len(asked.sequence) if asked is not None else 0
+    asked_media_count = (
+        len({entry.media_id for entry in asked.sequence}) if asked is not None else None
+    )
     asked_frame = (
         asked.speaker_frame if asked is not None and asked.speaker_frame != "full" else None
     )
@@ -950,14 +1007,17 @@ def _speaker_background_facts(
     repaired, _notices = repair_creator_speaker_background(manifest, parsed)
     kept = repaired.background_media
     windows_open = speaker_background_windows_open(manifest)
+    color_code = None if speaker_background_color_open(manifest) else _color_closed_code()
     if kept is None:
         return {
             "speaker_background": SpeakerBackgroundFact(
                 "none",
                 pool_count=len(pool),
                 asked_windows=asked_windows,
+                asked_media_count=asked_media_count,
                 windows_open=windows_open,
                 asked_frame=asked_frame,
+                color_code=color_code,
             )
         }
     return {
@@ -966,10 +1026,15 @@ def _speaker_background_facts(
             pool_count=len(pool),
             fill_id=kept.media_id,
             window_count=len(kept.sequence),
+            # Green 3: a sequence that names a photo twice still shows it once.
+            media_count=len({entry.media_id for entry in kept.sequence}),
             asked_windows=asked_windows,
+            asked_media_count=asked_media_count,
             windows_open=windows_open,
             frame=kept.speaker_frame if kept.speaker_frame != "full" else None,
             asked_frame=asked_frame,
+            color=kept.color,
+            color_code=color_code,
         )
     }
 
@@ -984,15 +1049,29 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
     """
     if "speaker_background" in variant:
         doc = variant["speaker_background"]
-        if not isinstance(doc, Mapping) or not doc.get("media_id"):
+        # KRI-1173: a solid-colour fill carries a ``color`` and no ``media_id``.
+        if not isinstance(doc, Mapping) or not (doc.get("media_id") or doc.get("color")):
             return SpeakerBackgroundFact("none")
         windows = doc.get("windows")
         return SpeakerBackgroundFact(
             "applied",
-            fill_id=str(doc["media_id"]),
+            fill_id=str(doc.get("media_id") or doc["color"]),
             window_count=len(windows) if isinstance(windows, list) else 0,
+            # The windows cycle the photos, so the count a creator hears is the distinct media.
+            media_count=(
+                len(
+                    {
+                        str(window["media_id"])
+                        for window in windows
+                        if isinstance(window, Mapping) and window.get("media_id")
+                    }
+                )
+                if isinstance(windows, list)
+                else None
+            ),
             windows_open=True,
             frame=_frame_preset_name(doc.get("speaker_frame")),
+            color=str(doc["color"]) if doc.get("color") and not doc.get("media_id") else None,
         )
     receipt = variant.get("phone_lane_receipt")
     if not isinstance(receipt, Mapping) or not isinstance(receipt.get("applied"), list):
@@ -1002,13 +1081,18 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
     detail = receipt.get("background")
     detail = detail if isinstance(detail, Mapping) else {}
     windows = detail.get("windows")
+    media = detail.get("media")
     return SpeakerBackgroundFact(
         "applied",
         window_count=int(windows)
         if isinstance(windows, int) and not isinstance(windows, bool)
         else 0,
+        # Green 3: the worker records how many distinct photos / videos the windows show
+        # (8 windows over 5 photos); a receipt from before that keeps the window count.
+        media_count=int(media) if isinstance(media, int) and not isinstance(media, bool) else None,
         windows_open=True,
         frame=detail.get("speaker_frame") if isinstance(detail.get("speaker_frame"), str) else None,
+        color=detail.get("color") if isinstance(detail.get("color"), str) else None,
     )
 
 
@@ -2472,6 +2556,8 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     changes.update(_timed_card_receipt_facts(variant.get("phone_timed_card_receipt")))
     changes.update(_overlay_sequence_facts(variant.get("phone_overlay_receipt")))
     changes.update(_rendered_caption_facts(variant))
+    if _rendered_music(variant):
+        changes["music_in_render"] = True  # KRI-1164: "No music" is judged against it
     receipt = variant.get("clip_sound")
     if isinstance(receipt, Mapping):
         changes["clip_sound"] = receipt  # KRI-842
@@ -2497,6 +2583,19 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
         changes["insert_clips_known"] = True
         changes["insert_clips"] = _insert_clip_receipt_facts(variant.get("phone_insert_clips"))
     return dataclasses.replace(base, **changes) if changes else base
+
+
+def _rendered_music(variant: Mapping[str, Any]) -> bool:
+    """KRI-1164: the finished phone render plays music under the video.
+
+    A smart music bed (`smart_music_treatment` / `background_music_treatment`) or a track the
+    render mixed in. A song only recommended for posting (`music_playback_mode ==
+    "reference_only"`, `song_reference`) is not in the file, so it is never music here."""
+    if variant.get("smart_music_treatment") or variant.get("background_music_treatment"):
+        return True
+    return bool(variant.get("music_track_id")) and variant.get("music_playback_mode") != (
+        "reference_only"
+    )
 
 
 def _insert_clip_receipt_facts(receipt: object) -> tuple[InsertClipFact, ...]:
@@ -2595,6 +2694,8 @@ def _rendered_speech_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
     if outcome in ("applied", "no_change"):
         facts["speech_cleanup_enabled"] = True
         facts["speech_cleanup_outcome"] = outcome
+        counts = _cleanup_counts(variant)
+        facts["speech_cleanup_retakes"] = counts[2] if counts else 0
     elif outcome is None and device:
         facts["speech_cleanup_enabled"] = False
         facts["speech_cleanup_outcome"] = "not_run"
@@ -2733,15 +2834,65 @@ def _rendered_caption_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(cue, Mapping)
     )
     texts = tuple(text for text in texts if text)
+    look = _caption_look_facts(variant)  # KRI-1177
     if not texts:
-        return {"caption_texts": ()} if variant.get("render_destination") == "device" else {}
-    facts: dict[str, Any] = {"caption_texts": texts}
+        if variant.get("render_destination") != "device":
+            return {}  # a cloud render fills its cues later
+        return {"caption_texts": (), **look}
+    facts: dict[str, Any] = {"caption_texts": texts, **look}
     language = variant.get("caption_language")
     if isinstance(language, str) and language.strip():
         facts["caption_language"] = language.strip()
     translated = variant.get("caption_translated_from")
     if isinstance(translated, str) and translated.strip():
         facts["caption_translated_from"] = translated.strip().casefold()
+    return facts
+
+
+def _caption_look_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    """KRI-1177: the caption look the phone Talking writer drew, and what the variant has now.
+
+    ``caption_look_receipt`` is written on the first draft only when the creator's typed look was
+    applied (size / position / colour / case, the drawn ``size_px`` and ``over_face``). The
+    variant's own caption fields are read beside it because an editor Save can change them: a
+    receipt the variant no longer matches is not evidence the look is still there.
+    """
+    receipt = variant.get("caption_look_receipt")
+    if not isinstance(receipt, Mapping) or not receipt:
+        return {}
+    facts: dict[str, Any] = {"caption_look_receipt": receipt}
+    size = _finite_number(variant.get("caption_size_px"))
+    if size is not None:
+        facts["caption_size_px"] = round(size)
+    color = variant.get("caption_text_color")
+    if isinstance(color, str) and color.strip():
+        facts["caption_text_color"] = color.strip()
+    style = variant.get("caption_editor_style")
+    alignment = style.get("alignment") if isinstance(style, Mapping) else None
+    if isinstance(alignment, str) and alignment:
+        facts["caption_alignment"] = alignment
+    style = style if isinstance(style, Mapping) else {}
+    for key, fact in (("position_x_frac", "caption_x_frac"), ("position_y_frac", "caption_y_frac")):
+        value = _finite_number(style.get(key))
+        if value is not None:
+            facts[fact] = value
+    cues = [cue for cue in variant.get("caption_cues") or [] if isinstance(cue, Mapping)]
+    lines = style.get("line_overrides")
+    lines = lines if isinstance(lines, Mapping) else {}
+    overrides = []
+    for cue in cues:
+        own = {key: cue[key] for key in ("size_px", "text_color") if cue.get(key) is not None}
+        line = lines.get(cue.get("id")) if cue.get("id") is not None else None
+        if isinstance(line, Mapping):
+            own.update(
+                (key, line[key])
+                for key in ("size_px", "position_x_frac", "position_y_frac")
+                if line.get(key) is not None
+            )
+        if own:
+            overrides.append(own)
+    if overrides:
+        facts["caption_line_overrides"] = tuple(overrides)
     return facts
 
 
@@ -4082,6 +4233,9 @@ def _cleanup_wording(req: BriefRequirement) -> bool:
     stated = _fact_flag(req, "speech_cleanup")
     if stated is not None:
         return stated
+    if _wants_restart_cut(req):
+        # KRI-1189: a recorded restart cut is a cleanup ask even if `speech_cleanup` was left out.
+        return True
     text = _req_text(req)
     if _KEEP_PAUSES_RE.search(text) or not _CLEANUP_VERB_RE.search(text):
         return False
@@ -4257,13 +4411,36 @@ _SB_NO_MEDIA = (
 _SB_NOT_PLANNED = "This draft doesn't put a photo or video behind you"
 _SB_NOT_DRAWN = "The finished video doesn't have a photo or video behind you"
 _SB_NO_CHANGE = "One photo or video stays behind you for the whole video; it doesn't change"
+# KRI-1173: a plain colour behind the speaker. The first three are format limits like the
+# photo / video ones; "attach the photos first" is never the answer to a colour ask (no pool).
+_SBC_NOT_TALKING = (
+    "Only a talking-to-camera edit made on your iPhone can put a plain colour behind you"
+)
+_SBC_UNAVAILABLE = "Putting a plain colour behind you isn't available on your iPhone yet"
+_SBC_APP_TOO_OLD = "Your iPhone app is too old to put a plain colour behind you; update it first"
+_SBC_NOT_PLANNED = "This draft doesn't put a plain colour behind you"
+_SBC_NOT_DRAWN = "The finished video doesn't have a plain colour behind you"
+# KRI-1173 review: the changing-backgrounds part of a colour ask, judged like the photo / video
+# one. The first is a format limit; the creator can act on the other two.
+_SBC_NO_SWITCHING = (
+    "The plain colour stays behind you the whole time; your iPhone can't switch backgrounds yet"
+)
+_SBC_NO_CHANGE = "The plain colour stays behind you the whole time; nothing changes over it"
+_SBC_NOTHING_TO_SWITCH = (
+    "The plain colour stays behind you the whole time; no photos or videos are attached to take "
+    "turns over it. Attach them in Visuals"
+)
 _SB_FORMAT_LIMITS: tuple[str, ...] = (
     _SB_NOT_TALKING,
     _SB_UNAVAILABLE,
     _SB_APP_TOO_OLD,
+    _SBC_NOT_TALKING,
+    _SBC_UNAVAILABLE,
+    _SBC_APP_TOO_OLD,
     _SB_NO_SWITCHING,
     _SB_FULL_SIZE,
     _SB_ONLY_ONE_ATTACHED,
+    _SBC_NO_SWITCHING,
 )
 
 
@@ -4275,7 +4452,17 @@ def asks_speaker_background(req: BriefRequirement) -> bool:
     never the creator's words. So "background music" / "arka plan müziği" / "no music", which
     record no such fact, can never be read as this ask.
     """
-    return bool(req.facts.get("speaker_background"))
+    # KRI-1173: a plain colour ask records `background_color` (and `speaker_background: true`).
+    return bool(req.facts.get("speaker_background")) or _asked_background_color(req) is not None
+
+
+def _asked_background_color(req: BriefRequirement) -> str | None:
+    """The colour the creator asked behind them (``facts["background_color"]``: a hex or the
+    colour as said), else None. A fact, never the creator's words (KRI-667)."""
+    value = req.facts.get("background_color")
+    if isinstance(value, str) and value.strip():
+        return " ".join(value.split())[:40]
+    return None
 
 
 def _asks_changing_backgrounds(req: BriefRequirement) -> bool:
@@ -4301,6 +4488,123 @@ def _sb(text: str, suffix: str = ".") -> str:
     return say(en=text + suffix, tr=_REASON_TR[text] + suffix)
 
 
+def _background_media_shown(fact: SpeakerBackgroundFact) -> int:
+    """How many photos / videos the creator sees take turns: the windows cycle the sequence, so
+    8 windows over 5 photos is 5 (Green 3). An older record without the distinct count falls
+    back to the windows."""
+    return fact.media_count or fact.window_count
+
+
+def _background_never_changes(fact: SpeakerBackgroundFact) -> bool:
+    """No windows, or one photo repeated in every window: nothing changes behind the speaker."""
+    return fact.window_count == 0 or fact.media_count == 1
+
+
+def _background_media_shortfall(fact: SpeakerBackgroundFact) -> tuple[int, int] | None:
+    """(shown, asked) when the plan shows fewer DISTINCT photos / videos than the strategy asked
+    for (a window that repeats a photo is not a photo lost), else None."""
+    shown = _background_media_shown(fact)
+    asked = fact.asked_media_count or fact.asked_windows
+    if fact.window_count and asked > shown:
+        return shown, asked
+    return None
+
+
+def _colour_extras_shortfalls(
+    req: BriefRequirement, fact: SpeakerBackgroundFact, *, rendered: bool
+) -> list[str]:
+    """What a colour ask's corner (``speaker_small``) and changing backgrounds
+    (``background_changes``) parts are missing, judged the way the photo / video ask judges them
+    in `_check_speaker_background`, in colour wording."""
+    out: list[str] = []
+    shortfall = _background_media_shortfall(fact)
+    if _asks_changing_backgrounds(req) and _background_never_changes(fact):
+        if fact.pool_count == 0:
+            out.append(_sb(_SBC_NOTHING_TO_SWITCH))
+        elif not rendered and not fact.windows_open:
+            out.append(_sb(_SBC_NO_SWITCHING))
+        else:
+            out.append(_sb(_SBC_NO_CHANGE))
+    elif shortfall is not None and not rendered:
+        shown, asked = shortfall
+        out.append(
+            say(
+                en=(
+                    f"Only {shown} of your {asked} photos or videos "
+                    "take turns over the colour; I couldn't use the rest."
+                ),
+                tr=(
+                    f"{asked} fotoğraf ya da videodan yalnızca {shown} "
+                    "tanesi rengin üstünde sırayla değişiyor; gerisini kullanamadım."
+                ),
+            )
+        )
+    if _asks_small_speaker(req) and fact.frame is None:
+        if not rendered and not fact.windows_open:
+            out.append(_sb(_SB_FULL_SIZE))
+        else:
+            out.append(
+                say(
+                    en="You stay full size, not small in a corner.",
+                    tr="Tam boyutta kalıyorsun, köşede küçük değilsin.",
+                )
+            )
+    return out
+
+
+def _check_background_color(
+    req: BriefRequirement, fact: SpeakerBackgroundFact, ask: str, *, rendered: bool
+) -> RequirementReceipt:
+    """A plain colour behind the speaker (KRI-1173, S58): met when the plan / video holds the
+    colour AND every corner / changing-backgrounds part asked beside it, else a refusal or a
+    partial that names each missing part and the reason. "Attach photos first" never answers the
+    colour itself (it needs no pool); only the changing part may ask for photos to switch to."""
+    from app.agents._schemas.reaction_beats import normalise_background_color  # noqa: PLC0415
+
+    if fact.status == "unavailable":
+        reason = {"unavailable": _SBC_UNAVAILABLE, "app_too_old": _SBC_APP_TOO_OLD}.get(
+            fact.code or "", _SBC_NOT_TALKING
+        )
+        return _receipt(req, "not_possible", _sb(reason))
+    if fact.color is None:
+        if fact.color_code == "app_too_old":
+            return _receipt(req, "not_possible", _sb(_SBC_APP_TOO_OLD))
+        if fact.color_code == "unavailable":
+            return _receipt(req, "not_possible", _sb(_SBC_UNAVAILABLE))
+        return _receipt(req, "not_possible", _sb(_SBC_NOT_DRAWN if rendered else _SBC_NOT_PLANNED))
+    asked_hex = normalise_background_color(ask)
+    # KRI-1173 review: the colour is one part of the ask. A corner or changing backgrounds asked
+    # beside it are judged too, and every shortfall is named (never "met" with the speaker still
+    # full size, never one shortfall hiding another).
+    shortfalls: list[str] = []
+    if asked_hex is not None and asked_hex != fact.color:
+        shortfalls.append(
+            say(
+                en=f"The plain colour behind you is {fact.color}, not the {ask} you asked for.",
+                tr=f"Arkandaki düz renk {fact.color}; istediğin {ask} değil.",
+            )
+        )
+    shortfalls += _colour_extras_shortfalls(req, fact, rendered=rendered)
+    if shortfalls:
+        return _receipt(req, "partial", " ".join(shortfalls))
+    label = ask if asked_hex is None or asked_hex != ask.upper() else fact.color
+    en = f"A plain {label} background sits behind you for the whole video"
+    tr = f"Bütün video boyunca arkanda düz {label} bir arka plan duruyor"
+    if not _background_never_changes(fact):
+        shown = _background_media_shown(fact)
+        en += f"; {shown} photos or videos take turns over it"
+        tr += f"; üstünde {shown} fotoğraf ya da video sırayla değişiyor"
+    elif fact.window_count:
+        # One photo repeated in every window does not take turns with anything.
+        en += "; one photo or video sits over it"
+        tr += "; üstünde tek bir fotoğraf ya da video duruyor"
+    corner = _FRAME_WORDS.get(fact.frame or "")
+    if corner:
+        en += f"; you're {corner[0]}"
+        tr += f"; sen {corner[1]}sın"
+    return _receipt(req, "met", say(en=en + ".", tr=tr + "."))
+
+
 def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Is a photo or video behind the speaker, as the creator asked (KRI-1161)?
 
@@ -4312,6 +4616,9 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
     if fact is None:
         return _receipt(req, "partial", _NO_CHECKER)
     rendered = facts.rendered_variant
+    color_ask = _asked_background_color(req)
+    if color_ask is not None:
+        return _check_background_color(req, fact, color_ask, rendered=bool(rendered))
     if fact.status == "unavailable":
         reason = {"unavailable": _SB_UNAVAILABLE, "app_too_old": _SB_APP_TOO_OLD}.get(
             fact.code or "", _SB_NOT_TALKING
@@ -4325,7 +4632,9 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
         return _receipt(req, "not_possible", _sb(_SB_NOT_PLANNED))
     wants_several = _asks_changing_backgrounds(req)
     wants_corner = _asks_small_speaker(req)
-    if wants_several and fact.window_count == 0:
+    # Green 3: the windows cycle the photos, so "8 windows" over 5 photos is 5 photos. One
+    # distinct photo behind eight windows is no change at all.
+    if wants_several and _background_never_changes(fact):
         if fact.pool_count == 1:
             return _receipt(req, "partial", _sb(_SB_ONLY_ONE_ATTACHED))
         if not rendered and not fact.windows_open:
@@ -4342,25 +4651,28 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
                 tr="Tam boyutta kalıyorsun, köşede küçük değilsin.",
             ),
         )
-    if fact.asked_windows > fact.window_count > 0 and not rendered:
+    shortfall = _background_media_shortfall(fact)
+    if shortfall is not None and not rendered:
+        shown, asked = shortfall
         return _receipt(
             req,
             "partial",
             say(
                 en=(
-                    f"Only {fact.window_count} of your {fact.asked_windows} photos or videos "
+                    f"Only {shown} of your {asked} photos or videos "
                     "take turns behind you; I couldn't use the rest."
                 ),
                 tr=(
-                    f"{fact.asked_windows} fotoğraf ya da videodan yalnızca {fact.window_count} "
+                    f"{asked} fotoğraf ya da videodan yalnızca {shown} "
                     "tanesi arkanda sırayla değişiyor; gerisini kullanamadım."
                 ),
             ),
         )
     corner = _FRAME_WORDS.get(fact.frame or "")
-    if fact.window_count:
-        en = f"{fact.window_count} photos or videos take turns behind you"
-        tr = f"{fact.window_count} fotoğraf ya da video arkanda sırayla değişiyor"
+    if not _background_never_changes(fact):
+        shown = _background_media_shown(fact)
+        en = f"{shown} photos or videos take turns behind you"
+        tr = f"{shown} fotoğraf ya da video arkanda sırayla değişiyor"
         if corner:
             en += f"; you're {corner[0]}"
             tr += f"; sen {corner[1]}sın"
@@ -4988,17 +5300,35 @@ def _single_quotes_as_double(text: str) -> str:
     )
 
 
+def _wants_restart_cut(req: BriefRequirement) -> bool:
+    """KRI-1189: the ask cuts a sentence the creator restarted without saying which one.
+
+    The model that read the message records it as ``facts["cut_restarts"]`` ("the sentence I
+    restarted", "my retakes", "tekrar aldığım cümle"); a restart the creator quotes or names is a
+    ``cut_lines`` entry instead. Only consented cleanup's retake detection can cut one.
+    """
+    return _fact_flag(req, "cut_restarts") is True
+
+
 def _wants_named_cuts(req: BriefRequirement) -> bool:
     """The ask names a stretch of speech to remove, not just pauses and sounds.
 
     KRI-792: the model records each such stretch in ``facts["cut_lines"]``; a recorded line
     decides. The fact only ever adds a named cut: without it the words still decide, since a
     missed named cut is a "Done" for a cut that never happens.
+    KRI-1189: with ``cut_restarts`` recorded, the restart is not a named stretch: only a line
+    the ask itself says (the render's own test, `named_cut_asks`) or quotes still is. A
+    ``cut_lines`` entry copied from the take (Green 3 r2) is one the render drops.
     """
-    if _cut_lines(req):
+    restart = _wants_restart_cut(req)
+    if restart:
+        from app.kria.opening_cut_ask import named_cut_asks  # noqa: PLC0415
+
+        if named_cut_asks([req]):
+            return True
+    elif _cut_lines(req):
         return True
-    text = _req_text(req)
-    if _NAMED_CUT_RE.search(text):
+    elif _NAMED_CUT_RE.search(_req_text(req)):
         return True
     # A quoted line is a spoken stretch; a quoted "um" is a filler sound.
     return any(
@@ -5088,6 +5418,10 @@ _BED_MUTE_RE = re.compile(
 # (main_creator._BRIEF_PROMPT_SECTION). A recorded `audio_intent` decides; the wording
 # recognisers below only read briefs written before it (KRI-667).
 SOURCE_MUTED_INTENT = "source_muted"
+# KRI-1164: "No music." The brief writer records the typed ``audio_intent: no_music``. It says
+# nothing about the footage's own sound (that is `source_muted`), so none of the bed readers
+# below claim it; `_check_no_music` does.
+NO_MUSIC_INTENT = "no_music"
 
 
 def _typed_audio_intent(req: BriefRequirement) -> str | None:
@@ -5151,6 +5485,41 @@ def renders_bed_mute(req: BriefRequirement) -> bool:
 # (`app.kria.footage_mute_ask`), so render and receipt share one recogniser.
 wants_bed_muted = _wants_bed_muted
 wants_bed_under_voice = _wants_bed_under_voice
+
+
+def wants_no_music(req: BriefRequirement) -> bool:
+    """KRI-1164: "No music." as the brief writer typed it (``audio_intent: no_music``).
+
+    Only the typed fact counts, never the creator's words (KRI-667): a brief written before it
+    existed keeps today's verdict. It never mutes the footage's own sound."""
+    return req.kind == "audio" and _typed_audio_intent(req) == NO_MUSIC_INTENT
+
+
+# The audio strategies whose music plays in (or is laid under) the video.
+_MUSIC_AUDIO_STRATEGIES = frozenset({"licensed_music", "user_song"})
+
+
+def _check_no_music(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """KRI-1164 (Green 3): "No music" against the plan or the finished video.
+
+    A Talking edit (phone or cloud, draft or render) plays the creator's own sound and lays no
+    music under it, so the ask is already how it is made: it used to be turned into "A Talking
+    video can't do this" because no checker owned it. A plan or render that DOES carry music is
+    said so. Any other format has no way to judge it here (neutral, as before).
+    """
+    if facts.audio_strategy in _MUSIC_AUDIO_STRATEGIES or facts.song_bed or facts.music_in_render:
+        return _receipt(
+            req,
+            "partial",
+            say(en="This video has music.", tr="Bu videoda müzik var."),
+        )
+    if facts.edit_format in _TALKING_FORMATS:
+        return _receipt(
+            req,
+            "met",
+            say(en="No music, as asked.", tr="İstediğin gibi müzik yok."),
+        )
+    return _receipt(req, "partial", _NO_CHECKER)
 
 
 def _has_duration_target(req: BriefRequirement) -> bool:
@@ -5246,6 +5615,18 @@ _NAMED_CUT_STILL_IN = "Still in your video"
 # KRI-821: a phone Talking draft cuts each named line the render finds said once.
 _NAMED_CUT_AT_RENDER = (
     "I'll cut the line you named out of your take if I find it said once, and tell you after"
+)
+# KRI-1189: "the sentence I restarted" with no line named (`_wants_restart_cut`). Consented
+# cleanup cuts one only while retake detection is on (`speech_cleanup_retakes_enabled`).
+_RESTART_STAYS = (
+    "Clean up speech looks only for pauses and filler sounds, so a sentence you restarted stays in"
+)
+_RESTART_CUT_AT_APPROVAL = (
+    "Clean up speech also cuts a sentence you restarted if it finds one, and I'll tell you after"
+)
+# KRI-1189: a finished render whose cleanup could detect restarts and cut none.
+_RESTART_NOT_FOUND = (
+    "Speech cleanup didn't find a sentence you restarted, so it may still be in your video"
 )
 # Neutral: the speaker may be someone the creator filmed (KRI-1008).
 _CAPTIONS_WORD_BY_WORD = "words light up as they're spoken"
@@ -5572,6 +5953,17 @@ _REASON_TR: dict[str, str] = {
     _NAMED_CUT_AT_RENDER: (
         "Söylediğin cümleyi çekiminde bir kez geçiyorsa keseceğim ve sonra sana söyleyeceğim"
     ),
+    _RESTART_STAYS: (
+        "“Konuşmayı temizle” yalnızca duraklamaları ve dolgu seslerini arar, "
+        "o yüzden baştan başladığın bir cümle videoda kalır"
+    ),
+    _RESTART_CUT_AT_APPROVAL: (
+        "“Konuşmayı temizle” baştan başladığın bir cümle bulursa onu da keser "
+        "ve sonra sana söylerim"
+    ),
+    _RESTART_NOT_FOUND: (
+        "Konuşma temizliği baştan başladığın bir cümle bulmadı, o yüzden videoda kalmış olabilir"
+    ),
     _NAMED_CUTS_STAY: (
         "belirli bir cümleyi henüz tam olarak kesemiyorum ve çıkarıldığını doğrulayamıyorum, "
         "o yüzden videoda kalmış olabilir"
@@ -5661,6 +6053,22 @@ _REASON_TR: dict[str, str] = {
     _SB_NOT_PLANNED: "Bu taslak arkana fotoğraf ya da video koymuyor",
     _SB_NOT_DRAWN: "Biten videoda arkanda fotoğraf ya da video yok",
     _SB_NO_CHANGE: ("Bütün video boyunca arkanda tek bir fotoğraf ya da video duruyor; değişmiyor"),
+    # KRI-1173: a plain colour behind the speaker.
+    _SBC_NOT_TALKING: (
+        "Arkana düz renk yalnızca iPhone'da hazırlanan konuşmalı düzenlemede konabilir"
+    ),
+    _SBC_UNAVAILABLE: "Arkana düz renk koymak iPhone'unda henüz kullanılamıyor",
+    _SBC_APP_TOO_OLD: "iPhone uygulaman arkana düz renk koymak için çok eski; önce güncelle",
+    _SBC_NOT_PLANNED: "Bu taslak arkana düz renk koymuyor",
+    _SBC_NOT_DRAWN: "Biten videoda arkanda düz renk yok",
+    _SBC_NO_SWITCHING: (
+        "Düz renk bütün video boyunca arkanda kalıyor; iPhone'un henüz arka planı değiştiremiyor"
+    ),
+    _SBC_NO_CHANGE: "Düz renk bütün video boyunca arkanda kalıyor; üstünde hiçbir şey değişmiyor",
+    _SBC_NOTHING_TO_SWITCH: (
+        "Düz renk bütün video boyunca arkanda kalıyor; üstünde sırayla değişecek fotoğraf ya da "
+        "video ekli değil. Onları Visuals'a ekle"
+    ),
 }
 
 
@@ -5720,6 +6128,9 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _CLEANUP_NOT_RUN,
     _NAMED_CUT_STILL_IN,
     _NAMED_CUT_AT_RENDER,
+    _RESTART_STAYS,
+    _RESTART_CUT_AT_APPROVAL,
+    _RESTART_NOT_FOUND,
     _BED_STILL_PLAYS,
     _NO_CLIP_SPEED,
     _NO_CLIP_SPEED_SONG,
@@ -6624,24 +7035,49 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         lead, status = _CLEANUP_IF_OFFERED, "partial"
     notes = [_loc(lead)]
     if _wants_named_cuts(req):
-        if (facts.phone_talking or _cuts_named_voiceover_lines(facts)) and named_cut_lines(req):
+        from app.kria.opening_cut_ask import named_cut_asks  # noqa: PLC0415
+
+        if (facts.phone_talking or _cuts_named_voiceover_lines(facts)) and named_cut_asks([req]):
             # KRI-821: the phone Talking render cuts each named line it finds said once;
             # KRI-889: so does a narrated render, out of the recorded voiceover.
             # Not certain before the render finds the line, so never "Done" (KRI-792).
+            # KRI-1176: only a line the ask itself says is kept (`named_cut_asks`): the render
+            # drops a recorded `cut_lines` entry the ask never says, so promising it is false.
             notes.append(_loc(_NAMED_CUT_AT_RENDER))
             status = "partial"
         else:
             notes.append(_loc(_NAMED_CUTS_STAY))
             status = "partial"
+    if _wants_restart_cut(req) and facts.speech_cleanup_offered is not False:
+        # KRI-1189: only cleanup's own retake detection can cut a restart nobody named, and only
+        # once the render finds one, so never "Done" before it.
+        notes.append(_loc(_RESTART_CUT_AT_APPROVAL if _retake_detection_on() else _RESTART_STAYS))
+        status = "partial"
     cleanup = _receipt(req, status, "; ".join(notes) if status == "partial" else None)
     return _merge_cleanup_timing(req, facts, cleanup)
+
+
+def _retake_detection_on(facts: PlanFacts | None = None) -> bool:
+    """KRI-1189: whether speech cleanup looks for restarted sentences.
+
+    A finished render says so itself (``speech_cleanup_retake_possible``, off its job's cleanup
+    contract); a draft is approved into consented cleanup, which needs both levers.
+    """
+    if facts is not None and facts.speech_cleanup_retake_possible is not None:
+        return facts.speech_cleanup_retake_possible
+    from app.services.plan_item_media import speech_cleanup_retakes_enabled  # noqa: PLC0415
+
+    return speech_cleanup_retakes_enabled()
 
 
 def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """KRI-541: the cleanup ask against what a finished render's speech cleanup did."""
     outcome = facts.speech_cleanup_outcome
     named = _named_cut_notes(req, facts) if _wants_named_cuts(req) else None
-    if named is not None and not _CLEANUP_NOUN_RE.search(_req_text(req)):
+    restart = _wants_restart_cut(req)
+    # KRI-1189: cleanup's cut record holds the restart it found (a `retake` row).
+    restart_cut = outcome == "applied" and (facts.speech_cleanup_retakes or 0) > 0
+    if named is not None and not restart and not _CLEANUP_NOUN_RE.search(_req_text(req)):
         # KRI-821: an ask that only names lines to cut is answered by the render's own
         # per-line receipts, whatever speech cleanup did (it never cuts a named line).
         return _receipt(req, "met" if named[1] else "partial", "; ".join(named[0]))
@@ -6652,7 +7088,7 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
     elif outcome == "not_run":
         lead, status = _CLEANUP_NOT_RUN, "partial"
     else:
-        if named is not None:
+        if named is not None and not restart:
             # KRI-821: cleanup off (no cleanup record), but the named lines were cut on their own.
             return _receipt(req, "met" if named[1] else "partial", "; ".join(named[0]))
         return _receipt(req, "partial", _CANT_CHECK_CLEANUP)
@@ -6663,12 +7099,16 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
             notes.extend(named[0])
             if not named[1]:
                 status = "partial"
-            elif outcome == "applied":
+            elif outcome == "applied" and (restart_cut or not restart):
                 return _receipt(req, "met", "; ".join(named[0]))
         else:
             # The generic cut record cannot prove that this requested line was the removed span.
             notes.append(_loc(_NAMED_CUTS_STAY))
             status = "partial"
+    if restart and not restart_cut and outcome != "not_run":
+        # "Didn't run" already says the restart stays; otherwise say whether cleanup looked.
+        notes.append(_loc(_RESTART_NOT_FOUND if _retake_detection_on(facts) else _RESTART_STAYS))
+        status = "partial"
     if status == "met" and outcome == "applied":
         return _receipt(req, "met", None)
     return _receipt(req, status, "; ".join(notes))
@@ -6766,7 +7206,12 @@ def speech_cleanup_review_note(
                 ),
             )
         ]
-    if not retakes and not retake_cut_possible and _loc(_NAMED_CUTS_STAY) not in text:
+    if (
+        not retakes
+        and not retake_cut_possible
+        and _loc(_NAMED_CUTS_STAY) not in text
+        and _loc(_RESTART_STAYS) not in text
+    ):
         sentences.append(
             say(
                 # KRI-970: what it looks for, never a promise of what it cut. Its filler
@@ -6798,7 +7243,185 @@ def _merge_cleanup_timing(
     return _receipt(req, "partial", f"{cleanup.reason}; {timing.reason}")
 
 
-def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+def _caption_lines_kept(
+    ask: CaptionLookAsk, receipt: Mapping[str, Any], overrides: Sequence[Mapping[str, Any]]
+) -> bool | None:
+    """Do single captions changed in the editor still carry the asked look (Emir's second #2089
+    review)? The render draws each override (`phone_captions`), so one caption resized,
+    recoloured or moved off the drawn spot is the look changed; an override that keeps it is
+    not. None = an asked spot the receipt does not record, which nothing can compare."""
+    unknown = False
+    for line in overrides:
+        if ask.size is not None and "size_px" in line:
+            size = _finite_number(line["size_px"])
+            if size is None or round(size) != round(float(receipt.get("size_px") or 0)):
+                return False
+        if ask.color is not None and "text_color" in line:
+            if str(line["text_color"]).casefold() != ask.color.casefold():
+                return False
+        if ask.position is not None:
+            for key in ("position_x_frac", "position_y_frac"):
+                if key not in line:
+                    continue
+                drawn, now = _finite_number(receipt.get(key)), _finite_number(line[key])
+                if drawn is None:
+                    unknown = True
+                elif now is None or abs(now - drawn) > 0.02:
+                    return False
+    return None if unknown else True
+
+
+def _caption_look_kept(ask: CaptionLookAsk, facts: PlanFacts) -> bool | None:
+    """Does the finished variant still carry the look its first draft drew (KRI-1177)?
+
+    True = every asked part is on the variant; False = a recorded part differs (an editor Save
+    or a re-render changed it, or the receipt was drawn for another ask); None = a part the
+    ask names is not recorded on the variant, so nothing can be said either way.
+    """
+    receipt = facts.caption_look_receipt or {}
+    unknown = False
+    if ask.size is not None:
+        size_px = receipt.get("size_px")
+        if receipt.get("size") != ask.size or not isinstance(size_px, int | float):
+            return False
+        if facts.caption_size_px is None:
+            unknown = True
+        elif facts.caption_size_px != round(size_px):
+            return False
+    if ask.color is not None:
+        drawn = str(receipt.get("color") or "").casefold()
+        if drawn != ask.color.casefold():
+            return False
+        if facts.caption_text_color is None:
+            unknown = True
+        elif facts.caption_text_color.casefold() != drawn:
+            return False
+    if ask.position is not None:
+        if receipt.get("position") != ask.position:
+            return False
+        if facts.caption_alignment is None:
+            unknown = True
+        elif facts.caption_alignment != caption_alignment(ask.position):
+            return False
+        # Same side but moved up, down or sideways (a KRI-827 mark, an editor drag) is not the
+        # spot; a spot the receipt or the variant does not record is unknown, never met.
+        for drawn, now in (
+            (receipt.get("position_x_frac"), facts.caption_x_frac),
+            (receipt.get("position_y_frac"), facts.caption_y_frac),
+        ):
+            drawn = _finite_number(drawn)
+            if drawn is None or now is None:
+                unknown = True
+            elif abs(now - drawn) > 0.02:
+                return False
+    kept = _caption_lines_kept(ask, receipt, facts.caption_line_overrides)
+    if kept is not True:
+        return kept
+    if ask.case is not None:
+        if receipt.get("case") != ask.case:
+            return False
+        if not facts.caption_texts:
+            unknown = True
+        else:
+            # The same rule the writer cased the cues with (Turkish dotted / dotless i too).
+            cased = apply_caption_case(
+                [{"text": text} for text in facts.caption_texts], ask.case, facts.caption_language
+            )
+            if [cue["text"] for cue in cased] != list(facts.caption_texts):
+                return False
+    return None if unknown else True
+
+
+def _check_caption_look(
+    req: BriefRequirement, facts: PlanFacts, ask: CaptionLookAsk
+) -> RequirementReceipt | None:
+    """The caption look the creator typed ("small, white, lowercase, in the middle", KRI-1177).
+
+    The brief records it as typed facts; the phone Talking writer draws it on the first draft
+    (even over a face or the corner speaker: the creator's ask wins) and writes a
+    ``caption_look_receipt``. So a phone Talking draft says it is done, and a finished video is
+    judged on whether it still carries what the writer drew. ``None`` = no writer here draws the
+    look (cloud, montage, an editor turn, a render with no receipt): the usual captions path,
+    which says "can't check", stays.
+    """
+    if _wants_no_captions(req):
+        return None
+    frame = facts.speaker_background.frame if facts.speaker_background is not None else None
+    over_speaker = caption_over_speaker(ask.position, frame)
+    if facts.rendered_variant:
+        if facts.caption_look_receipt is None:
+            return None
+        if facts.caption_texts == ():
+            return _receipt(
+                req,
+                "partial",
+                say(en="This video has no captions.", tr="Bu videoda altyazı yok."),
+            )
+        kept = _caption_look_kept(ask, facts)
+        if kept is None:
+            return None
+        if not kept:
+            return _receipt(
+                req,
+                "partial",
+                say(
+                    en="The captions no longer look the way you asked.",
+                    tr="Altyazılar artık istediğin gibi görünmüyor.",
+                ),
+            )
+        over_face = facts.caption_look_receipt.get("over_face") is True
+        return _receipt(
+            req,
+            "met",
+            caption_look_reason(ask, over_speaker=over_speaker, over_face=over_face),
+        )
+    from app.config import settings  # noqa: PLC0415
+
+    if (
+        facts.caption_words_at_render
+        and not facts.editor
+        and settings.phone_text_styling_enabled
+        and facts.caption_style != "none"
+    ):
+        # The phone Talking writer applies the look to this draft's first render; with phone
+        # text styling off it stamps no policy (`stamp_phone_text_style`), so nothing is drawn,
+        # and a draft with captions off has nothing to draw it on (`_check_captions` says so).
+        return _receipt(
+            req,
+            "met",
+            caption_look_reason(ask, over_speaker=over_speaker, over_face=False),
+        )
+    return None
+
+
+def _with_caption_words(
+    req: BriefRequirement, facts: PlanFacts, look: RequirementReceipt
+) -> RequirementReceipt:
+    """The typed look's verdict combined with the rest of the same captions ask (KRI-1177).
+
+    Emir's #2089 review: "Captions small, white, in Turkish" returned the look's "met" alone,
+    so the Turkish ask was never judged or said. The language / spelling part takes its usual
+    path (the draft's plan line, or the finished captions), a word-by-word ask its style check,
+    and the weaker verdict stands (`combine_receipts`)."""
+    if not _wants_captions(req):
+        return look
+    if _caption_words_ask(req, look_typed=True):
+        if facts.caption_words_at_render and not facts.rendered_variant and not facts.editor:
+            rest = _caption_words_plan(req, facts)
+        elif facts.caption_texts is not None:
+            rest = _check_caption_words(req, facts)
+        else:
+            rest = _receipt(req, "partial", _CANT_CHECK_CAPTIONS)
+    elif _wants_word_captions(req):
+        rest = _check_captions(req, facts, look_typed=True)
+    else:
+        return look
+    return combine_receipts(look, rest)
+
+
+def _check_captions(
+    req: BriefRequirement, facts: PlanFacts, *, look_typed: bool = False
+) -> RequirementReceipt:
     """Captions on / off / word-by-word, against the strategy's caption style.
 
     Only what the style settles is judged: an ask about a caption's look, place or
@@ -6853,7 +7476,7 @@ def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
         facts.caption_style is None
         or (facts.editor and not rendered)
         or fmt not in _SPEECH_FORMATS
-        or _CAPTION_DETAIL_RE.search(text)
+        or (not look_typed and _CAPTION_DETAIL_RE.search(text))
         or _keeps_spoken_languages(req)
     ):
         return _receipt(req, "partial", _CANT_CHECK_CAPTIONS)
@@ -9519,9 +10142,10 @@ def _asks_spelling(req: BriefRequirement) -> bool:
     return _spelled_names(req) is not None or bool(_SPELLING_RE.search(_loose_req(req)))
 
 
-def _caption_words_ask(req: BriefRequirement) -> bool:
+def _caption_words_ask(req: BriefRequirement, *, look_typed: bool = False) -> bool:
     """A captions ask about their language and/or how names are spelled, and nothing about
-    their look or place (`_check_captions` keeps those)."""
+    their look or place (`_check_captions` keeps those). ``look_typed``: the look is a typed
+    `caption_look_ask` judged on its own (KRI-1177), so look words never disqualify it."""
     if _wants_no_captions(req):
         return False
     if _asked_caption_language(req) is None and not _asks_spelling(req):
@@ -9529,7 +10153,7 @@ def _caption_words_ask(req: BriefRequirement) -> bool:
     look = _req_text(req)
     for name in _spelled_names(req) or ():
         look = look.replace(_fold(name), " ")
-    return not _CAPTION_LOOK_RE.search(look)
+    return look_typed or not _CAPTION_LOOK_RE.search(look)
 
 
 def _judges_caption_words(req: BriefRequirement, facts: PlanFacts) -> bool:
@@ -10963,6 +11587,10 @@ def _has_checker(req: BriefRequirement) -> bool:
         return True  # KRI-841: judged against the plan's / render's ending video
     if asks_speaker_background(req):
         return True  # KRI-1161: judged against the plan's / render's background
+    if wants_no_music(req):
+        return True  # KRI-1164: judged against the plan's / render's music
+    if caption_look_ask(req) is not None:
+        return True  # KRI-1177: the typed caption look, judged against the writer's receipt
     if _insert_clip_fact(req):
         return True  # parent KRI-1151: judged against the plan's / render's paused-take clips
     if requirement_clip_sound(req) is not None:
@@ -11566,6 +12194,10 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # KRI-1161: "put the photo behind me" / a green screen is judged against the background
         # the plan (or the render) holds, ahead of the framing and generic Talking answers.
         return _check_speaker_background(req, facts)
+    if wants_no_music(req):
+        # KRI-1164: the typed "no music" is judged against the plan's / render's music, ahead of
+        # the bed and source-sound readers (it says nothing about the footage's own sound).
+        return _check_no_music(req, facts)
     clip_sound = requirement_clip_sound(req)
     if clip_sound is not None:
         # KRI-842: a recorded fact owns the ask, whatever words it is worded in.
@@ -11587,6 +12219,14 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # edit: the cleanup ask owns the sentence; the length it names is judged
         # inside it. Elsewhere the sentence takes its kind's usual path.
         return _check_speech_cleanup(req, facts)
+    look_ask = caption_look_ask(req)
+    if look_ask is not None:
+        # KRI-1177: "captions small, white, lowercase, in the middle" is typed on the brief, so
+        # the phone Talking writer draws it and says so; ahead of the style and captions paths
+        # that can only answer "can't check". No receipt / no such writer: falls through.
+        look = _check_caption_look(req, facts, look_ask)
+        if look is not None:
+            return _with_caption_words(req, facts, look)
     montage_fit = _montage_landscape_fit(req, facts)
     if montage_fit is not None:
         # KRI-1027: a montage's "make it all vertical" / "keep the black bars"; a Talking

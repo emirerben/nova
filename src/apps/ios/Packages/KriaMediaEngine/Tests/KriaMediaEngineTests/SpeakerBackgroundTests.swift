@@ -60,6 +60,51 @@ final class SpeakerBackgroundTests: XCTestCase {
         }
     }
 
+    // MARK: - KRI-1173 wire (v3.json: a solid-colour fill)
+
+    func testSharedFixtureV3ValidLayersDecodeToTheNormalizedForm() throws {
+        let valid = try cases("valid", file: "v3")
+        XCTAssertGreaterThanOrEqual(valid.count, 4)
+        for item in valid {
+            let layer = try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: item.layer)
+            XCTAssertEqual(layer, try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: XCTUnwrap(item.normalized)), item.name)
+            try layer.validate()
+            let rewritten = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(layer)) as? NSDictionary)
+            XCTAssertEqual(rewritten, try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(item.normalized)) as? NSDictionary), item.name)
+        }
+    }
+
+    func testSharedFixtureV3InvalidLayersAreRejected() throws {
+        let invalid = try cases("invalid", file: "v3")
+        XCTAssertGreaterThanOrEqual(invalid.count, 16)
+        for item in invalid {
+            XCTAssertThrowsError(try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: item.layer), item.name)
+        }
+    }
+
+    /// S48: a media layer never writes `color`; a colour layer never writes `asset_id`.
+    func testColourAndMediaLayersWriteOnlyTheirOwnKeys() throws {
+        let media = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(SpeakerBackgroundLayer(assetID: "a", mediaKind: .image))) as? [String: Any])
+        XCTAssertNil(media["color"])
+        XCTAssertNotNil(media["asset_id"])
+        let colour = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(SpeakerBackgroundLayer.color("#FFFFFF"))) as? [String: Any])
+        XCTAssertNil(colour["asset_id"])
+        XCTAssertEqual(colour["color"] as? String, "#FFFFFF")
+        XCTAssertEqual(colour["media_kind"] as? String, "color")
+        XCTAssertNil(SpeakerBackgroundLayer.color("#FFFFFF").visualMediaKind)
+        XCTAssertEqual(SpeakerBackgroundLayer(assetID: "a", mediaKind: .video).visualMediaKind, .video)
+    }
+
+    func testInitRejectsInconsistentColourShapes() {
+        XCTAssertThrowsError(try SpeakerBackgroundLayer(assetID: "a", mediaKind: SpeakerBackgroundFillKind.color, color: "#FFFFFF").validate())
+        XCTAssertThrowsError(try SpeakerBackgroundLayer(assetID: nil, mediaKind: .color).validate())
+        XCTAssertThrowsError(try SpeakerBackgroundLayer(assetID: nil, mediaKind: .image).validate())
+        XCTAssertThrowsError(try SpeakerBackgroundLayer(assetID: "a", mediaKind: SpeakerBackgroundFillKind.image, color: "#FFFFFF").validate())
+        XCTAssertThrowsError(try SpeakerBackgroundLayer.color("#ffffff").validate())
+        XCTAssertThrowsError(try SpeakerBackgroundLayer(assetID: nil, mediaKind: .color, sourceStart: 1, color: "#FFFFFF").validate())
+        XCTAssertNoThrow(try SpeakerBackgroundLayer.color("#0A1B2C").validate())
+    }
+
     func testNullWindowsAndFrameReadAsAbsent() throws {
         let layer = try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: Data(
             #"{"asset_id":"a","media_kind":"image","windows":null,"speaker_frame":null}"#.utf8))
@@ -192,6 +237,42 @@ final class SpeakerBackgroundTests: XCTestCase {
                        ["asset_id": "visual-missing", "media_kind": "image", "start": 0, "end": 4]] as [[String: Any]] {
             object["speaker_background"] = ["asset_id": "media-1", "media_kind": "image", "windows": [window]] as [String: Any]
             XCTAssertThrowsError(try decode(object).validate(), "\(window)")
+        }
+    }
+
+    /// KRI-1173 (S62): a colour fill needs no `.visual` manifest asset and derives `speakerBackgroundColor`
+    /// (plus `speakerBackgroundWindows` with windows or a frame); a media fill never does.
+    func testColourRecipeNeedsNoVisualAssetAndDerivesTheColourCapability() throws {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: recipeFixture)) as? [String: Any])
+        object["speaker_background"] = ["media_kind": "color", "color": "#00FF00"]
+        let recipe = try decode(object)
+        try recipe.validate()
+        XCTAssertEqual(recipe.speakerBackground?.mediaKind, .color)
+        XCTAssertTrue(recipe.effectiveCapabilities.isSuperset(of: [.speakerBackground, .speakerBackgroundColor]))
+        XCTAssertFalse(recipe.effectiveCapabilities.contains(.speakerBackgroundWindows))
+        XCTAssertEqual(try decode(JSONSerialization.jsonObject(with: RecipeJSON.encode(recipe)) as! [String: Any]), recipe)
+        let decision = CapabilityNegotiator().decide(for: recipe)
+        XCTAssertEqual(decision.route, .cloud)
+        XCTAssertTrue(decision.missingCapabilities.contains(.speakerBackgroundColor))
+
+        let frame: [String: Any] = ["width_fraction": 0.42, "x_fraction": 0.76, "y_fraction": 0.8]
+        object["speaker_background"] = ["media_kind": "color", "color": "#00FF00", "speaker_frame": frame] as [String: Any]
+        XCTAssertTrue(try decode(object).effectiveCapabilities.isSuperset(of: [.speakerBackground, .speakerBackgroundColor, .speakerBackgroundWindows]))
+
+        let media = try decode(recipeObject())
+        XCTAssertFalse(media.effectiveCapabilities.contains(.speakerBackgroundColor))
+    }
+
+    /// A colour fill under a window still needs the window's own manifest asset.
+    func testColourFillWindowStillNamesAMatchingVisualsAsset() throws {
+        var object = try recipeObject()
+        let window: [String: Any] = ["asset_id": "media-1", "media_kind": "image", "start": 0, "end": 4]
+        object["speaker_background"] = ["media_kind": "color", "color": "#FFFFFF", "windows": [window]] as [String: Any]
+        XCTAssertNoThrow(try decode(object).validate())
+        for bad in [["asset_id": "media-1", "media_kind": "video", "start": 0, "end": 4],
+                    ["asset_id": "visual-missing", "media_kind": "image", "start": 0, "end": 4]] as [[String: Any]] {
+            object["speaker_background"] = ["media_kind": "color", "color": "#FFFFFF", "windows": [bad]] as [String: Any]
+            XCTAssertThrowsError(try decode(object).validate(), "\(bad)")
         }
     }
 

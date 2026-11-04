@@ -648,6 +648,7 @@ class Settings(BaseSettings):
     ai_openai_monthly_budget_usd: float = Field(default=0, ge=0, le=1000)
     ai_anthropic_monthly_budget_usd: float = Field(default=0, ge=0, le=1000)
     ai_openai_evaluation_budget_usd: float = Field(default=0, ge=0, le=1000)
+    ai_openai_intent_review_budget_usd: float = Field(default=0, ge=0, le=1000)
     ai_openai_image_budget_usd: float = Field(default=0, ge=0, le=1000)
     ai_openai_narration_budget_usd: float = Field(default=0, ge=0, le=1000)
     ai_anthropic_evaluation_budget_usd: float = Field(default=0, ge=0, le=1000)
@@ -781,6 +782,26 @@ class Settings(BaseSettings):
     # runtime_version=1 project remain available when this is false; the new
     # durable turn/approval endpoints deliberately fail closed as 404.
     kria_runtime_v2_enabled: bool = False
+    kria_intent_review_enabled: bool = False
+    kria_intent_review_evidence_queue: str = Field(
+        default="celery",
+        description="Celery queue for `tasks.prepare_generation_review`, which downloads the "
+        "published MP4 (up to 256MB, RAM-backed /tmp) and runs ffmpeg. The code default keeps "
+        "local `dev-auto.sh` working. Production pins an `autoplace-jobs` queue in fly.toml, "
+        "never `agent-control`/`maintenance`, which the 1GB `light`/Beat machine consumes.",
+    )
+    # Paid frame review (KRI-1171). A no-op without ENABLED; repair staging is a no-op without
+    # PAID. `[]` admits nobody, `["*"]` everyone. Tier, ceiling and legacy interlock:
+    # app/kria/intent_review_tier.py. Apply: fly secret on api + worker, then restart.
+    kria_intent_review_paid_enabled: bool = False
+    kria_intent_review_repair_enabled: bool = False
+    kria_intent_review_user_ids: Annotated[list[str], NoDecode] = []
+    kria_intent_review_max_usd: float = Field(default=0.10, gt=0, le=0.25)
+    # Literal per-creator daily cap on paid reviews, counted in the cost ledger by feature
+    # (like edit_director and the chip suggester). 0 blocks every review.
+    kria_intent_review_daily_limit_per_user: int = Field(default=20, ge=0, le=500)
+    # release_canary_id the ledger requires for internal accounts; empty => no paid review.
+    kria_intent_review_canary_id: str = ""
     # KRI-520: Kria replies in the chat's language (Turkish or English). The chat's
     # language comes from the creator's own messages, then the device language; server
     # copy and the Main Creator/copilot prompts follow it. Default TRUE; kill switch =
@@ -900,6 +921,15 @@ class Settings(BaseSettings):
     # `speaker_background_windows_phone_fallback`). Design:
     # docs/reviews/speaker-background-windows-failure-modes.md.
     speaker_background_windows_min_client_protocol: int = 32
+    # KRI-1173: a solid-colour FILL (`media_kind: "color"` + `color: "#RRGGBB"`, no asset) on
+    # the same lane. No new kill switch: SPEAKER_BACKGROUND_ENABLED stays the one switch; the
+    # device-parity gate is the verified token `speakerBackgroundColor` in
+    # PHONE_RENDER_VERIFIED_FEATURES plus an app build declaring `X-Kria-Client-Protocol` >= 34
+    # (33 is the media-tilt-zoom build, KRI-1169). Below either, a colour request is stripped
+    # whole (there is no media fill to fall back to; trace
+    # `speaker_background_color_phone_fallback`) and the creator keeps their own room.
+    # Design: docs/reviews/speaker-background-color-failure-modes.md.
+    speaker_background_color_min_client_protocol: int = 34
     # KRI-1134: tilt a clip or photo to any angle (`transform.rotation_degrees`, clockwise on
     # screen) with a blank, colour or blurred backdrop behind it (`TimelineClip.backdrop`),
     # drawn ON DEVICE by `KriaMediaEngine`. Capability `clipTilt` (derived from the clips). The
@@ -1254,6 +1284,7 @@ class Settings(BaseSettings):
         "kria_brief_binding_user_ids",
         "kria_approval_readiness_user_ids",
         "kria_suggestion_chips_user_ids",
+        "kria_intent_review_user_ids",
         mode="before",
     )
     @classmethod

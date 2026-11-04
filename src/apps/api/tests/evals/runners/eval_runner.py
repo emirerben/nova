@@ -263,6 +263,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.song_classifier import SongClassifierAgent
 
         return SongClassifierAgent
+    if agent_name == "nova.kria.intent_review":
+        from app.agents.intent_review import IntentReviewAgent
+
+        return IntentReviewAgent
     if agent_name == "nova.audio.song_sections":
         from app.agents.song_sections import SongSectionsAgent
 
@@ -391,6 +395,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.main_creator import MainCreatorAgent
 
         return MainCreatorAgent
+    if agent_name == "nova.creator.brief_extractor":
+        from app.agents.brief_extractor import BriefExtractorAgent
+
+        return BriefExtractorAgent
     if agent_name == "nova.compose.camera_emphasis":
         from app.agents.camera_emphasis import CameraEmphasisAgent
 

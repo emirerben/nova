@@ -56,6 +56,10 @@ enum SpeakerColor {
     static let background = CGColor(red: 0, green: 0, blue: 1, alpha: 1)
 }
 
+enum SpeakerTestColor {
+    static let white = CGColor(red: 1, green: 1, blue: 1, alpha: 1)
+}
+
 /// A temporary directory removed when the test ends.
 func speakerTestDirectory(_ test: XCTestCase) throws -> URL {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -214,7 +218,7 @@ func speakerRecipe(canvas: Canvas, speaker: URL, duration: Double, transform: Me
                    background: SpeakerTestBackground?, endingClip: TimelineClip? = nil, extraTracks: [TimelineTrack] = [],
                    extraAssets: [String: URL] = [:], visuals: [String: (url: URL, kind: VisualMediaKind)] = [:],
                    audio: AudioMixRecipe = .default, windows: [SpeakerTestWindow] = [],
-                   speakerFrame: SpeakerFrame? = nil) throws -> (recipe: EditRecipe, urls: [String: URL]) {
+                   speakerFrame: SpeakerFrame? = nil, colorBackground: String? = nil) throws -> (recipe: EditRecipe, urls: [String: URL]) {
     var visuals = visuals
     if let background { visuals["visual-background"] = (background.url, background.kind) }
     for (index, window) in windows.enumerated() { visuals["visual-window-\(index)"] = (window.url, window.kind) }
@@ -226,19 +230,24 @@ func speakerRecipe(canvas: Canvas, speaker: URL, duration: Double, transform: Me
         RenderAssetReference(id: asset.id, fingerprint: try RenderFingerprint(asset.fingerprint!),
             source: visuals[asset.id].map { .visual(visualID: asset.id, generation: "1", mediaKind: $0.kind) } ?? .original(mediaID: asset.id))
     }
+    let windowLayers = windows.isEmpty ? nil : windows.enumerated().map { index, window in
+        SpeakerBackgroundWindow(assetID: "visual-window-\(index)", mediaKind: window.kind, sourceStart: window.sourceStart,
+                                start: window.start, end: window.end)
+    }
+    // KRI-1173: a colour fill has no manifest asset (and wins over `background` if both are given).
+    let speakerBackgroundLayer: SpeakerBackgroundLayer? = colorBackground.map {
+        SpeakerBackgroundLayer.color($0, windows: windowLayers, speakerFrame: speakerFrame)
+    } ?? background.map {
+        SpeakerBackgroundLayer(assetID: "visual-background", mediaKind: $0.kind, sourceStart: $0.sourceStart, loop: $0.loop,
+                               windows: windowLayers, speakerFrame: speakerFrame)
+    }
     let recipe = EditRecipe(
         schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: canvas, assets: assets,
         tracks: [TimelineTrack(id: "subtitled", kind: .video, clips: [
             TimelineClip(id: "clip-0", sourceAssetID: "speaker", sourceDuration: duration, transform: transform),
         ] + [endingClip].compactMap { $0 })] + extraTracks,
         audio: audio, assetManifest: RenderAssetManifest(assets: references),
-        speakerBackground: background.map {
-            SpeakerBackgroundLayer(assetID: "visual-background", mediaKind: $0.kind, sourceStart: $0.sourceStart, loop: $0.loop,
-                windows: windows.isEmpty ? nil : windows.enumerated().map { index, window in
-                    SpeakerBackgroundWindow(assetID: "visual-window-\(index)", mediaKind: window.kind, sourceStart: window.sourceStart,
-                                            start: window.start, end: window.end)
-                }, speakerFrame: speakerFrame)
-        })
+        speakerBackground: speakerBackgroundLayer)
     try recipe.validate()
     return (recipe, urls)
 }

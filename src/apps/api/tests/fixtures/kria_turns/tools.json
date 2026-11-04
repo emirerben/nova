@@ -1704,22 +1704,44 @@
         },
         "EditorCommitSpeakerBackground": {
           "additionalProperties": false,
-          "description": "Editor Save section for the Talk-to-camera background (KRI-1117).\n\nThe wire is the same ``{media_id, kind, source_start_s}`` the editor document carries:\nthe media id names a visual in this item's pool, never a path (the server pins the\nexact bytes). Sent as an object to set it, as an explicit ``null`` to clear it.\n\nKRI-1162: ``windows`` (1..40 timed backgrounds over the fill) and ``speaker_frame`` are\noptional and omitted from the dump while unused, so an old-shape Save dumps exactly as it\ndid and still equals the stored document.",
+          "description": "Editor Save section for the Talk-to-camera background (KRI-1117).\n\nThe wire is the same ``{media_id, kind, source_start_s}`` the editor document carries:\nthe media id names a visual in this item's pool, never a path (the server pins the\nexact bytes). Sent as an object to set it, as an explicit ``null`` to clear it.\n\nKRI-1162: ``windows`` (1..40 timed backgrounds over the fill) and ``speaker_frame`` are\noptional and omitted from the dump while unused, so an old-shape Save dumps exactly as it\ndid and still equals the stored document.\n\nKRI-1173: ``kind: \"color\"`` + ``color`` (``#RRGGBB``, any case in, UPPERCASE stored) is a\nsolid-colour fill: no ``media_id``, no pin, ``source_start_s`` 0 (omitted from the dump).",
           "properties": {
+            "color": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Color"
+            },
             "kind": {
               "enum": [
                 "image",
-                "video"
+                "video",
+                "color"
               ],
               "title": "Kind",
               "type": "string"
             },
             "media_id": {
-              "maxLength": 160,
-              "minLength": 1,
-              "pattern": "^\\S+$",
-              "title": "Media Id",
-              "type": "string"
+              "anyOf": [
+                {
+                  "maxLength": 160,
+                  "minLength": 1,
+                  "pattern": "^\\S+$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Media Id"
             },
             "source_start_s": {
               "default": 0.0,
@@ -1758,7 +1780,6 @@
             }
           },
           "required": [
-            "media_id",
             "kind"
           ],
           "title": "EditorCommitSpeakerBackground",

@@ -52,6 +52,9 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
         "OverlayFormatMatcherAgent",
     ),
     ("nova.compose.intro_writer", "app.agents.intro_writer", "IntroTextWriterAgent"),
+    # KRI-1171: frame review of a finished generation against the creator's request. Sent
+    # through the bounded image transport, never the dispatcher; see app/agents/intent_review.py.
+    ("nova.kria.intent_review", "app.agents.intent_review", "IntentReviewAgent"),
     (
         "nova.compose.visual_treatment_planner",
         "app.agents.visual_treatment_planner",

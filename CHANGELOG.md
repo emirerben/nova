@@ -2,6 +2,66 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.85.2.0] - 2026-11-04
+
+### Changed
+- fix(kria): "Cut the sentence I restarted" reads "Done" after a real retake cut (KRI-1189) (#2092) <!-- release-pr: 2092 -->
+
+## [0.85.1.0] - 2026-11-04
+
+### Changed
+- fix(kria): freeze the review's recipe in one order so the worker's recheck matches (KRI-1191) (#2093) <!-- release-pr: 2093 -->
+
+## [0.85.0.0] - 2026-11-04
+
+### Added
+- feat(kria): solid-colour backgrounds behind the Talk-to-camera speaker (KRI-1173) (#2088) <!-- release-pr: 2088 -->
+
+## [0.84.22.0] - 2026-11-03
+
+### Changed
+- feat(kria): tell the creator what the review found, and the qualification harness (KRI-1171) (#2080) <!-- release-pr: 2080 -->
+
+## [0.84.21.0] - 2026-11-03
+
+### Fixed
+- fix(kria): Green 3 caption look, no music, cleanup at approval and background count (KRI-1177, KRI-1164, KRI-1178) (#2089) <!-- release-pr: 2089 -->
+
+## [0.84.20.0] - 2026-11-03
+
+### Changed
+- feat(kria): stage a reversible, Approve-gated repair for safe review findings (KRI-1171) (#2079) <!-- release-pr: 2079 -->
+
+## [0.84.19.0] - 2026-11-03
+
+### Changed
+- feat(kria): judge a finished edit against the creator's request with typed findings (KRI-1171) (#2078) <!-- release-pr: 2078 -->
+
+## [0.84.18.0] - 2026-11-03
+
+### Fixed
+- fix(kria): green-screen backgrounds land on the words that name them (KRI-1175) (#2091) <!-- release-pr: 2091 -->
+
+## [0.84.17.0] - 2026-11-03
+
+### Changed
+- test(ios): pin the editor preview of a corner speaker with timed backgrounds (KRI-1179) (#2087) <!-- release-pr: 2087 -->
+
+## [0.84.16.0] - 2026-11-03
+
+### Changed
+- fix(kria): honest restart-cut promise + one retake predicate, ready to enable consented retakes (KRI-1176) (#2090) <!-- release-pr: 2090 -->
+
+## [0.84.15.0] - 2026-11-03
+
+### Changed
+- feat(kria): send review frames to OpenAI under a reserved, capped budget (KRI-1171) (#2077) <!-- release-pr: 2077 -->
+
+## [0.84.14.0] - 2026-11-03
+
+### Changed
+- feat(kria): admit one review per published generation and extract bounded frame evidence (KRI-1171) (#2076) <!-- release-pr: 2076 -->
+
 ## [0.84.13.0] - 2026-11-03
 
 ### Changed

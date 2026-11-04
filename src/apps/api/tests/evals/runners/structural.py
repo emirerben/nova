@@ -44,6 +44,7 @@ from app.agents.edit_copilot import _MAX_OPS as _EDIT_COPILOT_MAX_OPS
 from app.agents.edit_copilot import EditCopilotOutput
 from app.agents.edit_director import EditDirectorInput, EditDirectorOutput
 from app.agents.idea_expander import IdeaExpanderInput, IdeaExpanderOutput
+from app.agents.intent_review import IntentReviewInput
 from app.agents.intro_writer import (
     _MAX_WORDS as INTRO_MAX_WORDS,
 )
@@ -998,6 +999,22 @@ def check_transition_picker(
 
 
 # ── Dispatch ─────────────────────────────────────────────────────────────────
+
+
+def check_intent_review(output: Any, input: IntentReviewInput) -> list[str]:  # noqa: A002
+    """Structural floor for nova.kria.intent_review: the same contract the server enforces.
+
+    Anything the production validator would void is a failure here, so a fixture can never
+    pass replay with an output the live path would throw away.
+    """
+    from app.agents._schemas.intent_review import InvalidReviewOutput
+    from app.kria.intent_review_disposition import validate_review_output
+
+    try:
+        validate_review_output(output, input.catalog)
+    except InvalidReviewOutput as exc:
+        return [f"intent review output is void: {exc.reason}"]
+    return []
 
 
 def check_song_classifier(output: SongClassifierOutput) -> list[str]:
@@ -3208,6 +3225,8 @@ def run_structural(
         return check_audio_template(output)
     if agent_name == "nova.audio.song_classifier":
         return check_song_classifier(output)
+    if agent_name == "nova.kria.intent_review":
+        return check_intent_review(output, input)
     if agent_name == "nova.audio.song_sections":
         return check_song_sections(output, input)
     if agent_name == "nova.audio.music_matcher":
@@ -3358,4 +3377,7 @@ def run_structural(
         return check_voiceover_interviewer(output, input)
     if agent_name == "nova.plan.slide_post_composer":
         return check_slide_post_composer(output, input)
+    if agent_name == "nova.creator.brief_extractor":
+        # KRI-1189: the output schema is the check; fixtures add `meta.restart_brief`.
+        return []
     raise ValueError(f"no structural checks registered for agent {agent_name!r}")

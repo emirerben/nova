@@ -876,6 +876,14 @@ _BACKGROUND_UNAVAILABLE = {
     "token_not_verified": "backgrounds behind you aren't ready on this iPhone app yet",
     "client_protocol_below_min": "this version of the app can't show a background behind you yet",
 }
+# KRI-1173: why a plain colour behind the speaker cannot be set although the lane is open, keyed
+# by `speaker_background_color_unavailable_reason`. Plain words the model repeats as an unmet
+# request (S59).
+_BACKGROUND_COLOR_UNAVAILABLE = {
+    "color_token_not_verified": "a plain colour behind you isn't ready on this iPhone app yet",
+    "client_protocol_below_min": "this version of the app can't show a plain colour behind you yet",
+}
+_BACKGROUND_COLOR_UNAVAILABLE_DEFAULT = "a plain colour behind you isn't available right now"
 _BACKGROUND_ARCHETYPES = {"subtitled", "talking_head"}
 MAX_BACKGROUND_POOL_ROWS = 12
 
@@ -920,6 +928,24 @@ def background_windows_open(job: Any, variant: dict[str, Any]) -> bool:
     return speaker_background_windows_unavailable_reason() is None
 
 
+def background_color_reason(job: Any, variant: dict[str, Any]) -> str | None:
+    """Why chat may not put a plain colour behind the speaker although the lane is open, in
+    words for the creator; None when the colour gate holds (KRI-1173).
+
+    Only meaningful while the base lane is open (`background_state`): the colour gate is the
+    base gate PLUS the ``speakerBackgroundColor`` token and the colour build gate
+    (`speaker_background_color_unavailable_reason`, same worker-side client rule).
+    """
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        speaker_background_color_unavailable_reason,
+    )
+
+    reason = speaker_background_color_unavailable_reason()
+    if reason is None:
+        return None
+    return _BACKGROUND_COLOR_UNAVAILABLE.get(reason, _BACKGROUND_COLOR_UNAVAILABLE_DEFAULT)
+
+
 def background_duration_s(variant: dict[str, Any]) -> float:
     """The edit's length in seconds, 0.0 when the variant does not say (KRI-1162)."""
     try:
@@ -945,7 +971,12 @@ def background_current(job: Any, variant: dict[str, Any]) -> dict[str, Any] | No
     cleared draft), else what the pinned recipe says for a Talking edit never Saved."""
     if "speaker_background" in variant:
         current = variant["speaker_background"]
-        return current if isinstance(current, dict) and current.get("media_id") else None
+        # KRI-1173: a solid-colour fill carries a `color` and no `media_id`.
+        return (
+            current
+            if isinstance(current, dict) and (current.get("media_id") or current.get("color"))
+            else None
+        )
     return derived_phone_background(job, variant)
 
 
@@ -971,19 +1002,26 @@ def _background_snapshot(
         for row in clip_context.get("background_pool") or []
         if isinstance(row, dict) and row.get("kind") in {"image", "video"}
     ][:MAX_BACKGROUND_POOL_ROWS]
+    current_row: dict[str, Any] | None = None
+    if isinstance(current, dict) and current.get("media_id"):
+        current_row = {
+            "media_id": current.get("media_id"),
+            "kind": current.get("kind"),
+            "source_start_s": current.get("source_start_s", 0.0),
+        }
+    elif isinstance(current, dict) and current.get("color"):
+        # KRI-1173: a plain colour names no pool media and has no start.
+        current_row = {"kind": "color", "color": current.get("color")}
     section: dict[str, Any] = {
         "available": True,
-        "current": (
-            {
-                "media_id": current.get("media_id"),
-                "kind": current.get("kind"),
-                "source_start_s": current.get("source_start_s", 0.0),
-            }
-            if isinstance(current, dict) and current.get("media_id")
-            else None
-        ),
+        "current": current_row,
         "pool": pool,
     }
+    # KRI-1173: whether chat may set a plain colour (and why not), beside the windows flag.
+    color_reason = background_color_reason(job, variant)
+    section["color_available"] = color_reason is None
+    if color_reason is not None:
+        section["color_reason"] = color_reason
     if background_windows_open(job, variant):
         # KRI-1162: only while the windows gate is open, so a closed gate's section is unchanged.
         windows = current.get("windows") if isinstance(current, dict) else None

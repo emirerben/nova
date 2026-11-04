@@ -1,25 +1,27 @@
 """Read-only capture of approved intent and one verified native publication.
 
 VerifiedArtifactReceipt is a trusted server-internal attestation input. Constructing
-this type does not verify bytes. The storage verifier adapter is deliberately absent;
+this type does not verify bytes. The caller must use the trusted storage verifier;
 client upload hashes and publication success alone cannot supply this capability.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
 import uuid
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field, model_validator
 from sqlalchemy import select
 
 from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.brief_binding import BriefBinding
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
 from app.kria.prepared_execution import PreparedExecutionSnapshot
+from app.kria.review_canon import FrozenModel
+from app.kria.review_canon import canonical_json as _json
+from app.kria.review_canon import digest as canonical_digest
+from app.kria.review_canon import require as _require
 from app.models import (
     ContentPlan,
     CreationThread,
@@ -38,10 +40,6 @@ from app.services.creator_render_contract import (
     read_render_contract,
 )
 from app.services.device_render import _recipe_digest, device_record, device_status
-
-
-class FrozenModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
 
 class VerifiedArtifactReceipt(FrozenModel):
@@ -89,6 +87,7 @@ class RenderReviewPacket(FrozenModel):
     original_request: str
     binding_json: str
     binding_digest: str
+    dispatch_settings_json: str
     approved_plan_json: str
     recipe_json: str
     recipe_digest: str
@@ -130,20 +129,12 @@ class ReviewRows:
     prepared: CreatorPreparedExecution | None = None
 
 
-def _json(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-
-
-def _require(condition: bool, reason: str) -> None:
-    if not condition:
-        raise ValueError(reason)
-
-
 def build_render_review_context(
     rows: ReviewRows,
     *,
     verified_artifact: VerifiedArtifactReceipt | None,
     observations: tuple[TimestampedObservation, ...] = (),
+    original_request: str | None = None,
 ) -> CaptureResult:
     if verified_artifact is None:
         return CaptureResult(status="unavailable", reason="artifact_verification_missing")
@@ -204,11 +195,18 @@ def build_render_review_context(
             and bool(binding.creator_request.strip()),
             "approved_binding_missing_or_changed",
         )
+        initial_authority = None
+        if document.kind == "strategy":
+            from app.kria.initial_render_review_authority import resolve_initial_render_authority
+
+            initial_authority = resolve_initial_render_authority(rows)
         variant_id = e.target_variant_id
         _require(
             bool(variant_id)
-            and d.variant_key == variant_id == a.target_variant_id
-            and a.target_job_id == j.id,
+            and (
+                initial_authority is not None
+                or (d.variant_key == variant_id == a.target_variant_id and a.target_job_id == j.id)
+            ),
             "variant_changed",
         )
         variant = next(v for v in j.assembly_plan["variants"] if v.get("variant_id") == variant_id)
@@ -222,7 +220,12 @@ def build_render_review_context(
             and variant.get("render_generation_id")
             == record.get("published_attempt")
             == status.published_generation
-            and generation == e.target_generation_id
+            and generation
+            == (
+                initial_authority.requirement_generation
+                if initial_authority
+                else e.target_generation_id
+            )
             and bool(generation),
             "publication_changed",
         )
@@ -232,7 +235,11 @@ def build_render_review_context(
             and identity.variant_id == variant_id
             and identity.recipe_digest == digest == record.get("recipe_digest")
             and identity.recipe_revision
-            == (e.result or {}).get("editor_prep", {}).get("device_recipe_revision"),
+            == (
+                initial_authority.recipe_revision
+                if initial_authority
+                else (e.result or {}).get("editor_prep", {}).get("device_recipe_revision")
+            ),
             "recipe_changed",
         )
         contract = read_render_contract({CONTRACT_FIELD: record.get("contract_snapshot")})
@@ -292,10 +299,11 @@ def build_render_review_context(
             variant_id=variant_id,
             requirement_generation=generation,
             published_attempt=proof.published_attempt,
-            original_request=binding.creator_request,
+            original_request=original_request or binding.creator_request,
             binding_json=binding.model_dump_json(),
             binding_digest=binding.digest,
             approved_plan_json=_json(d.snapshot_json),
+            dispatch_settings_json=_json((j.all_candidates or {}).get("creator_strategy")),
             recipe_json=status.request.recipe.model_dump_json(),
             recipe_digest=digest,
             contract_json=contract.model_dump_json(),
@@ -306,9 +314,7 @@ def build_render_review_context(
         )
         return CaptureResult(
             status="ready",
-            packet=RenderReviewPacket(
-                **data, packet_digest=hashlib.sha256(_json(data).encode()).hexdigest()
-            ),
+            packet=RenderReviewPacket(**data, packet_digest=canonical_digest(data)),
         )
     except (ValueError, TypeError, KeyError, AttributeError, StopIteration) as exc:
         return CaptureResult(
