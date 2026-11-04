@@ -20,9 +20,12 @@ Footage is NOT made here: OUT_DIR must already hold (never in git)
   rec1.mp4..rec5.mp4   the five "screen recordings"
 
 usage:
-  src/apps/api/.venv/bin/python scripts/ios/phone-background-windows-e2e.py OUT_DIR [--flag on|off]
+  src/apps/api/.venv/bin/python scripts/ios/phone-background-windows-e2e.py OUT_DIR [--flag on|off] [--phrases labels|spoken]
 
 ``--flag`` sets ``background_follows_talk_enabled`` (default off = today's behaviour).
+``--phrases labels`` (default) feeds her typed label spellings as ``spoken_phrase``; ``spoken``
+feeds each name's words exactly as whisper wrote them in words.json (what the planner is taught
+to copy from the take's own transcript).
 """
 
 from __future__ import annotations
@@ -113,6 +116,37 @@ def _cues(words: list[dict]) -> list[dict]:
     return cues
 
 
+# Where each recording is named in the take: (first token prefix, required next token
+# prefixes or None, words in the phrase), in RECORDINGS order.
+SPOKEN_SPANS = [
+    ("spec", None, 2),
+    ("impeccable", None, 1),
+    ("trading", None, 2),
+    ("number", ("4", "four"), 3),
+    ("cla", ("code",), 4),
+]
+
+
+def _spoken_phrases(words: list[dict]) -> list[str]:
+    """Each recording's name as whisper wrote it (trailing punctuation dropped)."""
+    out: list[str] = []
+    for first, nxt, count in SPOKEN_SPANS:
+        for i, word in enumerate(words):
+            if not _token(word["text"]).startswith(first):
+                continue
+            if nxt is not None and not (
+                i + 1 < len(words) and _token(words[i + 1]["text"]).startswith(nxt)
+            ):
+                continue
+            out.append(
+                " ".join(w["text"].strip().rstrip(".,!?") for w in words[i : i + count])
+            )
+            break
+        else:
+            raise SystemExit(f"{first!r} is not spoken in words.json")
+    return out
+
+
 def _name_time(words: list[dict], token: str, occurrence: int) -> float | None:
     seen = 0
     for word in words:
@@ -127,6 +161,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("out_dir")
     parser.add_argument("--flag", choices=("on", "off"), default="off")
+    parser.add_argument("--phrases", choices=("labels", "spoken"), default="labels")
     args = parser.parse_args()
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -164,13 +199,24 @@ def main() -> None:
         }
     )
 
+    phrases = (
+        _spoken_phrases(words)
+        if args.phrases == "spoken"
+        else [label for _f, _p, label, _t, _o in RECORDINGS]
+    )
+    print(f"phrases ({args.phrases}): {phrases}")
+
     # --- the strategy's background_media, exactly as the planner stores it ------------------
     strategy_background = {
         "media_id": f"asset-{RECORDINGS[0][1]}",
         "source_start_s": 0.0,
         "sequence": [
-            {"media_id": f"asset-{pool_id}", "spoken_phrase": label}
-            for _file, pool_id, label, _tok, _occ in RECORDINGS
+            {"media_id": f"asset-{pool_id}", "spoken_phrase": phrase}
+            for (_file, pool_id, _label, _tok, _occ), phrase in zip(
+                RECORDINGS,
+                phrases,
+                strict=True,
+            )
         ],
         "speaker_frame": "small_bottom_right",
     }
@@ -296,6 +342,7 @@ def main() -> None:
         json.dumps(
             {
                 "flag": args.flag,
+                "phrases": phrases,
                 "take_s": take_s,
                 "recipe_duration_s": recipe.duration,
                 "lane_drops": lane_drops,
