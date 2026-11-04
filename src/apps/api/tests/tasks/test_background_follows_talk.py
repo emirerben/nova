@@ -446,3 +446,13 @@ def test_a_name_that_only_occurs_inside_another_name_still_shows(monkeypatch):
     held = run()
     assert {w.index for w in held.windows} >= {2, 3}
     assert not [n for n in held.notes if n.get("reason") == "phrase_not_heard"]
+
+
+def test_a_sound_alike_with_a_plural_is_still_heard(flag_on):
+    for spoken in (
+        "last one is cloud code game studios",
+        "last one is cloud code game studio",
+    ):
+        assert _heard("Claude code game studio", spoken) is not None, spoken
+    # A single word never toggles its plural.
+    assert _heard("Notion", "some notions") is None

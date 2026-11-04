@@ -220,6 +220,29 @@ def _loose_hearings(stream: Sequence, phrase: str) -> list[tuple[float, float]]:
     return hits
 
 
+def _plural_toggled_hearings(
+    stream: Sequence, timed: list[dict], phrase: str
+) -> list[tuple[float, float]]:
+    """A sound-alike AND a plural together ("Claude code game studio" heard as "cloud code game
+    studios"): the exact / KRI-961 matchers again with the last word's plural toggled. Phrases of
+    two or more words only, so a single name ("Notion") never hears its plural."""
+    from app.services import phone_reaction_grounding as grounding  # noqa: PLC0415
+
+    words = grounding.fold_tokens(phrase)
+    if len(words) < 2:
+        return []
+    last = words[-1]
+    toggled = _strip_plural(last)
+    if toggled == last:
+        toggled = last + "s"
+    return [
+        (float(a), float(b))
+        for a, b, _heard in grounding._phrase_windows(  # noqa: SLF001
+            stream, timed, " ".join([*words[:-1], toggled])
+        )
+    ]
+
+
 def _anchor_times_following_talk(
     entries: Sequence[SequenceEntry],
     words: Sequence[dict] | None,
@@ -242,7 +265,11 @@ def _anchor_times_following_talk(
                 stream, timed, entry.spoken_phrase
             )
         ]
-        hearings[entry.index] = found or _loose_hearings(stream, entry.spoken_phrase)
+        hearings[entry.index] = (
+            found
+            or _loose_hearings(stream, entry.spoken_phrase)
+            or _plural_toggled_hearings(stream, timed, entry.spoken_phrase)
+        )
     anchors: dict[int, float | None] = {}
     for entry in entries:
         if not entry.spoken_phrase:
