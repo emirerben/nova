@@ -1182,3 +1182,14 @@ Adding the next update:
    names out. `WhatsNewTests` fails the build on any of these.
 5. Run `KRIA_IOS_TEST_MODE=unit bash scripts/ios/verify.sh`. A new UI test also goes in
    `scripts/ios/ui-test-groups.json`.
+
+### Upload place hint (item 24)
+
+`UPLOAD_PLACE_HINT_ENABLED` (default `false`) is advertised to the app as the boolean
+capability `upload_place_hint`. When on, the Add media sheet tells a creator that a screen
+recording placed in Footage next to a talking take belongs in Overlays (the visuals pool),
+with a one-tap move. Detection is local and free: preview shape plus screen-recording
+filenames or the Photos screen-recording subtype. No model call, no upload. The key is
+additive (older builds ignore it), so there is no client protocol bump. Off: the sheet is
+unchanged. Apply or roll back: `fly secrets set UPLOAD_PLACE_HINT_ENABLED=true|false -a nova-video`
+and restart the api (workers do not read it).

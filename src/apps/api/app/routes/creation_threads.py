@@ -424,6 +424,9 @@ class CreationCapabilitiesOut(BaseModel):
     speaker_background_color: bool = False
     # KRI-742: the chat composers show a mic button (VOICE_DICTATION_ENABLED).
     voice_dictation: bool = False
+    # Qendresa item 24: the Add media sheet shows the "screen recording belongs in Overlays"
+    # hint (UPLOAD_PLACE_HINT_ENABLED). Additive key; no client protocol gate.
+    upload_place_hint: bool = False
     slide_post_extended_device_export: bool = False
     # KRI-374: the server may ask the creator to confirm the order of takes it
     # could not place against their song (`song_order_question` on a turn plan).
@@ -4098,6 +4101,7 @@ async def capabilities(
             settings.voice_dictation_enabled
             and (settings.openai_api_key or settings.whisper_backend != "openai-api")
         ),
+        "upload_place_hint": bool(settings.upload_place_hint_enabled),
         "creation_mode": (
             "device_only" if settings.ios_device_only_mode or native_device_only else "hybrid"
         ),
