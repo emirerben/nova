@@ -79,6 +79,7 @@ from app.pipeline.caption_language import (
     ASK_END,
     LANGUAGE_NAMES,
     LANGUAGE_WORDS,
+    canonical_caption_language,
     can_deliver_caption_language,
     caption_language_decision,
     caption_language_verdict,
@@ -3953,8 +3954,10 @@ _CAPTION_DETAIL_RE = re.compile(
     r"\b(colou?rs?|yellow|white|red|blue|green|black|pink|orange|purple|lime|font|bold|italic"
     r"|sizes?|bigger|big|small|smaller|larger|huge|tiny|top|bottom|middle|cent(er|re)|left|right"
     r"|higher|lower|outline|shadow|stroke|uppercase|lowercase|caps|language|translat\w*"
-    r"|turkish|english|german|spanish|french|italian|arabic|dutch|portuguese)\b"
+    r"|turkish|english|german|spanish|french|italian|arabic|dutch|portuguese"
+    r"|greek|korean|danish|serbian)\b"  # KRI-1192
     r"|\brenk|\bsari\b|\bbeyaz\b|\bbüyük|\bküçük|\büst|\balt(ta|a)\b|\btürkçe|\bingilizce"
+    r"|\byunanca|\bkorece|\bdanca|\bsirpça"
     r"|\byazi tipi|\bkalin"
 )
 _TRIGGER_FACT_KEYS = (
@@ -4023,7 +4026,7 @@ def _caption_language_fact(req: BriefRequirement) -> str | None:
     value = req.facts.get("caption_language")
     if not isinstance(value, str) or not value.strip():
         return None
-    code = value.strip().casefold().replace("_", "-").split("-")[0]
+    code = canonical_caption_language(value.strip().casefold().replace("_", "-").split("-")[0])
     if code in LANGUAGE_NAMES:
         return code
     return LANGUAGE_WORDS.get(loose_text(value).strip())

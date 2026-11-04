@@ -67,6 +67,10 @@ class CaptionLanguage:
     turkish: str
     words: tuple[str, ...]
     stems: tuple[str, ...] = ()
+    # Other codes whisper reports for the SAME written language (KRI-1192): whisper labels
+    # half of Serbian speakers Croatian, and the Latin written standard is shared, so they
+    # are one caption language and one code.
+    aliases: tuple[str, ...] = ()
 
 
 CAPTION_LANGUAGES: tuple[CaptionLanguage, ...] = (
@@ -85,6 +89,18 @@ CAPTION_LANGUAGES: tuple[CaptionLanguage, ...] = (
         ("hollandaca", "felemenkce", "flemenkce"),
     ),
     CaptionLanguage("pt", "Portuguese", "Portekizce", ("portuguese", "portugues"), ("portekizce",)),
+    # KRI-1192
+    CaptionLanguage("el", "Greek", "Yunanca", ("greek",), ("yunanca",)),
+    CaptionLanguage("ko", "Korean", "Korece", ("korean",), ("korece",)),
+    CaptionLanguage("da", "Danish", "Danca", ("danish", "dansk"), ("danca",)),
+    CaptionLanguage(
+        "sr",
+        "Serbian",
+        "Sırpça",
+        ("serbian", "srpski"),
+        ("sirpca",),
+        aliases=("hr", "bs", "sh", "cnr"),
+    ),
 )
 
 # The languages a caption request may name; ``can_deliver_caption_language`` decides
@@ -99,6 +115,86 @@ LANGUAGE_NAMES: dict[str, tuple[str, str]] = {
 LANGUAGE_WORDS: dict[str, str] = {
     spelling: lang.code for lang in CAPTION_LANGUAGES for spelling in (*lang.words, *lang.stems)
 }
+# Alias code -> table code ("hr" -> "sr").
+_ALIAS_CODES: dict[str, str] = {
+    alias: lang.code for lang in CAPTION_LANGUAGES for alias in lang.aliases
+}
+# Whisper's full language names (whisper-1's verbose_json reports "greek", not "el").
+WHISPER_LANGUAGE_NAMES: dict[str, str] = {
+    **{lang.english.lower(): lang.code for lang in CAPTION_LANGUAGES},
+    "croatian": "sr",
+    "bosnian": "sr",
+    "montenegrin": "sr",
+}
+
+
+def canonical_caption_language(code: str | None) -> str:
+    """The table code for a whisper language code or name, else ``code`` lower-cased.
+
+    "greek" -> "el", "hr"/"bs"/"sr-Latn" -> "sr", "SR" -> "sr"; a code outside the table
+    ("ru", "en-us") is returned as written (lower-cased), never guessed.
+    """
+    key = (code or "").strip().lower().replace("_", "-")
+    if not key:
+        return ""
+    if key in WHISPER_LANGUAGE_NAMES:
+        return WHISPER_LANGUAGE_NAMES[key]
+    if key in _ALIAS_CODES:
+        return _ALIAS_CODES[key]
+    base = key.split("-", 1)[0]
+    if base != key and (base in _ALIAS_CODES or base in _ALIAS_CODES.values()):
+        return _ALIAS_CODES.get(base, base)
+    return key
+
+
+# Serbian Cyrillic -> Latin (the official one-to-one Vuk/Gaj correspondence). Serbian
+# captions are Latin: whisper writes Serbian in Latin letters even when told the
+# language is Serbian, so a Cyrillic word (a Gemini reference, a stray whisper segment)
+# is turned Latin to keep ONE alphabet per video (KRI-1192).
+_SERBIAN_CYRILLIC = dict(
+    zip(
+        "абвгдђежзијклљмнњопрстћуфхцчџш",
+        "a b v g d đ e ž z i j k l lj m n nj o p r s t ć u f h c č dž š".split(),
+        strict=True,
+    )
+)
+_SERBIAN_CYRILLIC_LETTERS = frozenset(_SERBIAN_CYRILLIC) | frozenset(
+    ch.upper() for ch in _SERBIAN_CYRILLIC
+)
+_CYRILLIC_WORD = re.compile(r"[\u0400-\u04ff]+")
+
+
+def _cyrillic_word_to_latin(word: str) -> str:
+    # An all-caps word keeps its digraphs all-caps ("ЉУБАВ" -> "LJUBAV"); otherwise a
+    # capital digraph is title-cased ("Љубав" -> "Ljubav").
+    all_caps = sum(ch.isalpha() for ch in word) > 1 and word == word.upper()
+    out: list[str] = []
+    for ch in word:
+        low = ch.lower()
+        latin = _SERBIAN_CYRILLIC.get(low)
+        if latin is None:
+            out.append(ch)
+        elif ch == low:
+            out.append(latin)
+        else:
+            out.append(latin.upper() if all_caps else latin.capitalize())
+    return "".join(out)
+
+
+def serbian_latin(text: str | None) -> str:
+    """``text`` with every Serbian Cyrillic word written in Latin letters ("Љубав" ->
+    "Ljubav"); Latin text and words of other Cyrillic alphabets are returned unchanged."""
+    if not text:
+        return text or ""
+
+    def word(m: re.Match[str]) -> str:
+        found = m.group(0)
+        if any(ch not in _SERBIAN_CYRILLIC_LETTERS for ch in found):
+            return found  # Russian/Ukrainian/Macedonian letters: not Serbian
+        return _cyrillic_word_to_latin(found)
+
+    return _CYRILLIC_WORD.sub(word, text)
+
 
 # What the whisper language hint alone has always delivered. With translation off,
 # only these two keep being promised (the hint plus the text check decide the rest).
@@ -387,7 +483,40 @@ _WORD = re.compile(r"[^\W\d_]+", re.UNICODE)
 
 
 def infer_language_from_text(text: str | None) -> str:
-    """Conservative EN/TR guess from transcript text. "" when not clearly one of them."""
+    """Conservative guess of the table language a transcript is in; "" when unclear.
+
+    KRI-1192: the EN/TR guess alone called German, Spanish, Portuguese, French and Italian
+    "Turkish" (ç ö ü, "de", "da", "o") and Danish "English", and the cross-check then
+    re-ran whisper in that language, which translates. A text clearly in another table
+    language (``detect_text_language``) now names that language, and the EN/TR guess is
+    dropped when another language leads the evidence. English/Turkish text gets exactly
+    the guess it always got.
+    """
+    found = detect_text_language(text)
+    legacy = _infer_en_tr(text)
+    scores = _score_languages(text or "") if (found or legacy) else {}
+    if found and found not in {"en", "tr"}:
+        # A text with real English/Turkish evidence keeps today's EN/TR call unless the other
+        # language clearly dominates it: a mixed take ("Español, yeah. What's your name? ...
+        # Acá tenemos salsas", Spanish 1.9x English) is the mixed-language path's job.
+        if not legacy or scores.get(found, 0.0) >= _OVERRIDE_EN_TR * scores.get(legacy, 0.0):
+            return found
+        return legacy
+    if legacy:
+        mine = scores.get(legacy, 0.0)
+        if any(lang not in {"en", "tr"} and points >= mine for lang, points in scores.items()):
+            return ""
+    return legacy
+
+
+# How far a table language must out-score the EN/TR guess to replace it. Measured on real
+# FLEURS speech (KRI-1192): a single-language text that the EN/TR guess misread scores at
+# least 5.1x; the mixed Don Julio T1 reference (English + Spanish) 1.9x.
+_OVERRIDE_EN_TR = 3.0
+
+
+def _infer_en_tr(text: str | None) -> str:
+    """The KRI-177 EN/TR guess (unchanged): "" when not clearly one of them."""
     tokens = [t.lower() for t in _WORD.findall(text or "")]
     if len(tokens) < 3:
         return ""
@@ -409,7 +538,7 @@ def crosscheck_detected_language(detected: str | None, *, reference_text: str | 
     instead of transcribing. ``reference_text`` is Gemini's clip transcript, which
     every ingested clip already has, so a clear EN/TR disagreement costs no extra call.
     """
-    lang = (detected or "").strip().lower()
+    lang = canonical_caption_language(detected)
     reference = infer_language_from_text(reference_text)
     if lang and reference and reference != lang:
         return reference
@@ -425,7 +554,7 @@ def resolve_spoken_caption_language(
     ``fallback`` (the job language, else "en"). The fallback is deliberate and the
     returned source lets the caller record it — it never wins silently.
     """
-    lang = (detected or "").strip().lower()
+    lang = canonical_caption_language(detected)
     if lang:
         return lang, SOURCE_DETECTED
     inferred = infer_language_from_text(transcript_text)
@@ -535,6 +664,28 @@ _FUNCTION_WORDS_SRC: dict[str, str] = {
         "alsjeblieft dank bedankt hallo goed mooi allemaal vandaag volgende keer"
     ),
     "ar": "",
+    # KRI-1192. Greek and Korean are read by script alone (no word list needed).
+    "el": "",
+    "ko": "",
+    "da": (
+        "og i det at en den til er som på de med han af for ikke der var mig sig men et har "
+        "om vi min havde ham hun nu over da fra du ud sin dem os op man hans hvor eller hvad "
+        "skal selv her alle vil blev kunne ind når være dog noget ville jo deres efter ned "
+        "skulle denne end dette mit også under have dig anden hende mine alt meget sit sine "
+        "vor mod disse hvis din nogle hos blive mange bliver hendes været jeg kan så ved "
+        "hvordan hvorfor nej ja tak godt lige bare mere kun blevet først flere andre hvilket "
+        "hvilke sammen siden mellem uden blandt efterhånden igen aldrig altid"
+    ),
+    # Latin-script Serbian (what whisper writes); Cyrillic is read through ``serbian_latin``.
+    "sr": (
+        "u i se da na ne je su za od sa što šta kao ili ali iz koji koja koje kojih kojima "
+        "kojoj biti bio bila bilo bili smo ste sam će ću ćemo ćete kod jer već još samo ovo "
+        "ono ovaj ova ovog taj "
+        "ga mu joj ih nas vas njih nije nisu može mogu treba kada kad gde gdje kako zašto ima "
+        "nema sve svi svoje svoj svoja njegov njena njihov njegova njihova među prema posle "
+        "pre tokom bez preko oko jedan jedna jedno dva tri godine godina takođe veoma vrlo "
+        "koju kojem kojeg čak već nakon zbog između iako dok ako sada tada ovde tamo"
+    ),
 }
 _SPLIT_WORDS = {code: frozenset(src.split()) for code, src in _FUNCTION_WORDS_SRC.items()}
 # word -> languages that list it (a shared word scores 1/len(languages) for each).
@@ -560,7 +711,14 @@ _CHAR_EVIDENCE: dict[str, dict[str, float]] = {
     **dict.fromkeys("èù", {"fr": 0.5, "it": 0.5}),
     **dict.fromkeys("òì", {"it": 1.0}),
     **dict.fromkeys("áíóú", {"es": 0.25, "pt": 0.25}),
+    # KRI-1192. æ ø: Danish (and Norwegian, outside the table); å also Swedish.
+    **dict.fromkeys("æø", {"da": 2.0}),
+    "å": {"da": 1.0},
+    # ć đ: Serbian/Croatian/Bosnian (one table language); č š ž also Czech/Slovak/Slovene.
+    **dict.fromkeys("ćđ", {"sr": 2.0}),
+    **dict.fromkeys("čšž", {"sr": 1.0}),
 }
+_SERBIAN_ONSETS = ("nj", "lj", "dž")
 _EN_CONTRACTION = re.compile(r"^[a-z]+(?:n't|'(?:s|re|ve|ll|d|m))$")
 _TR_VERB_ENDING = re.compile(r"^\w{2,}[iıuü]yor(?:um|uz|sun|sunuz|lar)?$")
 _TOKEN = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)*['’]?|[¿¡]")
@@ -573,6 +731,27 @@ _ARABIC = re.compile(
     + "-".join(chr(c) for c in (0xFE70, 0xFEFC))
     + "]"
 )
+# Whole-script evidence (KRI-1192), like Arabic: a token written mostly in the script
+# names the language. Cyrillic names Serbian only when no letter of another Cyrillic
+# alphabet appears anywhere in the text (Russian й ы э ю я ъ ь щ ё, Ukrainian і ї є ґ,
+# Macedonian ѓ ќ ѕ, Belarusian ў).
+_GREEK = re.compile("[" + chr(0x0370) + "-" + chr(0x03FF) + chr(0x1F00) + "-" + chr(0x1FFF) + "]")
+_HANGUL = re.compile(
+    "["
+    + chr(0xAC00)
+    + "-"
+    + chr(0xD7A3)
+    + chr(0x1100)
+    + "-"
+    + chr(0x11FF)
+    + chr(0x3130)
+    + "-"
+    + chr(0x318F)
+    + "]"
+)
+_CYRILLIC = re.compile("[" + chr(0x0400) + "-" + chr(0x04FF) + "]")
+_NON_SERBIAN_CYRILLIC = re.compile("[йыэюяъьщёіїєґѓќѕўЙЫЭЮЯЪЬЩЁІЇЄҐЃЌЅЎ]")
+_SCRIPT_POINTS = 3.0
 _SENTENCE_END = frozenset('.!?…:¿¡\n"“”()—-–')
 _MIN_EVIDENCE = 2.0  # points the winner needs (about two clear function words)
 _MIN_RATIO = 1.8  # winner vs runner-up
@@ -615,6 +794,7 @@ def _score_languages(text: str, ignore_terms: Sequence[str] = ()) -> dict[str, f
     def add(lang: str, points: float) -> None:
         scores[lang] = scores.get(lang, 0.0) + points
 
+    serbian_cyrillic_ok = not _NON_SERBIAN_CYRILLIC.search(text)
     for index, (token, start) in enumerate(spans):
         if index in masked:
             continue
@@ -625,6 +805,26 @@ def _score_languages(text: str, ignore_terms: Sequence[str] = ()) -> dict[str, f
         if arabic:
             if arabic * 2 >= len(token):
                 add("ar", 3.0)
+            continue
+        script_hit = False
+        for pattern, lang in ((_GREEK, "el"), (_HANGUL, "ko")):
+            hits = len(pattern.findall(token))
+            if hits:
+                if hits * 2 >= len(token):
+                    add(lang, _SCRIPT_POINTS)
+                script_hit = True
+                break
+        if script_hit:
+            continue
+        cyrillic = len(_CYRILLIC.findall(token))
+        if cyrillic:
+            if serbian_cyrillic_ok and cyrillic * 2 >= len(token):
+                # Read as the Latin it transliterates to: function words and ć đ count too.
+                add("sr", 1.0)
+                latin = _lower(serbian_latin(token))
+                for lang in _WORD_LANGUAGES.get(latin, ()):
+                    if lang == "sr":
+                        add("sr", 1.0)
             continue
         # A capitalized word mid-sentence is a name ("Carolina", "Oblea", "Ecuador'da"),
         # an all-caps one an acronym — neither is evidence. "I" and "I'm" are English.
@@ -642,6 +842,8 @@ def _score_languages(text: str, ignore_terms: Sequence[str] = ()) -> dict[str, f
             add("en", 1.0)
         elif langs is None and _TR_VERB_ENDING.match(low):
             add("tr", 1.0)
+        elif langs is None and low.startswith(_SERBIAN_ONSETS):
+            add("sr", 1.0)  # "njegov", "ljudi", "džep": no table language starts a word so
         elif langs is None and "'" in low:
             # Elisions and clitics: "l'amour" -> "l'" + "amour", "qu'il" -> "qu'" + "il".
             head_part, _, tail = low.partition("'")

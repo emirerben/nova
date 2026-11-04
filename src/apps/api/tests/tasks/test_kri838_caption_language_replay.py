@@ -558,16 +558,33 @@ def test_f_gemini_read_is_used_only_when_the_spoken_pass_fell_back(monkeypatch, 
     receipt = _review(variant, "altyazılar Türkçe olsun")
     assert receipt.reason == "The captions are in English, not Turkish."
 
-    # ...and a spoken pass that DID detect a language outranks Gemini's read (Spanish text, so
-    # the EN/TR crosscheck of the spoken pass stays quiet and cannot re-transcribe it).
+    # ...and a spoken pass that DID detect a language outranks a Gemini read too short to
+    # name one.
     translator.side_effect = RuntimeError("provider down")
     _job, other, _whisper = _render(
         monkeypatch,
         prompt="altyazılar Türkçe olsun",
         by_hint={None: _transcript(_WOW_WORDS, "de"), "tr": _WOW_HINTED},
-        gemini_transcript="Wow. Qué increíble, me encanta este lugar y la gente de aquí.",
+        gemini_transcript="Wow. Increíble.",
     )
     assert other["caption_language"] == "de"
+
+    # KRI-1192: the cross-check reads every table language now, so a Gemini read that is
+    # CLEARLY Spanish against whisper's "de" re-transcribes in Spanish (before, only an
+    # English/Turkish read could, and a misheard Spanish speaker kept German captions).
+    translator.side_effect = RuntimeError("provider down")
+    _job, spanish, whisper = _render(
+        monkeypatch,
+        prompt="altyazılar Türkçe olsun",
+        by_hint={
+            None: _transcript(_WOW_WORDS, "de"),
+            "es": _transcript(_WOW_WORDS, "es"),
+            "tr": _WOW_HINTED,
+        },
+        gemini_transcript="Wow. Qué increíble, me encanta este lugar y la gente de aquí.",
+    )
+    assert "es" in [call.kwargs.get("language") for call in whisper.call_args_list]
+    assert spanish["caption_language"] == "es"
 
 
 def test_f_with_no_independent_evidence_the_stamp_is_empty_never_the_requests_label(
