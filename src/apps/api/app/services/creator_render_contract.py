@@ -718,6 +718,7 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "background_media.sequence[].spoken_phrase",
         "background_media.sequence[].hold_s",
         "background_media.cadence_s",
+        "background_media.keep_changing",
         "background_media.speaker_frame",
         note=(
             "KRI-1117: kept, filled from the creator's camera pick, or dropped by "

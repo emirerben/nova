@@ -1866,6 +1866,7 @@ def _repair_creator_speaker_background(
     entries: list[BackgroundSequenceEntry] = []
     cadence_s = DEFAULT_BACKGROUND_CADENCE_S
     frame = "full"
+    keep_changing = False
     asked_windows = wanted is not None and (
         bool(wanted.sequence)
         or wanted.speaker_frame != "full"
@@ -1897,6 +1898,8 @@ def _repair_creator_speaker_background(
                 notices.append(SPEAKER_BACKGROUND_NOTICES["sequence_not_found"])
             if not entries:
                 cadence_s = DEFAULT_BACKGROUND_CADENCE_S
+            else:
+                keep_changing = wanted.keep_changing
     if media is None and color is None and entries:
         # The model named no usable fill but a usable sequence: its first entry fills.
         first = entries[0]
@@ -1911,6 +1914,7 @@ def _repair_creator_speaker_background(
             sequence=tuple(entries),
             cadence_s=cadence_s,
             speaker_frame=frame,
+            keep_changing=keep_changing,
         )
     else:
         fill = BackgroundMedia(
@@ -1919,6 +1923,7 @@ def _repair_creator_speaker_background(
             sequence=tuple(entries),
             cadence_s=cadence_s,
             speaker_frame=frame,
+            keep_changing=keep_changing,
         )
     update: dict[str, Any] = {"background_media": fill}
     backdrop_ids = {*(entry.media_id for entry in entries)}

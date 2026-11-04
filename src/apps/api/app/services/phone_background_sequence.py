@@ -42,6 +42,20 @@ On the word (every entry has a ``spoken_phrase`` and one is heard, KRI-1175, S46
   order they were first shown, to the take end (a leftover sliver joins the window before it
   unless that one has ``hold_s``; with no such visual the fill shows); the ``MAX_WINDOWS``
   stretch is that cadence only.
+
+With ``BACKGROUND_FOLLOWS_TALK_ENABLED`` (item 17, S57-S66) the anchoring rules below apply to
+EVERY phrased sequence, and the on-the-word tail follows the talk unless a rhythm was stated (a
+stated rhythm keeps the tail rotation above exactly):
+
+* a phrase neither the exact nor the KRI-961 matcher hears is aligned loosely to whole spoken
+  words: a word may be split or joined across 2-3 words of 3+ letters ("TradingAgents" / "trading
+  agents"), a final plural "s" is ignored, one word against one word is never loose, names under
+  four letters never; a hearing inside ANOTHER entry's longer, different phrase ("agents" in
+  "trading agents") is that entry's word, so the next free hearing anchors (a name only ever said
+  inside another keeps its first hearing);
+* with no stated rhythm (``keep_changing`` unset and ``cadence_s`` the unasked default) nothing
+  cycles: the last window runs to the take end (its ``hold_s`` still ends it, the fill shows,
+  unless the rest is a sliver).
 """
 
 from __future__ import annotations
@@ -149,6 +163,112 @@ def _anchor_time(
     return None
 
 
+def _strip_plural(text: str) -> str:
+    """A final plural "s" dropped from a long word or run ("studios" -> "studio")."""
+    if len(text) >= 5 and text.endswith("s") and not text.endswith(("ss", "us", "is")):
+        return text[:-1]
+    return text
+
+
+_JOIN_MAX = 3  # a name split or joined across at most three words
+_JOIN_MIN_LEN = 3  # every word of a joined run is a real word, not a stray letter or two
+
+
+def _align_loose(phrase: list[str], spoken: list[str], a: int, b: int) -> int | None:
+    """End (exclusive) in ``spoken`` of an alignment of ``phrase[a:]`` from ``spoken[b]``.
+
+    Each step pairs one phrase word with one spoken word (equal modulo a final plural "s"), one
+    phrase word with 2-3 spoken words joined, or 2-3 phrase words joined with one spoken word.
+    """
+    if a == len(phrase):
+        return b
+    if b >= len(spoken):
+        return None
+    steps = [(1, 1)]
+    steps += [(1, k) for k in range(2, _JOIN_MAX + 1)] + [(k, 1) for k in range(2, _JOIN_MAX + 1)]
+    for pn, sn in steps:
+        p_run, s_run = phrase[a : a + pn], spoken[b : b + sn]
+        if len(p_run) < pn or len(s_run) < sn:
+            continue
+        if pn > 1 and min(map(len, p_run)) < _JOIN_MIN_LEN:
+            continue
+        if sn > 1 and min(map(len, s_run)) < _JOIN_MIN_LEN:
+            continue
+        if _strip_plural("".join(p_run)) != _strip_plural("".join(s_run)):
+            continue
+        end = _align_loose(phrase, spoken, a + pn, b + sn)
+        if end is not None:
+            return end
+    return None
+
+
+def _loose_hearings(stream: Sequence, phrase: str) -> list[tuple[float, float]]:
+    """Where whole spoken words say ``phrase`` split or joined differently, or with a final
+    plural "s" ("TradingAgents" / "trading agents", "game studio" / "game studios")."""
+    from app.services import phone_reaction_grounding as grounding  # noqa: PLC0415
+
+    words = grounding.fold_tokens(phrase)
+    if len("".join(_strip_plural(w) for w in words)) < 4:
+        return []
+    texts = [token.text for token in stream]
+    hits: list[tuple[float, float]] = []
+    for i in range(len(texts)):
+        end = _align_loose(words, texts, 0, i)
+        # One word against one word is the exact / KRI-961 matchers' job.
+        if end is not None and (len(words) > 1 or end - i > 1):
+            hits.append((stream[i].start_s, stream[end - 1].end_s))
+    return hits
+
+
+def _anchor_times_following_talk(
+    entries: Sequence[SequenceEntry],
+    words: Sequence[dict] | None,
+    keep_segments: Sequence[tuple[float, float]] | None,
+) -> dict[int, float | None]:
+    """Output time of each phrased entry's word, flag on (S64-S66); ``None`` = not heard."""
+    from app.services import phone_reaction_grounding as grounding  # noqa: PLC0415
+
+    timed = [word for word in (words or []) if isinstance(word, dict)]
+    stream = grounding._token_stream(timed)  # noqa: SLF001 - the tokenizer beats ground with
+    hearings: dict[int, list[tuple[float, float]]] = {}
+    folded: dict[int, tuple[str, ...]] = {}
+    for entry in entries:
+        if not entry.spoken_phrase or not timed:
+            continue
+        folded[entry.index] = tuple(grounding.fold_tokens(entry.spoken_phrase))
+        found = [
+            (float(a), float(b))
+            for a, b, _heard in grounding._phrase_windows(  # noqa: SLF001
+                stream, timed, entry.spoken_phrase
+            )
+        ]
+        hearings[entry.index] = found or _loose_hearings(stream, entry.spoken_phrase)
+    anchors: dict[int, float | None] = {}
+    for entry in entries:
+        if not entry.spoken_phrase:
+            continue
+        kept = [
+            (start, end, to_output_time(start, keep_segments))
+            for start, end in hearings.get(entry.index, [])
+        ]
+        kept = [(start, end, at) for start, end, at in kept if at is not None]
+        free = [
+            (at, start, end)
+            for start, end, at in kept
+            if not any(
+                folded[other] != folded[entry.index]
+                and o_start <= start + _EPS
+                and end <= o_end + _EPS
+                and o_end - o_start > end - start + _EPS
+                for other, spans in hearings.items()
+                for o_start, o_end in spans
+            )
+        ]
+        # A name only ever said inside another name keeps its first hearing (as without the flag).
+        anchors[entry.index] = free[0][0] if free else (kept[0][2] if kept else None)
+    return anchors
+
+
 def _fill_gap(
     gap_start: float,
     gap_end: float,
@@ -240,6 +360,7 @@ def _lay_out_on_the_word(
     *,
     cadence_s: float,
     take_s: float,
+    hold_last: bool = False,
 ) -> SequenceLayout:
     """Every entry has a phrase and one is heard: each visual sits on the words that name it."""
     by_index = {entry.index: entry for entry in entries}
@@ -268,6 +389,20 @@ def _lay_out_on_the_word(
     first = head[0]
     if not by_index[first.index].hold_s or first.start_s < MIN_WINDOW_S - _EPS:
         head[0] = OutputWindow(first.index, 0.0, first.end_s)
+
+    if hold_last:
+        # No rhythm was asked: the last visual talked about stays (its own hold_s still ends it,
+        # unless the rest would be a sliver).
+        last = head[-1]
+        rest = take_s - last.end_s
+        if rest > _EPS and not (by_index[last.index].hold_s and rest >= MIN_WINDOW_S - _EPS):
+            head[-1] = OutputWindow(last.index, last.start_s, take_s)
+        return SequenceLayout(
+            windows=tuple(sorted(head[:MAX_WINDOWS], key=lambda window: window.start_s)),
+            notes=tuple({tuple(sorted(n.items())): n for n in notes}.values()),
+            cadence_s=cadence_s,
+            anchored=frozenset(anchors),
+        )
 
     # Tail: every mention is behind us, so the visuals shown without an explicit hold take turns
     # in the order they were first shown, starting after the one on screen.
@@ -314,17 +449,27 @@ def lay_out(
     take_s: float,
     words: Sequence[dict] | None,
     keep_segments: Sequence[tuple[float, float]] | None,
+    keep_changing: bool = False,
 ) -> SequenceLayout:
     """The windows of ``entries`` on a kept take of ``take_s`` seconds, plus honest notes."""
+    from app.agents._schemas.reaction_beats import (  # noqa: PLC0415
+        DEFAULT_BACKGROUND_CADENCE_S,
+    )
+    from app.config import settings  # noqa: PLC0415
+
+    follows_talk = settings.background_follows_talk_enabled
     notes: list[dict] = []
     if not entries or take_s < MIN_WINDOW_S - _EPS:
         return SequenceLayout(windows=(), cadence_s=cadence_s)
 
     anchors: dict[int, float] = {}
+    heard_at = _anchor_times_following_talk(entries, words, keep_segments) if follows_talk else {}
     for entry in entries:
         if not entry.spoken_phrase:
             continue
-        at = _anchor_time(entry, words, keep_segments)
+        at = (
+            heard_at.get(entry.index) if follows_talk else _anchor_time(entry, words, keep_segments)
+        )
         if at is None or at >= take_s - MIN_WINDOW_S + _EPS:
             notes.append(
                 {"lane": "background", "window": entry.index, "reason": "phrase_not_heard"}
@@ -332,7 +477,15 @@ def lay_out(
         else:
             anchors[entry.index] = at
     if anchors and all(entry.spoken_phrase for entry in entries):
-        return _lay_out_on_the_word(entries, anchors, notes, cadence_s=cadence_s, take_s=take_s)
+        stated_rhythm = keep_changing or abs(cadence_s - DEFAULT_BACKGROUND_CADENCE_S) > _EPS
+        return _lay_out_on_the_word(
+            entries,
+            anchors,
+            notes,
+            cadence_s=cadence_s,
+            take_s=take_s,
+            hold_last=follows_talk and not stated_rhythm,
+        )
     by_index = {entry.index: entry for entry in entries}
     cycle = [e.index for e in entries if e.index not in anchors]
 

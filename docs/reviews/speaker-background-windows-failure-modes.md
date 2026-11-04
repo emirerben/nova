@@ -211,3 +211,41 @@ Device tests owed before `speakerBackgroundWindows` is verified: on an iPhone, a
 three photo windows and the speaker small bottom-right must show each photo in its window and the creator
 cleanly cut out in the corner in preview and export; a video window must loop inside its window and be
 silent; a 60 s export with ten windows must finish within 120 s without a thermal step-down.
+
+## Qendresa item 17: each recording stays while it is talked about (written before the code)
+
+Flag `BACKGROUND_FOLLOWS_TALK_ENABLED` (default off, server only). Test kit run Q2 (2026-11-04,
+`kria-qendresa-test/_src/kria_check/Q2/REPORT.md` row B5): a screen walkthrough of five repos, each
+recording phrased on its name. Recordings 1-4 switch on their words; recording 5 shows 4 s, then
+recordings 1 to 4 cycle back over the rest of repo 5 and the call to action (S51, on purpose for
+Green 3). Her phrases as typed also miss: "Claude code game studio" is spoken "studios" and
+"TradingAgents" is spoken "trading agents" (both `phrase_not_heard`, the recording never shows), and
+"agents" anchors inside "trading agents" (recording 3 cut to 4 s).
+
+**The signal is a stated rhythm, recorded by the planner.** Both asks tie every visual to the talk
+(every entry phrased), so phrasing cannot separate them. What separates them is that Green 3 named a
+rhythm ("changing every 3-5 seconds") and Qendresa named none. The server never reads intent off the
+creator's words (`test_kri667_no_new_intent_regexes.py`), so the planner records it, and the existing
+`cadence_s` cannot carry it alone: the midpoint of "3-5 seconds" is 4, the default, which the dump
+omits, so "asked every 4 s" and "asked nothing" are stored the same. Hence an explicit
+`background_media.keep_changing: true` (Main Creator v123, taught only with the flag on). A cadence
+other than the default is also a stated rhythm (the planner only sets one when the creator names it).
+On the word, with the flag on: a stated rhythm keeps the S51 tail rotation; no rhythm holds the last
+visual talked about to the take end. The anchoring rules (S64-S66, S69) apply to every phrased
+sequence with the flag on, rhythm or not.
+
+| # | Failure mode | Treatment | Pinned by |
+|---|---|---|---|
+| S57 | The last visual talked about shows one cadence, then earlier ones cycle back over its topic (Q2 B5) | Flag on, on the word, no stated rhythm: the last mention's last window holds to the take end; nothing cycles. | `tests/tasks/test_background_follows_talk.py::test_the_last_recording_stays_to_the_end` (kit-shaped five-repo talk) + the kit's `test_q2_last_recording_holds.py` |
+| S58 | Green 3's "changing every 3-5 seconds" loses its tail rotation | `keep_changing` (or a non-default cadence) keeps today's tail exactly. A length per visual ("show each for 5 seconds") is taught as `hold_s`, never `cadence_s`, so it is not read as a rhythm. | `::test_green3_with_a_stated_rhythm_still_rotates_exactly_as_before` (windows equal to flag off), `::test_a_non_default_cadence_counts_as_a_stated_rhythm` |
+| S59 | The rhythm is lost between planner and worker (the repair rebuilds `BackgroundMedia`, the worker request picks keys, the dump omits defaults), or a loose model value (`"true"`, `null`) fails the whole turn | The repair and `_strategy_background_request` carry `keep_changing`; it is omitted from the dump only when false; the field takes any bool-like value and never fails the schema. | `tests/kria/test_speaker_background_chat.py` (model value -> repair -> dump), `tests/tasks/test_background_follows_talk_worker.py` (stored strategy -> worker request -> windows) |
+| S60 | Flag off changes anything | Off: the old anchoring and tail code run unchanged, the prompt has no new bytes, the field is omitted from every dump while false. Not inert: the prompt version label moves to v123, and the new `FIELD_MATRIX` row changes the worker capabilities digest, so an execution prepared by the old code and claimed after the deploy is refused once as stale (as with KRI-1173). | `::test_flag_off_windows_and_notes_are_byte_identical` (Green 3 + the five-repo talk, frozen), `tests/kria/test_speaker_background_chat.py` prompt bytes with the flag off |
+| S61 | An explicit `hold_s` on the last visual is overridden by the hold to the end | `hold_s` still ends it; the fill shows to the end unless the rest is under 0.5 s, which the window absorbs. | `::test_an_explicit_hold_on_the_last_visual_still_ends_it` |
+| S62 | Two visuals on the last mention: the first is dropped or the second never shows | They follow each other from the mention (cadence each, or sharing the span); the last of them holds to the end. | `::test_two_visuals_on_the_last_mention_both_show_and_the_second_holds` |
+| S63 | A rotation or a partly phrased request changes | The hold applies only on the word; rotation and mixed layouts keep their tails. | `::test_rotation_and_mixed_requests_keep_their_layout` |
+| S64 | A name spoken another way is never heard: a final plural "s" ("studio"/"studios"), joined or split words ("TradingAgents"/"trading agents") | After the exact and KRI-961 matchers hear nothing, a loose name match compares the words with spaces removed and a final "s" ignored on words of five or more letters (not "-ss", "-us", "-is"). | `::test_her_label_spellings_are_heard` |
+| S65 | The loose match hears a different word ("island" in "this is land", "Notion" in "some notions", "Canva" in "canvas") | Last resort only (never when the exact or KRI-961 matcher hears the phrase); words are aligned one to one, or one word to two or three joined words of three letters or more; a single word against a single word is never loose; a name under four letters never matches loosely. | `::test_the_loose_match_never_hears_a_different_word` (negative controls) |
+| S66 | A short name inside another visual's longer name ("agents" in "trading agents") anchors there and cuts that visual short | A hearing that lies inside another entry's hearing of a longer phrase belongs to that entry and is skipped; the next hearing is used. Two visuals with the same phrase still share their mention. | `::test_a_name_inside_another_visuals_name_is_not_its_word`, S48 tests unchanged |
+| S67 | A common word ("agents") is said again inside the previous topic, so the visual still starts early | Not solvable from the words alone. v123 teaches the planner to copy the words said only where the visual is introduced ("number four agents"). Model behaviour not proven offline (paid replay, not run). | `tests/kria/test_speaker_background_chat.py` (the paragraph teaches it, only with the flag on) |
+| S68 | A strategy approved before the flag flip with a rhythm ask (no `keep_changing` recorded) re-renders holding the last visual | Accepted: the flag stays off until a v123 planner check; rollback is the flag. | rollout note in `docs/pipelines/speaker-background.md` |
+| S69 | Two visuals of one thing get nested phrases ("drones" / "mounted on drones") and the shorter is never said alone, so the inside rule (S66) drops it | A hearing inside another entry's phrase is skipped only when the entry has a free hearing in the kept take; otherwise its first hearing anchors, as with the flag off. | `::test_a_name_that_only_occurs_inside_another_name_still_shows` (Green 3 words) |

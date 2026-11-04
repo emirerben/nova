@@ -8171,7 +8171,8 @@ def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
 
     KRI-1162: plus ``sequence`` (``[{media_id, source_start_s, spoken_phrase, hold_s}]``),
     ``cadence_s`` and ``speaker_frame`` (a preset name) -- each present only when the strategy
-    carries it, so a single-background strategy yields exactly the pre-KRI-1162 dict.
+    carries it, so a single-background strategy yields exactly the pre-KRI-1162 dict. Qendresa
+    item 17: ``keep_changing: True`` only when entries exist and the planner set a real ``True``.
     """
     strategy = all_candidates.get("creator_strategy")
     raw = strategy.get("background_media") if isinstance(strategy, dict) else None
@@ -8221,6 +8222,8 @@ def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
         cadence = raw.get("cadence_s")
         if isinstance(cadence, (int, float)) and not isinstance(cadence, bool):
             request["cadence_s"] = float(cadence)
+        if raw.get("keep_changing") is True:
+            request["keep_changing"] = True
     frame = raw.get("speaker_frame")
     if isinstance(frame, str) and frame in SPEAKER_FRAME_PRESETS:
         request["speaker_frame"] = frame
@@ -8352,6 +8355,7 @@ def _resolve_strategy_background(
             take_s=float(take_s) if take_s is not None else 0.0,
             words=words,
             keep_segments=keep_segments,
+            keep_changing=bool(request.get("keep_changing")),
         )
         lane_drops.extend(layout.notes)
         for placed in layout.windows:

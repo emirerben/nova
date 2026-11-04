@@ -231,7 +231,12 @@ log = structlog.get_logger()
 # it). Every other creator prompt is byte-identical.
 # v119 (KRI-1189 lands after #2088): v117's `cut_restarts` teaching on top of v118. The
 # KRI-1189 replay fixtures keep the `2026-11-03-v117` label they were recorded under.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-04-v119"
+# v123 (Qendresa item 17, follow-up of KRI-1175; v120-v122 reserved by items 12-14): one
+# paragraph after the windows section and the `background_media.keep_changing` field it teaches
+# (an on-the-word sequence keeps rotating after the last mention only when the creator names a
+# rhythm). Shown only with BACKGROUND_FOLLOWS_TALK_ENABLED and the windows capability; every
+# other prompt keeps its bytes.
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-04-v123"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -729,6 +734,18 @@ the backgrounds: "small_bottom_right", "small_bottom_left", "small_top_right" or
 speaker full-screen. Pick only these names, never numbers. If no photo or video is attached to
 use, leave `background_media` out rather than guess an id. Say in `summary`, in plain words, how
 the backgrounds change and where the speaker sits.
+""".strip("\n")
+
+# Qendresa item 17: appended after the windows section ONLY with BACKGROUND_FOLLOWS_TALK_ENABLED.
+_BACKGROUND_FOLLOWS_TALK_PROMPT_SECTION = """
+Each photo or video in an on-the-word `sequence` stays on screen while they talk about it, and the
+last one talked about stays to the end of the video. Set `background_media.keep_changing` true only
+when the creator also names a rhythm for the backgrounds ("changing every 3-5 seconds", "keep
+switching", "3 saniyede bir değişsin"): then, once every one has been talked about, they keep taking
+turns at that rhythm until the end. When a name is also said elsewhere in the take (a common word
+such as "agents"), copy the words said only where that one is introduced ("number four agents").
+How long each one stays once it is talked about ("show each for 5 seconds") is that entry's
+`hold_s`, never `cadence_s`.
 """.strip("\n")
 
 # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED) on a phone Montage / Voiceover
@@ -1495,6 +1512,13 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 + (
                     "\n" + _SPEAKER_BACKGROUND_WINDOWS_PROMPT_SECTION
                     if speaker_background_windows_open(input.capability_manifest)
+                    else ""
+                )
+                # Qendresa item 17: "" unless the flag is on AND the windows are advertised.
+                + (
+                    "\n" + _BACKGROUND_FOLLOWS_TALK_PROMPT_SECTION
+                    if settings.background_follows_talk_enabled
+                    and speaker_background_windows_open(input.capability_manifest)
                     else ""
                 )
             ),
