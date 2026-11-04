@@ -808,6 +808,9 @@ class PlanFacts:
     caption_look_receipt: Mapping[str, Any] | None = None
     # Qendresa item 12: the box colour the variant's `caption_shape` still carries (None = none).
     caption_shape_box: str | None = None
+    # The app build that sent the drafting message (None = unknown): a caption shape is drawn
+    # only for a build that can edit it (`phone_rollout.caption_shape_planned_for`).
+    client_protocol: int | None = None
     caption_size_px: int | None = None
     caption_text_color: str | None = None
     caption_alignment: str | None = None
@@ -7346,10 +7349,14 @@ _SHAPE_WORD_NAMES = {1: "one", 2: "two", 3: "three"}
 _SHAPE_WORD_NAMES_TR = {1: "bir", 2: "iki", 3: "üç"}
 
 
-def _caption_shape_drawable() -> bool:
-    """Can the phone writer draw a caption shape (Qendresa item 12): flag and both tokens."""
+def _caption_shape_drawable(client_protocol: int | None) -> bool:
+    """Can the phone writer draw a caption shape (Qendresa item 12)? The flag and both tokens,
+    and, when the drafting app build is known, that build (`caption_shape_planned_for`)."""
     from app.config import settings  # noqa: PLC0415
+    from app.services.phone_rollout import caption_shape_planned_for  # noqa: PLC0415
 
+    if client_protocol is not None:
+        return caption_shape_planned_for(client_protocol)
     return settings.phone_caption_shape_enabled and {"captionShape", "authoredText"} <= set(
         settings.phone_render_verified_features
     )
@@ -7472,7 +7479,7 @@ def _check_caption_look(
         # The phone Talking writer applies the look to this draft's first render; with phone
         # text styling off it stamps no policy (`stamp_phone_text_style`), so nothing is drawn,
         # and a draft with captions off has nothing to draw it on (`_check_captions` says so).
-        if ask.has_shape and not _caption_shape_drawable():
+        if ask.has_shape and not _caption_shape_drawable(facts.client_protocol):
             return _receipt(req, "partial", _caption_shape_unmet(ask, drawn_words=None))
         return _receipt(
             req,

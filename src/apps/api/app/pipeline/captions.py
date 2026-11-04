@@ -1656,7 +1656,14 @@ def split_cues_by_words(cues: list[dict], max_words: int) -> list[dict]:
         aligned = (
             isinstance(words, list)
             and len(words) == len(tokens)
-            and all(isinstance(w, dict) for w in words)
+            and all(
+                isinstance(w, dict)
+                and all(
+                    isinstance(w.get(key), int | float) and not isinstance(w.get(key), bool)
+                    for key in ("start_s", "end_s")
+                )
+                for w in words
+            )
             and [str(w.get("text", "")).strip() for w in words] == tokens
         )
         offsets = [0]

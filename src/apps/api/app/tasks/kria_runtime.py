@@ -2103,6 +2103,9 @@ def _complete_draft_turn(
                         facts,
                         phone_talking=phone_talking,
                         caption_words_at_render=talking_writer,
+                        # Qendresa item 12: a caption shape is promised only to a build that
+                        # draws it.
+                        client_protocol=client_protocol,
                         # KRI-1024: any phone writer draws text with the phone's fonts, so a
                         # literal none of them draws is a "Couldn't" before approval.
                         phone_text=defers_text_to_phone(

@@ -568,7 +568,11 @@ def _apply_caption_shape(resolved, ask, over_face: bool, cues: list[dict], canva
     A box look: black bold text on a rounded box, low (0.79) or middle (0.62). A words-only
     look: the not-yet-spoken word dimmed, no lime, under the face (0.62) or low (0.79). Records
     the shape on the policy for `generation_style_fields` and the receipt; ``resolved`` and
-    ``over_face`` come back unchanged when the stamped ask carries no shape."""
+    ``over_face`` come back unchanged when the stamped ask carries no shape.
+
+    Faces: an asked spot is the creator's (KRI-1177) and ``over_face`` says what it covers. A
+    box with no asked spot takes the low spot only when it covers no sampled face; otherwise it
+    stays where the face-aware placement put it (text never covers a face)."""
     from dataclasses import replace
 
     if ask is None or not ask.has_shape:
@@ -590,57 +594,77 @@ def _apply_caption_shape(resolved, ask, over_face: bool, cues: list[dict], canva
         )
         if ask.size is None:
             updates["text_size_px"] = 64
-        if ask.position in (None, "bottom", "middle"):
-            updates.update(position_x_frac=0.5, text_anchor="center")
         policy["_caption_shape"] = {"words": words, "box": ask.box}
     else:
         updates.update(dim_words=True, highlight_color=resolved.text_color)
         policy["_caption_shape"] = {"words": words, "dim": True}
+    moved = {}
     if placed_y is not None:
-        updates["position_y_frac"] = placed_y
-    resolved = replace(resolved, **updates)
+        moved["position_y_frac"] = placed_y
+        if ask.box is not None and ask.position in (None, "bottom", "middle"):
+            moved.update(position_x_frac=0.5, text_anchor="center")
+    shaped = replace(resolved, **updates)
     faces = policy.get("_face_boxes") or []
-    if not cues or not faces:
-        return resolved, False
+    if not moved:
+        return shaped, _shape_over_face(shaped, cues, faces, canvas) if faces else over_face
+    candidate = replace(shaped, **moved)
+    covers = _shape_over_face(candidate, cues, faces, canvas) if faces else False
+    if covers and ask.position is None:
+        # Not her spot: keep the face-aware one (`_place` already dodged the faces).
+        return shaped, _shape_over_face(shaped, cues, faces, canvas)
+    return candidate, covers
+
+
+def _shape_over_face(look, cues: list[dict], faces: list, canvas) -> bool:
+    """Does the shaped caption block (its box included) overlap a sampled face while a cue is
+    on? The block is the widest cue measured at the look's size and width, centred where the
+    look draws it (``position_x_frac`` / ``position_y_frac`` are the block centre; a left /
+    right anchor puts its edge there)."""
     from app.agents._schemas.text_element import TextElement
     from app.pipeline.canvas import PORTRAIT
-    from app.pipeline.phone_text_style import _overlap, _same_window, animation_box, measure_box
+    from app.pipeline.phone_text_style import _overlap, _same_window, measure_box
 
     canvas = canvas or PORTRAIT
     timed = [c for c in cues if str(c.get("text") or "").strip()]
-    if not timed:
-        return resolved, over_face
+    if not timed or not faces:
+        return False
     widest = max(timed, key=lambda c: len(str(c["text"])))
     row = TextElement(
         id="caption-shape",
         text=str(widest["text"]),
         start_s=min(float(c.get("start_s", 0)) for c in timed),
         end_s=max(float(c.get("end_s", 0)) for c in timed),
-        font_family=resolved.font_family,
-        size_px=resolved.text_size_px,
-        color=resolved.text_color,
-        stroke_width=resolved.outline_px,
-        shadow_enabled=resolved.shadow_enabled,
-        max_width_frac=resolved.max_width_frac,
+        font_family=look.font_family,
+        size_px=look.text_size_px,
+        color=look.text_color,
+        stroke_width=look.outline_px,
+        shadow_enabled=look.shadow_enabled,
+        max_width_frac=look.max_width_frac,
         effect="pop-in",
     ).model_dump(mode="json", exclude_none=True)
-    row.update(
-        x_frac=resolved.position_x_frac,
-        y_frac=resolved.position_y_frac,
-        alignment=resolved.text_anchor,
+    x0, y0, x1, y1 = measure_box(dict(row), canvas)  # its size; the spot is set below
+    width, height = x1 - x0, y1 - y0
+    cx, cy = float(look.position_x_frac), float(look.position_y_frac)
+    left = (
+        cx
+        if look.text_anchor == "left"
+        else cx - width
+        if look.text_anchor == "right"
+        else (cx - width / 2)
     )
-    block = list(animation_box(row, measure_box(dict(row), canvas), canvas))
-    if resolved.box_color is not None:
-        pad_x = 0.40 * resolved.text_size_px / canvas.width
-        pad_y = 0.18 * resolved.text_size_px / canvas.height
+    block = [left, cy - height / 2, left + width, cy + height / 2]
+    if look.box_color is not None:
+        from app.pipeline.phone_captions import _CAPTION_BOX_PAD_X_EM, _CAPTION_BOX_PAD_Y_EM
+
+        pad_x = _CAPTION_BOX_PAD_X_EM * look.text_size_px / canvas.width
+        pad_y = _CAPTION_BOX_PAD_Y_EM * look.text_size_px / canvas.height
         block = [block[0] - pad_x, block[1] - pad_y, block[2] + pad_x, block[3] + pad_y]
-    cue_windows = [dict(start_s=c.get("start_s", 0), end_s=c.get("end_s", 0)) for c in timed]
-    hit = any(
+    windows = [{"start_s": c.get("start_s", 0), "end_s": c.get("end_s", 0)} for c in timed]
+    return any(
         _overlap(block, face["box"] if isinstance(face, dict) else face)
-        and (not isinstance(face, dict) or any(_same_window(face, w) for w in cue_windows))
+        and (not isinstance(face, dict) or any(_same_window(face, w) for w in windows))
         for face in faces
     )
-    return resolved, hit
 
 
 def _caption_over_face(row: dict, rows: list[dict], faces: list, canvas) -> bool:
@@ -930,7 +954,9 @@ def generation_style_fields() -> dict:
             caption_stroke_width=look.outline_px,
             caption_shadow_enabled=look.shadow_enabled,
             caption_text_color=look.text_color,
-            caption_highlight_color=look.highlight_color,
+            # The dimmed look's spoken word is the text colour, even when a later background
+            # pass re-picked that colour: the editor reads this field for it.
+            caption_highlight_color=look.text_color if look.dim_words else look.highlight_color,
             caption_size_px=look.text_size_px,
             caption_margin_v=round(1920 * (1 - max(0.30, min(0.90, look.position_y_frac)))),
             caption_editor_style={

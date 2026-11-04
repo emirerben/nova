@@ -387,3 +387,89 @@ def test_the_draft_review_says_done_when_the_shape_is_on(monkeypatch, asked):
     )
     receipt = bc.check_requirement(asked, _draft_facts())
     assert receipt.status == "met", receipt
+
+
+# ------------------------------------------------------------------- faces (team rule)
+
+# A low full-frame face, where the box's default spot (0.79) would land on it.
+LOW_FACE = {"start_s": 0.0, "end_s": 60.0, "box": (0.30, 0.70, 0.70, 0.88), "kind": "face"}
+HIGH_FACE = {"start_s": 0.0, "end_s": 60.0, "box": (0.35, 0.30, 0.65, 0.50), "kind": "face"}
+BOX_ONLY = BriefRequirement(
+    id="boxonly",
+    kind="style",
+    scope="global",
+    description="Captions in a light grey box",
+    facts={"captions": "on", "caption_box": "#E5E5E5"},
+)
+BOX_BOTTOM = BriefRequirement(
+    id="boxbottom",
+    kind="style",
+    scope="global",
+    description="Captions in a light grey box at the bottom",
+    facts={"captions": "on", "caption_box": "#E5E5E5", "caption_position": "bottom"},
+)
+
+
+def _with_faces(monkeypatch, faces):
+    def environment(canvas):
+        styling._POLICY.get()["_face_boxes"] = [dict(face) for face in faces]
+
+    monkeypatch.setattr(styling, "_ensure_generation_environment", environment)
+
+
+def _box_rects(job):
+    return [
+        (
+            layer.background.left / CANVAS_W,
+            layer.background.top / CANVAS_H,
+            (layer.background.left + layer.background.width) / CANVAS_W,
+            (layer.background.top + layer.background.height) / CANVAS_H,
+        )
+        for layer in _caption_layers(job)
+    ]
+
+
+def test_a_box_with_no_spot_never_lands_on_a_face(monkeypatch):
+    """No spot asked: the box keeps off the face (team rule) instead of the fixed low spot."""
+    job = _shape_job(monkeypatch, [BOX_ONLY], request="Captions in a light grey box.", corner=False)
+    _with_faces(monkeypatch, [LOW_FACE])
+    variant = _run(job)
+    rects = _box_rects(job)
+    assert rects
+    assert not any(_overlaps(rect, LOW_FACE["box"]) for rect in rects), rects
+    assert variant["caption_look_receipt"]["over_face"] is False
+
+
+@pytest.mark.parametrize(
+    ("face", "covered"), [(LOW_FACE, True), (HIGH_FACE, False)], ids=["low_face", "high_face"]
+)
+def test_an_asked_low_box_says_truthfully_whether_it_covers_a_face(monkeypatch, face, covered):
+    """The creator's spot wins (KRI-1177), and `over_face` says what it covers."""
+    job = _shape_job(
+        monkeypatch,
+        [BOX_BOTTOM],
+        request="Captions in a light grey box at the bottom.",
+        corner=False,
+    )
+    _with_faces(monkeypatch, [face])
+    variant = _run(job)
+    rects = _box_rects(job)
+    assert all(0.75 <= (r[1] + r[3]) / 2 <= 0.87 for r in rects)
+    assert any(_overlaps(rect, face["box"]) for rect in rects) is covered
+    assert variant["caption_look_receipt"]["over_face"] is covered
+
+
+def test_the_draft_review_never_promises_a_shape_to_an_old_build(monkeypatch):
+    import dataclasses
+
+    monkeypatch.setattr(settings, "phone_text_styling_enabled", True)
+    monkeypatch.setattr(settings, "phone_caption_shape_enabled", True)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [*settings.phone_render_verified_features, "authoredText", "captionShape"],
+    )
+    old = dataclasses.replace(_draft_facts(), client_protocol=35)
+    assert bc.check_requirement(Q2_CAPTIONS, old).status != "met"
+    new = dataclasses.replace(_draft_facts(), client_protocol=36)
+    assert bc.check_requirement(Q2_CAPTIONS, new).status == "met"
