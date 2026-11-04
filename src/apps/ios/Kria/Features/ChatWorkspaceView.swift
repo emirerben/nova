@@ -551,6 +551,9 @@ private struct CreationWorkspaceView: View {
     @State private var answeredClipSelections: [String: ClipSelectionSubmission] = [:]
     /// Conflict-choice answers sent from this device, by question id, for the collapsed "answered" summary.
     @State private var answeredChoices: [String: ChoiceSelectionSubmission] = [:]
+    /// A suggestions request is in flight (or re-asking while the server says pending), so the first prompt shows
+    /// its placeholders rather than nothing.
+    @State private var suggestionsLoading = false
     /// KRI-802: answers held for a reply that asks a choice card and a clip picker together, by message id. Both go
     /// out on one turn once both are in.
     @State private var questionBatches: [String: QuestionBatch] = [:]
@@ -1065,6 +1068,7 @@ private struct CreationWorkspaceView: View {
                            songDurationS: CreationAttachedMedia.song(threadState)?.durationS,
                            projectID: project.id,
                            choiceQuestionMode: choiceQuestionMode(for: message),
+                           hidesAnswerEcho: echoesChoiceAnswer(message),
                            questionBatch: asksTogether(message) ? questionBatches[message.id] ?? QuestionBatch() : nil,
                            songRangeMode: songRangeMode(for: message),
                            objectMarkMode: objectMarkMode(for: message),
@@ -1138,7 +1142,8 @@ private struct CreationWorkspaceView: View {
                 Task { await send(message: text, clipSelection: submission) }
             }
         }
-        return nil
+        // Not the newest clip question and nothing answered it: a newer one replaced it.
+        return .superseded
     }
 
     /// The song timeline (instead of the vertical order list) when the server also advertises
@@ -1154,7 +1159,7 @@ private struct CreationWorkspaceView: View {
     }
 
     /// Order card only when the server advertises `song_order_questions`. Interactive on the newest question
-    /// that no later user message has answered; read-only afterwards; hidden once a newer question replaced it.
+    /// that no later user message has answered; read-only afterwards; a quiet "replaced" line once a newer question replaced it.
     private func songOrderMode(for message: ChatTranscriptMessage) -> SongOrderCardMode? {
         guard transcriptIsFresh, capabilities?.songOrderQuestionsEnabled == true,
               let question = message.songOrderQuestion else { return nil }
@@ -1172,14 +1177,14 @@ private struct CreationWorkspaceView: View {
             let positions = SongOrderPositions.map(media: CreationAttachedMedia.parse(threadState), question: question)
             let summary = submission.summary(positions: positions)
             return .answered(summary: summary.isEmpty ? nil : summary)
-        case .superseded, nil:
-            return nil
+        case .superseded: return .superseded
+        case nil: return nil
         }
     }
 
     /// KRI-588: the "which part of the song did you film?" card, only when the server advertises
     /// `song_range_questions` (and the song affordance). Interactive on the newest question no `song_range`
-    /// has answered; read-only once answered; hidden once a newer question replaced it or the server closed it.
+    /// has answered; read-only once answered; a quiet "replaced" line once a newer question replaced it or the server closed it.
     private func songRangeMode(for message: ChatTranscriptMessage) -> SongRangeCardMode? {
         guard transcriptIsFresh, capabilities?.songRangeQuestionsEnabled == true,
               let question = message.songRangeQuestion else { return nil }
@@ -1197,13 +1202,13 @@ private struct CreationWorkspaceView: View {
             }
         case .answered(let answer):
             return .answered(summary: answer.summary, spoken: answer.spokenSummary)
-        case .superseded, nil:
-            return nil
+        case .superseded: return .superseded
+        case nil: return nil
         }
     }
 
     /// KRI-901: the "Mark the plate" card, only when the server advertises `protected_region_marks`. Interactive on
-    /// the newest question no mark of that object has answered; read-only once answered; hidden once replaced.
+    /// the newest question no mark of that object has answered; read-only once answered; a quiet "replaced" line once replaced.
     private func objectMarkMode(for message: ChatTranscriptMessage) -> ObjectMarkCardMode? {
         guard transcriptIsFresh, capabilities?.protectedRegionMarks == true,
               let question = message.protectedRegionQuestion else { return nil }
@@ -1222,13 +1227,13 @@ private struct CreationWorkspaceView: View {
             }
         case .answered(let answer):
             return .answered(summary: answer.message)
-        case .superseded, nil:
-            return nil
+        case .superseded: return .superseded
+        case nil: return nil
         }
     }
 
     /// KRI-723: the "show me your moments" card, only when the server advertises `moment_order_questions`.
-    /// Interactive on the newest question no answer has closed; read-only once answered; hidden once replaced.
+    /// Interactive on the newest question no answer has closed; read-only once answered; a quiet "replaced" line once replaced.
     private func momentOrderMode(for message: ChatTranscriptMessage) -> MomentOrderCardMode? {
         guard transcriptIsFresh, capabilities?.momentOrderQuestions == true,
               let question = message.momentOrderQuestion else { return nil }
@@ -1248,8 +1253,8 @@ private struct CreationWorkspaceView: View {
             }
         case .answered(let answer):
             return .answered(summary: MomentOrderStrings(language).answered(count: answer.answers.count))
-        case .superseded, nil:
-            return nil
+        case .superseded: return .superseded
+        case nil: return nil
         }
     }
 
@@ -1279,6 +1284,27 @@ private struct CreationWorkspaceView: View {
             // A rejected send removes the pending message, which reopens the card for a retry.
             Task { await send(message: text, choiceSelection: submission) }
         }
+    }
+
+    /// The user message that is nothing more than the "You chose" capsule of the choice question it answers (same
+    /// text, confirmed by the server). The capsule stands alone then; a combined batch message, a typed answer that
+    /// differs from the capsule, or a pending send keep their bubble.
+    private func echoesChoiceAnswer(_ message: ChatTranscriptMessage) -> Bool {
+        guard message.role == .user, !message.isPending, transcriptIsFresh,
+              capabilities?.choiceQuestionsEnabled == true else { return false }
+        let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
+            if case .message(let message) = entry.content { message } else { nil }
+        }
+        guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return false }
+        // The nearest question above, with no other user message in between: this one is its answer.
+        for earlier in messages[..<index].reversed() {
+            if earlier.role == .user { return false }
+            guard let question = earlier.choiceQuestion else { continue }
+            if earlier.clipQuestion != nil { return false }
+            let shown = answeredChoices[question.questionID].flatMap { question.option(key: $0.optionKey)?.label } ?? message.content
+            return shown == message.content
+        }
+        return false
     }
 
     /// KRI-815: the script card only when the server advertises it. Interactive on the newest script of THIS
@@ -1788,6 +1814,19 @@ private struct CreationWorkspaceView: View {
                         .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
                         .background(KriaColor.paper)
                         .accessibilityIdentifier("first-prompt-suggestions")
+                } else if suggestionsLoading, suggestionSurface == .firstPrompt,
+                          prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    // The first prompt's chips are still being written (Paper S2.09 state A): two quiet placeholders.
+                    HStack(spacing: 8) {
+                        KriaSkeletonBar(width: 140, height: 44)
+                        KriaSkeletonBar(width: 112, height: 44)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
+                    .background(KriaColor.paper)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Loading suggestions")
+                    .accessibilityIdentifier("first-prompt-suggestions-loading")
                 }
                 ChatComposer(
                     text: promptBinding,
@@ -2179,6 +2218,8 @@ private struct CreationWorkspaceView: View {
         // Another scope's set is dropped at once; the same scope keeps what it holds until a new set_id arrives.
         if suggestionSetKey != scope { suggestionSet = nil; suggestionSetKey = scope }
         let api = model.api, threadID = project.id
+        suggestionsLoading = true
+        defer { suggestionsLoading = false }
         await SuggestionChipsPolicy.poll(
             fetch: { try await api.creationSuggestions(threadID: threadID) },
             onSet: { suggestionSet = SuggestionChipsPolicy.merge(current: suggestionSet, incoming: $0) }

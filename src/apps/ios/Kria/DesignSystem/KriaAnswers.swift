@@ -25,29 +25,53 @@ struct KriaAnswerChip: View {
             .accessibilityAddTraits(state == .selected ? .isSelected : [])
     }
 
-    private var content: some View {
-        HStack(alignment: .center, spacing: 8) {
-            if state == .sending {
-                KriaSpinner(size: 16)
-            } else if state == .selected {
-                Image(systemName: "checkmark").font(.system(size: 13, weight: .bold))
-            } else if typeMyOwn {
-                Image(systemName: "pencil").font(.system(size: 13, weight: .semibold))
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).kriaType(.button)
-                if let caption {
-                    Text(caption).kriaType(.caption)
-                        .foregroundStyle(state == .selected ? KriaColor.paper.opacity(0.8) : KriaColor.mutedInk)
+    /// The tag follows the label on the same line when both fit and drops under it when they do not, so a long
+    /// label is never squeezed by the tag (Paper wraps the tag the same way).
+    @ViewBuilder private var content: some View {
+        if isRecommended {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 8) { lead; label; recommendedTag }
+                    .foregroundStyle(foreground)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .center, spacing: 8) { lead; label }
+                    recommendedTag
                 }
+                .foregroundStyle(foreground)
             }
-            .multilineTextAlignment(.leading)
-            if isRecommended {
-                Text("Recommended").kriaType(.caption).fixedSize()
+        } else {
+            HStack(alignment: .center, spacing: 8) { lead; label }
+                .foregroundStyle(foreground)
+        }
+    }
+
+    @ViewBuilder private var lead: some View {
+        if state == .sending {
+            KriaSpinner(size: 16)
+        } else if state == .selected {
+            Image(systemName: "checkmark").font(.system(size: 13, weight: .bold))
+        } else if typeMyOwn {
+            Image(systemName: "pencil").font(.system(size: 13, weight: .semibold))
+        }
+    }
+
+    private var label: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).kriaType(.button)
+            if let caption {
+                Text(caption).kriaType(.caption)
                     .foregroundStyle(state == .selected ? KriaColor.paper.opacity(0.8) : KriaColor.mutedInk)
             }
         }
-        .foregroundStyle(typeMyOwn && state == .idle ? KriaColor.mutedInk : (state == .selected ? KriaColor.paper : KriaColor.ink))
+        .multilineTextAlignment(.leading)
+    }
+
+    private var recommendedTag: some View {
+        Text("Recommended").kriaType(.caption)
+            .foregroundStyle(state == .selected ? KriaColor.paper.opacity(0.8) : KriaColor.mutedInk)
+    }
+
+    private var foreground: Color {
+        typeMyOwn && state == .idle ? KriaColor.mutedInk : (state == .selected ? KriaColor.paper : KriaColor.ink)
     }
 
     private var accessibilityTitle: String {
@@ -100,9 +124,17 @@ struct KriaChoiceRow: View {
             if typeMyOwn { Image(systemName: "pencil").font(.system(size: 15, weight: .semibold)) }
             VStack(alignment: .leading, spacing: 2) {
                 if isRecommended && state != .selected {
-                    HStack(alignment: .center, spacing: 8) {
-                        Text(title).kriaType(.button)
-                        recommendedPill
+                    // Title and pill share a line when they fit; otherwise the pill drops under the title so the
+                    // title keeps the whole width (it is never squeezed to a sliver at large text sizes).
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .center, spacing: 8) {
+                            Text(title).kriaType(.button)
+                            recommendedPill
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(title).kriaType(.button)
+                            recommendedPill
+                        }
                     }
                 } else {
                     Text(title).kriaType(.button)
@@ -209,11 +241,11 @@ struct KriaAnswerStack: View {
             }
             if let typeMyOwn {
                 KriaChoiceRow(title: "Type my own", typeMyOwn: true, action: typeMyOwn)
-                    .disabled(isSending || isLocked)
+                    .disabled(isSending || isLocked || heldID != nil)
                     .accessibilityIdentifier("answer-type-my-own")
             }
             if sendFailed {
-                KriaInlineFailure(text: failureText).accessibilityIdentifier("answer-send-failed")
+                KriaInlineFailure(text: failureText, announces: false).accessibilityIdentifier("answer-send-failed")
             }
             if let decide {
                 Button("Let Kria decide", action: decide)
@@ -226,6 +258,8 @@ struct KriaAnswerStack: View {
             if wasSending, !nowSending, tappedID != nil {
                 sendFailed = true
                 tappedID = nil
+                // Announced here, once, when the send fails: the failure line below only redraws on a re-render.
+                KriaAnnouncements.post(failureText, highPriority: true, repeatsAfter: 0)
             }
         }
     }
@@ -244,9 +278,12 @@ struct KriaAnswerStack: View {
     }
 }
 
-/// A failure line: a small alert glyph and the reason in `failureText`, announced when it appears.
+/// A failure line: a small alert glyph and the reason in `failureText`, announced once when it appears. A
+/// transcript re-render that redraws the same line does not announce it again; the caller that owns the failure
+/// passes `announces: false` when it announces the event itself.
 struct KriaInlineFailure: View {
     let text: String
+    var announces = true
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -258,7 +295,24 @@ struct KriaInlineFailure: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isStaticText)
-        .onAppear { AccessibilityNotification.Announcement(text).post() }
+        .onAppear { if announces { KriaAnnouncements.post(text) } }
+    }
+}
+
+/// Spoken announcements for failures and notices, once per distinct text. A view that is rebuilt (a transcript
+/// re-render, a lazy row scrolling back in) draws the same failure again; without this it would be read out every
+/// time. The same text is spoken again only after `repeatsAfter` seconds, so a real second failure still is.
+@MainActor enum KriaAnnouncements {
+    private static var spoken: [String: Date] = [:]
+
+    static func post(_ text: String, highPriority: Bool = false, repeatsAfter window: TimeInterval = 30) {
+        let now = Date()
+        spoken = spoken.filter { now.timeIntervalSince($0.value) < 300 }
+        if window > 0, let last = spoken[text], now.timeIntervalSince(last) < window { return }
+        spoken[text] = now
+        var attributed = AttributedString(text)
+        if highPriority { attributed.accessibilitySpeechAnnouncementPriority = .high }
+        AccessibilityNotification.Announcement(attributed).post()
     }
 }
 
@@ -333,5 +387,39 @@ struct KriaQuestionCard<Content: View>: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+}
+
+/// Lays its children out left to right and starts a new line when the next one does not fit. Each child is offered
+/// the container's width, so a chip whose label is wider than a whole line wraps its text inside the chip instead
+/// of running off the edge.
+struct KriaWrapLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(width: proposal.width ?? .infinity, subviews: subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let layout = arrange(width: bounds.width, subviews: subviews)
+        for (index, frame) in layout.frames.enumerated() {
+            subviews[index].place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                                  proposal: ProposedViewSize(width: frame.width, height: frame.height))
+        }
+    }
+
+    private func arrange(width: CGFloat, subviews: Subviews) -> (size: CGSize, frames: [CGRect]) {
+        var frames: [CGRect] = []
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, maxX: CGFloat = 0
+        for subview in subviews {
+            var size = subview.sizeThatFits(.unspecified)
+            if width.isFinite, size.width > width { size = subview.sizeThatFits(ProposedViewSize(width: width, height: nil)) }
+            if x > 0, x + size.width > width { x = 0; y += rowHeight + spacing; rowHeight = 0 }
+            frames.append(CGRect(origin: CGPoint(x: x, y: y), size: size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+            maxX = max(maxX, x - spacing)
+        }
+        return (CGSize(width: maxX, height: y + rowHeight), frames)
     }
 }

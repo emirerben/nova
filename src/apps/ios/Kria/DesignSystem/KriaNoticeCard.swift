@@ -13,7 +13,8 @@ struct KriaNoticeAction {
 /// - Success: no button, and `action`/`link` are ignored.
 /// - Banner: a single line with one tertiary action; `link` is ignored.
 ///
-/// Warning is slate, not yellow. Failure is announced as an alert; the other tones as a polite status.
+/// Warning is slate, not yellow. Failure is announced as an alert; the other tones as a polite status. Each
+/// distinct notice is announced once (`KriaAnnouncements`), not on every redraw.
 struct KriaNoticeCard: View {
     enum Tone { case info, warning, failure, success }
     enum Style { case card, banner }
@@ -37,9 +38,8 @@ struct KriaNoticeCard: View {
         .accessibilityElement(children: .contain)
         .onAppear {
             guard announces else { return }
-            var text = AttributedString([title, message].compactMap { $0 }.joined(separator: ". "))
-            if tone == .failure { text.accessibilitySpeechAnnouncementPriority = .high }
-            AccessibilityNotification.Announcement(text).post()
+            // Once per distinct notice: a re-render that redraws the same card does not read it out again.
+            KriaAnnouncements.post([title, message].compactMap { $0 }.joined(separator: ". "), highPriority: tone == .failure)
         }
     }
 

@@ -254,7 +254,7 @@ final class CreationChatFixture: @unchecked Sendable {
         if mode == "invalid", start != nil || end != nil { return (422, "song_range_invalid", "That starts after your song ends.") }
         guard let start, let end else { return nil }
         if start >= 90 { return (422, "song_range_invalid", "That starts after your song ends.") }
-        if end - start < 5 { return (422, "song_range_invalid", "Pick at least five seconds of your song.") }
+        if end - start < 5 { return (422, "song_range_invalid", "Pick at least five seconds.") }
         return nil
     }
     /// KRI-756: the server's `SuggestionSetOut`, shaped like the real contract. `ready` once a render finished,
@@ -631,7 +631,7 @@ final class CreationChatFixture: @unchecked Sendable {
             let start = body["start_s"] as? Double, end = body["end_s"] as? Double
             if let start, let end {
                 if start >= songSeconds { return problem(422, "song_range_invalid", "That starts after your song ends.") }
-                if end - start < 5 { return problem(422, "song_range_invalid", "Pick at least five seconds of your song.") }
+                if end - start < 5 { return problem(422, "song_range_invalid", "Pick at least five seconds.") }
                 media[songIndex]["song_range"] = ["start_s": start, "end_s": min(end, songSeconds)]
             } else {
                 media[songIndex].removeValue(forKey: "song_range")

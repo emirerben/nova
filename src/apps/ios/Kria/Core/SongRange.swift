@@ -59,7 +59,7 @@ enum SongRangeMath {
 /// What the creator is choosing in the sheet: whole seconds, always inside the song, with the To picker free to
 /// go below From + 5 s (Save is then off and says why) but From never leaving To behind.
 struct SongRangeDraft: Equatable {
-    static let tooShortMessage = "Pick at least five seconds of your song."
+    static let tooShortMessage = "Pick at least five seconds."
 
     /// Last whole second of the song.
     let limit: Int

@@ -25,6 +25,9 @@ struct MomentWindow: Equatable, Sendable {
     /// "0:03.2–0:05.0": tenths, because two moments a second apart must not read the same.
     var label: String { "\(Self.clock(start))–\(Self.clock(end))" }
 
+    /// "0:12 to 0:18": whole seconds, the way the status lines read it.
+    var rangeLabel: String { "\(SongRangeMath.timecode(start)) to \(SongRangeMath.timecode(end))" }
+
     /// Exact seconds, for accessibility values and UI tests.
     var exact: String { String(format: "%.2f-%.2f", start, end) }
 
@@ -356,15 +359,13 @@ struct MomentOrderStrings {
         switch choice {
         case .point(let window)?:
             if isFound(moment, choice: choice) {
-                return say("Found it at \(window.label)", "\(window.label) arasında buldum")
+                return say("Found it at \(window.rangeLabel)", "\(window.rangeLabel.replacingOccurrences(of: " to ", with: "–")) arasında buldum")
             }
-            return say("You picked \(window.label)", "Seçtiğin yer: \(window.label)")
+            return say("You picked \(window.rangeLabel)", "Seçtiğin yer: \(window.rangeLabel.replacingOccurrences(of: " to ", with: "–"))")
         case .skip?: return say("Not in your clips: left out", "Kliplerinde yok: çıkarıldı")
         case .delegate?: return say("Kria picks a part for this one", "Bunun için bir kısmı Kria seçecek")
         case nil:
-            return moment.status == .ambiguous
-                ? say("Could be a few places. Show me which one.", "Birkaç yerde olabilir. Hangisi olduğunu göster.")
-                : say("I couldn’t find this one in the clip.", "Bunu klipte bulamadım.")
+            return say("Choose one below", "Aşağıdan birini seç")
         }
     }
 

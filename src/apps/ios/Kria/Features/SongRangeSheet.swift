@@ -177,6 +177,9 @@ struct SongRangeWheelPair: View {
                 }
             }
             .pickerStyle(.wheel)
+            // The wheel rows are a fixed 120pt tall: larger digits would overlap their neighbours, so the digits
+            // stop growing at xxxLarge (the labels around the wheels still scale).
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .frame(height: 120)
             .clipped()
             .accessibilityLabel(title)

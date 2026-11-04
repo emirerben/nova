@@ -11,6 +11,8 @@ enum SongRangeCardMode {
     case active(isSending: Bool, problem: String?, submit: (SongRangeAnswer, String) -> Void)
     /// Answered by a `song_range` message: one read-only line.
     case answered(summary: String, spoken: String)
+    /// A newer question replaced this one before it was answered.
+    case superseded
 }
 
 struct SongRangeQuestionCard: View {
@@ -23,6 +25,8 @@ struct SongRangeQuestionCard: View {
         switch mode {
         case .answered(let summary, let spoken):
             SongRangeAnsweredLine(summary: summary, spoken: spoken)
+        case .superseded:
+            KriaSupersededLine().accessibilityIdentifier("song-range-card-superseded")
         case .active(let isSending, let problem, let submit):
             SongRangeActiveCard(question: question, fallbackDurationS: fallbackDurationS,
                                 isSending: isSending, problem: problem, submit: submit)
@@ -112,16 +116,11 @@ private struct SongRangeActiveCard: View {
 
     @ViewBuilder private var buttons: some View {
         if draft != nil {
-            HStack(spacing: 8) {
-                Button("Use this part", action: sendPart)
-                    .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true, onFill: true))
-                    .disabled(isSending || chosenRange == nil)
-                    .accessibilityIdentifier("song-range-card-use")
-                Button("Whole song", action: sendWholeSong)
-                    .buttonStyle(KriaButtonStyle(role: .secondary, fullWidth: true, onFill: true))
-                    .disabled(isSending)
-                    .accessibilityLabel("Use the whole song")
-                    .accessibilityIdentifier("song-range-card-whole")
+            // Side by side while both labels fit on one line; stacked otherwise, so a label never breaks inside a
+            // word and a button never shrinks to a circle at large text sizes.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { usePartButton; wholeSongButton }
+                VStack(spacing: 8) { usePartButton; wholeSongButton }
             }
         } else {
             Button("Use the whole song", action: sendWholeSong)
@@ -129,6 +128,21 @@ private struct SongRangeActiveCard: View {
                 .disabled(isSending)
                 .accessibilityIdentifier("song-range-card-whole")
         }
+    }
+
+    private var usePartButton: some View {
+        Button("Use this part", action: sendPart)
+            .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true, onFill: true))
+            .disabled(isSending || chosenRange == nil)
+            .accessibilityIdentifier("song-range-card-use")
+    }
+
+    private var wholeSongButton: some View {
+        Button("Whole song", action: sendWholeSong)
+            .buttonStyle(KriaButtonStyle(role: .secondary, fullWidth: true, onFill: true))
+            .disabled(isSending)
+            .accessibilityLabel("Use the whole song")
+            .accessibilityIdentifier("song-range-card-whole")
     }
 
     private func sendPart() {

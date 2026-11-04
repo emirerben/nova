@@ -88,7 +88,7 @@ final class SongRangeUITests: XCTestCase {
         XCTAssertFalse(app.buttons["song-range-save"].isEnabled)
         let reason = app.descendants(matching: .any)["song-range-error"]
         XCTAssertTrue(reason.waitForExistence(timeout: 3))
-        XCTAssertEqual(reason.label, "Pick at least five seconds of your song.")
+        XCTAssertEqual(reason.label, "Pick at least five seconds.")
         choose(app, "song-range-to", "0:50")
         XCTAssertTrue(app.buttons["song-range-save"].isEnabled)
         XCTAssertFalse(reason.exists)

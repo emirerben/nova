@@ -12,6 +12,8 @@ enum MomentOrderCardMode {
     case active(isSending: Bool, problem: String?, submit: (MomentOrderAnswer) -> Void)
     /// Answered by a `moment_order` message: one read-only line.
     case answered(summary: String)
+    /// A newer question replaced this one before it was answered.
+    case superseded
 }
 
 /// Finds the take's original on this iPhone (phone projects keep originals in the project directory).
@@ -37,6 +39,8 @@ struct MomentOrderCard: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(summary)
                 .accessibilityIdentifier("moment-order-answered")
+        case .superseded:
+            KriaSupersededLine().accessibilityIdentifier("moment-order-superseded")
         case .active(let isSending, let problem, let submit):
             MomentOrderActiveCard(question: question, projectID: projectID, strings: MomentOrderStrings(language),
                                   isSending: isSending, problem: problem, submit: submit)
@@ -129,6 +133,8 @@ private struct MomentOrderActiveCard: View {
                 handle(key, words: moment.words)
                 Text("\(position)")
                     .kriaType(.label).fontWeight(.semibold).foregroundStyle(KriaColor.ink)
+                    // The digit stops growing at xxxLarge so it stays inside its 24pt disc.
+                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                     .frame(width: 24, height: 24).background(KriaColor.fill, in: Circle())
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
@@ -209,9 +215,10 @@ private struct MomentOrderActiveCard: View {
         }
     }
 
-    /// The row's own three-option control, wrapping inside the row: ink when chosen, fill track otherwise.
+    /// The row's own three answers as wrapping chips (Paper S2.11): ink when chosen, fill otherwise. They sit on
+    /// as many lines as the width needs and a long label wraps inside its chip, never inside a word.
     private func options(for key: String, choice: MomentChoice?) -> some View {
-        HStack(spacing: 0) {
+        KriaWrapLayout(spacing: 8) {
             segment(strings.point, selected: pointed(key) != nil, id: "moment-order-point-\(key)",
                     enabled: localURL != nil || pointed(key) != nil) {
                 if localURL != nil { picking = PickTarget(key: key) }
@@ -223,8 +230,7 @@ private struct MomentOrderActiveCard: View {
                 draft.choose(.delegate, for: key)
             }
         }
-        .padding(2)
-        .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
     }
 
@@ -232,12 +238,12 @@ private struct MomentOrderActiveCard: View {
         Button(action: action) {
             Text(title)
                 .kriaType(.label).fontWeight(.semibold)
-                .foregroundStyle(selected ? KriaColor.paper : KriaColor.mutedInk)
+                .foregroundStyle(selected ? KriaColor.paper : KriaColor.ink)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 6).padding(.vertical, 8)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .background(selected ? KriaColor.ink : Color.clear, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .padding(.horizontal, 16).padding(.vertical, 8)
+                .frame(minHeight: 44)
+                .background(selected ? KriaColor.ink : KriaColor.fill, in: Capsule())
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .opacity(enabled ? 1 : 0.4)
