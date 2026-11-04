@@ -72,7 +72,7 @@ struct ResearchPreview: Equatable {
 struct ResearchPreviewStrings {
     let language: ClipAnswerLanguage
 
-    var eyebrow: String { language == .turkish ? "KAYNAKLAR" : "SOURCES" }
+    var sourcesTitle: String { language == .turkish ? "Kaynaklar" : "Sources" }
     var intro: String {
         language == .turkish
             ? "Bu kaynaklı metin yalnızca onaylarsan videoya eklenir."
