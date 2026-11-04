@@ -95,19 +95,26 @@ struct SuggestionSet: Decodable, Equatable, Sendable {
     var wording: String?
     /// Sorted by rank (stable), de-duplicated by id and by message, capped at four.
     var chips: [SuggestionChip]
+    /// AI suggestion blocks (the v2 `suggestions`). Empty for a server without them, which keeps the chips in charge.
+    /// Sorted by rank (stable), de-duplicated by id, capped at `maxCards`.
+    var cards: [SuggestionCard]
+
+    /// The most cards the server ever returns (`MAX_SUGGESTIONS`).
+    static let maxCards = 5
 
     static let unavailable = SuggestionSet(setID: nil, state: "none", status: "unavailable", understanding: "done", retryAfterSeconds: nil, chips: [])
 
     init(setID: String?, state: String, status: String, understanding: String = "done", retryAfterSeconds: Double? = nil,
-         wording: String? = nil, chips: [SuggestionChip]) {
+         wording: String? = nil, chips: [SuggestionChip], cards: [SuggestionCard] = []) {
         self.setID = setID; self.state = state; self.status = status
         self.understanding = understanding; self.retryAfterSeconds = retryAfterSeconds
         self.wording = wording
         self.chips = Self.normalized(chips)
+        self.cards = Self.normalized(cards)
     }
 
     enum CodingKeys: String, CodingKey {
-        case state, status, understanding, wording, chips
+        case state, status, understanding, wording, chips, suggestions
         case setID = "set_id", retryAfterSeconds = "retry_after_s"
     }
 
@@ -122,6 +129,15 @@ struct SuggestionSet: Decodable, Equatable, Sendable {
         // One malformed chip must not take the rest down with it.
         let lossy = try container.decodeIfPresent([Lossy<SuggestionChip>].self, forKey: .chips) ?? []
         chips = Self.normalized(lossy.compactMap(\.value))
+        let lossyCards = (try? container.decodeIfPresent([Lossy<SuggestionCard>].self, forKey: .suggestions)) ?? []
+        cards = Self.normalized(lossyCards.compactMap(\.value))
+    }
+
+    private static func normalized(_ cards: [SuggestionCard]) -> [SuggestionCard] {
+        var ids = Set<String>()
+        let unique = cards.filter { ids.insert($0.id).inserted }
+        let ordered = unique.enumerated().sorted { ($0.element.rank, $0.offset) < ($1.element.rank, $1.offset) }.map(\.element)
+        return Array(ordered.prefix(maxCards))
     }
 
     private static func normalized(_ chips: [SuggestionChip]) -> [SuggestionChip] {
@@ -201,7 +217,7 @@ enum SuggestionChipsPolicy {
     /// A pending set is replaced by whatever comes next, and a failed ask (nil) keeps what is held.
     static func merge(current: SuggestionSet?, incoming: SuggestionSet?) -> SuggestionSet? {
         guard let incoming else { return current }
-        if let current, current.status == "ok", !current.chips.isEmpty,
+        if let current, current.status == "ok", !current.chips.isEmpty || !current.cards.isEmpty,
            current.state == incoming.state, let id = current.setID, id == incoming.setID {
             return current
         }
