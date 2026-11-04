@@ -220,7 +220,18 @@
       "KriaUITests/GeneratedMediaUITests/testDisabledCapabilitiesPreserveRecordImportAndHideGeneration",
       "KriaUITests/GeneratedMediaUITests/testValidationRejectionRequiresEditAndExplicitNewSubmission",
       "KriaUITests/GeneratedMediaUITests/testGeneratedImagePreviewUseRefreshesVisualPool",
-      "KriaUITests/GeneratedMediaUITests/testImageRecoveryAfterProcessRelaunchNeverPostsAgain"
+      "KriaUITests/GeneratedMediaUITests/testImageRecoveryAfterProcessRelaunchNeverPostsAgain",
+      "KriaUITests/SteerNowUITests/testWaitingBarAndSteerWhileKriaPlans",
+      "KriaUITests/SteerNowUITests/testSteerClosesTheCardAndSaysWhy",
+      "KriaUITests/SteerNowUITests/testNoSteerWhileTheVideoIsBeingMade",
+      "KriaUITests/SteerNowUITests/testTrashRemovesTheWaitingMessage",
+      "KriaUITests/SteerNowUITests/testEditFromTheMenuPutsTheTextBackInTheBox",
+      "KriaUITests/SteerNowUITests/testHoldingTheBarOpensTheSameMenu",
+      "KriaUITests/SteerNowUITests/testThirdMessageStaysInComposerWithANote",
+      "KriaUITests/SteerNowUITests/testSteerRetriesOnceAfterAStaleRevision",
+      "KriaUITests/SteerNowUITests/testSteerAfterTheVideoStartedHidesTheButton",
+      "KriaUITests/SteerNowUITests/testTurkishChatGetsTurkishSteerWords",
+      "KriaUITests/SteerNowUITests/testSwitchOffLooksLikeToday"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -537,6 +548,9 @@
     "src/apps/ios/Kria/Core/WhatsNewReleases.swift": "projects",
     "src/apps/ios/Kria/Features/WhatsNewView.swift": "projects",
     "src/apps/ios/Kria/Features/AccountUITestTransport.swift": "projects",
-    "src/apps/ios/Tests/KriaUITests/WhatsNewUITests.swift": "projects"
+    "src/apps/ios/Tests/KriaUITests/WhatsNewUITests.swift": "projects",
+    "src/apps/ios/Kria/Core/SteerNow.swift": "creation",
+    "src/apps/ios/Kria/Features/WaitingMessageBar.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/SteerNowUITests.swift": "creation"
   }
 }
