@@ -91,7 +91,9 @@ from app.kria.planner import (
     continuation_superseded_reply,
     extract_deferred_brief,
     localized_editor_state_reply,
+    no_longer_fits_reply,
     plan_live_turn,
+    plan_pinned_suggestion_turn,
     start_degraded_retry,
     turn_deadline,
 )
@@ -510,6 +512,72 @@ def _snapshot(thread: CreationThread) -> dict[str, Any]:
         # Absent until a message told, so older snapshots are unchanged.
         **({"reply_language": language} if (language := thread_reply_language(thread)) else {}),
     }
+
+
+def _pinned_tap_no_longer_fits(
+    turn_id: uuid.UUID,
+    *,
+    lease_owner: str,
+    lease_epoch: int,
+    claimed_thread_revision: int,
+    planned: PlannedKriaTurn,
+    reason: str,
+) -> _Completion:
+    """A tapped card the draft commit cannot honour: say so and write nothing else.
+
+    The caller has rolled back its speculative work (the same rollback-then-respond pattern as the
+    creative-copy and choice gates), so no draft or brief version exists for the tap.
+    """
+    pin = planned.suggestion_pin or {}
+    log.info(
+        "suggestion_pin.refused_at_commit",
+        turn_id=str(turn_id),
+        set_id=pin.get("set_id"),
+        suggestion_id=pin.get("id"),
+        reason=reason,
+    )
+    completed = _complete_response_turn(
+        turn_id,
+        lease_owner=lease_owner,
+        lease_epoch=lease_epoch,
+        claimed_thread_revision=claimed_thread_revision,
+        plan=KriaTurnPlan(
+            mode="respond",
+            turn_value="recovery",
+            response=no_longer_fits_reply(),
+            diagnostics={
+                "suggestion_pin": {
+                    "set_id": pin.get("set_id"),
+                    "id": pin.get("id"),
+                    "outcome": "refused",
+                    "reason": reason,
+                }
+            },
+        ),
+    )
+    return replace(completed, response_only=True)
+
+
+def _mark_pinned_card_applied(
+    db,  # noqa: ANN001 - SQLAlchemy sync Session
+    thread: CreationThread,
+    pin: dict[str, Any],
+    turn_id: uuid.UUID,
+) -> None:
+    """Record that the tapped card ran, in the transaction that commits its draft.
+
+    ``thread.state`` was loaded before the thread row lock and can predate a newer set the
+    suggester wrote since, so the ring is read again here, under the lock, and only the marked
+    copy of it is written back.
+    """
+    from app.services.suggestions import pinned as _pinned  # noqa: PLC0415
+
+    current = db.execute(
+        select(CreationThread.state).where(CreationThread.id == thread.id)
+    ).scalar_one()
+    marked = _pinned.mark_consumed(current, str(pin["set_id"]), str(pin["id"]), turn_id)
+    if marked is not None:
+        thread.state = marked
 
 
 def _complete_response_turn(
@@ -1830,6 +1898,24 @@ def _complete_draft_turn(
                 projected=editor_base.projected,
                 brief=load_latest_brief_sync(db, thread.id),
             )
+            if planned.suggestion_pin is not None:
+                from app.services.suggestions import pinned as _pinned  # noqa: PLC0415
+
+                if (
+                    _pinned.projected_digest(editor_base.projected)
+                    != planned.suggestion_pin["projected_digest"]
+                ):
+                    # The editor moved between planning and this lock (a Save, another turn):
+                    # an index-addressed op would land on whichever clip now sits there.
+                    db.rollback()
+                    return _pinned_tap_no_longer_fits(
+                        turn_id,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                        claimed_thread_revision=claimed_thread_revision,
+                        planned=planned,
+                        reason=_pinned.BASE_MOVED,
+                    )
             if planned.intent_repair is not None:
                 guard_intent_repair_head(
                     planned.intent_repair,
@@ -1886,6 +1972,19 @@ def _complete_draft_turn(
             verify_intent_repair(
                 planned.intent_repair, before=compiled.before, payload=compiled.payload
             )
+            if planned.suggestion_pin is not None and (
+                compiled.diff.unavailable or not compiled.diff.real()
+            ):
+                # A tap that changes nothing must never read as done, nor invite free words.
+                db.rollback()
+                return _pinned_tap_no_longer_fits(
+                    turn_id,
+                    lease_owner=lease_owner,
+                    lease_epoch=lease_epoch,
+                    claimed_thread_revision=claimed_thread_revision,
+                    planned=planned,
+                    reason="no_change",
+                )
             if timing_only_operations(arguments.operations) or any(
                 update.facts.get("editor_timing_only") is True for update in planned.brief_updates
             ):
@@ -3244,6 +3343,8 @@ def _complete_draft_turn(
         )
         db.add(draft)
         db.flush()
+        if planned.suggestion_pin is not None:
+            _mark_pinned_card_applied(db, thread, planned.suggestion_pin, turn.id)
         draft_execution.target_draft_id = draft.id
         draft_execution.target_draft_revision = draft.draft_revision
         draft_execution.result = {
@@ -3711,6 +3812,37 @@ async def _plan_with_live_agent(
             await engine.dispose()
 
 
+async def _plan_pinned_turn(
+    snapshot: dict[str, Any],
+    user_message: str,
+    *,
+    editor_state: dict[str, Any] | None = None,
+) -> PlannedKriaTurn:
+    """A tapped suggestion card, planned from its stored action. No model, no planner.
+
+    Same unpooled engine and sending-build binding as `_plan_with_live_agent` (the editor
+    snapshot's families depend on the sender's protocol); the caller renews the lease.
+    """
+    protocol = stamped_client_protocol(snapshot.get("client_protocol"))
+    engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
+    sender = bind_sending_build(protocol)
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+            return await plan_pinned_suggestion_turn(
+                db,
+                thread_id=uuid.UUID(str(snapshot["thread_id"])),
+                item_id=uuid.UUID(str(snapshot["item_id"])),
+                creator_id=uuid.UUID(str(snapshot["creator_id"])),
+                user_message=user_message,
+                pin=snapshot["pinned_suggestion"],
+                editor_state=parse_editor_state(editor_state),
+                client_protocol=protocol,
+            )
+    finally:
+        unbind_sending_build(sender)
+        await engine.dispose()
+
+
 def _append_sync_event(
     db,  # noqa: ANN001 - SQLAlchemy sync Session
     thread: CreationThread,
@@ -3997,6 +4129,12 @@ def _claim(
         if sent_from is not None:
             # KRI-898: the app build that sent the message; only when stamped.
             claimed_snapshot["client_protocol"] = sent_from
+        pin = source_payload.get("pinned_suggestion") if isinstance(source_payload, dict) else None
+        if isinstance(pin, dict) and pin and settings.kria_suggestion_pinned_taps_enabled:
+            # A tapped suggestion card: only with the flag on, so every other snapshot is unchanged.
+            # Read again here on purpose: switching the flag off must stop pinned plans even for
+            # a tap stamped before it (the card's words then take the legacy path).
+            claimed_snapshot["pinned_suggestion"] = pin
         if _previous_turn_hit_provider_deadline(db, turn, _model_message(source)):
             # KRI-1037: only when true, so every other snapshot is unchanged.
             claimed_snapshot["start_degraded"] = True
@@ -4558,46 +4696,62 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
     # This run's calls and waits, for the continuation record (see `_continue_turn`).
     recorder = TurnRunRecorder()
     recorder_token = turn_run_recorder.set(recorder)
+    # A tapped suggestion card (pinned taps flag) is planned from its stored action, never by the
+    # planner.
+    pinned_tap = snapshot.get("pinned_suggestion") if snapshot.get("item_id") else None
     try:
-        if (
-            settings.main_creator_agent_enabled or snapshot.get("camera_roll_story")
-        ) and snapshot.get("item_id"):
-            planned = asyncio.run(
-                _plan_with_live_agent(
-                    snapshot,
-                    user_message,
-                    turn_id=identifier,
-                    lease_owner=lease_owner,
-                    lease_epoch=lease_epoch,
-                    thought_publisher=thought_publisher,
-                    **({"editor_state": editor_state} if editor_state else {}),
-                    **({"answers_clip_question": True} if answers_clip_question else {}),
-                )
-            )
-            planned = _useful_plan(planned, user_message=user_message)
-            # KRI-881: research a typed research ask before the approval card, outside
-            # every lock; "checking sources" continues the turn when it needs more time.
-            from app.kria import research_preview  # noqa: PLC0415
-
-            # Planning's own heartbeat stopped with it; research takes 20-90 s and the
-            # lease is 15 s, so keep renewing it or the draft commit finds the turn lost.
-            with _lease_heartbeat_thread(
-                identifier, lease_owner=lease_owner, lease_epoch=lease_epoch
-            ):
-                with timed_step("research"):
-                    planned = research_preview.with_research(
-                        planned,
+        if pinned_tap is not None or (
+            (settings.main_creator_agent_enabled or snapshot.get("camera_roll_story"))
+            and snapshot.get("item_id")
+        ):
+            if pinned_tap is not None:
+                with _lease_heartbeat_thread(
+                    identifier, lease_owner=lease_owner, lease_epoch=lease_epoch
+                ):
+                    planned = asyncio.run(
+                        _plan_pinned_turn(
+                            snapshot,
+                            user_message,
+                            editor_state=editor_state,
+                        )
+                    )
+            else:
+                planned = asyncio.run(
+                    _plan_with_live_agent(
                         snapshot,
+                        user_message,
+                        turn_id=identifier,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                        thought_publisher=thought_publisher,
+                        **({"editor_state": editor_state} if editor_state else {}),
+                        **({"answers_clip_question": True} if answers_clip_question else {}),
+                    )
+                )
+                planned = _useful_plan(planned, user_message=user_message)
+                # KRI-881: research a typed research ask before the approval card, outside
+                # every lock; "checking sources" continues the turn when it needs more time.
+                from app.kria import research_preview  # noqa: PLC0415
+
+                # Planning's own heartbeat stopped with it; research takes 20-90 s and the
+                # lease is 15 s, so keep renewing it or the draft commit finds the turn lost.
+                with _lease_heartbeat_thread(
+                    identifier, lease_owner=lease_owner, lease_epoch=lease_epoch
+                ):
+                    with timed_step("research"):
+                        planned = research_preview.with_research(
+                            planned,
+                            snapshot,
+                            turn_id=identifier,
+                            deadline=turn_started + float(run_kria_turn.soft_time_limit or 200),
+                        )
+                    from app.kria.editor_repair import with_editor_review  # noqa: PLC0415
+
+                    planned = with_editor_review(
+                        planned,
                         turn_id=identifier,
                         deadline=turn_started + float(run_kria_turn.soft_time_limit or 200),
                     )
-                from app.kria.editor_repair import with_editor_review  # noqa: PLC0415
-
-                planned = with_editor_review(
-                    planned,
-                    turn_id=identifier,
-                    deadline=turn_started + float(run_kria_turn.soft_time_limit or 200),
-                )
             # What this run's record says, unless `_continue_turn` already wrote it ("exhausted").
             run_outcome: str | None = "completed"
             if planned.plan.mode == "respond" and planned.continuable:
@@ -4762,6 +4916,15 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
             )
             if thought_publisher is not None:
                 thought_publisher.complete()
+            if pinned_tap is not None and (
+                planned.plan.mode == "respond" or completion.response_only
+            ):
+                # The tapped card no longer fits: ask for fresh ones (flag-checked, enqueue-only).
+                from app.services.suggestion_serve import enqueue_for_thread  # noqa: PLC0415
+
+                enqueue_for_thread(
+                    snapshot["thread_id"], trigger="pinned_stale", creator_id=snapshot["creator_id"]
+                )
             if planned.defer_brief:
                 try:
                     extract_kria_brief.apply_async(

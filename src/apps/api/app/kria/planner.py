@@ -1003,6 +1003,10 @@ class PlannedKriaTurn:
     editor_repair: PreparedEditorRepair | None = None
     editor_repair_run_context: RunContext | None = None
     intent_repair: IntentRepairSpec | None = None
+    # A tapped suggestion card's pin (`plan_pinned_suggestion_turn`): set_id, id, kind, whether
+    # the stored action ran as built, and the digest of the editor state it compiles against,
+    # which the draft commit re-checks inside the row lock. None for every other turn.
+    suggestion_pin: dict | None = field(default=None, compare=False, repr=False)
 
 
 async def _withdraw_stuck_pins(
@@ -6404,6 +6408,190 @@ async def _plan_scoped_turn(
             brief_expected_version=expected_version,
         )
     return planned
+
+
+_NO_LONGER_FITS = (
+    "This suggestion no longer fits your edit. Nothing was changed, and I'm refreshing the ideas."
+)
+_NO_LONGER_FITS_TR = (
+    "Bu öneri artık düzenlemene uymuyor. Hiçbir şey değişmedi, önerileri yeniliyorum."
+)
+
+
+def no_longer_fits_reply() -> str:
+    return say(en=_NO_LONGER_FITS, tr=_NO_LONGER_FITS_TR)
+
+
+async def plan_pinned_suggestion_turn(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    item_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    user_message: str,
+    pin: Mapping[str, Any],
+    editor_state: Any = None,
+    client_protocol: int | None = None,
+) -> PlannedKriaTurn:
+    """A tapped suggestion card as a planned turn: the action it was proven with, no model.
+
+    The result is either ``[draft.apply_editor_ops]`` built from the card's stored action (or the
+    registry's rebuild of it when the editor state moved since the card was served), or a reply
+    that says the card no longer fits. It is never a free interpretation of the card's words:
+    every failure here is a reply, not a fall-through to the planner. The draft commit
+    (``tasks/kria_runtime._complete_draft_turn``) is the only apply path and re-checks the
+    editor state inside its row lock (``suggestion_pin``).
+    """
+    from app.services.suggestions import pinned  # noqa: PLC0415
+
+    item = await db.get(PlanItem, item_id)
+    if item is None:
+        raise RuntimeError("Kria target item is unavailable")
+    plan_row = await db.get(ContentPlan, item.content_plan_id)
+    if plan_row is None or plan_row.user_id != creator_id:
+        raise RuntimeError("Kria target item ownership changed")
+    persona = await db.get(Persona, plan_row.persona_id)
+    if persona is None or persona.user_id != creator_id:
+        raise RuntimeError("Kria creator context is unavailable")
+    # Reads only (capabilities, media refs): the manifest hash needs no model call.
+    manifest, _ = await resolve_item_creator_context(
+        db, item, persona=persona, runs_guided_voiceover=False
+    )
+    set_id, suggestion_id = str(pin.get("set_id") or ""), str(pin.get("id") or "")
+
+    def _record(outcome: str, **extra: Any) -> dict[str, Any]:
+        return {
+            "suggestion_pin": {
+                "set_id": set_id,
+                "id": suggestion_id,
+                "outcome": outcome,
+                **extra,
+            }
+        }
+
+    def _reply(text: str, reason: str) -> PlannedKriaTurn:
+        log.info("suggestion_pin.refused", thread_id=str(thread_id), reason=reason)
+        return PlannedKriaTurn(
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="recovery",
+                response=text,
+                diagnostics=_record("refused", reason=reason),
+            ),
+            manifest_hash=manifest.manifest_hash,
+            context_hash=manifest.context_hash,
+        )
+
+    def _no_longer_fits(reason: str) -> PlannedKriaTurn:
+        return _reply(no_longer_fits_reply(), reason)
+
+    thread = await db.get(CreationThread, thread_id)
+    resolved = pinned.resolve_pin(thread.state if thread is not None else None, pin, user_message)
+    if resolved.card is None:
+        return _no_longer_fits(resolved.reason or pinned.UNRESOLVED)
+    card = resolved.card
+    action = card.suggestion.action
+    ops = pinned.editor_ops(action)
+    if ops is None:
+        return _no_longer_fits(pinned.ACTION_UNSUPPORTED)
+    if pinned.disallowed_op(ops) is not None or not pinned.kind_enabled(card.suggestion):
+        return _no_longer_fits(pinned.OP_NOT_ALLOWED)
+
+    target = await _load_editor_target(
+        db, thread_id=thread_id, item=item, **_state_kw(editor_state)
+    )
+    if target is None:
+        miss = _editor_target_miss.get()
+        if miss == "render_in_flight":
+            return _reply(
+                say(en=_EDITOR_TARGET_IN_FLIGHT_REPLY, tr=_EDITOR_TARGET_IN_FLIGHT_REPLY_TR),
+                pinned.TARGET_UNAVAILABLE,
+            )
+        if miss == "editor_state_stale":
+            return _reply(_editor_state_stale_reply(), pinned.TARGET_UNAVAILABLE)
+        return _no_longer_fits(pinned.TARGET_UNAVAILABLE)
+    if target.recovery_basis is not None:
+        # A failed render's correction carries a pinned recovery basis only the copilot path mints.
+        return _no_longer_fits(pinned.TARGET_UNAVAILABLE)
+
+    exact = pinned.snapshot_digest(target.snapshot) == action.base_digest
+    if not exact:
+        # The editor moved since the card was served: build it again from the registry and the
+        # current facts. A card the registry cannot prove now is a card that no longer fits, and
+        # so is one a tap already applied: its rebuild would be a new change, not the offer.
+        if pinned.is_consumed(thread.state, set_id, suggestion_id):
+            return _no_longer_fits(pinned.CONSUMED)
+        rebuilt = await pinned.rebuild_action(
+            db,
+            suggestion=card.suggestion,
+            thread=thread,
+            item=item,
+            manifest=manifest,
+            target=target,
+            protocol=client_protocol,
+        )
+        ops = pinned.editor_ops(rebuilt) if rebuilt is not None else None
+        if not ops or pinned.disallowed_op(ops) is not None:
+            return _no_longer_fits(pinned.BASE_MOVED)
+    parsed = pinned.parse_ops(ops, target.snapshot)
+    if parsed is None:
+        return _no_longer_fits(pinned.OP_REFUSED)
+    draft_plan = adapt_editor_action(
+        reply=say(en=_PHONE_STAGED_REPLY, tr=_PHONE_STAGED_REPLY_TR), ops=parsed
+    )
+    if draft_plan.mode != "act":
+        return _no_longer_fits(pinned.OP_REFUSED)
+
+    brief_fields: dict[str, Any] = {}
+    if settings.creative_brief_for(creator_id):
+        # The tap's typed requirement, so the receipt names what changed and a later replan
+        # reads it as a requirement. Deterministic: no extraction, no deferred brief.
+        try:
+            prior_brief = await load_latest_brief(db, thread_id)
+            updates = pinned.brief_updates_for(card.suggestion, parsed)
+            ids = [
+                req.id for req in apply_updates(prior_brief, updates, source_turn_id=None).live()
+            ]
+        except (BriefCoverageError, BriefUpdateBatchError, ValidationError, ValueError):
+            log.warning("suggestion_pin.brief_unavailable", thread_id=str(thread_id), exc_info=True)
+            return _no_longer_fits(pinned.BRIEF_UNAVAILABLE)
+        brief_fields = {
+            "brief_updates": updates,
+            "brief_route": "editor_ops",
+            "brief_clip_ids": tuple(str(media.media_id) for media in manifest.media),
+            "brief_manifest": manifest,
+            "brief_coverage": {
+                "applicable_ids": ids,
+                "retrieved_ids": [],
+                "enforced_ids": [],
+                "unresolved_ids": ids,
+            },
+            "brief_expected_version": prior_brief.version if prior_brief else 0,
+        }
+    log.info(
+        "suggestion_pin.planned",
+        thread_id=str(thread_id),
+        kind=card.suggestion.kind,
+        exact=exact,
+        ops=[op.get("op") for op in parsed],
+    )
+    return PlannedKriaTurn(
+        plan=draft_plan.model_copy(
+            update={
+                "diagnostics": _record("planned", kind=card.suggestion.kind, exact=exact),
+            }
+        ),
+        manifest_hash=manifest.manifest_hash,
+        context_hash=manifest.context_hash,
+        suggestion_pin={
+            "set_id": set_id,
+            "id": suggestion_id,
+            "kind": card.suggestion.kind,
+            "exact": exact,
+            "projected_digest": pinned.projected_digest(target.variant),
+        },
+        **brief_fields,
+    )
 
 
 async def _plan_live_turn(
