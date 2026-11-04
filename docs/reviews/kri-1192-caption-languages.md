@@ -183,3 +183,56 @@ and polytonic edge cases). Python, web and the shared parity fixture agree.
   language in one face; Latin text keeps the KRI-785 face exactly; the registry hash still
   matches `registry-embeddings.npz`.
 - `tests/fixtures/text-element-parity/text_case.json`: 8 Greek cases (Python, web, iOS).
+
+### 4.4 Cloud render (libass + Skia, local)
+
+`src/apps/api/scripts/dev/kri1192_caption_render_evidence.py` burns two FLEURS sentences per
+language through the REAL ASS writers and the production libass filter
+(`narrated_assembler.caption_burn_filter`) in five formats (Talk to camera sentence and
+word-pop, Smart, voiceover sentence, voiceover one-big-word): **60 of 60 cells pass**, 0
+missing glyphs in the chosen face, 0 libass font fallbacks (`-v trace` log), every ink box
+inside the frame, ASS `Encoding: -1` for Arabic only, word-pop highlight right-to-left for
+Arabic and left-to-right for the rest. Faces: Noto Sans KR (ko), Noto Sans Arabic (ar),
+TikTok Sans (everything else). Skia overlay verify on `kri1192_caption_scripts.json`: PASS
+6/6. Report: `docs/reviews/kri-1192/cloud-render-report.json`; montage:
+`docs/reviews/kri-1192/cloud-montage.jpg`. Local ffmpeg 8.1 / libass 0.17.4 (HarfBuzz +
+FriBidi); this Mac has no Docker, so the prod-image run is CI's `verify-overlays` job.
+
+English/Turkish: 137 outputs (cues, phone budget, re-split, word cues, the ASS of 11 styles,
+the guided projection, the Smart measure, phone recipes, the Skia shaping switch) hashed from
+a `git archive` of fa1a64f5b before the render change; all identical
+(`tests/pipeline/test_kri1192_en_tr_byte_identity.py`).
+
+### 4.5 iPhone render (KriaMediaEngine + app compile, simulator/macOS)
+
+`CaptionScriptRenderTests` renders a caption per language with TikTok Sans, Montserrat and
+Poppins Bold through the real `AuthoredTextLayout` / painter: ink present, no system-font
+fallback, the same face as the server (`tests/fixtures/caption-glyph-parity`, 44 texts x 47
+families, asserted on both sides). Arabic: first logical word right of the last, joined
+contextual forms, highlighted word moving right to left. Greek ALL CAPS without accents.
+Samples: `docs/reviews/kri-1192/iphone-*.jpg`. Full KriaTests unit bundle 2533 passed (iPhone
+Air iOS 26.5 simulator, arm64), KriaMediaEngine `swift test` 493 passed.
+
+## 5. Rollout
+
+1. Merge; deploy API + workers (no flag; Greek, Danish, Serbian and the Romance languages
+   work for every client).
+2. Ship an app build at protocol 35 (it bundles the Noto faces).
+3. Device check on that build: Korean and Arabic captions in Talk to camera and voiceover,
+   preview and export. Then add `scriptFonts` to the Fly secret
+   `PHONE_RENDER_VERIFIED_FEATURES` (api + worker restart). Until then the phone declines
+   Korean/Arabic captions and the chat says it can't make them yet.
+4. Native speakers read the montages (Arabic, Korean, Greek, Serbian at least).
+
+## 6. Not covered / known gaps
+
+- Paid checks not run: whisper-1 itself and the gpt-4o caption-correction pass on these clips
+  (about $1); the free run covers every deterministic step and the language decisions.
+- `make ios-verify` (UI tests) and `make verify-overlays` (prod Docker image) run in CI.
+- Arabic on the phone highlights the active word only (shaped karaoke runs are accepted in
+  active-only mode); English/Turkish keep the cumulative sweep.
+- Typewriter/smooth-type animations and left/right caption alignment assume left-to-right.
+- A creator font missing a Latin letter (Big Curls, Rascal, Satisfy, Permanent Marker, Alte
+  Haas) keeps libass's per-letter fallback for pt/es/da/sr letters, as Turkish does today.
+- A single caption burn mixing Hangul with Turkish ğ ş ı has no covering face.
+- The web-only caption-language chip (re-transcribe in en/tr) is unchanged (web out of scope).
