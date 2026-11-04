@@ -5,8 +5,8 @@ Free, offline, no network, no model calls: it runs the deterministic chip engine
 replay fixtures (``tests/fixtures/agent_evals/suggestion_chips`` plus the ``nermin-*`` turns and
 ``east-run-brief``), scores every fixture on the structural gates G1-G8 and G11, replays each
 recorded planner answer through the real v2 adapter + compiler (G9), replays the hand-authored
-wording-agent cassettes (``tests/fixtures/agent_evals/chip_suggester``) through the real task
-body, fuzzes arbitrary model output (G10), measures label acceptance, and writes::
+suggestion-agent cassettes (``tests/fixtures/agent_evals/suggestion_agent``) through the real
+task body, fuzzes arbitrary model output (G10), and writes::
 
     <repo>/.chip-eval/report.md
 
@@ -60,7 +60,7 @@ for _key, _value in {
 
 from structlog.testing import capture_logs  # noqa: E402
 
-from tests.evals import chip_suggester_harness as cs  # noqa: E402
+from tests.evals import suggestion_agent_harness as cs  # noqa: E402
 from tests.evals import suggestion_chips_harness as h  # noqa: E402
 
 REPO_ROOT = API_ROOT.parents[2]
@@ -166,25 +166,28 @@ FUZZ_N = 30
 
 
 def evaluate_agent(by_name: dict) -> dict:
-    """E2 / E3: cassette replays, G10 fuzz and label acceptance (all offline, no model)."""
+    """E2 / E3: cassette replays and the G10 fuzz (all offline, no model)."""
     cass_rows = []
     for cassette in cs.load_cassettes():
         try:
             rep = cs.replay_cassette(cassette, by_name)
-            problems = cs.expectation_failures(cassette, rep) + cs.check_agent_set(
-                rep.case, rep.served, rep.plan, rep.ctx
+            problems = (
+                cs.expectation_failures(cassette, rep)
+                + cs.check_agent_set(rep.case, rep.served, rep.plan, rep.ctx)
+                + cs.check_cards(rep.ctx, rep.plan, rep.cards, rep.served.suggestions)
             )
         except Exception as exc:  # noqa: BLE001 - report, do not crash the artifact
             rep, problems = None, [f"{type(exc).__name__}: {exc}"]
         cass_rows.append((cassette, rep, problems))
-    foreign = sorted({c.cid for case in cs.fuzz_cases() for c in h.plan_for(case).pool})
     runs = violations = 0
     outcomes: dict[str, int] = {}
     examples: list[str] = []
     for case in cs.fuzz_cases():
-        for i, raw in cs.fuzz_stream(case, FUZZ_N, foreign):
+        for i, raw in cs.fuzz_stream(case, FUZZ_N):
             rep = cs.replay_raw(case, lambda plan, raw=raw: raw)
-            problems = cs.check_agent_set(case, rep.served, rep.plan, rep.ctx)
+            problems = cs.check_agent_set(case, rep.served, rep.plan, rep.ctx) + cs.check_cards(
+                rep.ctx, rep.plan, rep.cards, rep.served.suggestions
+            )
             runs += 1
             if problems:
                 violations += 1
@@ -192,13 +195,16 @@ def evaluate_agent(by_name: dict) -> dict:
             run = rep.agent_run
             if run.get("fallback_reason") == "schema_error":
                 outcomes["schema_error fallback"] = outcomes.get("schema_error fallback", 0) + 1
-            if any(c.label_source == "agent" for c in rep.served.chips):
-                outcomes["agent label shown"] = outcomes.get("agent label shown", 0) + 1
-            if any(c.why for c in rep.served.chips):
-                outcomes["grounded why shown"] = outcomes.get("grounded why shown", 0) + 1
+            if rep.served.suggestions:
+                outcomes["v2 cards served"] = outcomes.get("v2 cards served", 0) + 1
+            if any(
+                c.why and c.why != h.expected_evidence(case, c, rep.served.state)
+                for c in rep.served.chips
+            ):
+                outcomes["agent why shown"] = outcomes.get("agent why shown", 0) + 1
             if rep.served.wording == "fallback":
-                outcomes["template set (wording=fallback)"] = (
-                    outcomes.get("template set (wording=fallback)", 0) + 1
+                outcomes["deterministic set (wording=fallback)"] = (
+                    outcomes.get("deterministic set (wording=fallback)", 0) + 1
                 )
     return {
         "cassettes": cass_rows,
@@ -207,7 +213,6 @@ def evaluate_agent(by_name: dict) -> dict:
         "fuzz_examples": examples[:5],
         "fuzz_outcomes": outcomes,
         "fuzz_cases": len(cs.fuzz_cases()),
-        "corpus": cs.run_label_corpus(),
     }
 
 
@@ -218,32 +223,23 @@ def _pct(ok: int, total: int) -> str:
 def add_agent_section(add, agent: dict) -> None:
     cass = agent["cassettes"]
     ok = sum(1 for _, _, p in cass if not p)
-    corpus = agent["corpus"]
-    add("## Wording agent (`nova.chat.suggester`): replay, G10 fuzz, label acceptance")
+    add("## Suggestion agent (`nova.chat.suggestion_agent`): replay and G10 fuzz")
     add("")
     add(
-        "Hand-authored raw model answers through the REAL agent parse, task body, validators and "
-        "serve join. No model is ever called. These are NOT recorded model outputs: they measure "
-        "what the safeguards do with answers I wrote, not what Flash writes."
+        "Hand-authored raw model answers through the REAL agent parse, task body, registry "
+        "builders and witnesses, validators and serve join. No model is ever called. These are "
+        "NOT recorded model outputs: they measure what the safeguards do with answers I wrote, "
+        "not what gpt-6.1-sol picks."
     )
     add("")
     add("| check | result | bar |")
     add("| --- | --- | --- |")
     add(f"| cassettes (natural + adversarial) | {_pct(ok, len(cass))} | 100% |")
     add(
-        f"| G10 fuzz: served set obeys the contract | "
+        f"| G10 fuzz: served chips are live candidates, served cards are witnessed registry "
+        f"candidates | "
         f"{_pct(agent['fuzz_runs'] - agent['fuzz_violations'], agent['fuzz_runs'])} "
         f"({agent['fuzz_cases']} contexts x {FUZZ_N} seeded answers) | 100% |"
-    )
-    let_through = sum(1 for r in corpus.rows if r["want"] == "accept" and r["accepted"])
-    stopped = sum(1 for r in corpus.rows if r["want"] == "reject" and not r["accepted"])
-    add(
-        "| label acceptance: plausible creator-voiced labels let through | "
-        f"{corpus.recall:.0%} ({let_through}/{corpus.n_accept}) | >= 80% |"
-    )
-    add(
-        "| label rejection: cringe / wrong-kind / leaking / hostile labels stopped | "
-        f"{corpus.rejection_rate:.0%} ({stopped}/{corpus.n_reject}) | 100% |"
     )
     add("")
     add(
@@ -254,66 +250,23 @@ def add_agent_section(add, agent: dict) -> None:
         add("")
         add("**G10 VIOLATIONS:** " + "; ".join(agent["fuzz_examples"]))
     add("")
-    add(
-        "Label acceptance by kind (accepted/plausible): "
-        + ", ".join(f"{k} {a}/{t}" for k, (a, t) in corpus.by("kind").items())
-    )
-    add("")
-    add("By language: " + ", ".join(f"{k} {a}/{t}" for k, (a, t) in corpus.by("language").items()))
-    add("")
-    rejected = [r for r in corpus.rows if r["want"] == "accept" and not r["accepted"]]
-    if rejected:
-        add("Plausible labels the lexicon rejects (these fall back to the template label):")
-        add("")
-        for r in rejected:
-            add(f'* `{r["kind"]}`/{r["language"]} "{r["label"]}" ({r["reason"]})')
-        add("")
-    add(
-        f"Loosening to stoplist-only would let through {corpus.lexicon_only_stops} of "
-        f"{corpus.n_reject} bad labels ({corpus.lexicon_only_stops / corpus.n_reject:.0%}): "
-        "wrong-kind, content-leaking and wrong-language labels are stopped only by the lexicon. "
-        "Recommendation: keep the lexicon, widen it with the rejected plausible words above, "
-        "and do not enable the agent on the strength of its wording alone (its value is the "
-        "ranking and the grounded `why`; a rejected label costs nothing, the template stays)."
-    )
-    add("")
-    add("### Backend gaps the eval found (strict xfails; they fail the day the gap closes)")
-    add("")
-    for gap in cs.BACKEND_GAPS:
-        add(f"* {gap}")
-    add("")
     add("### Cassettes")
     add("")
-    add("| cassette | context | wording | served kinds (label source) | result |")
-    add("| --- | --- | --- | --- | --- |")
+    add("| cassette | context | wording | served chips | v2 cards | result |")
+    add("| --- | --- | --- | --- | --- | --- |")
     for cassette, rep, problems in cass:
         if rep is None:
-            served, wording = "-", "-"
+            served, wording, cards = "-", "-", "-"
         else:
-            served = ", ".join(
-                f"{c.kind}({c.label_source[0]}{'+why' if c.why else ''})" for c in rep.served.chips
-            )
+            served = ", ".join(f"{c.kind}{'+why' if c.why else ''}" for c in rep.served.chips)
             wording = rep.served.wording
+            cards = ", ".join(s.kind for s in rep.served.suggestions) or "-"
         verdict = "pass" if not problems else "FAIL: " + _cell("; ".join(problems))
-        add(f"| {cassette['id']} | {cassette['context']} | {wording} | {served} | {verdict} |")
+        add(
+            f"| {cassette['id']} | {cassette['context']} | {wording} | {served} | {cards} | "
+            f"{verdict} |"
+        )
     add("")
-    add("### Agent-worded sets next to the template sets (natural cassettes)")
-    add("")
-    for cassette, rep, _ in cass:
-        if rep is None or "natural" not in cassette["tags"]:
-            continue
-        add(f"**{cassette['id']}** ({cassette['context']})")
-        add("")
-        add("| # | template label | agent label | why |")
-        add("| --- | --- | --- | --- |")
-        template = {c.id: c for c in rep.template.chips}
-        for chip in rep.served.chips:
-            base = template.get(chip.id)
-            add(
-                f"| {chip.rank} | {_cell(base.label) if base else '-'} | {_cell(chip.label)} "
-                f"({chip.label_source}) | {_cell(chip.why or '')} |"
-            )
-        add("")
 
 
 def render(data: dict) -> str:
@@ -376,7 +329,7 @@ def render(data: dict) -> str:
         "G1 only validates an anchor a chip actually carries, so a 100% G1 is NOT evidence "
         "that a chip fits THIS footage, and no gate here measures that: the template engine "
         "emits a closed deck of generic labels by design. Footage-specific wording comes only "
-        "from the `nova.chat.suggester` agent (hand-authored cassettes here, never run live) "
+        "from the `nova.chat.suggestion_agent` (hand-authored cassettes here, never run live) "
         "and `opener_clip` (dark). The specificity bar is the paid live replay plus judge "
         "(`specificity_to_this_footage` in the rubric), which has NOT been run."
     )
