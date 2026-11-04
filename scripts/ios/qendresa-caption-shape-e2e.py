@@ -12,9 +12,13 @@ Run from the repo root (any worktree) with the API venv:
 
   src/apps/api/.venv/bin/python scripts/ios/qendresa-caption-shape-e2e.py \
     prepare OUT --take TAKE.mp4 --words WORDS.json
-  KRIA_E2E_DIR=OUT xcodebuild test ... \
+  TEST_RUNNER_KRIA_CAPTION_SHAPE_E2E_DIR=OUT xcodebuild test ... \
     -only-testing:KriaTests/DeviceCaptionShapeRenderE2ETests/testRendersEveryPreparedCaptionShapeCase
   src/apps/api/.venv/bin/python scripts/ios/qendresa-caption-shape-e2e.py score OUT --kit KIT_DIR
+
+(Own env name: `KRIA_E2E_DIR` is read by the other device E2E tests, which then fail on these
+cases. Run on a simulator no other test run is driving: a concurrent UI-test run force-quits
+the app and kills the export.)
 
 prepare: TAKE is a 1080x1920 talking video with speech; WORDS is whisper.cpp JSON
 (`whisper-cli -ml 1 -sow -oj`). Writes `cases/{q1,q2}_{before,after}` (recipe.json,

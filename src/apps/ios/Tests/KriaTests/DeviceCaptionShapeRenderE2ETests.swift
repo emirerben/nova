@@ -4,7 +4,7 @@ import AVFoundation
 import KriaMediaEngine
 
 /// Qendresa item 12 (caption shape), opt-in: renders every
-/// `KRIA_E2E_DIR/cases/<name>/recipe.json` that
+/// `KRIA_CAPTION_SHAPE_E2E_DIR/cases/<name>/recipe.json` that
 /// `scripts/ios/qendresa-caption-shape-e2e.py prepare` compiled with the real
 /// phone Talking caption chain (`q1_before`, `q1_after`, `q2_before`,
 /// `q2_after`) through the production exporter on the simulator, to
@@ -16,10 +16,10 @@ import KriaMediaEngine
 /// `.standard` (watermark + outro tail), so this does too; the kit scorer is
 /// run with `--ignore-tail-s 1.6` for the tail. The duration assertion adds the
 /// bundled outro's own length to the recipe duration.
-/// Skipped unless `KRIA_E2E_DIR` is set (`documents:` prefix supported).
+/// Skipped unless `KRIA_CAPTION_SHAPE_E2E_DIR` is set (`documents:` prefix supported).
 @MainActor final class DeviceCaptionShapeRenderE2ETests: XCTestCase {
     func testRendersEveryPreparedCaptionShapeCase() async throws {
-        guard let path = ProcessInfo.processInfo.environment["KRIA_E2E_DIR"] else { throw XCTSkip("Set KRIA_E2E_DIR to run") }
+        guard let path = ProcessInfo.processInfo.environment["KRIA_CAPTION_SHAPE_E2E_DIR"] else { throw XCTSkip("Set KRIA_CAPTION_SHAPE_E2E_DIR to run") }
         let root: URL
         if path.hasPrefix("documents:") {
             root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
