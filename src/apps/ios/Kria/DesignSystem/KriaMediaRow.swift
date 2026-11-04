@@ -23,6 +23,8 @@ struct KriaMediaRow<Thumbnail: View>: View {
 
     enum Trailing {
         case none
+        /// A finished item that needs no action: the green check disc.
+        case check
         case remove(label: String = "Remove", () -> Void)
         case menu(label: String = "More actions", [KriaMenuAction])
     }
@@ -31,6 +33,8 @@ struct KriaMediaRow<Thumbnail: View>: View {
     let status: Status
     var trailing: Trailing = .none
     var onRetry: (() -> Void)?
+    /// The row is its own fill card (r20) instead of a paper row that needs a fill wrapper around it.
+    var onFill = false
     @ViewBuilder var thumbnail: () -> Thumbnail
 
     var body: some View {
@@ -57,7 +61,7 @@ struct KriaMediaRow<Thumbnail: View>: View {
         }
         .padding(8)
         .frame(maxWidth: .infinity)
-        .background(KriaColor.paper, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(onFill ? KriaColor.fill : KriaColor.paper, in: RoundedRectangle(cornerRadius: onFill ? 20 : 16, style: .continuous))
     }
 
     @ViewBuilder private var statusLine: some View {
@@ -82,6 +86,8 @@ struct KriaMediaRow<Thumbnail: View>: View {
         switch trailing {
         case .none:
             EmptyView()
+        case .check:
+            KriaCheckDisc(size: 28).accessibilityHidden(true)
         case .remove(let label, let action):
             Button(action: action) { Image(systemName: "trash").font(.system(size: 17)) }
                 .buttonStyle(.kriaIcon).accessibilityLabel(label)
@@ -124,25 +130,43 @@ struct KriaThumbnailPlaceholder: View {
 struct KriaStepRail: View {
     let steps: [String]
     let current: Int
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         if steps.count > 1 {
-            HStack(spacing: 8) {
-                ForEach(steps.indices, id: \.self) { index in
-                    VStack(alignment: .leading, spacing: 8) {
-                        RoundedRectangle(cornerRadius: 2).fill(barColor(index)).frame(height: 4)
-                        HStack(spacing: 6) {
-                            if index < current { KriaCheckDisc(size: 16) }
-                            Text(steps[index]).kriaType(.label)
-                                .fontWeight(index == current ? .semibold : .medium)
-                                .foregroundStyle(labelColor(index))
-                                .lineLimit(1)
+            if typeSize.isAccessibilitySize {
+                // Three labels can't share a row at this size without clipping: keep the bars and name only the current step.
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        ForEach(steps.indices, id: \.self) { index in
+                            RoundedRectangle(cornerRadius: 2).fill(barColor(index)).frame(height: 4)
                         }
-                        .frame(minHeight: 20)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("\(steps[index]), \(index < current ? "done" : index == current ? "current step" : "not started")")
+                    .accessibilityHidden(true)
+                    Text("\(steps[min(current, steps.count - 1)]) · step \(current + 1) of \(steps.count)")
+                        .kriaType(.label).fontWeight(.semibold).foregroundStyle(KriaColor.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(steps[min(current, steps.count - 1)]), current step, \(current + 1) of \(steps.count)")
+            } else {
+                HStack(spacing: 8) {
+                    ForEach(steps.indices, id: \.self) { index in
+                        VStack(alignment: .leading, spacing: 8) {
+                            RoundedRectangle(cornerRadius: 2).fill(barColor(index)).frame(height: 4)
+                            HStack(spacing: 6) {
+                                if index < current { KriaCheckDisc(size: 16) }
+                                Text(steps[index]).kriaType(.label)
+                                    .fontWeight(index == current ? .semibold : .medium)
+                                    .foregroundStyle(labelColor(index))
+                                    .lineLimit(1)
+                            }
+                            .frame(minHeight: 20)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("\(steps[index]), \(index < current ? "done" : index == current ? "current step" : "not started")")
+                    }
                 }
             }
         }

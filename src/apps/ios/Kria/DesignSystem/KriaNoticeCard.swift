@@ -26,6 +26,7 @@ struct KriaNoticeCard: View {
     var style: Style = .card
     /// Turn off in a list that rebuilds rows on scroll, so recycling does not re-announce.
     var announces = true
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         Group {
@@ -55,7 +56,9 @@ struct KriaNoticeCard: View {
                 }
                 .accessibilityElement(children: .combine)
                 if tone != .success, action != nil || link != nil {
-                    HStack(spacing: 8) {
+                    // Two buttons share a row; at accessibility sizes they stack so neither wraps mid-word.
+                    let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+                    layout {
                         if let action {
                             Button(action.title, action: action.handler)
                                 .buttonStyle(KriaButtonStyle(role: tone == .failure ? .ink : .secondary, size: .medium, onFill: tone != .failure))

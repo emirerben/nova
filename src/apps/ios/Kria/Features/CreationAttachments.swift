@@ -51,6 +51,7 @@ struct AttachmentSheet: View {
     @State private var uploadingRecording = false
     @State private var voiceoverUploadError: String?
     @State private var confirmsDiscardingTake = false
+    @State private var confirmsCancellingRecording = false
     @State private var pendingRecords: [UploadRecoveryRecord] = []
     @State private var inFlight: [UUID: BackgroundUploadCoordinator.InFlightUpload] = [:]
     /// Per-sheet budget for retrying transient analysis failures on the creator's behalf.
@@ -306,6 +307,10 @@ struct AttachmentSheet: View {
                 }
             }
             .interactiveDismissDisabled(recorder.isRecording || recorder.hasRecording)
+            .confirmationDialog("Stop and discard this recording?", isPresented: $confirmsCancellingRecording, titleVisibility: .visible) {
+                Button("Discard recording", role: .destructive) { recorder.discard() }
+                Button("Keep recording", role: .cancel) { }
+            } message: { Text("What you have recorded so far will be deleted.") }
             .confirmationDialog("Discard this voiceover?", isPresented: $confirmsDiscardingTake, titleVisibility: .visible) {
                 Button("Discard recording", role: .destructive) { recorder.discard(); dismiss() }
                 Button("Keep recording", role: .cancel) { }
@@ -423,9 +428,7 @@ struct AttachmentSheet: View {
 
     private var footageStep: some View {
         VStack(alignment: .leading, spacing: 20) {
-            AttachmentHeading(title: "Add footage", subtitle: isTalkingToCamera && maximumClipCount == 1
-                ? "Record yourself, or upload a video you already have."
-                : FootageStageCopy.attachmentSubtitle(talking: isTalkingToCamera, maximumClipCount: maximumClipCount))
+            AttachmentHeading(title: "Add footage", subtitle: FootageStageCopy.attachmentSubtitle(talking: isTalkingToCamera, maximumClipCount: maximumClipCount))
             FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximumClipCount, attachedClipCount: existing(for: .clip), attachedMediaIDs: attachedMediaIDs(for: .clip), role: .clip, itemID: itemID, limit: capabilities?.media?["clips"], destination: uploadDestination(for: .clip), onPickerFilled: nil, onSelectionCompleted: advanceAfterFootageSelection, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true,
                               controls: .tiles(record: auth.localStorageIdentity == nil ? nil : { openCamera(withScript: false) }),
                               launchSource: $pickerLaunch)
@@ -590,8 +593,8 @@ struct AttachmentSheet: View {
                                             identifier: "generate-narration", isEnabled: !loadingNarration) { generateNarration(for: voiceoverScript) }
                 }()
                 KriaSourceRow(options: [
-                    .record(caption: "Use your mic", identifier: "voiceover-record", isEnabled: canRecord && canUploadAudio) { Task { await recorder.start() } },
-                    .upload(caption: "Use an audio file", identifier: "voiceover-upload", isEnabled: canRecord && canUploadAudio) { voiceoverPickerLaunch = .files },
+                    .record(symbol: "mic.fill", caption: "Use your mic", identifier: "voiceover-record", isEnabled: canRecord && canUploadAudio) { Task { await recorder.start() } },
+                    .upload(caption: "Use an audio file", identifier: "voiceover-upload", isEnabled: canRecord && canUploadAudio) { voiceoverPickerLaunch = capabilities?.mediaLibrary == true ? .sources : .files },
                     aiVoice
                 ].compactMap { $0 })
                 if footageDurationSummary.count > 0 {
@@ -602,9 +605,9 @@ struct AttachmentSheet: View {
                     .accessibilityElement(children: .combine).accessibilityIdentifier("footage-duration")
                 }
             }
-            // The audio importer behind the Upload tile; it draws nothing.
-            FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .voiceover), attachedClipCount: existing(for: .voiceover), attachedMediaIDs: attachedMediaIDs(for: .voiceover), role: .voiceover, itemID: itemID, limit: capabilities?.media?["voiceover"], destination: uploadDestination(for: .voiceover), onAudioFileSelected: recorder.importFile, showsHeading: false, libraryEnabled: false, controls: .hidden, launchSource: $voiceoverPickerLaunch)
-                .frame(height: 0).accessibilityHidden(true)
+            // The audio importer behind the Upload tile. It draws no controls, but it does show what went wrong
+            // (an unsupported or oversized file, a failed attach) right here.
+            FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .voiceover), attachedClipCount: existing(for: .voiceover), attachedMediaIDs: attachedMediaIDs(for: .voiceover), role: .voiceover, itemID: itemID, limit: capabilities?.media?["voiceover"], destination: uploadDestination(for: .voiceover), onAudioFileSelected: recorder.importFile, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true, controls: .hidden, launchSource: $voiceoverPickerLaunch)
             if let recorderError = recorder.error { Text(recorderError).kriaType(.label).foregroundStyle(KriaColor.failureText) }
             if (recorder.hasRecording || recorder.isRecording), let warning = voiceoverWarning {
                 VoiceoverDurationWarning(message: warning, addFootage: { step = .footage })
@@ -719,7 +722,7 @@ struct AttachmentSheet: View {
 
     @ViewBuilder private var attachmentFooter: some View {
         if recorder.isRecording {
-            Button("Cancel recording") { recorder.discard() }
+            Button("Cancel recording") { confirmsCancellingRecording = true }
                 .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium)).accessibilityIdentifier("voiceover-cancel")
                 .padding(.horizontal, 24).padding(.vertical, 12)
         }
@@ -795,7 +798,8 @@ struct AttachmentSheet: View {
                 VStack(spacing: 8) {
                     KriaMediaRow(name: attachment.displayName,
                                  status: .ready(role == .voiceover ? "Voiceover · Ready" : role == .song ? "Song · Ready" : "Video · Ready"),
-                                 trailing: .remove(label: "Remove \(attachment.displayName)") { Task { await removeAttached(attachment) } }) {
+                                 trailing: .remove(label: "Remove \(attachment.displayName)") { Task { await removeAttached(attachment) } },
+                                 onFill: !offersSongRange(for: attachment)) {
                         CreationAttachmentThumbnail(media: attachment)
                     }
                     .disabled(locked)
@@ -803,7 +807,8 @@ struct AttachmentSheet: View {
                         SongRangeRow(range: attachment.filmingRange, isEnabled: !locked) { showsSongRange = true }
                     }
                 }
-                .padding(4).background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .padding(offersSongRange(for: attachment) ? 4 : 0)
+                .background(offersSongRange(for: attachment) ? KriaColor.fill : Color.clear, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             }
             if let mediaRemovalError {
                 Text(mediaRemovalError).kriaType(.label).foregroundStyle(KriaColor.failureText)

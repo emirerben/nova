@@ -197,10 +197,9 @@ struct FootagePickerView: View {
             // Clips still being prepared: not yet an upload record, but already chosen. Shown at once, with
             // their thumbnail, so the user sees each pick land instead of waiting for it to finish uploading.
             ForEach(preparingUploads, id: \.id) { item in
-                KriaMediaRow(name: item.filename ?? "Preparing…", status: .preparing) {
+                KriaMediaRow(name: item.filename ?? "Preparing…", status: .preparing, onFill: true) {
                     CreationRecordThumbnail(recordID: item.id, version: uploads.previewVersion)
                 }
-                .padding(4).background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             }
             ForEach(uploads.records.filter { $0.projectID == projectID && $0.role == role }) { record in
                 VStack(alignment: .leading, spacing: 4) {
@@ -210,9 +209,9 @@ struct FootagePickerView: View {
                         name: BackgroundUploadCoordinator.displayFilename(record.filename),
                         status: record.uploadFailed == true ? .failed("Upload failed") : .uploading(uploads.progress[record.id] ?? 0),
                         trailing: .remove(label: record.uploadCompleted == true ? "Remove" : "Cancel") { Task { await uploads.cancel(recordID: record.id) } },
-                        onRetry: record.uploadFailed == true ? { Task { await uploads.retryUpload(recordID: record.id) } } : nil
+                        onRetry: record.uploadFailed == true ? { Task { await uploads.retryUpload(recordID: record.id) } } : nil,
+                        onFill: true
                     ) { CreationRecordThumbnail(recordID: record.id, version: uploads.previewVersion) }
-                    .padding(4).background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                     if record.uploadCompleted == true {
                         Button("Retry attach") { Task { await uploads.retryAttachment(recordID: record.id) } }
                             .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium))
@@ -251,7 +250,8 @@ struct FootagePickerView: View {
             filter: role == .visual ? visualPickerFilter : .videos,
             kinds: role == .visual ? visualGalleryKinds : .videos,
             libraryBacked: libraryAuthorized,
-            title: displayTitle,
+            heading: role == .clip ? "Choose clips" : "Choose \(displayTitle.lowercased())",
+            offersSaved: libraryEnabled,
             onFilled: onPickerFilled,
             didChooseNewFootage: $photosPickerHasNewFootage,
             onSelectionCompleted: onSelectionCompleted,
@@ -275,7 +275,7 @@ struct FootagePickerView: View {
             }, onChoosePhotos: role.isAudio ? nil : { savedUploadsToPhotos = true; showingSavedUploads = false })
         }
         .sheet(isPresented: $showsSources) {
-            UploadSourcesSheet(noun: role == .visual ? "photos and videos" : "videos", offersSaved: libraryEnabled) { kind in
+            UploadSourcesSheet(noun: sourcesNoun, offersPhotos: !role.isAudio, offersSaved: libraryEnabled) { kind in
                 showsSources = false
                 // The next sheet waits for this one to finish closing.
                 Task { @MainActor in
@@ -283,7 +283,17 @@ struct FootagePickerView: View {
                     start(kind)
                 }
             }
-            .presentationDetents([.height(libraryEnabled ? 330 : 270)]).presentationDragIndicator(.visible)
+            .modifier(UploadSourcesDetents(rows: (role.isAudio ? 0 : 1) + (libraryEnabled ? 1 : 0) + 1))
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+    private var sourcesNoun: String {
+        switch role {
+        case .song: "songs"
+        case .voiceover: "audio files"
+        case .visual: "photos and videos"
+        case .clip: "videos"
         }
     }
 
@@ -292,14 +302,15 @@ struct FootagePickerView: View {
     @ViewBuilder private var sourceControls: some View {
         if case .tiles(let record, let third) = controls {
             let blocked = selectionCapacity.remaining == 0 || !destination.canUpload
-            let uploadsDirectly = role.isAudio || role == .song
+            // Audio has no Photos source: with no saved library it goes straight to Files.
+            let uploadsDirectly = role.isAudio && !libraryEnabled
             let options: [KriaSourceOption] = [
                 record.map { action in
                     KriaSourceOption.record(caption: role == .voiceover ? "Use your mic" : "Film now", isEnabled: !blocked, action: action)
                 },
                 KriaSourceOption.upload(
                     caption: role == .voiceover ? "Use an audio file" : role == .song ? "From Files" : "Use existing \(role == .visual ? "media" : "video")",
-                    isEnabled: !blocked || (selectionCapacity.preselected > 0 && !uploadsDirectly),
+                    isEnabled: !blocked || (selectionCapacity.preselected > 0 && !role.isAudio),
                     action: { if uploadsDirectly { beginImport(source: .files) } else { openSources() } }),
                 third
             ].compactMap { $0 }
@@ -564,7 +575,8 @@ private struct FootagePhotosPicker: ViewModifier {
     let filter: PHPickerFilter
     let kinds: LibraryMediaKinds
     let libraryBacked: Bool
-    let title: String
+    let heading: String
+    let offersSaved: Bool
     /// Runs once the sheet has closed itself because a pick filled it, so the host can go further back.
     let onFilled: (() -> Void)?
     @Binding var didChooseNewFootage: Bool
@@ -573,6 +585,7 @@ private struct FootagePhotosPicker: ViewModifier {
     var onRecord: (() -> Void)?
     var onSwitch: ((FootageSourceKind) -> Void)?
     @State private var closedByFilling = false
+    @State private var cancelled = false
     @State private var afterDismiss: (() -> Void)?
 
     private func completeSelectionIfNeeded() {
@@ -586,14 +599,20 @@ private struct FootagePhotosPicker: ViewModifier {
             content.sheet(isPresented: $isPresented, onDismiss: {
                 // After the dismissal, not with it: the host closing its own sheet while this one is
                 // still on screen would tear both down mid-animation.
-                if closedByFilling { closedByFilling = false; onFilled?() }
-                completeSelectionIfNeeded()
+                if cancelled {
+                    // Cancel put the selection back; nothing new was chosen, so the host must not move on.
+                    cancelled = false; closedByFilling = false; didChooseNewFootage = false
+                } else {
+                    if closedByFilling { closedByFilling = false; onFilled?() }
+                    completeSelectionIfNeeded()
+                }
                 if let next = afterDismiss { afterDismiss = nil; next() }
             }) {
                 LibraryPhotosPickerSheet(
-                    title: title, selection: $selection, limit: limit, filter: filter, kinds: kinds,
+                    heading: heading, offersSaved: offersSaved, selection: $selection, limit: limit, filter: filter, kinds: kinds,
                     onRecord: onRecord.map { record in { afterDismiss = record; isPresented = false } },
-                    onSwitch: onSwitch.map { switchTo in { kind in afterDismiss = { switchTo(kind) }; isPresented = false } }
+                    onSwitch: onSwitch.map { switchTo in { kind in afterDismiss = { switchTo(kind) }; isPresented = false } },
+                    cancel: { cancelled = true; isPresented = false }
                 ) { filled in
                     closedByFilling = filled
                     isPresented = false
@@ -609,46 +628,75 @@ private struct FootagePhotosPicker: ViewModifier {
 }
 
 private struct LibraryPhotosPickerSheet: View {
-    let title: String
+    let heading: String
+    let offersSaved: Bool
     @Binding var selection: [PhotosPickerItem]
     let limit: Int
     let filter: PHPickerFilter
     let kinds: LibraryMediaKinds
     let onRecord: (() -> Void)?
     let onSwitch: ((FootageSourceKind) -> Void)?
+    /// Puts back what was ticked when the sheet opened, then closes without moving the host on.
+    let cancel: () -> Void
     let close: (_ filled: Bool) -> Void
     /// Only for UI tests: the system's inline picker stands in for the Kria gallery.
     @State private var usesApplePicker = ProcessInfo.processInfo.arguments.contains("-ui-testing-apple-photo-picker")
     @State private var segment = GallerySegment.photos
+    /// What was ticked when the sheet opened: the baseline Cancel returns to and the primary counts against.
+    @State private var opening: [PhotosPickerItem]?
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     private enum GallerySegment: Hashable { case photos, saved }
 
     private var count: Int { selection.compactMap(\.itemIdentifier).count }
+    private var openingIDs: Set<String> { Set((opening ?? selection).compactMap(\.itemIdentifier)) }
+    private var addedCount: Int { selection.compactMap(\.itemIdentifier).filter { !openingIDs.contains($0) }.count }
+    private var removedAny: Bool { openingIDs.contains { id in !selection.contains { $0.itemIdentifier == id } } }
     private var noun: String { kinds == .videos ? "clip" : "item" }
+
+    private var cancelButton: some View {
+        Button("Cancel") {
+            if let opening { selection = opening }
+            cancel()
+        }
+        .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium)).accessibilityIdentifier("gallery-cancel")
+    }
+
+    private var title: some View {
+        Text(heading).kriaType(.button).foregroundStyle(KriaColor.ink).accessibilityAddTraits(.isHeader)
+    }
+
+    /// Cancel and the title share a row; at accessibility sizes they stack so neither overlaps or truncates.
+    @ViewBuilder private var header: some View {
+        if typeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 4) { cancelButton; title.padding(.horizontal, 12) }
+        } else {
+            ZStack {
+                title
+                HStack { cancelButton; Spacer() }
+            }
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            ZStack {
-                Text(title.isEmpty ? "Choose clips" : "Choose \(title.lowercased())").kriaType(.button).foregroundStyle(KriaColor.ink)
-                    .accessibilityAddTraits(.isHeader)
-                HStack {
-                    Button("Cancel") { close(false) }
-                        .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium)).accessibilityIdentifier("gallery-cancel")
-                    Spacer()
-                }
-            }
-            .padding(.horizontal, 12).frame(height: 56)
+            header
+                .padding(.horizontal, 12).frame(minHeight: 56)
             // The system's inline picker (UI tests only) pulls the sheet under the status bar, where Cancel can't be tapped.
             .padding(.top, usesApplePicker ? 50 : 0)
             if onSwitch != nil {
                 HStack(spacing: 8) {
-                    KriaSegmentedControl(options: [("Photos", GallerySegment.photos), ("Saved uploads", .saved)], selection: Binding(
-                        get: { segment },
-                        set: { next in
-                            segment = next
-                            if next == .saved { onSwitch?(.savedUploads) }
-                        }), fillsWidth: true)
-                        .accessibilityIdentifier("gallery-segments")
+                    if offersSaved {
+                        KriaSegmentedControl(options: [("Photos", GallerySegment.photos), ("Saved uploads", .saved)], selection: Binding(
+                            get: { segment },
+                            set: { next in
+                                segment = next
+                                if next == .saved { onSwitch?(.savedUploads) }
+                            }), fillsWidth: true)
+                            .accessibilityIdentifier("gallery-segments")
+                    } else {
+                        Spacer(minLength: 0)
+                    }
                     Button { onSwitch?(.files) } label: { Label("Files", systemImage: "folder") }
                         .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium)).accessibilityIdentifier("gallery-files")
                 }
@@ -666,13 +714,16 @@ private struct LibraryPhotosPickerSheet: View {
             VStack(spacing: 8) {
                 Text("\(count) of \(limit) selected").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
                     .accessibilityIdentifier("gallery-count")
-                Button(count == 0 ? "Choose \(noun)s" : "Add \(count) \(count == 1 ? noun : noun + "s")") { close(count >= limit) }
-                    .buttonStyle(KriaButtonStyle(role: count == 0 ? .secondary : .primary, fullWidth: true))
-                    .disabled(count == 0).accessibilityIdentifier("photos-picker-done")
+                // Counts only what this visit added: clips that were already attached when it opened are not "added".
+                let changed = addedCount > 0 || removedAny
+                Button(addedCount > 0 ? "Add \(addedCount) \(addedCount == 1 ? noun : noun + "s")" : removedAny ? "Done" : "Choose \(noun)s") { close(addedCount > 0 && count >= limit) }
+                    .buttonStyle(KriaButtonStyle(role: changed ? .primary : .secondary, fullWidth: true))
+                    .disabled(!changed).accessibilityIdentifier("photos-picker-done")
             }
             .padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 12).background(KriaColor.paper)
         }
         .background(KriaColor.paper)
+        .onAppear { if opening == nil { opening = selection } }
     }
 }
 
@@ -715,19 +766,6 @@ struct ImportedMedia: Transferable {
     }
 }
 
-/// The guided voiceover importer is the page's primary action.
-private struct AttachmentFileButtonStyle: ButtonStyle {
-    let isVoiceover: Bool
-    @ViewBuilder func makeBody(configuration: Configuration) -> some View {
-        if isVoiceover {
-            AttachmentPrimaryButtonStyle().makeBody(configuration: configuration)
-        } else {
-            KriaSecondaryButtonStyle().makeBody(configuration: configuration)
-        }
-    }
-}
-
-
 enum FootageSourceKind: Equatable {
     case photos, savedUploads, files
     /// Not a source: opens the "Upload from" list.
@@ -744,12 +782,13 @@ enum FootagePickerControls {
 /// The second step after Upload (Paper S3.05d): where the media comes from.
 struct UploadSourceRows: View {
     let noun: String
+    var offersPhotos = true
     let offersSaved: Bool
     let choose: (FootageSourceKind) -> Void
 
     var body: some View {
         VStack(spacing: 4) {
-            row("photo.on.rectangle.angled", "Photos", "Pick \(noun) from your library", .photos, id: "upload-source-photos")
+            if offersPhotos { row("photo.on.rectangle.angled", "Photos", "Pick \(noun) from your library", .photos, id: "upload-source-photos") }
             if offersSaved { row("play.rectangle", "Saved uploads", "\(noun.prefix(1).uppercased() + noun.dropFirst()) you have used before", .savedUploads, id: "saved-uploads-open") }
             row("folder", "Files", "From Files or iCloud", .files, id: "upload-source-files")
         }
@@ -777,14 +816,32 @@ struct UploadSourceRows: View {
 /// Upload's source list as a short sheet, for the surfaces that are not the composer's tray.
 struct UploadSourcesSheet: View {
     let noun: String
+    var offersPhotos = true
     let offersSaved: Bool
     let choose: (FootageSourceKind) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Upload from").kriaType(.heading).foregroundStyle(KriaColor.ink).accessibilityAddTraits(.isHeader)
-            UploadSourceRows(noun: noun, offersSaved: offersSaved, choose: choose)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Upload from").kriaType(.heading).foregroundStyle(KriaColor.ink).accessibilityAddTraits(.isHeader)
+                UploadSourceRows(noun: noun, offersPhotos: offersPhotos, offersSaved: offersSaved, choose: choose)
+            }
+            .padding(24).frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .padding(24).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).background(KriaColor.paper)
+        .background(KriaColor.paper)
+    }
+}
+
+/// A short sheet at normal text sizes; at accessibility sizes the rows grow, so it opens full height (and scrolls).
+struct UploadSourcesDetents: ViewModifier {
+    let rows: Int
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    func body(content: Content) -> some View {
+        if typeSize.isAccessibilitySize {
+            content.presentationDetents([.large])
+        } else {
+            content.presentationDetents([.height(CGFloat(120 + rows * 70)), .large])
+        }
     }
 }
