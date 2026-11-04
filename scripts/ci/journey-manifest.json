@@ -2707,6 +2707,7 @@
         "src/apps/api/app/services/phone_speaker_background.py",
         "src/apps/api/app/agents/editor_ops_v2/background.py",
         "src/apps/api/prompts/edit_copilot_ops/speaker_background.txt",
+        "src/apps/api/prompts/edit_copilot_ops/speaker_background_focus.txt",
         "src/apps/api/tests/kria/test_speaker_background_chat.py",
         "src/apps/api/tests/tasks/test_speaker_background_strategy_worker.py",
         "src/apps/api/tests/routes/test_speaker_background_chat_ops.py",
