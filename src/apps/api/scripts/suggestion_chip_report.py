@@ -36,6 +36,8 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 API_ROOT = Path(__file__).resolve().parents[1]
@@ -96,6 +98,72 @@ def old_chips(state: str) -> list[str]:
     block = source[start : start + 6000] if start >= 0 else ""
     found = re.findall(r'PromptChip\(text:\s*"([^"]+)"', block)
     return found or list(FALLBACK_OLD_READY)
+
+
+# Registry kinds with their own replay eval module. Every other kind is proven only through the
+# shared chip fixtures and the agent cassettes, which the table says out loud.
+KIND_EVAL_MODULES = {
+    "hook": "tests/evals/test_suggestion_kind_hook.py",
+    "duplicates": "tests/evals/test_suggestion_kind_dupes.py",
+    "filler_words": "tests/evals/test_suggestion_kind_filler.py",
+    "mute_clip": "tests/evals/test_suggestion_kind_mute.py",
+}
+
+
+def _run_kind_module(module: str) -> dict[str, int]:
+    """Pass/fail/skip/xfail counts for one kind eval module, from a junit file (no model call)."""
+    counts = {"passed": 0, "failed": 0, "skipped": 0, "xfailed": 0}
+    with tempfile.TemporaryDirectory() as tmp:
+        junit = Path(tmp) / "junit.xml"
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                module,
+                "-q",
+                "-p",
+                "no:cacheprovider",
+                f"--junitxml={junit}",
+            ],
+            cwd=API_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=900,
+            check=False,
+        )
+        if not junit.exists():
+            return {**counts, "failed": 1}
+        for case in ET.parse(junit).getroot().iter("testcase"):
+            children = {child.tag for child in case}
+            if children & {"failure", "error"}:
+                counts["failed"] += 1
+            elif "skipped" in children:
+                skipped = next(c for c in case if c.tag == "skipped")
+                counts["xfailed" if skipped.get("type") == "pytest.xfail" else "skipped"] += 1
+            else:
+                counts["passed"] += 1
+    return counts
+
+
+def evaluate_kinds(tiers: dict[tuple[str, str], int]) -> list[dict]:
+    from app.services.suggestions import registry  # noqa: PLC0415
+
+    rows = []
+    for kind in registry.all_kinds():
+        module = KIND_EVAL_MODULES.get(kind.kind)
+        rows.append(
+            {
+                "kind": kind.kind,
+                "flag": kind.flag or "(always on)",
+                "states": ", ".join(sorted(kind.states)) or "(none)",
+                "surfaces": ", ".join(sorted(kind.surfaces)),
+                "shared_chips": sum(n for (k, _), n in tiers.items() if k == kind.kind),
+                "module": module,
+                "counts": _run_kind_module(module) if module else None,
+            }
+        )
+    return rows
 
 
 def _cell(text: str) -> str:
@@ -159,6 +227,7 @@ def evaluate() -> dict:
         "chip_count": chip_count,
         "gap_hits": gap_hits,
         "exec_rows": exec_rows,
+        "kinds": evaluate_kinds(tiers),
     }
 
 
@@ -218,6 +287,39 @@ def evaluate_agent(by_name: dict) -> dict:
 
 def _pct(ok: int, total: int) -> str:
     return "n/a" if total == 0 else f"{ok}/{total} ({100 * ok / total:.0f}%)"
+
+
+def add_kind_section(add, kinds: list[dict]) -> None:
+    add("### Per-kind pass table (every registered suggestion kind)")
+    add("")
+    add(
+        "`dedicated eval` is the kind's own replay module (fixtures, adversarial cases, flag-off "
+        "pins); a kind without one is proven only by the shared chip fixtures and the agent "
+        "cassettes above. `chips in shared fixtures` counts legacy template-engine chips only, "
+        "so a v2-only kind (no legacy chip) reads 0 there by design."
+    )
+    add("")
+    add("| kind | flag (default false) | states | surfaces | chips in shared fixtures |")
+    add("| --- | --- | --- | --- | --- |")
+    for row in kinds:
+        add(
+            f"| {row['kind']} | {row['flag']} | {row['states']} | {row['surfaces']} | "
+            f"{row['shared_chips']} |"
+        )
+    add("")
+    add("| kind | dedicated eval | passed | failed | skipped | xfail (known gap) | verdict |")
+    add("| --- | --- | --- | --- | --- | --- | --- |")
+    for row in kinds:
+        counts = row["counts"]
+        if counts is None:
+            add(f"| {row['kind']} | none (shared fixtures only) | - | - | - | - | n/a |")
+            continue
+        verdict = "pass" if counts["failed"] == 0 and counts["passed"] > 0 else "FAIL"
+        add(
+            f"| {row['kind']} | `{row['module']}` | {counts['passed']} | {counts['failed']} | "
+            f"{counts['skipped']} | {counts['xfailed']} | {verdict} |"
+        )
+    add("")
 
 
 def add_agent_section(add, agent: dict) -> None:
@@ -334,6 +436,7 @@ def render(data: dict) -> str:
         "(`specificity_to_this_footage` in the rubric), which has NOT been run."
     )
     add("")
+    add_kind_section(add, data["kinds"])
     add("### Witness tier of every chip shown (how its executability was proven)")
     add("")
     add("| kind | strategy (planner policy dry run) | editor (parser + compiler) | policy_only |")
@@ -462,6 +565,7 @@ def main(argv: list[str] | None = None) -> int:
         + [(c["id"], "G9") for c, p in data["exec_rows"] if p]
         + [(c["id"], "cassette") for c, _, p in data["agent"]["cassettes"] if p]
         + ([("fuzz", "G10")] if data["agent"]["fuzz_violations"] else [])
+        + [(r["kind"], "kind eval") for r in data["kinds"] if r["counts"] and r["counts"]["failed"]]
     )
     if failed:
         print(f"FAILING: {failed}", file=sys.stderr)
