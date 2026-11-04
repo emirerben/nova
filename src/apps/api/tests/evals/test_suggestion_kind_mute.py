@@ -87,6 +87,8 @@ def _clip(media_id: str, ordinal: int, **extra: Any) -> dict[str, Any]:
         "kind": "video",
         "has_speech": False,
         "to_camera": False,
+        "_empty": False,
+        "_incomplete": False,
         "duration_s": 8.0,
         **extra,
     }
@@ -195,6 +197,16 @@ def test_an_unmeasured_or_unconvincing_record_offers_nothing(measured, proven, r
 @needs_ffmpeg
 @pytest.mark.parametrize("flag", ["has_speech", "to_camera"])
 def test_a_clip_kept_for_its_speech_is_never_muted(measured, proven, flag) -> None:
+    clips = [_clip(WIND, 1, **{flag: True}), _clip(CLEAN, 2)]
+    ctx = _ctx(measured, clips=clips, snapshot=_snapshot([WIND, CLEAN]))
+    assert _open_ordinals(ctx) == []
+    assert not mute_clip.KIND.availability(ctx)
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("flag", ["_empty", "_incomplete"])
+def test_a_clip_without_a_complete_understanding_is_never_muted(measured, proven, flag) -> None:
+    # An unanalysed clip reads has_speech=False; a voice in wind is still "noisy".
     clips = [_clip(WIND, 1, **{flag: True}), _clip(CLEAN, 2)]
     ctx = _ctx(measured, clips=clips, snapshot=_snapshot([WIND, CLEAN]))
     assert _open_ordinals(ctx) == []

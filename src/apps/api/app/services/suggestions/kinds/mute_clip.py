@@ -14,7 +14,9 @@ applies the fact, the editor commit does not. Flip the constant only with a rout
 Offered for a clip when all of these hold (each is a way a "mute" card goes wrong):
 
 * the ``audio_quality`` signal measured it ``noisy`` (never ``silent``, never unmeasured);
-* it is a video with no speech and no talking to camera: muting it would silence the point;
+* it is a video with no speech and no talking to camera, read from a complete clip-understanding
+  record: an unanalysed clip also reads as speechless, and `noisy` cannot tell wind over a voice
+  from wind alone, so a row not marked understood (`_empty`/`_incomplete` false) never counts;
 * it is in the current edit, and muting it leaves something audible (a music track or another
   clip);
 * a montage edit whose footage sound the creator can control (``audio_notes`` says otherwise for
@@ -22,8 +24,10 @@ Offered for a clip when all of these hold (each is a way a "mute" card goes wron
 * no live brief ask already turns that clip's sound on or off (KRI-129: the creator's request wins,
   and a second mute is not a new change).
 
-Brief inputs come from the loader: ``kind_inputs["mute_clip"] = loader_input(brief)``. Without
-them no action can bind to a brief version, so the kind fails closed.
+Brief inputs are ``kind_inputs["mute_clip"] = loader_input(brief)``. No serve loader sets that
+key yet (``suggestion_serve`` only fills ``transcripts``), so the kind fails closed even after
+``PINNED_TAP_APPLIES_CLIP_SOUND`` flips: the flip needs that loader and a route that re-plans.
+Without the input no action can bind to a brief version.
 """
 
 from __future__ import annotations
@@ -174,6 +178,8 @@ def _scan(ctx: SuggestionContext) -> Scan:
             or not isinstance(ordinal, int)
             or isinstance(ordinal, bool)
             or media_id not in edit_media
+            or clip.get("_empty") is not False
+            or clip.get("_incomplete") is not False
             or clip.get("has_speech")
             or clip.get("to_camera")
         ):
