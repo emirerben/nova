@@ -920,12 +920,20 @@ struct DirectionStage: View {
                 .buttonStyle(CanonicalPrimaryButtonStyle())
                 .disabled(isBusy)
         case let .choice(stats):
-            SpeechCleanupChoiceButtons(
-                stats: stats,
-                isDisabled: isBusy,
-                clean: { decide("approve", "clean", resolution.analysisID) },
-                keepOriginal: { decide("approve", "keep_original", resolution.analysisID) }
-            )
+            if stats.requestedInChat {
+                SpeechCleanupPreselectedChoice(
+                    stats: stats,
+                    isDisabled: isBusy,
+                    create: { clean in decide("approve", clean ? "clean" : "keep_original", resolution.analysisID) }
+                )
+            } else {
+                SpeechCleanupChoiceButtons(
+                    stats: stats,
+                    isDisabled: isBusy,
+                    clean: { decide("approve", "clean", resolution.analysisID) },
+                    keepOriginal: { decide("approve", "keep_original", resolution.analysisID) }
+                )
+            }
         }
     }
 }

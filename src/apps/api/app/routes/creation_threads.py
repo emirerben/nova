@@ -3371,6 +3371,65 @@ async def _render_shape_projection(
         return None
 
 
+async def _cleanup_ask_projection(
+    db: AsyncSession, thread: CreationThread, item: PlanItem
+) -> tuple[bool, bool]:
+    """Qendresa 13: ``(requested_in_chat, tight)`` for the speech-cleanup card.
+
+    Read off the newest pending approval's pinned brief, the same way ``_render_shape_projection``
+    does. ``requested_in_chat``: the creator's own words ask for speech cleanup. ``tight``: they
+    ask for EVERY pause to go AND the draft is a phone Talking single-clip edit (the only render
+    that cuts pauses tight). Best-effort: anything unreadable is ``(False, False)``; it must never
+    break the thread read."""
+    from app.kria.brief_checks import defers_caption_words_to_phone_render  # noqa: PLC0415
+    from app.kria.tight_pause_ask import (  # noqa: PLC0415
+        brief_tight_pauses,
+        brief_wants_speech_cleanup,
+    )
+    from app.services import render_shape  # noqa: PLC0415
+
+    try:
+        if int(getattr(thread, "runtime_version", 1)) != 2:
+            return False, False
+        snapshot = (
+            await db.execute(
+                select(CreatorEditDraft.snapshot_json)
+                .join(CreatorAgentApproval, CreatorAgentApproval.draft_id == CreatorEditDraft.id)
+                .where(
+                    CreatorAgentApproval.thread_id == thread.id,
+                    CreatorAgentApproval.status == "pending",
+                )
+                .order_by(CreatorAgentApproval.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if not isinstance(snapshot, dict):
+            return False, False
+        brief = render_shape.readable_brief(snapshot.get("brief_binding"))
+        if brief is None or not brief_wants_speech_cleanup(brief):
+            return False, False
+        if not brief_tight_pauses(brief):
+            return True, False
+        raw_strategy = snapshot.get("strategy")
+        strategy = raw_strategy if isinstance(raw_strategy, dict) else {}
+        edit_format = strategy.get("edit_format") or getattr(item, "edit_format", None)
+        clip_paths = tuple(getattr(item, "clip_gcs_paths", None) or ())
+        phone_talking = (
+            len(clip_paths) == 1
+            and edit_format in {"subtitled", "talking_head"}
+            and defers_caption_words_to_phone_render(
+                creator_id=thread.creator_id,
+                edit_format=edit_format,
+                audio_strategy=strategy.get("audio_strategy"),
+                clip_paths=clip_paths,
+            )
+        )
+        return True, bool(phone_talking)
+    except Exception:  # noqa: BLE001 - an optional projection never breaks a read
+        log.warning("creation_thread.cleanup_ask_projection_failed", exc_info=True)
+        return False, False
+
+
 async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadOut:
     if isinstance(db, AsyncSession) and (thread.state or {}).get("title_generation") == "pending":
         start_title_generation(thread.id)
@@ -3534,6 +3593,12 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                 # every legacy required_v1 Job. An item genuinely in the cohort
                 # still gets its card through in_cohort.
                 speech_cleanup = None
+            if settings.tight_pause_cut_enabled and isinstance(speech_cleanup, dict):
+                requested, tight = await _cleanup_ask_projection(db, thread, item)
+                if requested:
+                    speech_cleanup["requested_in_chat"] = True
+                if tight:
+                    speech_cleanup["pause_style"] = "tight"
     render_shape_projection = None
     if isinstance(db, AsyncSession) and item is not None:
         render_shape_projection = await _render_shape_projection(db, thread, item, session)

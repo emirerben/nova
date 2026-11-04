@@ -11,8 +11,16 @@ struct SpeechCleanupStats: Equatable {
     let fillerSounds: Int?
     let longPauses: Int?
     let retakes: Int?
+    /// The creator already asked for the cleanup in chat (top-level `requested_in_chat`),
+    /// so the v2 card shows "Clean up speech" already on. Old servers never send it.
+    let requestedInChat: Bool
+    /// The creator asked for TIGHT pauses (top-level `pause_style == "tight"`); the analysis
+    /// numbers only count long pauses, so the card leaves them out.
+    let tightPauses: Bool
 
-    init(analysis: [String: JSONValue]) {
+    init(analysis: [String: JSONValue], requestedInChat: Bool = false, tightPauses: Bool = false) {
+        self.requestedInChat = requestedInChat
+        self.tightPauses = tightPauses
         candidateCount = analysis["candidate_count"]?.numberValue.map(Int.init)
         estimatedRemovedMs = analysis["estimated_removed_ms"]?.numberValue.map(Int.init)
         let counts = analysis["category_counts"]?.objectValue
@@ -21,7 +29,9 @@ struct SpeechCleanupStats: Equatable {
         retakes = counts?["retakes"]?.numberValue.map(Int.init)
     }
 
-    init(candidateCount: Int? = nil, estimatedRemovedMs: Int? = nil, fillerSounds: Int? = nil, longPauses: Int? = nil, retakes: Int? = nil) {
+    init(candidateCount: Int? = nil, estimatedRemovedMs: Int? = nil, fillerSounds: Int? = nil, longPauses: Int? = nil, retakes: Int? = nil, requestedInChat: Bool = false, tightPauses: Bool = false) {
+        self.requestedInChat = requestedInChat
+        self.tightPauses = tightPauses
         self.candidateCount = candidateCount
         self.estimatedRemovedMs = estimatedRemovedMs
         self.fillerSounds = fillerSounds
@@ -109,6 +119,54 @@ struct SpeechCleanupChoiceButtons: View {
     }
 }
 
+/// v2 approval-card variant for when the creator already asked for the cleanup in chat:
+/// "Clean up speech" starts on, and one "Create this video" button applies the choice.
+struct SpeechCleanupPreselectedChoice: View {
+    let stats: SpeechCleanupStats
+    let isDisabled: Bool
+    let create: (Bool) -> Void
+    @State private var cleanUp = true
+
+    init(stats: SpeechCleanupStats, isDisabled: Bool, create: @escaping (Bool) -> Void) {
+        self.stats = stats
+        self.isDisabled = isDisabled
+        self.create = create
+    }
+
+    var body: some View {
+        Group {
+            Toggle(isOn: $cleanUp) {
+                Text("Clean up speech")
+                    .font(KriaFont.body(14).weight(.medium))
+                Text(stats.tightPauses
+                    ? "You asked for tight pauses, so this is on. Every pause gets cut down to about 0.3 s."
+                    : "You asked me to cut your pauses, so this is on.")
+                    .font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
+            }
+            .disabled(isDisabled)
+            .accessibilityIdentifier("speech-cleanup-preselected-toggle")
+            if stats.removesRetakes {
+                Text(stats.cleanupConsentSentence)
+                    .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+            }
+            if !stats.tightPauses, let summary = stats.summarySentence {
+                Text(summary)
+                    .font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
+                    .accessibilityIdentifier("speech-cleanup-stats")
+            }
+            Button { create(cleanUp) } label: {
+                Text("Create this video")
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, 12)
+            }
+            .buttonStyle(CanonicalPrimaryButtonStyle())
+            .disabled(isDisabled)
+            .accessibilityIdentifier("speech-cleanup-create")
+        }
+    }
+}
+
 /// What the v2 approval card (`DirectionStage`) offers for speech cleanup,
 /// derived purely from `CreationThread.speechCleanup` so the branching is
 /// unit-testable without a live thread or view. The server's `analysis.status`
@@ -147,7 +205,7 @@ enum SpeechCleanupOffer: Equatable {
             return (.failed, analysisID)
         case "ready", "no_findings":
             if cleanup["requires_choice"]?.booleanValue == true {
-                return (.choice(SpeechCleanupStats(analysis: analysis)), analysisID)
+                return (.choice(SpeechCleanupStats(analysis: analysis, requestedInChat: cleanup["requested_in_chat"]?.booleanValue == true, tightPauses: cleanup["pause_style"]?.stringValue == "tight")), analysisID)
             }
             return (.plain, analysisID)
         default:
