@@ -1,0 +1,50 @@
+{
+  "id": "b02_already_in_edit",
+  "why_bad": "captions offered though captions are in the edit",
+  "expect": "fail",
+  "expect_failures": [
+    "already_present"
+  ],
+  "input": {
+    "state": "ready",
+    "language": "en",
+    "creator_request": "",
+    "issued": [
+      {
+        "kind": "captions",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e1": {
+        "signal": "speech",
+        "fact": "creator talks to camera in clip 1"
+      }
+    },
+    "already_in_edit": [
+      "captions"
+    ],
+    "dismissed": [],
+    "untrusted_texts": []
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "captions",
+        "target_ids": [
+          "all"
+        ],
+        "why": "Speech to camera in clip 1",
+        "copy": null,
+        "rank": 1
+      }
+    ]
+  }
+}
