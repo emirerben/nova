@@ -8728,7 +8728,6 @@ def _run_phone_subtitled_job(
     feature existed, and the lanes field on the snapshot is ignored entirely.
     """
     from app.kria.device_render import make_device_request  # noqa: PLC0415
-    from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
     from app.pipeline.caption_language import (  # noqa: PLC0415
         SOURCE_DETECTED,
         SOURCE_FALLBACK,
@@ -8737,11 +8736,9 @@ def _run_phone_subtitled_job(
         crosscheck_detected_language,
         resolve_spoken_caption_language,
     )
-    from app.pipeline.caption_spelling import extract_spelling_asks  # noqa: PLC0415
     from app.pipeline.captions import (  # noqa: PLC0415
         PHONE_CUE_BUDGET,
         build_plain_cues,
-        resplit_cues_into_sentences,
     )
     from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
         SilentAudioPlanDeclined,
@@ -9950,34 +9947,14 @@ def _run_phone_subtitled_job(
                     and _caption_final != _translated_source
                 ):
                     caption_translated_from = _translated_source
-            cues = correct_caption_cues(
+            cues, unclear_words_receipt = _phone_talking_caption_text(
                 cues,
-                detected_lang,
-                model=settings.caption_correction_model,
-                enabled=settings.subtitled_caption_correction_enabled,
-                trusted_aliases=None,
+                detected_lang=detected_lang,
+                snapshot=snapshot,
+                all_candidates=all_candidates,
+                cut_plan=cut_plan,
+                clip_metas=clip_metas,
             )
-            cues = resplit_cues_into_sentences(cues)
-            # KRI-631: the creator's quoted spelling asks ("write 'community' in English").
-            # KRI-793: plus every word the approved brief lists to spell in the captions
-            # ("correct spellings: Oblea de la Casa, dulce de leche, ..."), applied last
-            # so caption correction can never undo them.
-            cues = _apply_creator_spellings(
-                cues,
-                _phone_caption_spellings(
-                    snapshot, extract_spelling_asks(_creator_request_text(all_candidates))
-                ),
-            )
-            # KRI-849: "if you can't tell what he says, ask me": leave the unclear word out.
-            cues, unclear_words_receipt = _apply_unclear_words(
-                cues,
-                snapshot,
-                cut_plan,
-                extract_spelling_asks(_creator_request_text(all_candidates)),
-            )
-            # KRI-1177: "captions lowercase" is the cue text itself, so the drawn layers, the
-            # editor and a Save all carry it.
-            cues = generation_caption_cues(cues, language=detected_lang)
 
             # The speaker's span exactly as the compiler plays it: the cleanup
             # cut, else the phone-measured clip (which can run a hair shorter
@@ -12279,6 +12256,55 @@ def _phone_caption_spellings(snapshot: dict, quoted: tuple[str, ...]) -> tuple[s
             folded.add(word.casefold())
             targets.append(word)
     return tuple(targets)
+
+
+def _phone_talking_caption_text(
+    cues: list,
+    *,
+    detected_lang: str | None,
+    snapshot: dict,
+    all_candidates: dict,
+    cut_plan: Any,
+    clip_metas: Any = None,
+) -> tuple[list, dict | None]:
+    """The phone Talking caption words after whisper, in the job's order: the model spelling
+    fix, sentence split, the creator's spellings, unclear words, then the creator's case ask.
+
+    One function so a replay of a real job runs exactly these steps (Green 4/5, 2026-11-04).
+    ``clip_metas`` are the job's Gemini clip records. Returns ``(cues, unclear_words_receipt)``.
+    """
+    from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
+    from app.pipeline.caption_spelling import extract_spelling_asks  # noqa: PLC0415
+    from app.pipeline.captions import resplit_cues_into_sentences  # noqa: PLC0415
+
+    cues = correct_caption_cues(
+        cues,
+        detected_lang,
+        model=settings.caption_correction_model,
+        enabled=settings.subtitled_caption_correction_enabled,
+        trusted_aliases=None,
+    )
+    cues = resplit_cues_into_sentences(cues)
+    # KRI-631: the creator's quoted spelling asks ("write 'community' in English").
+    # KRI-793: plus every word the approved brief lists to spell in the captions
+    # ("correct spellings: Oblea de la Casa, dulce de leche, ..."), applied last
+    # so caption correction can never undo them.
+    cues = _apply_creator_spellings(
+        cues,
+        _phone_caption_spellings(
+            snapshot, extract_spelling_asks(_creator_request_text(all_candidates))
+        ),
+    )
+    # KRI-849: "if you can't tell what he says, ask me": leave the unclear word out.
+    cues, unclear_words_receipt = _apply_unclear_words(
+        cues,
+        snapshot,
+        cut_plan,
+        extract_spelling_asks(_creator_request_text(all_candidates)),
+    )
+    # KRI-1177: "captions lowercase" is the cue text itself, so the drawn layers, the
+    # editor and a Save all carry it.
+    return generation_caption_cues(cues, language=detected_lang), unclear_words_receipt
 
 
 def _apply_creator_spellings(cues: list, targets: tuple[str, ...]) -> list:
