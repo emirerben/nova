@@ -39,8 +39,10 @@ def _style(description: str, facts: dict) -> dict:
 
 
 def test_extractor_version_is_the_next_free_name():
-    # v48 belongs to the talking-insert-at-mention PR; whichever lands second renumbers.
-    assert BRIEF_EXTRACTOR_PROMPT_VERSION == "2026-11-03-v50"
+    # v48 belongs to the talking-insert-at-mention PR and v49 to generated-image grounding;
+    # v50 is #2089 (merged), v52 is held by #2092; v53 is the KRI-1173 colour clause (whichever
+    # lands next renumbers).
+    assert BRIEF_EXTRACTOR_PROMPT_VERSION == "2026-11-03-v53"
 
 
 def test_extractor_teaches_generated_images_as_trigger_asks():

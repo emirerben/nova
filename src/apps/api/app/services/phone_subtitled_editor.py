@@ -152,6 +152,37 @@ def variant_carries_speaker_background_windows(assembly_plan: dict, variant: dic
     )
 
 
+def variant_carries_speaker_background_color(assembly_plan: dict, variant: dict) -> bool:
+    """Does this variant already hold a solid-colour background fill (KRI-1173)?
+
+    The same three places as `variant_carries_speaker_background`. PURE. Decides whether a Save
+    or a poll from a build below the colour protocol must be refused (S49): such a build cannot
+    decode ``media_kind: "color"``.
+    """
+    if not isinstance(assembly_plan, dict) or not isinstance(variant, dict):
+        return False
+
+    def is_color(value: object) -> bool:
+        return isinstance(value, dict) and value.get("kind") == "color"
+
+    if is_color(variant.get("speaker_background")):
+        return True
+    persisted = variant.get(PHONE_SUBTITLED_EDITOR_LANES_FIELD)
+    if isinstance(persisted, dict):
+        lanes = persisted.get("lanes")
+        if isinstance(lanes, dict) and is_color(lanes.get("background")):
+            return True
+    variant_id = variant.get("variant_id")
+    if not isinstance(variant_id, str) or not variant_id:
+        return False
+    recipe = _pinned_recipe(assembly_plan, variant_id)
+    return (
+        recipe is not None
+        and recipe.speaker_background is not None
+        and recipe.speaker_background.uses_color
+    )
+
+
 def project_phone_subtitled_editor_sections(
     assembly_plan: dict, variant: dict
 ) -> dict[str, list[dict]] | None:
@@ -354,16 +385,23 @@ def sections_from_lanes(
 def speaker_background_document(background: SubtitledBackground) -> dict[str, Any]:
     """The editor document's ``speaker_background`` value (a fixed shared interface):
     ``{"media_id", "kind", "source_start_s"}``. The path and generation stay server-side.
+    KRI-1173: a solid-colour fill is ``{"kind": "color", "color": "#RRGGBB"}`` (no media id,
+    no source start).
 
     KRI-1162: ``windows`` (``[{media_id, kind, source_start_s, start_s, end_s}]``) and
     ``speaker_frame`` (``{width_fraction, x_fraction, y_fraction}``) are added ONLY while
     present, so every existing document is byte-identical.
     """
-    document: dict[str, Any] = {
-        "media_id": background.media_id,
-        "kind": background.kind,
-        "source_start_s": background.source_start_s,
-    }
+    document: dict[str, Any]
+    if background.uses_color:
+        # KRI-1173: a colour names no pool media and has no source start.
+        document = {"kind": "color", "color": background.color}
+    else:
+        document = {
+            "media_id": background.media_id,
+            "kind": background.kind,
+            "source_start_s": background.source_start_s,
+        }
     if background.windows:
         document["windows"] = [
             {
@@ -522,8 +560,19 @@ def lanes_from_recipe(
     background: SubtitledBackground | None = None
     if recipe.speaker_background is not None:
         layer = recipe.speaker_background
-        visual = visual_for(layer.asset_id)
-        if visual is not None:
+        if layer.uses_color:
+            # KRI-1173: a colour fill pins no visual; rebuild it (never silently drop it).
+            background = SubtitledBackground(
+                kind="color",
+                color=layer.color,
+                windows=tuple(_windows_from_layer(layer, visual_for)),
+                speaker_frame=(
+                    SubtitledSpeakerFrame(**layer.speaker_frame.model_dump())
+                    if layer.speaker_frame is not None
+                    else None
+                ),
+            )
+        elif (visual := visual_for(layer.asset_id)) is not None:
             background = SubtitledBackground(
                 media_id=visual.media_id,
                 gcs_path=visual.gcs_path,

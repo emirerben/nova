@@ -4109,6 +4109,16 @@ carries a background. The app reads `capabilities.speaker_background` (creation)
 `editor_capabilities.speaker_background` (per variant). Rollback is the kill switch, never a
 code revert. Detail: `docs/pipelines/speaker-background.md`.
 
+KRI-1173 adds a solid-colour fill (`media_kind: "color"` + `color: "#RRGGBB"`, no asset) on the same lane
+behind its own verified token `speakerBackgroundColor` and client protocol >= 34
+(`SPEAKER_BACKGROUND_COLOR_MIN_CLIENT_PROTOCOL`); no new env flag, `SPEAKER_BACKGROUND_ENABLED` stays the one
+kill switch. Add the token only after a physical-iPhone preview + export check (white then green fill, a colour
+under photo windows, a 60 s export within 120 s). With the token or the build missing the whole background is
+stripped (trace `speaker_background_color_phone_fallback`) and the creator keeps their own room; builds below
+34 get `426 client_update_required` (`feature: "speaker_background_color"`) for a variant that carries a colour,
+and `editor_capabilities.speaker_background_color` / the thread capability of the same name hide the Colour
+control. Detail: `docs/pipelines/speaker-background.md` "Solid-colour fill (KRI-1173)".
+
 
 ## Clip tilt (KRI-1134)
 

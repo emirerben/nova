@@ -77,15 +77,15 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v106 (prompt fidelity, animation): the two brief-enabled hashes re-pinned (one added paragraph).
 # v109 (KRI-1161) teaches the `speaker_background` brief fact: the two brief-on hashes re-pinned;
 # brief-off unchanged.
-# v113 (KRI-1177 / KRI-1164) teaches the caption look facts (`caption_size`, `caption_position`,
-# `caption_color`, `caption_case`) and `audio_intent: no_music`: the two brief-on hashes re-pinned
-# (removing exactly those two inserted passages restores the v112 hashes); brief-off unchanged.
+# v113 (KRI-1177 / KRI-1164) teaches the caption look facts and `audio_intent: no_music`, and
+# KRI-1173 adds the `background_color` brief fact: the two brief-on hashes re-pinned (main had
+# 065dbc15… / 610a0650… before the colour clause); brief-off unchanged.
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "065dbc150703ca8e07c2a3887b2d3ad671d7db41f337dbf3c45de165d04c3cd3",
+    (True, True): "ea4b279fa724a676f1280947a06a77e076780cc9a3beca298e5c49b3d411cb9e",
     (True, False): "e3de37c194b88bd906568375111a33a5d8ec8bdab981a29ff6f377162710e87e",
-    (False, True): "610a065007e8071250dd85944ba4dc0b1059017f0ad55b0ed08c9ac37ccd47d5",
+    (False, True): "a855f01d37771a854e3c2d61baaefe9663ed128b78f438572b2e10c4cbc3f62a",
     (False, False): "e804c3135cb2e6eae9093216bee3ee0d97159aa120c2b1eef8e34e61a3d37240",
 }
 
@@ -167,7 +167,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-03-v116"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-03-v118"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

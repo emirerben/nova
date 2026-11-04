@@ -164,11 +164,18 @@ struct EditorUserSongState: Equatable, Sendable {
 /// video in the item's Visuals pool; the recipe asset id derived from it is `visual-<media_id>`.
 /// KRI-1162 adds, both keys absent while unused: `windows` (timed pool visuals; the fields above stay the FILL shown
 /// wherever no window covers the time) and `speaker_frame` (the matted speaker drawn small in a corner).
+/// KRI-1173 adds a second FILL shape, a solid colour: `{kind: "color", color: "#RRGGBB"}` with no `media_id` and no
+/// `source_start_s`; windows and the speaker frame sit over it exactly as over a media fill.
 struct EditorSpeakerBackground: Equatable, Sendable {
-    var mediaID: String
-    var kind: VisualMediaKind
-    /// Seconds into a video where playback starts; always 0 for a photo.
-    var sourceStartS: Double
+    /// What fills the layer wherever no window covers the time.
+    enum Fill: Equatable, Sendable {
+        /// A pool photo or video; `sourceStartS` is always 0 for a photo.
+        case media(mediaID: String, kind: VisualMediaKind, sourceStartS: Double)
+        /// `#RRGGBB`, uppercase (the wire's only spelling).
+        case color(String)
+    }
+
+    var fill: Fill
     /// Sorted by `startS`, non-overlapping, at most `SpeakerBackgroundLimits.maxWindows`; empty = key absent.
     var windows: [EditorSpeakerBackgroundWindow]
     /// Nil = the speaker fills the frame (key absent).
@@ -176,25 +183,46 @@ struct EditorSpeakerBackground: Equatable, Sendable {
 
     init(mediaID: String, kind: VisualMediaKind, sourceStartS: Double = 0,
          windows: [EditorSpeakerBackgroundWindow] = [], speakerFrame: EditorSpeakerFrame? = nil) {
-        self.mediaID = mediaID; self.kind = kind; self.sourceStartS = kind == .video ? sourceStartS : 0
+        self.fill = .media(mediaID: mediaID, kind: kind, sourceStartS: kind == .video ? sourceStartS : 0)
         self.windows = windows; self.speakerFrame = speakerFrame
     }
 
+    /// A solid-colour fill. `color` is stored as given; `init?(json:)` and `isValid` hold the `#RRGGBB` rule, and
+    /// the session normalises a picked colour (`Self.normalizedColor`) before it gets here.
+    init(color: String, windows: [EditorSpeakerBackgroundWindow] = [], speakerFrame: EditorSpeakerFrame? = nil) {
+        self.fill = .color(color); self.windows = windows; self.speakerFrame = speakerFrame
+    }
+
+    /// The pool visual behind the speaker; nil while the fill is a colour.
+    var mediaID: String? { if case .media(let id, _, _) = fill { id } else { nil } }
+    var kind: VisualMediaKind? { if case .media(_, let kind, _) = fill { kind } else { nil } }
+    /// Seconds into a video fill where playback starts; 0 for a photo or a colour.
+    var sourceStartS: Double { if case .media(_, _, let start) = fill { start } else { 0 } }
+    /// `#RRGGBB` while the fill is a colour, else nil.
+    var color: String? { if case .color(let hex) = fill { hex } else { nil } }
+
+    /// Exactly `#` + six uppercase hex digits: the only spelling the recipe and the editor wire accept.
+    static func isStrictHexColor(_ value: String) -> Bool {
+        let digits = Array(value.utf8)
+        return digits.count == 7 && digits[0] == UInt8(ascii: "#")
+            && digits[1...].allSatisfy { ($0 >= 48 && $0 <= 57) || ($0 >= 65 && $0 <= 70) }
+    }
+
+    /// `#RRGGBB` uppercase for any `#`-prefixed six-digit hex in either case, else nil.
+    static func normalizedColor(_ value: String) -> String? {
+        let upper = value.trimmingCharacters(in: .whitespaces).uppercased()
+        return isStrictHexColor(upper) ? upper : nil
+    }
+
     /// Nil for any shape this client cannot represent exactly (extra keys, a bad kind, a photo with a start, a
-    /// `null`/empty `windows` or `speaker_frame`, windows out of order or overlapping).
+    /// colour with a `media_id` or a malformed hex, a media kind without a `media_id`, a `null`/empty `windows` or
+    /// `speaker_frame`, windows out of order or overlapping).
     init?(json: JSONValue) {
-        guard case .object(let fields) = json,
-              Set(fields.keys).isSubset(of: ["media_id", "kind", "source_start_s", "windows", "speaker_frame"]),
-              case .string(let id)? = fields["media_id"], !id.isEmpty, id.count <= SpeakerBackgroundLimits.maxIDLength,
-              !id.contains(where: \.isWhitespace),
-              case .string(let rawKind)? = fields["kind"], let kind = VisualMediaKind(rawValue: rawKind) else { return nil }
-        var start = 0.0
-        switch fields["source_start_s"] {
-        case nil, .null?: break
-        case .number(let value)?: start = value
-        default: return nil
-        }
-        guard start.isFinite, (0...SpeakerBackgroundLimits.maxSourceStart).contains(start), kind == .video || start == 0 else { return nil }
+        guard case .object(let fields) = json, case .string(let rawKind)? = fields["kind"] else { return nil }
+        let isColor = rawKind == "color"
+        let allowed: Set<String> = isColor ? ["kind", "color", "windows", "speaker_frame"]
+                                           : ["media_id", "kind", "source_start_s", "windows", "speaker_frame"]
+        guard Set(fields.keys).isSubset(of: allowed) else { return nil }
         var windows: [EditorSpeakerBackgroundWindow] = []
         if let raw = fields["windows"] {
             guard case .array(let rows) = raw, !rows.isEmpty, rows.count <= SpeakerBackgroundLimits.maxWindows else { return nil }
@@ -209,27 +237,59 @@ struct EditorSpeakerBackground: Equatable, Sendable {
             guard let value = EditorSpeakerFrame(json: raw) else { return nil }
             frame = value
         }
+        if isColor {
+            guard case .string(let hex)? = fields["color"], Self.isStrictHexColor(hex) else { return nil }
+            self.init(color: hex, windows: windows, speakerFrame: frame)
+            return
+        }
+        guard let kind = VisualMediaKind(rawValue: rawKind),
+              case .string(let id)? = fields["media_id"], !id.isEmpty, id.count <= SpeakerBackgroundLimits.maxIDLength,
+              !id.contains(where: \.isWhitespace) else { return nil }
+        var start = 0.0
+        switch fields["source_start_s"] {
+        case nil, .null?: break
+        case .number(let value)?: start = value
+        default: return nil
+        }
+        guard start.isFinite, (0...SpeakerBackgroundLimits.maxSourceStart).contains(start), kind == .video || start == 0 else { return nil }
         self.init(mediaID: id, kind: kind, sourceStartS: start, windows: windows, speakerFrame: frame)
     }
 
     var json: JSONValue {
-        var fields: [String: JSONValue] = ["media_id": .string(mediaID), "kind": .string(kind.rawValue), "source_start_s": .number(sourceStartS)]
+        var fields: [String: JSONValue]
+        switch fill {
+        case .media(let mediaID, let kind, let sourceStartS):
+            fields = ["media_id": .string(mediaID), "kind": .string(kind.rawValue), "source_start_s": .number(sourceStartS)]
+        case .color(let hex):
+            fields = ["kind": .string("color"), "color": .string(hex)]
+        }
         if !windows.isEmpty { fields["windows"] = .array(windows.map(\.json)) }
         if let speakerFrame { fields["speaker_frame"] = speakerFrame.json }
         return .object(fields)
     }
 
-    /// The engine layer this lane compiles to: asset `visual-<media_id>`, looping, bound to the Talking speaker track.
+    /// The engine layer this lane compiles to, looping and bound to the Talking speaker track: asset
+    /// `visual-<media_id>` for a pool visual, or a `color` fill with no asset (KRI-1173).
     var layer: SpeakerBackgroundLayer {
-        SpeakerBackgroundLayer(assetID: Self.assetID(forMediaID: mediaID), mediaKind: kind, sourceStart: sourceStartS,
-                               loop: true, subjectTrackID: SpeakerBackgroundLimits.defaultSubjectTrackID,
-                               windows: windows.isEmpty ? nil : windows.map(\.layerWindow), speakerFrame: speakerFrame?.layerFrame)
+        let layerWindows = windows.isEmpty ? nil : windows.map(\.layerWindow)
+        switch fill {
+        case .media(let mediaID, let kind, let sourceStartS):
+            return SpeakerBackgroundLayer(assetID: Self.assetID(forMediaID: mediaID), mediaKind: kind, sourceStart: sourceStartS,
+                                          loop: true, subjectTrackID: SpeakerBackgroundLimits.defaultSubjectTrackID,
+                                          windows: layerWindows, speakerFrame: speakerFrame?.layerFrame)
+        case .color(let hex):
+            return .color(hex, subjectTrackID: SpeakerBackgroundLimits.defaultSubjectTrackID,
+                          windows: layerWindows, speakerFrame: speakerFrame?.layerFrame)
+        }
     }
 
-    /// Every pool visual the lane needs bytes for: the fill and each window, once per media id.
+    /// Every pool visual the lane needs bytes for: the fill (none for a colour) and each window, once per media id.
     var mediaRequirements: [(mediaID: String, kind: VisualMediaKind)] {
         var seen = Set<String>()
-        return ([(mediaID, kind)] + windows.map { ($0.mediaID, $0.kind) }).filter { seen.insert($0.0).inserted }
+        var rows: [(mediaID: String, kind: VisualMediaKind)] = []
+        if let mediaID, let kind { rows.append((mediaID, kind)) }
+        rows += windows.map { ($0.mediaID, $0.kind) }
+        return rows.filter { seen.insert($0.0).inserted }
     }
 
     static func assetID(forMediaID id: String) -> String { "visual-" + id }

@@ -710,6 +710,7 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "speaker_background_repair",
         "background_media",
         "background_media.media_id",
+        "background_media.color",
         "background_media.source_start_s",
         "background_media.sequence[]",
         "background_media.sequence[].media_id",

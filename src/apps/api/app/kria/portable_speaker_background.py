@@ -12,11 +12,18 @@ with its own pool photo or muted looping video; ``speaker_frame`` (absent while 
 draws the matted speaker scaled into a corner instead of full-frame. A layer with neither
 new field serialises byte-for-byte as before, so every first-cut recipe keeps its digest.
 Design and failure modes: `docs/reviews/speaker-background-windows-failure-modes.md`.
+
+KRI-1173 (solid-colour fill): the FILL may instead be a flat colour -- ``media_kind:
+"color"`` + ``color: "#RRGGBB"`` and NO ``asset_id`` -- pinned by
+`tests/fixtures/speaker-background-parity/v3.json`. A media fill serialises exactly as
+before (``color`` omitted while None), so every earlier recipe keeps its digest. Windows
+stay photo/video only. Design and failure modes:
+`docs/reviews/speaker-background-color-failure-modes.md`.
 """
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
@@ -27,6 +34,9 @@ MAX_BACKGROUND_WINDOWS = 40
 MIN_BACKGROUND_WINDOW_S = 0.5
 MAX_TIMELINE_S = 1800.0
 MIN_SPEAKER_FRAME_WIDTH_FRACTION = 0.2
+# KRI-1173: exactly ``#`` + six UPPERCASE hex digits on the recipe wire. Case and names are
+# normalised at the editor Save, the lane and the chat boundary, never here.
+BACKGROUND_COLOR_PATTERN = r"^#[0-9A-F]{6}$"
 
 SpeakerFramePreset = Literal[
     "full", "small_bottom_right", "small_bottom_left", "small_top_right", "small_top_left"
@@ -83,8 +93,11 @@ class SpeakerBackgroundWindow(BaseModel):
 class SpeakerBackgroundLayer(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
-    asset_id: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
-    media_kind: Literal["image", "video"]
+    # KRI-1173: absent (never null) for a colour fill; required for image | video.
+    asset_id: str | None = Field(default=None, min_length=1, max_length=160, pattern=r"^\S+$")
+    media_kind: Literal["image", "video", "color"]
+    # KRI-1173: required iff ``media_kind == "color"``; omitted from the wire otherwise.
+    color: str | None = Field(default=None, pattern=BACKGROUND_COLOR_PATTERN)
     source_start: float = Field(default=0.0, ge=0, le=MAX_SOURCE_START_S)
     loop: bool = True
     subject_track_id: str = Field(default=DEFAULT_SUBJECT_TRACK_ID, min_length=1, max_length=160)
@@ -93,6 +106,28 @@ class SpeakerBackgroundLayer(BaseModel):
         default=None, min_length=1, max_length=MAX_BACKGROUND_WINDOWS
     )
     speaker_frame: SpeakerFrame | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _colour_has_no_asset_key(cls, data: Any) -> Any:
+        # A colour names no asset: even ``"asset_id": null`` is a malformed recipe (v3.json).
+        if isinstance(data, dict) and data.get("media_kind") == "color" and "asset_id" in data:
+            raise ValueError("a colour background has no asset_id")
+        return data
+
+    @model_validator(mode="after")
+    def fill_matches_its_kind(self) -> SpeakerBackgroundLayer:
+        if self.media_kind == "color":
+            if self.color is None:
+                raise ValueError("a colour background needs a color")
+            if self.source_start != 0:
+                raise ValueError("a colour background has no source start")
+        else:
+            if self.asset_id is None:
+                raise ValueError("a photo or video background needs an asset_id")
+            if self.color is not None:
+                raise ValueError("only a colour background carries a color")
+        return self
 
     @model_validator(mode="after")
     def photo_has_no_timeline(self) -> SpeakerBackgroundLayer:
@@ -115,9 +150,18 @@ class SpeakerBackgroundLayer(BaseModel):
         """True when the layer needs the ``speakerBackgroundWindows`` capability."""
         return bool(self.windows) or self.speaker_frame is not None
 
+    @property
+    def uses_color(self) -> bool:
+        """True when the fill is a flat colour (needs the ``speakerBackgroundColor`` capability)."""
+        return self.media_kind == "color"
+
     @model_serializer(mode="wrap")
     def _omit_unused(self, handler):  # noqa: ANN001, ANN202
         data = handler(self)
+        if data.get("asset_id") is None:
+            data.pop("asset_id", None)
+        if data.get("color") is None:
+            data.pop("color", None)
         if not data.get("windows"):
             data.pop("windows", None)
         if data.get("speaker_frame") is None:

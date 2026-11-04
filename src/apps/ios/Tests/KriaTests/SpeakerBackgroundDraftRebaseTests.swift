@@ -50,4 +50,34 @@ final class SpeakerBackgroundDraftRebaseTests: XCTestCase {
 
         XCTAssertNil(document.speakerBackground)
     }
+
+    /// KRI-1173 (S56): a colour fill rides the same status-variant projection as a media one.
+    func testStatusVariantColourBackgroundReachesTheRebasedDocument() {
+        let authoritative = variant([
+            "speaker_background": .object(["kind": .string("color"), "color": .string("#00FF00")]),
+        ])
+        let rebased = draft(sections: ["caption_cues": .array([])])
+            .editorDraft(projectID: UUID(), authoritativeVariant: authoritative)
+        let document = EditorDocument.decode(snapshot: rebased.serverSnapshot)
+
+        XCTAssertEqual(document.speakerBackground, EditorSpeakerBackground(color: "#00FF00"))
+        XCTAssertEqual(document.speakerBackground?.color, "#00FF00")
+        XCTAssertNil(document.speakerBackground?.mediaID)
+        XCTAssertFalse(document.unreadableSpeakerBackground)
+    }
+
+    func testStatusVariantColourReplacesAStaleMediaDraftCopy() {
+        let stale: JSONValue = .object([
+            "media_id": .string("stale-visual"), "kind": .string("image"), "source_start_s": .number(0),
+        ])
+        let authoritative = variant([
+            "speaker_background": .object(["kind": .string("color"), "color": .string("#FFFFFF")]),
+        ])
+        let rebased = draft(sections: ["speaker_background": stale])
+            .editorDraft(projectID: UUID(), authoritativeVariant: authoritative)
+        let document = EditorDocument.decode(snapshot: rebased.serverSnapshot)
+
+        XCTAssertEqual(document.speakerBackground?.color, "#FFFFFF")
+        XCTAssertNil(document.speakerBackground?.mediaID)
+    }
 }

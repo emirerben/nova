@@ -355,7 +355,8 @@ class SpeakerBackgroundFact:
     fill; ``media_count`` how many DISTINCT photos / videos those windows show (the windows
     cycle the sequence, so 8 windows over 5 photos is 5; None = the record did not say, as on a
     render written before it was recorded); ``asked_windows`` / ``asked_frame`` what the
-    strategy asked for before the repair dropped any; ``frame`` the corner preset the speaker
+    strategy asked for before the repair dropped any, ``asked_media_count`` the distinct photos /
+    videos among those asked windows (None = unknown); ``frame`` the corner preset the speaker
     sits in (None = full size).
     """
 
@@ -366,9 +367,14 @@ class SpeakerBackgroundFact:
     window_count: int = 0
     media_count: int | None = None
     asked_windows: int = 0
+    asked_media_count: int | None = None
     windows_open: bool = False
     frame: str | None = None
     asked_frame: str | None = None
+    # KRI-1173: the plain colour (``#RRGGBB``) the plan / finished video holds as its fill, and
+    # why a colour is not available on this edit ("unavailable" | "app_too_old"; None = it is).
+    color: str | None = None
+    color_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -937,6 +943,16 @@ def _speaker_background_closed_code(manifest: ResolvedCreatorManifest) -> str:
     return "not_talking"  # a cloud or voiceover Talking render: the lane is advertised nowhere
 
 
+def _color_closed_code() -> str:
+    """Why a plain colour behind the speaker is closed while the photo / video lane is open."""
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        speaker_background_color_unavailable_reason,
+    )
+
+    reason = speaker_background_color_unavailable_reason()
+    return "app_too_old" if reason == "client_protocol_below_min" else "unavailable"
+
+
 def _speaker_background_facts(
     strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest
 ) -> dict[str, Any]:
@@ -949,6 +965,7 @@ def _speaker_background_facts(
     from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
     from app.services.creator_capabilities import (  # noqa: PLC0415
         repair_creator_speaker_background,
+        speaker_background_color_open,
         speaker_background_open,
         speaker_background_windows_open,
     )
@@ -964,6 +981,9 @@ def _speaker_background_facts(
         return {}
     asked = parsed.background_media
     asked_windows = len(asked.sequence) if asked is not None else 0
+    asked_media_count = (
+        len({entry.media_id for entry in asked.sequence}) if asked is not None else None
+    )
     asked_frame = (
         asked.speaker_frame if asked is not None and asked.speaker_frame != "full" else None
     )
@@ -980,14 +1000,17 @@ def _speaker_background_facts(
     repaired, _notices = repair_creator_speaker_background(manifest, parsed)
     kept = repaired.background_media
     windows_open = speaker_background_windows_open(manifest)
+    color_code = None if speaker_background_color_open(manifest) else _color_closed_code()
     if kept is None:
         return {
             "speaker_background": SpeakerBackgroundFact(
                 "none",
                 pool_count=len(pool),
                 asked_windows=asked_windows,
+                asked_media_count=asked_media_count,
                 windows_open=windows_open,
                 asked_frame=asked_frame,
+                color_code=color_code,
             )
         }
     return {
@@ -999,9 +1022,12 @@ def _speaker_background_facts(
             # Green 3: a sequence that names a photo twice still shows it once.
             media_count=len({entry.media_id for entry in kept.sequence}),
             asked_windows=asked_windows,
+            asked_media_count=asked_media_count,
             windows_open=windows_open,
             frame=kept.speaker_frame if kept.speaker_frame != "full" else None,
             asked_frame=asked_frame,
+            color=kept.color,
+            color_code=color_code,
         )
     }
 
@@ -1016,12 +1042,13 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
     """
     if "speaker_background" in variant:
         doc = variant["speaker_background"]
-        if not isinstance(doc, Mapping) or not doc.get("media_id"):
+        # KRI-1173: a solid-colour fill carries a ``color`` and no ``media_id``.
+        if not isinstance(doc, Mapping) or not (doc.get("media_id") or doc.get("color")):
             return SpeakerBackgroundFact("none")
         windows = doc.get("windows")
         return SpeakerBackgroundFact(
             "applied",
-            fill_id=str(doc["media_id"]),
+            fill_id=str(doc.get("media_id") or doc["color"]),
             window_count=len(windows) if isinstance(windows, list) else 0,
             # The windows cycle the photos, so the count a creator hears is the distinct media.
             media_count=(
@@ -1037,6 +1064,7 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
             ),
             windows_open=True,
             frame=_frame_preset_name(doc.get("speaker_frame")),
+            color=str(doc["color"]) if doc.get("color") and not doc.get("media_id") else None,
         )
     receipt = variant.get("phone_lane_receipt")
     if not isinstance(receipt, Mapping) or not isinstance(receipt.get("applied"), list):
@@ -1057,6 +1085,7 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
         media_count=int(media) if isinstance(media, int) and not isinstance(media, bool) else None,
         windows_open=True,
         frame=detail.get("speaker_frame") if isinstance(detail.get("speaker_frame"), str) else None,
+        color=detail.get("color") if isinstance(detail.get("color"), str) else None,
     )
 
 
@@ -4370,13 +4399,36 @@ _SB_NO_MEDIA = (
 _SB_NOT_PLANNED = "This draft doesn't put a photo or video behind you"
 _SB_NOT_DRAWN = "The finished video doesn't have a photo or video behind you"
 _SB_NO_CHANGE = "One photo or video stays behind you for the whole video; it doesn't change"
+# KRI-1173: a plain colour behind the speaker. The first three are format limits like the
+# photo / video ones; "attach the photos first" is never the answer to a colour ask (no pool).
+_SBC_NOT_TALKING = (
+    "Only a talking-to-camera edit made on your iPhone can put a plain colour behind you"
+)
+_SBC_UNAVAILABLE = "Putting a plain colour behind you isn't available on your iPhone yet"
+_SBC_APP_TOO_OLD = "Your iPhone app is too old to put a plain colour behind you; update it first"
+_SBC_NOT_PLANNED = "This draft doesn't put a plain colour behind you"
+_SBC_NOT_DRAWN = "The finished video doesn't have a plain colour behind you"
+# KRI-1173 review: the changing-backgrounds part of a colour ask, judged like the photo / video
+# one. The first is a format limit; the creator can act on the other two.
+_SBC_NO_SWITCHING = (
+    "The plain colour stays behind you the whole time; your iPhone can't switch backgrounds yet"
+)
+_SBC_NO_CHANGE = "The plain colour stays behind you the whole time; nothing changes over it"
+_SBC_NOTHING_TO_SWITCH = (
+    "The plain colour stays behind you the whole time; no photos or videos are attached to take "
+    "turns over it. Attach them in Visuals"
+)
 _SB_FORMAT_LIMITS: tuple[str, ...] = (
     _SB_NOT_TALKING,
     _SB_UNAVAILABLE,
     _SB_APP_TOO_OLD,
+    _SBC_NOT_TALKING,
+    _SBC_UNAVAILABLE,
+    _SBC_APP_TOO_OLD,
     _SB_NO_SWITCHING,
     _SB_FULL_SIZE,
     _SB_ONLY_ONE_ATTACHED,
+    _SBC_NO_SWITCHING,
 )
 
 
@@ -4388,7 +4440,17 @@ def asks_speaker_background(req: BriefRequirement) -> bool:
     never the creator's words. So "background music" / "arka plan müziği" / "no music", which
     record no such fact, can never be read as this ask.
     """
-    return bool(req.facts.get("speaker_background"))
+    # KRI-1173: a plain colour ask records `background_color` (and `speaker_background: true`).
+    return bool(req.facts.get("speaker_background")) or _asked_background_color(req) is not None
+
+
+def _asked_background_color(req: BriefRequirement) -> str | None:
+    """The colour the creator asked behind them (``facts["background_color"]``: a hex or the
+    colour as said), else None. A fact, never the creator's words (KRI-667)."""
+    value = req.facts.get("background_color")
+    if isinstance(value, str) and value.strip():
+        return " ".join(value.split())[:40]
+    return None
 
 
 def _asks_changing_backgrounds(req: BriefRequirement) -> bool:
@@ -4414,6 +4476,123 @@ def _sb(text: str, suffix: str = ".") -> str:
     return say(en=text + suffix, tr=_REASON_TR[text] + suffix)
 
 
+def _background_media_shown(fact: SpeakerBackgroundFact) -> int:
+    """How many photos / videos the creator sees take turns: the windows cycle the sequence, so
+    8 windows over 5 photos is 5 (Green 3). An older record without the distinct count falls
+    back to the windows."""
+    return fact.media_count or fact.window_count
+
+
+def _background_never_changes(fact: SpeakerBackgroundFact) -> bool:
+    """No windows, or one photo repeated in every window: nothing changes behind the speaker."""
+    return fact.window_count == 0 or fact.media_count == 1
+
+
+def _background_media_shortfall(fact: SpeakerBackgroundFact) -> tuple[int, int] | None:
+    """(shown, asked) when the plan shows fewer DISTINCT photos / videos than the strategy asked
+    for (a window that repeats a photo is not a photo lost), else None."""
+    shown = _background_media_shown(fact)
+    asked = fact.asked_media_count or fact.asked_windows
+    if fact.window_count and asked > shown:
+        return shown, asked
+    return None
+
+
+def _colour_extras_shortfalls(
+    req: BriefRequirement, fact: SpeakerBackgroundFact, *, rendered: bool
+) -> list[str]:
+    """What a colour ask's corner (``speaker_small``) and changing backgrounds
+    (``background_changes``) parts are missing, judged the way the photo / video ask judges them
+    in `_check_speaker_background`, in colour wording."""
+    out: list[str] = []
+    shortfall = _background_media_shortfall(fact)
+    if _asks_changing_backgrounds(req) and _background_never_changes(fact):
+        if fact.pool_count == 0:
+            out.append(_sb(_SBC_NOTHING_TO_SWITCH))
+        elif not rendered and not fact.windows_open:
+            out.append(_sb(_SBC_NO_SWITCHING))
+        else:
+            out.append(_sb(_SBC_NO_CHANGE))
+    elif shortfall is not None and not rendered:
+        shown, asked = shortfall
+        out.append(
+            say(
+                en=(
+                    f"Only {shown} of your {asked} photos or videos "
+                    "take turns over the colour; I couldn't use the rest."
+                ),
+                tr=(
+                    f"{asked} fotoğraf ya da videodan yalnızca {shown} "
+                    "tanesi rengin üstünde sırayla değişiyor; gerisini kullanamadım."
+                ),
+            )
+        )
+    if _asks_small_speaker(req) and fact.frame is None:
+        if not rendered and not fact.windows_open:
+            out.append(_sb(_SB_FULL_SIZE))
+        else:
+            out.append(
+                say(
+                    en="You stay full size, not small in a corner.",
+                    tr="Tam boyutta kalıyorsun, köşede küçük değilsin.",
+                )
+            )
+    return out
+
+
+def _check_background_color(
+    req: BriefRequirement, fact: SpeakerBackgroundFact, ask: str, *, rendered: bool
+) -> RequirementReceipt:
+    """A plain colour behind the speaker (KRI-1173, S58): met when the plan / video holds the
+    colour AND every corner / changing-backgrounds part asked beside it, else a refusal or a
+    partial that names each missing part and the reason. "Attach photos first" never answers the
+    colour itself (it needs no pool); only the changing part may ask for photos to switch to."""
+    from app.agents._schemas.reaction_beats import normalise_background_color  # noqa: PLC0415
+
+    if fact.status == "unavailable":
+        reason = {"unavailable": _SBC_UNAVAILABLE, "app_too_old": _SBC_APP_TOO_OLD}.get(
+            fact.code or "", _SBC_NOT_TALKING
+        )
+        return _receipt(req, "not_possible", _sb(reason))
+    if fact.color is None:
+        if fact.color_code == "app_too_old":
+            return _receipt(req, "not_possible", _sb(_SBC_APP_TOO_OLD))
+        if fact.color_code == "unavailable":
+            return _receipt(req, "not_possible", _sb(_SBC_UNAVAILABLE))
+        return _receipt(req, "not_possible", _sb(_SBC_NOT_DRAWN if rendered else _SBC_NOT_PLANNED))
+    asked_hex = normalise_background_color(ask)
+    # KRI-1173 review: the colour is one part of the ask. A corner or changing backgrounds asked
+    # beside it are judged too, and every shortfall is named (never "met" with the speaker still
+    # full size, never one shortfall hiding another).
+    shortfalls: list[str] = []
+    if asked_hex is not None and asked_hex != fact.color:
+        shortfalls.append(
+            say(
+                en=f"The plain colour behind you is {fact.color}, not the {ask} you asked for.",
+                tr=f"Arkandaki düz renk {fact.color}; istediğin {ask} değil.",
+            )
+        )
+    shortfalls += _colour_extras_shortfalls(req, fact, rendered=rendered)
+    if shortfalls:
+        return _receipt(req, "partial", " ".join(shortfalls))
+    label = ask if asked_hex is None or asked_hex != ask.upper() else fact.color
+    en = f"A plain {label} background sits behind you for the whole video"
+    tr = f"Bütün video boyunca arkanda düz {label} bir arka plan duruyor"
+    if not _background_never_changes(fact):
+        shown = _background_media_shown(fact)
+        en += f"; {shown} photos or videos take turns over it"
+        tr += f"; üstünde {shown} fotoğraf ya da video sırayla değişiyor"
+    elif fact.window_count:
+        # One photo repeated in every window does not take turns with anything.
+        en += "; one photo or video sits over it"
+        tr += "; üstünde tek bir fotoğraf ya da video duruyor"
+    corner = _FRAME_WORDS.get(fact.frame or "")
+    if corner:
+        en += f"; you're {corner[0]}"
+        tr += f"; sen {corner[1]}sın"
+    return _receipt(req, "met", say(en=en + ".", tr=tr + "."))
+
+
 def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Is a photo or video behind the speaker, as the creator asked (KRI-1161)?
 
@@ -4425,6 +4604,9 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
     if fact is None:
         return _receipt(req, "partial", _NO_CHECKER)
     rendered = facts.rendered_variant
+    color_ask = _asked_background_color(req)
+    if color_ask is not None:
+        return _check_background_color(req, fact, color_ask, rendered=bool(rendered))
     if fact.status == "unavailable":
         reason = {"unavailable": _SB_UNAVAILABLE, "app_too_old": _SB_APP_TOO_OLD}.get(
             fact.code or "", _SB_NOT_TALKING
@@ -4440,7 +4622,7 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
     wants_corner = _asks_small_speaker(req)
     # Green 3: the windows cycle the photos, so "8 windows" over 5 photos is 5 photos. One
     # distinct photo behind eight windows is no change at all.
-    if wants_several and (fact.window_count == 0 or fact.media_count == 1):
+    if wants_several and _background_never_changes(fact):
         if fact.pool_count == 1:
             return _receipt(req, "partial", _sb(_SB_ONLY_ONE_ATTACHED))
         if not rendered and not fact.windows_open:
@@ -4457,24 +4639,26 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
                 tr="Tam boyutta kalıyorsun, köşede küçük değilsin.",
             ),
         )
-    if fact.asked_windows > fact.window_count > 0 and not rendered:
+    shortfall = _background_media_shortfall(fact)
+    if shortfall is not None and not rendered:
+        shown, asked = shortfall
         return _receipt(
             req,
             "partial",
             say(
                 en=(
-                    f"Only {fact.window_count} of your {fact.asked_windows} photos or videos "
+                    f"Only {shown} of your {asked} photos or videos "
                     "take turns behind you; I couldn't use the rest."
                 ),
                 tr=(
-                    f"{fact.asked_windows} fotoğraf ya da videodan yalnızca {fact.window_count} "
+                    f"{asked} fotoğraf ya da videodan yalnızca {shown} "
                     "tanesi arkanda sırayla değişiyor; gerisini kullanamadım."
                 ),
             ),
         )
     corner = _FRAME_WORDS.get(fact.frame or "")
-    if fact.window_count and fact.media_count != 1:
-        shown = fact.media_count or fact.window_count
+    if not _background_never_changes(fact):
+        shown = _background_media_shown(fact)
         en = f"{shown} photos or videos take turns behind you"
         tr = f"{shown} fotoğraf ya da video arkanda sırayla değişiyor"
         if corner:
@@ -5816,6 +6000,22 @@ _REASON_TR: dict[str, str] = {
     _SB_NOT_PLANNED: "Bu taslak arkana fotoğraf ya da video koymuyor",
     _SB_NOT_DRAWN: "Biten videoda arkanda fotoğraf ya da video yok",
     _SB_NO_CHANGE: ("Bütün video boyunca arkanda tek bir fotoğraf ya da video duruyor; değişmiyor"),
+    # KRI-1173: a plain colour behind the speaker.
+    _SBC_NOT_TALKING: (
+        "Arkana düz renk yalnızca iPhone'da hazırlanan konuşmalı düzenlemede konabilir"
+    ),
+    _SBC_UNAVAILABLE: "Arkana düz renk koymak iPhone'unda henüz kullanılamıyor",
+    _SBC_APP_TOO_OLD: "iPhone uygulaman arkana düz renk koymak için çok eski; önce güncelle",
+    _SBC_NOT_PLANNED: "Bu taslak arkana düz renk koymuyor",
+    _SBC_NOT_DRAWN: "Biten videoda arkanda düz renk yok",
+    _SBC_NO_SWITCHING: (
+        "Düz renk bütün video boyunca arkanda kalıyor; iPhone'un henüz arka planı değiştiremiyor"
+    ),
+    _SBC_NO_CHANGE: "Düz renk bütün video boyunca arkanda kalıyor; üstünde hiçbir şey değişmiyor",
+    _SBC_NOTHING_TO_SWITCH: (
+        "Düz renk bütün video boyunca arkanda kalıyor; üstünde sırayla değişecek fotoğraf ya da "
+        "video ekli değil. Onları Visuals'a ekle"
+    ),
 }
 
 

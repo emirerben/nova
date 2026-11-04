@@ -288,6 +288,15 @@ _KNOWN_TR: dict[str, str] = {
         "Değişen arka plan için söylediğin bazı fotoğraf ya da videoları bulamadım; onları "
         "çıkardım."
     ),
+    # KRI-1173: a plain colour.
+    SPEAKER_BACKGROUND_NOTICES["color_unavailable"]: (
+        "Arkana düz bir renk koyamadım: iPhone uygulaman henüz bunu gösteremiyor; kendi arka "
+        "planını bıraktım."
+    ),
+    SPEAKER_BACKGROUND_NOTICES["color_invalid"]: (
+        "Bu rengi arka planın için kullanamadım; kendi arka planını bıraktım. Beyaz, siyah, "
+        "yeşil, mavi, kırmızı, sarı ya da gri dene."
+    ),
     SPEAKER_BACKGROUND_NOT_ALSO_A_POP_IN_NOTICE: (
         "Arkandaki fotoğraf ya da video sadece arka plan, söylediğin bir kelimede ayrıca çıkmıyor."
     ),

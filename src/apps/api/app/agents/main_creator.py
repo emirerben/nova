@@ -59,6 +59,7 @@ from app.services.creator_capabilities import (
     TalkingCutawayAvailability,
     ending_clip_candidates,
     insert_clip_candidates,
+    speaker_background_color_open,
     speaker_background_open,
     speaker_background_windows_open,
     talking_footage_cutaways,
@@ -219,7 +220,12 @@ log = structlog.get_logger()
 # shared brief section records the creator's caption look (`caption_size`, `caption_position`,
 # `caption_color`, `caption_case`) and "no music" as `audio_intent: no_music`; the speaker's own
 # corner is never a caption position. On top of v114.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-03-v116"
+# v118 (KRI-1173; v117 is held by #2092): a plain colour behind the speaker, on top of v116.
+# `background_media` takes `color` ("#RRGGBB") instead of `media_id`, taught in one extra
+# paragraph only where the manifest advertises `speaker_background_color`; the shared brief
+# section records `background_color` beside `speaker_background` (brief_extractor v53 shares
+# it). Every other creator prompt is byte-identical.
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-03-v118"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -668,6 +674,22 @@ A background is only the backdrop: never also use the same photo or video in `re
 this. Say in `summary`, in plain words, that it sits behind them for the whole video.
 """.strip("\n")
 
+# KRI-1173: a plain colour instead of a photo or video. Appended after the paragraph above ONLY
+# when the manifest advertises `speaker_background_color`, so a closed colour gate keeps every
+# prompt byte-identical. The repair (`creator_capabilities.repair_creator_speaker_background`)
+# normalises names and case to `#RRGGBB` and drops anything else with a notice.
+_SPEAKER_BACKGROUND_COLOR_PROMPT_SECTION = """
+PLAIN COLOUR BEHIND THE SPEAKER (iPhone Talking only)
+When the creator wants a single flat colour behind them instead of a photo or video ("a plain
+white background", "make my background green", "arkam düz beyaz olsun"), set `background_media`:
+{"color": "#RRGGBB"} with NO `media_id` and no `source_start_s`: exactly one of `media_id` or
+`color`. Named colours are exact: white #FFFFFF, black #000000, green #00FF00, blue #0000FF, red
+#FF0000, yellow #FFFF00, grey #808080 (beyaz, siyah, yeşil, mavi, kırmızı, sarı, gri). For a hex
+the creator gives, copy it; for any other colour name use the standard hex only when you are
+sure of it, otherwise leave `background_media` out and ask which colour. A colour needs no photo
+or video from `media_context`. Say in `summary`, in plain words, which colour sits behind them.
+""".strip("\n")
+
 # KRI-1162: several backgrounds in time + the speaker small in a corner. Appended after the
 # paragraph above ONLY when the manifest advertises `speaker_background_windows`.
 _SPEAKER_BACKGROUND_WINDOWS_PROMPT_SECTION = """
@@ -975,7 +997,9 @@ adding or ending on a clip keeps `last_clip` as above. A photo or video the crea
 them on a talking-to-camera edit ("put the beach photo behind me", "make it like a green screen",
 "arkamda bu fotoğraf dursun") is a `style` requirement with {"speaker_background": true}, whatever
 language they write in; add "background_changes": true when several photos or videos take turns
-behind them and "speaker_small": true when they want to be small in a corner. Sound that merely
+behind them, "speaker_small": true when they want to be small in a corner and "background_color":
+"<the colour as said, or its hex>" for a plain colour instead of a photo or video ("a plain white
+background", "arkam düz yeşil olsun"). Sound that merely
 plays in the background ("background music", "arka plan müziği") is NOT this and records no such
 fact. How on-screen text should look goes in the
 `facts` of its text requirement, only what the creator said: `animation` (an id from
@@ -1446,6 +1470,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 + (
                     "\n" + _SPEAKER_BACKGROUND_PROMPT_SECTION
                     if speaker_background_open(input.capability_manifest)
+                    else ""
+                )
+                # KRI-1173: a plain colour fill; "" unless advertised.
+                + (
+                    "\n" + _SPEAKER_BACKGROUND_COLOR_PROMPT_SECTION
+                    if speaker_background_color_open(input.capability_manifest)
                     else ""
                 )
                 # KRI-1162: timed backgrounds + the speaker frame; "" unless advertised.

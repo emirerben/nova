@@ -921,6 +921,8 @@ enum NativeEditorRenderError: Error, Equatable {
             let layer = background.layer
             // KRI-1162: the fill and every window visual are pinned pool assets (one entry per media id, however
             // many windows reuse it).
+            // KRI-1173: a solid-colour fill has no pool visual, so `mediaRequirements` lists only the windows and the
+            // layer carries the colour itself; `recipe.validate()` skips the manifest check for it.
             for requirement in background.mediaRequirements {
                 let assetID = EditorSpeakerBackground.assetID(forMediaID: requirement.mediaID)
                 guard let source = mediaSources[EditorSpeakerBackground.sourceKey(forMediaID: requirement.mediaID)],

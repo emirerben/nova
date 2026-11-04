@@ -99,7 +99,11 @@ log = structlog.get_logger()
 # "zoom_delta" (added), the zoom that fills the corners a tilt leaves empty, taught in
 # clip_tilt_zoom.txt only where `tilt_zoom` is open; a clip row lists its zoom only then. Every
 # other prompt, including a tilt-open one without zoom, is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-02-v108"
+# v109 (KRI-1173): set_background_color {color} (a hex or a named preset, EN + TR) puts a plain
+# colour behind the speaker; the BACKGROUND block lists a colour "current" and `color: available`
+# / `not available`. Taught inside speaker_background.txt, so only an edit that already offers the
+# `background` family sees it; every other prompt is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-03-v109"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -2012,7 +2016,13 @@ def _format_snapshot(snapshot: dict) -> str:
             )
         else:
             current = background.get("current")
-            if isinstance(current, dict):
+            if isinstance(current, dict) and current.get("kind") == "color":
+                # KRI-1173: a plain colour, no pool media.
+                lines.append(
+                    "current: a plain colour "
+                    f"{_field(current.get('color'), max_chars=16)!r} (no photo or video)"
+                )
+            elif isinstance(current, dict):
                 lines.append(
                     f"current: kind={_field(current.get('kind'), max_chars=20)!r} "
                     f"id={_field(current.get('media_id'), max_chars=80)!r} "
@@ -2020,6 +2030,12 @@ def _format_snapshot(snapshot: dict) -> str:
                 )
             else:
                 lines.append("current: (none)")
+            if background.get("color_available") is True:
+                lines.append("color: available (a plain colour can go behind the speaker)")
+            elif background.get("color_available") is False:
+                lines.append(
+                    f"color: not available: {_field(background.get('color_reason'), max_chars=160)}"
+                )
             pool = background.get("pool") if isinstance(background.get("pool"), list) else []
             lines.append("POOL:")
             if pool:
