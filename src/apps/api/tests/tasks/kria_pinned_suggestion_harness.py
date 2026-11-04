@@ -419,7 +419,7 @@ async def media_digest_of(seeded: Seeded) -> str:
         return media_digest(snapshot_media(await db.get(PlanItem, seeded.item_id)))
 
 
-def install_dedupe_kind(monkeypatch) -> None:  # noqa: ANN001
+def install_dedupe_kind(monkeypatch, *, flag: str | None = None) -> None:  # noqa: ANN001
     """A test stand-in for the duplicates lane's kind: ``remove_clip`` addressed by media id.
 
     The registered ``duplicates`` kind is a stub that never offers. This one builds the
@@ -452,6 +452,7 @@ def install_dedupe_kind(monkeypatch) -> None:  # noqa: ANN001
         build_action=build,
         witness=editor_ops_witness,
         surfaces=frozenset({"phone"}),
+        flag=flag,
     )
     real = registry.get
     monkeypatch.setattr(registry, "get", lambda name: kind if name == "duplicates" else real(name))

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -213,6 +214,7 @@ def parse_ops(ops: Sequence[Mapping[str, Any]], snapshot: Mapping[str, Any]) -> 
 # What the creator asked for, as a typed requirement. Receipts (KRI-558) bind it to the diff by
 # the words of its description, so the description is the card's own prompt: exactly the message
 # the creator sees in the chat.
+_CLIP_ID = re.compile(r"[A-Za-z0-9._:-]{1,100}")  # the brief's `clip:<id>` scope grammar
 _REQUIREMENT_KIND = {
     "add_sfx": "audio",
     "set_mix": "audio",
@@ -233,7 +235,7 @@ def brief_updates_for(suggestion: Suggestion, ops: Sequence[Mapping[str, Any]]) 
         return ()
     scope = "global"
     media_id = suggestion.anchor.media_id
-    if first == "remove_clip" and media_id:
+    if first == "remove_clip" and media_id and _CLIP_ID.fullmatch(media_id):
         scope = f"clip:{media_id}"
     return (
         BriefUpdate(operation="add", kind=kind, scope=scope, description=suggestion.prompt[:300]),

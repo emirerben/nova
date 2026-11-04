@@ -178,6 +178,37 @@ async def test_fm2_an_unresolvable_pin_answers_no_longer_fits(world, how):
 
 
 @pytest.mark.asyncio
+async def test_fm2_a_stamping_crash_never_plans_the_card_as_free_text(world, monkeypatch):
+    from app.services.suggestions import pinned
+
+    def crash(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise RuntimeError("ring unreadable")
+
+    monkeypatch.setattr(pinned, "stamp_pin", crash)
+    seeded = h.seed_ready_thread()
+    await h.serve(seeded)
+    before = h.counts(seeded)
+    await _tap_and_run(seeded, "sfx")
+    _refused_untouched(seeded, before)
+
+
+@pytest.mark.asyncio
+async def test_fm2_no_longer_fits_speaks_the_chats_language(world):
+    seeded = h.seed_ready_thread()
+    await h.serve(seeded)
+    before = h.counts(seeded)
+    accepted, _ = await h.submit(
+        seeded, "Müziği kıs", tap={"set_id": seeded.set_id, "chip_id": "ss_000000000000"}
+    )
+    await h.run(accepted.turn_id)
+    _refused_untouched(
+        seeded,
+        before,
+        reply="Bu öneri artık düzenlemene uymuyor. Hiçbir şey değişmedi, önerileri yeniliyorum.",
+    )
+
+
+@pytest.mark.asyncio
 async def test_fm3_typed_words_win_over_a_pin(world, monkeypatch):
     legacy = h.legacy_planner_answers(monkeypatch)
     seeded = h.seed_ready_thread()
@@ -412,15 +443,31 @@ async def test_fm8_a_stale_card_whose_change_is_already_there_no_longer_fits(wor
 
 
 @pytest.mark.asyncio
-async def test_fm8_a_card_whose_kind_was_switched_off_no_longer_fits(world, monkeypatch):
+@pytest.mark.parametrize("switched_on", [False, True])
+async def test_fm8_a_card_whose_kind_flag_was_pulled_after_serving_no_longer_fits(
+    world, monkeypatch, switched_on
+):
+    """The kill switch stops a card that was served before it was pulled; with it on, the same
+    card applies (so the refusal is the flag's doing)."""
+    h.install_dedupe_kind(monkeypatch, flag="kria_suggestion_duplicates_enabled")
+    monkeypatch.setattr(settings, "kria_suggestion_duplicates_enabled", switched_on)
     seeded = h.seed_ready_thread()
-    await h.serve(seeded)
-    from app.services.suggestions import pinned
-
-    monkeypatch.setattr(pinned, "kind_enabled", lambda suggestion: False)
+    h.put_cards(
+        seeded,
+        h.card(
+            "duplicates",
+            "Remove clip 3, it repeats clip 2",
+            [{"op": "remove_clip", "slot_index": 2}],
+            base_digest=await h.current_digest(seeded),
+            media_id="clip-c",
+        ),
+    )
     before = h.counts(seeded)
-    await _tap_and_run(seeded, "sfx")
-    _refused_untouched(seeded, before)
+    await _tap_and_run(seeded, "duplicates")
+    if switched_on:
+        assert h.counts(seeded)["drafts"] == before["drafts"] + 1
+    else:
+        _refused_untouched(seeded, before)
 
 
 @pytest.mark.asyncio
@@ -534,6 +581,27 @@ async def test_fm10_a_stale_client_state_is_the_honest_stale_editor_reply(world)
 
 
 @pytest.mark.asyncio
+async def test_fm5_a_tap_that_compiles_to_no_real_change_never_reads_as_done(world, monkeypatch):
+    import dataclasses
+
+    from app.services.kria_editor_ops_diff import EditorDiff
+    from app.tasks import kria_runtime
+
+    real = kria_runtime.compile_editor_ops
+
+    def compiles_to_nothing(*args, **kwargs):  # noqa: ANN002, ANN003
+        return dataclasses.replace(real(*args, **kwargs), diff=EditorDiff())
+
+    monkeypatch.setattr(kria_runtime, "compile_editor_ops", compiles_to_nothing)
+    seeded = h.seed_ready_thread()
+    await h.serve(seeded)
+    before = h.counts(seeded)
+    accepted, _ = await _tap_and_run(seeded, "sfx")
+    _refused_untouched(seeded, before)
+    assert _pin_record(accepted.turn_id)["reason"] == "no_change"
+
+
+@pytest.mark.asyncio
 async def test_fm11_a_speech_cut_card_is_refused_before_anything_compiles(world, monkeypatch):
     h.install_dedupe_kind(monkeypatch)
     seeded = h.seed_ready_thread()
@@ -609,6 +677,25 @@ async def test_fm12_a_text_carrying_op_in_a_stored_action_is_never_applied(world
 
 
 # ── The turn's own fences ────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_fm12_a_stored_op_the_copilot_parser_refuses_is_never_compiled(world):
+    seeded = h.seed_ready_thread()
+    base = await h.current_digest(seeded)
+    h.put_cards(
+        seeded,
+        h.card(
+            "sfx",
+            "Add sound effects",
+            [{"op": "add_sfx", "effect_id": "fx-not-in-the-catalog", "at_s": 0.5}],
+            base_digest=base,
+        ),
+    )
+    before = h.counts(seeded)
+    accepted, _ = await _tap_and_run(seeded, "sfx")
+    _refused_untouched(seeded, before)
+    assert _pin_record(accepted.turn_id)["reason"] == "op_refused"
 
 
 @pytest.mark.asyncio
