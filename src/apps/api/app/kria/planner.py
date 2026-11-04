@@ -6531,16 +6531,27 @@ async def plan_pinned_suggestion_turn(
         # A failed render's correction carries a pinned recovery basis only the copilot path mints.
         return _no_longer_fits(pinned.TARGET_UNAVAILABLE)
 
+    # Every card is proven again against the facts as they are now, whatever its action type:
+    # the editor may be on the exact base the card was built for while something else moved (the
+    # creator named the clip a duplicates card removes, a title was decided, the analysis was
+    # replaced). The kind's own witness is the one judge of that (it also compares the base).
     ctx = None
-    if isinstance(action, EditorOpsAction):
-        exact = pinned.snapshot_digest(target.snapshot) == action.base_digest
-    else:
-        # No base digest to compare: the stored action is exact when its kind's own witness
-        # accepts it against the facts as they are now.
+    try:
         ctx = await pinned.ready_context(
             db, thread=thread, item=item, manifest=manifest, target=target, protocol=client_protocol
         )
-        exact = pinned.proves(suggestion, action, ctx)
+    except Exception:  # noqa: BLE001 - facts that cannot be read prove nothing: rebuild or refuse
+        log.warning("suggestion_pin.context_failed", thread_id=str(thread_id), exc_info=True)
+    exact = ctx is not None and pinned.proves(suggestion, action, ctx)
+    if (
+        not exact
+        and isinstance(action, EditorOpsAction)
+        and pinned.snapshot_digest(target.snapshot) == action.base_digest
+    ):
+        # The editor is on the exact base the card was built for, yet its own proof fails: a
+        # stored op the compiler or the kind now refuses. That is not an edit that moved, so
+        # nothing is rebuilt around it.
+        return _no_longer_fits(pinned.OP_REFUSED)
     if not exact:
         # The edit moved since the card was served: build it again from the registry and the
         # current facts. A card the registry cannot prove now is a card that no longer fits, and
@@ -6580,7 +6591,11 @@ async def plan_pinned_suggestion_turn(
         )
         if plan_out.mode != "act":
             return _no_longer_fits(pinned.OP_REFUSED)
-        typed_updates = pinned.brief_updates_for(suggestion, parsed)
+        typed_updates = pinned.brief_updates_for(
+            suggestion,
+            parsed,
+            language=(ctx.language if ctx is not None else current_reply_language()) or "en",
+        )
         route = "editor_ops"
     else:
         strategy = await pinned.restated_strategy(db, thread_id=thread_id)

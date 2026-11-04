@@ -352,3 +352,148 @@ async def test_hook_kind_switched_off_after_serve_refuses(world, monkeypatch):
     await tap_and_run(seeded, "hook")
     assert last_reply(seeded.thread_id) == NO_LONGER_FITS
     assert h.counts(seeded) == before
+
+
+# ── Duplicates: keep the better of two takes ─────────────────────────────────────────
+
+DUP_PROMPT = "Keep the better of clips 1, 2"
+
+
+async def serve_duplicates(seeded, monkeypatch, *, needed=None, also_transition=False):  # noqa: ANN001, ANN201
+    k.install_inputs(monkeypatch, needed=needed if needed is not None else [])
+    k.seed_duplicate_pair(seeded)
+    picks = [k.pick("duplicates", targets=("c1", "c2"))]
+    if also_transition:
+        picks.append(k.pick("sfx", rank=2))
+    await k.serve_cards(seeded, *picks)
+    return seeded.cards["duplicates"]
+
+
+def removed_slots(thread_id) -> set[str]:  # noqa: ANN001
+    snap = head(thread_id)["snap"]["editor_payload"]
+    return {r["slot_id"] for r in snap.get("timeline_slots") or [] if r["removed"]}
+
+
+@pytest.mark.asyncio
+async def test_duplicates_tap_removes_the_weaker_take_and_undo_restores_it(world, monkeypatch):
+    seeded = h.seed_ready_thread()
+    card = await serve_duplicates(seeded, monkeypatch, also_transition=True)
+    assert card.prompt == DUP_PROMPT and card.anchor.media_id == "clip-a"
+    assert card.action.type == "editor_ops" and card.action.ops == [
+        {"op": "remove_clip", "slot_index": 0}
+    ]
+    await tap_and_run(seeded, "sfx")  # a head draft to follow
+    parent = head(seeded.thread_id)
+    before = h.counts(seeded)
+
+    accepted, result = await tap_and_run(seeded, "duplicates")
+
+    assert result["status"] == "completed", result
+    assert pin_record(accepted.turn_id)["kind"] == "duplicates"
+    assert h.counts(seeded)["drafts"] == before["drafts"] + 1
+    assert removed_slots(seeded.thread_id) == {"slot-0"}, "the weaker take (clip-a) went"
+    assert head(seeded.thread_id)["parent"] == parent["id"]
+    applied = h.events(seeded.thread_id, "draft_applied")[-1].payload
+    [receipt] = applied["requirement_receipts"]
+    assert receipt["status"] == "met" and receipt["verification"] == "checked"
+    req = h.briefs(seeded.thread_id)[-1].requirements[-1]
+    # The requirement says what the tap did, not the pair sentence a replan could read as "keep".
+    assert req["scope"] == "clip:clip-a" and req["description"] == "Remove clip 1"
+    assert h.counts(seeded)["approvals"] == 0
+
+    from app.kria.drafts import undo_draft
+
+    async with h.AsyncSessionLocal() as db:
+        await undo_draft(
+            db,
+            thread_id=seeded.thread_id,
+            creator_id=seeded.user_id,
+            expected_revision=head(seeded.thread_id)["rev"],
+        )
+    assert removed_slots(seeded.thread_id) == set()
+
+
+@pytest.mark.asyncio
+async def test_duplicates_a_reordered_edit_rebuilds_the_pair_from_the_anchor(world, monkeypatch):
+    """K1/K9: the stored op addressed slot 0; the edit was reordered, so the same index is now
+    another clip. The rebuild finds the pair again by media id and removes the right one."""
+    seeded = h.seed_ready_thread()
+    await serve_duplicates(seeded, monkeypatch)
+
+    def reorder(variant):  # clip-b, clip-a, clip-c
+        slots = variant["ai_timeline"]["slots"]
+        variant["ai_timeline"]["slots"] = [slots[1], slots[0], slots[2]]
+
+    h.edit_variant(seeded, reorder)
+    accepted, result = await tap_and_run(seeded, "duplicates")
+
+    assert result["status"] == "completed", result
+    assert pin_record(accepted.turn_id)["exact"] is False
+    assert removed_slots(seeded.thread_id) == {"slot-0"}, "clip-a, wherever it sits now"
+    assert h.counts(seeded)["drafts"] == 1
+
+
+@pytest.mark.asyncio
+async def test_duplicates_the_keeper_removed_since_serve_no_longer_fits(world, monkeypatch):
+    """K9: with the better take gone there is no pair; nothing is removed."""
+    seeded = h.seed_ready_thread()
+    await serve_duplicates(seeded, monkeypatch)
+
+    def drop_keeper(variant):
+        for slot in variant["ai_timeline"]["slots"]:
+            if slot["media_id"] == "clip-b":
+                slot["removed"] = True
+
+    h.edit_variant(seeded, drop_keeper)
+    before = h.counts(seeded)
+    accepted, _ = await tap_and_run(seeded, "duplicates")
+    assert last_reply(seeded.thread_id) == NO_LONGER_FITS
+    assert h.counts(seeded) == before
+    assert pin_record(accepted.turn_id)["reason"] in {"base_moved", "op_refused"}
+
+
+@pytest.mark.asyncio
+async def test_duplicates_a_clip_the_request_now_names_is_never_removed(world, monkeypatch):
+    """K6 (KRI-129): the creator asked for clip 1 after the card was served."""
+    needed: list[str] = []
+    seeded = h.seed_ready_thread()
+    await serve_duplicates(seeded, monkeypatch, needed=needed)
+    needed.append("clip-a")
+    before = h.counts(seeded)
+    accepted, _ = await tap_and_run(seeded, "duplicates")
+    assert last_reply(seeded.thread_id) == NO_LONGER_FITS
+    assert h.counts(seeded) == before
+    assert pin_record(accepted.turn_id)["reason"] in {"base_moved", "op_refused"}
+
+
+@pytest.mark.asyncio
+async def test_duplicates_a_changed_group_is_not_what_the_creator_tapped(world, monkeypatch):
+    """K9: the base moved AND a third clip now matches the pair. The rebuilt card would remove
+    two clips; the closed sentence it renders is not the one the creator tapped, so it refuses."""
+    from app.services.clip_signals import near_dup_hash
+
+    seeded = h.seed_ready_thread()
+    await serve_duplicates(seeded, monkeypatch, also_transition=True)
+    await tap_and_run(seeded, "sfx")  # the base moves
+    third = {c["media_id"]: c for c in k.dup_case()["clips"]}["m2"]
+    k.set_analysis(
+        seeded,
+        "clip-c",
+        {
+            "signals": {
+                near_dup_hash.NAME: {
+                    "v": near_dup_hash.VERSION,
+                    "data": {
+                        "hashes": third["hashes"],
+                        "sharpness": 90,
+                        "mean_luma": third["mean_luma"],
+                    },
+                }
+            }
+        },
+    )
+    before = h.counts(seeded)
+    accepted, _ = await tap_and_run(seeded, "duplicates")
+    assert last_reply(seeded.thread_id) == NO_LONGER_FITS
+    assert h.counts(seeded) == before
+    assert pin_record(accepted.turn_id)["reason"] == "base_moved"

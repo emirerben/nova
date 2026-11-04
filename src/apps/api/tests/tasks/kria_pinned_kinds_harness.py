@@ -225,3 +225,54 @@ def write_brief(seeded: base.Seeded, *updates) -> None:  # noqa: ANN002
             )
         )
         db.commit()
+
+
+# ── Duplicates: real recorded measurements ───────────────────────────────────────────
+
+
+def dup_case() -> dict[str, Any]:
+    import json
+    from pathlib import Path
+
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "agent_evals"
+        / "suggestion_kind_dupes"
+        / "d01_two_takes_sharper.json"
+    )
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def seed_duplicate_pair(seeded: base.Seeded) -> None:
+    """clip-a and clip-b are two takes of one shot (b is sharper); clip-c is another shot.
+
+    The hashes are the near-duplicate lane's recorded measurements (d01), stored the way the
+    signal writes them. No clip speaks, so the pair may be taken apart.
+    """
+    from app.services.clip_signals import near_dup_hash
+
+    clips = {c["media_id"]: c for c in dup_case()["clips"]}
+    for media_id, recorded in zip(base.MEDIA_IDS, ("m1", "m2", "m3"), strict=True):
+        record = clips[recorded]
+        set_analysis(
+            seeded,
+            media_id,
+            {
+                "duration_s": 8.0,
+                "understanding": {
+                    "subject": f"{media_id} subject",
+                    "speech": {"has_speech": False},
+                },
+                "signals": {
+                    near_dup_hash.NAME: {
+                        "v": near_dup_hash.VERSION,
+                        "data": {
+                            "hashes": record["hashes"],
+                            "sharpness": record["sharpness"],
+                            "mean_luma": record["mean_luma"],
+                        },
+                    }
+                },
+            },
+        )

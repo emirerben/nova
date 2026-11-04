@@ -305,9 +305,19 @@ _REQUIREMENT_KIND = {
 }
 
 
-def brief_updates_for(suggestion: Suggestion, ops: Sequence[Mapping[str, Any]]) -> tuple[Any, ...]:
+_REMOVE_CLIP_WORDS = {"en": "Remove clip {n}", "tr": "{n}. klibi kaldır"}
+
+
+def brief_updates_for(
+    suggestion: Suggestion, ops: Sequence[Mapping[str, Any]], *, language: str = "en"
+) -> tuple[Any, ...]:
     """One typed ``BriefUpdate`` for the tap, so the receipt names what changed and a later
-    replan reads the change as a requirement instead of undoing it. No model, no extraction."""
+    replan reads the change as a requirement instead of undoing it. No model, no extraction.
+
+    The requirement's words are the card's own sentence, except a clip removal whose sentence names
+    the pair it came from ("Keep the better of clips 1, 2"): a requirement must say what the tap
+    did ("Remove clip 1"), or a receipt reads it as keeping both and a replan could bring the
+    removed take back."""
     from app.kria.brief import BriefUpdate  # noqa: PLC0415
 
     first = str(ops[0].get("op") or "") if ops else ""
@@ -338,9 +348,12 @@ def brief_updates_for(suggestion: Suggestion, ops: Sequence[Mapping[str, Any]]) 
                 facts={APPROVED_COPY_FACT: {"target": "opening_title", "text": text}},
             ),
         )
-    return (
-        BriefUpdate(operation="add", kind=kind, scope=scope, description=suggestion.prompt[:300]),
-    )
+    description = suggestion.prompt[:300]
+    ordinal = suggestion.anchor.clip_ordinal
+    if first == "remove_clip" and scope.startswith("clip:") and ordinal is not None:
+        words = _REMOVE_CLIP_WORDS["tr" if language.casefold().startswith("tr") else "en"]
+        description = words.format(n=ordinal)
+    return (BriefUpdate(operation="add", kind=kind, scope=scope, description=description),)
 
 
 # ── Rebuild when the base moved ──────────────────────────────────────────────────────
