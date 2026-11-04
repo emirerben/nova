@@ -58,10 +58,16 @@ Applied cards (a card is one offer)
        tappable once the cause is gone.
   FM23 the suggester writes a new set into the ring between the turn's first read of the thread and
        its row lock: the mark is written from the row as it is under the lock, so that set survives.
+
+Database (collection)
+  FM24 the fixtures above skip when no `*_test` Postgres answers, so a laptop run can look green
+       with none of them having run. Under CI (`CI` set, where the api shards provide `nova_test`
+       migrated to head) a missing or unmigrated database fails collection instead.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 
 import pytest
@@ -74,13 +80,26 @@ from app.database import engine as async_engine
 from app.database import sync_session
 from tests.tasks import kria_pinned_suggestion_harness as h
 
-if not (make_url(settings.database_url).database or "").endswith("_test"):
-    pytest.skip("requires a *_test database", allow_module_level=True)
-try:
-    with sync_session() as _probe:
-        _probe.execute(text("select 1 from creative_brief_versions limit 1"))
-except Exception as _exc:  # noqa: BLE001 - unreachable or unmigrated => skip, never fail CI
-    pytest.skip(f"nova_test Postgres not ready: {type(_exc).__name__}", allow_module_level=True)
+
+def _database_problem() -> str | None:
+    name = make_url(settings.database_url).database or ""
+    if not name.endswith("_test"):
+        return f"refusing to write to non-test database {name!r}"
+    try:
+        with sync_session() as probe:
+            probe.execute(text("select 1 from creative_brief_versions limit 1"))
+    except Exception as exc:  # noqa: BLE001 - whatever is wrong, the fixtures cannot run
+        return f"nova_test Postgres not reachable or not migrated ({type(exc).__name__})"
+    return None
+
+
+_PROBLEM = _database_problem()
+if _PROBLEM and os.environ.get("CI"):
+    # The api shards provide nova_test migrated to head. A skip here would let every fixture
+    # in this module go unrun behind a green check.
+    pytest.fail(f"{_PROBLEM}: the pinned-tap fixtures must run in CI", pytrace=False)
+if _PROBLEM:
+    pytest.skip(_PROBLEM, allow_module_level=True)
 
 
 @pytest_asyncio.fixture(autouse=True)

@@ -58,7 +58,6 @@ from app.services.suggestions.models import (
 )
 from app.tasks.kria_runtime import run_kria_turn
 from tests.kria.test_creative_brief import _MANIFEST
-from tests.kria.test_runtime_postgres_integration import _seed_runtime_project
 
 # A capability map with every lane the five pinned ops touch open. The real derivation closes them
 # unless several deployment flags are on and the sources are fresh; it is not what is under test.
@@ -166,6 +165,10 @@ class Seeded:
 
 def seed_ready_thread(variant: dict[str, Any] | None = None) -> Seeded:
     """A thread whose current render is ready, editable, and followed by no open question."""
+    # Imported here because that module skips itself at import when no test database answers,
+    # which would hide the test module's own CI-aware guard behind a silent skip.
+    from tests.kria.test_runtime_postgres_integration import _seed_runtime_project  # noqa: PLC0415
+
     user_id, thread_id, session_id = _seed_runtime_project()
     variant = variant or ready_variant()
     job_id = uuid.uuid4()
