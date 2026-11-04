@@ -513,7 +513,6 @@ def _seed_pending_legacy_review(session_id, job_id):
 async def test_legacy_queue_and_claim_yield_to_canonical_runtime(approved_publication, monkeypatch):
     from unittest.mock import Mock
 
-    from app.kria import intent_review_tier
     from app.services.creator_sessions import reconcile_render_state
     from app.tasks.creator_quality_review import claim_exact_review
 
@@ -523,7 +522,6 @@ async def test_legacy_queue_and_claim_yield_to_canonical_runtime(approved_public
     monkeypatch.setattr(settings, "kria_intent_review_paid_enabled", True)
     monkeypatch.setattr(settings, "ai_openai_intent_review_budget_usd", 50.0)
     monkeypatch.setattr(settings, "ai_openai_monthly_budget_usd", 500.0)
-    monkeypatch.setattr(intent_review_tier, "_CODE_TIER_CEILING", "review")
     monkeypatch.setattr(settings, "main_creator_agent_review_enabled", True)
     monkeypatch.setattr(settings, "main_creator_agent_quality_review_enabled", True)
     forbidden = Mock(side_effect=AssertionError("Canonical runtime must not queue Gemini"))

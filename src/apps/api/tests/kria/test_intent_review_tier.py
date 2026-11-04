@@ -1,7 +1,7 @@
-"""Failure matrix row 41: a flag flip can never switch on a stage that has not shipped.
+"""Failure matrix row 41: a flag flip never switches on a stage its parent flag has not enabled.
 
 The tier is the only thing the rest of the code reads. A child flag set without its parent
-does nothing, an empty allowlist admits nobody, and the per-PR ceiling caps everything.
+does nothing, and an empty allowlist admits nobody.
 """
 
 import pytest
@@ -27,35 +27,8 @@ def flags(monkeypatch):
         values.update(overrides)
         for name, value in values.items():
             monkeypatch.setattr(settings, name, value)
-        monkeypatch.setattr(tier, "_CODE_TIER_CEILING", overrides.pop("ceiling", "repair"))
 
     return apply
-
-
-def test_shipping_ceiling_caps_every_flag_combination(flags, monkeypatch):
-    flags()
-    for ceiling, expected in (
-        ("evidence", "evidence"),
-        ("review", "review"),
-        ("repair", "repair"),
-    ):
-        monkeypatch.setattr(tier, "_CODE_TIER_CEILING", ceiling)
-        assert tier.intent_review_tier(USER) == expected
-
-
-def test_shipped_ceiling_reviews_but_never_repairs_even_with_every_flag_on(monkeypatch):
-    for name, value in dict(
-        kria_intent_review_enabled=True,
-        kria_intent_review_paid_enabled=True,
-        kria_intent_review_repair_enabled=True,
-        kria_intent_review_user_ids=[USER],
-        openai_api_key="sk-test",
-        ai_openai_intent_review_budget_usd=50.0,
-        ai_openai_monthly_budget_usd=500.0,
-    ).items():
-        monkeypatch.setattr(settings, name, value)
-    assert tier._CODE_TIER_CEILING == "review"
-    assert tier.intent_review_tier(USER) == "review"
 
 
 @pytest.mark.parametrize(
@@ -86,10 +59,10 @@ def test_only_a_reviewing_tier_retires_the_legacy_review_until_the_review_has_no
     flags, monkeypatch
 ):
     flags()
-    monkeypatch.setattr(tier, "_CODE_TIER_CEILING", "evidence")
-    assert tier.intent_review_replaces_legacy(USER) is False
-    monkeypatch.setattr(tier, "_CODE_TIER_CEILING", "review")
     assert tier.intent_review_replaces_legacy(USER) is True
+    monkeypatch.setattr(settings, "kria_intent_review_paid_enabled", False)
+    assert tier.intent_review_replaces_legacy(USER) is False
+    monkeypatch.setattr(settings, "kria_intent_review_paid_enabled", True)
     assert tier.intent_review_replaces_legacy(USER, ended_without_verdict=True) is False
     assert tier.intent_review_replaces_legacy("someone-else") is False
 
@@ -103,6 +76,7 @@ def test_every_flag_is_documented_where_operators_look():
     env = (root / ".env.example").read_text(encoding="utf-8")
     claude = (root / "CLAUDE.md").read_text(encoding="utf-8")
     runbook = (root / "docs/runbooks/kria-intent-review.md").read_text(encoding="utf-8")
+    rollout = (root / "docs/runbooks/intent-review-rollout.md").read_text(encoding="utf-8")
     names = sorted(
         field.upper()
         for field in Settings.model_fields
@@ -112,7 +86,8 @@ def test_every_flag_is_documented_where_operators_look():
     assert "KRIA_INTENT_REVIEW_EVIDENCE_QUEUE" in names
     for name in names:
         assert f"{name}=" in env, name
-        assert name in runbook, name
+        assert name in runbook and name in rollout, name
     assert (
-        "KRIA_INTENT_REVIEW_ENABLED" in claude and "docs/runbooks/kria-intent-review.md" in claude
+        "KRIA_INTENT_REVIEW_ENABLED" in claude
+        and "docs/runbooks/intent-review-rollout.md" in claude
     )

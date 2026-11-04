@@ -37,7 +37,8 @@ Failure modes, written before the staging code (matrix row in parentheses). Each
     draft was left alone); the turn the undo promoted is published only once the parent is
     closed, and a broker that refuses it cannot strand the parent.
   A settlement that credits or blames the repair wrongly (31, 32, 33):
-    `fixed` needs every recorded target met, and at least one target; a low-confidence unmet
+    `fixed` needs every recorded target met at more than a guess, and at least one target; a
+    low-confidence met is a guess and never credits the repair; a low-confidence unmet
     finding is no loss; more high-confidence unmet requirements than before is a loss even
     when none of them was met before.
   A repair the creator or the follow-up review turned down comes back (30, 31):
@@ -82,7 +83,6 @@ from sqlalchemy import select, text
 
 from app.config import settings
 from app.database import AsyncSessionLocal, sync_session
-from app.kria import intent_review_tier as tier
 from app.kria.brief import BriefRequirement
 from app.kria.brief_binding import BriefBinding
 from app.kria.drafts import undo_draft
@@ -142,8 +142,17 @@ TEXT_CUT_OFF = reply(finding("R1", "unmet", "text_cut_off", ["f1"]))
 def repair_on(paid, monkeypatch):
     monkeypatch.setattr(flow, "build_review", prompt.build_review)
     monkeypatch.setattr(settings, "kria_intent_review_repair_enabled", True)
-    monkeypatch.setattr(tier, "_CODE_TIER_CEILING", "repair")
-    return paid
+    yield paid
+    # The beat sweep is global and takes the oldest 25 staged rows: one test's leftover repair
+    # must not crowd the next test's out of it.
+    with sync_session() as db:
+        db.execute(
+            text(
+                "UPDATE creator_generation_reviews SET status = 'repair_abandoned', "
+                "reason = 'test_cleanup' WHERE status = 'repair_staged'"
+            )
+        )
+        db.commit()
 
 
 @pytest.fixture
@@ -243,6 +252,7 @@ async def test_a_high_confidence_wording_drift_stages_a_pending_draft_and_render
         ("system", INTENT_REPAIR_EVENT),
         ("assistant", "draft_applied"),
         ("system", "approval_requested"),
+        ("assistant", "assistant_response"),
     ]
     applied = created[1]
     assert applied.payload["can_undo"] is True and applied.payload["draft_id"] == str(staged.id)
@@ -304,7 +314,7 @@ async def test_a_compile_that_touches_more_than_the_candidates_named_stages_noth
     assert row.repair_draft_id is None and len(drafts(thread)) == count
     assert [s["why"] for s in row.review["disposition"]["suggestions"]] == ["protected"]
     new = [e for e in events(thread) if e.id not in seen]
-    assert [e.event_type for e in new] == [INTENT_REPAIR_EVENT]
+    assert [e.event_type for e in new] == [INTENT_REPAIR_EVENT, "assistant_response"]
     with sync_session() as db:
         turn = db.scalar(
             select(CreatorAgentTurn).where(
@@ -425,16 +435,16 @@ def forbid_the_element(thread_id):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "interfere,why",
+    "interfere,why,receipts",
     [
-        (make_head_move, "head_moved"),
-        (make_thread_busy, "thread_busy"),
-        (open_an_approval, "thread_busy"),
-        (forbid_the_element, "protected"),
+        (make_head_move, "head_moved", 1),
+        (make_thread_busy, "thread_busy", 0),
+        (open_an_approval, "thread_busy", 0),
+        (forbid_the_element, "protected", 1),
     ],
 )
 async def test_a_repair_never_overrides_what_changed_since_the_render(
-    drifted, repair_on, monkeypatch, interfere, why
+    drifted, repair_on, monkeypatch, interfere, why, receipts
 ):
     _, thread, _, _ = drifted
     rid = await ready(drifted, monkeypatch)
@@ -445,7 +455,13 @@ async def test_a_repair_never_overrides_what_changed_since_the_render(
     (suggestion,) = row.review["disposition"]["suggestions"]
     assert suggestion["why"] == why and suggestion["candidate_id"]
     assert row.repair_draft_id is None and len(drafts(thread)) == before
-    assert {e.id for e in events(thread)} == seen
+    added = [e for e in events(thread) if e.id not in seen]
+    assert [(e.role, e.event_type) for e in added] == [
+        ("assistant", "assistant_response")
+    ] * receipts
+    assert all(
+        "Optional" not in r["reason"] for e in added for r in e.payload["requirement_receipts"]
+    )
 
 
 @pytest.mark.asyncio
@@ -465,21 +481,6 @@ async def test_a_repair_flag_turned_off_after_the_review_downgrades_to_a_suggest
     assert await run_async(rid, Provider(COPY_MISMATCH)) == "suggestion"
     (suggestion,) = review_row(rid).review["disposition"]["suggestions"]
     assert suggestion["why"] == "tier_review" and len(drafts(thread)) == count
-
-
-@pytest.mark.asyncio
-async def test_the_code_ceiling_alone_keeps_repair_off_with_every_flag_on(
-    drifted, repair_on, monkeypatch
-):
-    _, thread, _, _ = drifted
-    monkeypatch.setattr(tier, "_CODE_TIER_CEILING", "review")
-    rid = await ready(drifted, monkeypatch)
-    assert review_row(rid).tier == "review"
-    count = len(drafts(thread))
-    assert await run_async(rid, Provider(COPY_MISMATCH)) == "suggestion"
-    row = review_row(rid)
-    assert [s["why"] for s in row.review["disposition"]["suggestions"]] == ["tier_review"]
-    assert row.repair_draft_id is None and len(drafts(thread)) == count
 
 
 @pytest.mark.asyncio
@@ -961,12 +962,13 @@ async def test_a_repair_the_creator_turned_down_is_never_staged_again(
     assert (row.status, row.reason) == settled
 
     later = a_later_review_of_the_same_drift(rid)
-    count, seen = len(drafts(thread)), {e.id for e in events(thread)}
+    staging = (INTENT_REPAIR_EVENT, "draft_applied", "approval_requested")
+    count, seen = len(drafts(thread)), {e.id for e in events(thread, *staging)}
     assert await run_async(later, Provider(COPY_MISMATCH)) == "suggestion"
     follow = review_row(later)
     assert [s["why"] for s in follow.review["disposition"]["suggestions"]] == ["protected"]
     assert follow.repair_draft_id is None and len(drafts(thread)) == count
-    assert {e.id for e in events(thread)} == seen
+    assert {e.id for e in events(thread, *staging)} == seen
 
 
 def declined_for(rid):
@@ -1255,7 +1257,9 @@ async def test_a_follow_up_with_the_same_defect_never_stages_a_second_repair(
         == candidate["candidate_id"]
     )
     assert follow_up.repair_draft_id is None and len(drafts(thread)) == count
-    assert {e.id for e in events(thread)} == seen
+    (settlement,) = [e for e in events(thread) if e.id not in seen]
+    assert settlement.payload["review_id"] == str(rid)
+    assert follow_up.receipt_event_id is None
     parent = review_row(rid)
     assert parent.status == "repair_unverified" and parent.reason == "not_confirmed"
 
@@ -1277,7 +1281,10 @@ async def test_what_a_repair_adds_to_the_chat_is_only_what_old_app_builds_alread
     )
     allowed = set(re.findall(r'"([a-z_]+)"', block.group(1)))
     added = [e for e in events(thread) if e.id not in seen]
-    assert {e.event_type for e in added if e.role == "assistant"} == {"draft_applied"}
+    assert {e.event_type for e in added if e.role == "assistant"} == {
+        "draft_applied",
+        "assistant_response",
+    }
     assert {e.event_type for e in added if e.role == "assistant"} <= allowed
     assert not {e.event_type for e in added if e.role == "system"} & allowed
 
@@ -1548,6 +1555,27 @@ async def test_a_refused_publish_of_the_turn_the_undo_promoted_cannot_strand_the
             two_requirements,
             id="a_repair_with_no_recorded_target_proves_nothing",
         ),
+        pytest.param(
+            [R1_UNMET, R2_MET],
+            None,
+            [finding("R1", "met", frames=["f0"], confidence="low"), R2_MET],
+            ("repair_unverified", "not_confirmed"),
+            False,
+            two_requirements,
+            id="a_low_confidence_pass_on_the_target_is_a_guess_not_a_fix",
+        ),
+        pytest.param(
+            [R1_UNMET, R2_MET],
+            None,
+            [
+                finding("R1", "met", frames=["f0"], confidence="low"),
+                finding("R2", "met", frames=["f1"], confidence="low"),
+            ],
+            ("repair_unverified", "rereview_unavailable"),
+            False,
+            two_requirements,
+            id="a_follow_up_whose_passes_are_all_guesses_confirms_nothing",
+        ),
     ],
 )
 async def test_a_repair_is_credited_or_blamed_only_as_the_follow_up_review_shows(
@@ -1638,7 +1666,12 @@ async def test_a_reply_the_draft_path_would_write_instead_of_a_draft_never_reach
     assert [s["why"] for s in row.review["disposition"]["suggestions"]] == ["protected"]
     assert row.repair_draft_id is None and len(drafts(thread)) == count
     created = [e for e in events(thread) if e.id not in seen]
-    assert [(e.role, e.event_type) for e in created] == [("system", INTENT_REPAIR_EVENT)]
+    assert [(e.role, e.event_type) for e in created] == [
+        ("system", INTENT_REPAIR_EVENT),
+        ("assistant", "assistant_response"),
+    ]
+    assert created[1].payload["turn_value"] == "intent_review"
+    assert "I didn't change anything" in created[1].content
     with sync_session() as db:
         turn = db.scalar(
             select(CreatorAgentTurn).where(

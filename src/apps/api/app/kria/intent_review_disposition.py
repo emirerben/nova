@@ -20,6 +20,7 @@ from app.agents._schemas.intent_review import (
     IntentFinding,
     IntentReviewOutput,
     InvalidReviewOutput,
+    counts_as_met,
     parse_review_output,
 )
 from app.kria.intent_review_catalog import ReviewCatalog
@@ -235,13 +236,12 @@ def evaluate_review(
 ) -> Evaluation:
     """Parse, validate and dispose. Raises `InvalidReviewOutput` when the review is void."""
     findings = validate_review_output(parse_review_output(raw_text), catalog)
-    judged = any(
-        f.verdict == "met" or (f.verdict == "unmet" and f.confidence != "low") for f in findings
-    )
+    passed = any(counts_as_met(f.verdict, f.confidence) for f in findings)
+    judged = passed or any(f.verdict == "unmet" and f.confidence != "low" for f in findings)
     if not judged:
         return Evaluation("unavailable", "nothing_verifiable", findings, None)
     disposition = dispose(findings, catalog, tier=tier, repair_preconditions=repair_preconditions)
-    if disposition.outcome == "no_findings" and not any(f.verdict == "met" for f in findings):
+    if disposition.outcome == "no_findings" and not passed:
         return Evaluation("unavailable", "nothing_verifiable", findings, disposition)
     status = "repair_staged" if disposition.outcome == "repair" else disposition.outcome
     return Evaluation(status, "reviewed", findings, disposition)

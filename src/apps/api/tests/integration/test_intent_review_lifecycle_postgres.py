@@ -60,7 +60,6 @@ from app.agents._runtime import (
 )
 from app.config import settings
 from app.database import sync_engine, sync_session
-from app.kria import intent_review_tier as tier
 from app.kria.render_review_context import TimestampedObservation
 from app.models import (
     CreationThread,
@@ -188,7 +187,6 @@ def paid(monkeypatch):
         ai_unknown_reservation_ttl_seconds=900,
     ).items():
         monkeypatch.setattr(settings, name, value)
-    monkeypatch.setattr(tier, "_CODE_TIER_CEILING", "review")
     builder = Builder()
     monkeypatch.setattr(flow, "build_review", builder.build)
     publish = Mock()
@@ -466,17 +464,16 @@ async def test_review_task_runs_the_flow_under_the_job_trace(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "ceiling,overrides,expected_tier,published",
+    "overrides,expected_tier,published",
     [
-        ("evidence", {}, "evidence", False),
-        ("review", {}, "review", True),
-        ("review", {"kria_intent_review_paid_enabled": False}, "evidence", False),
+        ({"kria_intent_review_paid_enabled": False}, "evidence", False),
+        ({}, "review", True),
+        ({"kria_intent_review_repair_enabled": True}, "repair", True),
     ],
 )
 async def test_admission_stamps_tier_and_only_reviewing_tiers_publish(
-    approved_publication, paid, monkeypatch, ceiling, overrides, expected_tier, published
+    approved_publication, paid, monkeypatch, overrides, expected_tier, published
 ):
-    monkeypatch.setattr(tier, "_CODE_TIER_CEILING", ceiling)
     for name, value in overrides.items():
         monkeypatch.setattr(settings, name, value)
     rid, _, _ = await ready_review(approved_publication, monkeypatch)
@@ -1280,7 +1277,7 @@ async def test_reconcile_republishes_a_lost_enqueue_and_expires_a_late_one(
 async def test_evidence_tier_rows_are_never_republished_or_expired(
     approved_publication, paid, monkeypatch
 ):
-    monkeypatch.setattr(tier, "_CODE_TIER_CEILING", "evidence")
+    monkeypatch.setattr(settings, "kria_intent_review_paid_enabled", False)
     rid, _, _ = await ready_review(approved_publication, monkeypatch)
     edit_row(rid, evidence_ready_at=datetime.now(UTC) - timedelta(seconds=600))
     reconcile_generation_reviews()

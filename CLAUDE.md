@@ -89,7 +89,7 @@ Localhost sign-in bypasses Google consent via the `dev-login` NextAuth provider,
 
 ### Local-render parity (high-fidelity, slow iteration)
 
-Use `make local-render` when you need byte-equivalent output before merging a render-affecting change — it runs the prod Docker image with matching FFmpeg and fonts. Usage, divergence sources, cache-busting: `docs/runbooks/local-render.md`.
+Use `make local-render` for byte-equivalent output before merging a render-affecting change (prod image, matching FFmpeg and fonts). Usage, divergence sources, cache-busting: `docs/runbooks/local-render.md`.
 
 ## Quality checks
 - Backend tests: `cd src/apps/api && pytest` (asyncio mode auto; tests live in `src/apps/api/tests/`)
@@ -129,7 +129,6 @@ python scripts/admin.py --prod POST templates/abc/publish                     # 
 - Hook window: first 2-3 seconds must create a question in the viewer's mind
 - Processing is ASYNC — a 5-min source video takes 2-5 min to process
 - Jobs polled via GET /jobs/:id/status or websocket
-- Raw uploads and processed outputs are NEVER committed to git
 - Read agents/VIDEO_CONTEXT.md for full video domain context and FFmpeg patterns
 - Read agents/DECISIONS.md for why key choices were made
 
@@ -140,8 +139,8 @@ python scripts/admin.py --prod POST templates/abc/publish                     # 
 - Signed URLs stay short-lived (`_variants_for_response` refreshes ready generative URLs); authenticated generative uploads have 24h cleanup receipts until atomic Job attachment.
 
 ## ⚠️ Anti-pattern: do NOT use MoviePy / VideoFileClip
-VideoFileClip(path) buffers the entire video into RAM. On a 2GB source file this crashes.
-Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
+VideoFileClip(path) buffers the whole video in RAM (a 2GB source crashes).
+Use subprocess FFmpeg directly; patterns in agents/VIDEO_CONTEXT.md.
 
 ## Music beat-sync pipeline
 - Track lifecycle: `pending` → `analyzing` → `ready` | `failed`; only `ready`+`published` tracks appear in the public gallery
@@ -219,7 +218,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `SILENCE_CUT_ENABLED` / `RETAKE_CUT_ENABLED` — default `false`; speech paths only, fail-open. **"cleanup cut a word" is a guard bug, not this lever.** Runbook: `docs/runbooks/chat-speech-cleanup-rollout.md` (fingerprint levers: DECISIONS.md "CLAUDE.md flag detail"); pins `test_silence_cut*.py`; plans/010/019/021.
 - `PHONE_TALKING_HEAD_RENDERING_ENABLED` — default `false`. 2+-clip self-narration renders on the phone (speaker clip + muted cutaways). `docs/reviews/kri-132/phone-format-matrix.md`.
 - `USER_SONG_MONTAGE_ENABLED` — default `true` (KRI-374). Creator song montages; off hides `media.song` + refuses `user_song`. Needs `musicBed`+`audioMix` verified. Apply: fly secret `…=false` (api+worker) + restart; `phone-rendering.md`. Same for `SONG_CAPTIONS_ENABLED` (lyrics) and `SONG_CAPTIONS_AVAILABLE_BY_DEFAULT` (unasked = hidden).
-- `KRIA_INTENT_REVIEW_ENABLED` / `_PAID_ENABLED` / `_REPAIR_ENABLED` / `_USER_IDS` — off / `[]`: paid frame review (KRI-1171); tier decided only in `kria/intent_review_tier.py`. `docs/runbooks/kria-intent-review.md`.
+- `KRIA_INTENT_REVIEW_ENABLED` / `_PAID_ENABLED` / `_REPAIR_ENABLED` / `_USER_IDS` — off / `[]` (KRI-1171): paid frame review of the finished video; a repair needs the creator's Approve tap. A child flag needs its parent; tier decided only in `kria/intent_review_tier.py`. Also `_MAX_USD`, `_CANARY_ID`, `AI_OPENAI_INTENT_REVIEW_BUDGET_USD`. Rollout and kill: `docs/runbooks/intent-review-rollout.md`.
 - `CAPTION_ANIMATION_ENABLED` — default `true` (KRI-1007): caption entrance/exit/loop (protocol 24, `authoredText`); off = old captions. `phone-rendering.md`.
 - `SPEAKER_BACKGROUND_ENABLED` — default **`false`**; token/protocol: `speakerBackground` 27, `speakerBackgroundWindows` 32, `speakerBackgroundColor` 34. `docs/pipelines/speaker-background.md`.
 - `MEDIA_TILT_ENABLED` — default **`false`** (KRI-1134). Clip tilt + backdrop; needs `clipTilt` verified + protocol ≥28. phone-rendering.md.

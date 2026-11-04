@@ -44,7 +44,6 @@ from app.database import sync_session
 from app.kria.intent_review_catalog import ReviewCatalog
 from app.kria.intent_review_disposition import evaluate_review
 from app.kria.intent_review_tier import intent_review_tier, lower_tier, tier_rank
-from app.kria.review_canon import digest as canonical_digest
 from app.models import CreatorGenerationReview
 from app.services import ai_cost_control as costs
 from app.services.bounded_media_review import (
@@ -57,13 +56,14 @@ from app.services.bounded_media_review import (
     reservation_json,
     usage_meter,
 )
+from app.services.intent_review_fence import check_authority
+from app.services.intent_review_post import post_intent_review_outcome
 from app.services.intent_review_prompt import (
     FrameView,
     NothingToReview,
     build_review,
 )
 from app.services.pipeline_trace import pipeline_trace_for, record_pipeline_event
-from app.services.render_review_admission import _inputs, load_review_rows
 
 log = structlog.get_logger()
 
@@ -75,9 +75,6 @@ REPUBLISH_AFTER_S = 30
 MAX_REVIEW_ATTEMPTS = 2
 MAX_RAW_OUTPUT_CHARS = 16_384
 _URLSAFE = str.maketrans("-_", "+/")
-_OWNERSHIP_REASONS = frozenset(
-    {"authority_changed", "approved_binding_missing_or_changed", "authority_missing"}
-)
 _FAILURE_STATUS = {
     "context_too_large": ("unavailable", "context_too_large"),
     "budget_review": ("exhausted", "budget_review"),
@@ -123,28 +120,6 @@ def _lock_row(db, review_id) -> CreatorGenerationReview | None:
         .with_for_update()
         .execution_options(populate_existing=True)
     )
-
-
-def check_authority(db, row) -> tuple[Any, str | None]:
-    """Lock the authority graph (before the review row) and say why it is no longer current."""
-    try:
-        rows = load_review_rows(db, row.execution_id, locked=True)
-        current = _inputs(rows)
-    except ValueError as exc:
-        reason = "ownership_changed" if str(exc) in _OWNERSHIP_REASONS else "generation_changed"
-        return None, reason
-    except (TypeError, KeyError, AttributeError, StopIteration):
-        return None, "generation_changed"
-    stored = row.inputs
-    if (
-        canonical_digest(current) == row.input_digest
-        and canonical_digest(stored) == row.input_digest
-    ):
-        return rows, None
-    changed_owner = current.get("owner_epoch") != stored.get("owner_epoch") or (
-        (current.get("binding") or {}).get("digest") != (stored.get("binding") or {}).get("digest")
-    )
-    return rows, "ownership_changed" if changed_owner else "generation_changed"
 
 
 def paid_call_key_for(review_id, refs: ReviewRefs) -> str:
@@ -600,14 +575,6 @@ def _stage_repair_if_pending(review_id, outcome: str) -> str:
     return stage_intent_repair(review_id, token=token)
 
 
-def post_intent_review_outcome(review_id) -> None:
-    """Shadow mode: the outcome is stored and traced, and the creator is shown nothing.
-
-    The creator-facing receipt and question arrive with the posting stage; until then the
-    deterministic post-render receipt stands, so a review can never say more than it checked.
-    """
-
-
 def _emit_trace(review_id, outcome: str) -> None:
     with sync_session() as db:
         row = db.get(CreatorGenerationReview, review_id)
@@ -772,15 +739,18 @@ def recover_intent_reviews(deadline: float | None = None) -> int:
             return handled
         _recover_expired(identifier)
         handled += 1
+    from app.services.intent_review_post import post_unposted_outcomes
     from app.services.intent_review_repair_flow import recover_repair_staged
 
-    return handled + recover_repair_staged()
+    handled += recover_repair_staged()
+    return handled + post_unposted_outcomes()
 
 
 def _recover_expired(review_id) -> str:
     outcome = _stage_repair_if_pending(review_id, _resolve_expired(review_id))
     if outcome not in {"ignored", "evidence_ready"}:
         _emit_trace(review_id, outcome)
+        post_intent_review_outcome(review_id)
     return outcome
 
 

@@ -1002,6 +1002,10 @@ Proof: scorecard check 7 (no model) and check 8 (every recorded live composer an
 `tests/kria/test_29ekim_post_approval.py`. To capture new answers (paid, development ledger, $1 cap,
 needs a throwaway migrated database), run `scripts/kria/capture_29_ekim_post_approval.py`.
 
+## Intent review of the finished video (KRI-1171)
+
+After a render is published, one paid look at a few frames of it (flag-gated, off by default) can add chat events to the thread: an `assistant_response` receipt (rows are ordinary `requirement_receipts` with `turn_value: "intent_review"`, skipped by `GET brief`), at most one `assistant_question`, and a repair staged through `_complete_draft_turn` under a system source event the planner never reads. Pipeline: [`intent-review`](intent-review.md). The runtime contract it relies on: a background event bumps the thread revision, so it is written only into a quiet thread (no creator message since the render, no turn in flight), under the thread lock, once per status.
+
 ## Local proof
 
 From a prepared worktree:

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.22.0] - 2026-11-03
+
+### Changed
+- feat(kria): tell the creator what the review found, and the qualification harness (KRI-1171) (#2080) <!-- release-pr: 2080 -->
+
+## [0.84.21.0] - 2026-11-03
+
+### Fixed
+- fix(kria): Green 3 caption look, no music, cleanup at approval and background count (KRI-1177, KRI-1164, KRI-1178) (#2089) <!-- release-pr: 2089 -->
+
 ## [0.84.20.0] - 2026-11-03
 
 ### Changed
