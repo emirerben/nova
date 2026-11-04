@@ -887,7 +887,7 @@ async def submit_turn(
         replay_turn_id = str(existing.id)
         replay_revision = int(thread.revision)
         replay_status = existing.status
-        replay_plan = existing.plan_json
+        replay_plan = getattr(existing, "plan_json", None)
         should_publish = replay_status == "pending"
         await db.rollback()
         replayed_refusal = (
