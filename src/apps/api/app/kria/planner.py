@@ -6442,7 +6442,14 @@ async def plan_pinned_suggestion_turn(
     (``tasks/kria_runtime._complete_draft_turn``) is the only apply path and re-checks the
     editor state inside its row lock (``suggestion_pin``).
     """
+    from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
     from app.services.suggestions import pinned  # noqa: PLC0415
+    from app.services.suggestions.models import (  # noqa: PLC0415
+        BriefUpdateAction,
+        CopyDecisionAction,
+        EditorOpsAction,
+        ItemSettingAction,
+    )
 
     item = await db.get(PlanItem, item_id)
     if item is None:
@@ -6490,12 +6497,22 @@ async def plan_pinned_suggestion_turn(
     if resolved.card is None:
         return _no_longer_fits(resolved.reason or pinned.UNRESOLVED)
     card = resolved.card
-    action = card.suggestion.action
+    suggestion = card.suggestion
+    action = suggestion.action
+    restate = pinned.restates_strategy(action)
     ops = pinned.editor_ops(action)
-    if ops is None:
+    allow = pinned.PINNED_OP_ALLOW
+    if ops is None and (ops := pinned.copy_ops(action)) is not None:
+        allow = pinned.COPY_OP_ALLOW
+    if ops is None and not restate:
         return _no_longer_fits(pinned.ACTION_UNSUPPORTED)
-    if pinned.disallowed_op(ops) is not None or not pinned.kind_enabled(card.suggestion):
+    if (ops is not None and pinned.disallowed_op(ops, allow) is not None) or (
+        not pinned.kind_enabled(suggestion)
+    ):
         return _no_longer_fits(pinned.OP_NOT_ALLOWED)
+    if restate and editor_state_has_lanes(editor_state):
+        # The creator's hand edits are not saved yet. Restating the plan would re-plan over them.
+        return _no_longer_fits(pinned.UNSAVED_EDITS)
 
     target = await _load_editor_target(
         db, thread_id=thread_id, item=item, **_state_kw(editor_state)
@@ -6514,50 +6531,82 @@ async def plan_pinned_suggestion_turn(
         # A failed render's correction carries a pinned recovery basis only the copilot path mints.
         return _no_longer_fits(pinned.TARGET_UNAVAILABLE)
 
-    exact = pinned.snapshot_digest(target.snapshot) == action.base_digest
+    ctx = None
+    if isinstance(action, EditorOpsAction):
+        exact = pinned.snapshot_digest(target.snapshot) == action.base_digest
+    else:
+        # No base digest to compare: the stored action is exact when its kind's own witness
+        # accepts it against the facts as they are now.
+        ctx = await pinned.ready_context(
+            db, thread=thread, item=item, manifest=manifest, target=target, protocol=client_protocol
+        )
+        exact = pinned.proves(suggestion, action, ctx)
     if not exact:
-        # The editor moved since the card was served: build it again from the registry and the
+        # The edit moved since the card was served: build it again from the registry and the
         # current facts. A card the registry cannot prove now is a card that no longer fits, and
         # so is one a tap already applied: its rebuild would be a new change, not the offer.
         if pinned.is_consumed(thread.state, set_id, suggestion_id):
             return _no_longer_fits(pinned.CONSUMED)
         rebuilt = await pinned.rebuild_action(
             db,
-            suggestion=card.suggestion,
+            suggestion=suggestion,
             thread=thread,
             item=item,
             manifest=manifest,
             target=target,
             protocol=client_protocol,
+            ctx=ctx,
         )
-        ops = pinned.editor_ops(rebuilt) if rebuilt is not None else None
-        if not ops or pinned.disallowed_op(ops) is not None:
+        if rebuilt is None or type(rebuilt) is not type(action):
             return _no_longer_fits(pinned.BASE_MOVED)
-    parsed = pinned.parse_ops(ops, target.snapshot)
-    if parsed is None:
-        return _no_longer_fits(pinned.OP_REFUSED)
-    draft_plan = adapt_editor_action(
-        reply=say(en=_PHONE_STAGED_REPLY, tr=_PHONE_STAGED_REPLY_TR), ops=parsed
-    )
-    if draft_plan.mode != "act":
-        return _no_longer_fits(pinned.OP_REFUSED)
+        action = rebuilt
+        ops = pinned.editor_ops(action)
+        if ops is None:
+            ops = pinned.copy_ops(action)
+        if (ops is None and not restate) or (
+            ops is not None and pinned.disallowed_op(ops, allow) is not None
+        ):
+            return _no_longer_fits(pinned.BASE_MOVED)
 
     brief_fields: dict[str, Any] = {}
+    parsed: list[dict] | None = None
+    typed_updates: tuple[Any, ...] = ()
+    if ops is not None:
+        parsed = pinned.parse_ops(ops, target.snapshot)
+        if parsed is None:
+            return _no_longer_fits(pinned.OP_REFUSED)
+        plan_out = adapt_editor_action(
+            reply=say(en=_PHONE_STAGED_REPLY, tr=_PHONE_STAGED_REPLY_TR), ops=parsed
+        )
+        if plan_out.mode != "act":
+            return _no_longer_fits(pinned.OP_REFUSED)
+        typed_updates = pinned.brief_updates_for(suggestion, parsed)
+        route = "editor_ops"
+    else:
+        strategy = await pinned.restated_strategy(db, thread_id=thread_id)
+        if strategy is None:
+            return _no_longer_fits(pinned.NO_STRATEGY)
+        plan_out = _restated_strategy_plan(strategy, suggestion.prompt)
+        typed_updates = pinned.restate_updates(suggestion, action)
+        route = "replan"
     if settings.creative_brief_for(creator_id):
         # The tap's typed requirement, so the receipt names what changed and a later replan
         # reads it as a requirement. Deterministic: no extraction, no deferred brief.
         try:
             prior_brief = await load_latest_brief(db, thread_id)
-            updates = pinned.brief_updates_for(card.suggestion, parsed)
             ids = [
-                req.id for req in apply_updates(prior_brief, updates, source_turn_id=None).live()
+                req.id
+                for req in apply_updates(prior_brief, typed_updates, source_turn_id=None).live()
             ]
         except (BriefCoverageError, BriefUpdateBatchError, ValidationError, ValueError):
             log.warning("suggestion_pin.brief_unavailable", thread_id=str(thread_id), exc_info=True)
             return _no_longer_fits(pinned.BRIEF_UNAVAILABLE)
+        current_version = prior_brief.version if prior_brief else 0
+        if isinstance(action, BriefUpdateAction) and action.expected_version != current_version:
+            return _no_longer_fits(pinned.BASE_MOVED)
         brief_fields = {
-            "brief_updates": updates,
-            "brief_route": "editor_ops",
+            "brief_updates": typed_updates,
+            "brief_route": route,
             "brief_clip_ids": tuple(str(media.media_id) for media in manifest.media),
             "brief_manifest": manifest,
             "brief_coverage": {
@@ -6566,31 +6615,80 @@ async def plan_pinned_suggestion_turn(
                 "enforced_ids": [],
                 "unresolved_ids": ids,
             },
-            "brief_expected_version": prior_brief.version if prior_brief else 0,
+            "brief_expected_version": current_version,
         }
+    elif isinstance(action, BriefUpdateAction):
+        return _no_longer_fits(pinned.BRIEF_UNAVAILABLE)
+    from app.services.creative_copy_decisions import (  # noqa: PLC0415
+        media_digest,
+        suggestion_resolution,
+    )
+
+    extra: dict[str, Any] = {}
+    pin_state: dict[str, Any] = {}
+    if isinstance(action, CopyDecisionAction):
+        extra["creative_copy_resolution"] = suggestion_resolution(
+            text=action.text,
+            dependency_digest=media_digest(snapshot_media(item)),
+            set_id=set_id,
+            suggestion_id=suggestion_id,
+        )
+    if restate:
+        extra["media_snapshot"] = snapshot_media(item)
+        pin_state["head_hash"] = await pinned.head_hash(db, thread_id=thread_id, ctx=ctx)
+        if isinstance(action, ItemSettingAction):
+            pin_state["setting"] = {"field": action.field, "value": action.value}
+    else:
+        pin_state["projected_digest"] = pinned.projected_digest(target.variant)
     log.info(
         "suggestion_pin.planned",
         thread_id=str(thread_id),
-        kind=card.suggestion.kind,
+        kind=suggestion.kind,
         exact=exact,
-        ops=[op.get("op") for op in parsed],
+        lane="restate" if restate else "ops",
+        ops=[op.get("op") for op in parsed or []],
     )
     return PlannedKriaTurn(
-        plan=draft_plan.model_copy(
-            update={
-                "diagnostics": _record("planned", kind=card.suggestion.kind, exact=exact),
-            }
+        plan=plan_out.model_copy(
+            update={"diagnostics": _record("planned", kind=suggestion.kind, exact=exact)}
         ),
         manifest_hash=manifest.manifest_hash,
         context_hash=manifest.context_hash,
         suggestion_pin={
             "set_id": set_id,
             "id": suggestion_id,
-            "kind": card.suggestion.kind,
+            "kind": suggestion.kind,
             "exact": exact,
-            "projected_digest": pinned.projected_digest(target.variant),
+            **pin_state,
         },
         **brief_fields,
+        **extra,
+    )
+
+
+def _restated_strategy_plan(strategy: dict[str, Any], summary: str) -> KriaTurnPlan:
+    """The thread's current plan as a draft plus its exact render approval: the route that
+    re-reads the brief (a clip's sound, the speech-cleanup setting). The plan itself is not
+    changed; the typed update and the item setting are what the tap adds."""
+    return KriaTurnPlan(
+        mode="act",
+        turn_value="action",
+        evidence_ids=["trusted-project-manifest"],
+        intents=[
+            {
+                "intent_id": "apply-strategy",
+                "tool_name": "draft.apply_strategy",
+                "tool_version": 1,
+                "arguments": {"strategy": strategy, "summary": summary},
+            },
+            {
+                "intent_id": "request-render",
+                "tool_name": "render.request",
+                "tool_version": 1,
+                "arguments": {},
+                "depends_on": ["apply-strategy"],
+            },
+        ],
     )
 
 

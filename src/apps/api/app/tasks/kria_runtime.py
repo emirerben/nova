@@ -237,6 +237,8 @@ class _Completion:
     successor_turn_id: str | None = None
     requeue_turn_id: str | None = None
     response_only: bool = False
+    # A speech-cleanup analysis a pinned filler tap queued: published once its commit has landed.
+    publish_analysis_id: uuid.UUID | None = None
 
 
 class ApprovedCreatorRequestTooLongError(ValueError):
@@ -514,6 +516,25 @@ def _snapshot(thread: CreationThread) -> dict[str, Any]:
     }
 
 
+def _pin_refusal_signal(pin: dict[str, Any] | None, reason: str) -> dict[str, Any]:
+    """The typed record of a refused pin: the assistant event's ``suggestion_pin`` payload."""
+    pin = pin or {}
+    return {
+        "set_id": pin.get("set_id"),
+        "id": pin.get("id"),
+        "outcome": "refused",
+        "reason": reason,
+    }
+
+
+def planned_pin_refusal(plan: KriaTurnPlan) -> dict[str, Any] | None:
+    """The refusal a pinned plan recorded on its diagnostics (planner side), else None."""
+    record = (plan.diagnostics or {}).get("suggestion_pin")
+    if not isinstance(record, dict) or record.get("outcome") != "refused":
+        return None
+    return _pin_refusal_signal(record, str(record.get("reason") or ""))
+
+
 def _pinned_tap_no_longer_fits(
     turn_id: uuid.UUID,
     *,
@@ -536,6 +557,7 @@ def _pinned_tap_no_longer_fits(
         suggestion_id=pin.get("id"),
         reason=reason,
     )
+    signal = _pin_refusal_signal(pin, reason)
     completed = _complete_response_turn(
         turn_id,
         lease_owner=lease_owner,
@@ -545,17 +567,18 @@ def _pinned_tap_no_longer_fits(
             mode="respond",
             turn_value="recovery",
             response=no_longer_fits_reply(),
-            diagnostics={
-                "suggestion_pin": {
-                    "set_id": pin.get("set_id"),
-                    "id": pin.get("id"),
-                    "outcome": "refused",
-                    "reason": reason,
-                }
-            },
+            diagnostics={"suggestion_pin": signal},
         ),
+        pinned_refusal=signal,
     )
     return replace(completed, response_only=True)
+
+
+def _publish_cleanup_analysis(analysis_id: uuid.UUID | None) -> None:
+    """Best effort, after the commit that keeps the row (Beat owns durable recovery)."""
+    from app.services.plan_item_media import publish_preflight_after_commit  # noqa: PLC0415
+
+    publish_preflight_after_commit(analysis_id)
 
 
 def _mark_pinned_card_applied(
@@ -594,6 +617,7 @@ def _complete_response_turn(
     creative_copy_resolution: dict | None = None,
     brief_delegated: bool = False,
     brief_delegation_read_ids: tuple[str, ...] = (),
+    pinned_refusal: dict[str, Any] | None = None,
 ) -> _Completion:
     with sync_session() as db:
         turn = db.execute(
@@ -616,6 +640,21 @@ def _complete_response_turn(
             turn.lease_expires_at = None
             db.commit()
             return _Completion(committed=False, requeue_turn_id=str(turn.id))
+        if pinned_refusal is not None:
+            # In this transaction: the card is marked refused on its ring entry, so the next read
+            # hides it and mints a new set (`pinned.mark_refused`). A refusal that says nothing
+            # about the card (a render in flight) leaves it tappable.
+            from app.services.suggestions import pinned as _pinned  # noqa: PLC0415
+
+            if pinned_refusal.get("reason") not in _pinned.TRANSIENT_REASONS and (
+                marked := _pinned.mark_refused(
+                    thread.state,
+                    str(pinned_refusal.get("set_id") or ""),
+                    str(pinned_refusal.get("id") or ""),
+                    turn.id,
+                )
+            ):
+                thread.state = marked
         if brief_expected_version is not None:
             current_brief = load_latest_brief_sync(db, thread.id)
             if brief_expected_version != (current_brief.version if current_brief else 0):
@@ -697,6 +736,8 @@ def _complete_response_turn(
                     if creative_copy_resolution
                     else {}
                 ),
+                # A refused tap, typed: the phone reads this instead of matching the reply text.
+                **({"suggestion_pin": pinned_refusal} if pinned_refusal is not None else {}),
             },
         )
         turn.plan_json = plan.model_dump(mode="json")
@@ -1821,6 +1862,64 @@ def _complete_draft_turn(
             )
             .with_for_update()
         ).scalar_one_or_none()
+        pin = planned.suggestion_pin
+        publish_analysis_id: uuid.UUID | None = None
+        if pin is not None:
+            # Every pinned tap: the brief it was typed against must still be the brief now. A
+            # moved brief is a card that no longer fits, not a "please retry" failure.
+            from app.services.suggestions import pinned as _pinned  # noqa: PLC0415
+
+            current_for_pin = load_latest_brief_sync(db, thread.id)
+            if planned.brief_expected_version is not None and planned.brief_expected_version != (
+                current_for_pin.version if current_for_pin else 0
+            ):
+                db.rollback()
+                return _pinned_tap_no_longer_fits(
+                    turn_id,
+                    lease_owner=lease_owner,
+                    lease_epoch=lease_epoch,
+                    claimed_thread_revision=claimed_thread_revision,
+                    planned=planned,
+                    reason=_pinned.BASE_MOVED,
+                )
+        if pin is not None and apply_intent.tool_name == "draft.apply_strategy":
+            # A restate (a typed brief update, an item setting): the plan it restates and the
+            # head draft it replaces must still be the ones the tap was planned against.
+            if (head.snapshot_hash if head is not None else None) != pin.get("head_hash"):
+                db.rollback()
+                return _pinned_tap_no_longer_fits(
+                    turn_id,
+                    lease_owner=lease_owner,
+                    lease_epoch=lease_epoch,
+                    claimed_thread_revision=claimed_thread_revision,
+                    planned=planned,
+                    reason=_pinned.BASE_MOVED,
+                )
+            setting = pin.get("setting")
+            if setting:
+                from app.services.suggestions.kinds.filler_words import (  # noqa: PLC0415
+                    apply_item_setting,
+                )
+                from app.services.suggestions.models import ItemSettingAction  # noqa: PLC0415
+
+                outcome = apply_item_setting(db, item, ItemSettingAction(**setting))
+                if not outcome.applied:
+                    if outcome.publish_analysis_id is not None:
+                        # The scheduler re-queued the analysis (and put the setting back). Rolling
+                        # back would orphan that row, so keep it and hand it to the publisher.
+                        db.commit()
+                        _publish_cleanup_analysis(outcome.publish_analysis_id)
+                    else:
+                        db.rollback()
+                    return _pinned_tap_no_longer_fits(
+                        turn_id,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                        claimed_thread_revision=claimed_thread_revision,
+                        planned=planned,
+                        reason=outcome.reason or _pinned.SETTING_REFUSED,
+                    )
+                publish_analysis_id = outcome.publish_analysis_id
         if apply_intent.tool_name == "draft.apply_editor_ops":
             variant = (
                 next(
@@ -3412,7 +3511,9 @@ def _complete_draft_turn(
             thread_id = thread.id
             db.commit()
             return _Completion(
-                committed=True, successor_turn_id=_promote_queued_successor_sync(thread_id)
+                committed=True,
+                successor_turn_id=_promote_queued_successor_sync(thread_id),
+                publish_analysis_id=publish_analysis_id,
             )
 
         render_execution = CreatorAgentExecution(
@@ -3553,7 +3654,7 @@ def _complete_draft_turn(
         turn.lease_owner = None
         turn.lease_expires_at = None
         db.commit()
-        return _Completion(committed=True)
+        return _Completion(committed=True, publish_analysis_id=publish_analysis_id)
 
 
 def _research_preview_payload(draft_research: Any) -> dict[str, Any]:
@@ -4802,6 +4903,9 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     brief_delegation_read_ids=planned.brief_delegation_read_ids,
                     brief_coverage=planned.brief_coverage,
                     brief_expected_version=planned.brief_expected_version,
+                    pinned_refusal=(
+                        planned_pin_refusal(planned.plan) if pinned_tap is not None else None
+                    ),
                 )
             else:
                 try:
@@ -4916,6 +5020,9 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
             )
             if thought_publisher is not None:
                 thought_publisher.complete()
+            if completion.publish_analysis_id is not None:
+                # A filler tap queued a cleanup analysis in the commit that just landed.
+                _publish_cleanup_analysis(completion.publish_analysis_id)
             if pinned_tap is not None and (
                 planned.plan.mode == "respond" or completion.response_only
             ):
