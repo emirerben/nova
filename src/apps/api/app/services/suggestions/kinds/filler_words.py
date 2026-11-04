@@ -274,7 +274,12 @@ def apply_item_setting(db: Any, item: Any, action: ItemSettingAction) -> Setting
     (the order ``PATCH`` takes) and runs the normal approval/render flow afterwards; the dispatch
     reads the setting and stamps ``required_v1``. The evidence is read again here, so a card
     served for an analysis that has since been replaced, declined or outgrown is refused instead
-    of flipping a setting the creator was never offered. A refusal writes nothing.
+    of flipping a setting the creator was never offered. A refusal on the evidence writes nothing.
+
+    Scheduling can still re-open the analysis (a changed source policy, or Gemini's transcript
+    contradicting the language whisper heard) and that clears the cleanup choice. Then the tap did
+    not take: the outcome is ``analysis_redone``, ``user_edited`` is put back, and the queued
+    analysis is still handed back so the caller publishes it (its commit must keep that row).
     """
     if action.field != SETTING_FIELD or action.value is not True:
         return SettingOutcome(False, "unsupported_setting")
@@ -284,11 +289,16 @@ def apply_item_setting(db: Any, item: Any, action: ItemSettingAction) -> Setting
     reason = unoffered_reason(load_evidence_sync(db, item))
     if reason is not None:
         return SettingOutcome(False, reason)
+    was_user_edited = item.user_edited
     item.speech_cleanup_enabled = True
     item.user_edited = True
     from app.services.speech_cleanup_preflight import schedule_item_preflight_sync  # noqa: PLC0415
 
-    return SettingOutcome(True, publish_analysis_id=schedule_item_preflight_sync(db, item))
+    analysis_id = schedule_item_preflight_sync(db, item)
+    if item.speech_cleanup_enabled is not True:
+        item.user_edited = was_user_edited
+        return SettingOutcome(False, "analysis_redone", publish_analysis_id=analysis_id)
+    return SettingOutcome(True, publish_analysis_id=analysis_id)
 
 
 KIND = SuggestionKind(

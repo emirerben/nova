@@ -425,11 +425,8 @@ def test_tap_flips_the_setting_and_the_normal_dispatch_reads_it(served):
     # A card served earlier and tapped again cannot flip it twice.
     again = apply_item_setting(object(), item, TAP)
     assert not again.applied and again.reason == "already_enabled"
-    assert (
-        not KIND.availability(
-            ctx_of(evidence_for_item(item, served.row, current_fingerprint=FINGERPRINT))
-        )
-        or True
+    assert KIND.already_present(
+        ctx_of(evidence_for_item(item, served.row, current_fingerprint=FINGERPRINT))
     )
 
 
@@ -451,6 +448,48 @@ def test_a_card_whose_evidence_has_gone_writes_nothing(served, change):
     assert not outcome.applied and outcome.reason
     assert item.speech_cleanup_enabled is False and item.user_edited is False
     assert served.scheduled == []
+
+
+def test_a_tap_the_real_scheduler_undoes_is_not_reported_as_applied(monkeypatch):
+    """The real scheduler re-opens a row Gemini contradicts and clears the setting."""
+    from app.pipeline import caption_language
+    from app.services import plan_item_media as media
+    from app.services import speech_cleanup_preflight as preflight
+
+    words, duration, language = TAKES["cafe_real"]
+    row = row_from(
+        run_engine(words, duration, language).public_receipt,
+        id=uuid.uuid4(),
+        analysis_payload={"language": "en"},
+        engine_version=preflight.SPEECH_CLEANUP_ENGINE_VERSION,
+    )
+    source = types.SimpleNamespace(
+        source_policy_fingerprint=FINGERPRINT,
+        source_kind="clip",
+        media_id="m0",
+        storage_path=CLOUD_PATH,
+        generation="g1",
+        window_start_s=0.0,
+        window_end_s=10.0,
+    )
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_mode", "enforce")
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_rollout_percent", 100)
+    monkeypatch.setattr(preflight, "current_analysis_sync", lambda _db, _id, for_update=False: row)
+    monkeypatch.setattr(kind_mod, "_fingerprint", lambda _item: FINGERPRINT)
+    monkeypatch.setattr(
+        media, "resolve_item_narration", lambda *_a, **_k: types.SimpleNamespace(source=source)
+    )
+    monkeypatch.setattr(media, "current_detector_policy", lambda: "p")
+    monkeypatch.setattr(preflight, "preflight_enabled_for_source", lambda *_a, **_k: True)
+    monkeypatch.setattr(preflight, "reference_transcript_for_source", lambda *_a, **_k: "merhaba")
+    monkeypatch.setattr(caption_language, "crosscheck_detected_language", lambda *_a, **_k: "tr")
+
+    item = item_of("subtitled")
+    outcome = apply_item_setting(types.SimpleNamespace(flush=lambda: None), item, TAP)
+
+    assert not outcome.applied and outcome.reason == "analysis_redone"
+    assert item.speech_cleanup_enabled is False and item.user_edited is False
+    assert outcome.publish_analysis_id == row.id and row.status == "queued"
 
 
 def test_tap_refuses_other_settings_and_a_pulled_kind(served, monkeypatch):
