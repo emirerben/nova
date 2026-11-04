@@ -204,6 +204,35 @@ def request_digest(body: SubmitTurnBody) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _pinned_suggestion_stamp(thread: CreationThread, body: SubmitTurnBody) -> dict[str, Any]:
+    """``{"pinned_suggestion": {...}}`` for a tapped v2 suggestion card, else ``{}``.
+
+    Checked against this thread's own offered-set ring (``services/suggestions/pinned``): a tap
+    whose card the thread was never offered is stamped ``unresolved``, so the worker answers "no
+    longer fits" instead of letting the planner read the card's words. A tap whose message is not
+    the card's prompt is the creator's own request and stays unpinned.
+    """
+    if (
+        body.suggestion is None
+        or not settings.kria_suggestion_pinned_taps_enabled
+        or not settings.suggestion_chips_for(thread.creator_id)
+    ):
+        return {}
+    from app.services.suggestions import pinned  # noqa: PLC0415
+
+    tap = body.suggestion.model_dump()
+    try:
+        stamp = pinned.stamp_pin(thread.state, tap, body.message)
+    except Exception:  # noqa: BLE001 - never plan a tapped card as free text
+        log.warning("suggestion_pin.stamp_failed", thread_id=str(thread.id), exc_info=True)
+        stamp = (
+            {"set_id": tap["set_id"], "id": tap["chip_id"], "unresolved": True}
+            if pinned.is_pin_id(tap["chip_id"])
+            else None
+        )
+    return {pinned.PIN_KEY: stamp} if stamp else {}
+
+
 def approval_fingerprint(approval: CreatorAgentApproval) -> str:
     """Hash immutable server-authored pins; this is a stale fence, not auth.
 
@@ -1275,6 +1304,9 @@ async def submit_turn(
                     suggestion=body.suggestion.model_dump() if body.suggestion else None,
                 )
             ),
+            # Suggestion blocks: a tapped v2 card is pinned to the action the thread was offered.
+            # Flag off => nothing stored (existing payloads byte-identical).
+            **_pinned_suggestion_stamp(thread, body),
         },
         client_event_id=body.client_event_id,
     )
