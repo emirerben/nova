@@ -17,6 +17,9 @@ Needs a ``ready`` render. Before one there is no edit to remove from, and a card
   approved plan refers to. Every clip a request names, pins, labels or places, a clip-scoped
   brief requirement, and every clip a filming-order requirement orders. A needed clip is never
   removed (KRI-129); when every member of a pair is needed there is nothing to offer.
+
+A clip with speech (``has_speech`` or ``to_camera``) is never removed either: two takes of a
+locked-off shot look the same while the lines differ, and the visual hash cannot tell them apart.
 * ``capture_times`` (optional): ``{media_id: ISO time}``. Both timed lets near-in-time clips pair
   at the looser threshold; without them the stricter one applies.
 * ``exposure`` (optional): ``{media_id: KRI-680 exposure record}`` for the exposure tiebreak.
@@ -67,6 +70,7 @@ _WHY = {
         "longer": "longer",
         "earlier": "listed first",
         "named": "your request uses it",
+        "speech": "it has your speech",
     },
     "tr": {
         "sharper": "daha net",
@@ -74,6 +78,7 @@ _WHY = {
         "longer": "daha uzun",
         "earlier": "önce eklenen",
         "named": "isteğin onu kullanıyor",
+        "speech": "konuşman var",
     },
 }
 
@@ -82,7 +87,7 @@ _WHY = {
 class Plan:
     keep: str
     drops: tuple[str, ...]
-    # sharper | better exposed | longer | earlier | named
+    # sharper | better exposed | longer | earlier | named | speech
     reason: str
     # Indices into the snapshot's FULL slot list (removed rows included): what ``remove_clip``
     # addresses, and what a removal earlier in the same bundle does not shift.
@@ -104,6 +109,14 @@ def _needed(ctx: SuggestionContext) -> frozenset[str] | None:
     if not isinstance(raw, (list, tuple, set, frozenset)):
         return None
     return frozenset(str(item) for item in raw if item)
+
+
+def _speaking(ctx: SuggestionContext) -> frozenset[str]:
+    return frozenset(
+        str(c["media_id"])
+        for c in live_clips(ctx)
+        if isinstance(c.get("media_id"), str) and (c.get("has_speech") or c.get("to_camera"))
+    )
 
 
 def _slot_rows(ctx: SuggestionContext) -> list[Any]:
@@ -220,18 +233,19 @@ def _plans(ctx: SuggestionContext, restrict: frozenset[str] | None = None) -> li
     by_media = _slots_by_media(ctx)
     active = _active_slots(ctx)
     ordinal = _ordinals(ctx)
+    shielded = needed | _speaking(ctx)
     plans: list[Plan] = []
     for group in near_dup_hash.duplicate_groups(_dup_clips(ctx, by_media, restrict)):
         members = [group.keep, *group.drop]
-        protected = [m for m in members if m in needed]
-        droppable = [m for m in members if m not in needed]
+        protected = [m for m in members if m in shielded]
+        droppable = [m for m in members if m not in shielded]
         if not droppable:
-            continue  # every copy is needed: removing any would undo what the creator asked for
+            continue  # every copy is needed or speaks: removing any would lose what it carries
         if protected:
             keep = (
                 group.keep if group.keep in protected else min(protected, key=ordinal.__getitem__)
             )
-            reason = "named"
+            reason = "named" if keep in needed else "speech"
         else:
             keep, reason = group.keep, group.reason
             longer = _longer(ctx, members) if reason == "earlier" else None
@@ -267,7 +281,12 @@ def _plan_for(ctx: SuggestionContext, targets: Sequence[Target]) -> Plan | None:
         return plans[0] if plans else None
     if len(wanted) < 2:
         return None
-    return next((p for p in _plans(ctx, restrict=wanted) if p.members == wanted), None)
+    plan = next((p for p in _plans(ctx, restrict=wanted) if p.members == wanted), None)
+    # The card's anchor is the first named clip, and the brief requirement a tap records is
+    # scoped to it: it must be a clip that goes, never the keeper.
+    if plan is None or targets[0].media_id not in plan.drops:
+        return None
+    return plan
 
 
 def _build_action(
@@ -280,6 +299,19 @@ def _build_action(
     return EditorOpsAction(
         ops=[{"op": "remove_clip", "slot_index": i} for i in plan.slot_indices], base_digest=base
     )
+
+
+def _may_drop_the_pick(
+    ctx: SuggestionContext,
+    group: near_dup_hash.DupGroup,
+    stays: set[str],
+    shielded: frozenset[str],
+) -> bool:
+    """The measurement's pick may go only for a copy that must stay (named or speaking), or for a
+    copy that is clearly longer when the measurement could only call it by listing order."""
+    if stays & shielded:
+        return True
+    return group.reason == "earlier" and any(_longer(ctx, [group.keep, m]) == m for m in stays)
 
 
 def _witness(action: Action, ctx: SuggestionContext) -> WitnessResult:
@@ -312,6 +344,9 @@ def _witness(action: Action, ctx: SuggestionContext) -> WitnessResult:
     dropped = {rows[i].get("media_id") for i in indices}
     if any(not isinstance(m, str) or not m for m in dropped) or dropped & needed:
         return refuse("removes_a_needed_clip")
+    speaking = _speaking(ctx)
+    if dropped & speaking:
+        return refuse("removes_speech")
     if len(active) - len(indices) < MIN_REMAINING_SLOTS:
         return refuse("below_clip_floor")
     by_media = _slots_by_media(ctx)
@@ -319,10 +354,14 @@ def _witness(action: Action, ctx: SuggestionContext) -> WitnessResult:
     if {i for m in dropped for i in by_media.get(m, [])} != set(indices):
         return refuse("partial_removal")
     paired: set[str] = set()
+    shielded = needed | speaking
     for group in near_dup_hash.duplicate_groups(_dup_clips(ctx, by_media, None)):
         members = {group.keep, *group.drop}
-        if members - dropped:  # a copy stays
+        stays = members - dropped
+        if stays:  # a copy stays
             paired |= members & dropped
+            if group.keep in dropped and not _may_drop_the_pick(ctx, group, stays, shielded):
+                return refuse("drops_the_better_clip")
     if paired != dropped:
         return refuse("not_a_duplicate")
     return editor_ops_witness(action, ctx)

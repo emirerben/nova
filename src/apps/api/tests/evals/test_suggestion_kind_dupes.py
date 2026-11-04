@@ -109,8 +109,8 @@ def build_ctx(case: dict, *, with_witness: bool = True) -> SuggestionContext:
             "kind": c["kind"],
             "subject": "",
             "setting": "",
-            "has_speech": False,
-            "to_camera": False,
+            "has_speech": c["media_id"] in case.get("speech", []),
+            "to_camera": c["media_id"] in case.get("to_camera", []),
             "duration_s": c["duration_s"],
             "notable_moments": [],
         }
@@ -170,8 +170,10 @@ def _named_targets(case: dict, ctx: SuggestionContext) -> list:
     if "keep" not in expect:  # nothing is offered: the agent tries the obvious pair
         return [handles["c1"], handles["c2"]]
     slots = _snapshot(case)["slots"]
-    media = {expect["keep"], *(slots[i]["media_id"] for i in expect.get("ops", []))}
-    return [t for t in handles.values() if t.media_id in media]
+    dropped = {slots[i]["media_id"] for i in expect.get("ops", [])}
+    named = [t for t in handles.values() if t.media_id in {expect["keep"], *dropped}]
+    # The card anchors to the first clip named, so a clip that goes is named first.
+    return sorted(named, key=lambda t: t.media_id not in dropped)
 
 
 # ── The matrix ───────────────────────────────────────────────────────────────────────
@@ -368,12 +370,72 @@ def _rm(*indices: int) -> list[dict]:
             "op_not_remove_clip",
         ),
         ("an unknown need", "d01_two_takes_sharper", _rm(0), {"needed": None}, "not_removable"),
+        (
+            "a clip with speech",
+            "d01_two_takes_sharper",
+            _rm(0),
+            {"speech": ["m1"]},
+            "removes_speech",
+        ),
+        (
+            "a clip talking to camera",
+            "d01_two_takes_sharper",
+            _rm(0),
+            {"to_camera": ["m1"]},
+            "removes_speech",
+        ),
+        (
+            "the better clip while the worse stays",
+            "d01_two_takes_sharper",
+            _rm(1),
+            {},
+            "drops_the_better_clip",
+        ),
     ],
 )
 def test_the_witness_refuses(label, case, ops, patch, reason):
     ctx, action = _hostile(case, ops, **patch)
     proven = KIND.witness(action, ctx)
     assert (proven.ok, proven.reason) == (False, reason), label
+
+
+def test_two_spoken_takes_are_never_a_duplicate():
+    """Locked-off takes look identical while the lines differ: speech clips are never offered."""
+    case = copy.deepcopy(CASES["d01_two_takes_sharper"])
+    ids = [c["media_id"] for c in case["clips"]]
+    for key in ("speech", "to_camera"):
+        spoken = {**case, key: ids}
+        ctx = build_ctx(spoken)
+        assert KIND.availability(ctx) is False
+        assert KIND.build_action(ctx, _named_targets(case, ctx), None) is None
+
+
+def test_a_spoken_keeper_lets_the_silent_copy_go():
+    case = {**CASES["d01_two_takes_sharper"], "speech": ["m2"]}
+    ctx = build_ctx(case)
+    plan = dup._plans(ctx)[0]
+    assert (plan.keep, plan.drops) == ("m2", ("m1",))
+    only_m1_speaks = {**CASES["d01_two_takes_sharper"], "speech": ["m1"]}
+    ctx = build_ctx(only_m1_speaks)
+    plan = dup._plans(ctx)[0]
+    assert (plan.keep, plan.drops, plan.reason) == ("m1", ("m2",), "speech")
+    assert dup.evidence_lines(ctx, [_handles(ctx)["c2"], _handles(ctx)["c1"]]) == [
+        "Keeps clip 1: it has your speech"
+    ]
+
+
+def test_the_card_anchor_is_a_clip_that_goes_never_the_keeper():
+    """The tap scopes its brief requirement to the anchor, so naming the keeper first builds no
+    card, while either order of a valid pair that leads with the dropped clip builds the same."""
+    case = CASES["d01_two_takes_sharper"]
+    ctx = build_ctx(case)
+    handles = _handles(ctx)
+    keeper_first = [handles["c2"], handles["c1"]]
+    assert KIND.build_action(ctx, keeper_first, None) is None
+    assert dup.evidence_lines(ctx, keeper_first) == []
+    drop_first = [handles["c1"], handles["c2"]]
+    action = KIND.build_action(ctx, drop_first, None)
+    assert [op["slot_index"] for op in action.ops] == [0] and KIND.witness(action, ctx).ok
 
 
 def test_the_witness_accepts_the_builders_own_action_and_refuses_a_stale_base():
