@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Calibrate the ``audio_quality`` clip signal on a labeled set of synthetic clips.
 
-    generate              write the committed fit set (30 AAC clips + labels.json)
+    generate              write the committed synthetic fit set (AAC clips + labels.json)
+    generate-tts          write the committed clean TTS-at-several-gains fit clips (macOS `say`)
     fit [--write]         fit the wind / crowd / clipping thresholds on the fit set
     check                 fail when the thresholds in audio_quality.py drifted from the fixtures
     report                precision/recall per class on the fit set AND a fresh held-out set,
@@ -22,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -203,7 +205,7 @@ class ClipSpec:
             mode = p["mode"]
             x = np.zeros(n) if mode == "zeros" else _scale_to_db(rng.standard_normal(n), p["db"])
         elif label == "clean":
-            x = _scale_to_db(speech(rng, n, p["f0"]), p["level_db"])
+            x = _scale_to_db(speech(rng, n, p["f0"], p["pause_scale"]), p["level_db"])
             x = x + _scale_to_db(steady_noise(rng, n, "pink"), p["room_db"])
         elif label == "wind":
             gusts = wind(rng, n, p["fc"], p["gust"])
@@ -249,9 +251,17 @@ def _draw(rng, wide: bool, label: str, idx: int) -> dict[str, Any]:
     }
     base["bitrate"] *= base["channels"]
     f0 = float(rng.choice([95, 110, 140, 180, 210, 240]) if wide else [95, 120, 180, 220][idx % 4])
-    level = float(rng.uniform(-30, -14) if wide else rng.uniform(-26, -16))
+    level = float(rng.uniform(-40, -12) if wide else rng.uniform(-36, -14))
     if label == "clean":
-        return {**base, "f0": f0, "level_db": level, "room_db": float(rng.uniform(-66, -46))}
+        # dense speech (almost no pauses) is the clean case a steady-noise detector confuses
+        # with a crowd, so it is drawn on purpose.
+        return {
+            **base,
+            "f0": f0,
+            "level_db": level,
+            "room_db": float(rng.uniform(-70, -44)),
+            "pause_scale": float(rng.choice([0.05, 0.2, 1.0, 1.0, 2.0])),
+        }
     if label == "wind":
         pure = idx % 6 >= 4
         return {
@@ -293,7 +303,7 @@ def _draw(rng, wide: bool, label: str, idx: int) -> dict[str, Any]:
     raise ValueError(label)
 
 
-FIT_COUNTS = {"clean": 6, "wind": 6, "crowd": 6, "music": 5, "clipped": 3, "silence": 4}
+FIT_COUNTS = {"clean": 12, "wind": 6, "crowd": 6, "music": 5, "clipped": 3, "silence": 4}
 
 
 def make_specs(counts: dict[str, int], seed_base: int, wide: bool) -> list[ClipSpec]:
@@ -314,6 +324,10 @@ def encode(spec: ClipSpec, out: Path) -> None:
         pcm = np.stack([x, np.clip(right, -1, 1)], axis=1)
     else:
         pcm = x[:, None]
+    _encode_pcm(pcm, channels, enc, out)
+
+
+def _encode_pcm(pcm: np.ndarray, channels: int, enc: dict[str, Any], out: Path) -> None:
     subprocess.run(
         [
             "ffmpeg",
@@ -345,6 +359,77 @@ def encode(spec: ClipSpec, out: Path) -> None:
         input=pcm.astype("<f4").tobytes(),
         check=True,
     )
+
+
+# --------------------------------------------------------------------------------------------
+# real (TTS) speech at several gains
+# --------------------------------------------------------------------------------------------
+# Synthetic speech from our own generator cannot show that the measurement is independent of how
+# loud a clip was recorded. Text-to-speech voices are not from that generator, so the same sentence
+# is rendered clean at several gains. Fit and held-out use different voices, text and gains.
+
+TTS_DIR = FIXTURES / "tts"
+TTS_FIT_TEXT = (
+    "We got to the beach just before sunrise. The water was cold, but the light on the "
+    "hills was worth every minute of the drive."
+)
+TTS_HELDOUT_TEXT = (
+    "This is the third time we have tried this recipe. Honestly, the sauce is the "
+    "part that makes it, so do not skip the garlic, and taste it as you go."
+)
+TTS_FIT = {"voices": ("Daniel", "Samantha", "Karen", "Moira"), "gains_db": (-12.0, 0.0, 6.0)}
+TTS_HELDOUT = {"voices": ("Fred", "Tessa", "Rishi", "Daniel"), "gains_db": (-18.0, -6.0, 3.0, 9.0)}
+TTS_ENCODE = {"bitrate": 64_000, "sr": 44_100}
+
+
+def render_tts(voice: str, text: str, gain_db: float, out: Path) -> None:
+    """One clean clip: ``say`` -> gain -> peak-limited to 0.89 -> AAC 64k. macOS only."""
+    import wave
+
+    with tempfile.TemporaryDirectory() as tmp:
+        wav = Path(tmp) / "say.wav"
+        subprocess.run(
+            ["say", "-v", voice, "-o", str(wav), "--data-format=LEI16@44100", text], check=True
+        )
+        with wave.open(str(wav)) as w:
+            x = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(np.float64) / 32768
+    x = x * 10 ** (gain_db / 20)
+    peak = float(np.max(np.abs(x)))
+    if peak > 0.89:
+        x = x * (0.89 / peak)
+    _encode_pcm(x[:, None], 1, TTS_ENCODE, out)
+
+
+def tts_name(voice: str, gain_db: float) -> str:
+    return f"tts_{voice.lower()}_{'m' if gain_db < 0 else 'p'}{abs(int(gain_db)):02d}.m4a"
+
+
+def cmd_generate_tts(_args) -> int:
+    TTS_DIR.mkdir(parents=True, exist_ok=True)
+    for old in TTS_DIR.glob("*.m4a"):
+        old.unlink()
+    labels = {}
+    for voice in TTS_FIT["voices"]:
+        for gain in TTS_FIT["gains_db"]:
+            name = tts_name(voice, gain)
+            render_tts(voice, TTS_FIT_TEXT, gain, TTS_DIR / name)
+            labels[name] = {"label": "clean", "params": {"voice": voice, "gain_db": gain}}
+    (TTS_DIR / "labels.json").write_text(json.dumps(labels, indent=1, sort_keys=True) + "\n")
+    print(f"wrote {len(labels)} TTS clips")
+    return 0
+
+
+def measure_heldout_tts(tmp: Path) -> list[Measured]:
+    """Held-out clean TTS clips, empty when ``say`` is not installed (non-macOS)."""
+    if shutil.which("say") is None:
+        return []
+    labels = {}
+    for voice in TTS_HELDOUT["voices"]:
+        for gain in TTS_HELDOUT["gains_db"]:
+            name = tts_name(voice, gain)
+            render_tts(voice, TTS_HELDOUT_TEXT, gain, tmp / name)
+            labels[name] = "clean"
+    return measure_dir(tmp, labels)
 
 
 # --------------------------------------------------------------------------------------------
@@ -543,6 +628,8 @@ def cmd_generate(_args) -> int:
 
 def fit_rows(args) -> list[Measured]:
     rows = measure_dir(FIXTURES, load_labels(FIXTURES))
+    if (TTS_DIR / "labels.json").exists():
+        rows += measure_dir(TTS_DIR, load_labels(TTS_DIR))
     if getattr(args, "include_real", False) and args.real_dir:
         rows += measure_dir(args.real_dir, load_labels(args.real_dir))
     return rows
@@ -651,22 +738,55 @@ def snr_sweep(tmp: Path) -> list[str]:
     return lines
 
 
+def gain_table(rows: list[Measured]) -> list[str]:
+    if not rows:
+        return ["Not run: `say` is not installed on this machine."]
+    wind_t = aq.FITTED["wind"]["threshold"]
+    crowd_t = aq.FITTED["crowd"]["threshold"]
+    lines = [
+        f"| gain dB | clips | flagged noisy | max wind score (>= {wind_t}) | max crowd score (>= {crowd_t}) |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    by_gain: dict[float, list[Measured]] = defaultdict(list)
+    for m in rows:
+        if m.features is not None:
+            tag = m.name.rsplit("_", 1)[-1]  # m12.m4a / p06.m4a
+            by_gain[(-1 if tag[0] == "m" else 1) * float(tag[1:3])].append(m)
+    for gain in sorted(by_gain):
+        group = by_gain[gain]
+        scores = [aq.head_scores(m.features) for m in group]
+        noisy = sum(int(bool(predict(m.features)["noisy"])) for m in group)
+        lines.append(
+            f"| {gain:+.0f} | {len(group)} | {noisy} | {max(w for w, _ in scores):.2f} | {max(c for _, c in scores):.2f} |"
+        )
+    return lines
+
+
 def cmd_report(args) -> int:
-    fit_result = evaluate(measure_dir(FIXTURES, load_labels(FIXTURES)))
+    fit_rows_all = measure_dir(FIXTURES, load_labels(FIXTURES))
+    if (TTS_DIR / "labels.json").exists():
+        fit_rows_all += measure_dir(TTS_DIR, load_labels(TTS_DIR))
+    fit_result = evaluate(fit_rows_all)
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
-        counts = {"clean": 12, "wind": 12, "crowd": 12, "music": 10, "clipped": 6, "silence": 6}
+        counts = {"clean": 18, "wind": 12, "crowd": 12, "music": 10, "clipped": 6, "silence": 6}
         specs = make_specs(counts, HELDOUT_SEED_BASE, wide=True)
         labels = {}
         for spec in specs:
             encode(spec, tmp / f"{spec.name}.m4a")
             labels[f"{spec.name}.m4a"] = spec.label
-        held = evaluate(measure_dir(tmp, labels))
+        held_rows = measure_dir(tmp, labels)
+        with tempfile.TemporaryDirectory() as tts_tmp:
+            tts_rows = measure_heldout_tts(Path(tts_tmp))
+        held = evaluate(held_rows + tts_rows)
         sweep = snr_sweep(tmp)
+        gain_lines = gain_table(tts_rows)
     real = None
     if args.real_dir:
         real = evaluate(measure_dir(args.real_dir, load_labels(args.real_dir)))
 
+    n_fit = len(fit_rows_all)
+    n_held = len(held_rows) + len(tts_rows)
     mute = held["classes"]["mute (wind|crowd)"]
     mute_fit = fit_result["classes"]["mute (wind|crowd)"]
     precision = mute["precision"]
@@ -679,11 +799,13 @@ def cmd_report(args) -> int:
         "",
         "## Honest scope",
         "",
-        "Every clip here is synthetic (numpy synthesis, encoded to AAC with ffmpeg): harmonic voiced speech, "
+        "Most clips here are synthetic (numpy synthesis, encoded to AAC with ffmpeg): harmonic voiced speech, "
         "gusty low-passed noise for wind, summed continuous voices plus diffuse noise for crowd, kick/sub-bass/hat "
-        "loops for bass music, hard-clipped speech, and silence. The fit set (30 committed clips) and the held-out set "
-        "(60 clips, different seeds, wider parameter ranges, 2.5-6 s, 44.1/48 kHz, 32-96 kbps) come from the SAME generator "
-        "family, so a good number here means the measurement separates the failure modes we thought of, "
+        "loops for bass music, hard-clipped speech, and silence. The clean class also includes text-to-speech "
+        "voices (macOS `say`, not from our generator) rendered at several gains, in both sets, so the fit cannot "
+        f"learn that loud means noisy. The fit set ({n_fit} committed clips) and the held-out set "
+        f"({n_held} clips, different seeds and TTS voices/text/gains, wider parameter ranges, 2.5-6 s, 44.1/48 kHz, 32-96 kbps) "
+        "come from the SAME synthetic family apart from the TTS clips, so a good number here means the measurement separates the failure modes we thought of, "
         "not that it works on real phone audio. Real wind hits a phone mic differently (mic-specific noise "
         "reduction, AGC pumping), and real crowds and real music are far more varied. "
         "Treat the mute-clip gate below as necessary, not sufficient: re-run with `--real-dir` on labeled real clips "
@@ -701,9 +823,17 @@ def cmd_report(args) -> int:
         "",
         "## How to read this",
         "",
-        "- Development used the fit set only. The held-out set was scored twice: once, then again after the "
-        "periodicity measure was changed to autocorrelation peaks and a saturated-808 music variant was added; "
-        "nothing was tuned on it beyond that.",
+        "- Development used the fit set only, but the held-out set is not untouched: it was scored more than once "
+        "while the measurement changed (autocorrelation-peak periodicity, a saturated-808 music variant, then "
+        "level normalization after a reviewer found that loudness alone flipped clean speech to noisy). "
+        "Read the precision as an optimistic bound, and treat the 0.9 gate as unproven until real labeled clips "
+        "pass it.",
+        "- Loudness: every spectral feature is measured after normalizing the clip's loud level, so gain does not "
+        "move a verdict (see the gain table). The fit step also sees clean clips from -40 to -12 dB.",
+        f"- Thin margin: the precision above rests on {mute['tp'] + mute['fp']} flagged held-out clips, so one more "
+        f"false positive moves it by about {100 / max(mute['tp'] + mute['fp'], 1):.0f} points. Recall is the cost of "
+        "removing the loudness shortcut: speech well above a crowd (about +8 dB and more) is mostly left alone, "
+        "because without an absolute floor it looks like dense clean speech.",
         "- `noisy` (wind or crowd) is what the mute card may act on; the separate wind / crowd rows only say which "
         "evidence line a card would show. A traffic-like rumble can read as wind and is still a correct mute.",
         "- `noisy` does not know whether the clip's speech matters. Muting a noisy clip also mutes its voice; "
@@ -713,17 +843,24 @@ def cmd_report(args) -> int:
         "- Sign priors (`WIND_SIGNS`, `CROWD_SIGNS`) stop the fit from using a feature against its physical meaning. "
         "A feature the data wants backwards gets weight 0 (see the FITTED block).",
         "",
-        "## Held-out set (60 clips)",
+        f"## Held-out set ({n_held} clips)",
         "",
         *_table(held),
         "",
         *_confusion(held),
         "",
-        "## Fit set (30 committed clips; optimistic by construction)",
+        f"## Fit set ({n_fit} committed clips; optimistic by construction)",
         "",
         *_table(fit_result),
         "",
         *_confusion(fit_result),
+        "",
+        "## Clean TTS speech by gain (held-out voices, text and gains)",
+        "",
+        "A clean voice must stay unflagged at every recording level. Crowd/wind scores are against the fitted "
+        "thresholds shown in the header row.",
+        "",
+        *gain_lines,
         "",
         "## Detection by SNR (speech minus noise, held-out generator, 6 clips each)",
         "",
@@ -755,15 +892,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("generate")
+    sub.add_parser("generate-tts")
     p_fit = sub.add_parser("fit")
     p_fit.add_argument("--write", action="store_true")
     for p in (p_fit, sub.add_parser("check"), sub.add_parser("report")):
         p.add_argument("--real-dir", type=Path, default=None)
     p_fit.add_argument("--include-real", action="store_true")
     args = parser.parse_args()
-    return {"generate": cmd_generate, "fit": cmd_fit, "check": cmd_check, "report": cmd_report}[
-        args.cmd
-    ](args)
+    return {
+        "generate": cmd_generate,
+        "generate-tts": cmd_generate_tts,
+        "fit": cmd_fit,
+        "check": cmd_check,
+        "report": cmd_report,
+    }[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -18,15 +18,23 @@ Failure modes this is built around (each is exercised by the calibration set, se
 * bass-heavy music read as wind: it has the same low-band energy, so wind also needs a noise-like
   (flat) low-band spectrum and an envelope with no beat periodicity. Sub-bass tones and kick
   drums fail one or the other.
-* music or an HVAC hum read as crowd noise: the crowd head needs a noise-like mid band and
-  no beat periodicity as well as a high floor.
-* silent / near-silent clip: no division by zero, ``noisy`` is False, ``silent`` is True.
+* music or an HVAC hum read as crowd noise: the crowd head needs a noise-like mid band, no beat
+  periodicity, a small gap between loud and quiet frames and loud frames that carry no pitch.
+* dense clean speech (no pauses) read as a crowd: only the pitch feature separates a single voice
+  from babble, so the calibration set draws dense speech and TTS voices on purpose.
+* silent / near-silent clip (peak, loud level or audible frame count): no division by zero,
+  ``noisy`` is False, ``silent`` is True.
 * very short clip (< ``MIN_DURATION_S``): too few frames for a floor or a periodicity estimate,
   so the signal is absent rather than a guess.
 * mono vs stereo: both are downmixed for the spectral features; clipping is read per file.
 * missing audio stream, unreadable file, ffmpeg failure or timeout: the signal is absent
   (``compute`` returns None), never an exception.
-* a quiet gust (inaudible rumble) is not wind: the low-band level has to be audible.
+* a quiet gust (inaudible rumble) is not wind: the low-band level, relative to the clip's speech
+  level, has to be audible.
+* recording loudness: the same content read as noisier the louder it was recorded, because an
+  absolute noise floor was a feature. Every spectral feature is now measured after normalizing the
+  clip's loud level (90th percentile frame RMS) to ``NORMALIZED_LEVEL_DB``, so a clean voice scores
+  the same at any gain. Only the reported ``noise_floor_db`` stays absolute, and no head reads it.
 
 Every number inside the ``FITTED`` markers comes from the labeled calibration set. Do not edit
 that block by hand: ``scripts/clip_signal_calibration.py fit --write`` regenerates it, and
@@ -51,7 +59,7 @@ from app.services.clip_signals.registry import SignalInputs, SignalSpec, registe
 
 logger = logging.getLogger(__name__)
 
-SIGNAL_VERSION = 1
+SIGNAL_VERSION = 2
 
 ANALYSIS_SR = 16_000
 N_FFT = 1024
@@ -60,12 +68,24 @@ MIN_DURATION_S = 1.0
 MAX_ANALYZED_S = 300.0
 FFMPEG_TIMEOUT_S = 60.0
 
+# Spectral features are measured with the clip's loud level (90th percentile frame RMS) here.
+NORMALIZED_LEVEL_DB = -20.0
+
+# Pitch period search (80-400 Hz at 16 kHz) and the autocorrelation peak that counts as voiced.
+PITCH_LAGS = (40, 200)
+VOICED_ACF = 0.3
+LOUD_REL_DB = 15.0
+
 LOW_BAND_HZ = (30.0, 200.0)
 MID_BAND_HZ = (300.0, 3400.0)
 # Frames quieter than this carry no audible content; they count toward the floor, not the shape.
 AUDIBLE_DB = -60.0
 # Below this peak the clip is treated as silent whatever its spectrum says.
 SILENT_PEAK_DB = -55.0
+# Below this loud level (90th percentile frame RMS) nothing in the clip is audible either. Spectral
+# features are loudness-normalized, so without this a -58 dBFS hiss would be amplified into a
+# convincing "crowd".
+SILENT_LEVEL_DB = -55.0
 MIN_AUDIBLE_FRAMES = 8
 FLOOR_CLAMP_DB = -90.0
 # Beat/gust periodicity is looked for between 0.19 s and 1.0 s (frames are 32 ms).
@@ -73,29 +93,29 @@ ACF_LAG_FRAMES = (6, 31)
 # "Samples at the maximum" only means clipping when the maximum is at the rail.
 CLIP_PEAK_DB = -1.0
 
-WIND_FEATURES = ("low_ratio", "low_flat", "low_acf", "low_cv", "low_level_db")
-CROWD_FEATURES = ("floor_db", "dyn_db", "mid_flat", "env_acf", "low_ratio")
+WIND_FEATURES = ("low_ratio", "low_flat", "low_acf", "low_cv", "low_rel_db")
+CROWD_FEATURES = ("dyn_db", "mid_flat", "env_acf", "low_ratio", "unvoiced_frac")
 # Direction each feature may push its score. The calibration fit may not use a feature against
 # its physical meaning (e.g. "more bass-dominant means LESS wind"), because the synthetic
 # clips it learns from can make that look true while real recordings will not.
 WIND_SIGNS = (1, 1, -1, 1, 1)
-CROWD_SIGNS = (1, -1, 1, -1, -1)
+CROWD_SIGNS = (-1, 1, -1, -1, 1)
 
 # BEGIN FITTED (scripts/clip_signal_calibration.py fit --write)
 FITTED: dict[str, Any] = {
     "wind": {
-        "mean": [0.471646, 0.357605, 0.503379, 1.072749, -26.579829],
-        "std": [0.341078, 0.19414, 0.283027, 0.605395, 14.120541],
-        "weights": [0.790267, 1.639184, -0.514494, 0.0, 0.671156],
-        "bias": -1.43726,
-        "threshold": 0.4189,
+        "mean": [0.382725, 0.239247, 0.426486, 0.94101, -11.251249],
+        "std": [0.286466, 0.215904, 0.295442, 0.460268, 7.219868],
+        "weights": [0.890211, 1.730267, -0.431486, 0.464067, 0.738158],
+        "bias": -2.781469,
+        "threshold": 0.3865,
     },
     "crowd": {
-        "mean": [-41.790055, 25.361793, 0.189878, 0.823219, 0.328649],
-        "std": [22.061214, 25.952407, 0.147177, 0.18821, 0.35478],
-        "weights": [1.365756, -0.63168, 0.037715, 0.0, -1.394341],
-        "bias": -1.356892,
-        "threshold": 0.3719,
+        "mean": [24.573749, 0.120774, 0.647002, 0.303981, 0.081027],
+        "std": [19.84924, 0.13911, 0.32843, 0.280296, 0.113218],
+        "weights": [-0.916519, 0.472429, 0.0, -0.870273, 1.600847],
+        "bias": -2.50521,
+        "threshold": 0.4539,
     },
     "clipping_fraction": 0.000868,
 }
@@ -117,9 +137,10 @@ class AudioFeatures:
     low_flat: float
     low_acf: float
     low_cv: float
-    low_level_db: float
+    low_rel_db: float
     mid_flat: float
     env_acf: float
+    unvoiced_frac: float
 
     def head(self, names: Sequence[str]) -> list[float]:
         row = asdict(self)
@@ -163,6 +184,23 @@ def _flatness(power: np.ndarray) -> np.ndarray:
     """Per-frame spectral flatness (geometric / arithmetic mean): ~0.56 for noise, ~0 for a tone."""
     p = power + 1e-14
     return np.exp(np.mean(np.log(p), axis=1)) / np.mean(p, axis=1)
+
+
+def _unvoiced_fraction(power: np.ndarray, rms_db: np.ndarray, level_db: float) -> float:
+    """Share of the clip's loud frames that carry no pitch, 0..1.
+
+    "Loud" is within ``LOUD_REL_DB`` of the clip's loud level, so room tone between sentences is
+    left out and only sound competing with the speaker counts. A voice has a strong autocorrelation
+    peak at its pitch period in every voiced frame; babble, traffic and hiss do not. A clip with no
+    loud frames has nothing to say about it, so 0.
+    """
+    loud = rms_db >= level_db - LOUD_REL_DB
+    if not loud.any():
+        return 0.0
+    ac = np.fft.irfft(power[loud], axis=1)
+    ac = ac / np.maximum(ac[:, :1], 1e-20)
+    pitch = ac[:, PITCH_LAGS[0] : PITCH_LAGS[1]].max(axis=1)
+    return float(np.mean(pitch < VOICED_ACF))
 
 
 def _astats(path: str) -> tuple[float, float] | None:
@@ -233,7 +271,11 @@ def extract_features(path: str) -> AudioFeatures | None:
     floor_db = max(float(np.percentile(rms_db, 10)), FLOOR_CLAMP_DB)
     level_db = max(float(np.percentile(rms_db, 90)), FLOOR_CLAMP_DB)
     audible = rms_db >= AUDIBLE_DB
-    silent = peak_db < SILENT_PEAK_DB or int(audible.sum()) < MIN_AUDIBLE_FRAMES
+    silent = (
+        peak_db < SILENT_PEAK_DB
+        or level_db < SILENT_LEVEL_DB
+        or int(audible.sum()) < MIN_AUDIBLE_FRAMES
+    )
     if silent:
         return AudioFeatures(
             duration_s=duration_s,
@@ -247,13 +289,15 @@ def extract_features(path: str) -> AudioFeatures | None:
             low_flat=0.0,
             low_acf=0.0,
             low_cv=0.0,
-            low_level_db=FLOOR_CLAMP_DB,
+            low_rel_db=FLOOR_CLAMP_DB,
             mid_flat=0.0,
             env_acf=0.0,
+            unvoiced_frac=0.0,
         )
 
+    gain = 10.0 ** ((NORMALIZED_LEVEL_DB - level_db) / 20.0)
     window = np.hanning(N_FFT)
-    power = np.abs(np.fft.rfft(windows * window, axis=1)) ** 2
+    power = np.abs(np.fft.rfft(windows * (gain * window), axis=1)) ** 2
     hz_per_bin = ANALYSIS_SR / N_FFT
     lo = slice(math.ceil(LOW_BAND_HZ[0] / hz_per_bin), int(LOW_BAND_HZ[1] // hz_per_bin) + 1)
     mid = slice(math.ceil(MID_BAND_HZ[0] / hz_per_bin), int(MID_BAND_HZ[1] // hz_per_bin) + 1)
@@ -276,9 +320,10 @@ def extract_features(path: str) -> AudioFeatures | None:
         low_flat=float(np.median(_flatness(p_low)[audible])),
         low_acf=_env_periodicity(low_env, ACF_LAG_FRAMES),
         low_cv=float(np.std(low_env) / (np.mean(low_env) + 1e-12)),
-        low_level_db=_db(float(np.mean(low_ms[audible]))),
+        low_rel_db=_db(float(np.mean(low_ms[audible]))) - NORMALIZED_LEVEL_DB,
         mid_flat=float(np.median(_flatness(power[:, mid])[audible])),
         env_acf=_env_periodicity(frame_rms, ACF_LAG_FRAMES),
+        unvoiced_frac=_unvoiced_fraction(power, rms_db, level_db),
     )
 
 
