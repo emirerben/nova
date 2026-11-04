@@ -48,8 +48,9 @@ if TYPE_CHECKING:
     from app.kria.brief import CreativeBrief
     from app.kria.clip_sound_toggle_ask import SoundToggleAsk
 
-# The brief and sound-ask modules pull the ORM; this package stays import-light, so they load
-# inside the functions that read them (as `models.BriefUpdateAction` does).
+# Copies of `narrated_clip_sound_ask.CLIP_SOUND_FACT` / `clip_sound_toggle_ask.SOUND_OFF` (a test
+# pins them): the brief and sound-ask modules pull the ORM, so this import-light package loads
+# them inside the functions that read them, as `models.BriefUpdateAction` does.
 CLIP_SOUND_FACT = "clip_sound"
 SOUND_OFF = "off"
 
