@@ -47,9 +47,9 @@ def _run(
     job = _green3_job(monkeypatch, background)
     plain_bind = phone_visuals_mod.bind_phone_visual_assets
 
-    def bind(open_, *, job_id, pins):
+    def bind(open_, *, job_id, pins, **kwargs):
         out = []
-        for b in plain_bind(open_, job_id=job_id, pins=pins):
+        for b in plain_bind(open_, job_id=job_id, pins=pins, **kwargs):
             fields = b.model_dump()
             out.append(PhoneVisualBinding(**fields, text_column=column))
         return tuple(out)
@@ -119,6 +119,27 @@ def test_an_old_build_gets_no_focus_anywhere(monkeypatch):
     assert all(f is None for f in _foci(job))
     assert "focus" not in _dump(job)
     assert "backgroundFocus" not in _recipe(job).required_capabilities
+
+
+def test_a_dropped_aim_is_traced_and_the_lane_receipt_does_not_claim_it(monkeypatch):
+    """Stamped 38 (focus gate closed for the approving build) with a creator-named side: the
+    compile drops the aim, says so in the trace once, and the receipt names no focus."""
+    from app.pipeline import phone_subtitled_lanes as lanes_mod
+
+    events = []
+    real = lanes_mod._trace_background_fallback
+    monkeypatch.setattr(
+        lanes_mod,
+        "_trace_background_fallback",
+        lambda event, detail: (events.append((event, detail)), real(event, detail))[1],
+    )
+    job = _run(monkeypatch, {**ASKED, "focus": "left", "focus_zoom": 2.0}, protocol=38)
+    assert all(f is None for f in _foci(job))
+    receipt = _variant(job)["phone_lane_receipt"]["background"]
+    assert "focus" not in receipt and "focus_zoom" not in receipt
+    gate = [d for e, d in events if d.get("reason") == "focus_gate_closed_for_build"]
+    assert len(gate) == 1
+    assert gate[0]["window_count"] >= 1 and gate[0]["had_fill_focus"] is True
 
 
 def test_no_stamp_gets_no_focus(monkeypatch):

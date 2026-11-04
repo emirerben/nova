@@ -243,6 +243,28 @@ def test_portrait_screenshot_is_not_even_read(tmp_path):
     assert measure_text_column(p, kind="image") is None
 
 
+@pytest.mark.parametrize("stored", [(1080, 2340, None), (2340, 1080, 6)])
+def test_a_portrait_photo_is_never_decoded(tmp_path, monkeypatch, stored):
+    """Image.open is lazy: the size (and the EXIF turn) is read BEFORE any pixel is decoded."""
+    w, h, orientation = stored
+    img = Image.new("RGB", (w, h), (30, 30, 30))
+    path = tmp_path / "portrait.jpg"
+    exif = Image.Exif()
+    if orientation:
+        exif[0x0112] = orientation
+    img.save(path, exif=exif)
+    loads = []
+    real_load = Image.Image.load
+
+    def spy(self, *a, **k):
+        loads.append(1)
+        return real_load(self, *a, **k)
+
+    monkeypatch.setattr(Image.Image, "load", spy)
+    assert measure_text_column(str(path), kind="image") is None
+    assert not loads
+
+
 def test_missing_and_corrupt_files_return_none(tmp_path):
     assert measure_text_column(str(tmp_path / "nope.png"), kind="image") is None
     bad = tmp_path / "bad.png"
@@ -315,12 +337,12 @@ def test_blank_video_has_no_text_column(tmp_path):
 
 
 @needs_ffmpeg
-def test_video_path_never_decodes_more_than_six_frames(tmp_path, monkeypatch):
-    seen: list[list[str]] = []
+def test_video_path_seeks_to_at_most_six_single_frames(tmp_path, monkeypatch):
+    seen: list[tuple[list[str], dict]] = []
     real_run = subprocess.run
 
     def spy(args, *a, **kw):
-        seen.append(list(args))
+        seen.append((list(args), kw))
         return real_run(args, *a, **kw)
 
     monkeypatch.setattr(btf.subprocess, "run", spy)
@@ -332,16 +354,32 @@ def test_video_path_never_decodes_more_than_six_frames(tmp_path, monkeypatch):
         check=True, capture_output=True, timeout=60,
     )  # fmt: skip
     measure_text_column(str(out), kind="video", width=1920, height=1080)
-    ff = [a for a in seen if a and a[0] == "ffmpeg"]
-    assert len(ff) == 1
-    args = ff[0]
-    assert "-frames:v" in args
-    assert int(args[args.index("-frames:v") + 1]) <= 6
-    assert "-t" in args and float(args[args.index("-t") + 1]) <= 60
+    ff = [(a, kw) for a, kw in seen if a and a[0] == "ffmpeg"]
+    assert 1 <= len(ff) <= 6
+    for args, kw in ff:
+        # fast INPUT seeking: -ss before -i, one frame per call, a short timeout of its own
+        assert args.index("-ss") < args.index("-i")
+        assert int(args[args.index("-frames:v") + 1]) == 1
+        assert float(args[args.index("-ss") + 1]) <= 60
+        assert kw["timeout"] <= 15
     # also without a known size, nothing is decoded for a portrait hint
     seen.clear()
     assert measure_text_column(str(out), kind="video", width=1080, height=1920) is None
     assert not seen
+
+
+def test_a_soft_time_limit_is_never_swallowed(tmp_path, monkeypatch):
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    f = tmp_path / "x.mp4"
+    f.write_bytes(b"x")
+
+    def limit(*_a, **_k):
+        raise SoftTimeLimitExceeded()
+
+    monkeypatch.setattr(btf.subprocess, "run", limit)
+    with pytest.raises(SoftTimeLimitExceeded):
+        measure_text_column(str(f), kind="video", width=1920, height=1080)
 
 
 def test_ffmpeg_missing_or_timeout_returns_none(tmp_path, monkeypatch):
@@ -395,15 +433,25 @@ def test_narrow_column_never_zooms_past_cap():
     assert f.zoom <= MAX_AUTO_ZOOM
 
 
-def test_no_pitch_shows_at_most_half_the_width():
+def test_no_pitch_means_no_auto_focus():
+    """A column with no measurable line pitch is not text we can size: no focus at all (it used
+    to zoom out to half the width, leaving black bands). Replaces the old
+    ``test_no_pitch_shows_at_most_half_the_width``."""
     col = TextColumn(left=0.1, right=0.9, line_pitch=None)
-    f = focus_for_text_column(col, source_w=1920, source_h=1080)
-    assert f is not None
-    cover = max(1080 / 1920, 1920 / 1080)
-    contain = min(1080 / 1920, 1920 / 1080)
-    v_cover = 1080 / (1920 * cover)
-    shown = v_cover / max(f.zoom, contain / cover)
-    assert shown <= 0.5 + 1e-3
+    assert focus_for_text_column(col, source_w=1920, source_h=1080) is None
+
+
+def test_evenly_spaced_vertical_bars_are_not_auto_aimed(tmp_path):
+    arr = np.full((1080, 1920), 20, dtype=np.uint8)
+    for x in range(200, 1500, 24):
+        arr[432:648, x : x + 8] = 235  # bars across the middle 40 % of the height
+    path = _save(Image.fromarray(arr).convert("RGB"), tmp_path / "bars.png")
+    column = measure_text_column(path, kind="image")
+    assert column is not None and column.line_pitch is None  # it is measured, but not as text
+    assert (
+        focus_for_text_column(column, source_w=column.source_width, source_h=column.source_height)
+        is None
+    )
 
 
 @pytest.mark.parametrize(

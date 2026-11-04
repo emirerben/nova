@@ -1068,6 +1068,24 @@ def _compile_background(
                 focus=focus_for(window.media_id, window.focus),
             )
         )
+    asked_fill_focus = not background.uses_color and background.focus is not None
+    asked_windows = sum(1 for window in background.windows if window.focus is not None)
+    if (asked_fill_focus or asked_windows) and not focus_for.is_open():
+        # Qendresa item 18: the lane asked for an aim but the build that will draw this recipe
+        # cannot (or the gate is closed): the aim is dropped here -- say so, once per compile.
+        from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+            BACKGROUND_FOCUS_FALLBACK_EVENT,
+            _trace_background_fallback,
+        )
+
+        _trace_background_fallback(
+            BACKGROUND_FOCUS_FALLBACK_EVENT,
+            {
+                "reason": "focus_gate_closed_for_build",
+                "window_count": asked_windows,
+                "had_fill_focus": asked_fill_focus,
+            },
+        )
     # Qendresa item 16: the full-screen spans pin nothing; clip them to the edit like windows.
     full_screen: list[SpeakerFullScreenWindow] = []
     for span in background.full_screen_windows:
@@ -1146,6 +1164,9 @@ class _FocusResolver:
             )
             self._open = reason is None
         return self._open
+
+    def is_open(self) -> bool:
+        return self._gate_open()
 
     def __call__(
         self, media_id: str | None, lane: SubtitledBackgroundFocus | None

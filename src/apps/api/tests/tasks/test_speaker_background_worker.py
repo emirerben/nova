@@ -89,7 +89,7 @@ def test_a_closed_gate_renders_exactly_what_a_request_that_never_asked_renders(m
 def test_an_unbindable_background_drops_its_lane_and_the_edit_still_renders(monkeypatch):
     job = _job(monkeypatch)
 
-    def _unreadable(_open, *, job_id, pins):  # noqa: ARG001
+    def _unreadable(_open, *, job_id, pins, measure_text=False):  # noqa: ARG001
         raise ValueError("approved photo bytes are unavailable")
 
     monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _unreadable)

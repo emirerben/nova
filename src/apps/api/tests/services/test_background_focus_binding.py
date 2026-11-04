@@ -25,7 +25,7 @@ from tests.services.test_background_text_focus import _encode, _page, _save
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not on PATH")
 
 
-def _bind(monkeypatch, tmp_path: Path, *, kind: str, local_file: str):
+def _bind(monkeypatch, tmp_path: Path, *, kind: str, local_file: str, measure_text: bool = True):
     """Bind one pool asset whose bytes are `local_file`; storage and DB are faked."""
     owner, item, media = (uuid.UUID(int=n) for n in (1, 2, 3))  # same ids every call
     path = f"users/{owner}/plan/{item}/pool/{media}.bin"
@@ -51,7 +51,9 @@ def _bind(monkeypatch, tmp_path: Path, *, kind: str, local_file: str):
 
     monkeypatch.setattr(storage, "download_generation_to_file", download)
     pins = {str(media): (kind, path, "77")}
-    return bind_phone_visual_assets(session, job_id=str(uuid.uuid4()), pins=pins)[0]
+    return bind_phone_visual_assets(
+        session, job_id=str(uuid.uuid4()), pins=pins, measure_text=measure_text
+    )[0]
 
 
 def _image(tmp_path: Path) -> str:
@@ -154,3 +156,29 @@ def test_a_failing_measure_never_fails_the_bind(monkeypatch, tmp_path):
     binding = _bind(monkeypatch, tmp_path, kind="image", local_file=_image(tmp_path))
     assert binding.text_column is None
     assert binding.sha256
+
+
+def test_a_bind_that_did_not_ask_for_the_measure_never_measures(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "background_focus_enabled", True)
+
+    def boom(*_a, **_k):
+        raise AssertionError("measure_text defaults to False")
+
+    monkeypatch.setattr(phone_visuals, "measure_text_column", boom, raising=False)
+    binding = _bind(
+        monkeypatch, tmp_path, kind="image", local_file=_image(tmp_path), measure_text=False
+    )
+    assert binding.text_column is None
+
+
+def test_a_soft_time_limit_in_the_measure_is_never_swallowed(monkeypatch, tmp_path):
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    monkeypatch.setattr(settings, "background_focus_enabled", True)
+
+    def limit(*_a, **_k):
+        raise SoftTimeLimitExceeded()
+
+    monkeypatch.setattr(phone_visuals, "measure_text_column", limit, raising=False)
+    with pytest.raises(SoftTimeLimitExceeded):
+        _bind(monkeypatch, tmp_path, kind="image", local_file=_image(tmp_path))

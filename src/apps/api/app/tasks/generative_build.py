@@ -11032,6 +11032,7 @@ def _run_phone_subtitled_job(
                                         _sync_session,
                                         job_id=job_id,
                                         pins=background_pins_by_id,
+                                        measure_text=True,
                                     )
                                 except OperationalError:
                                     raise  # transient DB -> Celery autoretry, never a lane drop
@@ -11304,6 +11305,13 @@ def _run_phone_subtitled_job(
                         _named = _bg.focus or next(
                             (w.focus for w in _bg.windows if w.focus is not None), None
                         )
+                        # ...and only when the compiled recipe really carries an aim: a build
+                        # the focus gate was closed for drops it (traced by the compile), and
+                        # the receipt must not claim it.
+                        if not getattr(
+                            getattr(recipe, "speaker_background", None), "uses_focus", False
+                        ):
+                            _named = None
                         if _named is not None and _named.x is not None:
                             _side = {0.0: "left", 0.5: "center", 1.0: "right"}.get(_named.x)
                             if _side is not None:

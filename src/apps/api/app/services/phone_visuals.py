@@ -16,6 +16,7 @@ from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any
 
+from celery.exceptions import SoftTimeLimitExceeded
 from google.api_core.exceptions import NotFound
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -165,12 +166,17 @@ def bind_phone_visual_assets(
     *,
     job_id: str,
     pins: dict[str, tuple[str, str, str]],
+    measure_text: bool = False,
 ) -> tuple[PhoneVisualBinding, ...]:
     """Bind selected ready pool assets without requiring a story timeline.
 
     Admission uses this same receipt path for editor-added photos and videos.
     Callers pass only server-derived rows; it still rechecks owner, item, exact
     generation, and the pool namespace before downloading any bytes.
+
+    ``measure_text`` (Qendresa item 18, with ``BACKGROUND_FOCUS_ENABLED``) also measures where
+    the text sits in each picture while its bytes are on disk. Only the callers that keep the
+    result (the background pins) ask for it; every other bind skips the work.
     """
     if not pins:
         return ()
@@ -255,7 +261,7 @@ def bind_phone_visual_assets(
                     raise ValueError("library original bytes do not match their verified identity")
             probed = _probed_video(local) if kind == "video" else {}
             text_column = None
-            if settings.background_focus_enabled:
+            if measure_text and settings.background_focus_enabled:
                 # Qendresa item 18: the only moment the bytes are on disk. `measure_text_column`
                 # is best-effort (never raises); a missing measure just means no auto focus.
                 try:
@@ -264,6 +270,8 @@ def bind_phone_visual_assets(
                         kind=kind,
                         **_upright_size(probed),
                     )
+                except SoftTimeLimitExceeded:
+                    raise
                 except Exception:  # noqa: BLE001 -- a measure never fails a bind
                     text_column = None
             # One visual on disk at a time keeps worker temp space bounded.

@@ -16,10 +16,12 @@ checked by the caller. Failure modes F3-F9: docs/reviews/background-focus-failur
 from __future__ import annotations
 
 import subprocess
+import time
 from typing import Literal
 
 import numpy as np
 import structlog
+from celery.exceptions import SoftTimeLimitExceeded
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 log = structlog.get_logger()
@@ -36,8 +38,9 @@ _SAMPLE_W, _SAMPLE_H = 960, 540
 _FRAME_BYTES = _SAMPLE_W * _SAMPLE_H
 _MAX_FRAMES = 6
 _MAX_SPAN_S = 60.0
-_FALLBACK_FPS = 0.2
-_TIMEOUT_S = 40
+_FALLBACK_STEP_S = 5.0  # sample spacing when the duration is unknown
+_TIMEOUT_S = 40  # the whole video measure
+_FRAME_TIMEOUT_S = 10  # one seek + decode of a single frame
 _PROBE_TIMEOUT_S = 10
 _STEP_LUMA = 48  # a glyph stroke is a neighbour-pixel luma jump at least this big
 _MIN_ROW_STEPS = 6  # rows with fewer steps are lone borders/rules
@@ -106,11 +109,17 @@ def _image_frame(
     except Exception:  # noqa: BLE001 -- optional dependency
         pass
     with Image.open(path) as im:
-        im.load()
-        im = ImageOps.exif_transpose(im)
-        upright_w, upright_h = width or im.width, height or im.height
+        # Image.open is lazy: read the size and the EXIF turn BEFORE decoding any pixel, so a
+        # portrait photo is never decoded.
+        stored_w, stored_h = im.size
+        turned = im.getexif().get(0x0112) in (5, 6, 7, 8)
+        if turned:
+            stored_w, stored_h = stored_h, stored_w
+        upright_w, upright_h = width or stored_w, height or stored_h
         if not should_measure(upright_w, upright_h):
             return None
+        im.load()
+        im = ImageOps.exif_transpose(im)
         gray = im.convert("L").resize((_SAMPLE_W, _SAMPLE_H), Image.BILINEAR)
         frame = np.asarray(gray, dtype=np.uint8).reshape(1, _SAMPLE_H, _SAMPLE_W)
         return frame, upright_w, upright_h
@@ -124,29 +133,54 @@ def _probe_duration(path: str) -> float | None:
             capture_output=True, timeout=_PROBE_TIMEOUT_S,
         )  # fmt: skip
         value = float(proc.stdout.decode().strip())
+    except SoftTimeLimitExceeded:
+        raise
     except Exception:  # noqa: BLE001 -- unknown duration is fine
         return None
     return value if value > 0 else None
 
 
-def _video_frames(path: str) -> np.ndarray | None:
-    duration = _probe_duration(path)
+def _sample_times(duration: float | None) -> list[float]:
     span = min(duration, _MAX_SPAN_S) if duration else None
-    fps = _MAX_FRAMES / span if span else _FALLBACK_FPS
-    args = [
-        "ffmpeg", "-nostdin", "-v", "error", "-i", path,
-        "-map", "0:v:0", "-an", "-sn", "-dn",
-        "-t", str(int(_MAX_SPAN_S)),
-        "-vf", f"fps={fps:.6f},scale={_SAMPLE_W}:{_SAMPLE_H}:flags=area,format=gray",
-        "-frames:v", str(_MAX_FRAMES), "-f", "rawvideo", "-",
-    ]  # fmt: skip
-    proc = subprocess.run(args, capture_output=True, timeout=_TIMEOUT_S, check=True)
-    data = proc.stdout
-    count = min(len(data) // _FRAME_BYTES, _MAX_FRAMES)
-    if count == 0:
+    if span:
+        return [round(span * (i + 0.5) / _MAX_FRAMES, 3) for i in range(_MAX_FRAMES)]
+    return [i * _FALLBACK_STEP_S for i in range(_MAX_FRAMES)]
+
+
+def _video_frames(path: str) -> np.ndarray | None:
+    """Up to six grey frames, one fast input-seek ffmpeg call per sample time (no decoding of
+    the footage in between), each with its own short timeout inside a bounded total."""
+    deadline = time.monotonic() + _TIMEOUT_S
+    frames: list[bytes] = []
+    for t in _sample_times(_probe_duration(path)):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        args = [
+            "ffmpeg", "-nostdin", "-v", "error", "-ss", f"{t:.3f}", "-i", path,
+            "-map", "0:v:0", "-an", "-sn", "-dn", "-frames:v", "1",
+            "-vf", f"scale={_SAMPLE_W}:{_SAMPLE_H}:flags=area,format=gray",
+            "-f", "rawvideo", "-",
+        ]  # fmt: skip
+        try:
+            proc = subprocess.run(
+                args,
+                capture_output=True,
+                timeout=min(_FRAME_TIMEOUT_S, remaining),
+                check=True,
+            )
+        except SoftTimeLimitExceeded:
+            raise
+        except FileNotFoundError:
+            return None
+        except (subprocess.SubprocessError, OSError):
+            continue  # one bad seek (past the end, a stall) just loses that sample
+        if len(proc.stdout) >= _FRAME_BYTES:
+            frames.append(proc.stdout[:_FRAME_BYTES])
+    if not frames:
         return None
-    arr = np.frombuffer(data[: count * _FRAME_BYTES], dtype=np.uint8)
-    return arr.reshape(count, _SAMPLE_H, _SAMPLE_W)
+    arr = np.frombuffer(b"".join(frames), dtype=np.uint8)
+    return arr.reshape(len(frames), _SAMPLE_H, _SAMPLE_W)
 
 
 # ---------------------------------------------------------------------------- measure
@@ -247,6 +281,8 @@ def measure_text_column(
         if column is None:
             return None
         return column.model_copy(update={"source_width": width, "source_height": height})
+    except SoftTimeLimitExceeded:
+        raise
     except Exception as exc:  # noqa: BLE001 -- best-effort, never fails a render
         log.warning("background_text_focus.measure_failed", error_type=type(exc).__name__)
         return None
@@ -263,7 +299,9 @@ def focus_for_text_column(
     canvas_w: int = 1080,
     canvas_h: int = 1920,
 ) -> BackgroundFocus | None:
-    """Zoom/align so the column fills the width, lines stay readable and start in view."""
+    """Zoom/align so the column fills the width, lines stay readable and start in view.
+
+    None when the picture already fits or the column has no line pitch (not text)."""
     if min(source_w, source_h, canvas_w, canvas_h) <= 0:
         return None
     cover = max(canvas_w / source_w, canvas_h / source_h)
@@ -277,10 +315,9 @@ def focus_for_text_column(
     if b <= a:
         return None
     z_fit = v_cover / (b - a)
-    if column.line_pitch:
-        z_read = TARGET_LINE_PITCH_PX / (column.line_pitch * source_h * cover)
-    else:
-        z_read = v_cover / 0.5  # no pitch: show at most half the width
+    if not column.line_pitch:
+        return None  # no measurable line pitch: not text we can size, so no auto focus
+    z_read = TARGET_LINE_PITCH_PX / (column.line_pitch * source_h * cover)
     z = min(MAX_AUTO_ZOOM, max(z_fit, z_read, contain / cover, MIN_FOCUS_ZOOM))
     v = v_cover / z
     # Wider than what shows: start at the column's left edge so lines read from their start.

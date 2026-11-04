@@ -73,7 +73,7 @@ async def _pin(db, job, **changes):
 async def test_a_ready_pool_row_is_bound_and_added_to_the_jobs_receipts(monkeypatch):
     seen = {}
 
-    def bind(_open, *, job_id, pins):
+    def bind(_open, *, job_id, pins, measure_text=False):
         seen.update(job_id=job_id, pins=pins)
         return (_binding(),)
 

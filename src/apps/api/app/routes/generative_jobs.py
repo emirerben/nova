@@ -11544,12 +11544,23 @@ def _background_focus_capability(job: Job, variant: dict) -> bool:
 
 
 def _validate_background_focus_change(
-    requested: EditorCommitSpeakerBackground, stored: object, *, is_color: bool
+    requested: EditorCommitSpeakerBackground,
+    job: Job,
+    variant: dict,
+    *,
+    is_color: bool,
 ) -> None:
-    """Qendresa item 18 (F1, F11): a focus on a colour fill is invalid; SETTING or CHANGING a
-    focus (compared per fill and per window with what the variant carries) needs the focus gate:
-    426 below the protocol, 422 ``background_focus_disabled`` otherwise. Unchanged focuses
-    (an echo, a fill change) are never refused by a gate closed since."""
+    """Qendresa item 18 (F1, F11): a focus on a colour fill is invalid; SETTING a focus needs the
+    focus gate: 426 below the protocol, 422 ``background_focus_disabled`` otherwise.
+
+    The baseline is the document the editor shows: the variant's stored one, else the one
+    projected from the pinned recipe (a never-Saved variant whose recipe carries a measured
+    focus). A requested focus is a "set" only when that exact (media, focus) pair is not already
+    on the baseline's fill or any baseline window of the same media (a fill keeping the baseline
+    fill's focus on a swapped photo counts too), so an echo, a carried aim,
+    or an aim inherited by a new window of the same media is never refused by a gate closed
+    since. Removing a focus is never gated."""
+    from app.services.kria_editor_ops import background_current  # noqa: PLC0415
     from app.services.phone_rollout import background_focus_unavailable_reason  # noqa: PLC0415
 
     if is_color and requested.focus is not None:
@@ -11557,17 +11568,41 @@ def _validate_background_focus_change(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"code": "background_focus_invalid"},
         )
-    stored_doc = stored if isinstance(stored, dict) else {}
-    stored_windows = stored_doc.get("windows") or []
-    changed = False
-    if requested.focus is not None:
-        changed = requested.focus.model_dump() != stored_doc.get("focus")
-    for index, window in enumerate(requested.windows or []):
-        if window.focus is None:
-            continue
-        old = stored_windows[index] if index < len(stored_windows) else None
-        previous = old.get("focus") if isinstance(old, dict) else None
-        if window.focus.model_dump() != previous:
+    stored = variant.get("speaker_background")
+    if isinstance(stored, dict) and (stored.get("media_id") or stored.get("color")):
+        baseline: dict = stored
+    elif "speaker_background" in variant:
+        baseline = {}
+    else:
+        baseline = background_current(job, variant) or {}
+    known: set[tuple[str, tuple[float, float, float]]] = set()
+
+    def _key(media_id: object, focus: object) -> tuple[str, tuple[float, float, float]] | None:
+        if not isinstance(media_id, str) or not isinstance(focus, dict):
+            return None
+        try:
+            return media_id, (float(focus["x"]), float(focus["y"]), float(focus["zoom"]))
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    for entry in [baseline, *(baseline.get("windows") or [])]:
+        if isinstance(entry, dict) and (key := _key(entry.get("media_id"), entry.get("focus"))):
+            known.add(key)
+
+    def _is_set(media_id: object, focus: Any) -> bool:
+        if focus is None:
+            return False
+        return _key(media_id, focus.model_dump()) not in known
+
+    # A fill swapped for another photo keeps the aim it showed (the app echoes it).
+    fill_echo = (
+        requested.focus is not None
+        and _key("fill", requested.focus.model_dump()) == _key("fill", baseline.get("focus"))
+        and baseline.get("focus") is not None
+    )
+    changed = not fill_echo and _is_set(requested.media_id, requested.focus)
+    for window in requested.windows or []:
+        if _is_set(window.media_id, window.focus):
             changed = True
     if not changed:
         return
@@ -11586,6 +11621,29 @@ def _validate_background_focus_change(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"code": "background_focus_disabled", "reason": reason},
         )
+
+
+def _new_recording_focus(job: Job, variant: dict, assembly: dict) -> dict[str, Any]:
+    """Qendresa item 18 (F14): the measured aim of the recordings THIS request newly pinned, for
+    the variant's recipe canvas (portrait when the variant has no pinned recipe). A media never
+    pinned before cannot carry a creator's choice, so a request focus-less fill/window of it
+    takes this aim without overwriting anything. Empty with the focus gate closed."""
+    from app.services.phone_rollout import background_focus_unavailable_reason  # noqa: PLC0415
+    from app.services.phone_speaker_background import (  # noqa: PLC0415
+        NEW_BACKGROUND_COLUMNS_ATTR,
+        new_background_focus,
+    )
+    from app.services.phone_subtitled_editor import _pinned_recipe  # noqa: PLC0415
+
+    if not getattr(job, NEW_BACKGROUND_COLUMNS_ATTR, None):
+        return {}
+    if background_focus_unavailable_reason() is not None:
+        return {}
+    recipe = _pinned_recipe(assembly, str(variant.get("variant_id") or ""))
+    canvas_w, canvas_h = (
+        (recipe.canvas.width, recipe.canvas.height) if recipe is not None else (1080, 1920)
+    )
+    return new_background_focus(job, canvas_w, canvas_h)
 
 
 def _validate_speaker_full_screen_windows(
@@ -11823,7 +11881,8 @@ def _validate_speaker_background_section(
             )
         if new_spans != stored_spans:
             _validate_speaker_full_screen_windows(requested, variant)
-    _validate_background_focus_change(requested, stored, is_color=is_color)
+    _validate_background_focus_change(requested, job, variant, is_color=is_color)
+    auto_focus = _new_recording_focus(job, variant, assembly)
     fill: dict[str, Any]
     if is_color:
         # KRI-1173 (S54): a colour is not a pool visual -- nothing to look up or pin.
@@ -11859,6 +11918,8 @@ def _validate_speaker_background_section(
         }
         if requested.focus is not None:
             fill["focus"] = SubtitledBackgroundFocus(**requested.focus.model_dump())
+        elif requested.media_id in auto_focus:
+            fill["focus"] = auto_focus[requested.media_id]
     window_lanes: list[SubtitledBackgroundWindow] = []
     if requested.uses_windows:
         _validate_speaker_background_windows(requested, assembly)
@@ -11876,7 +11937,7 @@ def _validate_speaker_background_section(
                     focus=(
                         SubtitledBackgroundFocus(**window.focus.model_dump())
                         if window.focus is not None
-                        else None
+                        else auto_focus.get(window.media_id)
                     ),
                 )
             )
