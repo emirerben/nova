@@ -3173,6 +3173,21 @@
         "src/apps/api/tests/integration/test_intent_review_qualification_postgres.py",
         "docs/reviews/intent-review/QUALIFICATION.md"
       ]
+    },
+    {
+      "id": "qendresa-13-tight-pauses",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_tight_pause_cut.py tests/pipeline/test_voice_guard_cleanup_e2e.py tests/kria/test_tight_pause_ask.py tests/kria/test_tight_pause_receipts.py tests/tasks/test_phone_tight_pauses.py tests/routes/test_creation_thread_cleanup_requested.py",
+      "paths": [
+        "src/apps/api/app/pipeline/tight_pause_cut.py",
+        "src/apps/api/app/kria/tight_pause_ask.py",
+        "src/apps/api/tests/pipeline/test_tight_pause_cut.py",
+        "src/apps/api/tests/kria/test_tight_pause_ask.py",
+        "src/apps/api/tests/kria/test_tight_pause_receipts.py",
+        "src/apps/api/tests/tasks/test_phone_tight_pauses.py",
+        "src/apps/api/tests/routes/test_creation_thread_cleanup_requested.py",
+        "scripts/ios/qendresa-13-tight-pauses-e2e.py"
+      ]
     }
   ]
 }
