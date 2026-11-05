@@ -539,7 +539,8 @@ class PlanFacts:
     # a title, captions, a start cut and speech cleanup; an ask outside that set is answered
     # with a plain "can't" before approval and after render (`_talking_honest_receipt`).
     phone_talking: bool = False
-    # Item 14: a `closing-arrow` drawing is on the finished video / in the editor payload.
+    # Item 14: a drawing over the closing text's window (Kria's `closing-arrow` or her own) is
+    # on the finished video / in the editor payload.
     closing_arrow: bool = False
     phone_voiceover_spoken_text: bool = False
     # KRI-793: True when this draft renders through the phone Talking writer, which captions
@@ -2359,25 +2360,24 @@ def _row_window(row: Mapping[str, Any]) -> tuple[float, float] | None:
 def _has_closing_arrow(payload: Mapping[str, Any]) -> bool:
     """Item 14: the payload's drawings hold the CTA ending's arrow.
 
-    Either Kria's `closing-arrow`, or a drawing the creator made herself that overlaps the
-    closing text rows' window.
+    A drawing counts only while its window overlaps the closing text rows' window: Kria's
+    `closing-arrow` and a drawing the creator made herself alike. The ID alone is not enough
+    (review of #2103): the creator can move Kria's arrow anywhere in the editor.
     """
-    from app.pipeline.phone_cta_text import CTA_ARROW_ID  # noqa: PLC0415
-
     drawings = payload.get("drawings")
     if not isinstance(drawings, list):
         return False
     windows = [
         w for w in (_row_window(r) for r in _closing_rows(payload.get("text_elements") or ())) if w
     ]
-    closing = (min(w[0] for w in windows), max(w[1] for w in windows)) if windows else None
+    if not windows:
+        return False
+    closing = (min(w[0] for w in windows), max(w[1] for w in windows))
     for d in drawings:
         if not isinstance(d, Mapping):
             continue
-        if d.get("id") == CTA_ARROW_ID:
-            return True
         window = _row_window(d)
-        if closing and window and window[0] < closing[1] and closing[0] < window[1]:
+        if window and window[0] < closing[1] and closing[0] < window[1]:
             return True
     return False
 

@@ -10,6 +10,9 @@ Ways this could fail (written before the code):
 - the text is found but nothing draws the arrow, and the receipt still says met;
 - the two-row ending ("comment", "READ") is not recognised as "comment READ" -> a false miss;
 - the creator deletes the arrow in the editor and the receipt keeps saying met;
+- (review #2103) she moves Kria's `closing-arrow` off the ending (to the start, or only
+  touching it, or its window is unreadable) and the ID alone keeps the receipt at met;
+  Kria's own arrow, timed with the ending rows by the worker, must still count;
 - the word "arrow" inside her quoted text ("comment ARROW") is read as an arrow ask;
 - the reason is English-only on a Turkish turn, or reads as the "simpler version?" question.
 
@@ -244,6 +247,29 @@ def test_a_drawing_elsewhere_in_the_video_is_not_the_ending_arrow():
     early = {**_ARROW, "id": "doodle", "start_s": 2.0, "end_s": 4.0}
     facts = bc.plan_facts_from_phone_variant(_variant([_row("closing-title", _CTA, None)], [early]))
     assert bc.check_requirement(ENDING, facts).status == "partial"
+
+
+@pytest.mark.parametrize(
+    "window",
+    [
+        {"start_s": 0.0, "end_s": 3.0},  # moved to the start of the video in the editor
+        {"start_s": 74.0, "end_s": 77.0},  # ends exactly as the ending starts: never together
+        {"start_s": None, "end_s": None},  # no readable window: never assumed to be the ending
+    ],
+)
+def test_review_2103_kria_arrow_moved_off_the_ending_is_not_the_ending_arrow(window):
+    """Emir's review of #2103: the `closing-arrow` ID alone used to say "met" wherever it was."""
+    moved = {**_ARROW, **window}
+    facts = bc.plan_facts_from_phone_variant(_variant(_HER_ENDING, [moved]))
+    receipt = bc.check_requirement(ENDING, facts)
+    assert receipt.status == "partial"
+    assert "arrow" in (receipt.reason or "").lower()
+
+
+def test_review_2103_kria_arrow_nudged_but_still_over_the_ending_counts():
+    nudged = {**_ARROW, "start_s": 78.5, "end_s": 81.0}
+    facts = bc.plan_facts_from_phone_variant(_variant(_HER_ENDING, [nudged]))
+    assert bc.check_requirement(ENDING, facts).status == "met"
 
 
 def test_her_two_rows_still_count_after_an_editor_timing_nudge():

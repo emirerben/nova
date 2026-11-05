@@ -14,7 +14,9 @@ Ways this could fail (written before the code; each is pinned below or in the re
   recipe it must refuse, instead of today's pill;
 - the switch off changes the variant or the recipe;
 - an ending clip after the speaker extends only one row and leaves the arrow short;
-- a closing text that isn't "comment <keyword>" is split anyway.
+- a closing text that isn't "comment <keyword>" is split anyway;
+- (review #2103) the receipt, which now needs the arrow over the ending rows, stops counting
+  the arrow the worker drew.
 
 Runs the real worker (`_run_generative_job`) on the shared Talking harness: ingest, probe,
 transcription and the face sampler are faked, the planner rows, placement, compiler, contract
@@ -148,6 +150,13 @@ def _closes_with(job, text: str = _CTA) -> list:
     return verify_phone_recipe(contract, _recipe(job))
 
 
+def _receipt_status(variant: dict) -> str:
+    """The finished-video receipt for the arrow ask, on the variant the worker persisted."""
+    from app.kria import brief_checks as bc
+
+    return bc.check_requirement(_ENDING, bc.plan_facts_from_phone_variant(variant)).status
+
+
 def _drawn_box(row: dict) -> NormalizedBox:
     """Where the row's ink sits on the 1080x1920 story canvas (the production measure)."""
     return title_mod._measure_title_box(row, canvas=_STORY_CANVAS)
@@ -212,6 +221,9 @@ def test_comment_read_with_an_arrow_draws_her_ending(monkeypatch):
     assert [layer.id for layer in recipe.drawing_layers] == ["closing-arrow"]
     assert "freehandDrawing" in recipe.required_capabilities
     assert _closes_with(job)
+    # The finished-video receipt counts the arrow the worker drew (review #2103: it now has to
+    # sit over the ending rows, not just carry the `closing-arrow` ID).
+    assert _receipt_status(variant) == "met"
 
 
 def test_comment_read_without_an_arrow_gets_her_two_styles_and_no_arrow(monkeypatch):
@@ -294,6 +306,7 @@ def test_after_an_ending_clip_both_rows_and_the_arrow_run_to_the_very_end(monkey
     [layer] = recipe.drawing_layers
     assert layer.end == pytest.approx(15.0)
     assert _closes_with(job)
+    assert _receipt_status(variant) == "met"
 
 
 def test_switched_off_the_job_is_exactly_todays(monkeypatch):

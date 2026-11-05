@@ -4432,8 +4432,9 @@ today's lime tag is drawn instead (`cta_fallback` on the placement receipt when 
 `tests/tasks/test_phone_cta_ending_worker.py::test_switched_off_the_job_is_exactly_todays`).
 
 **Receipts.** A "comment <keyword>" closing text whose ask also names an arrow ("no arrow" is not an ask)
-is "met" only when the `closing-arrow` drawing, or a drawing she made over the ending, is on the finished
-video; otherwise it is "partial" and says the arrow isn't there and that she can draw one with the pen in
+is "met" only when a drawing whose time window overlaps the ending text (the `closing-arrow` drawing, or one
+she made herself) is on the finished video; the ID alone never counts, so an arrow she moves off the ending
+does not; otherwise it is "partial" and says the arrow isn't there and that she can draw one with the pen in
 the editor. An arrow asked next to any other text is never drawn, so it is always "partial"
 (`tests/kria/test_cta_ending_receipt.py`). Known gap: the draft's "I'll draw a curly arrow" does not know
 the approving app build, a closing photo or an inserted clip; the finished-video receipt corrects it. The approved contract's exact closing
