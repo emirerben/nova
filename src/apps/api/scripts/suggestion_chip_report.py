@@ -329,8 +329,8 @@ def add_e2e_section(add) -> None:
     """The end-to-end tap proof (``pytest tests/e2e_suggestions``), when its report is on disk.
 
     That run needs Postgres, so this offline report only reads its JSON twin; it never runs it.
-    ``tap executes`` is the literal question (a card served by the unmodified GET, tapped, is
-    applied); ``seam executes`` is the pinned path once the ring holds the card.
+    ``tap executes`` is the literal question: EVERY card of the kind that the unmodified GET served,
+    tapped, was applied (one refused cell makes it NO, and ``why`` says which).
     """
     add("### End-to-end tap proof (every served card tapped through the pinned path)")
     add("")
@@ -347,13 +347,17 @@ def add_e2e_section(add) -> None:
         "Gaps are named GAP-1.. in that file."
     )
     add("")
-    add("| kind | cells tapped | tap executes (unmodified GET) | seam executes | refused | gaps |")
-    add("| --- | --- | --- | --- | --- | --- |")
+    add(
+        "| kind | cells tapped | languages | tap executes (unmodified GET) | refused | "
+        "first prompt | gaps | why |"
+    )
+    add("| --- | --- | --- | --- | --- | --- | --- | --- |")
     for row in twin.get("kinds_proven", []):
         add(
-            f"| {row['kind']} | {row['cells_tapped']} | {'yes' if row['tap_executes'] else 'NO'} | "
-            f"{'yes' if row['seam_executes'] else 'NO'} | {row.get('refused_cells', 0)} | "
-            f"{', '.join(row['gaps']) or '-'} |"
+            f"| {row['kind']} | {row['cells_tapped']} | {'+'.join(row.get('languages', [])) or '-'}"
+            f" | {'yes' if row['tap_executes'] else 'NO'} | {row.get('refused_cells', 0)} | "
+            f"{row.get('first_prompt', '-')} | {', '.join(row['gaps']) or '-'} | "
+            f"{str(row.get('why', '')).replace('|', '/')[:200]} |"
         )
     add("")
 
