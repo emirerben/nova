@@ -9578,6 +9578,7 @@ def _run_phone_subtitled_job(
             speech_cleanup_snapshot: HydratedSpeechCleanupSnapshot | None = None
             cut_plan: CutPlan | None = None
             speech_cleanup_outcome_context: dict[str, Any] | None = None
+            tight_pauses_report: dict[str, Any] | None = None
             if cleanup_required:
                 try:
                     speech_cleanup_snapshot = hydrate_job_speech_cleanup_snapshot(
@@ -9600,6 +9601,26 @@ def _run_phone_subtitled_job(
                 speech_cleanup_outcome_context = speech_cleanup_snapshot.outcome_context(
                     analysis_view="full_clip"
                 )
+                if not multi_clip:
+                    # Qendresa 13: "cut all my pauses so it's tight" -- extra pause cuts on top
+                    # of the consented plan, before the opening cut and before the outcome
+                    # bookkeeping below, so they count as cleanup.
+                    consented_plan = cut_plan
+                    cut_plan, tight_pauses_report = _phone_tight_pause_cut(
+                        snapshot,
+                        cut_plan,
+                        speech_cleanup_snapshot.source_words(),
+                        clip_path=clip_path,
+                        duration_s=float(probe.duration_s),
+                    )
+                    if cut_plan is not consented_plan:
+                        # The public receipt reads only these two counts: report what was cut.
+                        speech_cleanup_outcome_context["output_removal_count"] = (
+                            _merged_removal_count(cut_plan.removed)
+                        )
+                        speech_cleanup_outcome_context["output_removed_ms"] = max(
+                            0, int(round(cut_plan.time_saved_s * 1000))
+                        )
             # KRI-628: "start the video at '...'" cuts the speech before that line out of
             # the cleanup plan (the plan's keep segments are the only trim this render has).
             # KRI-790: "...and end right after '...'" cuts everything after that line too.
@@ -11811,6 +11832,8 @@ def _run_phone_subtitled_job(
                 probe_s=float(probe.duration_s),
                 original_s=float(binding.original.duration_s),
             )
+        if tight_pauses_report is not None:
+            new_entry["tight_pauses"] = tight_pauses_report
         if cut_plan is not None and not opening_cut_only:
             # The source `_speech_cleanup_outcome_context` the device-export completion route
             # (`app.routes.device_render._device_speech_cleanup_outcome`) reads to publish the
@@ -12139,6 +12162,79 @@ def _phone_opening_cut(
         except Exception:  # noqa: BLE001 - observability only
             pass
     return cut_plan, receipts
+
+
+def _merged_removal_count(removed: Sequence[Any], *, join_s: float = 0.001) -> int:
+    """Removals counted as the creator sees them: ones touching within ``join_s`` are one cut."""
+    count = 0
+    last_end: float | None = None
+    for row in sorted(removed, key=lambda r: r.start_s):
+        if last_end is None or row.start_s > last_end + join_s:
+            count += 1
+        last_end = row.end_s if last_end is None else max(last_end, row.end_s)
+    return count
+
+
+def _phone_tight_pause_cut(
+    snapshot: dict,
+    cut_plan: CutPlan,
+    words: Sequence[Any],
+    *,
+    clip_path: str,
+    duration_s: float,
+) -> tuple[CutPlan, dict[str, Any] | None]:
+    """Qendresa 13: layer tight-pause cuts on the consented speech-cleanup plan.
+
+    Runs only with ``TIGHT_PAUSE_CUT_ENABLED`` and an approved brief (``creator_brief_binding``)
+    that asks to cut every pause (``brief_tight_pauses``). Otherwise ``(cut_plan, None)`` with the
+    SAME plan object, so the render is byte-identical. Returns the plan plus the
+    ``variant["tight_pauses"]`` receipt. Never raises: a failure keeps the consented plan and
+    reports ``unavailable`` (the render is never failed for a pause the creator did not consent
+    to by name)."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.tight_pause_ask import brief_tight_pauses  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    if not settings.tight_pause_cut_enabled:
+        return cut_plan, None
+    raw_binding = snapshot.get("creator_brief_binding")
+    if not raw_binding:
+        return cut_plan, None
+    try:
+        brief = BriefBinding.model_validate(raw_binding).resolve()
+        if not brief_tight_pauses(brief):
+            return cut_plan, None
+    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
+        log.warning("phone_tight_pauses.binding_unreadable", error=str(exc)[:200])
+        return cut_plan, None
+    try:
+        from app.pipeline.tight_pause_cut import apply_tight_pauses  # noqa: PLC0415
+
+        new_plan, report = apply_tight_pauses(cut_plan, clip_path, list(words), duration_s)
+        receipt = report.to_variant()
+    except Exception as exc:  # noqa: BLE001 - the consented plan stands
+        log.warning("phone_tight_pauses.failed", error=str(exc)[:200])
+        new_plan = cut_plan
+        receipt = {
+            "version": 1,
+            "status": "unavailable",
+            "target_s": None,
+            "limit_s": None,
+            "added_cuts": 0,
+            "added_removed_ms": 0,
+            "longest_pause_s": None,
+            "longest_pause_before_s": None,
+            "pauses_over_limit": None,
+            "guard_dropped": 0,
+            "guard_trimmed": 0,
+            "capped": False,
+            "reason": "failed",
+        }
+    try:
+        record_pipeline_event("phone", "tight_pauses", receipt)
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return new_plan, receipt
 
 
 def _phone_speaker_framing(

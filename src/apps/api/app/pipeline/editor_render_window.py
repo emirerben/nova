@@ -2,6 +2,10 @@
 
 import math
 
+# Match NativeEditorRenderCompiler's source-window geometry tolerance. Saved
+# end-minus-start arithmetic can add a few ULPs without asking for another frame.
+SOURCE_WINDOW_TOLERANCE_S = 1e-6
+
 
 class RenderWindowUnavailable(ValueError):
     """Admitted finite authoring intent needs a media/window recovery action."""
@@ -30,14 +34,14 @@ def effective_source_start(
     if start < 0 or duration <= 0 or rate <= 0 or source_duration <= 0:
         raise ValueError("Source window must have a nonnegative start and positive duration/rate.")
     span = duration * rate
-    if span > source_duration:
+    if span > source_duration + SOURCE_WINDOW_TOLERANCE_S:
         raise RenderWindowUnavailable(
             "The requested duration needs more footage than this source contains."
         )
-    if start + span <= source_duration:
+    if start + span <= source_duration + SOURCE_WINDOW_TOLERANCE_S:
         return start
     if start_locked:
         raise RenderWindowUnavailable(
             "The pinned source moment cannot supply the requested duration."
         )
-    return source_duration - span
+    return max(0.0, source_duration - span)
