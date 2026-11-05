@@ -767,10 +767,19 @@ def _complete_response_turn(
             turn.lease_expires_at = None
             db.commit()
             return _Completion(committed=False, requeue_turn_id=str(turn.id))
+        if brief_expected_version is not None:
+            current_brief = load_latest_brief_sync(db, thread.id)
+            if brief_expected_version != (current_brief.version if current_brief else 0):
+                turn.status = "pending"
+                turn.lease_owner = None
+                turn.lease_expires_at = None
+                db.commit()
+                return _Completion(committed=False, requeue_turn_id=str(turn.id))
         if pinned_refusal is not None:
-            # In this transaction: the card is marked refused on its ring entry, so the next read
-            # hides it and mints a new set (`pinned.mark_refused`). A refusal that says nothing
-            # about the card (a render in flight) leaves it tappable.
+            # In this transaction, after both fences: a turn that is requeued has no outcome yet,
+            # and its commit would otherwise carry the mark. The card is marked refused on its ring
+            # entry, so the next read hides it and mints a new set (`pinned.mark_refused`). A
+            # refusal that says nothing about the card (a render in flight) leaves it tappable.
             from app.services.suggestions import pinned as _pinned  # noqa: PLC0415
 
             if pinned_refusal.get("reason") not in _pinned.TRANSIENT_REASONS and (
@@ -782,14 +791,6 @@ def _complete_response_turn(
                 )
             ):
                 thread.state = marked
-        if brief_expected_version is not None:
-            current_brief = load_latest_brief_sync(db, thread.id)
-            if brief_expected_version != (current_brief.version if current_brief else 0):
-                turn.status = "pending"
-                turn.lease_owner = None
-                turn.lease_expires_at = None
-                db.commit()
-                return _Completion(committed=False, requeue_turn_id=str(turn.id))
         persisted_brief = None
         if brief_updates or brief_delegated:
             # KRI-188: a question/recovery turn still records what the creator

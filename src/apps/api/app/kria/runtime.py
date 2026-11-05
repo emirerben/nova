@@ -43,7 +43,7 @@ from app.kria.contracts import (
     KriaTurnPlan,
     RequirementReceipt,
 )
-from app.kria.duplicate_send import duplicate_reply, find_duplicate_send
+from app.kria.duplicate_send import duplicate_reply, find_duplicate_send, refused_card_tap
 from app.kria.intent_review_copy import INTENT_REVIEW_TURN_VALUE
 from app.kria.language import is_help_question, is_status_question
 from app.kria.reply_language import (
@@ -1125,6 +1125,20 @@ async def submit_turn(
         # revision fence and the planner's reads skip them, so a copy never disturbs the turn
         # it repeats.
         copy_of = {"duplicate_of": str(duplicate.turn_id)} if duplicate is not None else {}
+        pin_stamp = _pinned_suggestion_stamp(thread, body) if duplicate is not None else {}
+        # A tap on a card whose first tap is still in flight gets the typed record every other
+        # refusal carries; the copy answer above stays the reply text.
+        refusal = (
+            refused_card_tap(duplicate, pin_stamp.get("pinned_suggestion"))
+            if duplicate is not None
+            else None
+        )
+        if refusal is not None:
+            from app.services.suggestions import pinned  # noqa: PLC0415
+
+            marked = pinned.mark_refused(thread.state, refusal["set_id"], refusal["id"], turn_id)
+            if marked:
+                thread.state = marked
         source = await _append_event(
             db,
             thread,
@@ -1155,9 +1169,15 @@ async def submit_turn(
                 "next_actions": [],
                 "schema_version": 2,
                 **copy_of,
+                **({"suggestion_pin": refusal} if refusal is not None else {}),
             },
         )
-        plan = KriaTurnPlan(mode="respond", turn_value=turn_value, response=message)
+        plan = KriaTurnPlan(
+            mode="respond",
+            turn_value=turn_value,
+            response=message,
+            **({"diagnostics": {"suggestion_pin": refusal}} if refusal is not None else {}),
+        )
         db.add(
             CreatorAgentTurn(
                 id=turn_id,
@@ -1174,11 +1194,19 @@ async def submit_turn(
         )
         await db.flush()
         await db.commit()
+        if refusal is not None:
+            from app.services.suggestion_serve import enqueue_for_thread  # noqa: PLC0415
+
+            # Fresh cards, as for every refused tap (flag-checked, enqueue-only, after the commit).
+            await asyncio.to_thread(
+                enqueue_for_thread, thread.id, trigger="pinned_stale", creator_id=creator_id
+            )
         return (
             TurnAccepted(
                 turn_id=str(turn_id),
                 thread_revision=int(thread.revision),
                 status="completed",
+                suggestion_outcome="refused" if refusal is not None else None,
             ),
             False,
         )
