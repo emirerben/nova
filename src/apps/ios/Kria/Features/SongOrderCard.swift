@@ -9,6 +9,8 @@ enum SongOrderCardMode {
     /// Answered by a `song_order` message: read-only, collapsed. `summary` names the confirmed order; nil when
     /// that message's clips can no longer be named, which reads as a neutral "Order question closed".
     case answered(summary: String?)
+    /// A newer question replaced this one before it was answered.
+    case superseded
 }
 
 /// Finds a take's original on this iPhone without hashing it: the card only needs something to play.
@@ -83,6 +85,8 @@ struct SongOrderCard: View {
             .frame(minHeight: 44, alignment: .leading)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("song-order-answered")
+        case .superseded:
+            KriaSupersededLine().accessibilityIdentifier("song-order-superseded")
         case .active(let isSending, let submit):
             VStack(alignment: .leading, spacing: 14) {
                 header

@@ -179,7 +179,7 @@ import UIKit
         XCTAssertEqual(failure.message, CreationUploadError.busyMessage)
         XCTAssertFalse(failure.message.contains("read"))
         XCTAssertTrue(UploadFailureBanner.canRetry(coordinator.failures))
-        XCTAssertEqual(UploadFailureBanner.message(for: coordinator.failures), "1 file didn’t upload and won’t be sent unless you retry")
+        XCTAssertEqual(UploadFailureBanner.message(for: coordinator.failures), "1 file couldn’t upload")
     }
 
     func testRetryAfterAFailedIntakeReRunsItWhenTheServerRecovers() async throws {

@@ -83,9 +83,11 @@ struct ChatConversationScroll<Content: View>: View {
                     } label: {
                         Label("Latest", systemImage: "arrow.down")
                             .font(KriaFont.body(12).weight(.semibold))
-                            .padding(.horizontal, 14).padding(.vertical, 10)
-                            .background(KriaColor.paper, in: Capsule())
-                            .overlay(Capsule().stroke(KriaColor.border, lineWidth: 1))
+                            .padding(.horizontal, 16)
+                            .frame(minHeight: 44)
+                            .foregroundStyle(KriaColor.ink)
+                            .background(KriaColor.fill, in: Capsule())
+                            .shadow(color: KriaColor.ink.opacity(0.12), radius: 8, y: 3)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Jump to latest message")

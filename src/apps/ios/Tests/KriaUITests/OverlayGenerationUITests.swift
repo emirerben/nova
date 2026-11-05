@@ -87,10 +87,10 @@ import XCTest
         let scroll = app.scrollViews["native-editor-visuals-scroll"]
         for _ in 0..<4 where !use.isHittable { scroll.swipeUp() }
         use.tap()
-        XCTAssertTrue(app.staticTexts["generated-media-error"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.otherElements["generated-media-problem"].waitForExistence(timeout: 10))
         let block = app.buttons["native-editor-timeline-visual_block-DCC14763-5702-4AE3-8510-8C72845E6B15"]
         XCTAssertFalse(block.exists)
-        app.buttons["Try another look"].tap()
+        app.buttons["generated-media-try-again"].tap()
         XCTAssertTrue(use.waitForExistence(timeout: 10))
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: use)
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed)

@@ -86,7 +86,7 @@ struct NativeVideoPreview: View {
     /// session has no device-render identity to relink against, in which case
     /// the missing-originals state explains itself without offering the action.
     private let onFindOriginals: (() -> Void)?
-    private let onAddClip: (() -> Void)?
+    private let onAddClip: ((AddClipLaunch) -> Void)?
     /// Last time a drag or pinch changed on the canvas. A drag that also
     /// resolves as a tap (its tap location is where the finger went down) must
     /// never count as an empty tap. Reference type: writing it must not re-render.
@@ -122,7 +122,7 @@ struct NativeVideoPreview: View {
     @State private var textAlignmentFeedback = NativeTextAlignmentFeedback()
     @State private var textAlignmentHaptic = UISelectionFeedbackGenerator()
 
-    init(session: NativeEditorSession, onEmptyTap: (() -> Void)? = nil, onFindOriginals: (() -> Void)? = nil, onAddClip: (() -> Void)? = nil) {
+    init(session: NativeEditorSession, onEmptyTap: (() -> Void)? = nil, onFindOriginals: (() -> Void)? = nil, onAddClip: ((AddClipLaunch) -> Void)? = nil) {
         self.session = session
         self.onEmptyTap = onEmptyTap
         self.onFindOriginals = onFindOriginals
@@ -622,14 +622,27 @@ struct NativeVideoPreview: View {
         ZStack(alignment: .topLeading) {
             Color.black
             if session.document.editorState == "empty" {
-                VStack(spacing: 12) {
-                    Image(systemName: "film.stack").font(.system(size: 30)).accessibilityHidden(true)
-                    Text("Add a clip to start your edit").font(KriaFont.display(20))
+                VStack(spacing: 16) {
+                    Text("Add a clip to start your edit").kriaType(.heading)
                         .multilineTextAlignment(.center)
-                    Button("Add clip", action: { onAddClip?() })
-                        .buttonStyle(KriaPrimaryButtonStyle())
-                        .disabled(onAddClip == nil || !session.canAddTimelineMedia)
-                        .accessibilityIdentifier("native-editor-empty-add-clip")
+                    HStack(spacing: 12) {
+                        ForEach([AddClipLaunch.record, .upload], id: \.self) { launch in
+                            Button { onAddClip?(launch) } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: launch == .record ? KriaSourceOption.recordSymbol : KriaSourceOption.uploadSymbol)
+                                        .font(.system(size: 15))
+                                    Text(launch == .record ? "Record" : "Upload").kriaType(.button)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .background(Color.white.opacity(0.16), in: Capsule())
+                                .contentShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(onAddClip == nil || !session.canAddTimelineMedia)
+                            .accessibilityIdentifier(launch == .record ? "native-editor-empty-record" : "native-editor-empty-add-clip")
+                        }
+                    }
+                    .padding(.horizontal, 24)
                 }
                 .foregroundStyle(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityElement(children: .contain)
@@ -1733,24 +1746,28 @@ struct NativeMiniStrip: View {
         let hasAudioLane = !clips.isEmpty
         return VStack(spacing: rowGap) {
             Color.clear.frame(height: 18)
-            Text("VIDEO")
+            Text("Video")
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(height: filmstripHeight)
                 .accessibilityIdentifier(rowsList.isEmpty && !hasAudioLane ? "native-editor-lane-label-last" : "native-editor-lane-label-video")
             ForEach(Array(rowsList.enumerated()), id: \.element.id) { index, row in
-                laneLabel(row.title)
+                laneLabel(Self.laneDisplayName(row.title))
                     .frame(height: CGFloat(rowCount(row)) * secondaryLaneHeight + CGFloat(rowCount(row) - 1) * rowGap, alignment: .top)
                     .accessibilityIdentifier(
                         index == rowsList.count - 1 && !hasAudioLane
                             ? "native-editor-lane-label-last" : "native-editor-lane-label-\(row.id)"
                     )
             }
-            if hasAudioLane { laneLabel("AUDIO").accessibilityIdentifier("native-editor-lane-label-last") }
+            if hasAudioLane { laneLabel("Audio").accessibilityIdentifier("native-editor-lane-label-last") }
         }
         .font(.system(size: laneLabelSize, weight: .bold, design: .rounded))
-        .tracking(0.8)
         .foregroundStyle(KriaColor.zinc)
+    }
+
+    /// Row ids stay upper-case keys; the label the creator reads is sentence case ("SFX" is an acronym and stays).
+    private static func laneDisplayName(_ key: String) -> String {
+        key == "SFX" ? key : key.prefix(1) + key.dropFirst().lowercased()
     }
 
     private func laneLabel(_ title: String) -> some View {

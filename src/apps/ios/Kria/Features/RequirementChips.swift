@@ -49,6 +49,9 @@ struct InferredLabel: Equatable, Sendable, Identifiable {
         clipNumber.map { "I guessed \(text) for clip \($0)" } ?? "I guessed \(text)"
     }
 
+    /// The short form on a chip: "Clip 2: Maya".
+    var chipLabel: String { clipNumber.map { "Clip \($0): \(text)" } ?? text }
+
     /// The opening of the correction, left for the creator to finish with the right name.
     var correctionPrompt: String {
         clipNumber.map { "Clip \($0) isn't \(text), it's " } ?? "That isn't \(text), it's "
@@ -218,7 +221,7 @@ struct RequirementChipsView: View {
         // A lone receipt under a lead needs no title, so it never waits for the brief.
         let showsTitles = !showsReasons || rows.count > 1
         if titlesReady || !showsTitles {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 12) {
                 ForEach(Array(rows.enumerated()), id: \.element.requirementID) { offset, receipt in
                     RequirementReceiptRow(
                         receipt: receipt,
@@ -228,7 +231,7 @@ struct RequirementChipsView: View {
                 }
                 if !alsoChanged.isEmpty {
                     Text("Also: " + alsoChanged.joined(separator: "; "))
-                        .font(KriaFont.body(12))
+                        .kriaType(.label)
                         .foregroundStyle(KriaColor.mutedInk)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("requirement-also-changed")
@@ -253,15 +256,7 @@ private struct RequirementReceiptRow: View {
     /// False when the prose above already states the reason (no `reply_lead`).
     var showsReason: Bool = true
 
-    private var treatment: (icon: String, tint: Color, meaning: String) {
-        // KRI-529: an unchecked requirement is neutral, never the yellow "partly done".
-        if receipt.isUnchecked { return ("checkmark", KriaColor.zinc, "Have a look") }
-        return switch receipt.outcome {
-        case .met: ("checkmark", KriaColor.success, receipt.outcome.word)
-        case .partial: ("circle.lefthalf.filled", KriaColor.ink, receipt.outcome.word)
-        case .notPossible: ("xmark", KriaColor.failureText, receipt.outcome.word)
-        }
-    }
+    private var meaning: String { receipt.isUnchecked ? "Have a look" : receipt.outcome.word }
 
     private var reason: String {
         receipt.reason ?? (receipt.isUnchecked ? "Have a look at this one in the video." : receipt.outcome.defaultReason)
@@ -269,30 +264,26 @@ private struct RequirementReceiptRow: View {
 
     private var spokenLabel: String {
         switch (title, showsReason) {
-        case let (title?, true): "\(treatment.meaning): \(title). \(reason)"
-        case let (title?, false): "\(treatment.meaning): \(title)"
-        case (nil, _): "\(treatment.meaning): \(reason)"
+        case let (title?, true): "\(meaning): \(title). \(reason)"
+        case let (title?, false): "\(meaning): \(title)"
+        case (nil, _): "\(meaning): \(reason)"
         }
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: treatment.icon)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(treatment.tint)
-                .frame(width: 16, height: 20)
-                .accessibilityHidden(true)
+        HStack(alignment: .top, spacing: 12) {
+            RequirementDisc(outcome: receipt.outcome, isUnchecked: receipt.isUnchecked)
+                .padding(.top, 1)
             VStack(alignment: .leading, spacing: 2) {
+                Text(meaning).kriaType(.button).foregroundStyle(KriaColor.ink)
                 if let title {
                     Text(title)
-                        .font(KriaFont.body(13).weight(.medium))
-                        .foregroundStyle(KriaColor.ink)
+                        .kriaType(.label).foregroundStyle(KriaColor.ink)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if showsReason {
                     Text(reason)
-                        .font(KriaFont.body(13))
-                        .foregroundStyle(title == nil ? KriaColor.ink : KriaColor.mutedInk)
+                        .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
                         // Never truncated: the "Couldn't" / "Partly" explanation is what the creator needs.
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -305,32 +296,61 @@ private struct RequirementReceiptRow: View {
     }
 }
 
+/// The 20pt outcome disc every receipt shares (Paper S2.14): green check, half circle on butterPale, red cross,
+/// and for a requirement nobody checked yet an eye on a neutral fill (never a check).
+private struct RequirementDisc: View {
+    let outcome: RequirementOutcome
+    let isUnchecked: Bool
+
+    var body: some View {
+        Group {
+            if isUnchecked {
+                glyph("eye", tint: KriaColor.ink, fill: KriaColor.fill)
+            } else {
+                switch outcome {
+                case .met: KriaCheckDisc(size: 20)
+                case .partial: glyph("circle.lefthalf.filled", tint: KriaColor.ink, fill: KriaColor.butterPale)
+                case .notPossible: glyph("xmark", tint: KriaColor.failureText, fill: KriaColor.failureSoft)
+                }
+            }
+        }
+        .frame(width: 20, height: 20)
+        .accessibilityHidden(true)
+    }
+
+    private func glyph(_ symbol: String, tint: Color, fill: Color) -> some View {
+        Circle().fill(fill)
+            .overlay(Image(systemName: symbol).font(.system(size: 10, weight: .bold)).foregroundStyle(tint))
+    }
+}
+
 private struct GuessedNamesRow: View {
     let labels: [InferredLabel]
     let correct: (InferredLabel) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("Guessed names")
-                .font(KriaFont.body(12).weight(.semibold))
-                .foregroundStyle(KriaColor.zinc)
-            ForEach(Array(labels.enumerated()), id: \.offset) { offset, label in
-                Button { correct(label) } label: {
-                    HStack(spacing: 6) {
-                        Text(label.guessSentence)
-                            .font(KriaFont.body(13))
-                            .foregroundStyle(KriaColor.ink)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Image(systemName: "pencil").font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(KriaColor.zinc)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Guessed names").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+            PlanChipFlow(spacing: 8) {
+                ForEach(Array(labels.enumerated()), id: \.offset) { offset, label in
+                    Button { correct(label) } label: {
+                        HStack(spacing: 8) {
+                            Text(label.chipLabel).kriaType(.button).foregroundStyle(KriaColor.ink)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Image(systemName: "pencil").font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(KriaColor.mutedInk)
+                        }
+                        .padding(.horizontal, 18).padding(.vertical, 8)
+                        .frame(minHeight: 44)
+                        .background(KriaColor.fill, in: Capsule())
+                        .contentShape(Capsule())
                     }
-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(label.guessSentence)
+                    .accessibilityHint("Starts a correction in the message box")
+                    .accessibilityIdentifier("guessed-name-\(offset)")
                 }
-                .buttonStyle(.plain)
-                .accessibilityHint("Starts a correction in the message box")
-                .accessibilityIdentifier("guessed-name-\(offset)")
             }
         }
         .accessibilityElement(children: .contain)
