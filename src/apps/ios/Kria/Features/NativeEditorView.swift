@@ -154,10 +154,6 @@ struct NativeEditorView: View {
                     .presentationDragIndicator(.visible)
             }
             .onChange(of: session.selectionRequest) { _, _ in routeSelection() }
-            // A drag that starts on an unselected speaker selects them mid-gesture, when routing waits; open their panel on release.
-            .onChange(of: session.isDirectManipulating) { _, active in
-                if !active, session.selection?.kind == .speaker, panel != .speaker { routeSelection() }
-            }
             // KRI-1162: the BACKGROUND lane's fill strip and a window's inspector open the Background tool.
             .onChange(of: session.backgroundToolRequest) { _, _ in
                 inspector = nil

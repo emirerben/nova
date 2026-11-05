@@ -1753,6 +1753,9 @@ struct NativeEditorTemporaryVideo: Sendable {
         if captionGestureChange == nil { endTransaction() }
         else { captionGestureChoicePresented = true }
         isDirectManipulating = false
+        // A drag that starts on an unselected speaker selects them mid-gesture, while the editor's routing waits for the
+        // gesture to end: route that selection now so the speaker's panel opens on release.
+        if selection?.kind == .speaker { selectionRequest &+= 1 }
         flushDeferredSourcePreviewUpdate()
     }
 
