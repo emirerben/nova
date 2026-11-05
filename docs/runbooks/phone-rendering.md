@@ -4036,6 +4036,37 @@ capability) + `authoredText` verified + client protocol >= `CAPTION_ANIMATION_MI
 phases, or replaces cues / guided `caption_meta` holding them, gets `426 client_update_required`
 (`feature: "caption_animation"`).
 
+## Caption shape on phone Talking edits (Qendresa item 12)
+
+A creator types the SHAPE of her captions: "two words at a time" and/or "in a light grey box".
+The brief records typed facts on the captions requirement (Main Creator v120): `caption_words`
+(1, 2 or 3) and `caption_box` (`#RRGGBB`, light grey `#E5E5E5`). They ride the KRI-1177 caption
+ask (`app/kria/caption_look_ask.py`); a box with no count shows two words.
+
+What the phone Talking writer draws (`phone_text_styling.generation_caption_cues` /
+`generation_caption_look`, `phone_captions.compile_caption_layers`):
+
+| Ask | Cues | Look | Spot (block centre) |
+|---|---|---|---|
+| N words, no box | split to <= N words on the cue's word times, no gaps inside a cue | white (or the asked colour); only the spoken word takes it, the others are that colour x 0.65 (`karaoke.active_only`); no lime | middle -> y 0.62, bottom -> y 0.79, otherwise as before |
+| box (+ N words) | <= N words (2 when not asked) | black or white text, whichever reads on the box (or the asked colour; one under 3:1 on the box gets a 4 px outline in that readable ink, stored as `caption_editor_style.stroke_color`), otherwise no outline, no shadow, 64 px unless a size was asked, one static layer per cue on an opaque rounded `TextBackground` (padding 0.40 x 0.18 em, radius 0.35 em) | bottom or no spot -> y 0.79, middle -> y 0.62 |
+
+A box is never put under a karaoke layer: the engine paints a karaoke layer's box once per word,
+so a later word's box would hide the earlier words. The variant keeps
+`caption_shape = {"version": 1, "words": N, "box" | "dim": ...}` beside the usual caption fields,
+so an editor Save, a chat edit and a reburn recompile the same shape (`caption_look_from_variant`).
+The native editor reads it as `caption_meta.shape` from protocol 36 and draws the same box and
+dimmed word in its preview and editor export. Setting "highlight spoken word" in the editor wins
+over the dimmed word.
+
+Gate (all required; any off = today's captions byte for byte, and the caption receipt says what
+was not drawn): `PHONE_CAPTION_SHAPE_ENABLED` (default off) + `captionShape` and `authoredText` in
+`PHONE_RENDER_VERIFIED_FEATURES` + the approving app build (`creator_client_protocol`) >=
+`CAPTION_SHAPE_PROTOCOL` (36). `captionShape` is a rollout token, not a recipe capability (the
+recipe only uses `authoredText`): add it after a device check of the editor box. Guard:
+`tests/tasks/test_qendresa_caption_shape_worker.py`. Rollback: `fly secrets set
+PHONE_CAPTION_SHAPE_ENABLED=false` (api + worker) + restart; stored shapes keep compiling.
+
 ## Actual-export verifier v3 rollout boundary (KRI-832)
 
 `phone-simple-cut-v3` is a forward-only verifier policy. New v3 code accepts the pinned older supported verifier versions; an older server cannot interpret a newly pinned v3 policy and refuses it rather than publishing unchecked output. After v3 policies exist, rolling the API back below v3 can therefore leave those exports blocked. Do not downgrade the pin/minimum verifier or relabel an old report to recover them; preserve the attempt and restore a compatible server before the normal output-check retry.

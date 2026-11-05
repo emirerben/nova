@@ -40,6 +40,7 @@ from app.kria.brief_route import (
     wants_hour_only_text,
 )
 from app.kria.caption_look_ask import (
+    CaptionLookAsk,
     apply_caption_case,
     caption_alignment,
     caption_look_ask,
@@ -116,7 +117,6 @@ from app.text_fold import lower as text_lower
 
 if TYPE_CHECKING:
     from app.agents._schemas.creator_agent import ResolvedCreatorManifest
-    from app.kria.caption_look_ask import CaptionLookAsk
     from app.kria.opening_cut_ask import TakeWindowEstimate
 
 DURATION_TOLERANCE = 0.10
@@ -831,6 +831,11 @@ class PlanFacts:
     # caption fields now (an editor Save can change them). None = no such record: the look is
     # judged on a draft only, never on a render that did not draw it.
     caption_look_receipt: Mapping[str, Any] | None = None
+    # Qendresa item 12: the box colour the variant's `caption_shape` still carries (None = none).
+    caption_shape_box: str | None = None
+    # The app build that sent the drafting message (None = unknown): a caption shape is drawn
+    # only for a build that can edit it (`phone_rollout.caption_shape_planned_for`).
+    client_protocol: int | None = None
     caption_size_px: int | None = None
     caption_text_color: str | None = None
     caption_alignment: str | None = None
@@ -2890,10 +2895,15 @@ def _caption_look_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
     variant's own caption fields are read beside it because an editor Save can change them: a
     receipt the variant no longer matches is not evidence the look is still there.
     """
+    shape = variant.get("caption_shape")
+    shape_box = shape.get("box") if isinstance(shape, Mapping) else None
+    shape_facts: dict[str, Any] = (
+        {"caption_shape_box": shape_box} if isinstance(shape_box, str) and shape_box else {}
+    )
     receipt = variant.get("caption_look_receipt")
     if not isinstance(receipt, Mapping) or not receipt:
-        return {}
-    facts: dict[str, Any] = {"caption_look_receipt": receipt}
+        return shape_facts
+    facts: dict[str, Any] = {"caption_look_receipt": receipt, **shape_facts}
     size = _finite_number(variant.get("caption_size_px"))
     if size is not None:
         facts["caption_size_px"] = round(size)
@@ -7376,6 +7386,79 @@ def _caption_look_kept(ask: CaptionLookAsk, facts: PlanFacts) -> bool | None:
     return None if unknown else True
 
 
+_SHAPE_WORD_NAMES = {1: "one", 2: "two", 3: "three"}
+_SHAPE_WORD_NAMES_TR = {1: "bir", 2: "iki", 3: "üç"}
+
+
+def _caption_shape_drawable(client_protocol: int | None) -> bool:
+    """Can the phone writer draw a caption shape (Qendresa item 12)? The flag and both tokens,
+    and, when the drafting app build is known, that build (`caption_shape_planned_for`)."""
+    from app.config import settings  # noqa: PLC0415
+    from app.services.phone_rollout import caption_shape_planned_for  # noqa: PLC0415
+
+    if client_protocol is not None:
+        return caption_shape_planned_for(client_protocol)
+    return settings.phone_caption_shape_enabled and {"captionShape", "authoredText"} <= set(
+        settings.phone_render_verified_features
+    )
+
+
+def _caption_shape_unmet(ask: CaptionLookAsk, *, drawn_words: int | None) -> str:
+    """Say what of the asked words / box will not be (or was not) drawn."""
+    parts: list[str] = []
+    if ask.words is not None:
+        en_n = _SHAPE_WORD_NAMES.get(ask.words, str(ask.words))
+        tr_n = _SHAPE_WORD_NAMES_TR.get(ask.words, str(ask.words))
+        if drawn_words is None:
+            parts.append(
+                say(
+                    en=f"The captions won't be held to {en_n} words at a time.",
+                    tr=f"Altyazılar aynı anda {tr_n} kelimeyle sınırlı kalmayacak.",
+                )
+            )
+        else:
+            parts.append(
+                say(
+                    en=f"The captions show up to {drawn_words} words at a time, not {en_n}.",
+                    tr=(
+                        f"Altyazılar aynı anda {tr_n} değil, "
+                        f"en fazla {drawn_words} kelime gösteriyor."
+                    ),
+                )
+            )
+    if ask.box is not None:
+        parts.append(
+            say(
+                en="There isn't a box behind the captions.",
+                tr="Altyazıların arkasında kutu yok.",
+            )
+        )
+    return " ".join(parts)
+
+
+def _caption_shape_gap(ask: CaptionLookAsk, facts: PlanFacts) -> str | None:
+    """On a finished render: why the asked words / box are not on it, None when they are."""
+    if not ask.has_shape:
+        return None
+    receipt = facts.caption_look_receipt or {}
+    drawn = receipt.get("words")
+    drawn = drawn if isinstance(drawn, int) and not isinstance(drawn, bool) and drawn > 0 else None
+    texts = facts.caption_texts or ()
+    most = max((len(text.split()) for text in texts), default=0)
+    if drawn is None or (ask.box is not None and not receipt.get("box")):
+        # The writer recorded no shape: say what the captions really hold.
+        return _caption_shape_unmet(ask, drawn_words=most or None)
+    if ask.box is not None and (facts.caption_shape_box or "").casefold() != ask.box.casefold():
+        return say(
+            en="The captions no longer look the way you asked.",
+            tr="Altyazılar artık istediğin gibi görünmüyor.",
+        )
+    limit = min(drawn, ask.words) if ask.words is not None else drawn
+    if most > limit:
+        return _caption_shape_unmet(CaptionLookAsk(words=ask.shape_words), drawn_words=most)
+    return None
+
+
 def _check_caption_look(
     req: BriefRequirement, facts: PlanFacts, ask: CaptionLookAsk
 ) -> RequirementReceipt | None:
@@ -7393,7 +7476,9 @@ def _check_caption_look(
     frame = facts.speaker_background.frame if facts.speaker_background is not None else None
     over_speaker = caption_over_speaker(ask.position, frame)
     if facts.rendered_variant:
-        if facts.caption_look_receipt is None:
+        if facts.caption_look_receipt is None and not (
+            ask.has_shape and facts.caption_texts is not None
+        ):
             return None
         if facts.caption_texts == ():
             return _receipt(
@@ -7401,6 +7486,11 @@ def _check_caption_look(
                 "partial",
                 say(en="This video has no captions.", tr="Bu videoda altyazı yok."),
             )
+        shape_gap = _caption_shape_gap(ask, facts)
+        if shape_gap is not None:
+            return _receipt(req, "partial", shape_gap)
+        if facts.caption_look_receipt is None:
+            return None
         kept = _caption_look_kept(ask, facts)
         if kept is None:
             return None
@@ -7430,6 +7520,8 @@ def _check_caption_look(
         # The phone Talking writer applies the look to this draft's first render; with phone
         # text styling off it stamps no policy (`stamp_phone_text_style`), so nothing is drawn,
         # and a draft with captions off has nothing to draw it on (`_check_captions` says so).
+        if ask.has_shape and not _caption_shape_drawable(facts.client_protocol):
+            return _receipt(req, "partial", _caption_shape_unmet(ask, drawn_words=None))
         return _receipt(
             req,
             "met",
