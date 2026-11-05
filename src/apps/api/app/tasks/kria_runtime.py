@@ -810,13 +810,20 @@ _EDIT_FORMAT_TR = {
 }
 
 
-def _strategy_changes(arguments: Any) -> list[str]:
+def _strategy_changes(arguments: Any, *, route: str | None = None) -> list[str]:
+    """The card's chips. With ``route`` (the draft's render route) a pace the route does not
+    follow is left off: nobody asked for it and nothing would play it (Green 4/5)."""
+    from app.kria.route_disclosure import asked_only, route_ignores  # noqa: PLC0415
+
     strategy = arguments.strategy
     pacing = strategy.pacing.replace("_", " ").title()
     edit_format = strategy.edit_format.replace("_", " ").title()
+    pace_shown = route is None or not asked_only() or not route_ignores(route, "pacing")
     values = [
         arguments.summary,
-        say(en=f"{pacing} pacing", tr=f"Tempo: {_PACING_TR.get(strategy.pacing, pacing)}"),
+        say(en=f"{pacing} pacing", tr=f"Tempo: {_PACING_TR.get(strategy.pacing, pacing)}")
+        if pace_shown
+        else None,
         say(
             en=f"{edit_format} format",
             tr=f"Format: {_EDIT_FORMAT_TR.get(strategy.edit_format, edit_format)}",
@@ -2217,6 +2224,14 @@ def _complete_draft_turn(
                         clip_paths=item.clip_gcs_paths or (),
                         phone_montage=facts.phone_montage,
                     )
+                    # Green 4/5: the chips follow the route too ("Balanced pacing" on a route
+                    # that ignores pacing claimed a pace nobody asked for and nothing played).
+                    if apply_intent.tool_name == "draft.apply_strategy" and route_name:
+                        routed_changes = _strategy_changes(arguments, route=route_name)
+                        if routed_changes != changes:
+                            changes = routed_changes
+                            document = document.model_copy(update={"changes": changes})
+                            snapshot, snapshot_hash = canonical_snapshot(document)
                     checked = brief.live()
                     # KRI-190: the unified montage planner writes the per-clip text,
                     # order and title at render time and reports on them then. Judging
