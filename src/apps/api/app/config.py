@@ -865,6 +865,15 @@ class Settings(BaseSettings):
     # `fly secrets set TEXT_BEND_ENABLED=false` (api + worker) + restart.
     text_bend_enabled: bool = True
     text_bend_min_client_protocol: int = 9
+    # Qendresa item 12: the caption SHAPE a creator types on a phone Talking edit ("two words at
+    # a time", "in a light grey box"): the brief's `caption_words` / `caption_box` facts cut the
+    # cues to 1-3 words, draw white with the spoken word bright and the others dimmed (no
+    # lime), or black text in a rounded box placed low. Default FALSE. Applied only when
+    # `captionShape` AND `authoredText` are in PHONE_RENDER_VERIFIED_FEATURES and the approving
+    # app build declares >= `client_protocol.CAPTION_SHAPE_PROTOCOL` (its editor draws the box);
+    # otherwise captions are byte-identical to before and the receipt says what was not drawn.
+    # Apply: `fly secrets set PHONE_CAPTION_SHAPE_ENABLED=true` (api + worker) + restart.
+    phone_caption_shape_enabled: bool = False
     # KRI-1007: caption entrance/exit/loop/speed (`animation_phases` on a caption row, or
     # the all-captions default `caption_meta.animation_phases`). Drawn on device from the
     # recipe's existing `animationPhases`. Default TRUE; the editor capability

@@ -34,6 +34,10 @@ CAPTION_ASK_POSITIONS = (
     "bottom_right",
 )
 CAPTION_ASK_CASES = ("lower", "upper")
+# Qendresa item 12: how many words one caption shows at a time ("two words at a time"), and the
+# colour of a box behind the captions ("in a light grey box"). A box with no count shows two.
+CAPTION_ASK_WORDS = (1, 2, 3)
+CAPTION_BOX_DEFAULT_WORDS = 2
 _HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")  # kri667: validates a typed hex fact, reads no creator text
 # A colour word the brief writer may still write instead of its hex (EN / TR).
 _COLOR_NAMES = {
@@ -47,6 +51,27 @@ _COLOR_NAMES = {
     "kırmızı": "#FF0000",
     "blue": "#0000FF",
     "mavi": "#0000FF",
+}
+# A box colour the brief writer may still write instead of its hex (EN / TR).
+_BOX_NAMES = {
+    **_COLOR_NAMES,
+    "light grey": "#E5E5E5",
+    "light gray": "#E5E5E5",
+    "açık gri": "#E5E5E5",
+    "grey": "#9E9E9E",
+    "gray": "#9E9E9E",
+    "gri": "#9E9E9E",
+}
+_BOX_WORDS = {
+    "#E5E5E5": ("in a light grey box", "açık gri bir kutuda"),
+    "#9E9E9E": ("in a grey box", "gri bir kutuda"),
+    "#FFFFFF": ("in a white box", "beyaz bir kutuda"),
+    "#000000": ("in a black box", "siyah bir kutuda"),
+}
+_WORDS_WORDS = {
+    1: ("one word at a time", "her seferinde bir kelime"),
+    2: ("two words at a time", "her seferinde iki kelime"),
+    3: ("three words at a time", "her seferinde üç kelime"),
 }
 _COLOR_WORDS = {
     "#FFFFFF": ("white", "beyaz"),
@@ -82,8 +107,13 @@ class CaptionLookAsk:
     position: str | None = None
     color: str | None = None
     case: str | None = None
+    # Qendresa item 12 (the caption SHAPE): words per caption and a box colour. Drawn only when
+    # `phone_rollout.caption_shape_planned_for` holds; the stamp drops them otherwise
+    # (`without_shape`), so a stamped ask without them is byte-identical to before.
+    words: int | None = None
+    box: str | None = None
 
-    def as_dict(self) -> dict[str, str]:
+    def as_dict(self) -> dict[str, Any]:
         return {
             key: value
             for key, value in (
@@ -91,9 +121,29 @@ class CaptionLookAsk:
                 ("position", self.position),
                 ("color", self.color),
                 ("case", self.case),
+                ("words", self.words),
+                ("box", self.box),
             )
             if value is not None
         }
+
+    @property
+    def shape_words(self) -> int | None:
+        """Words one caption may hold for this ask: the asked count, two for a box, else None."""
+        if self.words is not None:
+            return self.words
+        return CAPTION_BOX_DEFAULT_WORDS if self.box is not None else None
+
+    @property
+    def has_shape(self) -> bool:
+        return self.words is not None or self.box is not None
+
+    def without_shape(self) -> CaptionLookAsk | None:
+        """The same ask with no words / box; None when nothing else was asked."""
+        rest = CaptionLookAsk(
+            size=self.size, position=self.position, color=self.color, case=self.case
+        )
+        return rest if rest.as_dict() else None
 
     @classmethod
     def from_dict(cls, raw: object) -> CaptionLookAsk | None:
@@ -105,6 +155,8 @@ class CaptionLookAsk:
             position=raw.get("position"),
             color=raw.get("color"),
             case=raw.get("case"),
+            words=raw.get("words"),
+            box=raw.get("box"),
         )
 
 
@@ -117,18 +169,45 @@ def _color(value: object) -> str | None:
     return _COLOR_NAMES.get(text.casefold())
 
 
+def _box(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if _HEX.match(text):
+        return text.upper()
+    return _BOX_NAMES.get(" ".join(text.casefold().replace("_", " ").split()))
+
+
+def _words(value: object) -> int | None:
+    """A typed words-per-caption count (1-3). Model output can hold any JSON: only a real int
+    (never a bool, a float or a numeral string) counts."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if value in CAPTION_ASK_WORDS else None
+
+
 def _word(value: object, allowed: Iterable[str]) -> str | None:
     """``value`` when it is one of ``allowed``. Model output can hold any JSON (``[]``, ``{}``):
     an unhashable value tested against a dict raised TypeError and failed the turn's receipts."""
     return value if isinstance(value, str) and value in allowed else None
 
 
-def _ask(*, size: object, position: object, color: object, case: object) -> CaptionLookAsk | None:
+def _ask(
+    *,
+    size: object,
+    position: object,
+    color: object,
+    case: object,
+    words: object = None,
+    box: object = None,
+) -> CaptionLookAsk | None:
     ask = CaptionLookAsk(
         size=_word(size, CAPTION_ASK_SIZE_PX),
         position=_word(position, CAPTION_ASK_POSITIONS),
         color=_color(color),
         case=_word(case, CAPTION_ASK_CASES),
+        words=_words(words),
+        box=_box(box),
     )
     return ask if ask.as_dict() else None
 
@@ -141,6 +220,8 @@ def caption_look_ask(req: BriefRequirement) -> CaptionLookAsk | None:
         position=facts.get("caption_position"),
         color=facts.get("caption_color"),
         case=facts.get("caption_case"),
+        words=facts.get("caption_words"),
+        box=facts.get("caption_box"),
     )
 
 
@@ -229,6 +310,13 @@ def caption_look_reason(ask: CaptionLookAsk, *, over_speaker: bool, over_face: b
     if ask.position is not None:
         en_parts.append(_POSITION_WORDS[ask.position][0])
         tr_parts.append(_POSITION_WORDS[ask.position][1])
+    if ask.box is not None:
+        en, tr = _BOX_WORDS.get(ask.box, ("in a box", "bir kutuda"))
+        en_parts.append(en)
+        tr_parts.append(tr)
+    if ask.words is not None:
+        en_parts.append(_WORDS_WORDS[ask.words][0])
+        tr_parts.append(_WORDS_WORDS[ask.words][1])
     en = f"Captions are {_join(en_parts, 'and')}"
     tr = f"Altyazılar {_join(tr_parts, 've')}"
     if over_speaker:
