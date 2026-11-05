@@ -1,5 +1,7 @@
 # iPhone latency: New chat, Save, export after Save
 
+**Current integration result:** pinned main `1e91cb694165e6a0a0793cff21de6c74a3107918`, merge `817ce18385a7d6bbb1bcbf1116f9aaec9dfcc9b4`, tested code/UI fixture `4ffa7aa49ac76038ea0603992a75fb5a21864203`. Post-integration native unit aggregate: 2584 tests, 27 skipped, zero failures. One delayed-New-Chat UI test passed. Formal default: exit 3, PASS with drift. See the final integration section; it supersedes earlier pending-composer UI and later-main-integration gaps. Physical-device timing, media fidelity inspection, tracker ownership and full model correspondence remain open.
+
 Branch `codex/iphone-chat-save-latency` (worktree `/Users/emirerben/Documents/Codex/2026-11-05/task/nova-iphone-latency`), based on `origin/main` `56e21de1ab785c99f30cd09e5c3e2d7466240af2` (includes #2105 Steer now and #2118). **Tested code commit: `4cc324f6c0b0d3bd8561ad87ae07e26e1a23d7d6`** (the commit after it only adds this report). Local only: not pushed, no PR, nothing deployed.
 
 ## Evidence level
@@ -155,3 +157,28 @@ No coverage hashes were resynced. The review is scoped to the task's interleavin
 Later main integration is also open. PR #2117 merged at `19cc8fdcaa549bdb831adfdb0582b8bea609f206` after the reviewed native revision. This formal pass neither integrates that change nor claims the earlier native results cover it. A controlled integration and affected native rerun are required before publication. UNASSIGNED tracker ownership, pending-composer UI evidence, physical-device timings and exported-file inspection remain explicit blockers/gaps.
 
 Formal run results for this pass: the supported `python3 formal/ios_edit_flow/verify.py` command completed **exit 3, PASS (no residual findings) with DRIFT to review** (`/tmp/kria-receipt-formal-full.log`). All unchanged lifecycle model, historical and mutation checks completed. That run included the initial three-run companion; the final standalone companion was then rerun after splitting the legacy control into cancel and snapshot windows, producing the four-run result above. Only the bounded mutation selection changed; lifecycle models and their rules were unchanged. The final standalone command is the same companion entrypoint called by the default verifier. No native tests were rerun during this verification-only pass; the previous 413-test result remains anchored to unchanged native code. Python syntax checks, ruff lint/format checks and `git diff --check` passed. None of this clears the 28-function drift or the publication gaps listed above.
+
+## Controlled main integration and final validation
+
+The clean pre-integration revision `52fb06ccf278d21ee747b624d9eac74af5a8444c` is preserved at local reference `backup/iphone-latency-before-main-integration-52fb06ccf`. Origin/main was fetched once and pinned to `1e91cb694165e6a0a0793cff21de6c74a3107918`. That snapshot includes #2117 (`19cc8fdcaa549bdb831adfdb0582b8bea609f206`) and #2103. It was integrated into this feature branch with the normal local merge workflow as `817ce18385a7d6bbb1bcbf1116f9aaec9dfcc9b4`; the automatic NativeEditorSession merge had no conflict. Neither side was discarded, no shared/main checkout was changed, and no newer main was chased.
+
+The only post-merge source edits are debug fixture support and one bounded XCUITest, committed at `4ffa7aa49ac76038ea0603992a75fb5a21864203`. `ChatUITestTransport` can delay only POST `/creation-threads` under the explicit `KRIA_CHAT_CREATE_DELAY` test environment setting. No production create behavior, account state or backend data was changed. `testDelayedNewChatAcceptsTypingBeforeItsServerIdentityExists` delays the local fixture response 20 seconds, asserts pending UI appears, types into the real composer while pending, asserts Send disabled, waits for the real thread and asserts the typed text remains. It does not send a turn or upload media. No broad Creation/Projects UI suite was run in this integration pass.
+
+All results below ran against source identical to the code/UI commit above, on task-owned iOS Simulator `3F0D9C92-2BA8-4831-9AD6-F070EF630845`:
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Rebuild + full KriaTests native unit aggregate | **2584 tests, 27 skipped, zero failures**, 493.328 seconds test execution | `/tmp/kria-integration-unit.log` and its xcresult |
+| Affected suites within that aggregate | DeviceRenderExecution/IntentRepair/Session/Transient, NativeEditorExport/Session, ProjectActions/Restoration all passed; includes controlled receipt races, sequential failed GET, draft recovery, late-save replacement and cancellation case | same unit log |
+| Exactly one delayed-New-Chat UI regression | **1 test, zero failures**, 27.741 seconds; pending composer typable, submission gated, text retained after real identity | `/tmp/kria-integration-new-chat-ui.log`; `/tmp/kria-latency-dd/Logs/Test/Test-Kria-2026.11.05_23-13-52-+0000.xcresult` |
+| Supported formal verifier, including receipt companion/mutations | **exit 3: PASS (no residual findings) with DRIFT to review** | `/tmp/kria-integration-formal.log` |
+| Diff whitespace | passed | `git diff --check` |
+| Preship | Seven gates pass; request-evidence fails because `issue must name a KRI ticket or its Linear issue URL` | `/tmp/kria-integration-preship.log` |
+
+Synthetic checks repeated in the integrated aggregate: with a 500 ms create-reply delay the pending surface was present at 0 ms and the real thread at 520 ms. With four 300 ms delayed Save calls, each asserted once, Save returned in 907 ms. These injected-delay results are not live timings. The historical actual baseline comparison (529 ms / 1224 ms on `56e21de1a`) remains a prior baseline, not a fresh A/B measurement of pinned main `1e91cb694`.
+
+The intermittent cancellation/playback test passed in this integration run. That does not repair or disprove its documented failures on earlier unchanged main and feature builds. No native failures were hidden or retried to obtain the final aggregate result. No claim is made about unselected package/UI targets merely because the app unit target passed.
+
+Coverage metadata was not resynced. Recomputed against the pinned main snapshot, baseline drift is still 26 functions and integrated drift 28; the two additional functions remain saveOnce and refreshDeviceRender. All four receipt mutation runs and lifecycle checks completed. Bounded-model limitations in `saved-receipt-correspondence.md` remain; full function correspondence is not established by an exit-3 PASS.
+
+The fixture-backed pending-composer UI gap and the specifically requested #2117 main-integration gap are now closed to the evidence level above. Remaining publication blockers/gaps: UNASSIGNED tracker ownership, signed-in physical-device timing, inspection of the shared/exported file against preview/canonical render, and complete native/model correspondence beyond the bounded companion. No Linear issue was invented or changed. No external model/source disclosure, push, PR, merge into main or deployment occurred.
