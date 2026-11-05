@@ -1000,16 +1000,6 @@ def _database_problem() -> str | None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "KNOWN GAP: the pinned seam (kria/planner.plan_pinned_suggestion_turn, "
-        "suggestions/pinned.PINNED_OP_ALLOW, tasks/kria_runtime._complete_draft_turn) runs "
-        "editor_ops cards only; a copy_decision card is refused with action_unsupported. When "
-        "the seam applies it, this test passes and strict xfail fails: delete the marker."
-    ),
-)
 async def test_tapping_a_hook_card_through_the_real_seam_applies_its_text(monkeypatch):
     """The acceptance test for the seam change, run on real Postgres through the real
     ``submit_turn`` -> ``run_kria_turn`` path (nothing of the seam is mocked).
