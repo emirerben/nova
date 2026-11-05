@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.86.3.0] - 2026-11-05
+
+### Changed
+- test(api): isolate the AI-budget ledger tests from other xdist workers (KRI-1190) (#2101) <!-- release-pr: 2101 -->
+
 ## [0.86.2.0] - 2026-11-05
 
 ### Fixed
