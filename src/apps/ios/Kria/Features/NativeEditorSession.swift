@@ -821,18 +821,6 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var pendingDeviceRenderIdentity: DeviceRenderIdentity?
     /// The document generation the save that pinned `pendingDeviceRenderIdentity` produced.
     private var pendingDeviceRenderGeneration: String?
-    /// The request that the server itself tied to `pendingDeviceRenderGeneration` (its `base_generation`).
-    /// A completed refresh attempt proves nothing: a failed read keeps the previous save's request, so only a
-    /// successful read that names the acknowledged generation links the request to that save.
-    private var linkedDeviceRenderIdentity: DeviceRenderIdentity?
-
-    private func linkSavedDeviceRenderIfEvidenced() {
-        guard let key = deviceRenderKey, let renders = deviceRenders,
-              let generation = pendingDeviceRenderGeneration, !generation.isEmpty,
-              renders.baseGeneration(for: key) == generation,
-              let identity = renders.request(for: key)?.identity else { return }
-        linkedDeviceRenderIdentity = identity
-    }
     private var guidedRevisionNumber: Int?
     var deviceRenderKey: DeviceRenderKey? {
         guard rendersOnDevice, let jobID, let variantKey else { return nil }
@@ -949,7 +937,6 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
         deviceReconcilePending = false
         await deviceRenders.reconcile(key, capabilities: capabilities, retry: retry)
-        linkSavedDeviceRenderIfEvidenced()
     }
 
     func showDeviceOutput(_ url: URL) {
@@ -1322,18 +1309,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     private func savedEditDeviceRenderFile() -> URL? {
         guard !hasUnsavedChanges, !isSaving, chatStagedDocument == nil, document.editorState != "empty",
               let key = deviceRenderKey, let renders = deviceRenders,
-              let saved = linkedDeviceRenderIdentity, renders.request(for: key)?.identity == saved,
               let savedGeneration = pendingDeviceRenderGeneration,
-              let presentation = renders.presentations[key],
-              // The edit on screen must still be the one that render belongs to: another device's save,
-              // adopted by the preview poll or a reload, moves the document generation without changing
-              // this phone's request.
-              [savedGeneration, presentation.publishedGeneration].contains(document.revision.baseGeneration),
-              [.localReady, .syncing, .synced].contains(presentation.phase),
-              !presentation.requiresServerRetry,
-              let file = presentation.localFile, file.isFileURL,
-              FileManager.default.fileExists(atPath: file.path) else { return nil }
-        return file
+              let receipt = renders.savedRenderReceipt(for: key),
+              receipt.baseGeneration == savedGeneration,
+              [savedGeneration, receipt.publishedGeneration].contains(document.revision.baseGeneration) else { return nil }
+        return receipt.file
     }
 
     /// KRI-1032: with no edit on top of the finished render, the creator's saved or shared copy IS
@@ -2571,7 +2551,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         liveSongVolumeActive = false; previewBuiltDocument = nil
         sourcePreviewState = .idle; sourcePreviewGeneration = nil
         previewVariant = [:]
-        pendingDeviceRenderIdentity = nil; pendingDeviceRenderGeneration = nil; linkedDeviceRenderIdentity = nil
+        pendingDeviceRenderIdentity = nil; pendingDeviceRenderGeneration = nil
         // The old job's recovery must not touch the new job's player.
         finishedRenderRecoveryTask?.cancel(); finishedRenderRecoveryInFlight = false
         sourcePreviewQuietRetryTask?.cancel()
@@ -7062,7 +7042,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             // response saves an empty draft and does not start a new poll.
             previewRefreshTask?.cancel()
             pendingPreviewGeneration = nil
-            pendingDeviceRenderIdentity = nil; pendingDeviceRenderGeneration = nil; linkedDeviceRenderIdentity = nil
+            pendingDeviceRenderIdentity = nil; pendingDeviceRenderGeneration = nil
             chatStagedDocument = nil; chatStagedSections = []
             // An empty authored-phone document has its first editable revision
             // immediately, even before the next variant-status refresh exposes
@@ -9191,7 +9171,6 @@ struct NativeEditorTemporaryVideo: Sendable {
             guard retried else { return }
         }
         guard !Task.isCancelled, pendingPreviewGeneration == generation, deviceRenderKey == key else { return }
-        linkedDeviceRenderIdentity = nil
         pendingDeviceRenderGeneration = generation
         await refreshDeviceRender(retry: true)
         guard !Task.isCancelled, pendingPreviewGeneration == generation, deviceRenderKey == key else { return }

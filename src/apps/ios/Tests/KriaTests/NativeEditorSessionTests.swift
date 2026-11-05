@@ -5583,6 +5583,31 @@ final class NativeEditorSessionTests: XCTestCase {
     /// Failure mode (review P1): R1 finished for generation G1 and its presentation stayed `synced` with its file.
     /// The creator edited and committed G2, but the device-status read failed, so the editor kept R1 as "the
     /// request" and linked it to G2: the export handed over the PREVIOUS edit.
+    func testCoalescedSaveCannotExportDuringRequestReplacement() async throws {
+        for checkpoint in ["cancel", "snapshot"] {
+            let edit = try await savedPhoneEditWithFinishedRender()
+            let gate = SessionTestHeldGate()
+            edit.renders.reconciliationCheckpoint = { point in
+                if point == checkpoint { await gate.hold() }
+            }
+            let newer = deviceRenderRequest(jobID: edit.key.jobID, revision: 2, digest: "b")
+            await edit.status.set(DeviceRenderStatusResponse(phase: "awaiting_device", request: newer, baseGeneration: "g2"))
+            let refresh = Task { await edit.session.refreshDeviceRender() }
+            let held = await gate.waitHeld(timeout: .seconds(5))
+            XCTAssertTrue(held)
+            edit.fake.commitResponse = EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
+            edit.session.trimSelected(edge: .trailing, to: 1.2)
+            await edit.session.save()
+            XCTAssertFalse(edit.session.canDownloadCurrentVideo, checkpoint)
+            assertOwnFileNotOffered(edit, "Replacement has not produced a coherent receipt at \(checkpoint)")
+            await gate.open()
+            await refresh.value
+            edit.renders.reconciliationCheckpoint = nil
+            await edit.renders.stopAll()
+            try? FileManager.default.removeItem(at: edit.output)
+        }
+    }
+
     func testFailedStatusReadAfterANewSaveDoesNotLinkThePreviousRenderToIt() async throws {
         let edit = try await savedPhoneEditWithFinishedRender()
         defer { try? FileManager.default.removeItem(at: edit.output) }
