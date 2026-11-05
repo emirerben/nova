@@ -18,6 +18,8 @@ Failure catalogue (written before the code; each row is a fixture below).
       exactly as before: no record, no mark, no refresh.
   H4  Control: with the pinned-taps switch off the tap is not stamped, so a repeat is answered as
       before (no record, no mark, no refresh).
+  H5  Control: a repeat while the first tap is still being planned has no outcome to name (the
+      first may yet be refused for a transient reason and stay tappable): answered as before.
 """
 
 from __future__ import annotations
@@ -175,3 +177,23 @@ async def test_h4_with_the_pinned_taps_switch_off_a_repeat_is_answered_as_before
     assert "pinned_stale" not in h.world_refreshes(talking_world)
     assert "refused" not in (phone.ring_entry(out.set_id) or {})
     assert d.item_flags(seeded)["speech_cleanup_enabled"]
+
+
+@pytest.mark.asyncio
+async def test_h5_a_repeat_while_the_first_tap_is_still_planned_is_answered_as_before(
+    talking_world,
+):
+    seeded, phone, out = await served(talking_world)
+    card = filler(out)
+    tap = {"set_id": out.set_id, "chip_id": card.id}
+    first, _publish = await h.submit(seeded, card.prompt, tap=tap)
+    assert first.status == "pending"
+    talking_world.refreshes.clear()
+
+    again, _publish = await h.submit(seeded, card.prompt, tap=tap)
+
+    reply = [e for e in h.events(seeded.thread_id) if e.role == "assistant"][-1]
+    assert again.status == "completed" and again.suggestion_outcome is None
+    assert "suggestion_pin" not in (reply.payload or {})
+    assert "pinned_stale" not in h.world_refreshes(talking_world)
+    assert "refused" not in (phone.ring_entry(out.set_id) or {})

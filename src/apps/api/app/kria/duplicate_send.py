@@ -164,12 +164,19 @@ def refused_card_tap(
     """The typed refusal record for a tap that repeats a card's tap still in flight, else None.
 
     ``stamp`` is what this submit stamped (``pinned.stamp_pin``): the repeat is a tap on a card
-    this thread was offered, and the earlier message was a tap too. The card's change is already
-    staged, so the repeat is refused as ``consumed`` like every later tap on a spent card. A
-    repeat of words the creator typed, or a submit that was not stamped (the switch is off), has
-    no record and is answered exactly as before.
+    this thread was offered, and the earlier message was a tap too whose change is already staged
+    (an approval waits, a render runs, or it just finished), so the repeat is refused as
+    ``consumed`` like every later tap on a spent card. A repeat while the first tap is still being
+    planned has no outcome to name yet (it may yet be refused for a transient reason and stay
+    tappable). A repeat of words the creator typed, or a submit that was not stamped (the switch is
+    off), has no record and is answered exactly as before.
     """
-    if duplicate.tapped is None or not isinstance(stamp, dict) or stamp.get("unresolved"):
+    if (
+        duplicate.tapped is None
+        or duplicate.state == "working"
+        or not isinstance(stamp, dict)
+        or stamp.get("unresolved")
+    ):
         return None
     return {
         "set_id": str(stamp.get("set_id") or ""),
