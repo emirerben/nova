@@ -397,55 +397,74 @@ def _ask_words(text: str) -> tuple[str, ...]:
     return tuple(loose_words(text))
 
 
-def _literal_runs(words: tuple[str, ...], literals: list[tuple[str, ...]]) -> set[int] | None:
-    """Indexes of the literals an exact left-to-right cover of ``words`` can draw runs from.
+def _screen_start(op: dict) -> float:
+    """When an added line appears; a bad time sorts first (the replay rejects it later)."""
+    try:
+        start = float(op.get("start_s") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return start if math.isfinite(start) else 0.0
 
-    None when ``words`` is empty or some word is not in any literal (an invented line).
+
+# Bounds the exact-cover search below; a composer writes a handful of lines, so real
+# programs finish in far fewer steps. Past it the best cover found so far is kept.
+_COVER_SEARCH_STEPS = 20_000
+
+
+def _exact_covers(
+    chunks: list[tuple[str, ...]], literals: list[tuple[str, ...]], budget: list[float]
+) -> frozenset[int]:
+    """Indexes of the added lines that spell her literals exactly (item 22 review).
+
+    ``chunks`` are the added lines' words in screen order. A copy of a literal is one line,
+    or consecutive lines, that spell it word for word: same words, same order, nothing
+    skipped, added or repeated ("this is good" is not "this is not good", "go go go go" is
+    not "go go"). Literal ``j`` makes at most ``budget[j]`` copies (``math.inf`` for a
+    per-clip ask), so a second copy, or a piece of one, is not hers to add. A copy left
+    unfinished keeps none of its lines. Keeps the choice that shows the most of her words;
+    on a tie, the first found, trying for each line in screen order: continue the copy,
+    start a copy, drop the line.
     """
-    n = len(words)
-    edges = [
-        (i, k, j)
-        for i in range(n)
-        for k in range(i + 1, n + 1)
-        for j, lit in enumerate(literals)
-        if any(lit[o : o + k - i] == words[i:k] for o in range(len(lit) - (k - i) + 1))
-    ]
-    forward = {0}
-    for i, k, _ in sorted(edges):
-        if i in forward:
-            forward.add(k)
-    if n == 0 or n not in forward:
-        return None
-    backward = {n}
-    for i, k, _ in sorted(edges, reverse=True):
-        if k in backward:
-            backward.add(i)
-    return {j for i, k, j in edges if i in forward and k in backward}
+    tail = [0] * (len(chunks) + 1)
+    for i in range(len(chunks) - 1, -1, -1):
+        tail[i] = tail[i + 1] + len(chunks[i])
+    best: list = [0, frozenset()]
+    steps = 0
 
+    def walk(i, current, used, score, kept):
+        # ``current``: the copy being spelled, (literal, words placed, its lines) or None.
+        nonlocal steps
+        steps += 1
+        if i == len(chunks):
+            if score > best[0]:
+                best[:] = [score, kept]
+            return
+        placed = current[1] if current else 0
+        if steps > _COVER_SEARCH_STEPS or score + placed + tail[i] <= best[0]:
+            return
+        words = chunks[i]
+        n = len(words)
+        if current is not None:
+            j, pos, lines = current
+            if literals[j][pos : pos + n] == words:
+                if pos + n == len(literals[j]):
+                    done = (*used[:j], used[j] + 1, *used[j + 1 :])
+                    walk(i + 1, None, done, score + len(literals[j]), kept | lines | {i})
+                else:
+                    walk(i + 1, (j, pos + n, lines | {i}), used, score, kept)
+        # A new copy starts here; an unfinished one before it is dropped with its lines.
+        for j, literal in enumerate(literals):
+            if used[j] >= budget[j] or literal[:n] != words:
+                continue
+            if n == len(literal):
+                done = (*used[:j], used[j] + 1, *used[j + 1 :])
+                walk(i + 1, None, done, score + n, kept | {i})
+            else:
+                walk(i + 1, (j, n, frozenset({i})), used, score, kept)
+        walk(i + 1, current, used, score, kept)  # this line is dropped
 
-def _occurrences(words: tuple[str, ...], literal: tuple[str, ...]) -> int:
-    n = len(words)
-    return sum(literal[o : o + n] == words for o in range(len(literal) - n + 1)) if n else 0
-
-
-def _chunk_budget(
-    words: tuple[str, ...],
-    sources: set[int],
-    distinct: list[tuple[str, ...]],
-    allowed: dict[tuple[str, ...], int],
-    unbounded: set[tuple[str, ...]],
-) -> float:
-    """How many times a chunk of her literal(s) may be on screen.
-
-    Inside one literal: its allowed copies times how often the chunk occurs in it (a "go go
-    go" line keeps three "go"). A merge across literals draws one use from each source.
-    """
-    inside = [j for j in sources if _occurrences(words, distinct[j])]
-    if inside:
-        if any(distinct[j] in unbounded for j in inside):
-            return math.inf
-        return sum(allowed[distinct[j]] * _occurrences(words, distinct[j]) for j in inside)
-    return min(math.inf if distinct[j] in unbounded else allowed[distinct[j]] for j in sources)
+    walk(0, None, (0,) * len(literals), 0, frozenset())
+    return best[1]
 
 
 def _planned_bar_words(composed: list[dict], owners: set) -> dict[tuple[str, ...], int]:
@@ -485,7 +504,9 @@ def _drop_unasked_added_text(
     """Drop composer ``add_text`` ops that are not the creator's own words (item 22).
 
     "Just this text, nothing else" must not render an invented line or a second copy of
-    hers. It drops instead of raising: raising fails the creator's whole video, so a drop
+    hers, and her line must read exactly as she wrote it (``_exact_covers``): a line that
+    skips, repeats or reorders her words, or leaves her line unfinished, is dropped.
+    It drops instead of raising: raising fails the creator's whole video, so a drop
     that would stop the program replaying is skipped. Research ops are always kept (her
     own research ask), as are described asks (the composer writes the copy), a missing
     brief and story builds, so their system-owned copy never regresses.
@@ -524,36 +545,45 @@ def _drop_unasked_added_text(
     except CreationTextCompositionError:
         return operations  # the real replay right after raises exactly as it does today
     shown = _planned_bar_words(composed, {row.get("id") for row in texts})
-    chunks: dict[tuple[str, ...], int] = {}
+    # A planned bar that still shows her line is one of its copies.
+    budget = [
+        math.inf if lit in unbounded else max(0, allowed[lit] - shown.get(lit, 0))
+        for lit in distinct
+    ]
+    added = [
+        (index, _ask_words(str(op.get("text") or "")))
+        for index, op in enumerate(operations)
+        if op.get("op") == "add_text" and not isinstance(op.get("research"), dict)
+    ]
+    worded = sorted(
+        ((index, words) for index, words in added if words),
+        key=lambda item: (_screen_start(operations[item[0]]), item[0]),
+    )
+    covers = _exact_covers([words for _, words in worded], distinct, budget)
+    keep = {worded[k][0] for k in covers}
+    # Emoji or punctuation only: hers when it sits inside one of her literals, and on
+    # screen no more often than her literals have it.
+    symbol_budget: dict[str, float] = {}
+    for index, words in added:
+        symbols = "" if words else fold_text(str(operations[index].get("text") or ""))
+        if not symbols:
+            continue
+        if symbols not in symbol_budget:
+            symbol_budget[symbols] = sum(
+                math.inf
+                if req.scope == "per_clip" and symbols in literal
+                else literal.count(symbols)
+                for req, literal in zip(asks, folded, strict=True)
+            )
+        if symbol_budget[symbols] >= 1:
+            symbol_budget[symbols] -= 1
+            keep.add(index)
     kept, dropped = [], []
-    for op in operations:
-        if op.get("op") != "add_text" or isinstance(op.get("research"), dict):
-            kept.append(op)
-            continue
-        text = str(op.get("text") or "")
-        words = _ask_words(text)
-        if not words:
-            # Emoji or punctuation only: hers when it sits inside one of her literals.
-            symbols = fold_text(text)
-            if symbols and any(symbols in literal for literal in folded):
-                kept.append(op)
-            else:
-                dropped.append(text)
-            continue
-        sources = _literal_runs(words, distinct)
-        if sources is None or not any(
-            distinct[j] in unbounded or shown.get(distinct[j], 0) < allowed[distinct[j]]
-            for j in sources
-        ):
-            dropped.append(text)
-        elif words in allowed:
-            shown[words] = shown.get(words, 0) + 1
-            kept.append(op)
-        elif chunks.get(words, 0) < _chunk_budget(words, sources, distinct, allowed, unbounded):
-            chunks[words] = chunks.get(words, 0) + 1
+    for index, op in enumerate(operations):
+        if op.get("op") != "add_text" or isinstance(op.get("research"), dict) or index in keep:
             kept.append(op)
         else:
-            dropped.append(text)
+            dropped.append(str(op.get("text") or ""))
     if not dropped:
         return kept
     try:

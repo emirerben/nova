@@ -632,3 +632,115 @@ def test_song_lyric_lane_keeps_lyrics_and_drops_only_the_unasked_line(monkeypatc
     assert "Our song" in [row["text"] for row in after]
     assert "Wait till the end 👀" not in [row["text"] for row in after]
     assert _lyric_rows(result) == lyrics
+
+
+# --- review (Emir, head 2edef41): her literal appears exactly, once ------------------
+# Same words, same order, nothing dropped, nothing added or repeated; across chunks each
+# literal is used once unless she asked for it more than once. Ways this can fail:
+# 1. a chunk that skips her words passes ("this is not good" -> "this is good");
+# 2. a chunk that repeats her words passes ("go go" -> "go go go go");
+# 3. chunks that each fit her line still skip a word between them ("this is" + "good");
+# 4. separate chunks use her literal twice ("go" + "go go", or the split line + the whole);
+# 5. chunks reach the screen in the wrong order, or two lines' chunks interleave;
+# 6. a chunk leaves her line unfinished (her other words dropped);
+# 7. an emoji of her line repeats;
+# 8. a planned bar that already shows her line is not counted as its one use;
+# 9. too strict: an exact split, a phrase she repeats, a line she asked for twice, or two
+#    lines each split in order are lost.
+
+SPLIT = ("The prompt I run", "at the end of every Claude session")
+
+
+@pytest.mark.parametrize(
+    ("literals", "written", "expected"),
+    [
+        pytest.param(
+            ["this is not good"], [("this is good", 0, 4)], [], id="skipped-word-in-one-line"
+        ),
+        pytest.param(["go go"], [("go go go go", 0, 4)], [], id="repeated-words-in-one-line"),
+        pytest.param(
+            ["this is not good"],
+            [("this is", 0, 2), ("good", 2, 4)],
+            [],
+            id="skipped-word-between-chunks",
+        ),
+        pytest.param(
+            ["go go"], [("go", 0, 2), ("go go", 2, 4)], ["go go"], id="literal-reused-by-chunks"
+        ),
+        pytest.param(
+            [T3],
+            [(SPLIT[0], 0, 2), (SPLIT[1], 2, 5), (T3, 5, 10)],
+            list(SPLIT),
+            id="split-line-then-whole-line-again",
+        ),
+        pytest.param(
+            [T3], [(SPLIT[1], 0, 2), (SPLIT[0], 2, 5)], [], id="chunks-in-the-wrong-order"
+        ),
+        pytest.param([T3], [(SPLIT[0], 0, 2)], [], id="unfinished-line"),
+        pytest.param(
+            ["Best day ever 🔥"],
+            [("Best day ever", 0, 3), ("🔥", 3, 5), ("🔥", 5, 7)],
+            ["Best day ever", "🔥"],
+            id="repeated-emoji-chunk",
+        ),
+    ],
+)
+def test_review_her_literal_appears_exactly_once(
+    monkeypatch, switch_on, literals, written, expected
+):
+    snapshot = bare_plan()
+    reqs = [req(f"r{i}", "text", "global", literal=lit) for i, lit in enumerate(literals)]
+    client = transport(monkeypatch, [add(text, start, end) for text, start, end in written])
+    result = compose(snapshot, reqs)
+    assert len(client.calls) == 1
+    assert sorted(texts_of(result)) == sorted(expected)
+
+
+@pytest.mark.parametrize(
+    ("literals", "written"),
+    [
+        pytest.param(["this is not good"], [("this is", 0, 2), ("not good", 2, 4)], id="split"),
+        pytest.param(["go go"], [("go", 0, 2), ("go", 2, 4)], id="phrase-she-repeats"),
+        pytest.param(
+            ["go go", "go go"],
+            [("go go", 0, 2), ("go", 2, 4), ("go", 4, 6)],
+            id="asked-for-twice",
+        ),
+        pytest.param(
+            ["First line", "Second line"],
+            [("First", 0, 2), ("line", 2, 4), ("Second line", 4, 6)],
+            id="two-lines-each-split-in-order",
+        ),
+    ],
+)
+def test_review_exact_covers_of_her_literal_are_kept(monkeypatch, switch_on, literals, written):
+    snapshot = bare_plan()
+    reqs = [req(f"r{i}", "text", "global", literal=lit) for i, lit in enumerate(literals)]
+    client = transport(monkeypatch, [add(text, start, end) for text, start, end in written])
+    result = compose(snapshot, reqs)
+    assert len(client.calls) == 1
+    assert sorted(texts_of(result)) == sorted(text for text, _, _ in written)
+
+
+def test_review_interleaved_lines_never_read_as_a_mix(monkeypatch, switch_on):
+    # On screen "First / Second / line / line" spells neither of her lines; whatever stays
+    # must read as one of them exactly.
+    snapshot = bare_plan()
+    reqs = [
+        req("a", "text", "global", literal="First line"),
+        req("b", "text", "global", literal="Second line"),
+    ]
+    written = [("First", 0, 2), ("Second", 2, 4), ("line", 4, 6), ("line", 6, 8)]
+    client = transport(monkeypatch, [add(text, start, end) for text, start, end in written])
+    result = compose(snapshot, reqs)
+    assert len(client.calls) == 1
+    assert " ".join(texts_of(result)) in {"First line", "Second line"}
+
+
+def test_review_planned_bar_counts_as_her_one_use(monkeypatch, switch_on):
+    # Her pinned line already shows T3; a split copy of it added on top is a repeat.
+    snapshot, reqs = q3_plan()
+    client = transport(monkeypatch, [add(SPLIT[0], 0, 2), add(SPLIT[1], 2, 5)])
+    result = compose(snapshot, reqs)
+    assert len(client.calls) == 1
+    assert texts_of(result) == [T3]
