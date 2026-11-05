@@ -71,3 +71,31 @@ WITHDRAWN_CARD_STAYS_HIDDEN = Gap(
     "back'); the poll-while-pending case is the ordinary one, so the withdrawal that G asked for "
     "restores the setting and the brief but not the offer.",
 )
+
+
+CAPABILITY_LEVER_DEAD_CARD = Gap(
+    "GAP-14",
+    "A capability lever pulled after the serve leaves a filler card on the phone for a refused tap",
+    "app/services/suggestion_serve.py (_strip_dead_cards asks the kind switch, the consent gate, "
+    "approval readiness and the plan; not the cleanup capability the card is built on)",
+    "Talking take, filler card served; then `SILENCE_CUT_ENABLED`, `SUBTITLED_ARCHETYPE_ENABLED` "
+    "or `SPEECH_CLEANUP_MODE=off` is switched off (an operator's rollout lever, no code change). "
+    "The next GET still serves the card from the frozen set for the rest of the 24 h, and its tap "
+    "is refused `base_moved` (`pinned.rebuild_action` finds `capability_for_item` closed). Nothing "
+    "is written and the refusal mints a new set that drops the card, so the cost is one dead tap "
+    "per held card; the same class as GAP-10 (the per-kind switch), which the strip now answers.",
+)
+
+
+TURKISH_VOLUME_ASK_LEAKS = Gap(
+    "GAP-15",
+    "A Turkish volume ask with a word between noun and verb does not withhold the music card",
+    "app/services/suggestions/brief_asks.py (MUSIC.words: 'sesi kis' ... are adjacent phrases)",
+    "A live requirement whose description is 'sesi biraz kıs', 'sesi çok kıs', 'sesi tamamen "
+    "kapat', 'sesi daha düşük yap', 'ses çok yüksek' (and the like) carries no typed audio fact, "
+    "so "
+    "the words decide. MUSIC.words lists `f'{sesi|sesini} {verb}'` as adjacent phrases, so one "
+    "adverb in between ('biraz', 'çok', 'tamamen', 'daha') makes it another phrase and the card "
+    "'Müziği kıs' is offered over the creator's own 'sesi biraz kıs' (KRI-129). 'sesi kıs', "
+    "'sesini azalt' and every softened-k form of 'müzik' ('müziği', 'müziğin', 'müziğe') are read.",
+)

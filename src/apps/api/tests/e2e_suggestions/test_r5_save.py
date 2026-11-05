@@ -164,7 +164,7 @@ async def test_v7_an_editor_tap_and_its_undo_do_not_lift_the_saves_fence(talking
             f" (pointer {s.pointer(scene.seeded)!r}, saved {s.baseline(scene.seeded)!r})"
         )
     rec.negative(
-        "Save, an editor tap, Undo: the filler card is not served, or its tap is refused base_moved",
+        "Save, an editor tap, Undo: the filler card is not served or its tap is refused base_moved",
         key,
         "the plan still holds none of the Save's edits, so the filler card must not run",
         held,
