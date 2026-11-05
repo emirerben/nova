@@ -81,6 +81,74 @@ final class SpeechCleanupOfferTests: XCTestCase {
         XCTAssertTrue(stats.removesRetakes)
     }
 
+    private func requestedInChat(_ field: String, inAnalysis: Bool = false) -> Bool? {
+        let top = inAnalysis ? "" : field
+        let inner = inAnalysis ? field : ""
+        let (offer, _) = SpeechCleanupOffer.resolve(cleanup("""
+        {"applicable": true, "requires_choice": true\(top.isEmpty ? "" : ", " + top),
+         "analysis": {"id": "a1", "status": "ready", "candidate_count": 3\(inner.isEmpty ? "" : ", " + inner)}}
+        """))
+        guard case let .choice(stats) = offer else { return nil }
+        return stats.requestedInChat
+    }
+
+    func testRequestedInChatTrueAtTopLevelReachesChoiceStats() {
+        XCTAssertEqual(requestedInChat(#""requested_in_chat": true"#), true)
+    }
+
+    func testRequestedInChatAbsentFalseOrNonBoolIsFalse() {
+        XCTAssertEqual(requestedInChat(""), false)
+        XCTAssertEqual(requestedInChat(#""requested_in_chat": false"#), false)
+        XCTAssertEqual(requestedInChat(#""requested_in_chat": "true""#), false)
+        XCTAssertEqual(requestedInChat(#""requested_in_chat": 1"#), false)
+        XCTAssertEqual(requestedInChat(#""requested_in_chat": null"#), false)
+    }
+
+    func testRequestedInChatInsideAnalysisIsIgnored() {
+        XCTAssertEqual(requestedInChat(#""requested_in_chat": true"#, inAnalysis: true), false)
+    }
+
+    func testRequestedInChatDoesNotChangeNonChoiceOffers() {
+        let flag = #""requested_in_chat": true"#
+        XCTAssertEqual(SpeechCleanupOffer.resolve(cleanup("{\"applicable\": false, \(flag)}")).offer, .plain)
+        XCTAssertEqual(SpeechCleanupOffer.resolve(cleanup("{\"applicable\": true, \(flag)}")).offer, .checking)
+        XCTAssertEqual(SpeechCleanupOffer.resolve(cleanup("{\"applicable\": true, \(flag), \"analysis\": {\"id\": \"a1\", \"status\": \"failed\"}}")).offer, .failed)
+        XCTAssertEqual(SpeechCleanupOffer.resolve(cleanup("{\"applicable\": true, \"requires_choice\": false, \(flag), \"analysis\": {\"id\": \"a1\", \"status\": \"ready\"}}")).offer, .plain)
+    }
+
+    private func tightPauses(_ field: String, inAnalysis: Bool = false) -> Bool? {
+        let top = inAnalysis ? "" : field
+        let inner = inAnalysis ? field : ""
+        let (offer, _) = SpeechCleanupOffer.resolve(cleanup("""
+        {"applicable": true, "requires_choice": true\(top.isEmpty ? "" : ", " + top),
+         "analysis": {"id": "a1", "status": "ready", "candidate_count": 3\(inner.isEmpty ? "" : ", " + inner)}}
+        """))
+        guard case let .choice(stats) = offer else { return nil }
+        return stats.tightPauses
+    }
+
+    func testTightPauseStyleReadFromTopLevelOnly() {
+        XCTAssertEqual(tightPauses(#""pause_style": "tight""#), true)
+        XCTAssertEqual(tightPauses(#""pause_style": "tight""#, inAnalysis: true), false)
+    }
+
+    func testOtherPauseStylesAreNotTight() {
+        XCTAssertEqual(tightPauses(""), false)
+        XCTAssertEqual(tightPauses(#""pause_style": "normal""#), false)
+        XCTAssertEqual(tightPauses(#""pause_style": "Tight""#), false)
+        XCTAssertEqual(tightPauses(#""pause_style": true"#), false)
+    }
+
+    func testStatsDefaultToNotTightPauses() {
+        XCTAssertFalse(SpeechCleanupStats().tightPauses)
+        XCTAssertTrue(SpeechCleanupStats(tightPauses: true).tightPauses)
+    }
+
+    func testStatsDefaultToNotRequestedInChat() {
+        XCTAssertFalse(SpeechCleanupStats().requestedInChat)
+        XCTAssertTrue(SpeechCleanupStats(requestedInChat: true).requestedInChat)
+    }
+
     func testLegacyStatsWithoutRetakesKeepTheOriginalDisclosure() {
         XCTAssertFalse(SpeechCleanupStats(retakes: nil).removesRetakes)
         XCTAssertFalse(SpeechCleanupStats(retakes: 0).removesRetakes)
