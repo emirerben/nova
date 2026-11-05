@@ -1794,6 +1794,31 @@ final class CreationUITests: XCTestCase {
     /// KRI-640: New chat opens on its create reply alone. Every chat read and every capabilities read after the
     /// first answers 10s late here, so a new chat that reads itself back or re-reads capabilities before its
     /// format cards work misses the 5s budget (the budget leaves room for a slow CI accessibility query).
+    func testDelayedNewChatAcceptsTypingBeforeItsServerIdentityExists() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
+        app.launchEnvironment["KRIA_CHAT_CREATE_DELAY"] = "20"
+        app.launch()
+        XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 20))
+        app.buttons["Open projects"].tap()
+        let newChat = app.buttons["drawer-new-chat"]
+        XCTAssertTrue(newChat.waitForExistence(timeout: 3))
+        XCTAssertTrue(newChat.isEnabled)
+        newChat.tap()
+        XCTAssertTrue(app.staticTexts["Starting your chat…"].waitForExistence(timeout: 3))
+        let field = app.textFields["Message Kria"].exists ? app.textFields["Message Kria"] : app.textViews["Message Kria"]
+        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        field.tap()
+        field.typeText("draft before identity")
+        XCTAssertTrue(app.staticTexts["Starting your chat…"].exists, "Typing occurred before the delayed create response")
+        XCTAssertFalse(app.buttons["chat-send-message"].isEnabled, "Submission waits for the real thread")
+        XCTAssertTrue(app.staticTexts["What are we making?"].waitForExistence(timeout: 30))
+        let realField = app.textFields["Message Kria"].exists ? app.textFields["Message Kria"] : app.textViews["Message Kria"]
+        XCTAssertEqual(realField.value as? String, "draft before identity")
+        XCTAssertFalse(app.staticTexts["Starting your chat…"].exists)
+    }
+
     func testNewChatShowsUsableFormatsWithoutWaitingForMoreReads() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
