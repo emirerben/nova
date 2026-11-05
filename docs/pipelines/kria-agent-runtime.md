@@ -41,9 +41,9 @@ separation, not live-model interpretation or a verified TestFlight export.
 
 ## Only the text she asked for (`TEXT_COMPOSER_ASKED_ONLY_ENABLED`)
 
-With the switch on, the creation text pass keeps a composer `add_text` only when its words are the creator's own literal ask (whole, in chunks, or a merge of several literals) and that literal is not already on screen as many times as she asked. An invented line or a second copy of her line is dropped, not raised (raising would fail her whole video), and logged as `creation_text_unasked_dropped`.
+With the switch on, the creation text pass keeps a composer `add_text` only when its words are the creator's own literal ask (whole, in chunks, or a merge of several literals) and that literal is not already on screen as many times as she asked. A chunk of her line may repeat only as often as her line does (a "go go go" line keeps three "go"), and an emoji-only chunk stays when it sits inside her literal. An invented line or a second copy of her line is dropped, not raised (raising would fail her whole video), and logged as `creation_text_unasked_dropped`. The drop is verified: if the program would no longer replay without the dropped line, the drop is skipped (`creation_text_unasked_kept`) and the composer's ops stand, exactly as with the switch off.
 
-Exempt, unchanged: no brief bound, described asks without a literal, story/editorial builds (they keep the old unrequested-text check), approved research ops, pinned programs replayed from a stored snapshot, and chat/editor edits.
+Exempt, unchanged: no brief bound, described asks without a literal, story/editorial builds (they keep the old unrequested-text check), research ops (always kept: her own research ask), pinned programs replayed from a stored snapshot, and chat/editor edits.
 
 With the switch on, a title-only or style-only brief's extra line is also dropped instead of failing the render, so `test_approved_hook_journey.py::test_bound_styling_composition_adds_text_only_when_live_brief_requests_it[False]` (the old raise) holds only with the switch off. Known limit: a copy the composer adds next to her planned bar is dropped even when the planned bar is shorter (a 2.2 s title); the composer must retime or move that bar, and a whole-video line belongs in the planner's pin.
 

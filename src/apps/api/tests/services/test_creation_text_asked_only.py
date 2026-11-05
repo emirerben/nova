@@ -488,3 +488,147 @@ def test_chat_editor_add_text_is_untouched_by_the_switch(switch_on):
     texts, slots = _lanes(compile_proposal_execution_plan(snapshot))
     state = apply_text_lane_ops(texts, slots, [add("Whatever the creator typed", 0, 3)])
     assert [row["text"] for row in state.text] == ["Whatever the creator typed"]
+
+
+# --- follow-up review gaps ------------------------------------------------------------
+# Gap 1: a chunk made only of emoji/punctuation is still her words.
+
+
+def test_emoji_only_chunk_of_her_literal_is_kept(monkeypatch, switch_on):
+    snapshot = bare_plan()
+    reqs = [req("r1", "text", "global", literal="Best day ever 🔥")]
+    client = transport(monkeypatch, [add("Best day ever", 0, 3), add("🔥", 3, 5)])
+    result = compose(snapshot, reqs)
+    assert len(client.calls) == 1
+    assert sorted(texts_of(result)) == sorted(["Best day ever", "🔥"])
+
+
+def test_emoji_only_add_she_did_not_type_is_still_dropped(monkeypatch, switch_on):
+    snapshot = bare_plan()
+    reqs = [req("r1", "text", "global", literal="Best day ever 🔥")]
+    client = transport(monkeypatch, [add("Best day ever", 0, 3), add("👀", 3, 5)])
+    result = compose(snapshot, reqs)
+    assert len(client.calls) == 1
+    assert texts_of(result) == ["Best day ever"]
+
+
+# Gap 2: a drop must replay, and must not depend on the replay without the adds.
+
+
+def test_unasked_line_is_dropped_when_a_later_selector_would_count_it(monkeypatch, switch_on):
+    # A group selector resolved by the composer before the add existed has expected_count 1
+    # (her pin). With the invented row present the replay would see 2 and raise, failing her
+    # video; dropping the row lets the same op replay. No op can address an added row by
+    # index or id: the composer's own parse rejects both as "stale_target", so a later op that
+    # NEEDS the added row cannot come from a model (that case is covered by the monkeypatched
+    # tests below).
+    snapshot, reqs = q3_plan()
+    ops = [
+        add("Wait till the end 👀"),
+        {"op": "rewrite_text", "selector": {"group": "free"}, "text": T3},
+    ]
+    client = transport(monkeypatch, ops)
+    result = compose(snapshot, reqs)
+    assert len(client.calls) == 1
+    assert texts_of(result) == [T3]
+
+
+def test_failed_replay_without_the_adds_retries_with_every_op(monkeypatch, switch_on):
+    # If the replay without the adds raises (a later op that counted the added row), the
+    # function used to give up and return every op, so the invented line rendered. It now
+    # retries with all ops in place, finds the planned bars, and still drops the line.
+    import app.services.creation_text_composition as module
+
+    snapshot, reqs = q3_plan()
+    real = module.replay_text_composition
+    calls = []
+
+    def flaky(plan, program):
+        calls.append([op.get("op") for op in program.operations])
+        if len(calls) == 1:
+            raise CreationTextCompositionError("a later op counted the added row")
+        return real(plan, program)
+
+    monkeypatch.setattr(module, "replay_text_composition", flaky)
+    client = transport(monkeypatch, [add("Wait till the end 👀")])
+    result = compose(snapshot, reqs)
+    assert len(client.calls) == 1
+    assert calls[0] == []
+    assert calls[1] == ["add_text"]
+    assert texts_of(result) == [T3]
+
+
+def test_drop_that_would_break_the_program_is_skipped_not_raised(monkeypatch, switch_on, caplog):
+    import app.services.creation_text_composition as module
+
+    snapshot, reqs = q3_plan()
+    real = module.replay_text_composition
+    seen = []
+
+    def flaky(plan, program):
+        ops = [op.get("op") for op in program.operations]
+        seen.append(ops)
+        # Fails only for the program that has no add_text left (the dropped one).
+        if "add_text" not in ops and len(seen) > 1:
+            raise CreationTextCompositionError("kept program does not replay")
+        return real(plan, program)
+
+    monkeypatch.setattr(module, "replay_text_composition", flaky)
+    client = transport(monkeypatch, [add("Wait till the end 👀")])
+    result = compose(snapshot, reqs)
+    assert len(client.calls) == 1
+    assert "Wait till the end 👀" in texts_of(result)
+
+
+# Gap 3: a chunk of her line may repeat only as often as her line does.
+
+
+def test_repeated_chunk_of_her_line_is_kept_only_once(monkeypatch, switch_on):
+    snapshot = bare_plan()
+    reqs = [req("r1", "text", "global", literal=T3)]
+    client = transport(
+        monkeypatch,
+        [
+            add("The prompt I run", 0, 2),
+            add("The prompt I run", 2, 4),
+            add("at the end of every Claude session", 4, 7),
+        ],
+    )
+    result = compose(snapshot, reqs)
+    assert len(client.calls) == 1
+    assert sorted(texts_of(result)) == sorted(
+        ["The prompt I run", "at the end of every Claude session"]
+    )
+
+
+def test_a_phrase_her_line_repeats_keeps_each_chunk(monkeypatch, switch_on):
+    snapshot = bare_plan()
+    reqs = [req("r1", "text", "global", literal="go go go")]
+    client = transport(monkeypatch, [add("go", 0, 2), add("go", 2, 4), add("go", 4, 6)])
+    result = compose(snapshot, reqs)
+    assert len(client.calls) == 1
+    assert texts_of(result) == ["go", "go", "go"]
+
+
+# Song lyric lane: her literal passes, an invented line does not, lyric rows are untouched.
+
+
+def _lyric_rows(snapshot):
+    rows = compile_proposal_execution_plan(snapshot)["text_elements"]
+    return [row for row in rows if row["id"].startswith("song-caption-")]
+
+
+def test_song_lyric_lane_keeps_lyrics_and_drops_only_the_unasked_line(monkeypatch, switch_on):
+    from tests.evals.request_following.test_creation_composition import _song_caption_plan
+
+    snapshot = _song_caption_plan().snapshot
+    lyrics = _lyric_rows(snapshot)
+    assert len(lyrics) > 5
+    reqs = [req("r1", "text", "global", literal="Our song")]
+    client = transport(monkeypatch, [add("Our song", 0, 3), add("Wait till the end 👀", 3, 5)])
+    result = compose(snapshot, reqs, request="Add the text Our song")
+    assert len(client.calls) == 1
+    after = compile_proposal_execution_plan(result)["text_elements"]
+    assert "Our song" in [row["text"] for row in after]
+    assert "Wait till the end 👀" not in [row["text"] for row in after]
+    assert _lyric_rows(result) == lyrics

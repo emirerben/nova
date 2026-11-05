@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import re
 import unicodedata
 from collections.abc import Mapping, Sequence
@@ -422,52 +423,33 @@ def _literal_runs(words: tuple[str, ...], literals: list[tuple[str, ...]]) -> se
     return {j for i, k, j in edges if i in forward and k in backward}
 
 
-def _drop_unasked_added_text(
-    operations: list[dict],
-    requirements: Sequence[BriefRequirement] | None,
-    *,
-    plan: dict,
-    texts: list[dict],
-    slots: list[dict],
-    pinned_ops: list[dict],
-    snapshot: EditProposalSnapshot,
-    ctx: RunContext | None,
-) -> list[dict]:
-    """Drop composer ``add_text`` ops that are not the creator's own words (item 22).
+def _occurrences(words: tuple[str, ...], literal: tuple[str, ...]) -> int:
+    n = len(words)
+    return sum(literal[o : o + n] == words for o in range(len(literal) - n + 1)) if n else 0
 
-    "Just this text, nothing else" must not render an invented line or a second copy of
-    hers. It drops instead of raising: raising fails the creator's whole video. Research
-    ops, described asks (the composer writes the copy), a missing brief and story builds
-    keep today's behaviour, so their system-owned copy never regresses.
+
+def _chunk_budget(
+    words: tuple[str, ...],
+    sources: set[int],
+    distinct: list[tuple[str, ...]],
+    allowed: dict[tuple[str, ...], int],
+    unbounded: set[tuple[str, ...]],
+) -> float:
+    """How many times a chunk of her literal(s) may be on screen.
+
+    Inside one literal: its allowed copies times how often the chunk occurs in it (a "go go
+    go" line keeps three "go"). A merge across literals draws one use from each source.
     """
-    if requirements is None:
-        return operations
-    if snapshot.editorial_plan is not None or _is_story_snapshot(snapshot):
-        _check_added_text(operations, requirements)
-        return operations
-    asks = _authorizing_asks(requirements)
-    if any(not _ask_words(req.literal or "") for req in asks):
-        return operations
-    literals = [_ask_words(req.literal or "") for req in asks]
-    unbounded = {lit for req, lit in zip(asks, literals, strict=True) if req.scope == "per_clip"}
-    allowed: dict[tuple[str, ...], int] = {}
-    for req, lit in zip(asks, literals, strict=True):
-        allowed[lit] = allowed.get(lit, 0) + (req.scope != "per_clip")
-    distinct = list(allowed)
-    # Which planned bars still show which words once the program ran. An add_text never
-    # changes a planned bar and no later op can address an added one by index, so the adds
-    # are left out: a malformed extra line is then dropped instead of failing the replay.
-    edits = [op for op in operations if op.get("op") != "add_text"]
-    try:
-        composed = replay_text_composition(
-            plan,
-            TextCompositionProgram(
-                base_digest=_digest(texts, slots), operations=[*pinned_ops, *edits]
-            ),
-        )["text_elements"]
-    except CreationTextCompositionError:
-        return operations  # the real replay right after raises exactly as it does today
-    owners = {row.get("id") for row in texts}
+    inside = [j for j in sources if _occurrences(words, distinct[j])]
+    if inside:
+        if any(distinct[j] in unbounded for j in inside):
+            return math.inf
+        return sum(allowed[distinct[j]] * _occurrences(words, distinct[j]) for j in inside)
+    return min(math.inf if distinct[j] in unbounded else allowed[distinct[j]] for j in sources)
+
+
+def _planned_bar_words(composed: list[dict], owners: set) -> dict[tuple[str, ...], int]:
+    """Which planned bars still show which words once the program ran."""
     groups: dict[str, list[dict]] = {}
     for row in composed:
         if row.get("removed") or is_caption_text_bar(row):
@@ -486,28 +468,109 @@ def _drop_unasked_added_text(
             ordered[-1]["text"] if cumulative else " ".join(row["text"] for row in ordered)
         )
         shown[words] = shown.get(words, 0) + 1
+    return shown
+
+
+def _drop_unasked_added_text(
+    operations: list[dict],
+    requirements: Sequence[BriefRequirement] | None,
+    *,
+    plan: dict,
+    texts: list[dict],
+    slots: list[dict],
+    pinned_ops: list[dict],
+    snapshot: EditProposalSnapshot,
+    ctx: RunContext | None,
+) -> list[dict]:
+    """Drop composer ``add_text`` ops that are not the creator's own words (item 22).
+
+    "Just this text, nothing else" must not render an invented line or a second copy of
+    hers. It drops instead of raising: raising fails the creator's whole video, so a drop
+    that would stop the program replaying is skipped. Research ops are always kept (her
+    own research ask), as are described asks (the composer writes the copy), a missing
+    brief and story builds, so their system-owned copy never regresses.
+    """
+    if requirements is None:
+        return operations
+    if snapshot.editorial_plan is not None or _is_story_snapshot(snapshot):
+        _check_added_text(operations, requirements)
+        return operations
+    asks = _authorizing_asks(requirements)
+    if any(not _ask_words(req.literal or "") for req in asks):
+        return operations
+    from app.text_fold import fold_text  # noqa: PLC0415
+
+    literals = [_ask_words(req.literal or "") for req in asks]
+    folded = [fold_text(req.literal or "") for req in asks]
+    unbounded = {lit for req, lit in zip(asks, literals, strict=True) if req.scope == "per_clip"}
+    allowed: dict[tuple[str, ...], int] = {}
+    for req, lit in zip(asks, literals, strict=True):
+        allowed[lit] = allowed.get(lit, 0) + (req.scope != "per_clip")
+    distinct = list(allowed)
+    digest = _digest(texts, slots)
+
+    def replay(ops: list[dict]) -> list[dict]:
+        program = TextCompositionProgram(base_digest=digest, operations=[*pinned_ops, *ops])
+        return replay_text_composition(plan, program)["text_elements"]
+
+    # An add_text never changes a planned bar and no later op can address an added one, so
+    # the adds are left out: a malformed extra line is then dropped instead of failing the
+    # replay. If that replay fails (a later op counted the added row), retry with every op.
+    try:
+        try:
+            composed = replay([op for op in operations if op.get("op") != "add_text"])
+        except CreationTextCompositionError:
+            composed = replay(operations)
+    except CreationTextCompositionError:
+        return operations  # the real replay right after raises exactly as it does today
+    shown = _planned_bar_words(composed, {row.get("id") for row in texts})
+    chunks: dict[tuple[str, ...], int] = {}
     kept, dropped = [], []
     for op in operations:
         if op.get("op") != "add_text" or isinstance(op.get("research"), dict):
             kept.append(op)
             continue
-        words = _ask_words(str(op.get("text") or ""))
+        text = str(op.get("text") or "")
+        words = _ask_words(text)
+        if not words:
+            # Emoji or punctuation only: hers when it sits inside one of her literals.
+            symbols = fold_text(text)
+            if symbols and any(symbols in literal for literal in folded):
+                kept.append(op)
+            else:
+                dropped.append(text)
+            continue
         sources = _literal_runs(words, distinct)
         if sources is None or not any(
             distinct[j] in unbounded or shown.get(distinct[j], 0) < allowed[distinct[j]]
             for j in sources
         ):
-            dropped.append(str(op.get("text") or ""))
-            continue
-        shown[words] = shown.get(words, 0) + (words in allowed)
-        kept.append(op)
-    if dropped:
+            dropped.append(text)
+        elif words in allowed:
+            shown[words] = shown.get(words, 0) + 1
+            kept.append(op)
+        elif chunks.get(words, 0) < _chunk_budget(words, sources, distinct, allowed, unbounded):
+            chunks[words] = chunks.get(words, 0) + 1
+            kept.append(op)
+        else:
+            dropped.append(text)
+    if not dropped:
+        return kept
+    try:
+        replay(kept)
+    except CreationTextCompositionError as exc:
         log.info(
-            "creation_text_unasked_dropped",
+            "creation_text_unasked_kept",
             job_id=getattr(ctx, "job_id", None),
-            dropped=len(dropped),
-            texts=[t[:80] for t in dropped],
+            reason=str(exc)[:120],
         )
+        return operations
+    log.info(
+        "creation_text_unasked_dropped",
+        job_id=getattr(ctx, "job_id", None),
+        dropped=len(dropped),
+        texts=[t[:80] for t in dropped],
+    )
     return kept
 
 
