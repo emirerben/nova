@@ -387,3 +387,104 @@ def test_receipt_is_partial_and_names_her_face_when_the_line_moved(monkeypatch) 
     receipt = check_text_look(_requirement(), facts)
     assert receipt is not None and receipt.status == "partial"
     assert "face" in (receipt.reason or "").casefold()
+
+
+# Review fixes ----------------------------------------------------------------------------
+
+HUGE_FACES = [(0.30, 0.12, 0.70, 0.88), (0.02, 0.02, 0.98, 0.98)]
+
+
+def _receipt_for(rows: list[dict], position: str = "middle"):
+    facts = PlanFacts(text_styles=_text_style_rows(rows))
+    req = BriefRequirement(
+        id="r1",
+        kind="text",
+        scope="global",
+        literal=TEXT,
+        description="Put this text in the middle for the whole video",
+        facts={"position": position},
+    )
+    return check_text_look(req, facts)
+
+
+@pytest.mark.parametrize("box", HUGE_FACES)
+def test_no_clear_spot_says_it_covers_the_face(monkeypatch, box) -> None:
+    """Fix 1: a face over the whole middle column leaves the line on it; the row says
+    ``covers == ["face"]`` (no moved_off) and the receipt is partial naming the face."""
+    _flag(monkeypatch, True)
+    face = {"start_s": 0.0, "end_s": 11.0, "box": box, "kind": "face"}
+    rows = _style(_strategy([_middle_pin()]), excluded_boxes=[face])
+    source = _pin(rows)["source_params"]
+    assert source["covers"] == ["face"]
+    assert "moved_off" not in source
+    receipt = _receipt_for(rows)
+    assert receipt is not None and receipt.status == "partial"
+    assert "face" in (receipt.reason or "").casefold()
+
+
+def test_stale_moved_off_is_dropped_on_the_fallback_path(monkeypatch) -> None:
+    """Fix 4: a row arriving with ``moved_off=["face"]`` from an earlier pass, now with no
+    clear spot, ends without ``moved_off``."""
+    _flag(monkeypatch, True)
+    rows = _compiled_rows(_strategy([_middle_pin()]))
+    for row in rows:
+        if row["id"] == "guided-pinned-0":
+            row["source_params"] = {**(row.get("source_params") or {}), "moved_off": ["face"]}
+    face = {"start_s": 0.0, "end_s": 11.0, "box": HUGE_FACES[0], "kind": "face"}
+    styled = resolve_phone_text_style(
+        rows,
+        preferences={"all_text": {}},
+        requested=requested_style(_strategy([_middle_pin()]), PROMPT),
+        selected_fonts={},
+        excluded_boxes=[face],
+    )
+    assert "moved_off" not in _pin(styled)["source_params"]
+
+
+def test_authored_position_on_a_middle_pin_is_kept(monkeypatch) -> None:
+    """Fix 2: a later chat edit stored position fields; the middle pin pass must not snap
+    the row back to (0.5, 0.5)."""
+    _flag(monkeypatch, True)
+    strategy = _strategy([_middle_pin()])
+    rows = _compiled_rows(strategy)
+    for row in rows:
+        if row["id"] == "guided-pinned-0":
+            row.update(position="custom", x_frac=0.3, y_frac=0.2)
+            row["source_params"] = {
+                **(row.get("source_params") or {}),
+                "creator_style_fields": ["position", "x_frac", "y_frac"],
+            }
+    styled = resolve_phone_text_style(
+        rows,
+        preferences={"all_text": {}},
+        requested=requested_style(strategy, PROMPT),
+        selected_fonts={},
+    )
+    pin = _pin(styled)
+    assert pin["x_frac"] == pytest.approx(0.3, abs=0.01)
+    assert pin["y_frac"] == pytest.approx(0.2, abs=0.02)
+
+
+def test_small_face_move_is_still_told(monkeypatch) -> None:
+    """Fix 3: a face at y 0.44-0.50 moves the line only ~0.07 (inside _row_at's tolerance);
+    the receipt must still be partial and name the face."""
+    _flag(monkeypatch, True)
+    face = {"start_s": 0.0, "end_s": 11.0, "box": (0.30, 0.44, 0.70, 0.50), "kind": "face"}
+    rows = _style(_strategy([_middle_pin()]), excluded_boxes=[face])
+    assert _pin(rows)["source_params"].get("moved_off") == ["face"]
+    receipt = _receipt_for(rows)
+    assert receipt is not None and receipt.status == "partial"
+    assert "face" in (receipt.reason or "").casefold()
+
+
+def test_corner_pin_without_look_keeps_the_duplicate_title(monkeypatch) -> None:
+    """Fix 5: with the flag on, only a middle/look pin suppresses the identical opening
+    title; a plain top_left pin behaves as with the flag off (both drawn)."""
+    pin = {"text": TEXT, "corner": "top_left"}
+    counts = {}
+    for on in (False, True):
+        _flag(monkeypatch, on)
+        rows = _compiled_rows(_strategy([pin], opening_title=TEXT))
+        counts[on] = sorted(r["id"] for r in rows if TEXT in str(r.get("text")))
+    assert counts[True] == counts[False]
+    assert len(counts[True]) == 2

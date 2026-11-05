@@ -382,7 +382,25 @@ def cmd_prepare(args: argparse.Namespace) -> int:
         (directory / "recipe.json").write_text(
             json.dumps(recipe.model_dump(mode="json"), indent=2, sort_keys=True)
         )
-        assets = {asset.id: str(source) for asset in recipe.asset_manifest.assets}
+        # Footage -> the clip; a bundled font (`font-<file>`) -> its file in the API's font
+        # bundle, the same files the iPhone ships (never the clip: a font id mapped to a movie
+        # makes the phone fall back to another face).
+        assets: dict[str, str] = {}
+        for asset in [*recipe.assets, *recipe.asset_manifest.assets]:
+            if asset.id.startswith("font-"):
+                font = (
+                    REPO
+                    / "src"
+                    / "apps"
+                    / "api"
+                    / "assets"
+                    / "fonts"
+                    / asset.id.removeprefix("font-")
+                )
+                assert font.exists(), font
+                assets[asset.id] = str(font)
+            else:
+                assets[asset.id] = str(source)
         (directory / "assets.json").write_text(json.dumps(assets, indent=2))
         (directory / "plan.json").write_text(
             json.dumps(

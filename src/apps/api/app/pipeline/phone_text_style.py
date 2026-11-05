@@ -697,6 +697,7 @@ def _place(
     middle_pin = (
         role == "pinned"
         and (row.get("source_params") or {}).get("pin_zone") == "middle"
+        and not authored & {"position", "x_frac", "y_frac"}
         and (not position_fixed or wanted.get("position") in (None, "middle"))
     )
     if middle_pin:
@@ -724,6 +725,15 @@ def _place(
             wanted_position="middle",
             requested_position=None,
         )
+        # No spot clear of every obstacle: the line stays on what it still overlaps. Say so
+        # (the receipt reads ``covers``) and drop any stale "moved off" from an earlier pass.
+        source = dict(row.get("source_params") or {})
+        source.pop("moved_off", None)
+        if overlaps:
+            source["covers"] = sorted(set(overlaps))
+        else:
+            source.pop("covers", None)
+        row["source_params"] = source
         return row
     # Pins/captions retain their lane's established anchors unless the creator
     # asks otherwise. Reserve their complete measured rectangles for titles.
