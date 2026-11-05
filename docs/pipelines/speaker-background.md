@@ -174,8 +174,11 @@ and the frame, tracing `speaker_background_windows_phone_fallback` (`reason`: `w
   `capabilities.speaker_background_windows`. Repair keeps only this item's pool photos/videos, drops the rest with a
   `Couldn't …` notice, and drops the frame when the windows capability is closed.
 - Worker: entries with a `spoken_phrase` start at the first loose match in the take's caption-cue words; the others fill the
-  remaining time in order, `cadence_s` each, cycling to the take end. An unheard phrase falls back to the cadence with a
-  `phrase_not_heard` receipt note. Window visuals are reserved from cards (`used_media_ids`).
+  remaining time in order, `cadence_s` each. **The same photo never comes up twice** (S57–S63, 2026-11-05): nothing cycles,
+  the window before a gap holds through it, the last photo holds to the take end, a rotation shows each photo once
+  (cadence stretched to cover the take), a photo listed twice keeps one window (`duplicate_media`), and a fill that is one of
+  the sequence's photos never shows in a gap. An unheard phrase falls back to the cadence with a `phrase_not_heard` receipt
+  note. Window visuals are reserved from cards (`used_media_ids`).
 - Copilot ops `set_background_sequence {asset_ids, cadence_s?}`, `set_speaker_frame {preset}`, `clear_speaker_frame`;
   `set_background` stays the single fill, `remove_background` clears everything. Snapshot `background` carries `windows`,
   `speaker_frame` and `windows_available` while open.

@@ -1303,6 +1303,15 @@ class Settings(BaseSettings):
     # api + worker. docs/pipelines/suggestion-chips.md.
     kria_suggestion_chips_enabled: bool = False
     kria_suggestion_chips_user_ids: Annotated[list[str], NoDecode] = []
+    # Steer now (Green 5): a message sent while Kria works shows as "Up next" in the iOS chat
+    # with a "Steer now" button; `POST …/turns/{id}/cancel {"steer": true}` stops the running
+    # turn and starts the waiting message. Default off => capability `steer_now: false`, the
+    # queued payload carries no `queued_behind_turn_id`, a steer cancel is refused 404 and the
+    # plain cancel is byte-identical. The user-id list turns it on for single accounts while
+    # the global flag is off (canary). No NEXT_PUBLIC twin. Apply: `fly secrets set -a
+    # nova-video KRIA_STEER_NOW_ENABLED=true` + restart api + worker. docs/pipelines/steer-now.md.
+    kria_steer_now_enabled: bool = False
+    kria_steer_now_user_ids: Annotated[list[str], NoDecode] = []
     # KRI-756: bounds on the chip-wording agent (`nova.chat.suggester`). NOT flags: the one
     # flag above gates the whole feature. 0 runs/thread disables only the agent (chips fall
     # back to template labels): the cost kill lever without a second flag. The daily limit
@@ -1316,6 +1325,7 @@ class Settings(BaseSettings):
         "kria_brief_binding_user_ids",
         "kria_approval_readiness_user_ids",
         "kria_suggestion_chips_user_ids",
+        "kria_steer_now_user_ids",
         "kria_intent_review_user_ids",
         mode="before",
     )
@@ -1361,6 +1371,14 @@ class Settings(BaseSettings):
             return True
         return user_id is not None and str(user_id) in {
             str(uid) for uid in self.kria_suggestion_chips_user_ids
+        }
+
+    def steer_now_for(self, user_id: object) -> bool:
+        """Global flag OR the per-account allowlist (allowlist only ever adds)."""
+        if self.kria_steer_now_enabled:
+            return True
+        return user_id is not None and str(user_id) in {
+            str(uid) for uid in self.kria_steer_now_user_ids
         }
 
     def creative_brief_for(self, user_id: object) -> bool:
