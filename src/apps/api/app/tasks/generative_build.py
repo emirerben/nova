@@ -8345,13 +8345,17 @@ def _resolve_strategy_background(
                     index=index,
                     spoken_phrase=entry.get("spoken_phrase"),
                     hold_s=entry.get("hold_s"),
+                    # S57/S59: the pool row is the photo; two entries naming it are one photo.
+                    media_key=str(row["id"]),
                 )
-                for index, entry, _row in entry_rows
+                for index, entry, row in entry_rows
             ],
             cadence_s=float(request.get("cadence_s") or 4.0),
             take_s=float(take_s) if take_s is not None else 0.0,
             words=words,
             keep_segments=keep_segments,
+            # A colour fill is a base outside the sequence; a pool fill may be one of its photos.
+            fill_key=str(fill_row["id"]) if fill_row is not None else None,
         )
         lane_drops.extend(layout.notes)
         for placed in layout.windows:

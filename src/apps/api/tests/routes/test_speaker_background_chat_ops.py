@@ -525,8 +525,10 @@ def test_chat_sets_a_sequence_and_the_save_draws_every_window(monkeypatch):
     assert document["media_id"] == PHOTO.media_id
     duration = snapshot["background"]["duration_s"]
     windows = document["windows"]
-    assert [w["media_id"] for w in windows[:2]] == [PHOTO.media_id, VIDEO.media_id]
-    assert windows[0]["start_s"] == 0.0 and windows[0]["end_s"] == 4.0
+    # S57 (2026-11-05): each one once, stretched to cover the video (it used to take turns at 4 s).
+    assert [w["media_id"] for w in windows] == [PHOTO.media_id, VIDEO.media_id]
+    assert windows[0]["start_s"] == 0.0
+    assert windows[0]["end_s"] == pytest.approx(duration / 2, abs=1e-3)
     assert windows[-1]["end_s"] == pytest.approx(duration, abs=1e-3)
     assert all(later["start_s"] == earlier["end_s"] for earlier, later in zip(windows, windows[1:]))
 

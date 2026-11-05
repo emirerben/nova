@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.86.8.0] - 2026-11-05
+
+### Changed
+- fix(kria): green-screen backgrounds never show the same photo twice (#2118) <!-- release-pr: 2118 -->
+
+## [0.86.7.0] - 2026-11-05
+
+### Changed
+- feat(kria): Steer now — Codex-style waiting-message bar (iOS, flag off) (#2105) <!-- release-pr: 2105 -->
+
 ## [0.86.6.0] - 2026-11-05
 
 ### Changed
