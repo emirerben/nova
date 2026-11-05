@@ -259,6 +259,7 @@ async def cancel_runtime_turn(
             expected_thread_revision=body.expected_thread_revision,
             # Steer now: only a steer passes the option, so a plain cancel is called as before.
             **({"steer": True} if body.steer else {}),
+            **({"only_if_queued": True} if body.only_if_queued else {}),
         )
         if successor_turn_id is not None:
             try:

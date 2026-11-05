@@ -145,8 +145,13 @@ async def _steer(user_id: uuid.UUID, thread_id: uuid.UUID, turn_id: str, *, stee
         await engine.dispose()
 
 
-async def _approve(user_id: uuid.UUID, thread_id: uuid.UUID, approval_id: uuid.UUID):
-    """The creator taps "Create this video". Returns the answer or the 4xx failure."""
+async def _approve(
+    user_id: uuid.UUID, thread_id: uuid.UUID, approval_id: uuid.UUID, *, decision: str = "approve"
+):
+    """The creator taps "Create this video" (or, with `deny`, dismisses the card).
+
+    Returns the answer or the 4xx failure.
+    """
     with sync_session() as db:
         approval = db.get(CreatorAgentApproval, approval_id)
         body = ApprovalDecisionBody(
@@ -163,7 +168,7 @@ async def _approve(user_id: uuid.UUID, thread_id: uuid.UUID, approval_id: uuid.U
                     thread_id=thread_id,
                     approval_id=approval_id,
                     creator_id=user_id,
-                    decision="approve",
+                    decision=decision,
                     body=body,
                 )
             except RuntimeFailure as failure:
@@ -876,3 +881,164 @@ async def test_sending_the_removed_words_again_is_a_new_message() -> None:
 
     assert again.status == "queued"
     assert "inert" not in _user_message(thread_id, again.turn_id).payload
+
+
+# -- the trash and Edit only ever remove a message that is still waiting --------------------
+#
+# Emir's review of #2105: the bar's trash / Edit retried once after a stale-revision answer
+# without checking that the message still waited. If Kria picked it up in between (the turn it
+# waited behind finished), the retry was a plain cancel of the turn Kria now runs. The bar now
+# asks for "only if still waiting" (`only_if_queued`), and the server checks that in the same
+# statement that locks the turn.
+
+
+def _revision(thread_id: uuid.UUID) -> int:
+    with sync_session() as db:
+        return int(db.get(CreationThread, thread_id).revision)
+
+
+async def _remove(user_id: uuid.UUID, thread_id: uuid.UUID, turn_id: str, *, revision: int):
+    """The bar's trash or Edit, at the revision the app last read. Returns the answer or 4xx."""
+    engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+            try:
+                cancelled, _successor = await cancel_turn(
+                    db,
+                    thread_id=thread_id,
+                    turn_id=uuid.UUID(turn_id),
+                    creator_id=user_id,
+                    expected_thread_revision=revision,
+                    only_if_queued=True,
+                )
+            except RuntimeFailure as failure:
+                await db.rollback()
+                return failure
+            return cancelled
+    finally:
+        await engine.dispose()
+
+
+def _cancelled_turn_ids(thread_id: uuid.UUID) -> list[str]:
+    return [e.payload["turn_id"] for e in _events(thread_id, "turn_cancelled")]
+
+
+@pytest.mark.asyncio
+async def test_a_retried_removal_never_stops_a_message_kria_started(monkeypatch) -> None:  # noqa: ANN001
+    """F20: the trash hit a stale revision, then Kria picked the message up before the retry."""
+    user_id, thread_id, _ = _seed_runtime_project()
+    monkeypatch.setattr(rt, "_plan_with_live_agent", AsyncMock(return_value=_card_plan()))
+    first = await _send(user_id, thread_id, "make the intro faster")
+    waiting = await _send(user_id, thread_id, REMOVED)
+    assert waiting.status == "queued"
+    read_revision = _revision(thread_id)  # the app's last read
+    # A worker event lands after that read: A's card. B still waits.
+    assert (await _run_turn(first.turn_id))["status"] == "awaiting_approval"
+
+    stale = await _remove(user_id, thread_id, waiting.turn_id, revision=read_revision)
+
+    assert isinstance(stale, RuntimeFailure)
+    assert (stale.status_code, stale.code) == (409, "thread_revision_stale")
+    assert _status(waiting.turn_id) == "queued"
+
+    # Before the app retries, the creator dismisses A's card: A finishes and Kria starts on B.
+    with sync_session() as db:
+        approval_id = db.execute(
+            select(CreatorAgentApproval.id).where(
+                CreatorAgentApproval.turn_id == uuid.UUID(first.turn_id)
+            )
+        ).scalar_one()
+    dismissed = await _approve(user_id, thread_id, approval_id, decision="deny")
+    assert not isinstance(dismissed, RuntimeFailure), dismissed
+    assert _running(thread_id) == [waiting.turn_id]
+
+    retry = await _remove(user_id, thread_id, waiting.turn_id, revision=_revision(thread_id))
+
+    assert isinstance(retry, RuntimeFailure)
+    assert (retry.status_code, retry.code) == (409, "turn_no_longer_queued")
+    assert _status(waiting.turn_id) == "pending"
+    assert waiting.turn_id not in _cancelled_turn_ids(thread_id)
+    # Kria still plans B and shows its card: the planner and approval state are untouched.
+    assert (await _run_turn(waiting.turn_id))["status"] == "awaiting_approval"
+    assert _live_cards(thread_id) == [waiting.turn_id]
+
+
+@pytest.mark.asyncio
+async def test_a_retried_removal_of_a_still_waiting_message_goes_through(monkeypatch) -> None:  # noqa: ANN001
+    """F20: the condition never blocks a real removal, a lost answer, or hides a wrong id."""
+    user_id, thread_id, _ = _seed_runtime_project()
+    monkeypatch.setattr(rt, "_plan_with_live_agent", AsyncMock(return_value=_card_plan()))
+    first = await _send(user_id, thread_id, "make the intro faster")
+    waiting = await _send(user_id, thread_id, REMOVED)
+    read_revision = _revision(thread_id)
+    assert (await _run_turn(first.turn_id))["status"] == "awaiting_approval"  # B still waits
+
+    stale = await _remove(user_id, thread_id, waiting.turn_id, revision=read_revision)
+    assert (stale.status_code, stale.code) == (409, "thread_revision_stale")
+    removed = await _remove(user_id, thread_id, waiting.turn_id, revision=_revision(thread_id))
+    # The first answer was lost and the app taps again: same answer, nothing else changes.
+    again = await _remove(user_id, thread_id, waiting.turn_id, revision=_revision(thread_id))
+    unknown = await _remove(user_id, thread_id, str(uuid.uuid4()), revision=_revision(thread_id))
+
+    assert not isinstance(removed, RuntimeFailure), removed
+    assert not isinstance(again, RuntimeFailure), again
+    assert _status(waiting.turn_id) == "cancelled"
+    assert _cancelled_turn_ids(thread_id) == [waiting.turn_id]
+    assert _events(thread_id, "turn_cancelled")[-1].payload["removed_while_waiting"] is True
+    assert _status(first.turn_id) == "awaiting_approval"  # A and its card are untouched
+    assert _live_cards(thread_id) == [first.turn_id]
+    assert isinstance(unknown, RuntimeFailure)
+    assert (unknown.status_code, unknown.code) == (404, "turn_not_found")
+
+
+async def _until_a_query_waits_on_a_row_lock() -> None:
+    def _waiting() -> bool:
+        with sync_session() as db:
+            return bool(
+                db.execute(
+                    text(
+                        "select count(*) from pg_stat_activity "
+                        "where datname = current_database() and wait_event_type = 'Lock'"
+                    )
+                ).scalar_one()
+            )
+
+    for _ in range(100):
+        if await asyncio.to_thread(_waiting):
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError("the removal never waited on the promotion's row lock")
+
+
+@pytest.mark.asyncio
+async def test_the_still_waiting_check_and_the_removal_are_one_step() -> None:
+    """F21: Kria picks the message up while the removal is in flight (not read-then-write).
+
+    The promotion has locked B and set it running but not committed when the removal arrives.
+    The removal must wait for it and then see B running; a status read taken before the lock
+    would still say "queued" and cancel the turn Kria now runs.
+    """
+    user_id, thread_id, _ = _seed_runtime_project()
+    first = await _send(user_id, thread_id, "make the intro faster")
+    waiting = await _send(user_id, thread_id, REMOVED)
+    revision = _revision(thread_id)
+
+    with sync_session() as promotion:
+        # A finished (no event) and its follow-up is promoted, as `_promote_queued_successor` does.
+        b = promotion.get(CreatorAgentTurn, uuid.UUID(waiting.turn_id), with_for_update=True)
+        promotion.get(
+            CreatorAgentTurn, uuid.UUID(first.turn_id), with_for_update=True
+        ).status = "completed"
+        b.status = "pending"
+        promotion.flush()
+        removal = asyncio.create_task(
+            _remove(user_id, thread_id, waiting.turn_id, revision=revision)
+        )
+        await _until_a_query_waits_on_a_row_lock()
+        promotion.commit()
+    answer = await asyncio.wait_for(removal, timeout=30)
+
+    assert isinstance(answer, RuntimeFailure)
+    assert (answer.status_code, answer.code) == (409, "turn_no_longer_queued")
+    assert _status(waiting.turn_id) == "pending"
+    assert _cancelled_turn_ids(thread_id) == []

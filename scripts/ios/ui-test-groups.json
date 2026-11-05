@@ -247,6 +247,7 @@
       "KriaUITests/SteerNowUITests/testHoldingTheBarOpensTheSameMenu",
       "KriaUITests/SteerNowUITests/testThirdMessageStaysInComposerWithANote",
       "KriaUITests/SteerNowUITests/testSteerRetriesOnceAfterAStaleRevision",
+      "KriaUITests/SteerNowUITests/testEditAfterKriaPickedTheMessageUpNeverStopsIt",
       "KriaUITests/SteerNowUITests/testSteerAfterTheVideoStartedHidesTheButton",
       "KriaUITests/SteerNowUITests/testTurkishChatGetsTurkishSteerWords",
       "KriaUITests/SteerNowUITests/testSwitchOffLooksLikeToday"

@@ -228,7 +228,9 @@ final class CreationChatFixture: @unchecked Sendable {
     /// `KRIA_CHAT_STEER_NOW` (Steer now): a message sent while Kria works on a turn waits behind it, like the server's
     /// one queue slot (`runtime.submit_turn`), and `POST …/turns/{id}/cancel {"steer": true}` hands over to it. Modes:
     /// `planning` (the first turn stays planning), `card` (its card is up), `rendering` (its approved video is being made),
-    /// `stale` (the first Steer finds the revision moved), `refused` (the Steer lands after the video started).
+    /// `stale` (the first Steer finds the revision moved), `refused` (the Steer lands after the video started),
+    /// `trash_race` (like `card`; the first trash / Edit finds the revision moved and Kria picks the message up before the
+    /// retry).
     /// `KRIA_CHAT_STEER_NOW_CAP=0` is a server with the switch off.
     private var steerMode: String? { ProcessInfo.processInfo.environment["KRIA_CHAT_STEER_NOW"] }
     private var steerSwitchOn: Bool { steerMode != nil && ProcessInfo.processInfo.environment["KRIA_CHAT_STEER_NOW_CAP"] != "0" }
@@ -742,13 +744,36 @@ final class CreationChatFixture: @unchecked Sendable {
                 thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
                 return problem(409, "thread_revision_stale", "The project changed before cancellation.")
             }
+            let stopped = parts[3]
+            let stillWaiting = steerWaiting[id]?.lowercased() == stopped.lowercased()
+            if !steering, steerMode == "trash_race", !steerStaleServed, stillWaiting, let first = steerActive[id] {
+                // The first removal finds the revision moved. Before the app retries, the first card is dismissed and Kria
+                // picks the waiting message up (the server's promotion writes no event, so the app cannot see it).
+                steerStaleServed = true
+                append("approval_denied", role: "system", payload: ["approval_id": approvalID, "turn_id": first])
+                steerActive[id] = steerWaiting[id]
+                steerWaiting[id] = nil
+                thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+                return problem(409, "thread_revision_stale", "The project changed before cancellation.")
+            }
+            if !steering, body["only_if_queued"] as? Bool == true, !stillWaiting {
+                // Like `cancel_turn(only_if_queued=True)`: checked before the revision, never stops a running turn.
+                return problem(409, "turn_no_longer_queued", "Kria already started on this message.")
+            }
             if (body["expected_thread_revision"] as? Int) != revision {
                 return problem(409, "thread_revision_stale", "The project changed before cancellation.")
             }
-            let stopped = parts[3]
             if !steering {
-                // The trash / Edit: the plain cancel of the waiting message, marked so Kria never reads it.
-                guard steerWaiting[id]?.lowercased() == stopped.lowercased() else {
+                // The trash / Edit: the cancel of the waiting message, marked so Kria never reads it.
+                guard stillWaiting else {
+                    if steerActive[id]?.lowercased() == stopped.lowercased() {
+                        // Like the server, a plain cancel (no `only_if_queued`) stops the turn Kria now runs.
+                        append("turn_cancelled", role: "system", payload: ["turn_id": stopped, "approval_ids": [String]()])
+                        steerActive[id] = nil
+                        steerPromotion[id] = nil
+                        thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+                        return response(["turn_id": stopped, "thread_revision": revision, "status": "cancelled", "approval_ids": [String]()])
+                    }
                     return problem(409, "turn_not_cancellable", "Kria already started on this message.")
                 }
                 var payload: [String: Any] = ["turn_id": stopped, "approval_ids": [String]()]

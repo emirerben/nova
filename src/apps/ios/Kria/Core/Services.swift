@@ -313,8 +313,9 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgro
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
     /// Steer now: stop the running turn `turnID` so the message waiting behind it runs now.
     func steerNow(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
-    /// The plain cancel of a turn. Steer now's trash and Edit use it on the waiting message.
-    func cancelTurn(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
+    /// Steer now's trash and Edit: cancel the waiting message `turnID` only while it still waits. A 409
+    /// `turn_no_longer_queued` means Kria already picked it up; it is never stopped by this call.
+    func removeWaitingMessage(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot
     func retryApprovedRender(threadID: UUID, executionID: UUID, expectedRevision: Int) async throws -> RenderRetryAccepted
     /// `speechCleanupAware` must always be sent `true` from this client build --
@@ -421,7 +422,7 @@ extension KriaAPIClient {
 extension KriaAPIClient {
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
     func steerNow(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
-    func cancelTurn(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
+    func removeWaitingMessage(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
     func creationSuggestions(threadID: UUID) async throws -> SuggestionSet? { nil }
     func transcribeDictation(audio: Data, contextTerms: [String]) async throws -> DictationTranscriptResponse { throw APIError.unsupported }
     func planSnapshot(threadID: UUID) async throws -> PlanSnapshot { throw APIError.unsupported }
@@ -1712,9 +1713,9 @@ struct KriaAPI: KriaAPIClient {
         try await request(path: "creation-threads/\(threadID.uuidString)/turns/\(turnID)/cancel", method: "POST",
             bodyData: try JSONEncoder().encode(SteerNowRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)
     }
-    func cancelTurn(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled {
+    func removeWaitingMessage(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled {
         try await request(path: "creation-threads/\(threadID.uuidString)/turns/\(turnID)/cancel", method: "POST",
-            bodyData: try JSONEncoder().encode(CancelRenderRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)
+            bodyData: try JSONEncoder().encode(RemoveWaitingMessageRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)
     }
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled {
         try await request(path: "creation-threads/\(threadID.uuidString)/turns/\(turnID)/cancel-render", method: "POST", bodyData: try JSONEncoder().encode(CancelRenderRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)
@@ -2510,6 +2511,13 @@ private struct SteerNowRequest: Encodable {
     let expectedThreadRevision: Int
     var steer = true
     enum CodingKeys: String, CodingKey { case steer; case expectedThreadRevision = "expected_thread_revision" }
+}
+/// `POST …/turns/{id}/cancel` with `only_if_queued: true`: the server cancels the turn only while it still waits, in the
+/// same statement that locks it, so a retry that raced Kria picking the message up never stops it.
+private struct RemoveWaitingMessageRequest: Encodable {
+    let expectedThreadRevision: Int
+    var onlyIfQueued = true
+    enum CodingKeys: String, CodingKey { case onlyIfQueued = "only_if_queued"; case expectedThreadRevision = "expected_thread_revision" }
 }
 private struct CancelRenderRequest: Encodable { let expectedThreadRevision: Int; enum CodingKeys: String, CodingKey { case expectedThreadRevision = "expected_thread_revision" } }
 private struct DraftUndoRequest: Encodable {

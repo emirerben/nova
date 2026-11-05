@@ -1178,8 +1178,12 @@ def _ts_type(schema: dict[str, Any]) -> str:
 # (web ignores them and `src/apps/web` is deliberately unchanged), so the generated TypeScript
 # stays byte-identical while the server model and the mobile contract gain the field.
 # Mobile-only request fields: the web never sends them, so its contract stays byte-identical.
-# `suggestion` = KRI-756 chip taps; `steer` = Steer now (docs/pipelines/steer-now.md).
-_WEB_HIDDEN_FIELDS = {"SubmitTurnBody": ("suggestion",), "TurnCancelBody": ("steer",)}
+# `suggestion` = KRI-756 chip taps; `steer` / `only_if_queued` = Steer now
+# (docs/pipelines/steer-now.md).
+_WEB_HIDDEN_FIELDS = {
+    "SubmitTurnBody": ("suggestion",),
+    "TurnCancelBody": ("steer", "only_if_queued"),
+}
 _WEB_HIDDEN_DEFS = frozenset({"SuggestionTapIn"})
 
 

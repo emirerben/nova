@@ -79,6 +79,15 @@ queued `user_message` payload gains `queued_behind_turn_id`. Both exist only wit
 * Planning a turn that a Steer started: the brief extraction reads the stopped messages
   (chip taps excluded: they carry no creator words) together with its own message.
 
+The trash and Edit send `only_if_queued: true` (Emir's review: a retry after a stale-revision answer
+could otherwise cancel the message after Kria had picked it up, i.e. stop the running turn). The
+turn is then locked with `status IN ('queued', 'cancelled')` in the same statement, so Postgres
+re-checks it after waiting out a concurrent promotion; a turn that moved on gets 409
+`turn_no_longer_queued` ("Kria already started on this message.") and nothing changes. A repeated
+tap on a removed message keeps the old idempotent answer. Without the field the cancel is unchanged.
+Before its one retry the app refreshes and re-reads the events (`SteerNowPolicy.removalRetry`): a
+message that no longer waits is not tried again.
+
 Plain cancel (no `steer`) is the trash and Edit. With the switch on, a plain cancel of a **queued**
 turn marks its `turn_cancelled` `removed_while_waiting: true`, and every reader that hands the
 creator's words to planning skips that message (`app/kria/removed_messages.py`): the pinned full
@@ -115,7 +124,7 @@ message, too late, could not switch/remove) show above the bar.
 
 Trash or Edit, in any row while `B` waits: the bar goes, `B` never shows in the chat and is never
 read (Edit puts its words back in the box). A tap after Kria picked `B` up gets 409
-`turn_not_cancellable` and a note.
+`turn_no_longer_queued` and a note; `B` keeps running.
 
 Switch off: today's behaviour in every cell (the composer is blocked while Kria plans, a queued
 message looks like any sent message, no bar).
@@ -146,6 +155,8 @@ message looks like any sent message, no bar).
 | F17 | The bar stays after `B` started, or Steer shows while the video renders | `SteerNowUITests.testNoSteerWhileTheVideoIsBeingMade`, `SteerNowPolicyTests` |
 | F18 | The bar's controls are not reachable with VoiceOver, or smaller than 44 pt | `SteerNowUITests` query by accessibility id and label; `WaitingMessageBar` frames |
 | F19 | The menu differs between "⋯" and holding the bar | `SteerNowUITests.testHoldingTheBarOpensTheSameMenu` |
+| F20 | The trash / Edit hits a stale revision, Kria picks the message up, and the retry cancels the running turn (or puts its words back in the box); or the condition blocks a real removal / a repeated tap | `test_a_retried_removal_never_stops_a_message_kria_started`, `test_a_retried_removal_of_a_still_waiting_message_goes_through`, `SteerNowPolicyTests.testARemovalIs*`, `SteerNowUITests.testEditAfterKriaPickedTheMessageUpNeverStopsIt` |
+| F21 | The "still waiting" check is a read before the write, so a promotion committing in between slips through | `test_the_still_waiting_check_and_the_removal_are_one_step` |
 
 ## Rollout
 

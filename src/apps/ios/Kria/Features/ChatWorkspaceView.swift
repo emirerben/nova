@@ -999,8 +999,9 @@ private struct CreationWorkspaceView: View {
         }
     }
 
-    /// The trash and Edit: the plain cancel of the waiting turn. The server marks it so Kria never reads it; Edit then
-    /// puts the words back in the box (ahead of anything already typed there).
+    /// The trash and Edit: cancel the waiting turn only while it still waits (the server checks that atomically). The
+    /// server marks it so Kria never reads it; Edit then puts the words back in the box (ahead of anything already typed
+    /// there). A message Kria already picked up is never stopped: the bar says so and keeps the words out of the box.
     private func removeWaiting(_ waiting: SteerNowPolicy.Waiting, edit: Bool) {
         guard !isSteering else { return }
         isSteering = true
@@ -1009,7 +1010,7 @@ private struct CreationWorkspaceView: View {
             defer { isSteering = false }
             for attempt in 0..<2 {
                 do {
-                    let removed = try await model.api.cancelTurn(threadID: project.id, turnID: waiting.turnID, revision: threadRevision)
+                    let removed = try await model.api.removeWaitingMessage(threadID: project.id, turnID: waiting.turnID, revision: threadRevision)
                     threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: removed.threadRevision)
                     if edit {
                         let typed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1019,7 +1020,7 @@ private struct CreationWorkspaceView: View {
                     _ = try? await refreshDelta()
                     return
                 } catch let error as APIError where error.isConflict {
-                    if error.conflictCode == "turn_not_cancellable" {
+                    if error.conflictCode == "turn_no_longer_queued" || error.conflictCode == "turn_not_cancellable" {
                         steerNote = steerStrings.alreadyStarted
                         await refreshNow()
                         return
@@ -1029,7 +1030,24 @@ private struct CreationWorkspaceView: View {
                         await refreshNow()
                         return
                     }
+                    // The project moved on since the last read: take the latest and decide again before the second try.
+                    // Kria may have picked the message up in between; then it is not tried again.
                     _ = try? await refreshDelta()
+                    switch SteerNowPolicy.removalRetry(for: waiting, in: events) {
+                    case .retry:
+                        continue
+                    case .alreadyStarted:
+                        steerNote = steerStrings.alreadyStarted
+                        return
+                    case .alreadyRemoved:
+                        // Gone already (removed elsewhere): Edit still gets its words back.
+                        if edit {
+                            let typed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                            prompt = typed.isEmpty ? waiting.text : waiting.text + " " + typed
+                            composerFocused = true
+                        }
+                        return
+                    }
                 } catch {
                     steerNote = steerStrings.couldNotRemove
                     return

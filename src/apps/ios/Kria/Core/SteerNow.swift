@@ -67,6 +67,16 @@ enum SteerNowPolicy {
         return hidden
     }
 
+    /// What the trash / Edit does after a stale-revision answer and a refresh. Kria may have picked the message up in
+    /// between (its own turn spoke, a Steer handed over to it, or a newer message now waits), or it may already be
+    /// gone. Only a message that still waits is tried again, and the server re-checks that (`only_if_queued`).
+    enum RemovalRetry: Equatable { case retry, alreadyStarted, alreadyRemoved }
+
+    static func removalRetry(for removing: Waiting, in events: [ThreadEvent]) -> RemovalRetry {
+        if same(waiting(in: events)?.turnID, removing.turnID) { return .retry }
+        return wasRemoved(removing.turnID, in: events) ? .alreadyRemoved : .alreadyStarted
+    }
+
     /// Whether to offer Steer: the earlier turn is still planning or its card is still up.
     static func canSteer(_ waiting: Waiting, events: [ThreadEvent]) -> Bool {
         guard let behind = waiting.behindTurnID else { return false }

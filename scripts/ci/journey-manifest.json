@@ -3186,6 +3186,9 @@
         "KriaTests/SteerNowPolicyTests/testTheWaitingMessageIsHiddenFromTheChat",
         "KriaTests/SteerNowPolicyTests/testARemovedMessageStaysHidden",
         "KriaTests/SteerNowPolicyTests/testASteeredMessageJoinsTheChat",
+        "KriaTests/SteerNowPolicyTests/testARemovalIsRetriedOnlyWhileTheMessageStillWaits",
+        "KriaTests/SteerNowPolicyTests/testARemovalIsNotRetriedOnceKriaPickedTheMessageUp",
+        "KriaTests/SteerNowPolicyTests/testARemovalIsNotRetriedOnceTheMessageIsGone",
         "KriaTests/SteerNowPolicyTests/testCapabilityDefaultsOffWhenKeyIsMissing",
         "KriaUITests/SteerNowUITests/testWaitingBarAndSteerWhileKriaPlans",
         "KriaUITests/SteerNowUITests/testSteerClosesTheCardAndSaysWhy",
@@ -3195,6 +3198,7 @@
         "KriaUITests/SteerNowUITests/testHoldingTheBarOpensTheSameMenu",
         "KriaUITests/SteerNowUITests/testThirdMessageStaysInComposerWithANote",
         "KriaUITests/SteerNowUITests/testSteerRetriesOnceAfterAStaleRevision",
+        "KriaUITests/SteerNowUITests/testEditAfterKriaPickedTheMessageUpNeverStopsIt",
         "KriaUITests/SteerNowUITests/testSteerAfterTheVideoStartedHidesTheButton",
         "KriaUITests/SteerNowUITests/testTurkishChatGetsTurkishSteerWords",
         "KriaUITests/SteerNowUITests/testSwitchOffLooksLikeToday"

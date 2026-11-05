@@ -178,6 +178,28 @@ final class SteerNowUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Something went wrong"].exists)
     }
 
+    /// Review of #2105: Edit hit a stale revision and, before the retry, Kria picked the message up. The retry used to be
+    /// a plain cancel that stopped the turn Kria now runs (and put its words back in the box).
+    func testEditAfterKriaPickedTheMessageUpNeverStopsIt() {
+        let app = launch(["KRIA_CHAT_STEER_NOW": "trash_race"])
+        XCTAssertTrue(element(app, "direction-stage").waitForExistence(timeout: 15))
+        send(app, Self.typedRequest)
+        let more = app.buttons["chat-waiting-more"]
+        XCTAssertTrue(more.waitForExistence(timeout: 10))
+        more.tap()
+        XCTAssertTrue(app.buttons["Edit message"].waitForExistence(timeout: 5))
+
+        app.buttons["Edit message"].tap()
+
+        let note = element(app, "chat-steer-note")
+        XCTAssertTrue(note.waitForExistence(timeout: 10), "the app says why nothing was removed")
+        XCTAssertEqual(note.label, "Kria already started on this message.")
+        XCTAssertTrue(element(app, "chat-waiting-bar").exists, "the message was not stopped")
+        XCTAssertNotEqual(app.textFields["Message Kria"].value as? String, Self.typedRequest, "its words stay out of the box")
+        XCTAssertFalse(app.staticTexts["Something went wrong"].exists)
+        attach(app, "steer-12-edit-after-kria-picked-it-up")
+    }
+
     func testSteerAfterTheVideoStartedHidesTheButton() {
         let app = launch(["KRIA_CHAT_STEER_NOW": "refused"])
         XCTAssertTrue(element(app, "direction-stage").waitForExistence(timeout: 15))

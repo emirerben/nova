@@ -4446,6 +4446,11 @@
           "title": "Expected Thread Revision",
           "type": "integer"
         },
+        "only_if_queued": {
+          "default": false,
+          "title": "Only If Queued",
+          "type": "boolean"
+        },
         "steer": {
           "default": false,
           "title": "Steer",

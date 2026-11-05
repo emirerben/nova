@@ -1395,6 +1395,7 @@ async def cancel_turn(
     creator_id: uuid.UUID,
     expected_thread_revision: int,
     steer: bool = False,
+    only_if_queued: bool = False,
 ) -> tuple[TurnCancelled, str | None]:
     """Cancel a turn that has not committed work; promote the queued message, if any.
 
@@ -1405,6 +1406,11 @@ async def cancel_turn(
     otherwise revive the turn after this cancel. It also closes the stopped card in the
     chat (``approval_cancelled``) and says what happened in the chat's language. Without
     ``steer`` this is byte-identical to before.
+
+    ``only_if_queued`` (Steer now's trash / Edit): remove the message only while it still
+    waits. Once Kria has picked it up (the turn it waited behind finished), the answer is
+    409 ``turn_no_longer_queued`` and nothing changes; without it, a retry that raced the
+    promotion was a plain cancel of the turn Kria now runs.
     """
     if steer and not settings.steer_now_for(creator_id):
         raise RuntimeFailure(404, "steer_now_unavailable", "Steer now is unavailable.")
@@ -1433,13 +1439,26 @@ async def cancel_turn(
             )
     # Lock Turn before CreationThread per the global runtime lock order. This
     # transaction does not touch PlanItem/Job and cannot cancel a render.
-    turn = (
-        await db.execute(
-            select(CreatorAgentTurn)
-            .where(CreatorAgentTurn.id == turn_id, CreatorAgentTurn.thread_id == thread_id)
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
+    this_turn = (CreatorAgentTurn.id == turn_id, CreatorAgentTurn.thread_id == thread_id)
+    lookup = select(CreatorAgentTurn).where(*this_turn)
+    if only_if_queued:
+        # The condition is part of the locking statement, not a read before it: Postgres
+        # re-checks the WHERE on the newest row version after waiting out a promotion that
+        # holds the row, and once locked no other transaction can change the status before
+        # this one ends. `cancelled` stays readable so a repeated tap (its first answer
+        # lost) gets the same answer as before.
+        lookup = lookup.where(CreatorAgentTurn.status.in_(("queued", "cancelled")))
+    turn = (await db.execute(lookup.with_for_update())).scalar_one_or_none()
+    if turn is None and only_if_queued:
+        if (await db.execute(select(CreatorAgentTurn.id).where(*this_turn))).first() is not None:
+            thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=False)
+            raise RuntimeFailure(
+                409,
+                "turn_no_longer_queued",
+                "Kria already started on this message.",
+                recovery="refresh_replan",
+                current_revision=int(thread.revision),
+            )
     if turn is None:
         raise RuntimeFailure(404, "turn_not_found", "Kria turn not found")
     thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=True)

@@ -243,6 +243,9 @@ class TurnCancelBody(_StrictBody):
     # Steer now: stop this running turn so the message waiting behind it runs now
     # (docs/pipelines/steer-now.md). Default false = the plain cancel, unchanged.
     steer: bool = False
+    # Steer now's trash / Edit: cancel only while the turn still waits (409
+    # `turn_no_longer_queued` once Kria picked it up). Default false = unchanged.
+    only_if_queued: bool = False
 
 
 class RenderRetryBody(_StrictBody):

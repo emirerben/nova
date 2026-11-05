@@ -139,6 +139,33 @@ final class SteerNowPolicyTests: XCTestCase {
         XCTAssertEqual(SteerNowPolicy.waiting(in: events)?.text, "message B")
     }
 
+    // MARK: - The trash / Edit after a stale answer (review of #2105)
+
+    private let removing = SteerNowPolicy.Waiting(turnID: "B", behindTurnID: "A", messageEventID: "e2", text: "message B")
+
+    func testARemovalIsRetriedOnlyWhileTheMessageStillWaits() {
+        let events = [sent("A", status: "pending")] + card("A") + [sent("B", status: "queued", behind: "A")]
+        XCTAssertEqual(SteerNowPolicy.removalRetry(for: removing, in: events), .retry)
+        XCTAssertEqual(SteerNowPolicy.removalRetry(for: removing, in: events + [event("approval_approved", turn: "A")]), .retry,
+                       "an approved first video keeps the message waiting")
+    }
+
+    func testARemovalIsNotRetriedOnceKriaPickedTheMessageUp() {
+        let base = [sent("A", status: "pending"), sent("B", status: "queued", behind: "A")]
+        let answered = base + [event("assistant_question", role: "assistant", turn: "b", content: "Which clip opens it?")]
+        let steered = base + [event("turn_cancelled", turn: "A", extra: ["steered_to_turn_id": .string("B")])]
+        let newerWaits = base + card("B") + [sent("C", status: "queued", behind: "B")]
+        for events in [answered, steered, newerWaits] {
+            XCTAssertEqual(SteerNowPolicy.removalRetry(for: removing, in: events), .alreadyStarted)
+        }
+    }
+
+    func testARemovalIsNotRetriedOnceTheMessageIsGone() {
+        let events = [sent("A", status: "pending"), sent("B", status: "queued", behind: "A"),
+                      event("turn_cancelled", turn: "B", extra: ["removed_while_waiting": .bool(true)])]
+        XCTAssertEqual(SteerNowPolicy.removalRetry(for: removing, in: events), .alreadyRemoved)
+    }
+
     // MARK: - Capability
 
     func testCapabilityDefaultsOffWhenKeyIsMissing() throws {
