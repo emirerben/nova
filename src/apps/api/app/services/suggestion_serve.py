@@ -565,6 +565,8 @@ async def serve_suggestion_set(
         # A set frozen while the flag was on still carries its cards: switching the flag off must
         # stop them now, not when the 24 h freeze ends. The freeze itself is not edited.
         served.out = _legacy_only(served.out)
+    else:
+        await _strip_dead_cards(db, thread, served)
     if editor_triggers_on():
         served = _without_suppressed(served, thread)
     else:
@@ -578,6 +580,186 @@ def _legacy_only(out: SuggestionSetOut) -> SuggestionSetOut:
     if not out.suggestions and out.digest is None:
         return out
     return out.model_copy(update={"suggestions": [], "digest": None})
+
+
+# ── The cards whose tap would be refused right now ─────────────────────────────────────
+#
+# A served set can be hours old (it is frozen for 24 h). Between the freeze and this GET a switch
+# can be pulled, the creator can settle the on-screen title, the plan can be replaced by newer
+# work. The tap checks all of that again and refuses, and a refusal is a dead tap. So the GET asks
+# the tap's own questions and leaves out the cards it would refuse. The stored set is not edited:
+# the ring keeps the cards the set was built with, so a card that comes back (a switch turned on
+# again) needs no new run, and the cards that stay keep the ids the phone already holds.
+
+
+def _kind_off(kind: str) -> bool:
+    """The tap's own first check (``pinned.kind_enabled``): unregistered or switched off."""
+    from app.services.suggestions import registry  # noqa: PLC0415
+
+    spec = registry.get(kind)
+    return spec is None or not registry.enabled(spec)
+
+
+async def _copy_gate_dead(
+    db: Any, thread: Any, ctx: SuggestionContext, item: Any, kinds: frozenset[str]
+) -> dict[str, str]:
+    """Cards the creative-copy consent gate refuses at the draft commit (KRI-506).
+
+    The commit asks ``creative_copy_problem`` with the plan the draft carries. An editor-ops card
+    (and the hook card, which is one editor op) is committed with no plan, so ANY decision about
+    an on-screen title refuses it; a restating card carries the head plan, so only a plan that
+    disagrees with the decision refuses it. The same function answers here, over the same events
+    and the same media, so the two cannot drift.
+    """
+    from app.kria import planner  # noqa: PLC0415
+    from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+    from app.services.creative_copy_gate import creative_copy_problem  # noqa: PLC0415
+    from app.services.suggestions import pinned  # noqa: PLC0415
+
+    events = await planner._load_thread_events(db, thread.id, release=False)
+    media = snapshot_media(item)
+    dead: dict[str, str] = {}
+    editor_ops = kinds - RESTATING_KINDS
+    if editor_ops and creative_copy_problem(events, media, strategy=None) is not None:
+        dead.update(dict.fromkeys(editor_ops, "copy_gate"))
+    restating = kinds & RESTATING_KINDS
+    if restating:
+        base = await pinned.restate_base(db, thread_id=thread.id, ctx=ctx)
+        if base.strategy is None:
+            dead.update(dict.fromkeys(restating, base.reason or "no_plan"))
+        elif creative_copy_problem(events, media, strategy=base.strategy) is not None:
+            dead.update(dict.fromkeys(restating, "copy_gate"))
+    return dead
+
+
+async def _restate_held(
+    db: Any, thread: Any, ctx: SuggestionContext, item: Any, kind: str
+) -> str | None:
+    """Why a restating tap would be held at approval readiness, or None when it would not.
+
+    The tap re-drafts the head plan with one more requirement and holds the draft back when a
+    requirement the card did not write is still unmet ("Do not replace a creator's current draft
+    with a known partial edit"), answering ``requirements_not_ready``. This asks the draft check's
+    own functions (``plan_facts_from_strategy`` -> ``build_receipts`` -> ``needs_creator_choice``)
+    about the same plan and brief. It reads only the plan and the brief: facts that need the
+    phone's montage preflight or the research step are left unknown, which never turns into a
+    verdict (an unknown fact is an unchecked receipt), so what this holds back is what the plan
+    itself falls short of.
+
+    An account on approval readiness (KRI-721) is held back whole: the pinned restate never
+    resolves the readiness manifest (``planned.readiness_manifest`` stays None), so
+    ``assess_readiness`` answers "I haven't established which renderer can make this edit yet"
+    for every requirement and every restating tap is refused.
+    """
+    from app.kria.brief import load_latest_brief  # noqa: PLC0415
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        build_receipts,
+        needs_creator_choice,
+        plan_facts_from_strategy,
+        requirements_to_check_at_draft,
+    )
+    from app.models import ContentPlan, Persona  # noqa: PLC0415
+    from app.services.choice_questions import answered_brief  # noqa: PLC0415
+    from app.services.creator_sessions import resolve_item_creator_context  # noqa: PLC0415
+    from app.services.suggestions import pinned  # noqa: PLC0415
+
+    creator_id = getattr(thread, "creator_id", None)
+    if settings.approval_readiness_for(creator_id):
+        return "readiness_manifest_unresolved"
+    base = await pinned.restate_base(db, thread_id=thread.id, ctx=ctx)
+    if base.strategy is None:
+        return base.reason or "no_plan"
+    brief = await load_latest_brief(db, thread.id)
+    if brief is None or not brief.live():
+        return None
+    if settings.kria_choice_questions_enabled:
+        brief = answered_brief(brief, base.strategy)
+    plan = await db.get(ContentPlan, item.content_plan_id)
+    persona = await db.get(Persona, plan.persona_id) if plan is not None else None
+    if persona is None:
+        return "no_persona"
+    manifest, _media = await resolve_item_creator_context(
+        db, item, persona=persona, runs_guided_voiceover=False
+    )
+    facts = plan_facts_from_strategy(
+        base.strategy,
+        clip_ids=[str(media.media_id) for media in manifest.media],
+        manifest=manifest,
+        # The tap flips the setting before it judges the draft; mute leaves it alone.
+        speech_cleanup_enabled=True
+        if kind == "filler_words"
+        else bool(getattr(item, "speech_cleanup_enabled", False)),
+    )
+    checked = requirements_to_check_at_draft(
+        brief.live(),
+        creator_id=creator_id,
+        strategy=base.strategy,
+        item_edit_format=item.edit_format,
+        clip_paths=item.clip_gcs_paths or (),
+        client_protocol=ctx.client_protocol,
+    )
+    bound = settings.brief_binding_for(creator_id)
+    receipts = build_receipts(checked, facts, include_unchecked=bound, strict_order=bound)
+    unmet = [r.requirement_id for r in receipts if needs_creator_choice(r)]
+    return "requirements_not_ready" if unmet else None
+
+
+async def dead_card_kinds(
+    db: Any, thread: Any, ctx: SuggestionContext, kinds: frozenset[str]
+) -> dict[str, str]:
+    """``{kind: why}`` for the card kinds in ``kinds`` whose tap would be refused right now.
+
+    Fails closed: a check that cannot be made leaves its cards out (a card the server cannot
+    prove is not offered), never the other way round.
+    """
+    dead = {kind: "kind_off" for kind in kinds if _kind_off(kind)}
+    left = kinds - dead.keys()
+    if not left:
+        return dead
+    item_id = getattr(thread, "active_plan_item_id", None)
+    if not item_id:
+        return dead  # the loader serves no card without an item: there is nothing to ask
+    try:
+        from app.models import PlanItem  # noqa: PLC0415
+
+        item = await db.get(PlanItem, item_id)
+        if item is None:
+            return {**dead, **dict.fromkeys(left, "no_item")}
+        dead.update(await _copy_gate_dead(db, thread, ctx, item, left))
+        for kind in sorted((left - dead.keys()) & RESTATING_KINDS):
+            reason = await _restate_held(db, thread, ctx, item, kind)
+            if reason is not None:
+                dead[kind] = reason
+    except Exception:  # noqa: BLE001 - what cannot be proven is not offered
+        log.warning("suggestion_chips.error", stage="dead_cards", exc_info=True)
+        dead.update(dict.fromkeys(left - dead.keys(), "check_failed"))
+    return dead
+
+
+async def _strip_dead_cards(db: Any, thread: Any, served: Served) -> None:
+    """Take the v2 cards whose tap would be refused off the wire. The legacy chips stay."""
+    out = served.out
+    if not out.suggestions or served.ctx is None:
+        return
+    dead = await dead_card_kinds(db, thread, served.ctx, frozenset(c.kind for c in out.suggestions))
+    if not dead:
+        return
+    kept = [c for c in out.suggestions if c.kind not in dead]
+    log.info(
+        "suggestion_chips.stripped",
+        thread_id=str(thread.id),
+        set_id=out.set_id,
+        dropped=dead,
+        kept=[c.kind for c in kept],
+    )
+    served.unfiltered = served.unfiltered or out
+    served.out = out.model_copy(
+        update={
+            "suggestions": [c.model_copy(update={"rank": i + 1}) for i, c in enumerate(kept)],
+            # A set with no card left reads exactly like a legacy one (see ``_legacy_only``).
+            **({} if kept else {"digest": None}),
+        }
+    )
 
 
 async def _serve_core(
@@ -954,7 +1136,7 @@ def _without_suppressed(served: Served, thread: Any) -> Served:
     """
     state = getattr(thread, "state", None)
     suppressed = suppressed_set(state)
-    served.unfiltered = served.out
+    served.unfiltered = served.unfiltered or served.out
     served.needs_fold = fold_suppressed(state or {}) is not None if suppressed else False
     served.ring_has_cards = _ring_has_cards(served.out.set_id, state)
     out = served.out

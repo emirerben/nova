@@ -12,8 +12,8 @@ Failure catalogue (written first; each row is a line of "Negative cases" in the 
   K1  a per-kind kill switch pulled after the serve does not stop the tap. For hook, duplicates,
       filler words and mute the tap must be refused in words with the typed signal, never reach the
       free planner, write no draft, approval, brief version or setting.
-  K2  the same switch does not hide the card. The phone keeps a card whose tap is now refused for as
-      long as the 24 h freeze lasts (GAP-10: the tap is safe, the card is just dead).
+  K2  the same switch does not hide the card. The phone kept a card whose tap is now refused for as
+      long as the 24 h freeze lasted (GAP-10, closed: the GET leaves the card out).
   K3  the master switch (pinned taps) pulled after the serve leaves ANY kind's card tappable as a
       pinned card, or its tap reaches nothing: the card's words go to the legacy planner exactly
       once, stamp nothing, write no draft. Every kind, not just captions.
@@ -29,7 +29,7 @@ import pytest
 from app.config import settings
 from app.services.suggestions.kinds import mute_clip
 from tests.e2e_suggestions import driver as d
-from tests.e2e_suggestions import gaps, threads
+from tests.e2e_suggestions import threads
 from tests.e2e_suggestions.driver import Phone
 from tests.e2e_suggestions.flow import ensure_stored
 from tests.e2e_suggestions.report import Recorder
@@ -174,7 +174,6 @@ async def test_k1_a_per_kind_switch_pulled_after_the_serve(talking_world, monkey
         f"{kind} absent from the cards the phone is shown",
         kind not in shown_after,
         f"cards now {shown_after}",
-        gap=gaps.FROZEN_KIND_SWITCH,
     )
     rec.finish()
 
