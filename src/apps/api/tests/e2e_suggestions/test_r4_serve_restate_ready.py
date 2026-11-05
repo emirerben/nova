@@ -24,6 +24,10 @@ Failure catalogue (written first):
       executes. (When the pinned planner resolves the manifest, this switch can come out; the
       invariant, every served card executes, stays.)
 
+  C6  a check that cannot be made fails closed, and only for the cards it judges: a readiness read
+      that raises leaves the restating card out and the editor cards in; a consent read that raises
+      leaves every v2 card out and the legacy chips on the wire.
+
 Every check drives the real path: GET -> worker -> GET -> ``submit_turn`` -> ``run_kria_turn``.
 """
 
@@ -37,6 +41,7 @@ import pytest
 
 from app.config import settings
 from app.kria.brief import BriefUpdate
+from app.services import suggestion_serve
 from tests.e2e_suggestions import threads
 from tests.e2e_suggestions.driver import Phone
 from tests.e2e_suggestions.report import Recorder
@@ -213,5 +218,48 @@ async def test_c5_an_account_on_approval_readiness_is_served_no_restating_card(
         "no served card is refused",
         all(results.values()),
         f"executed {results}",
+    )
+    rec.finish()
+
+
+@pytest.mark.asyncio
+async def test_c6_a_check_that_cannot_be_made_leaves_out_only_the_cards_it_judges(
+    talking_world, monkeypatch
+):
+    rec = Recorder("negative C6 a check that cannot be made")
+    key = "nermin-matcha-update"
+    scn = threads.SCENARIOS[key]
+    phone = await phone_for(talking_world, scn, key)
+    control = await phone.serve()
+    before = [c.kind for c in control.suggestions]
+
+    async def broken(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise RuntimeError("the database went away")
+
+    restate_held = suggestion_serve._restate_held
+    monkeypatch.setattr(suggestion_serve, "_restate_held", broken)
+    served = [c.kind for c in (await phone.get()).suggestions]
+    rec.negative(
+        "the readiness read raises: the restating card is out, the others stay",
+        key,
+        "filler_words absent, every other card in its place",
+        "filler_words" in before and served == [x for x in before if x != "filler_words"],
+        f"before {before}; served {served}",
+    )
+    monkeypatch.setattr(suggestion_serve, "_restate_held", restate_held)
+
+    async def broken_gate(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise RuntimeError("the events could not be read")
+
+    monkeypatch.setattr(suggestion_serve, "_copy_gate_dead", broken_gate)
+    out = await phone.get()
+    rec.negative(
+        "the consent read raises: no v2 card is served, the legacy chips are",
+        key,
+        "no suggestions, no digest, the same chips as the control",
+        not out.suggestions
+        and out.digest is None
+        and [c.kind for c in out.chips] == [c.kind for c in control.chips],
+        f"cards {[c.kind for c in out.suggestions]} chips {[c.kind for c in out.chips]}",
     )
     rec.finish()

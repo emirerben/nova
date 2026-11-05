@@ -726,13 +726,18 @@ async def dead_card_kinds(
         if item is None:
             return {**dead, **dict.fromkeys(left, "no_item")}
         dead.update(await _copy_gate_dead(db, thread, ctx, item, left))
-        for kind in sorted((left - dead.keys()) & RESTATING_KINDS):
-            reason = await _restate_held(db, thread, ctx, item, kind)
-            if reason is not None:
-                dead[kind] = reason
     except Exception:  # noqa: BLE001 - what cannot be proven is not offered
         log.warning("suggestion_chips.error", stage="dead_cards", exc_info=True)
-        dead.update(dict.fromkeys(left - dead.keys(), "check_failed"))
+        return {**dead, **dict.fromkeys(left - dead.keys(), "check_failed")}
+    # One restating kind failing to prove itself costs that card, not the others.
+    for kind in sorted((left - dead.keys()) & RESTATING_KINDS):
+        try:
+            reason = await _restate_held(db, thread, ctx, item, kind)
+        except Exception:  # noqa: BLE001
+            log.warning("suggestion_chips.error", stage="restate_held", kind=kind, exc_info=True)
+            reason = "check_failed"
+        if reason is not None:
+            dead[kind] = reason
     return dead
 
 
