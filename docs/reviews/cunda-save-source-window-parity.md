@@ -1,8 +1,10 @@
 # Save source-window parity with the iPhone preview
 
-Parent incident: KRI-984. This is a bounded backend fix, not a claim that the
-current Cunda production job has been recovered. Its exact saved payload and
-installed build were unavailable in this executor.
+Save-contract follow-up: KRI-750 (the existing editor Save failure-mode matrix).
+That historical issue is Done; this PR does not reopen it or claim that the current
+Cunda production job has recovered. Original-incident acceptance remains pending
+in this report. Its exact saved payload and installed build were unavailable in
+this executor.
 
 ## Acceptance and boundaries
 
@@ -78,5 +80,7 @@ Before claiming the incident solved, obtain the current Cunda saved revision,
 identify its failing row and deployed API revision, replay the exact stored
 inputs, then verify Save, reopen and a Photos export on the iPhone after an
 authorized rollout. Preserve the saved timeline and original media throughout.
-KRI-984 remains the parent; historical Cunda export recovery KRI-1063 is a
-different failure and is not changed here.
+KRI-750 supplies the existing Save-contract scope for this follow-up; its Done
+status is not evidence of current Cunda recovery. Historical KRI-984 is the closed
+song-section compilation issue, and KRI-1063 concerns finished-export publication.
+Neither is the current source-window failure, and neither issue is changed here.
