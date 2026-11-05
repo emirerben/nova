@@ -84,6 +84,14 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
     "agents/narration_annotations.py": ("agent_prompt", "annotation input/prompt", None),
     "agents/semantic_edit_proposal.py": ("agent_prompt", "semantic proposal prompt", None),
     "agents/speech_excerpt_planner.py": ("agent_prompt", "excerpt planner input/prompt", None),
+    "services/suggestion_serve.py": (
+        "agent_prompt",
+        "brief_headline hands the creator's live requests to the suggestion agent as one line of "
+        "model context (KRI-129: their request wins). It only feeds the agent input "
+        "(SuggestionContext.brief_headline -> build_agent_input), never a branch condition, a "
+        "card's action or the digest.",
+        frozenset({"brief_headline"}),
+    ),
     # --- plan time: pinned by approval ----------------------------------------------------------
     "cli/verify_protected_text.py": (
         "plan_time",
