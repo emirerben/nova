@@ -99,6 +99,10 @@ class Served:
     unfiltered: SuggestionSetOut | None = field(default=None, compare=False, repr=False)
     needs_fold: bool = False
     ring_has_cards: bool = False
+    # The v2 cards for the ring entry, built while the read session was still live (see
+    # ``_prepare_cards``). ``cards_built`` tells "built, nothing to store" from "never built".
+    cards: list[dict[str, Any]] | None = field(default=None, compare=False, repr=False)
+    cards_built: bool = False
 
 
 def transcripts_of(item: Any) -> dict[str, str]:
@@ -154,6 +158,9 @@ async def with_transcripts(db: Any, thread: Any, ctx: SuggestionContext) -> Sugg
 
 # Kinds whose card reads something the editor snapshot and the clip rows cannot say.
 INPUT_KINDS = ("hook", "mute_clip", "filler_words", "duplicates")
+# The kinds whose tap re-drafts the thread's plan (a brief update or an item setting). They are
+# only the variant's next revision while its head draft IS the plan (``pinned.restate_base``).
+RESTATING_KINDS = frozenset({"mute_clip", "filler_words"})
 BRIEF_KEY = "brief"  # kind_inputs: the latest CreativeBrief (None = the thread has none)
 
 
@@ -341,6 +348,20 @@ async def _head_snapshot_hash(db: Any, thread: Any) -> str | None:
     ).scalar_one_or_none()
 
 
+async def _plan_is_head(db: Any, thread: Any, ctx: SuggestionContext) -> bool:
+    """False when a restating tap would be refused ``base_moved``: the variant's head draft is
+    newer work (an editor draft) than the plan the tap re-drafts. The tap's own check, asked at
+    offer time, so a card is not shown that its tap would refuse (and hide for good)."""
+    from app.services.suggestions import pinned  # noqa: PLC0415
+
+    try:
+        base = await pinned.restate_base(db, thread_id=thread.id, ctx=ctx)
+    except Exception:  # noqa: BLE001 - a card that cannot be proven is not offered
+        log.warning("suggestion_chips.error", stage="restate_base", exc_info=True)
+        return False
+    return base.reason != pinned.BASE_MOVED
+
+
 async def _with_v2_inputs(
     db: Any, thread: Any, item: Any, ctx: SuggestionContext
 ) -> SuggestionContext:
@@ -348,6 +369,13 @@ async def _with_v2_inputs(
     from app.services.suggestions.kinds import mute_clip  # noqa: PLC0415
 
     kinds = input_kinds_on()
+    if (
+        ctx.state == "ready"
+        and kinds & RESTATING_KINDS
+        and not await _plan_is_head(db, thread, ctx)
+    ):
+        # No input, no card: each kind fails closed without its own read.
+        kinds = kinds - RESTATING_KINDS
     inputs: dict[str, Any] = dict(ctx.kind_inputs)
     brief: Any = None
     brief_ok = False
@@ -511,11 +539,30 @@ async def serve_suggestion_set(
     *,
     locale: str | None = None,
 ) -> Served:
-    """Build what to serve for this thread right now. Wait-free; never calls a model."""
+    """Build what to serve for this thread right now. Wait-free; never calls a model.
+
+    Everything the ring write needs is built here, inside the caller's live read session: the
+    editor witness closes over the ORM ``Job``, and the route rolls the session back before it
+    writes, which expires the Job and makes every witness fail.
+    """
     served = await _serve_core(db, thread, user, client_protocol, locale=locale)
+    if not settings.kria_suggestion_pinned_taps_enabled:
+        # A set frozen while the flag was on still carries its cards: switching the flag off must
+        # stop them now, not when the 24 h freeze ends. The freeze itself is not edited.
+        served.out = _legacy_only(served.out)
     if editor_triggers_on():
         served = _without_suppressed(served, thread)
+    else:
+        served.ring_has_cards = _ring_has_cards(served.out.set_id, getattr(thread, "state", None))
+    await _prepare_cards(served)
     return served
+
+
+def _legacy_only(out: SuggestionSetOut) -> SuggestionSetOut:
+    """``out`` as the server sent it before v2 cards existed (byte-identical on the wire)."""
+    if not out.suggestions and out.digest is None:
+        return out
+    return out.model_copy(update={"suggestions": [], "digest": None})
 
 
 async def _serve_core(
@@ -876,6 +923,10 @@ def attach_cards(
     return None
 
 
+def _ring_has_cards(set_id: str, state: Mapping[str, Any] | None) -> bool:
+    return any(e.get("set_id") == set_id and e.get("suggestions") for e in _entries(state))
+
+
 def _without_suppressed(served: Served, thread: Any) -> Served:
     """Hide what the creator dismissed or applied, from the cards and the legacy chips alike.
 
@@ -886,9 +937,7 @@ def _without_suppressed(served: Served, thread: Any) -> Served:
     suppressed = suppressed_set(state)
     served.unfiltered = served.out
     served.needs_fold = fold_suppressed(state or {}) is not None if suppressed else False
-    served.ring_has_cards = any(
-        e.get("set_id") == served.out.set_id and e.get("suggestions") for e in _entries(state)
-    )
+    served.ring_has_cards = _ring_has_cards(served.out.set_id, state)
     out = served.out
     if not suppressed:
         return served
@@ -1001,15 +1050,34 @@ async def _server_cards(served: Served) -> list[dict[str, Any]] | None:
     return ring_suggestions(built)
 
 
+async def _prepare_cards(served: Served) -> None:
+    """Build the cards the ring entry will hold, unless the entry already has them.
+
+    Never raises: cards are an enhancement of a set that serves without them, and a set whose
+    cards cannot be built is stored without them (a tap then answers "no longer fits").
+    """
+    shown = served.unfiltered or served.out
+    if not shown.suggestions or shown.status != "ok" or served.ring_has_cards:
+        return
+    try:
+        served.cards = await _server_cards(served)
+    except Exception:  # noqa: BLE001
+        log.warning("suggestion_chips.error", stage="cards", exc_info=True)
+        served.cards = None
+    served.cards_built = True
+
+
 async def persist_served_set(
     db: Any, thread_id: Any, served: Served, *, protocol: int | None
 ) -> bool:
-    """The ring write for the freshness path: the legacy entry, plus what a dismiss needs.
+    """The ring write behind the GET: the legacy entry, plus what a tap and a dismiss need.
 
     1. fold the ring's dismissed / applied marks into the list that survives eviction, BEFORE the
-       append can push an entry out;
+       append can push an entry out (freshness path only: ``needs_fold`` is set by it);
     2. the legacy ``persist_suggestion_set`` (chips, idempotent, revision-neutral);
-    3. store the v2 cards on the set's entry, so a tap and a dismiss can find them.
+    3. store the v2 cards on the set's entry, so a tap and a dismiss can find them. They come from
+       ``serve_suggestion_set`` (built in the live read session); a ``Served`` that was not built
+       there builds them here, which only works while the caller's session is still live.
     Each step is its own short ``SKIP LOCKED`` write; a skipped one is retried by the next read.
     """
     from app.services.suggestion_chips import persist_suggestion_set  # noqa: PLC0415
@@ -1027,7 +1095,7 @@ async def persist_served_set(
     )
     shown = served.unfiltered or served.out
     if shown.suggestions and shown.status == "ok" and not served.ring_has_cards:
-        cards = await _server_cards(served)
+        cards = served.cards if served.cards_built else await _server_cards(served)
         if cards:
             await _mutate_state(
                 db, thread_id, lambda state: _outcome(attach_cards(state, shown.set_id, cards))

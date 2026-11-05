@@ -157,7 +157,6 @@ from app.services.speech_cleanup_decision import (
 )
 from app.services.suggestion_chips import (
     SuggestionSetOut,
-    persist_suggestion_set,
     suggestion_tap_payload,
     unavailable_set,
 )
@@ -4659,20 +4658,10 @@ async def thread_suggestions(
             client_protocol,
             locale=request.headers.get("accept-language"),
         )
-        # Release the read transaction, then take the ring write on its own.
+        # Release the read transaction, then take the ring write on its own. Everything the write
+        # needs was built before this point (``serve_suggestion_set``), while the Job was live.
         await db.rollback()
-        if editor_triggers_on():
-            await persist_served_set(db, owner_thread_id, served, protocol=client_protocol)
-        else:
-            await persist_suggestion_set(
-                db,
-                owner_thread_id,
-                served.out,
-                media_digest=served.media_digest,
-                protocol=client_protocol,
-                input_digest=served.input_digest,
-                witness_tiers=served.witness_tiers,
-            )
+        await persist_served_set(db, owner_thread_id, served, protocol=client_protocol)
         return await _with_pin_outcomes(db, owner_thread_id, served.out)
     except Exception:  # noqa: BLE001 - chips are an enhancement; never fail the screen
         log.warning(
