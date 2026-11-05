@@ -58,8 +58,7 @@ import pytest
 
 from tests.e2e_suggestions import threads
 from tests.e2e_suggestions.driver import Phone
-from tests.e2e_suggestions.flow import GAP_RESTATE_NOT_READY, tap_every_card, verify_render_kick
-from tests.e2e_suggestions.gaps import Gap
+from tests.e2e_suggestions.flow import tap_every_card, verify_render_kick
 from tests.e2e_suggestions.report import Recorder
 from tests.e2e_suggestions.threads import EDITOR, SIGNALS, TALKING
 
@@ -79,7 +78,9 @@ def preferences(scenario_key: str) -> list[dict]:
 # * ``signals``  two takes of one shot and a clip with wind: duplicates is served, mute is not (dark
 #                constant). The east run's capture-time order names every clip (duplicates out).
 # * ``talking``  one take with a measured cleanup analysis: filler words. The east run's title
-#                requirement keeps the hook out.
+#                requirement keeps the hook out, and its per-clip landmark ask (which the plan of a
+#                single take cannot carry) keeps the filler card out: a restate would be held at
+#                approval readiness, so the card is not served (GAP-5, closed).
 EXPECT: dict[tuple[str, str], list[str]] = {
     ("nermin-matcha-update", EDITOR): ["hook", "captions", "music", "transition", "sfx"],
     ("nermin-matcha-update", SIGNALS): ["duplicates", "hook", "captions", "sfx"],
@@ -88,7 +89,7 @@ EXPECT: dict[tuple[str, str], list[str]] = {
     ("nermin-travel-diary", SIGNALS): ["duplicates", "hook", "captions", "sfx"],
     ("east-run-brief", EDITOR): ["captions", "music", "transition", "sfx"],
     ("east-run-brief", SIGNALS): ["captions", "transition", "sfx"],
-    ("east-run-brief", TALKING): ["filler_words", "captions", "music", "sfx"],
+    ("east-run-brief", TALKING): ["captions", "music", "sfx"],
     ("east-run-brief/footage-only", EDITOR): ["hook", "captions", "music", "transition"],
     ("east-run-brief/footage-only", SIGNALS): ["duplicates", "hook", "captions", "sfx"],
     # The same footage told in the other language: the cards, the order and the changes are the
@@ -105,16 +106,6 @@ EXPECT: dict[tuple[str, str], list[str]] = {
         "music",
         "sfx",
     ],
-}
-
-
-# Cards the server serves today whose tap is refused with a typed reason: a named gap, not a pass.
-# The east run's recorded plan has no per-clip text lane (``plan_shape.has_per_clip_text_lane`` is
-# false) for its landmark-label request, so a plan restate cannot be approved as it stands.
-REFUSED_AT_TAP: dict[tuple[str, str], dict[str, tuple[str, Gap]]] = {
-    ("east-run-brief", TALKING): {
-        "filler_words": ("requirements_not_ready", GAP_RESTATE_NOT_READY)
-    },
 }
 
 
@@ -145,7 +136,6 @@ async def test_tap_every_served_card(talking_world, monkeypatch, key, profile):
         scn,
         profile,
         expect=EXPECT[(key, profile)],
-        refusals=REFUSED_AT_TAP.get((key, profile)),
         probe_render=probe,
     )
     rec.finish()

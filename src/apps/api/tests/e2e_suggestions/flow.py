@@ -54,7 +54,6 @@ SERVER_ONLY_KEYS = frozenset(
 RESTATE_FACT = {"filler_words": {"speech_cleanup": True}, "mute_clip": {"clip_sound": "off"}}
 
 GAP_RESTATE_DOUBLE_TAP = gaps.RESTATE_DOUBLE_TAP
-GAP_RESTATE_NOT_READY = gaps.RESTATE_NOT_READY
 
 RenderProbe = Callable[[Any, str], Awaitable[None]]
 

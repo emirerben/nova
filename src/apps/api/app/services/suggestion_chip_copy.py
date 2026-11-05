@@ -30,6 +30,7 @@ import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 
 from app.kria.brief_route import loose_text
+from app.text_fold import strip_marks
 
 MAX_LABEL_CHARS = 36
 MAX_WHY_CHARS = 48
@@ -763,8 +764,15 @@ def has_lookalike_letter(text: str) -> bool:
     for ch in text:
         if not ch.isalpha() or ch.isascii() or ch in _TR_LETTERS:
             continue
-        base, *marks = unicodedata.normalize("NFD", ch)
-        if base.isascii() and base.isalpha() and all(unicodedata.combining(m) for m in marks):
+        # An ASCII letter plus accents ("é" -> "e"), and only that: a compatibility form
+        # ("Ｏ", "ſ", "𝗼", "ﬁ") is a lookalike by definition, so it must not fold to its letter.
+        plain = strip_marks(ch)
+        if (
+            len(plain) == 1
+            and plain.isascii()
+            and plain.isalpha()
+            and unicodedata.normalize("NFKC", ch) == unicodedata.normalize("NFC", ch)
+        ):
             continue
         return True
     return False

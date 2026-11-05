@@ -747,11 +747,50 @@ async def test_w10_flag_off_reads_no_brief_no_head_and_no_kind_input(world, monk
     assert set(ctx.kind_inputs) == {"transcripts"}
 
 
+def add_plan_draft(seeded):  # noqa: ANN001, ANN202
+    """The strategy draft the render was made from: what a restating card re-drafts."""
+    from app.agents._schemas.creator_agent import CreativeStrategy
+    from app.kria.drafts import KriaDraftDocument, canonical_snapshot
+    from app.models import CreatorEditDraft
+
+    strategy = CreativeStrategy.model_validate(
+        {"edit_format": "montage", "rationale": "A matcha restock."}
+    ).model_dump(mode="json", exclude_none=True)
+    snapshot, digest = canonical_snapshot(
+        KriaDraftDocument(
+            kind="strategy",
+            intent="A matcha video",
+            edit_format="montage",
+            strategy=strategy,
+            changes=[],
+        )
+    )
+    with sync_session() as db:
+        db.add(
+            CreatorEditDraft(
+                creator_id=seeded.user_id,
+                thread_id=seeded.thread_id,
+                item_id=seeded.item_id,
+                variant_key="original_text",
+                base_job_id=seeded.job_id,
+                base_generation_id="generation-1",
+                draft_revision=0,
+                snapshot_json=snapshot,
+                snapshot_hash=digest,
+                is_head=True,
+            )
+        )
+        db.commit()
+
+
 @pytest.mark.asyncio
 async def test_w11_a_redis_outage_serves_the_deterministic_cards_and_never_raises(
     world, v2_on, no_redis, monkeypatch
 ):
     seeded = seed()
+    # A restating card (mute, filler) is only served over a plan it can re-draft; without one its
+    # tap is refused, so the GET leaves it out.
+    add_plan_draft(seeded)
     install_filler(monkeypatch)
     served = await serve_get(seeded)
     assert served.out.status == "ok"
