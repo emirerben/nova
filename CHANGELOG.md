@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.86.4.0] - 2026-11-05
+
+### Changed
+- fix(kria): the card's heads-up names only what the creator asked for (Green 4/5) (#2096) <!-- release-pr: 2096 -->
+
 ## [0.86.3.0] - 2026-11-05
 
 ### Changed
