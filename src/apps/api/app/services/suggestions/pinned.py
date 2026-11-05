@@ -241,6 +241,30 @@ def mark_refused(
     return _mark(state, REFUSED_FIELD, set_id, suggestion_id, turn_id)
 
 
+def unmark_consumed(
+    state: Mapping[str, Any] | None, set_id: str, suggestion_id: str, turn_id: object
+) -> dict[str, Any] | None:
+    """``state`` without the applied mark ``turn_id`` wrote for the card; None when it has none.
+
+    Undo takes the tap's change back, so the card is an offer again instead of a spent one (a
+    rebuild of a spent card is refused: it would derive a NEW change from the edit as it is now).
+    Only the mark of that very tap is cleared: a card a later tap applied again keeps its own.
+    """
+    ring = state.get(RING_KEY) if isinstance(state, Mapping) else None
+    index = _entry_index(ring, set_id) if isinstance(ring, list) else None
+    if index is None or not isinstance(state, Mapping):
+        return None
+    entry = ring[index]
+    consumed = entry.get(CONSUMED_FIELD)
+    if not isinstance(consumed, Mapping) or consumed.get(suggestion_id) != str(turn_id):
+        return None
+    rest = {key: value for key, value in consumed.items() if key != suggestion_id}
+    cleared = {key: value for key, value in entry.items() if key != CONSUMED_FIELD}
+    if rest:
+        cleared[CONSUMED_FIELD] = rest
+    return {**state, RING_KEY: [*ring[:index], cleared, *ring[index + 1 :]]}
+
+
 def stamp_pin(
     state: Mapping[str, Any] | None, tap: Mapping[str, Any] | None, message: str
 ) -> dict[str, Any] | None:
@@ -830,4 +854,5 @@ __all__ = [
     "snapshot_digest",
     "stamp_pin",
     "stored_card",
+    "unmark_consumed",
 ]

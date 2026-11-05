@@ -6662,6 +6662,9 @@ async def plan_pinned_suggestion_turn(
     if restate:
         extra["media_snapshot"] = snapshot_media(item)
         pin_state["head_hash"] = restated_head_hash
+        # A native-editor Save moves the saved video without writing a draft, so the head hash
+        # cannot tell. The commit compares this with the video it finds under the row lock.
+        pin_state["generation_id"] = variant_render_baseline(target.variant or {})
         if isinstance(action, ItemSettingAction):
             pin_state["setting"] = {"field": action.field, "value": action.value}
     else:

@@ -615,6 +615,93 @@ async def write_draft(
     return _out(row, can_undo=True)
 
 
+async def _withdraw_pinned_tap(
+    db: AsyncSession, *, item: PlanItem, thread: CreationThread, undone: CreatorEditDraft
+) -> None:
+    """Take back what a tapped suggestion card did besides writing the draft being undone.
+
+    The pinned commit keeps its footprint on the draft's execution (``pinned_undo``): the brief
+    requirements the turn wrote and, for a card that flips a setting, the values it held before.
+    Undo restores the draft and its approval; without this the typed requirement would stay live
+    (the creator never typed it, yet it blocks the next approval and hides the card, KRI-129) and
+    the setting would keep cutting speech the creator undid.
+
+    Only what is still the tap's is taken back: a requirement a later turn or the creator
+    rewrote has a different ``source_turn_id``, and a setting they flipped themselves is theirs.
+    The caller holds the item and the thread row locked, which orders the brief version.
+    """
+    source_id = getattr(undone, "source_execution_id", None)
+    if source_id is None:
+        return
+    execution = await db.get(CreatorAgentExecution, source_id)
+    record = (execution.result or {}).get("pinned_undo") if execution is not None else None
+    if not isinstance(record, dict):
+        return
+    from app.services.suggestions import pinned  # noqa: PLC0415
+
+    cleared = pinned.unmark_consumed(
+        thread.state,
+        str(record.get("set_id") or ""),
+        str(record.get("id") or ""),
+        record.get("turn_id"),
+    )
+    if cleared is not None:
+        thread.state = cleared
+    setting = record.get("setting")
+    if isinstance(setting, dict):
+        from app.services.suggestions.kinds.filler_words import (  # noqa: PLC0415
+            undo_item_setting,
+        )
+
+        undo_item_setting(item, setting)
+    ids = [str(i) for i in record.get("requirement_ids") or []]
+    if not ids:
+        return
+    from app.kria.brief import (  # noqa: PLC0415
+        BriefUpdate,
+        apply_updates,
+        load_latest_brief,
+        removed_target_ids,
+    )
+    from app.models import CreativeBriefVersion  # noqa: PLC0415
+
+    thread_id = thread.id
+    prior = await load_latest_brief(db, thread_id)
+    turn_id = str(record.get("turn_id") or "")
+    mine = {req.id for req in (prior.live() if prior else []) if req.source_turn_id == turn_id}
+    removals = [
+        BriefUpdate(operation="remove", target_requirement_id=i, expected_version=prior.version)
+        for i in ids
+        if prior is not None and i in mine
+    ]
+    if not removals:
+        return
+    merged = apply_updates(
+        prior, removals, source_turn_id=None, server_removed_ids=removed_target_ids(removals)
+    )
+    next_version = (
+        int(
+            (
+                await db.execute(
+                    select(func.coalesce(func.max(CreativeBriefVersion.version), 0)).where(
+                        CreativeBriefVersion.thread_id == thread_id
+                    )
+                )
+            ).scalar_one()
+        )
+        + 1
+    )
+    db.add(
+        CreativeBriefVersion(
+            thread_id=thread_id,
+            version=next_version,
+            requirements=[req.model_dump(mode="json") for req in merged.requirements],
+            source_turn_id=None,
+        )
+    )
+    await db.flush()
+
+
 async def undo_draft(
     db: AsyncSession,
     *,
@@ -733,6 +820,7 @@ async def undo_draft(
         require_active=False,
     )
     now = datetime.now(UTC)
+    await _withdraw_pinned_tap(db, item=target.item, thread=thread, undone=head)
     for approval in approvals:
         approval.status = "cancelled"
     for execution in executions:

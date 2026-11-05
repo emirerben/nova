@@ -80,14 +80,6 @@ REFUSED_BRIEF = Gap(
     "although nothing was applied (speech_cleanup_enabled stays false). KRI-129 then treats "
     "it as something the creator asked for.",
 )
-FILLER_UNDO = Gap(
-    "GAP-7",
-    "Undo of a filler tap leaves the setting on",
-    "app/kria/drafts.py undo_draft (documented limit)",
-    "Undo restores the parent draft and withdraws the approval, but "
-    "item.speech_cleanup_enabled stays true: speech cleanup is an item setting, not a draft "
-    "lane. Documented in test_kria_pinned_kinds.",
-)
 KILL_SWITCH_FROZEN = Gap(
     "GAP-8",
     "Switching pinned taps off does not stop the GET serving v2 cards",

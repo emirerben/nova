@@ -265,6 +265,9 @@ class SettingOutcome:
     reason: str | None = None
     # Hand to ``plan_item_media.publish_preflight_after_commit`` once the caller commits.
     publish_analysis_id: uuid.UUID | None = None
+    # What the item held before the flip, kept on the draft so Undo can put it back.
+    was_enabled: bool = False
+    was_user_edited: bool = False
 
 
 def apply_item_setting(db: Any, item: Any, action: ItemSettingAction) -> SettingOutcome:
@@ -289,7 +292,7 @@ def apply_item_setting(db: Any, item: Any, action: ItemSettingAction) -> Setting
     reason = unoffered_reason(load_evidence_sync(db, item))
     if reason is not None:
         return SettingOutcome(False, reason)
-    was_user_edited = item.user_edited
+    was_enabled, was_user_edited = bool(item.speech_cleanup_enabled), bool(item.user_edited)
     item.speech_cleanup_enabled = True
     item.user_edited = True
     from app.services.speech_cleanup_preflight import schedule_item_preflight_sync  # noqa: PLC0415
@@ -298,7 +301,34 @@ def apply_item_setting(db: Any, item: Any, action: ItemSettingAction) -> Setting
     if item.speech_cleanup_enabled is not True:
         item.user_edited = was_user_edited
         return SettingOutcome(False, "analysis_redone", publish_analysis_id=analysis_id)
-    return SettingOutcome(True, publish_analysis_id=analysis_id)
+    return SettingOutcome(
+        True,
+        publish_analysis_id=analysis_id,
+        was_enabled=was_enabled,
+        was_user_edited=was_user_edited,
+    )
+
+
+def setting_undo_record(action: ItemSettingAction, outcome: SettingOutcome) -> dict[str, Any]:
+    """What Undo needs to take the flip back: the field and the values it held before the tap."""
+    return {
+        "field": action.field,
+        "was": outcome.was_enabled,
+        "user_edited_was": outcome.was_user_edited,
+    }
+
+
+def undo_item_setting(item: Any, record: Mapping[str, Any]) -> bool:
+    """Put the setting back to what it held before the tap, if the tap's flip is still in force.
+
+    A setting the creator has changed since (they turned cleanup off themselves) is theirs now:
+    nothing is restored, and their ``user_edited`` stays. The caller holds ``item`` locked.
+    """
+    if record.get("field") != SETTING_FIELD or getattr(item, SETTING_FIELD, None) is not True:
+        return False
+    item.speech_cleanup_enabled = bool(record.get("was"))
+    item.user_edited = bool(record.get("user_edited_was"))
+    return True
 
 
 KIND = SuggestionKind(

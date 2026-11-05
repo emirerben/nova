@@ -110,8 +110,10 @@ _REGEX_CUES: dict[str, re.Pattern[str]] = {
     "spacing": re.compile(r"\b(spacing|letter ?spac\w*|line ?spac\w*|aralik\w*)\b"),
     "shadow": re.compile(r"\b(shadows?|golge\w*)\b"),
     "outline": re.compile(r"\b(outline|stroke|kontur\w*)\b"),
-    "music": re.compile(r"\b(music|song|track|muzik\w*|sarki\w*)\b"),
-    "volume": re.compile(r"\b(volume|louder|quieter|softer|mute\w*|audio|ses\w*)\b"),
+    # Turkish softens a final k before a vowel (muzik -> muzigi, klip -> klibi).
+    "music": re.compile(r"\b(music|song|track|muzi[kg]\w*|sarki\w*)\b"),
+    # "ses efektleri" is Turkish for sound effects; on its own "ses" is the volume.
+    "volume": re.compile(r"\b(volume|louder|quieter|softer|mute\w*|audio|ses(?! efekt)\w*)\b"),
     "sfx": re.compile(r"\b(sound effects?|sfx|whoosh\w*|efekt\w*)\b"),
     "camera": re.compile(r"\b(zoom\w*|shake|camera effects?|kamera\w*)\b"),
     "transition": re.compile(r"\b(transitions?|crossfade\w*|dissolve|gecis\w*)\b"),
@@ -125,7 +127,7 @@ _REGEX_CUES: dict[str, re.Pattern[str]] = {
         r"|(?:ekranda|daha uzun|daha kisa) (?:\w+ ){0,2}kal(?:sin|sinlar|acak|ir))\b"
     ),
 }
-_CLIP_NOUN = re.compile(r"\b(clips?|shots?|videos?|footage|klip\w*|cekim\w*)\b")
+_CLIP_NOUN = re.compile(r"\b(clips?|shots?|videos?|footage|kli[pb]\w*|cekim\w*)\b")
 _TEXT_NOUN = re.compile(
     r"\b(texts?|titles?|labels?|captions?|words?|yazi\w*|baslik\w*|etiket\w*)\b"
 )
@@ -222,6 +224,7 @@ _ORDINAL_RE = re.compile(
     r"\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last|1st|2nd|3rd"
     r"|ilk|ikinci|ucuncu|dorduncu|son)\b|\b(\d+)(?:st|nd|rd|th)\b"
     r"|\b(?:clip|shot|video) (?:number )?(\d+)\b"
+    r"|\b(\d+) (?:kli[pb]|cekim)\w*"  # Turkish counts before the noun: "2. klibi" -> "2 klibi"
 )
 _VALUE_FIELDS = frozenset({"font_family", "color", "entrance", "alignment", "text_case"})
 # Fields where "not in the diff" means "not done" (a row that did not change did not get
@@ -352,13 +355,13 @@ def _ordinal(text: str) -> int | None:
         return None
     found: set[int] = set()
     for match in _ORDINAL_RE.finditer(text):
-        word, suffixed, number = match.groups()
+        word, suffixed, number, counted = match.groups()
         if word:
             found.add(_ORDINALS[word])
         elif suffixed:
             found.add(int(suffixed))
-        elif number:
-            found.add(int(number))
+        elif number or counted:
+            found.add(int(number or counted))
     return next(iter(found)) if len(found) == 1 else None
 
 
