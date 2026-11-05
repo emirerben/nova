@@ -26,6 +26,7 @@ Everything is pure and language-aware for ``en`` and ``tr`` (any other language 
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 
 from app.kria.brief_route import loose_text
@@ -637,7 +638,7 @@ def validate_why(
         return None, "digit"
     if any(ch in _QUOTES for ch in text):
         return None, "quote"
-    if _HANDLE.search(text) or "http" in text.casefold() or "@" in text or "#" in text:
+    if _HANDLE.search(text) or looks_like_link(text) or "@" in text or "#" in text:
         return None, "handle"
     if _hits_stoplist(text):
         return None, "stoplist"
@@ -684,11 +685,112 @@ def shares_run(text: str, sources: Iterable[str], *, n: int = _RUN) -> bool:
     return bool(mine) and any(mine & _runs(source, n) for source in sources if source)
 
 
+# A bare domain ("evil.com", "bit.ly", "coffee-deals.shop"): a dot with letters on both sides and
+# no space. "http" and "www." alone left every link without a scheme on the screen.
+_BARE_DOMAIN = re.compile(r"(?<![^\W_])[\w-]*[^\W\d_][\w-]*\.[^\W\d_]{2,}(?![^\W_])")
+# A link spelled out so that no dot is typed ("evil dot com", Turkish "evil nokta com").
+_SPELLED_DOT = frozenset({"dot", "nokta"})
+_SPELLED_TLDS = frozenset(
+    "com net org io co ly me tv app shop xyz info biz gg to cc link store online site "
+    "ai dev tr".split()
+)
+
+
+def looks_like_link(text: str) -> bool:
+    """A URL in any of the forms a title must never carry: scheme, ``www.``, a bare domain, or
+    one spelled out with "dot" / "nokta". Display text only; never decides an action."""
+    low = text.casefold()
+    if "http" in low or "www." in low or _BARE_DOMAIN.search(low):
+        return True
+    words = _tokens(text)
+    return any(word in _SPELLED_DOT and nxt in _SPELLED_TLDS for word, nxt in zip(words, words[1:]))
+
+
+_TR_LETTERS = frozenset("çğıöşüÇĞİÖŞÜ")
+
+
+def has_lookalike_letter(text: str) -> bool:
+    """A letter that is neither ASCII, nor Turkish, nor an ASCII letter plus a combining mark.
+
+    The Latin script holds letters that read as another ("ᴏ" small capital O, "ɡ" script G) and
+    pass every "is it Latin" test. "café" decomposes to "e" plus an accent and is fine.
+    """
+    for ch in text:
+        if not ch.isalpha() or ch.isascii() or ch in _TR_LETTERS:
+            continue
+        base, *marks = unicodedata.normalize("NFD", ch)
+        if base.isascii() and base.isalpha() and all(unicodedata.combining(m) for m in marks):
+            continue
+        return True
+    return False
+
+
+# Words too common to show that two sentences say the same thing.
+_ECHO_STOP = frozenset(
+    _fold(w)
+    for w in (
+        "this that these those with from into onto over then than them they their there here "
+        "when where what which while about after before around been being have were will would "
+        "could should some more very just also only each both other your ours okay yeah "
+        "için gibi daha kadar sonra önce olan bunu şunu veya ile çok değil ama böyle şimdi "
+        "bugün evet tamam"
+    ).split()
+)
+_CLAUSE_BREAK = re.compile(r"[.!?;:\n]+")
+_ECHO_SUFFIXES = ("ing", "ed", "es", "s")
+_ECHO_MIN_SHARED = 2
+_ECHO_COVERAGE = 0.6
+
+
+def _content_stems(text: str, lang: str) -> frozenset[str]:
+    """Folded content words reduced to a stem: a crude English suffix strip, and the first five
+    letters for agglutinative Turkish ("dükkana" and "dükkanda" meet). Over-matching is the safe
+    direction here: a dropped card costs a card, a kept echo costs a quoted transcript."""
+    stems: set[str] = set()
+    for token in _tokens(text):
+        if len(token) < 4 or token in _ECHO_STOP:
+            continue
+        if lang == "tr":
+            stems.add(token[:5])
+            continue
+        for suffix in _ECHO_SUFFIXES:
+            if token.endswith(suffix) and len(token) - len(suffix) >= 4:
+                token = token[: -len(suffix)]
+                break
+        stems.add(token)
+    return frozenset(stems)
+
+
+def echoes_source(text: str, sources: Iterable[str], *, language: str = "en") -> bool:
+    """Does ``text`` re-say a clause of a source in other words?
+
+    The verbatim check (``shares_run``) needs three words in a row, so reordering the words or
+    swapping one slips past it. This one compares content stems clause by clause (a topic word
+    from one sentence and another from the next is ordinary language) and fires when two or
+    more are shared and they make up most of what ``text`` says. Stricter than ``shares_run``
+    on purpose: it guards the words that become the video's title.
+    """
+    lang = language_of(language)
+    mine = _content_stems(text, lang)
+    if len(mine) < _ECHO_MIN_SHARED:
+        return False
+    for source in sources:
+        for clause in _CLAUSE_BREAK.split(source or ""):
+            shared = mine & _content_stems(clause, lang)
+            if len(shared) >= _ECHO_MIN_SHARED and len(shared) / len(mine) >= _ECHO_COVERAGE:
+                return True
+    return False
+
+
 _COPY_CHARS = re.compile(r"^[^\W_]+(?:[ \-',.!?:][^\W_]+)*[.!?]?$", re.UNICODE)
 
 
 def validate_copy(
-    copy: object, *, language: str, transcripts: Iterable[str] = (), footage: Iterable[str] = ()
+    copy: object,
+    *,
+    language: str,
+    transcripts: Iterable[str] = (),
+    footage: Iterable[str] = (),
 ) -> tuple[str | None, str | None]:
     """``(copy, None)`` when the exact on-screen text may be offered, else ``(None, reason)``.
 
@@ -706,7 +808,7 @@ def validate_copy(
         return None, "empty"
     if len(text) > MAX_COPY_CHARS:
         return None, "length"
-    if any(ch in text for ch in "{}<>$`\\|[]*_#@") or "http" in text.casefold() or "www." in text:
+    if any(ch in text for ch in "{}<>$`\\|[]*_#@") or looks_like_link(text):
         return None, "markup"
     if not _COPY_CHARS.match(text):
         return None, "chars"
@@ -715,6 +817,8 @@ def validate_copy(
     if len(_tokens(text)) < 2:
         return None, "short"
     if lang == "en" and not all(ord(ch) < 128 for ch in text):
+        return None, "language"
+    if lang == "tr" and has_lookalike_letter(text):
         return None, "language"
     footage_texts = [t for t in footage if t]
     if shares_run(text, [*transcripts, *footage_texts]):

@@ -37,7 +37,12 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app.services.suggestion_chip_copy import language_of, shares_run, validate_copy
+from app.services.suggestion_chip_copy import (
+    echoes_source,
+    language_of,
+    shares_run,
+    validate_copy,
+)
 from app.services.suggestions.builders import PHONE_AND_CLOUD, legacy_kind
 from app.services.suggestions.context import (
     SuggestionContext,
@@ -329,6 +334,32 @@ def _wrong_language(text: str, language: str) -> bool:
     return bool(words & _TR_ONLY)
 
 
+_DASHES = re.compile(r"[-\u2010-\u2015]")
+
+
+def _despaced(text: str) -> str:
+    """``text`` with a run of single-letter words joined: "f o l l o w me" -> "follow me"."""
+    out: list[str] = []
+    run: list[str] = []
+    for word in text.split():
+        if len(word) == 1 and word.isalpha():
+            run.append(word)
+            continue
+        out += ["".join(run)] if len(run) > 1 else run
+        run = []
+        out.append(word)
+    out += ["".join(run)] if len(run) > 1 else run
+    return " ".join(out)
+
+
+def _is_cringe(text: str) -> bool:
+    """The phrase list over the text as written AND with hyphens read as spaces ("Link-in-bio")
+    and spaced-out letters joined ("d m me"): bait that only differs by punctuation is bait."""
+    views = {text, _DASHES.sub(" ", text)}
+    views |= {_despaced(view) for view in views}
+    return any(has_marker(view, _CRINGE) for view in views)
+
+
 def _lifts_on_screen_text(text: str, on_screen: Iterable[str]) -> bool:
     """Words read off the screen come back out: a two-word run, or the one word of a short sign."""
     mine = set(loose_words(text))
@@ -366,9 +397,15 @@ def check_copy(copy: object, ctx: SuggestionContext) -> tuple[str | None, str | 
         return None, reason
     if _wrong_language(checked, language):
         return None, "language"
-    if has_marker(checked, _CRINGE):
+    if _is_cringe(checked):
         return None, "cringe"
     if _lifts_on_screen_text(checked, sources.on_screen):
+        return None, "reused_on_screen_text"
+    # Last, so a more specific reason (cringe, a verbatim lift) wins: the same words in another
+    # order, or with one swapped, are still the footage's words.
+    if echoes_source(checked, sources.transcripts, language=language):
+        return None, "reused_footage_text"
+    if echoes_source(checked, sources.on_screen, language=language):
         return None, "reused_on_screen_text"
     return checked, None
 
