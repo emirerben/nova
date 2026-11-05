@@ -187,7 +187,8 @@ public struct SpeakerBackgroundLayer: Codable, Equatable, Sendable {
     /// The same background with the speaker drawn at `frame` (nil = full-frame). Every other field is kept.
     public func replacingSpeakerFrame(_ frame: SpeakerFrame?) -> SpeakerBackgroundLayer {
         SpeakerBackgroundLayer(assetID: assetID, mediaKind: mediaKind, sourceStart: sourceStart, loop: loop,
-                               subjectTrackID: subjectTrackID, windows: windows, speakerFrame: frame, color: color)
+                               subjectTrackID: subjectTrackID, windows: windows, speakerFrame: frame, color: color,
+                               fullScreenWindows: fullScreenWindows)
     }
 
     /// `next` differs from this background only by MOVING or RESIZING an existing speaker frame (SF5): both carry a
