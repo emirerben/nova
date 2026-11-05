@@ -314,8 +314,7 @@ struct VideoShapeCard: View {
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(KriaColor.softZinc.opacity(0.6))
-            .overlay { RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(KriaColor.line, lineWidth: 1) }
+            .background(KriaColor.fill)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("video-shape-card")

@@ -7,11 +7,11 @@ final class AttachmentFlowUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Add footage"].waitForExistence(timeout: 5))
         app.scrollViews["attachment-step-footage"].swipeLeft()
         XCTAssertTrue(app.buttons["voiceover-record"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Upload an audio file"].exists)
+        XCTAssertTrue(app.buttons["voiceover-upload"].exists)
         XCTAssertFalse(app.buttons["attachment-next"].exists, "Voiceover needs a deliberate choice")
         capture(app, "Voiceover start")
         app.scrollViews["attachment-step-voiceover"].swipeRight()
-        XCTAssertTrue(app.buttons["Choose from Photos"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["source-upload"].waitForExistence(timeout: 5))
         app.buttons["attachment-next"].tap()
         XCTAssertTrue(app.buttons["voiceover-skip"].waitForExistence(timeout: 5))
         app.buttons["voiceover-skip"].tap()
@@ -103,9 +103,13 @@ final class AttachmentFlowUITests: XCTestCase {
         XCTAssertTrue(narrated.waitForExistence(timeout: 10))
         if !narrated.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
         narrated.tap()
-        let attach = app.buttons["Attach footage"]
-        XCTAssertTrue(attach.waitForExistence(timeout: 5))
-        attach.tap()
+        // The footage stage's Upload opens Add media with the "Upload from" list over it; close the list to reach the steps.
+        let chooseVideos = app.buttons["choose-videos"]
+        XCTAssertTrue(chooseVideos.waitForExistence(timeout: 5))
+        chooseVideos.tap()
+        XCTAssertTrue(app.buttons["upload-source-photos"].waitForExistence(timeout: 5))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
+        XCTAssertTrue(app.buttons["upload-source-photos"].waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.buttons["attachment-next"].waitForExistence(timeout: 5))
         return app
     }

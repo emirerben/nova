@@ -39,7 +39,7 @@ struct NativeEditorView: View {
     @State private var drawMode: DrawMode?
     @StateObject private var sketch = NativeDrawingSketch()
     private struct DrawMode: Equatable { var appendingTo: String? }
-    @State private var showsEmptyAddClip = false
+    @State private var emptyAddClip: AddClipLaunch?
     @State private var selectedTextForActions: String?
     @State private var selectedSoundEffectForActions: String?
     /// KRI-185: a block opened from the Text tab's list edits its words first and
@@ -199,7 +199,7 @@ struct NativeEditorView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
-            .sheet(isPresented: $showsEmptyAddClip) { NativeEditorAddClipSheet(session: session) }
+            .sheet(item: $emptyAddClip) { NativeEditorAddClipSheet(session: session, launch: $0) }
             .onChange(of: deviceLocalFile) { _, file in
                 if let file { session.showDeviceOutput(file) }
             }
@@ -381,7 +381,7 @@ struct NativeEditorView: View {
             NativeVideoPreview(
                 session: session, onEmptyTap: handleEmptyPreviewTap,
                 onFindOriginals: { showsOriginalsRecovery = true },
-                onAddClip: { showsEmptyAddClip = true }
+                onAddClip: { emptyAddClip = $0 }
             )
                 .frame(width: previewHeight * session.previewAspectRatio, height: previewHeight)
                 .clipped()
@@ -1059,7 +1059,7 @@ private struct NativeEditorLoadSurface: View {
             NativeEditorTopBar(title: projectTitle, onBack: onBack)
             VStack(alignment: .leading, spacing: 14) {
                 if isLoading { ProgressView().tint(KriaColor.ink) }
-                Text(title).font(KriaFont.display(29))
+                Text(title).font(KriaFont.headline(29))
                 Text(detail).font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
                 if let retry {
                     Button("Try again", action: retry)
@@ -1175,7 +1175,7 @@ private struct NativeKriaInspector: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Text("A considered next move")
-                    .font(KriaFont.display(29))
+                    .font(KriaFont.headline(29))
                 Text("Kria keeps proposals reversible. Pick one to make a small, visible change, then decide whether to save.")
                     .font(KriaFont.body(15))
                     .foregroundStyle(KriaColor.zinc)
