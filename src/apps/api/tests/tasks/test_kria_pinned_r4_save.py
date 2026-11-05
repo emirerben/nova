@@ -23,8 +23,10 @@ the pointer is stale for good.
   F6  Unreadable instants (no ring time, no render stamp): fail closed, as before.
   F7  An editor-op card is untouched by all of this (it is built on the saved video).
 
-The Save is the real ``prepare_editor_commit`` (the function the HTTP route calls); the render
-worker's completion is the one stand-in (``finish_render``), because no worker runs here.
+The Save is the real ``POST /plan-items/{id}/variants/{id}/editor-commit`` (through the ASGI app,
+only the creator's identity overridden); a Save that must land between the plan and the lock (F3)
+calls ``prepare_editor_commit``, the function the route calls, because it runs inside the worker.
+The render worker's completion is the one stand-in (``finish_render``): no worker runs here.
 """
 
 from __future__ import annotations
@@ -108,6 +110,40 @@ def native_save(seeded, *, finish: bool = True, **sections) -> str:  # noqa: ANN
     return str(prep["generation"])
 
 
+async def route_save(seeded, **sections) -> str:  # noqa: ANN001, ANN003
+    """The creator's Save through the real editor-commit route, then the render worker's
+    completion write. Returns the generation the Save minted."""
+    from types import SimpleNamespace
+    from unittest import mock
+
+    import httpx
+
+    from app.auth import get_current_user
+    from app.main import app
+    from app.routes.generative_jobs import variant_render_baseline
+
+    with sync_session() as db:
+        variant = db.get(Job, seeded.job_id).assembly_plan["variants"][0]
+    body = {**(sections or {"caption_meta": {"size_px": 96}})}
+    body["base_generation"] = variant_render_baseline(variant)
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=seeded.user_id)
+    try:
+        # The render kick is the one thing the route hands to a broker.
+        with mock.patch("app.routes.plan_items.enqueue_editor_commit_render"):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://phone"
+            ) as client:
+                response = await client.post(
+                    f"/plan-items/{seeded.item_id}/variants/{variant['variant_id']}/editor-commit",
+                    json=body,
+                )
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+    assert response.status_code == 200, response.text[:300]
+    finish_render(seeded)
+    return response.json()["generation"]
+
+
 def finish_render(seeded) -> None:  # noqa: ANN001
     """What the render worker writes when the Save's render lands."""
     h.edit_variant(
@@ -129,7 +165,7 @@ async def test_f1_a_card_served_before_a_save_is_refused_after_it(talking_world)
     seeded, phone, out = await served(talking_world)
     card = card_of(out, "filler_words")
     before_pointer = pointer(seeded)
-    generation = native_save(seeded)
+    generation = await route_save(seeded)
     assert generation != before_pointer
 
     tap = await phone.tap(card, out)
@@ -142,7 +178,7 @@ async def test_f1_a_card_served_before_a_save_is_refused_after_it(talking_world)
 @pytest.mark.asyncio
 async def test_f2_a_card_served_after_a_save_runs(talking_world):
     seeded, phone, _first = await served(talking_world)
-    generation = native_save(seeded)
+    generation = await route_save(seeded)
     talking_world.refreshes.clear()
     out = await phone.serve()
     card = card_of(out, "filler_words")
@@ -162,7 +198,7 @@ async def test_f3_a_save_after_planning_is_still_refused_for_a_card_served_after
     talking_world, monkeypatch
 ):
     seeded, phone, _first = await served(talking_world)
-    native_save(seeded)
+    await route_save(seeded)
     out = await phone.serve()
     card = card_of(out, "filler_words")
     h.after_planning(monkeypatch, lambda: native_save(seeded))
@@ -179,10 +215,10 @@ async def test_f4_the_verdict_is_per_card_a_second_save_refuses_the_card_served_
     talking_world,
 ):
     seeded, phone, _first = await served(talking_world)
-    native_save(seeded)
+    await route_save(seeded)
     out = await phone.serve()
     card = card_of(out, "filler_words")
-    native_save(seeded)
+    await route_save(seeded)
 
     tap = await phone.tap(card, out)
 
@@ -220,7 +256,7 @@ def render_stamps(seeded) -> dict[str, str]:  # noqa: ANN001
 @pytest.mark.asyncio
 async def test_f5_a_card_served_before_the_saves_render_finished_is_refused(talking_world):
     seeded, phone, _first = await served(talking_world)
-    native_save(seeded)
+    await route_save(seeded)
     out = await phone.serve()
     card = card_of(out, "filler_words")
     stamps = render_stamps(seeded)
@@ -241,7 +277,7 @@ async def test_f5_a_card_served_before_the_saves_render_finished_is_refused(talk
 @pytest.mark.parametrize("missing", ["set_time", "render_stamps"])
 async def test_f6_an_unreadable_instant_falls_back_to_the_pointer_alone(talking_world, missing):
     seeded, phone, _first = await served(talking_world)
-    native_save(seeded)
+    await route_save(seeded)
     out = await phone.serve()
     card = card_of(out, "filler_words")
     if missing == "set_time":
@@ -262,7 +298,7 @@ async def test_f6_an_unreadable_instant_falls_back_to_the_pointer_alone(talking_
 async def test_f7_an_editor_op_card_is_built_on_the_saved_video_and_still_applies(world):
     seeded, phone, out = await served(world, EDITOR)
     card = card_of(out, "transition")
-    generation = native_save(seeded, text_elements=[{**h.HOOK, "text": "Saved by hand"}])
+    generation = await route_save(seeded, text_elements=[{**h.HOOK, "text": "Saved by hand"}])
 
     tap = await phone.tap(card, out)
 

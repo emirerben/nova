@@ -9011,24 +9011,30 @@ def _lock_plan_item_for_session_sync(  # noqa: ANN202
     """Lock ContentPlan -> PlanItem for ``session_id`` ahead of the session (the order the async
     ``runtime._lock_strategy_plan_item`` takes). Two unlocked reads discover the immutable
     identities to lock; None when a row is gone or is not this creator's."""
-    session_peek = db.get(CreatorAgentSession, session_id)
-    item_peek = (
-        db.get(PlanItem, session_peek.plan_item_id)
-        if session_peek is not None and session_peek.plan_item_id is not None
+    # Column reads, not entities: the session and the item are locked fresh below, and a row the
+    # identity map already holds would not be refreshed by that lock.
+    item_id = db.execute(
+        select(CreatorAgentSession.plan_item_id).where(CreatorAgentSession.id == session_id)
+    ).scalar_one_or_none()
+    plan_id = (
+        db.execute(
+            select(PlanItem.content_plan_id).where(PlanItem.id == item_id)
+        ).scalar_one_or_none()
+        if item_id is not None
         else None
     )
-    if item_peek is None:
+    if plan_id is None:
         return None
     plan_row = db.execute(
         select(ContentPlan)
-        .where(ContentPlan.id == item_peek.content_plan_id, ContentPlan.user_id == creator_id)
+        .where(ContentPlan.id == plan_id, ContentPlan.user_id == creator_id)
         .with_for_update(**CONTENT_PLAN_LOCK)
     ).scalar_one_or_none()
     if plan_row is None:
         return None
     return db.execute(
         select(PlanItem)
-        .where(PlanItem.id == item_peek.id)
+        .where(PlanItem.id == item_id)
         .with_for_update()
         .execution_options(populate_existing=True)
     ).scalar_one_or_none()
