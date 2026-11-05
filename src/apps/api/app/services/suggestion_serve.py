@@ -173,7 +173,8 @@ def _brief_unread(ctx: SuggestionContext) -> SuggestionContext:
 # Kinds whose card reads something the editor snapshot and the clip rows cannot say.
 INPUT_KINDS = ("hook", "mute_clip", "filler_words", "duplicates")
 # The kinds whose tap re-drafts the thread's plan (a brief update or an item setting). They are
-# only the variant's next revision while its head draft IS the plan (``pinned.restate_base``).
+# only the variant's next revision while its head draft IS the plan (``pinned.restate_base``), and
+# only while the saved video is one the agent has read (``pinned.save_unread``).
 RESTATING_KINDS = frozenset({"mute_clip", "filler_words"})
 BRIEF_KEY = "brief"  # kind_inputs: the latest CreativeBrief (None = the thread has none)
 
@@ -376,6 +377,25 @@ async def _plan_is_head(db: Any, thread: Any, ctx: SuggestionContext) -> bool:
     return base.reason != pinned.BASE_MOVED
 
 
+async def _video_is_read(db: Any, thread: Any, ctx: SuggestionContext) -> bool:
+    """False when a restating tap would be refused ``base_moved`` for a Save: the saved video is
+    not the one the agent session last read. The tap's own second witness (``pinned.save_unread``),
+    asked at offer time, because the plan the tap re-drafts holds none of the Save's edits and its
+    approval would render from that plan. The card comes back when the pointer catches up (a Kria
+    render completes, an editor tap re-syncs it)."""
+    from app.models import CreatorAgentSession  # noqa: PLC0415
+    from app.services.suggestions import pinned  # noqa: PLC0415
+
+    try:
+        session_id = getattr(thread, "active_creator_agent_session_id", None)
+        session = await db.get(CreatorAgentSession, session_id) if session_id else None
+    except Exception:  # noqa: BLE001 - a card that cannot be proven is not offered
+        log.warning("suggestion_chips.error", stage="session_pointer", exc_info=True)
+        return False
+    seen = session.target_generation_id if session is not None else None
+    return not pinned.save_unread(ctx.render_generation_id, seen)
+
+
 async def _with_v2_inputs(
     db: Any, thread: Any, item: Any, ctx: SuggestionContext
 ) -> SuggestionContext:
@@ -386,7 +406,7 @@ async def _with_v2_inputs(
     if (
         ctx.state == "ready"
         and kinds & RESTATING_KINDS
-        and not await _plan_is_head(db, thread, ctx)
+        and not (await _plan_is_head(db, thread, ctx) and await _video_is_read(db, thread, ctx))
     ):
         # No input, no card: each kind fails closed without its own read.
         kinds = kinds - RESTATING_KINDS

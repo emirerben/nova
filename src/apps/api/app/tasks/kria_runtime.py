@@ -668,6 +668,9 @@ def _restate_video_moved(
     (``pin["generation_id"]``) catches a Save that landed after planning. The session's pointer is
     the generation the agent last saw: when it is set and differs, a Save landed before the tap
     and the session never read it (an editor-op tap re-syncs it; a restate must not).
+
+    The serve asks the second witness too (``pinned.save_unread``) and offers no restating card
+    while a Save is unread, so no served card meets it at the tap except one served before the Save.
     """
     variant = next(
         (
@@ -681,8 +684,9 @@ def _restate_video_moved(
     planned_against = pin.get("generation_id")
     if planned_against is not None and current != planned_against:
         return True
-    seen = str(session.target_generation_id or "")
-    return bool(seen and current and seen != current)
+    from app.services.suggestions import pinned as _pinned  # noqa: PLC0415
+
+    return _pinned.save_unread(current, session.target_generation_id)
 
 
 def _publish_cleanup_analysis(analysis_id: uuid.UUID | None) -> None:
@@ -757,10 +761,19 @@ def _complete_response_turn(
             turn.lease_expires_at = None
             db.commit()
             return _Completion(committed=False, requeue_turn_id=str(turn.id))
+        if brief_expected_version is not None:
+            current_brief = load_latest_brief_sync(db, thread.id)
+            if brief_expected_version != (current_brief.version if current_brief else 0):
+                turn.status = "pending"
+                turn.lease_owner = None
+                turn.lease_expires_at = None
+                db.commit()
+                return _Completion(committed=False, requeue_turn_id=str(turn.id))
         if pinned_refusal is not None:
-            # In this transaction: the card is marked refused on its ring entry, so the next read
-            # hides it and mints a new set (`pinned.mark_refused`). A refusal that says nothing
-            # about the card (a render in flight) leaves it tappable.
+            # In this transaction, after both fences: a turn that is requeued has no outcome yet,
+            # and its commit would otherwise carry the mark. The card is marked refused on its ring
+            # entry, so the next read hides it and mints a new set (`pinned.mark_refused`). A
+            # refusal that says nothing about the card (a render in flight) leaves it tappable.
             from app.services.suggestions import pinned as _pinned  # noqa: PLC0415
 
             if pinned_refusal.get("reason") not in _pinned.TRANSIENT_REASONS and (
@@ -772,14 +785,6 @@ def _complete_response_turn(
                 )
             ):
                 thread.state = marked
-        if brief_expected_version is not None:
-            current_brief = load_latest_brief_sync(db, thread.id)
-            if brief_expected_version != (current_brief.version if current_brief else 0):
-                turn.status = "pending"
-                turn.lease_owner = None
-                turn.lease_expires_at = None
-                db.commit()
-                return _Completion(committed=False, requeue_turn_id=str(turn.id))
         persisted_brief = None
         if brief_updates or brief_delegated:
             # KRI-188: a question/recovery turn still records what the creator
@@ -2057,7 +2062,9 @@ def _complete_draft_turn(
                         reason=outcome.reason or _pinned.SETTING_REFUSED,
                     )
                 publish_analysis_id = outcome.publish_analysis_id
-                setting_undo = setting_undo_record(setting_action, outcome)
+                setting_undo = setting_undo_record(
+                    setting_action, outcome, at=db.execute(select(func.now())).scalar_one()
+                )
         if apply_intent.tool_name == "draft.apply_editor_ops":
             variant = (
                 next(
@@ -5522,6 +5529,25 @@ def _verify_prepared_execution(
     )
 
 
+def _withdraw_tap_of_cancelled_claim(
+    db,  # noqa: ANN001 - SQLAlchemy sync Session
+    approval: CreatorAgentApproval,
+    item: PlanItem,
+    thread: CreationThread,
+) -> None:
+    """The claim cancelled an approval a suggestion card staged, so no render will ever start:
+    take the tap back, as a denial or an expiry does. The claim already holds the plan item and the
+    thread locked, in canonical order. A no-op for an approval no card staged."""
+    from app.kria.drafts import (  # noqa: PLC0415
+        staged_tap_footprint_sync,
+        withdraw_staged_tap_sync,
+    )
+
+    footprint = staged_tap_footprint_sync(db, approval)
+    if footprint is not None:
+        withdraw_staged_tap_sync(db, record=footprint, item=item, thread=thread)
+
+
 def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim | None:
     """Consume exact consent into a durable accepted execution.
 
@@ -5828,6 +5854,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                 else "approval_target_stale"
             )
             approval.status = "cancelled"
+            _withdraw_tap_of_cancelled_claim(db, approval, item, thread)
             execution.status = "stale"
             execution.error = {
                 "code": stale_code,
@@ -5916,6 +5943,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             next_audio_mode = resolve_next_audio_mode(strategy, item)
             if next_audio_mode is None:
                 approval.status = "cancelled"
+                _withdraw_tap_of_cancelled_claim(db, approval, item, thread)
                 execution.status = "failed"
                 execution.error = {
                     "code": "voiceover_required",
@@ -6109,6 +6137,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                         # Nothing was pinned: the Job keeps the attempt it had.
                         current_job.all_candidates, current_job.assembly_plan = prepared_job_before
                     approval.status = "cancelled"
+                    _withdraw_tap_of_cancelled_claim(db, approval, item, thread)
                     execution.status = "failed"
                     execution.error = {"code": code, "retryable": False, "recovery": "revise"}
                     execution.completed_at = now
@@ -8982,6 +9011,43 @@ def _expire_pending_approvals() -> list[str]:
     return successors
 
 
+def _lock_plan_item_for_session_sync(  # noqa: ANN202
+    db,  # noqa: ANN001
+    session_id: uuid.UUID,
+    creator_id: uuid.UUID,
+) -> PlanItem | None:
+    """Lock ContentPlan -> PlanItem for ``session_id`` ahead of the session (the order the async
+    ``runtime._lock_strategy_plan_item`` takes). Two unlocked reads discover the immutable
+    identities to lock; None when a row is gone or is not this creator's."""
+    # Column reads, not entities: the session and the item are locked fresh below, and a row the
+    # identity map already holds would not be refreshed by that lock.
+    item_id = db.execute(
+        select(CreatorAgentSession.plan_item_id).where(CreatorAgentSession.id == session_id)
+    ).scalar_one_or_none()
+    plan_id = (
+        db.execute(
+            select(PlanItem.content_plan_id).where(PlanItem.id == item_id)
+        ).scalar_one_or_none()
+        if item_id is not None
+        else None
+    )
+    if plan_id is None:
+        return None
+    plan_row = db.execute(
+        select(ContentPlan)
+        .where(ContentPlan.id == plan_id, ContentPlan.user_id == creator_id)
+        .with_for_update(**CONTENT_PLAN_LOCK)
+    ).scalar_one_or_none()
+    if plan_row is None:
+        return None
+    return db.execute(
+        select(PlanItem)
+        .where(PlanItem.id == item_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+
+
 def _expire_overdue_approval(approval_id: uuid.UUID) -> str | None:
     """Expire one approval the sweep found overdue; return the successor turn to publish.
 
@@ -8992,6 +9058,15 @@ def _expire_overdue_approval(approval_id: uuid.UUID) -> str | None:
         ref = db.get(CreatorAgentApproval, approval_id)
         if ref is None:
             return None
+        from app.kria.drafts import staged_tap_footprint_sync  # noqa: PLC0415
+
+        # A card's tap that flipped an item setting is taken back with its expired approval, so
+        # the plan item is locked first (Plan -> PlanItem -> Session ...); read unlocked, the
+        # record never changes after the draft is minted.
+        footprint = staged_tap_footprint_sync(db, ref)
+        item = None
+        if footprint is not None and footprint.get("setting"):
+            item = _lock_plan_item_for_session_sync(db, ref.session_id, ref.creator_id)
         # Canonical order (subset): Session -> Turn -> Approval -> Execution -> Thread.
         session = db.execute(
             select(CreatorAgentSession)
@@ -9059,6 +9134,10 @@ def _expire_overdue_approval(approval_id: uuid.UUID) -> str | None:
             turn.error = error
         if session.status != "rendering":
             session.status = "awaiting_feedback"
+        if footprint is not None:
+            from app.kria.drafts import withdraw_staged_tap_sync  # noqa: PLC0415
+
+            withdraw_staged_tap_sync(db, record=footprint, item=item, thread=thread)
         _append_sync_event(
             db,
             thread,

@@ -295,6 +295,19 @@ def _entry(state: Mapping[str, Any] | None, set_id: str) -> Mapping[str, Any] | 
     return ring[index] if index is not None else None
 
 
+def save_unread(current: object, seen: object) -> bool:
+    """True when the saved video is not the one the agent session last read.
+
+    ``current`` is the variant's render baseline now; ``seen`` is the session's pointer. A native
+    Save moves the first and never the second, and the plan a restating card re-drafts holds none
+    of the Save's edits, so while this is True the card must neither be offered (the serve) nor run
+    (the tap's commit): both ask this one question. An empty side (no render yet, no pointer yet)
+    has nothing to compare and answers False.
+    """
+    current, seen = str(current or ""), str(seen or "")
+    return bool(current and seen and current != seen)
+
+
 def pin_marks(
     state: Mapping[str, Any] | None, set_id: str
 ) -> tuple[frozenset[str], frozenset[str]]:
@@ -850,6 +863,7 @@ __all__ = [
     "restate_updates",
     "restates_strategy",
     "resolve_pin",
+    "save_unread",
     "ring_suggestions",
     "snapshot_digest",
     "stamp_pin",
