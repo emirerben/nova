@@ -363,7 +363,7 @@ struct PlanChipFlow: Layout {
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         let layout = arrange(width: bounds.width, subviews: subviews)
         for (index, frame) in layout.frames.enumerated() {
-            subviews[index].place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY), proposal: .unspecified)
+            subviews[index].place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY), proposal: ProposedViewSize(frame.size))
         }
     }
 
@@ -371,7 +371,8 @@ struct PlanChipFlow: Layout {
         var frames: [CGRect] = []
         var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, maxX: CGFloat = 0
         for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
+            // A chip wider than the row wraps its label instead of pushing the whole row past the screen.
+            let size = subview.sizeThatFits(ProposedViewSize(width: width.isFinite ? width : nil, height: nil))
             if x > 0, x + size.width > width { x = 0; y += rowHeight + spacing; rowHeight = 0 }
             frames.append(CGRect(origin: CGPoint(x: x, y: y), size: size))
             x += size.width + spacing

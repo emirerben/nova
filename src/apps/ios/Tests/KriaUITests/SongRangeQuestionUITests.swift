@@ -154,7 +154,7 @@ final class SongRangeQuestionUITests: XCTestCase {
         XCTAssertTrue(app.buttons["song-range-card-whole"].isEnabled, "the whole song is always a valid answer")
         let reason = element(app, "song-range-card-error")
         XCTAssertTrue(reason.waitForExistence(timeout: 3))
-        XCTAssertEqual(reason.label, "Pick at least five seconds of your song.")
+        XCTAssertEqual(reason.label, "Pick at least five seconds.")
         choose(app, "song-range-card-to", "0:45")
         XCTAssertTrue(app.buttons["song-range-card-use"].isEnabled, "exactly five seconds is allowed")
         XCTAssertFalse(reason.exists)

@@ -25,6 +25,9 @@ struct MomentWindow: Equatable, Sendable {
     /// "0:03.2–0:05.0": tenths, because two moments a second apart must not read the same.
     var label: String { "\(Self.clock(start))–\(Self.clock(end))" }
 
+    /// "0:12 to 0:18": whole seconds, the way the status lines read it.
+    var rangeLabel: String { "\(SongRangeMath.timecode(start)) to \(SongRangeMath.timecode(end))" }
+
     /// Exact seconds, for accessibility values and UI tests.
     var exact: String { String(format: "%.2f-%.2f", start, end) }
 
@@ -315,8 +318,8 @@ struct MomentOrderStrings {
 
     var title: String { say("Show me your moments", "Anlarını göster") }
     var hint: String {
-        say("Put them in the order you want. For each one, show me where it is, tell me it isn’t in your clips, or let me pick.",
-            "İstediğin sıraya koy. Her biri için yerini göster, kliplerinde olmadığını söyle ya da benim seçmeme izin ver.")
+        say("Drag to reorder. Then tell me where each one is.",
+            "Sürükleyerek sırala. Sonra her birinin yerini söyle.")
     }
     var point: String { say("Show where", "Yerini göster") }
     var skip: String { say("Not in my clips", "Kliplerimde yok") }
@@ -341,23 +344,28 @@ struct MomentOrderStrings {
             "Kutuyu ana sürükle. Uzatmak ya da kısaltmak için bir kenarını sürükle.")
     }
     var couldNotLoad: String { say("Couldn’t load this clip.", "Bu klip yüklenemedi.") }
+    func reorder(_ words: String) -> String { say("Reorder \(words)", "\(words) sırasını değiştir") }
     func moveUp(_ words: String) -> String { say("Move \(words) up", "\(words) yukarı taşı") }
     func moveDown(_ words: String) -> String { say("Move \(words) down", "\(words) aşağı taşı") }
+
+    /// The creator's pointed window is the one Kria found itself.
+    func isFound(_ moment: MomentOrderQuestion.Moment, choice: MomentChoice?) -> Bool {
+        guard case .point(let window)? = choice, moment.status == .grounded || moment.status == .answered,
+              let found = moment.found else { return false }
+        return abs(found.start - window.start) < 0.01 && abs(found.end - window.end) < 0.01
+    }
 
     func status(_ moment: MomentOrderQuestion.Moment, choice: MomentChoice?) -> String {
         switch choice {
         case .point(let window)?:
-            if moment.status == .grounded || moment.status == .answered, let found = moment.found,
-               abs(found.start - window.start) < 0.01, abs(found.end - window.end) < 0.01 {
-                return say("Found it at \(window.label)", "\(window.label) arasında buldum")
+            if isFound(moment, choice: choice) {
+                return say("Found it at \(window.rangeLabel)", "\(window.rangeLabel.replacingOccurrences(of: " to ", with: "–")) arasında buldum")
             }
-            return say("You picked \(window.label)", "Seçtiğin yer: \(window.label)")
+            return say("You picked \(window.rangeLabel)", "Seçtiğin yer: \(window.rangeLabel.replacingOccurrences(of: " to ", with: "–"))")
         case .skip?: return say("Not in your clips: left out", "Kliplerinde yok: çıkarıldı")
         case .delegate?: return say("Kria picks a part for this one", "Bunun için bir kısmı Kria seçecek")
         case nil:
-            return moment.status == .ambiguous
-                ? say("Could be a few places. Show me which one.", "Birkaç yerde olabilir. Hangisi olduğunu göster.")
-                : say("I couldn’t find this one in the clip.", "Bunu klipte bulamadım.")
+            return say("Choose one below", "Aşağıdan birini seç")
         }
     }
 

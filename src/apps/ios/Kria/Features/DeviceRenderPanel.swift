@@ -86,7 +86,7 @@ private struct DeviceSourceRecoveryView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Find your originals").font(KriaFont.display(26))
+                Text("Find your originals").font(KriaFont.headline(26))
                 Text("Choose the original files used for this project. Kria checks that they match and keeps them on this iPhone.")
                     .font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
                 if loading { ProgressView().accessibilityLabel("Checking original files") }
@@ -411,9 +411,9 @@ struct DeviceRenderStatusCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(KriaColor.paper)
+        .background(KriaColor.fill)
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(KriaColor.border, lineWidth: 1))
+        .environment(\.kriaOnFill, true)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("device-render-status")
         .sheet(item: $playback) { local in LocalExportPlayback(file: local.url) }

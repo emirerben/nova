@@ -56,7 +56,7 @@ struct PocketEditorView: View {
     }
     var body: some View {
         VStack(spacing: 0) {
-            HStack { Button("Done") { dismiss() }.font(KriaFont.body(16).weight(.semibold)); Spacer(); Text("Editor").font(KriaFont.display(20)); Spacer(); Button(action: session.undo) { Image(systemName: "arrow.uturn.backward").frame(width: 44, height: 44) }.accessibilityLabel("Undo last edit").disabled(session.isSaving) }.padding(.horizontal, 16).frame(height: 56)
+            HStack { Button("Done") { dismiss() }.font(KriaFont.body(16).weight(.semibold)); Spacer(); Text("Editor").font(KriaFont.headline(20)); Spacer(); Button(action: session.undo) { Image(systemName: "arrow.uturn.backward").frame(width: 44, height: 44) }.accessibilityLabel("Undo last edit").disabled(session.isSaving) }.padding(.horizontal, 16).frame(height: 56)
             VideoCanvasView()
             TimelineView(draft: session.draft)
             EditorToolBar(selected: $selectedTool, session: session)
@@ -236,7 +236,7 @@ struct ResultsView: View {
 
     private var videoBody: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("Your video is ready.").font(KriaFont.display(34))
+            Text("Your video is ready.").font(KriaFont.headline(34))
             Group {
                 if let player { VideoPlayer(player: player).onDisappear { player.pause() } }
                 else { RoundedRectangle(cornerRadius: 22).fill(KriaColor.ink).overlay(ProgressView().tint(KriaColor.sky)) }
@@ -417,5 +417,5 @@ private struct VideoFileDownloader {
 
 struct ShareSheetView: View {
     let url: URL
-    var body: some View { VStack(spacing: 18) { Text("Share your cut").font(KriaFont.display(28)); ShareLink(item: url) { Label("Share video", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity, minHeight: 48) }.buttonStyle(KriaPrimaryButtonStyle()); Text("A local copy is ready for the native share sheet.").font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc) }.padding(24).presentationDetents([.height(230)]) }
+    var body: some View { VStack(spacing: 18) { Text("Share your cut").font(KriaFont.headline(28)); ShareLink(item: url) { Label("Share video", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity, minHeight: 48) }.buttonStyle(KriaPrimaryButtonStyle()); Text("A local copy is ready for the native share sheet.").font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc) }.padding(24).presentationDetents([.height(230)]) }
 }

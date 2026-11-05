@@ -62,7 +62,7 @@ final class ResearchPreviewApprovalUITests: XCTestCase {
     func testSourcedWordingAndSourcesShowBeforeApprovalAndASourceOpensInApp() {
         let app = launch(["KRIA_CHAT_RESEARCH_PREVIEW": "1"])
         // DirectionStage's own identifier is inherited by everything inside it, so the card is found by its words.
-        XCTAssertTrue(app.staticTexts["SOURCES"].waitForExistence(timeout: 5), "the sources card reads draft_applied.research_preview")
+        XCTAssertTrue(app.staticTexts["Sources"].waitForExistence(timeout: 5), "the sources card reads draft_applied.research_preview")
         XCTAssertTrue(app.staticTexts["“Galata Tower was built in 1348 by the Genoese.”"].exists, "the exact sourced wording")
         XCTAssertTrue(app.staticTexts["On screen 0:03–0:07"].exists, "where it sits in the video")
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Unsourced claim")).firstMatch.exists,
@@ -94,17 +94,17 @@ final class ResearchPreviewApprovalUITests: XCTestCase {
     func testADraftWithoutResearchLooksUnchanged() {
         let app = launch([:])
         XCTAssertTrue(app.buttons["Create this video"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.staticTexts["SOURCES"].exists, "no payload, no sources card")
+        XCTAssertFalse(app.staticTexts["Sources"].exists, "no payload, no sources card")
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Open source")).firstMatch.exists)
         attach(app, "Approval card without research")
     }
 
     func testTurkishChatGetsTurkishCardWords() {
         let app = launch(["KRIA_CHAT_RESEARCH_PREVIEW": "1", "KRIA_CHAT_REPLY_LANGUAGE": "tr"])
-        XCTAssertTrue(app.staticTexts["KAYNAKLAR"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Kaynaklar"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Ekranda 0:03–0:07"].exists)
         XCTAssertTrue(app.buttons["Kaynağı aç: Galata Tower | History, britannica.com"].exists)
-        XCTAssertFalse(app.staticTexts["SOURCES"].exists)
+        XCTAssertFalse(app.staticTexts["Sources"].exists)
         attach(app, "Turkish approval card with sources")
     }
 }

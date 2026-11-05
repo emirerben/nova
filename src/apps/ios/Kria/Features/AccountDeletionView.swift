@@ -1,11 +1,7 @@
 import SwiftUI
 import AuthenticationServices
 
-/// Split out of `AccountPrivacyViews.swift` (KRI-161) so that file's
-/// signup/consent typography guard (no `KriaFont.display`/Fraunces) can be
-/// scoped to just the signup and consent screens without also constraining
-/// this unrelated account-deletion flow, which keeps its existing Fraunces
-/// display type.
+/// Split out of `AccountPrivacyViews.swift` (KRI-161) so the signup and consent screens stay a small, separate file.
 struct AccountDeletionView: View {
     @StateObject private var deletion: AccountDeletionModel
     @EnvironmentObject private var auth: AuthStore
@@ -20,7 +16,7 @@ struct AccountDeletionView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Text("Delete your account")
-                    .font(KriaFont.display(28))
+                    .font(KriaFont.headline(28))
                     .accessibilityAddTraits(.isHeader)
                 Text("This permanently deletes your Kria account, projects, and uploaded and finished media. Copies you saved to Photos stay in Photos. This cannot be undone.")
                 if deletion.codeRequested {
