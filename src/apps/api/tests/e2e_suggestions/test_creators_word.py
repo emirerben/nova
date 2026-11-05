@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from app.kria.brief import BriefUpdate
-from tests.e2e_suggestions import gaps, threads
+from tests.e2e_suggestions import threads
 from tests.e2e_suggestions.driver import Phone
 from tests.e2e_suggestions.report import Recorder
 from tests.e2e_suggestions.threads import EDITOR
@@ -69,15 +69,8 @@ CREATOR_SAID = [
     ),
     ("music", "tr", "müzik olmasın", said("audio", "global", "müzik olmasın"), None),
     ("music", "tr", "sesi kıs", said("audio", "global", "sesi kıs lütfen"), None),
-    # The accusative of "müzik" is "müziği" (k softens to ğ), the commonest way to say it, and
-    # the folded word list only knows "muzik".
-    (
-        "music",
-        "tr",
-        "müziği kıs",
-        said("audio", "global", "müziği çok kıs"),
-        gaps.TR_MUSIC_ACCUSATIVE,
-    ),
+    # The accusative of "müzik" is "müziği" (k softens to ğ), the commonest way to say it.
+    ("music", "tr", "müziği kıs", said("audio", "global", "müziği çok kıs"), None),
     ("sfx", "en", "own words", said("audio", "global", "no sound effects please"), None),
     ("sfx", "tr", "own words", said("audio", "global", "ses efekti olmasın"), None),
     (

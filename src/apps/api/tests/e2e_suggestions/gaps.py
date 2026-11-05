@@ -64,12 +64,3 @@ FROZEN_KIND_SWITCH = Gap(
     "refusal mints a new set without the card, so the cost is one dead tap per creator. The master "
     "switch (pinned taps) does strip a frozen set.",
 )
-TR_MUSIC_ACCUSATIVE = Gap(
-    "GAP-11",
-    "A Turkish music request in the accusative does not withhold the music card (KRI-129)",
-    "app/services/suggestions/brief_asks.py (MUSIC.words has 'muzik', not 'muzig')",
-    "A live requirement whose description says 'müziği çok kıs' (the music, accusative: the k "
-    "softens to ğ) folds to 'muzigi cok kis'; the music dimension only knows 'muzik', 'sarki', "
-    "'sesi kis' and 'sesini kis', so the card 'Müziği kıs' is still offered over a creator who "
-    "just asked for exactly that. 'müzik olmasın' and 'sesi kıs lütfen' do withhold it.",
-)

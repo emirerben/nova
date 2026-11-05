@@ -66,15 +66,20 @@ MUSIC = Dimension(
         "song",
         "soundtrack",
         "muzik",
+        # "müzik" + a vowel suffix: the k softens to ğ ("müziği", "müziğin", "müziğe"), which the
+        # fold writes as "g".
+        "muzig",
         "sarki",
         "volume",
         "louder",
         "quieter",
         "ses seviye",
-        "sesi kis",
-        "sesini kis",
-        "sesi ac",
-        "sesini ac",
+        # "sesi" / "sesini" + the verb: the ask names the sound, not the word "music".
+        *(
+            f"{noun} {verb}"
+            for noun in ("sesi", "sesini")
+            for verb in ("kis", "ac", "azalt", "dusur", "artir", "yukselt", "kapat")
+        ),
     ),
 )
 SFX = Dimension(
