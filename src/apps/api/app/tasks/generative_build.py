@@ -108,6 +108,7 @@ from app.pipeline.look_presets import (
     normalize_look_preset,
 )
 from app.pipeline.phone_talking_inserts import PHONE_INSERT_CLIPS_FIELD
+from app.pipeline.phone_title_look import title_look_text
 from app.pipeline.speech_cleanup_apply import (
     PREFLIGHT_JOB_CONTRACT_FIELD,
     PREFLIGHT_JOB_CONTRACT_VALUE,
@@ -9606,6 +9607,14 @@ def _run_phone_subtitled_job(
                 _strategy = all_candidates.get("creator_strategy")
                 _strategy = _strategy if isinstance(_strategy, dict) else {}
                 _beats = _strategy.get("reaction_beats")
+                if settings.title_look_enabled and isinstance(_beats, list):
+                    # A title-anchored beat is never listened for: its trigger is the
+                    # Visual's name, not a spoken word.
+                    _beats = [
+                        b
+                        for b in _beats
+                        if not (isinstance(b, dict) and b.get("anchor") == "title")
+                    ]
                 _closing = _strategy.get("closing_media")
                 vocabulary_prompt = trigger_vocabulary_prompt(
                     _beats if isinstance(_beats, list) else [],
@@ -10023,6 +10032,8 @@ def _run_phone_subtitled_job(
                     position_x=speaker_position_x or 0.0,
                     protected=protected_plan,
                     caption_avoid=protected_caption_avoid,
+                    request_text=str(all_candidates.get("creator_request") or ""),
+                    reserve_logo=beats_enabled and _asks_title_logo(all_candidates),
                     **text_canvas,
                 )
 
@@ -10511,6 +10522,18 @@ def _run_phone_subtitled_job(
                         import app.services.phone_reaction_grounding as phone_reaction_grounding_mod  # noqa: PLC0415
 
                         beats_to_ground, closing_to_ground = beats, closing
+                        title_anchored: list[dict] = []
+                        if settings.title_look_enabled:
+                            title_anchored = [
+                                b
+                                for b in beats
+                                if isinstance(b, dict) and b.get("anchor") == "title"
+                            ]
+                            beats_to_ground = [
+                                b
+                                for b in beats
+                                if not (isinstance(b, dict) and b.get("anchor") == "title")
+                            ]
                         if ending_visual_id is not None:
                             # KRI-841: the Visual that ends the video is never also a pop-in
                             # or the held closing shot.
@@ -10519,26 +10542,32 @@ def _run_phone_subtitled_job(
                                 closing_to_ground,
                                 ending_beat_removed,
                                 ending_closing_removed,
-                            ) = _without_ending_media(beats, closing, ending_visual_id)
+                            ) = _without_ending_media(beats_to_ground, closing, ending_visual_id)
                         ground_beats = phone_reaction_grounding_mod.ground_phone_reaction_beats
                         try:
-                            grounded_beats = ground_beats(
-                                _sync_session,
-                                job_id=job_id,
-                                beats=beats_to_ground,
-                                closing=closing_to_ground,
-                                words=raw_words or [],
-                                duration_s=float(probe.duration_s),
-                                clip_path=clip_path,
-                                # KRI-521: "when I say X, show my video" -- the
-                                # same gate the KRI-183 PiP pass uses.
-                                video_supported=video_overlays_enabled,
-                                allow_fullscreen=fullscreen_beats_enabled,
-                                fullscreen_hold_s_default=(
-                                    phone_reaction_grounding_mod.TALKING_FULLSCREEN_HOLD_S_DEFAULT
-                                ),
-                                **framed_grounding,
-                            )
+                            if title_anchored and not beats_to_ground and not closing_to_ground:
+                                # Only title logos: grounding has nothing to listen for.
+                                grounded_beats = phone_reaction_grounding_mod.GroundedReactionBeats(
+                                    receipt=_empty_beat_receipt()
+                                )
+                            else:
+                                grounded_beats = ground_beats(
+                                    _sync_session,
+                                    job_id=job_id,
+                                    beats=beats_to_ground,
+                                    closing=closing_to_ground,
+                                    words=raw_words or [],
+                                    duration_s=float(probe.duration_s),
+                                    clip_path=clip_path,
+                                    # KRI-521: "when I say X, show my video" -- the
+                                    # same gate the KRI-183 PiP pass uses.
+                                    video_supported=video_overlays_enabled,
+                                    allow_fullscreen=fullscreen_beats_enabled,
+                                    fullscreen_hold_s_default=(
+                                        phone_reaction_grounding_mod.TALKING_FULLSCREEN_HOLD_S_DEFAULT
+                                    ),
+                                    **framed_grounding,
+                                )
                         except OperationalError:
                             raise  # transient DB -> Celery autoretry, never a lane drop
                         except Exception as exc:  # noqa: BLE001 - beats never fail the job
@@ -10583,6 +10612,33 @@ def _run_phone_subtitled_job(
                                         "badge": "none",
                                     },
                                 }
+
+                if (
+                    beats_enabled
+                    and (beats or closing)
+                    and lane_request is None
+                    and title_anchored
+                    and beat_receipt is not None
+                ):
+                    # Qendresa item 20: a logo she wants above the opening title is shown
+                    # with the title (not on a spoken word); report every outcome.
+                    title_cards, beat_receipt = _place_title_logo_beats(
+                        title_anchored,
+                        title_rows=title_rows,
+                        title_receipt=title_receipt,
+                        beat_receipt=beat_receipt,
+                        sync_session=_sync_session,
+                        job_id=job_id,
+                        clip_path=clip_path,
+                        binding=binding,
+                        keep_segments=speaker_keep_segments,
+                        landscape_fit=framed_fit,
+                        position_x=speaker_position_x or 0.0,
+                        canvas=text_canvas.get("canvas"),
+                    )
+                    if title_cards:
+                        beat_cards = [*beat_cards, *title_cards]
+                        beat_media_ids = frozenset(card.media_id for card in beat_cards)
 
                 # KRI-183: the creator's explicit beats direction still wins
                 # its Visuals and its time windows, but no longer silences the
@@ -11616,7 +11672,10 @@ def _run_phone_subtitled_job(
             + len({cutaway.binding.media_id for cutaway in cutaways}),
             "captions": list(cues or []),
             **(
-                {"title": title_rows[0]["text"], "title_bar_id": title_rows[0].get("id")}
+                {
+                    "title": title_look_text(title_rows) or title_rows[0]["text"],
+                    "title_bar_id": title_rows[0].get("id"),
+                }
                 if title_rows
                 else {}
             ),
@@ -12017,12 +12076,199 @@ def _protected_caption_avoid(
     return boxes
 
 
+def _is_title_anchored(beat: Any) -> bool:
+    return isinstance(beat, dict) and beat.get("anchor") == "title"
+
+
+def _empty_beat_receipt() -> dict[str, Any]:
+    return {
+        "version": 1,
+        "matcher": "phrase",
+        "face_sampling": "skipped",
+        "placed": [],
+        "unplaced": [],
+        "closing": {"status": "none", "badge": "none"},
+    }
+
+
+def _place_title_logo_beats(
+    beats: list[dict],
+    *,
+    title_rows: list[dict],
+    title_receipt: dict[str, Any] | None,
+    beat_receipt: dict[str, Any],
+    sync_session: Any,
+    job_id: str,
+    clip_path: str | None,
+    binding: Any,
+    keep_segments: list[tuple[float, float]],
+    landscape_fit: str,
+    position_x: float,
+    canvas: Any = None,
+) -> tuple[list[Any], dict[str, Any]]:
+    """Qendresa item 20: the logo cards for beats anchored to the opening title, placed right
+    above the title block while it shows, plus ``beat_receipt`` with every beat reported as
+    placed or unplaced (never silent). Cards are on SOURCE time (``remap_lanes_for_cut`` maps
+    them back to the cut timeline later). The title was already placed leaving room for the
+    logo (`_phone_talking_title_rows(reserve_logo=True)`)."""
+    import app.services.phone_overlay_grounding as phone_overlay_grounding_mod  # noqa: PLC0415
+    import app.services.phone_reaction_grounding as phone_reaction_grounding_mod  # noqa: PLC0415
+    from app.pipeline import phone_subtitled_title as title_mod  # noqa: PLC0415
+    from app.pipeline import phone_title_look  # noqa: PLC0415
+    from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_lanes import SubtitledOverlayCard  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.pipeline.render_geometry import NormalizedBox  # noqa: PLC0415
+    from app.services.phone_overlay_grounding import _label_for_asset  # noqa: PLC0415
+
+    canvas = canvas if canvas is not None else _STORY_CANVAS
+    placed = list(beat_receipt.get("placed") or [])
+    unplaced = list(beat_receipt.get("unplaced") or [])
+    cards: list[Any] = []
+
+    def _miss(beat: dict, reason: str) -> None:
+        unplaced.append(
+            {
+                "beat_id": str(beat.get("beat_id") or ""),
+                "trigger": str(beat.get("trigger") or ""),
+                "reason": reason,
+                "anchor": "title",
+            }
+        )
+
+    pool: dict[str, dict] | None = None
+    faces: list[NormalizedBox] | None = None
+    for beat in beats:
+        beat_id = str(beat.get("beat_id") or f"beat-{len(placed) + len(unplaced)}")
+        if not title_rows:
+            _miss(beat, "no_title")
+            continue
+        if pool is None:
+            pool = phone_reaction_grounding_mod._index_pool_assets(
+                phone_overlay_grounding_mod._load_ready_pool_assets(sync_session, job_id=job_id)
+            )
+        asset, reason = phone_reaction_grounding_mod._resolve_visual(
+            beat.get("visual_id"), pool, video_supported=False
+        )
+        if asset is None:
+            _miss(beat, reason or "visual_not_in_pool")
+            continue
+        if faces is None:
+            raw_faces = (title_receipt or {}).get("face_boxes")
+            if isinstance(raw_faces, list):
+                faces = [NormalizedBox(**box) for box in raw_faces]
+            else:
+                display_width, display_height = display_dims(binding.original)
+                window = (
+                    min(float(r["start_s"]) for r in title_rows),
+                    max(float(r["end_s"]) for r in title_rows),
+                )
+                faces, _ = title_mod._face_boxes(
+                    clip_path,
+                    window=window,
+                    keep_segments=keep_segments,
+                    display_width=display_width,
+                    display_height=display_height,
+                    canvas=canvas,
+                    scale=fit_transform(display_width, display_height, canvas, landscape_fit).scale,
+                    sample=title_mod.sample_face_regions,
+                    position_x=position_x,
+                )
+        aspect = phone_title_look.logo_aspect(asset)
+        alignment = str(title_rows[0].get("alignment") or "center")
+        geometry, miss = phone_title_look.place_title_logo(
+            phone_title_look.title_block_box(title_rows, canvas=canvas),
+            aspect=aspect,
+            faces=faces,
+            canvas=canvas,
+            alignment=alignment,
+        )
+        if geometry is None:
+            _miss(beat, miss or "no_room_above_title")
+            continue
+        out_start = min(float(r["start_s"]) for r in title_rows)
+        out_end = max(float(r["end_s"]) for r in title_rows)
+        source_start = title_mod._output_to_source_s(out_start, keep_segments)
+        source_end = title_mod._output_to_source_s(out_end, keep_segments)
+        if source_end is None and keep_segments:
+            source_end = float(keep_segments[-1][1])
+        if source_start is None or source_end is None or source_end <= source_start:
+            _miss(beat, "no_title")
+            continue
+        card = SubtitledOverlayCard(
+            id=f"{beat_id}-title",
+            media_id=str(asset["id"]),
+            gcs_path=asset["gcs_path"],
+            generation=str(asset.get("gcs_generation")),
+            start_s=round(source_start, 3),
+            end_s=round(source_end, 3),
+            fade=True,
+            z=1,
+            kind="image",
+            source_start_s=0.0,
+            **geometry,
+        )
+        cards.append(card)
+        placed.append(
+            {
+                "beat_id": beat_id,
+                "trigger": str(beat.get("trigger") or ""),
+                "at_s": round(source_start, 3),
+                "end_s": round(source_end, 3),
+                "visual_label": _label_for_asset(asset),
+                "anchor": "title",
+            }
+        )
+    return cards, {**beat_receipt, "placed": placed, "unplaced": unplaced}
+
+
+def _asks_title_logo(all_candidates: Mapping[str, Any]) -> bool:
+    """She asked for a logo above the opening title (a beat anchored to it), with the look on."""
+    if not settings.title_look_enabled:
+        return False
+    strategy = all_candidates.get("creator_strategy")
+    beats = strategy.get("reaction_beats") if isinstance(strategy, Mapping) else None
+    return isinstance(beats, list) and any(_is_title_anchored(beat) for beat in beats)
+
+
+def _style_rows_keeping_title_look(rows: list[dict], *, job_id: str, canvas: Any) -> list[dict]:
+    """`generation_style_rows`, except Qendresa's title-look rows (item 20) keep the face
+    and colour of their own line: they skip the restyle and are handed to it as boxes to
+    stay clear of. Without such rows this is exactly `generation_style_rows`."""
+    from app.pipeline.phone_title_look import is_title_look_row  # noqa: PLC0415
+
+    look = [row for row in rows if is_title_look_row(row)]
+    if not look:
+        return generation_style_rows(rows, job_id=job_id)
+    others = [row for row in rows if not is_title_look_row(row)]
+    restyled: dict[str, dict] = {}
+    if others:
+        from app.pipeline.canvas import PORTRAIT  # noqa: PLC0415
+        from app.pipeline.phone_text_style import animation_box, measure_box  # noqa: PLC0415
+
+        box_canvas = canvas if canvas is not None else PORTRAIT
+        excluded = [
+            {
+                "start_s": row["start_s"],
+                "end_s": row["end_s"],
+                "box": animation_box(row, measure_box(row, box_canvas), box_canvas),
+                "kind": "text",
+            }
+            for row in look
+        ]
+        restyled = {
+            row["id"]: row
+            for row in generation_style_rows(others, job_id=job_id, excluded_boxes=excluded)
+        }
+    return [row if is_title_look_row(row) else restyled[row["id"]] for row in rows]
+
+
 def _protected_style_rows(
     rows: list[dict], *, job_id: str, protected: Any, canvas: Any = None
 ) -> list[dict]:
     """`generation_style_rows`, then (KRI-827) any restyle that moved or grew a protected
     row onto a face or the marked object is undone, so the placement receipt stays true."""
-    styled = generation_style_rows(rows, job_id=job_id)
+    styled = _style_rows_keeping_title_look(rows, job_id=job_id, canvas=canvas)
     if protected is None:
         return styled
     from app.pipeline.phone_protected_text import keep_styled_rows_clear  # noqa: PLC0415
@@ -12143,12 +12389,19 @@ def _phone_talking_title_rows(
     protected: Any = None,
     caption_avoid: Any = None,
     canvas: Any = None,
+    request_text: str = "",
+    reserve_logo: bool = False,
 ) -> tuple[list[dict], dict[str, Any] | None]:
     """The phone Talking edit's opening title row (KRI-467), placed off the
     speaker's face, plus its placement receipt; ``([], None)`` when the title
     is empty or the clip has no time for it. ``binding`` is the speaker's
     `PhoneSourceBinding`; ``position_x`` is its KRI-547 face-filled crop shift
-    (with ``landscape_fit="fill"``), so the face is checked where it is drawn."""
+    (with ``landscape_fit="fill"``), so the face is checked where it is drawn.
+
+    Qendresa item 20 (``TITLE_LOOK_ENABLED``): a title typed with " / " breaks becomes one
+    row per line in her look (`phone_title_look`), stacked as one block off her face, and
+    ``reserve_logo`` (she asked for a logo above the title) places the title so the logo
+    fits right above it. Off, or a plain title with no logo asked: today's single row."""
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
 
@@ -12160,33 +12413,86 @@ def _phone_talking_title_rows(
     )
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
-    row = talking_title_element(
-        opening_title,
-        duration_s=duration_s,
-        first_word_end_s=first_cue_word_end_s(cues),
-        timeline_duration_s=sum(max(0.0, end - start) for start, end in keep_segments),
-        canvas=canvas,
-    )
-    if row is None:
-        return [], None
+    timeline_s = sum(max(0.0, end - start) for start, end in keep_segments)
+    rows: list[dict] | None = None
+    position: str | None = None
+    if settings.title_look_enabled:
+        from app.pipeline import phone_title_look  # noqa: PLC0415
+
+        lines = phone_title_look.split_title_lines(opening_title)
+        if lines is not None:
+            ask = phone_title_look.title_look_ask(
+                request_text,
+                line_count=len(lines),
+                title_rule=_phone_title_rule(request_text),
+            )
+            position = ask.position
+            rows = phone_title_look.title_look_rows(
+                opening_title,
+                duration_s=duration_s,
+                first_word_end_s=first_cue_word_end_s(cues),
+                timeline_duration_s=timeline_s,
+                canvas=canvas,
+                ask=ask,
+            )
+    look = bool(rows)
+    if not rows:
+        row = talking_title_element(
+            opening_title,
+            duration_s=duration_s,
+            first_word_end_s=first_cue_word_end_s(cues),
+            timeline_duration_s=timeline_s,
+            canvas=canvas,
+        )
+        if row is None:
+            return [], None
+        rows = [row]
     display_width, display_height = display_dims(binding.original)
-    placed, receipt = place_talking_title(
-        row,
-        clip_path=clip_path,
-        keep_segments=keep_segments,
-        display_width=display_width,
-        display_height=display_height,
-        canvas=canvas,
-        scale=fit_transform(display_width, display_height, canvas, landscape_fit).scale,
-        position_x=position_x,
-        avoid=caption_avoid((float(row["start_s"]), float(row["end_s"]))) if caption_avoid else (),
+    window = (float(rows[0]["start_s"]), float(rows[0]["end_s"]))
+    common = {
+        "clip_path": clip_path,
+        "keep_segments": keep_segments,
+        "display_width": display_width,
+        "display_height": display_height,
+        "canvas": canvas,
+        "scale": fit_transform(display_width, display_height, canvas, landscape_fit).scale,
+        "position_x": position_x,
+        "avoid": caption_avoid(window) if caption_avoid else (),
         **_protected_placement_kwargs(protected),
-    )
+    }
+    if look or (reserve_logo and settings.title_look_enabled):
+        from app.pipeline.phone_title_look import place_title_look  # noqa: PLC0415
+
+        placed_rows, receipt = place_title_look(
+            rows, position=position, reserve_logo=reserve_logo, **common
+        )
+    else:
+        placed, receipt = place_talking_title(rows[0], **common)
+        placed_rows = [placed]
     try:
         record_pipeline_event("phone", "subtitled_title_placement", receipt)
     except Exception:  # noqa: BLE001 - observability only
         pass
-    return [placed], receipt
+    return placed_rows, receipt
+
+
+def _phone_title_rule(request_text: str) -> dict:
+    """The title look she asked for: her saved text rules (the phone text policy's
+    preferences), then a title or all-text rule read from her own words. Never the
+    strategy's font/colour knobs: under the policy those can be a face Kria picked on its
+    own (KRI-1024's provisional font), which would flatten every line into one font."""
+    from app.schemas.phone_text_style import explicit_text_rule  # noqa: PLC0415
+
+    rule: dict = {}
+    policy = current_phone_text_policy()
+    preferences = (policy or {}).get("preferences") or {}
+    for role in ("all_text", "title"):
+        if isinstance(preferences.get(role), dict):
+            rule.update(preferences[role])
+    parsed = explicit_text_rule(request_text or "")
+    if parsed is not None and parsed[0] in ("all_text", "title"):
+        rule.update(parsed[1])
+    return rule
 
 
 def _phone_talking_closing_rows(

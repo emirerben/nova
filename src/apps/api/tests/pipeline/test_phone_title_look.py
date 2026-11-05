@@ -413,6 +413,62 @@ def test_the_logo_slides_or_shrinks_off_a_face():
     assert box.coverage_by(face) <= 0.05
 
 
+def _logo_box(geometry, aspect=1.0):
+    w = geometry["scale"]
+    h = w * CANVAS.width / aspect / CANVAS.height
+    return NormalizedBox(
+        geometry["x_frac"] - w / 2,
+        geometry["y_frac"] - h / 2,
+        geometry["x_frac"] + w / 2,
+        geometry["y_frac"] + h / 2,
+    )
+
+
+@pytest.mark.parametrize("aspect", [1.0, 3.0, 0.4])
+def test_with_a_logo_asked_her_v5_layout_fits_both_off_her_face(aspect):
+    """Her V5: the block under her face, the logo above it beside her head (never dropped)."""
+    placed, receipt = _place(_rows(), V5_FACE, reserve_logo=True)
+
+    face = NormalizedBox(*V5_FACE)
+    block = title_block_box(placed, canvas=CANVAS)
+    assert receipt["logo_room"] is True
+    assert all(box.coverage_by(face) <= 0.05 for box in _boxes(placed))
+    geometry, reason = place_title_logo(block, aspect=aspect, faces=[face], canvas=CANVAS)
+    assert reason is None, receipt
+    logo = _logo_box(geometry, aspect)
+    assert logo.coverage_by(face) <= 0.05
+    assert logo.bottom <= block.top + 1e-3
+    assert logo.top >= 0.06 - 1e-6
+
+
+@pytest.mark.parametrize("aspect", [1.0, 3.0, 0.4])
+def test_with_a_logo_asked_and_no_face_the_block_leaves_room_above_it(aspect):
+    placed, receipt = _place(_rows(), reserve_logo=True)
+
+    block = title_block_box(placed, canvas=CANVAS)
+    assert receipt["logo_room"] is True
+    geometry, reason = place_title_logo(block, aspect=aspect, faces=[], canvas=CANVAS)
+    assert reason is None
+    # Just enough room: the block is not pushed further down than the logo needs.
+    assert block.top <= 0.06 + 0.16 + 0.01 + 0.02
+
+
+def test_without_a_logo_the_block_keeps_its_top_spot():
+    placed, receipt = _place(_rows())
+
+    assert title_block_box(placed, canvas=CANVAS).top == pytest.approx(0.10, abs=2e-3)
+    assert "logo_room" not in receipt or receipt["logo_room"] is None
+
+
+def test_when_no_spot_leaves_room_for_the_logo_the_title_still_stays_off_her_face():
+    """A face filling the frame: the title keeps its own face-safe spot; the logo is dropped."""
+    placed, receipt = _place(_rows(), (0.05, 0.08, 0.95, 0.70), reserve_logo=True)
+
+    face = NormalizedBox(0.05, 0.08, 0.95, 0.70)
+    assert receipt["logo_room"] is False
+    assert all(box.coverage_by(face) <= 0.05 for box in _boxes(placed))
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [("1:1", 1.0), ("16:9", 16 / 9), ("0.5625", 0.5625), (None, 1.0), ("junk", 1.0), ("0:5", 1.0)],

@@ -644,6 +644,7 @@ FIELD_MATRIX: dict[str, FieldRule] = {
                 "following_clip_id",
                 "sound",
                 "hold_s",
+                "anchor",
             )
         ),
         "closing_media",
@@ -2732,9 +2733,9 @@ def verify_phone_recipe(
                 lines[-1].append(text)
         return "\n".join("".join(line) for line in lines)
 
-    def text_layers() -> list[tuple[str, str, float, float]]:
+    def text_layers() -> list[tuple[str, str, float, float, float]]:
         return [
-            (layer.id, _normal(_layer_text(layer)), layer.start, layer.end)
+            (layer.id, _normal(_layer_text(layer)), layer.start, layer.end, layer.anchor_y)
             for layer in recipe.text_layers
             if layer.runs
             and all(
@@ -2751,8 +2752,14 @@ def verify_phone_recipe(
 
     rendered = text_layers()
     rendered_evidence = [
-        {"element_id": layer_id, "text": text, "start_s": start, "end_s": end}
-        for layer_id, text, start, end in rendered
+        {
+            "element_id": layer_id,
+            "text": text,
+            "start_s": start,
+            "end_s": end,
+            "anchor_y": anchor_y,
+        }
+        for layer_id, text, start, end, anchor_y in rendered
     ]
     for requirement in contract.exact_texts:
         matches = text_matches(
@@ -2761,6 +2768,11 @@ def verify_phone_recipe(
             role=requirement.role,
             tolerance_s=frame,
         )
+        if not matches and requirement.role == "opening":
+            # Item 20: a " / " title drawn as one row per line, stacked top to bottom.
+            from app.pipeline.phone_title_look import stacked_title_matches  # noqa: PLC0415
+
+            matches = stacked_title_matches(rendered_evidence, requirement.text, tolerance_s=frame)
         if (
             not matches
             and requirement.role == "any"

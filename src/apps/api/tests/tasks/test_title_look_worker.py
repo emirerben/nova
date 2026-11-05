@@ -257,6 +257,38 @@ def test_the_styling_pass_keeps_each_lines_own_face(monkeypatch):
     assert "Unbounded" not in {row["font_family"] for row in rows}
 
 
+def test_a_font_kria_picked_on_its_own_never_flattens_her_lines(monkeypatch):
+    """Item 21's gotcha: the strategy's font knob can be a provisional face, not her ask."""
+    import app.services.phone_text_styling as styling
+
+    _look(monkeypatch)
+    _faces(monkeypatch)
+    monkeypatch.setattr(gb.settings, "phone_text_styling_enabled", True)
+    monkeypatch.setattr(styling, "select_fonts", lambda rows, policy, **_k: {})
+    job, *_ = _titled(monkeypatch)
+    job.all_candidates["creator_strategy"]["font_family"] = "Unbounded"
+    styling.stamp_phone_text_style(job)
+    job.assembly_plan[styling.PHONE_TEXT_STYLE_FIELD]["selection_calls"] = 2
+
+    gb._run_generative_job(str(job.id))
+
+    rows = _title_rows(job)
+    assert len({row["font_family"] for row in rows}) == 3
+    assert "Unbounded" not in {row["font_family"] for row in rows}
+
+
+def test_a_font_she_names_for_the_title_is_used_on_every_line(monkeypatch):
+    _look(monkeypatch)
+    _faces(monkeypatch)
+    job, *_ = _titled(
+        monkeypatch, request=f'Start with the title "{HER_TITLE}". Use Pacifico for the title.'
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert {row["font_family"] for row in _title_rows(job)} == {"Pacifico"}
+
+
 # --- the confirmed-text checks still find her title ---------------------------------------
 
 
@@ -384,15 +416,26 @@ def _logo_job(monkeypatch, *, face=None):
     return job
 
 
-def _logo_cards(job):
+def _logo_box(job) -> tuple[NormalizedBox, float, float]:
+    """The logo card the phone draws (recipe overlay track): its canvas box and window."""
     recipe = _recipe(job)
-    return [
+    [clip] = [
         clip
         for track in recipe.tracks
         if track.id != "subtitled"
         for clip in track.clips
         if "github-logo" in (clip.source_asset_id or "")
     ]
+    place = clip.visual_placement
+    width = place.width_fraction
+    height = width * PORTRAIT.width / PORTRAIT.height  # her logo is square ("1:1")
+    box = NormalizedBox(
+        place.x_fraction - width / 2,
+        place.y_fraction - height / 2,
+        place.x_fraction + width / 2,
+        place.y_fraction + height / 2,
+    )
+    return box, place.window_start, place.window_end
 
 
 def test_the_logo_sits_right_above_her_title_while_it_shows(monkeypatch):
@@ -404,43 +447,44 @@ def test_the_logo_sits_right_above_her_title_while_it_shows(monkeypatch):
     rows = _title_rows(job)
     block_top = min(_box(row).top for row in rows)
     [placed] = [e for e in variant["phone_beat_receipt"]["placed"] if e["beat_id"] == "logo"]
-    lanes = variant["phone_subtitled_lanes"]["overlays"]
-    [card] = [c for c in lanes if c["media_id"] in (_LOGO, "github-logo")]
+    assert placed["anchor"] == "title"
+    logo, start, end = _logo_box(job)
     # Shown with the title, from the first frame until the title leaves.
-    assert card["start_s"] == pytest.approx(0.0, abs=0.05)
-    assert card["end_s"] == pytest.approx(rows[0]["end_s"], abs=0.05)
-    # Right above the block: its bottom edge sits on or above the block's top edge.
-    half_height = card["scale"] * PORTRAIT.width / PORTRAIT.height / 2  # square logo
-    assert card["y_frac"] + half_height <= block_top + 1e-3
-    assert card["y_frac"] - half_height >= 0.06
-    assert placed["at_s"] == pytest.approx(0.0, abs=0.05)
-    assert _logo_cards(job)
+    assert start == pytest.approx(0.0, abs=0.05)
+    assert end == pytest.approx(rows[0]["end_s"], abs=0.05)
+    # Right above the block, under the platform header.
+    assert logo.bottom <= block_top + 1e-3
+    assert logo.bottom >= block_top - 0.03
+    assert logo.top >= 0.06 - 1e-3
 
 
-def test_the_logo_never_lands_on_her_face(monkeypatch):
+def test_with_her_v5_face_both_fit_the_title_under_it_and_the_logo_beside_her_head(monkeypatch):
     job = _logo_job(monkeypatch, face=HER_V5_FACE)
 
     gb._run_generative_job(str(job.id))
 
     variant = job.assembly_plan["variants"][0]
-    lanes = variant["phone_subtitled_lanes"]["overlays"]
-    cards = [c for c in lanes if c["media_id"] in (_LOGO, "github-logo")]
-    receipt = variant["phone_beat_receipt"]
-    if not cards:
-        # Dropped only with an honest reason, never silently.
-        [missed] = [e for e in receipt["unplaced"] if e["beat_id"] == "logo"]
-        assert missed["reason"]
-        return
-    [card] = cards
-    half_w = card["scale"] / 2
-    half_h = card["scale"] * PORTRAIT.width / PORTRAIT.height / 2
-    logo_box = NormalizedBox(
-        card["x_frac"] - half_w,
-        card["y_frac"] - half_h,
-        card["x_frac"] + half_w,
-        card["y_frac"] + half_h,
-    )
-    assert logo_box.coverage_by(HER_V5_FACE) <= _MAX_FACE_COVERAGE
+    rows = _title_rows(job)
+    assert [row["text"] for row in rows] == HER_LINES
+    for row in rows:
+        assert _box(row).coverage_by(HER_V5_FACE) <= _MAX_FACE_COVERAGE, row["text"]
+    assert [e["beat_id"] for e in variant["phone_beat_receipt"]["placed"]] == ["logo"]
+    logo, _start, _end = _logo_box(job)
+    assert logo.coverage_by(HER_V5_FACE) <= _MAX_FACE_COVERAGE
+    assert logo.bottom <= min(_box(row).top for row in rows) + 1e-3
+
+
+def test_with_no_room_off_her_face_the_logo_is_reported_not_hidden(monkeypatch):
+    face = NormalizedBox(0.05, 0.08, 0.95, 0.72)  # a face filling the frame
+    job = _logo_job(monkeypatch, face=face)
+
+    gb._run_generative_job(str(job.id))
+
+    variant = job.assembly_plan["variants"][0]
+    for row in _title_rows(job):
+        assert _box(row).coverage_by(face) <= _MAX_FACE_COVERAGE, row["text"]
+    [missed] = [e for e in variant["phone_beat_receipt"]["unplaced"] if e["beat_id"] == "logo"]
+    assert (missed["anchor"], missed["reason"]) == ("title", "no_room_above_title")
 
 
 def test_a_title_logo_beat_with_the_flag_off_goes_to_grounding_as_before(monkeypatch):

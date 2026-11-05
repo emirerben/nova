@@ -80,6 +80,11 @@ _LOGO_MAX_HEIGHT = 0.16
 _LOGO_GAP = 0.01
 _LOGO_X_MIN, _LOGO_X_MAX = 0.02, 0.98
 _LOGO_SHRINKS = (1.0, 0.8, 0.6)
+# The biggest logo `place_title_logo` ever draws (full width AND full height): a block with room
+# for this box at some spot has room for any real logo there (narrower or shorter fits inside it).
+_LOGO_ROOM_ASPECT = _LOGO_WIDTH / _LOGO_MAX_HEIGHT * 1920 / 1080
+# The highest block top that leaves that box room above it under the header margin.
+_LOGO_ROOM_TOP = _Y_MIN + _LOGO_MAX_HEIGHT + _LOGO_GAP
 
 
 class _Canvas(Protocol):
@@ -305,11 +310,14 @@ def _stack(boxes: Sequence[NormalizedBox], top: float) -> list[NormalizedBox]:
 
 
 def _candidates(
-    height: float, faces: Sequence[NormalizedBox], position: str | None
+    height: float, faces: Sequence[NormalizedBox], position: str | None, *, logo: bool = False
 ) -> list[tuple[str, float]]:
     """(kind, block top) in the order to try them."""
     first = 0.5 - height / 2 if position == "middle" else _BLOCK_TOP
     found = [("preset", first)]
+    if logo and first < _LOGO_ROOM_TOP:
+        # The same spot, lowered just enough for a logo above it.
+        found.append(("logo_room", _LOGO_ROOM_TOP))
     if faces:
         found.append(("below_face", max(f.bottom for f in faces) + _FACE_GAP))
         above = min(f.top for f in faces) - _FACE_GAP - height
@@ -352,11 +360,16 @@ def place_title_look(
     objects: Sequence[Any] = (),
     protect_all_faces: bool = False,
     position: str | None = None,
+    reserve_logo: bool = False,
 ) -> tuple[list[dict], dict[str, Any]]:
     """Stack ``rows`` top to bottom in line order, clear of faces, objects and the frame edge.
 
     Tries the asked (or default) spot, then under the lowest face, then above the highest;
-    when none fits it shrinks every row and retries. Never raises."""
+    when none fits it shrinks every row and retries. ``reserve_logo`` (she asked for a logo
+    above the title): a spot only counts when the biggest logo also fits right above the
+    block off every face (her V5: the block under her face, the logo beside her head); when
+    no spot at any size leaves that room, the title keeps the spot it would have had without
+    a logo and the receipt's ``logo_room`` is false. Never raises."""
     try:
         window = (min(float(r["start_s"]) for r in rows), max(float(r["end_s"]) for r in rows))
         faces, receipt = title_mod._face_boxes(
@@ -386,14 +399,27 @@ def place_title_look(
         if position == "top_left":
             base = [{**r, "alignment": "left", "x_frac": _LEFT_X_FRAC} for r in base]
 
+        def logo_fits(boxes: Sequence[NormalizedBox]) -> bool:
+            block = NormalizedBox(
+                min(b.left for b in boxes),
+                min(b.top for b in boxes),
+                max(b.right for b in boxes),
+                max(b.bottom for b in boxes),
+            )
+            geometry, _miss = place_title_logo(
+                block, aspect=_LOGO_ROOM_ASPECT, faces=hard, canvas=canvas
+            )
+            return geometry is not None
+
         best: tuple[tuple[float, float], str, float, list[dict], list[NormalizedBox]] | None = None
         chosen = None
+        without_logo = None  # the title-only choice, when no spot leaves room for the logo
         for factor in _SHRINK:
             sized = _sized(base, factor)
             measured = [_measure(r, canvas) for r in sized]
             height = sum(b.height for b in measured) + _GAP_FRAC * (len(measured) - 1)
             fits: list[tuple[str, list[NormalizedBox], float]] = []
-            for kind, top in _candidates(height, faces, position):
+            for kind, top in _candidates(height, faces, position, logo=reserve_logo):
                 boxes = _stack(measured, top)
                 if not _inside(boxes):
                     continue
@@ -402,11 +428,16 @@ def place_title_look(
                     best = ((coverage, -factor), kind, factor, sized, boxes)
                 if coverage <= _MAX_COVERAGE:
                     fits.append((kind, boxes, coverage))
+            if fits and reserve_logo:
+                if without_logo is None:
+                    without_logo = _pick(fits, avoid, factor, sized)
+                fits = [f for f in fits if logo_fits(f[1])]
             if fits:
-                clean = [f for f in fits if _worst(f[1], avoid) <= _MAX_COVERAGE]
-                kind, boxes, coverage = (clean or fits)[0]
-                chosen = (kind, factor, sized, boxes, coverage, not clean and bool(avoid))
+                chosen = _pick(fits, avoid, factor, sized)
                 break
+        logo_room = chosen is not None if reserve_logo else None
+        if chosen is None and without_logo is not None:
+            chosen = without_logo
         if chosen is not None:
             kind, factor, sized, boxes, coverage, overlap = chosen
             status = (
@@ -446,10 +477,23 @@ def place_title_look(
             "faces": receipt.get("faces"),
             "scale": factor,
             "objects": object_receipts,
+            **({"logo_room": logo_room} if reserve_logo else {}),
         }
     except Exception as exc:  # noqa: BLE001 - a placement nicety never blocks a render
         log.warning("phone_title_look.placement_failed", error=str(exc)[:200])
         return list(rows), {"status": "error", "error": str(exc)[:200]}
+
+
+def _pick(
+    fits: Sequence[tuple[str, list[NormalizedBox], float]],
+    avoid: Sequence[NormalizedBox],
+    factor: float,
+    sized: list[dict],
+) -> tuple[str, float, list[dict], list[NormalizedBox], float, bool]:
+    """The first fitting spot that also keeps clear of ``avoid`` (captions), else the first."""
+    clean = [f for f in fits if _worst(f[1], avoid) <= _MAX_COVERAGE]
+    kind, boxes, coverage = (clean or fits)[0]
+    return kind, factor, sized, boxes, coverage, not clean and bool(avoid)
 
 
 # --- logo --------------------------------------------------------------------------------

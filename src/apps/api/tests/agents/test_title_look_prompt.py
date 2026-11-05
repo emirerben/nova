@@ -25,14 +25,14 @@ def test_prompt_version_is_bumped() -> None:
 
 
 def test_flag_off_section_is_the_old_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(main_creator, "_title_look_on", lambda: False)
+    monkeypatch.setattr(main_creator.settings, "title_look_enabled", False)
     section = main_creator._reaction_beats_section(_manifest())
     assert section == main_creator._REACTION_BEATS_PROMPT_SECTION
     assert '"anchor"' not in section
 
 
 def test_flag_on_teaches_the_title_anchor(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(main_creator, "_title_look_on", lambda: True)
+    monkeypatch.setattr(main_creator.settings, "title_look_enabled", True)
     section = main_creator._reaction_beats_section(_manifest())
     assert section.startswith(main_creator._REACTION_BEATS_PROMPT_SECTION)
     assert '"anchor": "title"' in section

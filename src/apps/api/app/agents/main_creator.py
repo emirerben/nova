@@ -1973,9 +1973,9 @@ def _timed_cards_available(manifest: ResolvedCreatorManifest) -> bool:
 
 
 def _title_look_on() -> bool:
-    """TITLE_LOOK_ENABLED, read tolerantly (the field lands with the worker integration)."""
+    """TITLE_LOOK_ENABLED (Qendresa item 20), read per prompt render."""
 
-    return bool(getattr(settings, "title_look_enabled", False))
+    return settings.title_look_enabled
 
 
 def _reaction_beats_section(manifest: ResolvedCreatorManifest) -> str:
