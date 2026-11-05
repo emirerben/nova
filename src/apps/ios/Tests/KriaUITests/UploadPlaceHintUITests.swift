@@ -21,6 +21,8 @@ import XCTest
         attach(app, "Upload place hint")
         let move = footage.buttons["Move to Overlays"]
         XCTAssertTrue(move.waitForExistence(timeout: 3))
+        XCTAssertLessThan(move.frame.maxY, app.buttons["attachment-next"].frame.minY,
+                          "the hint is seen without scrolling, not under the clip rows behind Next")
         move.tap()
         XCTAssertTrue(hint.waitForNonExistence(timeout: 15), "the hint stays after Move to Overlays")
         XCTAssertTrue(row(footage, recordingName).waitForNonExistence(timeout: 15), "the recording is still in Footage")

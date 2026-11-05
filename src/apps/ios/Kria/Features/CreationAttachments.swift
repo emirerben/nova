@@ -433,8 +433,11 @@ struct AttachmentSheet: View {
     }
 
     private var footageStep: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        let hint = footageHint
+        return VStack(alignment: .leading, spacing: 20) {
             AttachmentHeading(title: "Add footage", subtitle: FootageStageCopy.attachmentSubtitle(talking: isTalkingToCamera, maximumClipCount: maximumClipCount))
+            // First thing on the step: under the clip rows it sat below the fold, behind Next.
+            if let hint { placeHintNotice(hint) }
             FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximumClipCount, attachedClipCount: existing(for: .clip), attachedMediaIDs: attachedMediaIDs(for: .clip), role: .clip, itemID: itemID, limit: capabilities?.media?["clips"], destination: uploadDestination(for: .clip), onPickerFilled: nil, onSelectionCompleted: advanceAfterFootageSelection, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true,
                               controls: .tiles(record: auth.localStorageIdentity == nil ? nil : { openCamera(withScript: false) }),
                               launchSource: $pickerLaunch)
@@ -457,9 +460,7 @@ struct AttachmentSheet: View {
                 }
                 .buttonStyle(.plain).accessibilityIdentifier("teleprompter-open")
             }
-            let hint = footageHint
             attachedList(role: .clip, flaggedClips: Dictionary(uniqueKeysWithValues: (hint?.flagged ?? []).map { ($0.key, $0.isScreenRecording) }))
-            if let hint { placeHintNotice(hint) }
         }
     }
 
