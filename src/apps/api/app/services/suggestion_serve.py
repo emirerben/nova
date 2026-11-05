@@ -65,6 +65,7 @@ from app.services.suggestion_chips import (
     load_suggestion_context,
     suggestion_digest,
 )
+from app.services.suggestions import brief_asks
 from app.services.suggestions.context import snapshot_digest
 
 log = structlog.get_logger()
@@ -140,14 +141,27 @@ async def with_transcripts(db: Any, thread: Any, ctx: SuggestionContext) -> Sugg
         )
     except Exception:  # noqa: BLE001 - the wording checks degrade, the set still serves
         log.warning("suggestion_chips.error", stage="transcripts", exc_info=True)
-        return ctx
+        return _brief_unread(ctx)
     if ctx.state not in ("first_prompt", "ready") or not v2_inputs_on():
         return ctx
     try:
         return await _with_v2_inputs(db, thread, item, ctx)
     except Exception:  # noqa: BLE001 - never worse than the transcripts-only context
         log.warning("suggestion_chips.error", stage="kind_inputs", exc_info=True)
+        return _brief_unread(ctx)
+
+
+def _brief_unread(ctx: SuggestionContext) -> SuggestionContext:
+    """A v2 flag is on and the brief was not read: mark it unreadable, not absent (KRI-129).
+
+    An absent ``BRIEF_KEY`` means the loader never ran (flags off), which the five brief-obeying
+    kinds read as "the creator said nothing". After a failed read that would offer a captions card
+    to someone who asked for none; ``UNREADABLE`` makes them offer nothing instead."""
+    if ctx.state not in ("first_prompt", "ready") or not v2_inputs_on():
         return ctx
+    return dataclasses.replace(
+        ctx, kind_inputs={**ctx.kind_inputs, BRIEF_KEY: brief_asks.UNREADABLE}
+    )
 
 
 # ── The v2 kinds' inputs (each read isolated: one failing never drops the others) ────────
@@ -357,6 +371,7 @@ async def _with_v2_inputs(
         inputs[BRIEF_KEY] = brief
     except Exception:  # noqa: BLE001 - every brief-reading kind then offers nothing
         log.warning("suggestion_chips.error", stage="brief", exc_info=True)
+        inputs[BRIEF_KEY] = brief_asks.UNREADABLE
 
     if editor_triggers_on() and brief_ok:
         try:

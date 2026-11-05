@@ -37,8 +37,8 @@ Signals hook
       creator on the chips allow-list; a failing measurement never fails the task; an almost
       spent run defers instead of starting.
 
-Skips unless DATABASE_URL names a reachable migrated ``*_test`` database; under CI (``CI`` set)
-that is a collection failure, not a skip.
+Skips unless DATABASE_URL names a reachable migrated ``*_test`` database; where
+``NOVA_REQUIRE_POSTGRES_TESTS`` is set (the api shards) that is a collection failure, not a skip.
 """
 
 from __future__ import annotations
@@ -62,8 +62,10 @@ from app.services import clip_signals
 from app.services import suggestion_chips as sc
 from app.services import suggestion_serve as serve
 from app.services import suggestion_store as store
+from app.services.suggestions import brief_asks
 from app.services.suggestions.kinds import filler_words, mute_clip
 from app.services.suggestions.models import RankedPick, SuggestionAgentOutput
+from tests.postgres_required import postgres_required
 
 
 def _database_problem() -> str | None:
@@ -79,7 +81,7 @@ def _database_problem() -> str | None:
 
 
 _PROBLEM = _database_problem()
-if _PROBLEM and os.environ.get("CI"):
+if _PROBLEM and postgres_required():
     pytest.fail(f"{_PROBLEM}: the serve wiring fixtures must run in CI", pytrace=False)
 if _PROBLEM:
     pytest.skip(_PROBLEM, allow_module_level=True)
@@ -360,7 +362,10 @@ async def test_w2_a_failed_brief_read_does_not_forge_a_freshness_key(world, v2_o
     seeded = seed()
     monkeypatch.setattr("app.kria.brief.load_latest_brief", _boom_async)
     ctx, plan = await loaded(seeded)
-    assert "brief" not in ctx.kind_inputs
+    # Not a forged brief and not an absent key (absent reads as "the loader never ran"): the
+    # sentinel makes the five brief-obeying kinds offer nothing (KRI-129).
+    assert ctx.kind_inputs["brief"] is brief_asks.UNREADABLE
+    assert "freshness" not in ctx.kind_inputs
     # plan_for read the key itself from the database rather than keying a brief that failed to load.
     assert plan.input_digest != sc.build_candidates(ctx).input_digest
 

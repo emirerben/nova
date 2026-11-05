@@ -25,6 +25,9 @@ Failure catalogue, written before any code
       cut order, the on-screen words of a text ask) suppresses a card it has nothing to say about.
   B6  fail open on an unreadable brief: the loader handed over something that is not a brief
       (a dict, a string). The kind must offer nothing, not guess.
+  B6b the loader itself fails (a transient DB error) with a v2 flag on. The key is then absent,
+      which ``spoke`` reads as "flags off", so the five kinds were offered even though the creator
+      may have said "no captions". An unreadable brief and an absent one must differ.
   B7  a legacy context (the loader never ran, flags off) changes: no "brief" key at all must be
       byte-identical to today, card for card and chip for chip.
 """
@@ -32,6 +35,7 @@ Failure catalogue, written before any code
 from __future__ import annotations
 
 import dataclasses
+from types import SimpleNamespace
 
 import pytest
 
@@ -222,6 +226,54 @@ def test_an_unreadable_brief_offers_nothing(kind, junk):
     ctx = home_ctx(kind)
     ctx = dataclasses.replace(ctx, kind_inputs={**ctx.kind_inputs, brief_asks.BRIEF_KEY: junk})
     assert_withheld(kind, ctx)
+
+
+class _Db:
+    def __init__(self, *, get_fails: bool = False):
+        self.get_fails = get_fails
+
+    async def get(self, model, key):
+        if self.get_fails:
+            raise RuntimeError("db down")
+        return SimpleNamespace(clip_assignments=[])
+
+
+def _break_loader(monkeypatch, how: str) -> None:
+    async def boom(*args, **kwargs):
+        raise RuntimeError("brief read failed")
+
+    if how == "brief_read":
+        monkeypatch.setattr("app.kria.brief.load_latest_brief", boom)
+    elif how == "v2_stage":
+        monkeypatch.setattr(suggestion_serve, "_with_v2_inputs", boom)
+
+
+@pytest.mark.parametrize("how", ["brief_read", "v2_stage", "transcripts"])
+@pytest.mark.parametrize("kind", sorted(HOME))
+async def test_a_failed_brief_read_offers_nothing_not_everything(monkeypatch, kind, how):
+    """B6b: through the real ``with_transcripts``, with a v2 flag on and the read failing."""
+    monkeypatch.setattr(settings, "kria_suggestion_editor_triggers_enabled", True)
+    assert suggestion_serve.v2_inputs_on()
+    _break_loader(monkeypatch, how)
+    ctx = home_ctx(kind)
+    assert_offered(kind, ctx)  # the same context with no brief key is what the bug served
+    thread = SimpleNamespace(id="t-1", active_plan_item_id="item-1")
+    served = await suggestion_serve.with_transcripts(
+        _Db(get_fails=how == "transcripts"), thread, ctx
+    )
+    assert_withheld(kind, served)
+
+
+async def test_a_failed_brief_read_with_every_v2_flag_off_changes_nothing(monkeypatch):
+    """Flags off is the legacy path: the read is never attempted, the context is as it was."""
+    monkeypatch.setattr(settings, "kria_suggestion_editor_triggers_enabled", False)
+    monkeypatch.setattr(suggestion_serve, "input_kinds_on", lambda: frozenset())
+    _break_loader(monkeypatch, "brief_read")
+    ctx = home_ctx("captions")
+    thread = SimpleNamespace(id="t-1", active_plan_item_id="item-1")
+    served = await suggestion_serve.with_transcripts(_Db(), thread, ctx)
+    assert brief_asks.BRIEF_KEY not in served.kind_inputs
+    assert_offered("captions", served)
 
 
 @pytest.mark.parametrize("kind", sorted(HOME))
