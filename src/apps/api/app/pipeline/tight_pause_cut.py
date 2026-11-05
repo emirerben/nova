@@ -8,7 +8,8 @@ module adds those cuts at render time, ON TOP of an already-consented ``CutPlan`
 - it only cuts silence between two kept words that sit in the same keep segment, leaving
   ``PAD_S`` of breathing room on each word (the margin today's pause rule keeps);
 - every new cut goes through the KRI-1017 voice guard, and a fault in silence detection or
-  audio decoding means no new cuts at all (never cut without having heard the audio);
+  audio decoding means no new cuts at all (never cut without having heard the audio); so does
+  a failed pause measurement (never cut what the receipt cannot report);
 - a kept speech fragment shorter than ``MIN_KEEP_SPEECH_SEGMENT_S`` never touches a new cut.
 
 Pure given decoded samples; ``apply_tight_pauses`` is the I/O wrapper.
@@ -378,6 +379,10 @@ def tighten_pauses(
     measure_silences: Sequence[tuple[float, float]] | None = None,
     measurable: bool = True,
 ) -> tuple[CutPlan, TightPauseReport]:
+    if not measurable:
+        # Review #2102: without the acceptance measurement the receipt cannot say what was
+        # left, and it says nothing was shortened, so the video must not be shortened either.
+        return _unavailable(plan, "unmeasured")
     normalized = _normalize_words(words)
     spans = _merge([(float(a), float(b)) for a, b in silences])
     measure = spans if measure_silences is None else _merge(list(measure_silences))
@@ -408,7 +413,7 @@ def tighten_pauses(
         candidates = _candidates(kept, keep, plan.removed, spans, normalized, loud)
     else:
         candidates = []
-    before_longest = kept_pause_stats(plan, words, measure, duration_s)[0] if measurable else None
+    before_longest = kept_pause_stats(plan, words, measure, duration_s)[0]
 
     guard_dropped = guard_trimmed = 0
     new: list[Removal] = []
@@ -441,15 +446,11 @@ def tighten_pauses(
         new = _enforce_fragments(consented, new, kept, normalized, duration_s)
 
     reason = None if audio_ok else "audio_unavailable"
-    if reason is None and not measurable:
-        reason = "unmeasured"
     if not new:
         status: Literal["applied", "no_change", "unavailable"] = (
             "no_change" if audio_ok else "unavailable"
         )
-        longest, over = (
-            kept_pause_stats(plan, words, measure, duration_s) if measurable else (None, None)
-        )
+        longest, over = kept_pause_stats(plan, words, measure, duration_s)
         return plan, TightPauseReport(
             status, 0, 0.0, longest, before_longest, over,
             guard_dropped, guard_trimmed, capped, reason,
@@ -462,9 +463,7 @@ def tighten_pauses(
         keep_segments=_complement(removed, duration_s),
         time_saved_s=sum(r.end_s - r.start_s for r in removed),
     )
-    longest, over = (
-        kept_pause_stats(out_plan, words, measure, duration_s) if measurable else (None, None)
-    )
+    longest, over = kept_pause_stats(out_plan, words, measure, duration_s)
     return out_plan, TightPauseReport(
         "applied", len(new), sum(r.end_s - r.start_s for r in new), longest, before_longest,
         over, guard_dropped, guard_trimmed, capped, reason,

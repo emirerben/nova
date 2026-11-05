@@ -43,7 +43,9 @@ clearly room tone:
   within 10 dB in the 0.2 s before / 0.3 s after a word's own audible core inside its stamp
   (soft onsets and endings; room tone flickers up to about +8 dB);
 - then the KRI-1017 voice guard; no shot under 0.6 s next to a new cut; at most 85 keep segments;
-  no tight cuts on takes whose floor is above -45 dBFS.
+  no tight cuts on takes whose floor is above -45 dBFS;
+- no tight cuts when the pause measurement fails (`reason: "unmeasured"`): the receipt then says
+  nothing was shortened, so the video must match it (review of #2102).
 
 A 12 dB prototype without the floor rule clipped a soft -38 dBFS word ending ("etmek" became "et"
 to whisper); the floor rule is what fixed it. It runs at render (like KRI-821 named cuts), on top

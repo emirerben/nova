@@ -28,6 +28,10 @@ Failure modes written down BEFORE the code (repo testing policy):
 19. (v3) A word's soft unvoiced ending INSIDE its own stamp is cut.
 20. (v3) A successful empty pause measurement is treated as a failed one (and a failed one
     silently falls back to the -30 dB spans).
+21. (review #2102) A failed pause measurement still cuts: the receipt then says "I didn't
+    shorten the shorter pauses" about a video that was shortened. A failed measurement must
+    leave the consented plan untouched (same object, no new cuts), in the I/O wrapper and in
+    the pure function alike.
 """
 
 from __future__ import annotations
@@ -488,11 +492,28 @@ def test_v3_empty_measurement_is_a_measurement_and_failed_one_is_unmeasured(
     out, report = tpc.apply_tight_pauses(plan, path, words, dur)
     assert report.status == "applied"
     assert report.longest_pause_s == 0.0 and report.pauses_over_limit == 0
+    assert _new_removals(plan, out)
     monkeypatch.setattr(tpc, "measure_silence_spans", lambda *a, **k: None)
     out2, report2 = tpc.apply_tight_pauses(plan, path, words, dur)
-    assert report2.status == "applied" and out2.removed == out.removed
+    # Review #2102: no measurement, no tight cuts (the receipt says nothing was shortened).
+    assert out2 is plan
+    assert report2.status == "unavailable" and report2.reason == "unmeasured"
+    assert report2.added_cuts == 0 and report2.added_removed_s == 0.0
     assert report2.longest_pause_s is None and report2.longest_pause_before_s is None
-    assert report2.pauses_over_limit is None and report2.reason == "unmeasured"
+    assert report2.pauses_over_limit is None
+
+
+def test_review_2102_pure_cutter_without_measurement_adds_no_cuts(tmp_path):
+    path, words, dur, samples = build_take(tmp_path, [1.0, 1.0, 1.0])
+    silences = _gap_silences(words)
+    plan = _whole_plan(dur)
+    measured, _ = tpc.tighten_pauses(
+        plan, words, silences, dur, samples=samples, measure_silences=silences
+    )
+    assert _new_removals(plan, measured)  # the same take is cut when it can be measured
+    out, report = tpc.tighten_pauses(plan, words, silences, dur, samples=samples, measurable=False)
+    assert out is plan
+    assert (report.status, report.reason, report.added_cuts) == ("unavailable", "unmeasured", 0)
 
 
 def _noise(samples, lo_s, hi_s, rel_db, seed):

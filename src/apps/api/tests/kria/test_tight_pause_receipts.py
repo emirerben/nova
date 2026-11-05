@@ -13,6 +13,9 @@ Prod/kit: the render cut only pauses >= 0.6 s and the finished receipt said a ba
  7. A plain "cut the long pauses" ask is not touched by the flag.
  8. Turkish twins exist for every new English line; the report is read only when a dict.
  9. Cleanup not run / declined -> today's logic (no tight claim).
+10. (review #2102) The video and the receipt disagree: the cutter's OWN report for a failed
+    pause measurement maps to "I didn't shorten the shorter pauses", so that render must hold
+    no tight cuts.
 """
 
 from __future__ import annotations
@@ -276,6 +279,24 @@ def test_unmeasured_reason_maps_to_unmeasured_line(flag_on):
     assert _rendered(_req(), report).reason == (
         "I couldn't measure the quiet parts of your take, so I didn't shorten the shorter pauses"
     )
+
+
+def test_review_2102_failed_measurement_video_and_receipt_agree(flag_on, tmp_path, monkeypatch):
+    from app.pipeline import tight_pause_cut as tpc
+    from tests.pipeline.test_tight_pause_cut import CYCLE, build_take, consented
+
+    path, words, dur, _ = build_take(tmp_path, (CYCLE * 4)[:23])
+    plan = consented(path, words, dur)
+    monkeypatch.setattr(tpc, "measure_silence_spans", lambda *a, **k: None)
+    out, report = tpc.apply_tight_pauses(plan, path, words, dur)
+    receipt = _rendered(_req(), report.to_variant())
+    assert receipt.status == "partial"
+    assert receipt.reason == (
+        "I couldn't measure the quiet parts of your take, so I didn't shorten the shorter pauses"
+    )
+    # ... and it is true: the render plays the consented plan, nothing more.
+    assert out is plan
+    assert report.to_variant()["added_cuts"] == 0
 
 
 def test_multi_clip_draft_does_not_promise_tight(flag_on):
