@@ -2062,7 +2062,9 @@ def _complete_draft_turn(
                         reason=outcome.reason or _pinned.SETTING_REFUSED,
                     )
                 publish_analysis_id = outcome.publish_analysis_id
-                setting_undo = setting_undo_record(setting_action, outcome)
+                setting_undo = setting_undo_record(
+                    setting_action, outcome, at=db.execute(select(func.now())).scalar_one()
+                )
         if apply_intent.tool_name == "draft.apply_editor_ops":
             variant = (
                 next(
@@ -5527,8 +5529,6 @@ def _verify_prepared_execution(
     )
 
 
-def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim | None:
-    """Consume exact consent into a durable accepted execution.
 def _withdraw_tap_of_cancelled_claim(
     db,  # noqa: ANN001 - SQLAlchemy sync Session
     approval: CreatorAgentApproval,
@@ -5548,6 +5548,8 @@ def _withdraw_tap_of_cancelled_claim(
         withdraw_staged_tap_sync(db, record=footprint, item=item, thread=thread)
 
 
+def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim | None:
+    """Consume exact consent into a durable accepted execution.
 
     This transaction performs no broker or renderer work. A crash after commit
     leaves ``accepted`` as the recovery ledger for the minute reconciler.
@@ -5852,9 +5854,9 @@ def _withdraw_tap_of_cancelled_claim(
                 else "approval_target_stale"
             )
             approval.status = "cancelled"
+            _withdraw_tap_of_cancelled_claim(db, approval, item, thread)
             execution.status = "stale"
             execution.error = {
-            _withdraw_tap_of_cancelled_claim(db, approval, item, thread)
                 "code": stale_code,
                 "retryable": False,
                 "recovery": "refresh_replan",
@@ -5941,9 +5943,9 @@ def _withdraw_tap_of_cancelled_claim(
             next_audio_mode = resolve_next_audio_mode(strategy, item)
             if next_audio_mode is None:
                 approval.status = "cancelled"
+                _withdraw_tap_of_cancelled_claim(db, approval, item, thread)
                 execution.status = "failed"
                 execution.error = {
-                _withdraw_tap_of_cancelled_claim(db, approval, item, thread)
                     "code": "voiceover_required",
                     "retryable": False,
                     "recovery": "ask_user",
@@ -6135,9 +6137,9 @@ def _withdraw_tap_of_cancelled_claim(
                         # Nothing was pinned: the Job keeps the attempt it had.
                         current_job.all_candidates, current_job.assembly_plan = prepared_job_before
                     approval.status = "cancelled"
+                    _withdraw_tap_of_cancelled_claim(db, approval, item, thread)
                     execution.status = "failed"
                     execution.error = {"code": code, "retryable": False, "recovery": "revise"}
-                    _withdraw_tap_of_cancelled_claim(db, approval, item, thread)
                     execution.completed_at = now
                     turn.status = "failed"
                     turn.completed_at = now

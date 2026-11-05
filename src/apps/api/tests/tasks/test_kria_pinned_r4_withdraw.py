@@ -25,6 +25,9 @@ the next render, a requirement KRI-129 reads as their own ask, and a card that s
   G11 The approval was APPROVED, then the render worker found the video had moved on before it
       claimed it (``approval_target_stale``): no render ever starts, so the tap is taken back.
   G12 The worker refused the claim for a missing voiceover (``voiceover_required``): same.
+  G13 What else the creator edited between the tap and the withdrawal is theirs: ``user_edited``
+      was set by their own edit, and the tap's stash must not clear it (G1 pins the other half:
+      with no edit in between it goes back to what it was).
 """
 
 from __future__ import annotations
@@ -385,3 +388,19 @@ async def test_g12_a_claim_refused_for_a_missing_voiceover_takes_its_tap_back(
     assert approval_status(seeded) == "cancelled"
     assert_taken_back(seeded, phone, tap, before)
 
+
+@pytest.mark.asyncio
+async def test_g13_an_edit_the_creator_made_since_the_tap_keeps_user_edited(talking_world):
+    seeded, phone, out, card, before, tap = await staged(talking_world)
+    assert before.flags["user_edited"] is False
+    with sync_session() as db:  # their own PATCH of something else, after the tap
+        item = db.get(h.PlanItem, seeded.item_id, with_for_update=True)
+        item.notes = "film the second take at golden hour"
+        item.user_edited = True
+        db.commit()
+
+    await decide(seeded, "deny")
+
+    flags = d.item_flags(seeded)
+    assert flags == {"speech_cleanup_enabled": False, "user_edited": True}, flags
+    assert d.live_brief(seeded.thread_id) == before.brief

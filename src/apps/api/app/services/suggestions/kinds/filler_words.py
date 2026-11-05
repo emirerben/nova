@@ -24,6 +24,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -309,25 +310,53 @@ def apply_item_setting(db: Any, item: Any, action: ItemSettingAction) -> Setting
     )
 
 
-def setting_undo_record(action: ItemSettingAction, outcome: SettingOutcome) -> dict[str, Any]:
-    """What Undo needs to take the flip back: the field and the values it held before the tap."""
+def setting_undo_record(
+    action: ItemSettingAction, outcome: SettingOutcome, *, at: datetime | None = None
+) -> dict[str, Any]:
+    """What a take-back needs to put the flip back: the field, the values it held before the tap,
+    and when the tap committed (``at``, the database's transaction time, which is also what
+    ``updated_at`` takes), so a later write by anyone else can be told apart from the tap's own."""
     return {
         "field": action.field,
         "was": outcome.was_enabled,
         "user_edited_was": outcome.was_user_edited,
+        **({"at": at.isoformat()} if at is not None else {}),
     }
 
 
+def _written_since(item: Any, stamped: object) -> bool:
+    """True when the plan item was written after the tap committed: the creator (or a render's
+    own claim) changed something besides the tap's flip. A record without a readable stamp (it
+    predates the stamp) answers False: the old, unconditional restore."""
+    if not isinstance(stamped, str):
+        return False
+    try:
+        at = datetime.fromisoformat(stamped)
+    except ValueError:
+        return False
+    updated = getattr(item, "updated_at", None)
+    return (
+        isinstance(updated, datetime)
+        and updated.tzinfo is not None
+        and at.tzinfo is not None
+        and updated > at
+    )
+
+
 def undo_item_setting(item: Any, record: Mapping[str, Any]) -> bool:
-    """Put the setting back to what it held before the tap, if the tap's flip is still in force.
+    """Put the setting back to what it was before the tap, if the tap's flip is still in force.
 
     A setting the creator has changed since (they turned cleanup off themselves) is theirs now:
-    nothing is restored, and their ``user_edited`` stays. The caller holds ``item`` locked.
+    nothing is restored, and their ``user_edited`` stays. ``user_edited`` itself goes back only
+    while the item is as the tap left it: a take-back can come long after the tap (a lapsed
+    approval, a sweep), and an unrelated edit in between is what set that flag then. The caller
+    holds ``item`` locked.
     """
     if record.get("field") != SETTING_FIELD or getattr(item, SETTING_FIELD, None) is not True:
         return False
     item.speech_cleanup_enabled = bool(record.get("was"))
-    item.user_edited = bool(record.get("user_edited_was"))
+    if not _written_since(item, record.get("at")):
+        item.user_edited = bool(record.get("user_edited_was"))
     return True
 
 
