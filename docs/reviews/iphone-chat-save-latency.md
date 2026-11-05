@@ -8,7 +8,7 @@ Branch `codex/iphone-chat-save-latency` (worktree `/Users/emirerben/Documents/Co
 
 ## What was awaited (read from code)
 
-- **New chat:** one `POST creation-threads` before anything appeared (KRI-640 / #1607 had already removed the capabilities and read-back trips). The button was also disabled while the project list loaded (`isLoading`), so a tap during that read did nothing.
+- **New chat:** one `POST creation-threads` before anything appeared (KRI-640, Done, historical: #1607 had already removed the capabilities and read-back trips). The button was also disabled while the project list loaded (`isLoading`), so a tap during that read did nothing.
 - **Save:** commit, then a committed-variant read (1-2 GETs, up to 450 ms of retry sleeps), then a fresh capabilities GET (the cache never read its stored entry), then the device-render status read, strictly one after another, before the phone render could start. The render itself is not awaited by Save.
 - **Export after Save:** disabled until the render uploaded and the server published it, then a re-download of the video the phone itself rendered (`applyPreviewVariant` swaps the phone file for the server URL).
 
@@ -87,4 +87,34 @@ PR2105 and #2118 are in the base; the only shared file is `ChatWorkspaceView.swi
 
 ## Preship
 
-`bash scripts/preship-check.sh --pr-body .dev/pr-body.md`: all 8 gates green (ruff skipped, no API changes; drift, release metadata, reliability gates, journey mapping with 11 journeys for CI to run, request-to-output evidence accepted as `local_fix` for KRI-672). Without a PR body the evidence gate fails by design; the local body is `.dev/pr-body.md` (git-ignored) and its `recovery` row is unit-level only, `request_fulfillment` and `export_fidelity` stay pending for a signed-in device run. KRI-672 is the related ticket from the handoff, not confirmed as this work's issue.
+Preship result is in "Review round 2" below.
+
+## Review round 2 (three source-traced defects)
+
+Base for this round: `19aa22d8b`; code commit for the fixes and tests: `06ab40c8078501a21e248b7a7ac45ebed5c4ded3` (the report commit follows it). The first-pass tested code commit `4cc324f6c` is superseded by it for the three areas below; `/tmp/kria-latency-test5.log` ran on the working tree identical to `06ab40c8078501a21e248b7a7ac45ebed5c4ded3`. Each defect was reproduced with a failing regression test before any fix (`/tmp/kria-latency-red.log`, build with the tests only):
+
+| # | Defect | Red evidence | Fix |
+| --- | --- | --- | --- |
+| P1 | A failed device-status read after a second Save left the previous request R1 (still `synced`, file kept by `DeviceRenderSessions.wait`) as the "current" request; `saveOnce` pinned it to the new commit generation, so export handed over R1's video for the G2 edit | `testFailedStatusReadAfterANewSaveDoesNotLinkThePreviousRenderToIt`: `canDownloadCurrentVideo` was true and the route was `.localFile(R1 file)` | The own-render link now needs evidence from a SUCCESSFUL status read: the server's `base_generation` for the pinned request must equal the acknowledged save generation (`DeviceRenderSessions.baseGeneration(for:)`, `linkSavedDeviceRenderIfEvidenced()` at the end of every `refreshDeviceRender`, so a later healed read links lazily). A completed attempt is not evidence. The identity, generation, `requiresServerRetry`, verification-withheld `localFile` and unsaved-edit fences are unchanged. Control `testStatusReadThatNamesTheSavedGenerationLinksTheNewRender` (new request R2 with `base_generation` g2) passed before and after. |
+| P2 | Typed text was lost when the creator left the pending chat (another chat or the camera roll) and the create then failed | `testTextTypedBeforeLeavingIsRecoverableWhenTheCreateFailsLater`: the next New chat started with an empty draft, for both targets | The failed create keeps the text as `AppModel.unsentNewChatDraft` without selecting or navigating anything; the next New chat starts with it, and it then moves to the new chat's own draft on success. Leaving a failed pending surface keeps it too; "Back to my chats" still discards. The previous chat's draft is asserted unchanged. |
+| P3 | A Save with `renderStarted == false` awaited the committed-variant read and then wrote retry sections and `renderRetryNeeded` into whatever editor was loaded meanwhile | `testRenderNotStartedSaveCannotWriteRetryStateIntoAnEditorLoadedMeanwhile`: editor B ended as `renderRetryNeeded("Editor A's render did not start.")` | Identity guard after the await, as the render-started branch already had. |
+
+Green: `/tmp/kria-latency-test5.log`, current build, simulator `3F0D9C92-2BA8-4831-9AD6-F070EF630845`:
+
+| Class | Executed | Failures |
+| --- | --- | --- |
+| `NativeEditorSessionTests` | 269 | 0 |
+| `ProjectActionsTests` | 35 | 0 |
+| `ProjectRestorationTests` | 2 | 0 |
+| `NativeEditorExportTests` | 10 | 1: the known `testCancelledNativeEncoderDoesNotRetry` baseline flake (line 58) |
+| Aggregate | 316 | 1 (the flake) |
+
+The cancellation flake: it failed in two class-level runs of `NativeEditorExportTests` in this round (`/tmp/kria-latency-test5.log`, `/tmp/kria-latency-export-rerun.log`) and passed 6 of 6 single fresh runs (`/tmp/cancel-changed2-{1..6}.log`). Unchanged `origin/main` `56e21de1ab785c99f30cd09e5c3e2d7466240af2` fails it too (1 of 6, see above); the test uses no save, device-render or New chat code. The earlier full-unit result (2579 executed, 27 skipped, 0 failures) predates this round and does not cover these changes; no broader run was made.
+
+### Formal model drift (`formal/ios_edit_flow`, TLA+ render lifecycle)
+
+TLC could not run here: the TLA+ jar download fails the checksum (`FAIL ... is not TLC v1.8.0`), so **no formal verification is claimed**. The offline drift part (function hashes against `coverage.json`, sync commit `b12bed356`) was recomputed: 26 covered functions already drift at unchanged `origin/main`; 28 drift now. The two NEW drifts are caused by this work: `NativeEditorSession.swift:saveOnce` and `:refreshDeviceRender` (`retryDeviceRender` also changed but already drifted at baseline). The model was not re-read or updated against them; that review is open.
+
+### Tracker and evidence metadata
+
+No valid tracker issue is assigned. KRI-672 is research backlog and KRI-640 is the historical, Done New chat delay; neither owns the unfinished fulfillment and export-fidelity evidence, and no issue was changed or created. The local PR body (`.dev/pr-body.md`, git-ignored) says `UNASSIGNED`, so the request-to-output evidence gate fails until the parent supplies a valid issue. The remaining open evidence: signed-in device timing, the shared file compared with the preview, a UI test of the pending composer.
