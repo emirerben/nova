@@ -51,6 +51,11 @@ Per kind (hook, duplicates, mute_clip, filler_words; captions/sfx/transition/mus
       builds the card), and an unproven surface never reaches a creator.
   K15 filler: the setting flip is atomic with the draft (a later raise rolls it back), is refused
       when the capability closed, and hands the scheduled analysis to the publisher after commit.
+  K16 a restate never replaces newer work. A strategy restate (mute, filler) is only the plan's own
+      next revision when the head draft IS the plan. After any editor-op tap (captions, sfx,
+      transition, hook, duplicates) the head is an editor draft whose chain a restated strategy
+      would drop (only Undo could bring it back): the tap refuses ``base_moved`` and writes no
+      draft, approval, brief version or setting flip. Undo back to the plan makes it tappable again.
 
 Refusals
   R1  every refusal (planner-side or at the commit) answers with the same typed signal on the
@@ -60,6 +65,15 @@ Refusals
       it, mints a NEW set_id (so the phone's "hidden until the set changes" ledger releases and the
       "refreshing" claim is true) and stores the derived set so a tap on a card in it resolves.
   R3  an applied card is hidden by id on the GET even with the editor triggers flag off.
+  R5  no refusal is silent. Every end a pinned tap can reach without applying (the consent gate,
+      the protected-region mark gate, the unmet-requirement / approval-readiness gate, the choice
+      gate, and the exception replies: stale editor state, an op the recipe cannot hold, a text
+      timing conflict, a request too long to keep) carries the same typed record on the assistant
+      event AND on the turn's plan diagnostics (the replayed ack reads that), marks the card
+      refused on its ring entry and so mints a new set on the next read.
+  R6  a transient refusal is never marked. Unsaved hand edits say nothing about the card: it stays
+      tappable, the reply tells the creator to save first (not "no longer fits"), and the same tap
+      applies once the edits are saved.
   R4  ``ready_context`` carries the kinds' inputs (the shared loader), so a rebuild sees what the
       serve saw: the hook's clip texts, the brief, the filler evidence, the duplicates' ``needed``.
 
@@ -1217,3 +1231,76 @@ async def test_filler_kind_switched_off_after_serve_refuses(world, monkeypatch, 
     assert last_reply(seeded.thread_id) == NO_LONGER_FITS
     assert k.item_row(seeded)["speech_cleanup_enabled"] is False
     assert h.counts(seeded) == before
+
+
+# ── A restate never replaces newer work ──────────────────────────────────────────────
+
+RESTATE_KINDS = ("mute_clip", "filler_words")
+
+
+async def serve_restate_beside_transition(seeded, monkeypatch, kind):  # noqa: ANN001, ANN201
+    """The thread's plan as a strategy draft, and a restating card next to an editor-op card."""
+    if kind == "mute_clip":
+        mute_world(monkeypatch)
+        k.seed_strategy_draft(seeded)
+        k.noisy_audio(seeded, "clip-b")
+        restating = k.pick("mute_clip", targets=("c2",))
+    else:
+        k.filler_world(monkeypatch)
+        k.seed_talking_item(seeded)
+        k.seed_strategy_draft(seeded)
+        restating = k.pick("filler_words")
+    await k.serve_cards(seeded, restating, k.pick("transition", rank=2))
+
+
+@pytest.mark.parametrize("kind", RESTATE_KINDS)
+@pytest.mark.asyncio
+async def test_a_restate_after_an_editor_tap_does_not_replace_the_newer_draft(
+    world, monkeypatch, published, kind
+):
+    """K16: the head is the transition draft the creator just staged; restating the older plan
+    over it would drop that edit from the head chain (only Undo could bring it back)."""
+    seeded = h.seed_ready_thread()
+    await serve_restate_beside_transition(seeded, monkeypatch, kind)
+    await tap_and_run(seeded, "transition")
+    staged = head(seeded.thread_id)
+    assert staged["snap"]["kind"] == "editor"
+    before = h.counts(seeded)
+
+    accepted, result = await tap_and_run(seeded, kind)
+
+    assert result["status"] == "completed"
+    assert last_reply(seeded.thread_id) == NO_LONGER_FITS
+    assert signal_of(seeded.thread_id)["reason"] == "base_moved"
+    assert h.counts(seeded) == before, "no draft, approval, brief version or job"
+    assert head(seeded.thread_id)["id"] == staged["id"], "the staged edit is still the head"
+    assert k.item_row(seeded)["speech_cleanup_enabled"] is False
+    assert published == []
+
+
+@pytest.mark.parametrize("kind", RESTATE_KINDS)
+@pytest.mark.asyncio
+async def test_a_restate_applies_again_once_undo_returns_the_head_to_the_plan(
+    world, monkeypatch, published, kind
+):
+    """K16: the refusal is about where the head is, not about the card. Undo the editor tap and
+    the same card restates the plan (a new strategy revision plus its approval)."""
+    from app.kria.drafts import undo_draft
+
+    seeded = h.seed_ready_thread()
+    await serve_restate_beside_transition(seeded, monkeypatch, kind)
+    await tap_and_run(seeded, "transition")
+    async with h.AsyncSessionLocal() as db:
+        await undo_draft(
+            db,
+            thread_id=seeded.thread_id,
+            creator_id=seeded.user_id,
+            expected_revision=head(seeded.thread_id)["rev"],
+        )
+    assert head(seeded.thread_id)["snap"]["kind"] == "strategy"
+
+    accepted, result = await tap_and_run(seeded, kind)
+
+    assert result["status"] == "awaiting_approval", result
+    assert head(seeded.thread_id)["snap"]["kind"] == "strategy"
+    assert signal_of(seeded.thread_id) is None

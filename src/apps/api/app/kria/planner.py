@@ -6582,6 +6582,7 @@ async def plan_pinned_suggestion_turn(
     brief_fields: dict[str, Any] = {}
     parsed: list[dict] | None = None
     typed_updates: tuple[Any, ...] = ()
+    restated_head_hash: str | None = None
     if ops is not None:
         parsed = pinned.parse_ops(ops, target.snapshot)
         if parsed is None:
@@ -6598,10 +6599,11 @@ async def plan_pinned_suggestion_turn(
         )
         route = "editor_ops"
     else:
-        strategy = await pinned.restated_strategy(db, thread_id=thread_id)
-        if strategy is None:
-            return _no_longer_fits(pinned.NO_STRATEGY)
-        plan_out = _restated_strategy_plan(strategy, suggestion.prompt)
+        restate_base = await pinned.restate_base(db, thread_id=thread_id, ctx=ctx)
+        if restate_base.strategy is None:
+            return _no_longer_fits(restate_base.reason or pinned.NO_STRATEGY)
+        plan_out = _restated_strategy_plan(restate_base.strategy, suggestion.prompt)
+        restated_head_hash = restate_base.head_hash
         typed_updates = pinned.restate_updates(suggestion, action)
         route = "replan"
     if settings.creative_brief_for(creator_id):
@@ -6650,7 +6652,7 @@ async def plan_pinned_suggestion_turn(
         )
     if restate:
         extra["media_snapshot"] = snapshot_media(item)
-        pin_state["head_hash"] = await pinned.head_hash(db, thread_id=thread_id, ctx=ctx)
+        pin_state["head_hash"] = restated_head_hash
         if isinstance(action, ItemSettingAction):
             pin_state["setting"] = {"field": action.field, "value": action.value}
     else:

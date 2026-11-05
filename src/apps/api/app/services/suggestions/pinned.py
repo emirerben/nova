@@ -683,17 +683,65 @@ def restate_updates(suggestion: Suggestion, action: Action) -> tuple[Any, ...]:
     return ()
 
 
-async def restated_strategy(db: Any, *, thread_id: Any) -> dict[str, Any] | None:
-    """The plan this thread's current video was made from: its newest strategy draft.
+@dataclass(frozen=True)
+class RestateBase:
+    """What a strategy restate stands on: the plan it re-drafts and the head draft it replaces.
 
-    None when there is none (a video made without a chat plan) or it no longer validates: a
-    restate that cannot name the plan it restates is refused, never invented.
+    ``reason`` is set (and ``strategy`` None) when the restate must not run.
+    """
+
+    strategy: dict[str, Any] | None
+    head_hash: str | None
+    reason: str | None = None
+
+
+def _strategy_of(snapshot: Any) -> dict[str, Any] | None:
+    from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+
+    raw = snapshot.get("strategy") if isinstance(snapshot, Mapping) else None
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        return CreativeStrategy.model_validate(raw).model_dump(mode="json", exclude_none=True)
+    except ValueError:
+        return None
+
+
+async def restate_base(db: Any, *, thread_id: Any, ctx: SuggestionContext | None) -> RestateBase:
+    """The plan a restating tap (mute, filler) re-drafts, and the head it will replace.
+
+    A restate writes the plan as the variant's next draft revision, so it is only the plan's own
+    next revision when the head draft IS the plan. Any other head is newer work (an editor draft
+    from a caption, sound, transition, hook or duplicates tap): restating over it would drop that
+    edit from the head chain, and only Undo could bring it back. That head is ``base_moved``.
+    A variant with no draft yet restates the thread's newest strategy draft, and a thread with no
+    plan to restate is refused, never invented.
+
+    ``head_hash`` is the head this was read against; the commit compares it again inside the row
+    lock, so a head that moved after planning is refused too.
     """
     from sqlalchemy import select  # noqa: PLC0415
 
-    from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
     from app.models import CreatorEditDraft  # noqa: PLC0415
 
+    variant_key = str((ctx.variant_id if ctx is not None else None) or "initial")
+    head = (
+        await db.execute(
+            select(CreatorEditDraft.snapshot_json, CreatorEditDraft.snapshot_hash)
+            .where(
+                CreatorEditDraft.thread_id == thread_id,
+                CreatorEditDraft.variant_key == variant_key,
+                CreatorEditDraft.is_head.is_(True),
+            )
+            .limit(1)
+        )
+    ).first()
+    if head is not None:
+        snapshot, digest = head
+        if not isinstance(snapshot, Mapping) or snapshot.get("kind") != "strategy":
+            return RestateBase(None, digest, BASE_MOVED)
+        strategy = _strategy_of(snapshot)
+        return RestateBase(strategy, digest, None if strategy else NO_STRATEGY)
     rows = (
         await db.execute(
             select(CreatorEditDraft.snapshot_json)
@@ -704,39 +752,9 @@ async def restated_strategy(db: Any, *, thread_id: Any) -> dict[str, Any] | None
     ).scalars()
     for snapshot in rows:
         if isinstance(snapshot, Mapping) and snapshot.get("kind") == "strategy":
-            raw = snapshot.get("strategy")
-            if not isinstance(raw, Mapping):
-                return None
-            try:
-                return CreativeStrategy.model_validate(raw).model_dump(
-                    mode="json", exclude_none=True
-                )
-            except ValueError:
-                return None
-    return None
-
-
-async def head_hash(db: Any, *, thread_id: Any, ctx: SuggestionContext | None) -> str | None:
-    """``snapshot_hash`` of the head draft of the variant a tap runs on (None: no draft yet).
-
-    The commit compares it again inside the row lock, so a restate never replaces newer work.
-    """
-    from sqlalchemy import select  # noqa: PLC0415
-
-    from app.models import CreatorEditDraft  # noqa: PLC0415
-
-    variant_key = str((ctx.variant_id if ctx is not None else None) or "initial")
-    return (
-        await db.execute(
-            select(CreatorEditDraft.snapshot_hash)
-            .where(
-                CreatorEditDraft.thread_id == thread_id,
-                CreatorEditDraft.variant_key == variant_key,
-                CreatorEditDraft.is_head.is_(True),
-            )
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+            strategy = _strategy_of(snapshot)
+            return RestateBase(strategy, None, None if strategy else NO_STRATEGY)
+    return RestateBase(None, None, NO_STRATEGY)
 
 
 def restates_strategy(action: Action) -> bool:
@@ -769,10 +787,10 @@ __all__ = [
     "projected_digest",
     "proves",
     "rebuild_action",
+    "RestateBase",
+    "restate_base",
     "restate_updates",
-    "restated_strategy",
     "restates_strategy",
-    "head_hash",
     "resolve_pin",
     "ring_suggestions",
     "snapshot_digest",
