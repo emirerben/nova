@@ -39,6 +39,16 @@ Check both EN/TR and subsequent edits. Negative controls must detect missing
 subtitles and an unexpected decorative label. Recipe checks establish layer
 separation, not live-model interpretation or a verified TestFlight export.
 
+## Only the text she asked for (`TEXT_COMPOSER_ASKED_ONLY_ENABLED`)
+
+With the switch on, the creation text pass keeps a composer `add_text` only when its words are the creator's own literal ask (whole, in chunks, or a merge of several literals) and that literal is not already on screen as many times as she asked. An invented line or a second copy of her line is dropped, not raised (raising would fail her whole video), and logged as `creation_text_unasked_dropped`.
+
+Exempt, unchanged: no brief bound, described asks without a literal, story/editorial builds (they keep the old unrequested-text check), approved research ops, pinned programs replayed from a stored snapshot, and chat/editor edits.
+
+With the switch on, a title-only or style-only brief's extra line is also dropped instead of failing the render, so `test_approved_hook_journey.py::test_bound_styling_composition_adds_text_only_when_live_brief_requests_it[False]` (the old raise) holds only with the switch off. Known limit: a copy the composer adds next to her planned bar is dropped even when the planned bar is shorter (a 2.2 s title); the composer must retime or move that bar, and a whole-video line belongs in the planner's pin.
+
+Default off and byte-identical off (guard: `tests/services/test_creation_text_asked_only.py::test_switch_off_keeps_the_composer_line_exactly_as_written`). Apply: fly secret `TEXT_COMPOSER_ASKED_ONLY_ENABLED=true` on api + worker, then restart. Related: KRI-767 (copy guard).
+
 ## State ownership
 
 | Concern | Authority |

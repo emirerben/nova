@@ -361,22 +361,153 @@ def _check_copy(texts: list[dict], constraints: Mapping[str, str]) -> None:
         movable.remove(moved)
 
 
-def _check_added_text(
-    operations: list[dict], requirements: Sequence[BriefRequirement] | None
-) -> None:
-    if requirements is None or any(
-        req.live
+def _authorizing_asks(requirements: Sequence[BriefRequirement]) -> list[BriefRequirement]:
+    """Live asks that let the text pass write a new text row."""
+    return [
+        req
+        for req in requirements
+        if req.live
         and (
             (req.kind == "text" and req.scope != "title")
             # A title or whole-video sequence already has its bar (the opening title,
             # `unified_montage.brief_view`): only one on a clip needs a new text to split.
             or (is_text_sequence(req) and req.scope not in _SEQUENCE_TITLE_SCOPES)
         )
-        for req in requirements
-    ):
+    ]
+
+
+def _check_added_text(
+    operations: list[dict], requirements: Sequence[BriefRequirement] | None
+) -> None:
+    if requirements is None or _authorizing_asks(requirements):
         return
     if any(op.get("op") == "add_text" for op in operations):
         raise CreationTextCompositionError("Text composition added unrequested text")
+
+
+def _ask_words(text: str) -> tuple[str, ...]:
+    """Words compared across case, accents, punctuation, emoji and line breaks."""
+    folded = "".join(
+        ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch)
+    )
+    folded = folded.casefold().replace("\u0131", "i")
+    # Any punctuation splits a word ("Istanbul'da" == "Istanbul da"); emoji never count.
+    return tuple(re.findall(r"[^\W_]+", folded))
+
+
+def _literal_runs(words: tuple[str, ...], literals: list[tuple[str, ...]]) -> set[int] | None:
+    """Indexes of the literals an exact left-to-right cover of ``words`` can draw runs from.
+
+    None when ``words`` is empty or some word is not in any literal (an invented line).
+    """
+    n = len(words)
+    edges = [
+        (i, k, j)
+        for i in range(n)
+        for k in range(i + 1, n + 1)
+        for j, lit in enumerate(literals)
+        if any(lit[o : o + k - i] == words[i:k] for o in range(len(lit) - (k - i) + 1))
+    ]
+    forward = {0}
+    for i, k, _ in sorted(edges):
+        if i in forward:
+            forward.add(k)
+    if n == 0 or n not in forward:
+        return None
+    backward = {n}
+    for i, k, _ in sorted(edges, reverse=True):
+        if k in backward:
+            backward.add(i)
+    return {j for i, k, j in edges if i in forward and k in backward}
+
+
+def _drop_unasked_added_text(
+    operations: list[dict],
+    requirements: Sequence[BriefRequirement] | None,
+    *,
+    plan: dict,
+    texts: list[dict],
+    slots: list[dict],
+    pinned_ops: list[dict],
+    snapshot: EditProposalSnapshot,
+    ctx: RunContext | None,
+) -> list[dict]:
+    """Drop composer ``add_text`` ops that are not the creator's own words (item 22).
+
+    "Just this text, nothing else" must not render an invented line or a second copy of
+    hers. It drops instead of raising: raising fails the creator's whole video. Research
+    ops, described asks (the composer writes the copy), a missing brief and story builds
+    keep today's behaviour, so their system-owned copy never regresses.
+    """
+    if requirements is None:
+        return operations
+    if snapshot.editorial_plan is not None or _is_story_snapshot(snapshot):
+        _check_added_text(operations, requirements)
+        return operations
+    asks = _authorizing_asks(requirements)
+    if any(not _ask_words(req.literal or "") for req in asks):
+        return operations
+    literals = [_ask_words(req.literal or "") for req in asks]
+    unbounded = {lit for req, lit in zip(asks, literals, strict=True) if req.scope == "per_clip"}
+    allowed: dict[tuple[str, ...], int] = {}
+    for req, lit in zip(asks, literals, strict=True):
+        allowed[lit] = allowed.get(lit, 0) + (req.scope != "per_clip")
+    distinct = list(allowed)
+    # Which planned bars still show which words once the program ran. An add_text never
+    # changes a planned bar and no later op can address an added one by index, so the adds
+    # are left out: a malformed extra line is then dropped instead of failing the replay.
+    edits = [op for op in operations if op.get("op") != "add_text"]
+    try:
+        composed = replay_text_composition(
+            plan,
+            TextCompositionProgram(
+                base_digest=_digest(texts, slots), operations=[*pinned_ops, *edits]
+            ),
+        )["text_elements"]
+    except CreationTextCompositionError:
+        return operations  # the real replay right after raises exactly as it does today
+    owners = {row.get("id") for row in texts}
+    groups: dict[str, list[dict]] = {}
+    for row in composed:
+        if row.get("removed") or is_caption_text_bar(row):
+            continue
+        params = row.get("source_params") or {}
+        owner = row.get("id") if row.get("id") in owners else params.get("sequence_source_id")
+        if owner in owners:
+            groups.setdefault(owner, []).append(row)
+    shown: dict[tuple[str, ...], int] = {}
+    for rows in groups.values():
+        ordered = sorted(rows, key=lambda row: row["start_s"])
+        cumulative = len(ordered) > 1 and all(
+            (row.get("source_params") or {}).get("sequence_mode") == "cumulative" for row in ordered
+        )
+        words = _ask_words(
+            ordered[-1]["text"] if cumulative else " ".join(row["text"] for row in ordered)
+        )
+        shown[words] = shown.get(words, 0) + 1
+    kept, dropped = [], []
+    for op in operations:
+        if op.get("op") != "add_text" or isinstance(op.get("research"), dict):
+            kept.append(op)
+            continue
+        words = _ask_words(str(op.get("text") or ""))
+        sources = _literal_runs(words, distinct)
+        if sources is None or not any(
+            distinct[j] in unbounded or shown.get(distinct[j], 0) < allowed[distinct[j]]
+            for j in sources
+        ):
+            dropped.append(str(op.get("text") or ""))
+            continue
+        shown[words] = shown.get(words, 0) + (words in allowed)
+        kept.append(op)
+    if dropped:
+        log.info(
+            "creation_text_unasked_dropped",
+            job_id=getattr(ctx, "job_id", None),
+            dropped=len(dropped),
+            texts=[t[:80] for t in dropped],
+        )
+    return kept
 
 
 def snapshot_copy_constraints(
@@ -1171,9 +1302,24 @@ def _compose_creation_text(
             "Text composition is incomplete: " + (details or output.reply)
         )
     operations = output.ops
-    _check_added_text(operations, text_requirements)
+    from app.config import settings  # noqa: PLC0415
+
+    asked_only = settings.text_composer_asked_only_enabled
+    if not asked_only:
+        _check_added_text(operations, text_requirements)
     if caption_lane is not None:
         operations = _to_full_bar_indexes(operations, texts_for_model)
+    if asked_only:
+        operations = _drop_unasked_added_text(
+            operations,
+            text_requirements,
+            plan=plan,
+            texts=texts,
+            slots=slots,
+            pinned_ops=pinned_ops,
+            snapshot=snapshot,
+            ctx=ctx,
+        )
     # The composer addressed the lane with the approved research already in place.
     operations = [*pinned_ops, *operations]
     program = TextCompositionProgram(

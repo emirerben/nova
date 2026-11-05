@@ -250,6 +250,15 @@ def test_q3_second_copy_of_her_line_is_dropped(monkeypatch, switch_on):
     assert len(phone_recipe(result).text_layers) == 1
 
 
+def test_q3_malformed_extra_line_is_dropped_not_failing_her_video(monkeypatch, switch_on):
+    # An unasked line timed past the end of her 11 s clip used to fail the whole render.
+    snapshot, reqs = q3_plan()
+    client = transport(monkeypatch, [add("Wait till the end 👀", 0, 30)])
+    result = compose(snapshot, reqs)
+    assert len(client.calls) == 1
+    assert texts_of(result) == [T3]
+
+
 def test_title_only_brief_drops_added_text_instead_of_failing(monkeypatch, switch_on):
     snapshot = bare_plan()
     reqs = [req("t1", "text", "title", description="a hook"), *STYLE_ONLY]
