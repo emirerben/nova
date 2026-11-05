@@ -71,6 +71,15 @@ def _save(**fields):  # noqa: ANN003, ANN202
     return lambda variant: variant.update(fields)
 
 
+def _stamped_now() -> dict[str, str]:
+    """The render stamps every real Save writes (naive UTC with a literal Z): the Save began a
+    render after the card was served, and it finished."""
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC).replace(tzinfo=None).isoformat() + "Z"
+    return {"render_started_at": now, "render_finished_at": now}
+
+
 def _all_crossfade(variant: dict) -> None:
     for slot in variant["ai_timeline"]["slots"]:
         slot["transition_after"] = "crossfade"
@@ -124,7 +133,7 @@ async def test_s2_a_save_replaced_the_video_under_a_restating_card(
     rec = Recorder(f"negative S2 {kind} video moved")
     _scn, seeded, phone, out = await served(talking_world, KEY, profile)
     assert await ensure_stored(phone, out) == "route"
-    h.edit_variant(seeded, _save(render_generation_id="generation-2"))
+    h.edit_variant(seeded, _save(render_generation_id="generation-2", **_stamped_now()))
     tap = await phone.tap(card_of(out, kind), out)
     signal = tap.refused or {}
     rec.negative(

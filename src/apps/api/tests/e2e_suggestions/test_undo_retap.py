@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from tests.e2e_suggestions import driver as d
-from tests.e2e_suggestions import gaps, threads
+from tests.e2e_suggestions import threads
 from tests.e2e_suggestions.driver import Phone
 from tests.e2e_suggestions.flow import LANE, RESTATE
 from tests.e2e_suggestions.report import Recorder
@@ -91,15 +91,14 @@ async def test_u1_undo_gives_the_card_back_once(talking_world, kind, profile):
             f"signal={third.refused} drafts +{third.new_drafts} reply={third.reply[:50]!r}",
         )
         if kind in RESTATE:
-            # A restating card's approval is pending, so the duplicate-send guard answers at submit
-            # (quiet, but without the typed signal): GAP-4.
+            # A restating card's approval is pending, so the duplicate-send guard answers at
+            # submit: quiet, and it carries the same typed refusal as every other second tap.
             rec.negative(
                 f"{kind}: ...with the typed refusal signal",
                 KEY,
                 "refused consumed",
                 typed,
                 f"signal={third.refused}",
-                gap=gaps.RESTATE_DOUBLE_TAP,
             )
     rec.finish()
 

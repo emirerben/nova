@@ -53,7 +53,6 @@ SERVER_ONLY_KEYS = frozenset(
 # What a restating card's staged requirement must say, and what the render then carries.
 RESTATE_FACT = {"filler_words": {"speech_cleanup": True}, "mute_clip": {"clip_sound": "off"}}
 
-GAP_RESTATE_DOUBLE_TAP = gaps.RESTATE_DOUBLE_TAP
 GAP_RESTATE_NOT_READY = gaps.RESTATE_NOT_READY
 
 RenderProbe = Callable[[Any, str], Awaitable[None]]
@@ -292,14 +291,10 @@ async def verify_second_tap(cell: Cell, phone: Phone, tap: Tap, out, language: s
     )
     if tap.card.kind in RESTATE:
         # The approval the first tap staged is still pending, so the pending-draft guard answers
-        # before the pinned seam does. Nothing is written; the typed signal is what is missing.
+        # before the pinned seam does. Nothing is written; it carries the typed signal and asks
+        # for fresh cards like every other second tap.
         typed = bool(refused.get("outcome") == "refused" and "pinned_stale" in triggers)
-        if quiet and typed:
-            cell.check("second_tap", True, detail)
-        elif quiet:
-            cell.check("second_tap", False, detail, gap=GAP_RESTATE_DOUBLE_TAP)
-        else:
-            cell.check("second_tap", False, detail)
+        cell.check("second_tap", bool(quiet and typed), detail)
         return commit_refresh
     ok = bool(
         quiet
