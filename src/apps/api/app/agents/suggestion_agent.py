@@ -10,8 +10,12 @@ the brief. Its only WRITE is ``SuggestionAgentOutput``: ``{kind, target_ids, why
 per card. There is no field for an op, an action, a message or a label. The server builds the
 action from the kind's registry row and proves it with the kind's witness
 (``services/suggestions``); a pick that fails never reaches the phone. The schema is closed over
-the kinds and target handles the server issued for THIS call, and ``parse_agent_output``
-re-checks the answer against them (an answer outside what was issued is void, never repaired).
+the kinds and target handles the server issued for THIS call, and ``parse_agent_output_tolerant``
+re-checks the answer against them (an answer outside what was issued is void). OpenAI strict mode
+carries no ``maxLength`` / ``maxItems``, so the SIZE caps are repaired instead of voiding the
+answer (``why`` cut, picks clamped to 5, targets to 3, ranks renumbered); an unissued kind or
+handle, an unknown field or a wrong type is still a hard drop. No retry: a second paid call
+would not make a void answer less void, and ``schema_retry_limit`` stays 0.
 
 Transcripts and the Gemini notes are UNTRUSTED data: they sit in a separate ``untrusted``
 object of the payload, the prompt says so, and nothing the model writes about them can become a
@@ -26,7 +30,7 @@ Failure modes this was written against (each has a replay cassette or a fuzz row
 
 1. an unissued kind or target, or a field that smuggles an op or message  -> the answer is void;
 2. an instruction hidden in a transcript echoed into ``why`` or ``copy``    -> overlap check;
-3. more cards than allowed, or duplicate kinds / ranks                       -> trimmed or void;
+3. too many cards / targets, repeated kinds, ranks or pairs, a long why      -> repaired;
 4. a budget stop, timeout, refusal, truncation or schema miss                -> deterministic
    ranking with template wording, never an error and never a retry;
 5. Turkish threads                                                           -> ``why`` language;
@@ -52,7 +56,7 @@ from app.services.suggestions.models import (
     InvalidAgentOutput,
     SuggestionAgentOutput,
     agent_response_schema,
-    parse_agent_output,
+    parse_agent_output_tolerant,
 )
 
 # gpt-6.1-sol bills reasoning tokens as output. 2,500 keeps one call's worst case under
@@ -187,7 +191,7 @@ class SuggestionAgent(Agent[SuggestionAgentInput, SuggestionAgentOutput]):
 
     def parse(self, raw_text: str, input: SuggestionAgentInput) -> SuggestionAgentOutput:  # noqa: A002
         try:
-            return parse_agent_output(
+            return parse_agent_output_tolerant(
                 raw_text,
                 kinds=[k.kind for k in input.kinds],
                 target_ids=input.target_handles(),
