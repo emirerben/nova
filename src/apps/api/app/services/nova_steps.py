@@ -402,6 +402,11 @@ def beat_miss_sentence(trigger: str, reason: str | None) -> str:
         return f'I never heard "{trigger}", so its photo or sound wasn\'t shown'
     if reason in _MISS_REASON_VISUAL_MISSING:
         return f'Couldn\'t find the photo or sticker for "{trigger}" in your Visuals'
+    if reason == "no_title":
+        # Item 20: a logo asked to sit above the opening title; nothing was listened for.
+        return f'There\'s no opening title to put "{trigger}" above'
+    if reason == "no_room_above_title":
+        return f'There wasn\'t room above your title for "{trigger}" without covering your face'
     if reason == "visual_is_video":
         return f'Videos can\'t pop up on your words in this edit yet, so "{trigger}" had no video'
     if reason == "sound_not_found":

@@ -165,6 +165,8 @@ class BeatFact:
     # None is an approved request, not execution evidence. Only the compiled
     # sequence receipt can prove that the original video actually follows.
     sequence_realized: bool | None = None
+    # "title": shown right above the opening title, never on a spoken word (Qendresa item 20).
+    anchor: str = "word"
 
 
 @dataclass(frozen=True)
@@ -592,6 +594,8 @@ class PlanFacts:
     # KRI-537: triggers the render never heard in the creator's voice (a phone variant's
     # `phone_beat_receipt.unplaced[]`), so "never said" is told apart from "no room".
     unheard_beat_triggers: tuple[str, ...] = ()
+    # (trigger, reason) for a title-anchored beat the render could not place; never "unheard".
+    title_beat_misses: tuple[tuple[str, str], ...] = ()
     # KRI-550: (trigger, placed, heard) for each "every time I say X" beat the render placed
     # on only some of the times it was said (`unplaced[]` reason "occurrence_cap").
     capped_beat_hits: tuple[tuple[str, int, int], ...] = ()
@@ -896,6 +900,7 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
                 sound=b.sound,
                 display_mode=b.display_mode,
                 following_clip_id=b.following_clip_id,
+                anchor=b.anchor,
             )
             for b in kept
         ),
@@ -2169,6 +2174,18 @@ def _text_style_rows(
     return tuple(out)
 
 
+def _title_look_text_of(rows: object) -> str | None:
+    """The stacked title look's lines joined with " / " (``None`` when there are none)."""
+    if not isinstance(rows, (list, tuple)) or not rows:
+        return None
+    try:
+        from app.pipeline.phone_title_look import title_look_text  # noqa: PLC0415
+    except ImportError:
+        return None
+    live = [r for r in rows if isinstance(r, Mapping) and not r.get("removed")]
+    return title_look_text(live) or None
+
+
 def plan_facts_from_editor_payload(
     payload: Mapping[str, Any] | None,
     text_diff: Iterable[Mapping[str, Any]] | None = None,
@@ -2257,6 +2274,12 @@ def plan_facts_from_editor_payload(
         composed["text"] for composed in complete_sequences(sequence_fragments)
     )
     strings.extend(composed_sequences)
+    # Item 20: her stacked title is one row per line; her literal " / " form is the joined text.
+    look_text = _title_look_text_of(timing_rows)
+    if look_text:
+        strings.append(look_text)
+        if title is not None and title == (look_text.split(" / ", 1)[0]):
+            title = look_text
     for entry in text_diff or ():
         if not isinstance(entry, Mapping) or not isinstance(entry.get("after"), str):
             continue
@@ -2407,6 +2430,7 @@ def _phone_receipt_facts(receipt: object, *, timed: bool) -> dict[str, Any]:
                 visual_id=str(entry.get("visual_label") or "") or None,
                 sound=str(entry.get("sound_label") or "") or None,
                 at_s=at_s,
+                anchor="title" if entry.get("anchor") == "title" else "word",
                 display_mode=str(entry.get("display_mode") or "pip"),
                 following_clip_id=entry.get("following_clip_id"),
                 sequence_realized=(
@@ -2420,17 +2444,23 @@ def _phone_receipt_facts(receipt: object, *, timed: bool) -> dict[str, Any]:
             )
         )
     unheard: list[str] = []
+    title_misses: list[tuple[str, str]] = []
     unplaced = receipt.get("unplaced")
     for entry in unplaced if isinstance(unplaced, list) else []:
         if not isinstance(entry, Mapping) or not isinstance(entry.get("trigger"), str):
             continue
         reason = entry.get("reason")
+        if entry.get("anchor") == "title":
+            # Nothing was listened for: a title-anchored beat is never an unheard word.
+            title_misses.append((entry["trigger"], str(reason or "")))
+            continue
         if not reason or reason in _NEVER_HEARD_REASONS:
             unheard.append(entry["trigger"])
     facts: dict[str, Any] = {
         "reaction_beats_available": True,
         "reaction_beats": tuple(beats),
         "unheard_beat_triggers": tuple(dict.fromkeys(unheard)),
+        "title_beat_misses": tuple(dict.fromkeys(title_misses)),
         "capped_beat_hits": _capped_beat_hits(placed, unplaced),
     }
     closing = receipt.get("closing")
@@ -6402,8 +6432,48 @@ def _capped_beat_problems(
     return list(dict.fromkeys(problems))
 
 
+def _title_misses_for(facts: PlanFacts, names: Sequence[str]) -> list[tuple[str, str]]:
+    """Title-anchored misses this ask is about (all of them when it names none)."""
+    return [
+        (trigger, reason)
+        for trigger, reason in facts.title_beat_misses
+        if not names or any(_trigger_heard(n, trigger) for n in names)
+    ]
+
+
+def _title_miss_problem(trigger: str, reason: str) -> str:
+    """The plain sentence for a logo/sticker that could not go above the title."""
+    if reason == "no_title":
+        return say(
+            en=f'There\'s no opening title to put "{trigger}" above',
+            tr=f'"{trigger}" görselini koyacak bir açılış başlığı yok',
+        )
+    if reason == "no_room_above_title":
+        return say(
+            en=f'There wasn\'t room above your title for "{trigger}" without covering your face',
+            tr=f'Yüzünü kapatmadan başlığın üstünde "{trigger}" için yer yoktu',
+        )
+    if reason == "visual_is_video":
+        return say(
+            en=f'"{trigger}" is a video, and only a photo or sticker can sit above the title',
+            tr=f'"{trigger}" bir video; başlığın üstüne yalnızca fotoğraf ya da çıkartma konur',
+        )
+    return say(
+        en=f'I couldn\'t find the photo or sticker for "{trigger}"',
+        tr=f'"{trigger}" için fotoğraf ya da çıkartma bulamadım',
+    )
+
+
 def _placement_reason(placements: Sequence[BeatFact]) -> str | None:
     """Where the met pop-ins landed, in time order; None when the render gave no times."""
+    titled = [b for b in placements if b.anchor == "title"]
+    if titled:
+        above = say(
+            en=_names_join([f'"{b.trigger}"' for b in titled]) + " shown above your title",
+            tr=_names_join([f'"{b.trigger}"' for b in titled]) + " başlığının üstünde çıkıyor",
+        )
+        rest = _placement_reason([b for b in placements if b.anchor != "title"])
+        return f"{above}; {rest}" if rest else above
     timed = sorted((b for b in placements if b.at_s is not None), key=lambda b: b.at_s or 0.0)
     if not timed:
         return None
@@ -6625,6 +6695,7 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         return _receipt(req, "partial", _CANT_CHECK_BEATS)
     beats = facts.reaction_beats
     problems: list[str] = []
+    title_misses: list[tuple[str, str]] = []
     delivered = False
     placements: list[BeatFact] = []
     by_name = True
@@ -6645,12 +6716,17 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
             # Nothing was placed at all: every unheard word is this ask's problem.
             unheard = list(facts.unheard_beat_triggers) if not names else _unheard_for(facts, names)
             room = _beat_room_problem(req, facts, names)
+            title_misses = _title_misses_for(facts, names)
+            if title_misses:
+                problems.extend(_title_miss_problem(t, r) for t, r in title_misses)
             if unheard:
                 problems.append(
                     _never_heard_problem(unheard, other_speaker=_asks_about_other_speaker(req))
                 )
             elif room:
                 problems.append(room)
+            elif title_misses:
+                pass
             else:
                 problems.append(
                     say(
@@ -6693,11 +6769,14 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                 by_name = False
             delivered = bool(placements)
             # A word the render never heard is told as that, not as a missing pop-in.
+            title_misses = _title_misses_for(facts, names)
+            problems.extend(_title_miss_problem(t, r) for t, r in title_misses)
             missing = [
                 n
                 for n in named
                 if not any(_trigger_heard(n, b.trigger) for b in beats)
                 and not any(_trigger_heard(n, u) for u in unheard)
+                and not any(_trigger_heard(n, t) for t, _r in title_misses)
             ]
             if unheard:
                 problems.append(
