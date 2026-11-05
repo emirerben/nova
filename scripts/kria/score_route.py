@@ -3557,9 +3557,47 @@ def _target_render(replay: dict, kind: str, ident: str, fx: dict) -> bool:
     )
 
 
-def check_field(fx: dict, cards: Mapping[str, dict], replay: dict, field: str) -> dict:
-    verdict = field_verdict(field, cards, _target_render(replay, "fields", field, fx))
+def _planner_choice_nobody_asked(fx: dict, field: str) -> bool:
+    """Green 4/5: the hook, story structure, pacing and direction are the planner's own fields.
+    With ``kria_headsup_asked_only_enabled`` the card names one a route ignores only when a live
+    typed ask carries it (`route_disclosure.creator_asked_for`); otherwise silence is the rule."""
+    try:
+        from app.kria.brief import BriefRequirement
+        from app.kria.route_disclosure import (
+            PLANNER_OWNED_FIELDS,
+            asked_only,
+            creator_asked_for,
+        )
+    except ImportError:  # code that predates the rule: every field is graded as before
+        return False
+    if field not in PLANNER_OWNED_FIELDS or not asked_only():
+        return False
+    asks = []
+    for raw in (fx.get("brief") or {}).get("requirements") or fx.get("requirements") or []:
+        try:
+            asks.append(BriefRequirement.model_validate(raw))
+        except Exception:  # noqa: BLE001 - an ask the brief cannot hold asks for nothing
+            continue
+    return not creator_asked_for(field, asks)
+
+
+def check_field(
+    fx: dict, cards: Mapping[str, dict], replay: dict, field: str, *, silent_unasked: bool = True
+) -> dict:
+    """``silent_unasked`` False grades the card lines alone (the self-checks of this check)."""
     value = fx["strategy"].get(field)
+    if silent_unasked and _planner_choice_nobody_asked(fx, field):
+        return _kind(
+            _result(
+                f"2.{field}",
+                f"{field}: the planner's own choice and nobody asked for it, so the card is silent",
+                True,
+                [],
+                {"value": value, "silent_unasked": True},
+            ),
+            "disclosed_ok",
+        )
+    verdict = field_verdict(field, cards, _target_render(replay, "fields", field, fx))
     return _kind(
         _result(
             f"2.{field}",
@@ -3790,7 +3828,15 @@ def _synthetic_card(
 
 def _card_check(field: str, card: dict, tr: dict | None = None) -> bool:
     cards = {"en": card, "tr": card if tr is None else tr}
-    return check_field(_SYNTHETIC_FX, cards, _NO_REPLAY, field)["pass"]
+    return check_field(_SYNTHETIC_FX, cards, _NO_REPLAY, field, silent_unasked=False)["pass"]
+
+
+def _unasked_check(field: str, asks: list) -> bool:
+    """Check 2 with the Green 4/5 rule on, on an empty card: silence is right only when no live
+    typed ask carries the planner's ``field``."""
+    fx = {**_SYNTHETIC_FX, "brief": {"version": 1, "requirements": asks}}
+    empty = _synthetic_card([])
+    return check_field(fx, {"en": empty, "tr": empty}, _NO_REPLAY, field)["pass"]
 
 
 def _ask_check(card: dict) -> bool:
@@ -3828,6 +3874,20 @@ def check_function_controls() -> list[dict]:
             "2 check_field: the field's own card line must PASS",
             True,
             _card_check("target_duration_s", _synthetic_card([pace, length])),
+        ),
+        _row(
+            "2 check_field: the planner's own pacing nobody asked for, not named, must PASS",
+            True,
+            _unasked_check("pacing", []),
+        ),
+        _row(
+            "2 check_field: a story structure the creator's order ask carries, not named, "
+            "must FAIL",
+            False,
+            _unasked_check(
+                "story_structure",
+                [_req("r1", "order", "global", {"key": "spoken"}).model_dump(mode="json")],
+            ),
         ),
         _row(
             "2 check_field: a line on the English card the Turkish card lacks must FAIL",

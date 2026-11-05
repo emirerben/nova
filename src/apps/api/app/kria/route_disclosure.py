@@ -84,6 +84,35 @@ class Disclosure:
 # Source of truth: each route's ``FIELD_HANDLING`` (`app.kria.route_capabilities`).
 
 
+# Strategy fields the planner fills on its own for every draft (Green 4/5). A route that does not
+# read one is worth a card line only when the creator asked for something it carries.
+PLANNER_OWNED_FIELDS = frozenset({"intro_hook", "story_structure", "pacing", "direction"})
+
+
+def asked_only() -> bool:
+    """Registry off keeps every card exactly as before the registry, this rule included."""
+    return bool(settings.kria_headsup_asked_only_enabled) and registry_enabled()
+
+
+def creator_asked_for(field: str, requirements: Sequence[BriefRequirement] | None) -> bool:
+    """A live typed ask the planner-owned ``field`` carries: a clip order for the story structure,
+    on-screen text for the hook. Pacing and direction have no typed ask: an untyped one ("make it
+    fast") is the creator's own requirement and gets its own receipt on the card."""
+    live = [req for req in requirements or () if req.live]
+    if field == "story_structure":
+        return any(req.kind in {"order", "text_sequence"} for req in live)
+    if field == "intro_hook":
+        return any(req.kind == "text" for req in live)
+    return False
+
+
+def route_ignores(route: str | None, field: str) -> bool:
+    """The route's table says it does not follow ``field`` (`NotApplied` / `RecordedOnly`)."""
+    table = _table(route)
+    handling = getattr(table, "FIELD_HANDLING", {}).get(field) if table is not None else None
+    return isinstance(handling, NotApplied | RecordedOnly)
+
+
 def _table(route: str | None) -> ModuleType | None:
     """The route's table; with the registry off, only the unified montage has one: the frozen
     pre-registry copy, so nothing a lane adds to `unified_montage` reaches a switch-off card."""
@@ -164,6 +193,12 @@ def strategy_notices(
                 if text:
                     out.append(Disclosure(handling.code, field, text))
                 continue
+        if (
+            field in PLANNER_OWNED_FIELDS
+            and asked_only()
+            and not creator_asked_for(field, requirements)
+        ):
+            continue  # the planner's own idea, not the creator's: nothing they asked is dropped
         try:
             build = handling.build
             text = (
