@@ -49,3 +49,26 @@ no protocol or verified token is needed.
 21. White on a white background: accepted (her own look; she asked for white). A named colour wins.
 22. A size she names ("big TikTok text") must win over the look's 56 px.
 23. Turkish asks ("ortada", "TikTok'taki gibi") must be taught too.
+
+## Result (simulator, iPhone Air sim, production exporter, 2026-11-05)
+
+Stand-in clips: an 11 s silent take with the face high in the frame (like her V3) and an 11 s
+take whose face fills the middle (like her V2, face boxes measured with Apple Vision and injected
+into the face sampler). Scored with her kit (`check_result.sh <mp4> Q3 --ignore-tail-s 1.6
+--source-s 11.0`).
+
+| Case | text_place | one_text | text_short | Text over a face |
+|---|---|---|---|---|
+| before: pin `top_center` + same-words `opening_title` (kit report C2) | FAIL y 0.18 | FAIL 0.17 | FAIL 21 words | 73% of face frames |
+| before: pin only | FAIL y 0.17 | PASS | PASS | 68% |
+| after: v128 middle TikTok-look pin | PASS x 0.50 y 0.50 | PASS 0.96 | PASS 11 | 0% |
+| after, with the same-words title too | PASS | PASS | PASS | 0% |
+| face in the middle, before (pin only) | FAIL y 0.18 | PASS | PASS | 41% |
+| face in the middle, after | FAIL y 0.83 (moved below the face; the receipt says so) | PASS | PASS | 0% |
+
+`one_shot` fails on the first stand-in both before and after (the take's own motion, 8 visual
+changes), unchanged by this work. The exported line breaks like her V3 ("The prompt I run at the
+end / of every Claude session") in white TikTok Sans Bold with a faint shadow.
+Review fixes after the fresh review: no clear spot ⇒ `covers` + honest receipt; an authored
+position is kept; small face moves are told; stale `moved_off` cleared; the title dedup only
+for middle / looked pins.
