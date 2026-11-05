@@ -217,6 +217,72 @@ def title_look_ask(
     )
 
 
+# --- dispatch pins her ask (KRI-470 plan authority) ----------------------------------------
+
+TITLE_LOOK_ASK_FIELD = "title_look_ask"
+_TITLE_LOOK_ASK_VERSION = 1
+_ASK_KINDS = frozenset(_LOOKS)
+
+
+def stamp_title_look(job: Any) -> None:
+    """Initial dispatch pins what her own words asked of a stacked title's look (per-line
+    styles and colours, a named title font/colour, top-left / centre) on the job, next to
+    `phone_text_styling.stamp_phone_text_style`. Only look properties: never route, duration,
+    voice, order or required text. Workers and retries read the pinned ask and never re-read
+    her prose. Nothing is stamped with ``TITLE_LOOK_ENABLED`` off, for a plain one-line
+    title, or on a legacy saved generation."""
+    from app.config import settings  # noqa: PLC0415
+    from app.schemas.phone_text_style import explicit_text_rule  # noqa: PLC0415
+
+    current = dict(job.assembly_plan or {})
+    if not settings.title_look_enabled or TITLE_LOOK_ASK_FIELD in current:
+        return
+    if current.get("variants") or current.get("_device_render_v1"):
+        return
+    candidates = job.all_candidates or {}
+    strategy = candidates.get("creator_strategy")
+    lines = split_title_lines(strategy.get("opening_title") if isinstance(strategy, dict) else None)
+    if lines is None:
+        return
+    request = str(candidates.get("creator_request") or "")
+    parsed = explicit_text_rule(request)
+    words = dict(parsed[1]) if parsed is not None and parsed[0] in ("all_text", "title") else {}
+    ask = title_look_ask(request, line_count=len(lines), title_rule=words)
+    current[TITLE_LOOK_ASK_FIELD] = {
+        "version": _TITLE_LOOK_ASK_VERSION,
+        "line_kinds": list(ask.line_kinds),
+        "line_colors": list(ask.line_colors),
+        "rule": {k: v for k, v in words.items() if k in ("font_family", "color", "position")},
+        "position": ask.position,
+    }
+    job.assembly_plan = current
+
+
+def pinned_title_look_ask(
+    plan: Mapping[str, Any], *, line_count: int, saved_rule: Mapping[str, Any] | None = None
+) -> TitleLookAsk:
+    """The ask the worker draws: what dispatch pinned from her words (`stamp_title_look`)
+    over her saved text rules (``saved_rule``). An unpinned job gets her saved rules only."""
+    raw = plan.get(TITLE_LOOK_ASK_FIELD)
+    pinned = raw if isinstance(raw, Mapping) and raw.get("version") == 1 else {}
+    kinds = [k for k in pinned.get("line_kinds") or () if k in _ASK_KINDS]
+    if len(kinds) < 2 or len(kinds) > line_count:
+        kinds = []
+    colors = list(pinned.get("line_colors") or ()) if kinds else []
+    words = pinned.get("rule") if isinstance(pinned.get("rule"), Mapping) else {}
+    rule = {**(saved_rule or {}), **words}
+    position = pinned.get("position")
+    if position not in _RULE_POSITIONS:
+        position = rule.get("position") if rule.get("position") in _RULE_POSITIONS else None
+    return TitleLookAsk(
+        line_kinds=tuple(kinds),
+        line_colors=tuple(c if isinstance(c, str) else None for c in colors) if any(colors) else (),
+        font_family=rule.get("font_family") or None,
+        color=None if kinds else (rule.get("color") or None),
+        position=position,
+    )
+
+
 # --- rows --------------------------------------------------------------------------------
 
 

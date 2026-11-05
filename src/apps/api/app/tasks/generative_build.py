@@ -10033,7 +10033,7 @@ def _run_phone_subtitled_job(
                     position_x=speaker_position_x or 0.0,
                     protected=protected_plan,
                     caption_avoid=protected_caption_avoid,
-                    request_text=str(all_candidates.get("creator_request") or ""),
+                    title_look_plan=snapshot,
                     reserve_logo=beats_enabled and _asks_title_logo(all_candidates),
                     look_caption_avoid=(
                         _title_look_caption_avoid(cues, caption_style=caption_style, **text_canvas)
@@ -12438,7 +12438,7 @@ def _phone_talking_title_rows(
     protected: Any = None,
     caption_avoid: Any = None,
     canvas: Any = None,
-    request_text: str = "",
+    title_look_plan: Mapping[str, Any] | None = None,
     reserve_logo: bool = False,
     look_caption_avoid: Any = None,
 ) -> tuple[list[dict], dict[str, Any] | None]:
@@ -12472,10 +12472,12 @@ def _phone_talking_title_rows(
 
         lines = phone_title_look.split_title_lines(opening_title)
         if lines is not None:
-            ask = phone_title_look.title_look_ask(
-                request_text,
+            # KRI-470: what dispatch pinned from her words (`stamp_title_look`) over her saved
+            # text rules; the worker never re-reads her prose.
+            ask = phone_title_look.pinned_title_look_ask(
+                title_look_plan or {},
                 line_count=len(lines),
-                title_rule=_phone_title_rule(request_text),
+                saved_rule=_phone_saved_title_rule(),
             )
             position = ask.position
             rows = phone_title_look.title_look_rows(
@@ -12544,22 +12546,15 @@ def _phone_talking_title_rows(
     return placed_rows, receipt
 
 
-def _phone_title_rule(request_text: str) -> dict:
-    """The title look she asked for: her saved text rules (the phone text policy's
-    preferences), then a title or all-text rule read from her own words. Never the
-    strategy's font/colour knobs: under the policy those can be a face Kria picked on its
-    own (KRI-1024's provisional font), which would flatten every line into one font."""
-    from app.schemas.phone_text_style import explicit_text_rule  # noqa: PLC0415
-
+def _phone_saved_title_rule() -> dict:
+    """Her saved text rules for the title (the phone text policy's preferences, pinned at
+    dispatch). Never the strategy's font/colour knobs: under the policy those can be a face
+    Kria picked on its own (KRI-1024's provisional font), which would flatten every line."""
     rule: dict = {}
-    policy = current_phone_text_policy()
-    preferences = (policy or {}).get("preferences") or {}
+    preferences = (current_phone_text_policy() or {}).get("preferences") or {}
     for role in ("all_text", "title"):
         if isinstance(preferences.get(role), dict):
             rule.update(preferences[role])
-    parsed = explicit_text_rule(request_text or "")
-    if parsed is not None and parsed[0] in ("all_text", "title"):
-        rule.update(parsed[1])
     return rule
 
 

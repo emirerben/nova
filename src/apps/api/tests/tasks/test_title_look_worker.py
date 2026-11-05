@@ -70,6 +70,10 @@ def _titled(monkeypatch, *, title=HER_TITLE, hold=None, request="", **setup):
     }
     if request:
         job.all_candidates["creator_request"] = request
+    # Dispatch pins what her words asked (KRI-470: the worker never re-reads her prose).
+    from app.pipeline.phone_title_look import stamp_title_look
+
+    stamp_title_look(job)
     return job, snapshot, session, binding
 
 
@@ -586,3 +590,22 @@ def test_a_one_line_title_keeps_its_spot_under_its_logo_through_the_styling_pass
     assert row["text"] == single
     logo, _start, _end = _logo_box(job)
     assert logo.bottom <= _box(row).top + 1e-3
+
+
+def test_the_worker_never_re_reads_her_words_only_what_dispatch_pinned(monkeypatch):
+    """KRI-470 plan authority: a request edited after dispatch (or a job dispatched before the
+    switch) changes nothing in the render; the look comes from the pinned ask alone."""
+    _look(monkeypatch)
+    _faces(monkeypatch)
+    job, *_ = _titled(monkeypatch)  # pinned with no request: the default look
+    job.all_candidates["creator_request"] = f'Title "{HER_TITLE}" in the top left corner.'
+
+    gb._run_generative_job(str(job.id))
+
+    rows = _title_rows(job)
+    assert {row["alignment"] for row in rows} == {"center"}
+    assert [row["font_family"] for row in rows] == [
+        "Bricolage Grotesque",
+        "Instrument Serif",
+        "Patrick Hand",
+    ]

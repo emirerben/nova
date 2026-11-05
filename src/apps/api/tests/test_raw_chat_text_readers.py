@@ -221,6 +221,14 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
         "narration label wording for the approved guided plan",
         None,
     ),
+    "pipeline/phone_title_look.py": (
+        "content_only",
+        "Qendresa item 20: initial dispatch pins her stacked title's look asks (per-line "
+        "face/colour, a named title font/colour, top-left/centre) beside "
+        "stamp_phone_text_style; it never changes route, duration, voice, order or the "
+        "title's words. Workers and retries read the pinned ask, never the prose",
+        frozenset({"stamp_title_look"}),
+    ),
     "services/phone_text_styling.py": (
         "content_only",
         "initial dispatch pins validated font/color/placement/effect properties from the "

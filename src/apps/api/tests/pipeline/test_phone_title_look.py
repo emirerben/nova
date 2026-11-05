@@ -644,3 +644,60 @@ def test_every_line_carries_a_strong_shadow_so_light_colours_read_on_light_foota
     for row in _rows():
         assert row.get("shadow_style") == "high_visibility"
         assert row.get("shadow_enabled") is not False
+
+
+# --- dispatch pins her ask (KRI-470) -----------------------------------------------------
+
+
+def _job(request, title=HER_TITLE, **plan):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        assembly_plan=dict(plan),
+        all_candidates={"creator_request": request, "creator_strategy": {"opening_title": title}},
+    )
+
+
+def test_dispatch_pins_her_per_line_ask_and_position(monkeypatch):
+    from app.config import settings
+    from app.pipeline.phone_title_look import (
+        TITLE_LOOK_ASK_FIELD,
+        pinned_title_look_ask,
+        stamp_title_look,
+    )
+
+    monkeypatch.setattr(settings, "title_look_enabled", True)
+    job = _job(HER_ASK + " Put the title top left.")
+
+    stamp_title_look(job)
+
+    pinned = job.assembly_plan[TITLE_LOOK_ASK_FIELD]
+    ask = pinned_title_look_ask(job.assembly_plan, line_count=3)
+    assert pinned["version"] == 1
+    assert ask.line_kinds == ("handwritten", "bold", "serif")
+    assert ask.line_colors == (None, None, "#FFFF00")
+    assert ask.position == "top_left"
+
+
+def test_dispatch_pins_nothing_with_the_switch_off_or_a_plain_title(monkeypatch):
+    from app.config import settings
+    from app.pipeline.phone_title_look import TITLE_LOOK_ASK_FIELD, stamp_title_look
+
+    monkeypatch.setattr(settings, "title_look_enabled", False)
+    off = _job(HER_ASK)
+    stamp_title_look(off)
+    monkeypatch.setattr(settings, "title_look_enabled", True)
+    plain = _job("title top left", title="one plain title")
+    stamp_title_look(plain)
+
+    assert TITLE_LOOK_ASK_FIELD not in off.assembly_plan
+    assert TITLE_LOOK_ASK_FIELD not in plain.assembly_plan
+
+
+def test_a_saved_rule_fills_in_what_her_pinned_words_did_not_name():
+    from app.pipeline.phone_title_look import pinned_title_look_ask
+
+    ask = pinned_title_look_ask({}, line_count=3, saved_rule={"font_family": "Pacifico"})
+
+    assert ask.font_family == "Pacifico"
+    assert ask.line_kinds == ()

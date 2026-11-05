@@ -40,6 +40,7 @@ import app.services.phone_reaction_grounding as reaction_mod
 import app.services.phone_visuals as phone_visuals_mod
 from app.config import settings
 from app.kria.media_sources import OriginalMediaDescriptor
+from app.pipeline.phone_title_look import stamp_title_look
 from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion, _face_protection_box
 from app.pipeline.transcribe import Word
 from app.services import phone_text_styling as styling
@@ -251,6 +252,7 @@ def test_prepare_device_cases(monkeypatch):
             ],
         }
         stamp_phone_text_style(job)
+        stamp_title_look(job)  # as dispatch does (content_plan_build)
         job.assembly_plan[PHONE_TEXT_STYLE_FIELD]["selection_calls"] = 2  # no font model call
         return job
 
