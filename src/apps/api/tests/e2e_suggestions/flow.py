@@ -13,6 +13,8 @@ because of a defect in production code that this lane may not touch carries a na
 
 from __future__ import annotations
 
+import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from tests.e2e_suggestions import driver as d
@@ -32,21 +34,71 @@ LANE = {
     "hook": "title",
 }
 RESTATE = frozenset({"mute_clip", "filler_words"})
+# Payload keys every draft carries for its own bookkeeping; a tap's creative change is the rest.
+BOOKKEEPING = frozenset(
+    {
+        "base_generation",
+        "copilot_receipt_ids",
+        "deletions",
+        "learning_temporary",
+        "remove_music",
+        "retry_guided_revision",
+    }
+)
+# Keys the server keeps to itself: the phone gets a prompt to send and text to read, never the
+# change that will be made (the Action stays server-side).
+SERVER_ONLY_KEYS = frozenset(
+    {"action", "ops", "op", "base_digest", "witness", "witness_tier", "expected_version", "updates"}
+)
+# What a restating card's staged requirement must say, and what the render then carries.
+RESTATE_FACT = {"filler_words": {"speech_cleanup": True}, "mute_clip": {"clip_sound": "off"}}
 
-GAP_TR_RECEIPT = gaps.TR_RECEIPT
 GAP_RESTATE_DOUBLE_TAP = gaps.RESTATE_DOUBLE_TAP
 GAP_RESTATE_NOT_READY = gaps.RESTATE_NOT_READY
-GAP_REFUSED_BRIEF = gaps.REFUSED_BRIEF
+
+RenderProbe = Callable[[Any, str], Awaitable[None]]
 
 
 async def ensure_stored(phone: Phone, out) -> str:  # noqa: ANN001
-    """``route`` when the real GET stored the cards it served in the ring, else ``missing``.
+    """``route`` when the real GET stored EVERY card it served in the ring, else ``missing``.
 
     Nothing is written on the phone's behalf: a tap against a ring the route did not fill is the
-    bug this reports, so the run fails on the ``stored`` cell instead of papering over it.
+    bug this reports, so the run fails on the ``stored`` cell instead of papering over it. A set
+    that kept only some of its cards fails too: the missing one answers "no longer fits".
     """
-    entry = phone.ring_entry(out.set_id)
-    return "route" if entry and entry.get("suggestions") else "missing"
+    entry = phone.ring_entry(out.set_id) or {}
+    stored = {c.get("id") for c in entry.get("suggestions") or []}
+    served = {c.id for c in out.suggestions}
+    return "route" if served and served <= stored else "missing"
+
+
+def leaked_keys(node: Any, path: str = "") -> list[str]:
+    """Server-only keys anywhere in a JSON body (the phone must never see the Action)."""
+    found: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in SERVER_ONLY_KEYS:
+                found.append(f"{path}.{key}")
+            found += leaked_keys(value, f"{path}.{key}")
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            found += leaked_keys(value, f"{path}[{index}]")
+    return found
+
+
+def verify_served(cell: Cell, phone: Phone, card) -> None:  # noqa: ANN001
+    """The card the phone parses: in the JSON of the real GET, with its closed prompt, no Action."""
+    wire = phone.last_wire
+    raw = next((c for c in wire.get("suggestions") or [] if c.get("id") == card.id), None)
+    leaks = leaked_keys(wire)
+    ok = bool(raw and raw.get("kind") == card.kind and raw.get("prompt") == card.prompt)
+    if raw and card.kind == "hook":
+        ok = ok and raw.get("copy_text") == card.copy_text and card.copy_text not in raw["prompt"]
+    cell.check(
+        "served",
+        ok and not leaks,
+        f"wire card keys {sorted(raw) if raw else None}; server-only keys on the wire: {leaks}",
+    )
 
 
 def removed_slots(head: dict[str, Any] | None) -> set[str]:
@@ -95,37 +147,62 @@ def verify_tap(cell: Cell, phone: Phone, tap: Tap) -> None:
         return
     diff = d.lane_diff(before, after)
     lane = LANE[kind]
-    detail = f"lanes changed: {sorted(diff)}"
+    creative = set(diff) - BOOKKEEPING
+    detail = f"lanes changed: {sorted(creative)}"
     real = bool(
         lane in diff
         and diff[lane][0] != diff[lane][1]
         and (after or {}).get("snap", {}).get("kind") == "editor"
     )
-    if kind == "duplicates":
-        # The weaker take of the pair goes, not whichever clip sits at that index.
-        real = real and removed_slots(after) == {"slot-0"}
-        detail += f"; removed {sorted(removed_slots(after))}"
-    if kind == "hook":
-        resolution = tap.applied_event.get("creative_copy_resolution") or {}
-        real = (
-            real and title_of(after) == card.copy_text and resolution.get("source") == "suggestion"
-        )
-        detail += (
-            f"; title {title_of(after)!r} vs card {card.copy_text!r}; "
-            f"resolution {resolution.get('source')}"
-        )
-    cell.check("change", real, detail)
+    ok_direction, how = direction(kind, tap)
+    detail += f"; {how}"
+    cell.check("change", real and ok_direction, detail)
+    # One card, one change: no other lane moved (a tap that also touched the mix, the captions or
+    # the cut would be a second change the card never promised).
+    cell.check("one_change", creative == {lane}, f"creative lanes changed: {sorted(creative)}")
     receipts = tap.receipts
     met = bool(receipts) and all(r.get("status") == "met" for r in receipts)
     shown = (
         f"receipts={[(r.get('status'), r.get('verification'), r.get('reason')) for r in receipts]}"
     )
-    partial_tr = bool(
-        phone.language == "tr"
-        and receipts
-        and all(r.get("status") == "partial" and r.get("reason") for r in receipts)
-    )
-    cell.check("receipts", met, shown, gap=GAP_TR_RECEIPT if partial_tr else None)
+    cell.check("receipts", met, shown)
+    cell.na("render_kick", "an editor-ops tap edits the draft; the phone exports the video")
+
+
+def payload_of(draft: dict[str, Any] | None) -> dict[str, Any]:
+    return ((draft or {}).get("snap") or {}).get("editor_payload") or {}
+
+
+def direction(kind: str, tap: Tap) -> tuple[bool, str]:
+    """The change went the way the card promised, not just somewhere in the right lane."""
+    before, after, card = tap.head_before, tap.head_after, tap.card
+    was, now = payload_of(before), payload_of(after)
+    if kind == "captions":
+        on = (now.get("caption_meta") or {}).get("enabled") is True
+        return on, f"captions enabled: {on}"
+    if kind == "music":
+        level = (now.get("mix") or {}).get("music_level")
+        prior = (was.get("mix") or {}).get("music_level")
+        lower = isinstance(level, int | float) and level < (1.0 if prior is None else prior)
+        return bool(lower), f"music level {prior} -> {level}"
+    if kind == "sfx":
+        added = len(now.get("sound_effects") or []) - len(was.get("sound_effects") or [])
+        return added == 1, f"sound effects added: {added}"
+    if kind == "transition":
+        slots = now.get("timeline_slots") or []
+        eased = [r["slot_id"] for r in slots if r.get("transition_after") not in (None, "cut")]
+        return bool(eased), f"slots with a transition now: {eased}"
+    if kind == "duplicates":
+        gone = removed_slots(after)
+        return gone == {"slot-0"}, f"removed {sorted(gone)}"
+    if kind == "hook":
+        title = title_of(after)
+        source = (tap.applied_event.get("creative_copy_resolution") or {}).get("source")
+        return (
+            title == card.copy_text and source == "suggestion",
+            f"title {title!r} vs card {card.copy_text!r}; decision source {source}",
+        )
+    return True, ""
 
 
 def verify_restate(cell: Cell, phone: Phone, tap: Tap) -> None:
@@ -137,10 +214,18 @@ def verify_restate(cell: Cell, phone: Phone, tap: Tap) -> None:
     req = version.requirements[-1]
     approvals = d.approvals_pending(seeded.thread_id)
     owned = req.get("source_turn_id") == tap.accepted.turn_id
+    # One change: the plan is restated as it stands. The tap adds its requirement or setting and
+    # the approval to render; it does not re-plan the story behind the creator's back.
+    was = ((tap.head_before or {}).get("snap") or {}).get("strategy")
+    now = ((tap.head_after or {}).get("snap") or {}).get("strategy")
+    cell_kind = ((tap.head_after or {}).get("snap") or {}).get("kind")
+    cell_ok = bool(cell_kind == "strategy" and was is not None and was == now)
+    d_detail = f"head kind {cell_kind}; strategy unchanged: {was == now}"
     if kind == "filler_words":
         flags = d.item_flags(seeded)
         ok = bool(
-            flags["speech_cleanup_enabled"] is True
+            tap.flags_before.get("speech_cleanup_enabled") is False
+            and flags["speech_cleanup_enabled"] is True
             and flags["user_edited"] is True
             and req.get("facts") == {"speech_cleanup": True}
             and owned
@@ -148,7 +233,10 @@ def verify_restate(cell: Cell, phone: Phone, tap: Tap) -> None:
             and h.events(seeded.thread_id, "approval_requested")
         )
         cell.check(
-            "change", ok, f"item {flags}, requirement {req.get('facts')}, approvals {approvals}"
+            "change",
+            ok,
+            f"item {tap.flags_before} -> {flags}, requirement {req.get('facts')}, "
+            f"approvals {approvals}",
         )
     else:
         ok = bool(
@@ -163,6 +251,7 @@ def verify_restate(cell: Cell, phone: Phone, tap: Tap) -> None:
             ok,
             f"requirement {req.get('scope')} {req.get('facts')}, approvals {approvals}",
         )
+    cell.check("one_change", cell_ok, d_detail)
     if tap.receipts:
         cell.check(
             "receipts", all(r.get("status") == "met" for r in tap.receipts), str(tap.receipts)
@@ -263,7 +352,8 @@ async def verify_refreshed(
 
 
 async def verify_undo(cell: Cell, phone: Phone, tap: Tap) -> bool:
-    """Undo the tap. False (and a failed check) when the tap left nothing to undo."""
+    """Undo the tap, then check the creator is back where they were: the draft, the render approval,
+    the brief and the item's settings. False (and a failed check) when there was nothing to undo."""
     if tap.new_drafts != 1:
         cell.check("undo", False, "the tap wrote no revision, so there is nothing to undo")
         return False
@@ -276,14 +366,27 @@ async def verify_undo(cell: Cell, phone: Phone, tap: Tap) -> bool:
         same and pending == 0,
         f"head snapshot == parent: {same}; approvals pending {pending}",
     )
-    if tap.card.kind == "filler_words":
-        back = d.item_flags(phone.seeded)["speech_cleanup_enabled"] is False
-        cell.check(
-            "undo_setting",
-            back,
-            f"speech_cleanup_enabled back to False: {back}",
-        )
+    # The typed requirement a tap wrote (a hook's title, a filler's speech_cleanup, a mute's
+    # clip_sound) is the creator's word as far as KRI-129 goes. Undo must take it back, or the
+    # next approval is blocked by a request nobody typed.
+    brief = d.live_brief(phone.seeded.thread_id)
+    cell.check(
+        "undo_brief",
+        brief == tap.brief_before,
+        f"requirements in force before the tap {_facts(tap.brief_before)}; "
+        f"after the tap {_facts(tap.brief_after)}; after Undo {_facts(brief)}",
+    )
+    flags = d.item_flags(phone.seeded)
+    cell.check(
+        "undo_setting",
+        flags == tap.flags_before,
+        f"item settings before the tap {tap.flags_before}; after Undo {flags}",
+    )
     return True
+
+
+def _facts(rows: list[dict[str, Any]]) -> list[str]:
+    return [f"{r['id']}:{r['kind']}:{json.dumps(r['facts'], sort_keys=True)}" for r in rows]
 
 
 def verify_hidden_after(cell: Cell, card, out) -> None:  # noqa: ANN001
@@ -316,9 +419,20 @@ def verify_refused_at_tap(cell: Cell, phone: Phone, tap: Tap, reason: str, gap: 
         "briefs" not in written,
         f"the refused tap wrote {written.get('briefs', 0)} brief version(s): the card's "
         "`speech_cleanup: true` is now a live requirement the thread never applied",
-        gap=GAP_REFUSED_BRIEF if "briefs" in written else None,
     )
-    for name in ("change", "revision", "receipts", "consumed", "second_tap", "refreshed", "undo"):
+    for name in (
+        "change",
+        "one_change",
+        "revision",
+        "receipts",
+        "render_kick",
+        "consumed",
+        "second_tap",
+        "refreshed",
+        "undo",
+        "undo_brief",
+        "undo_setting",
+    ):
         cell.na(name, "the tap was refused: there is no change to verify")
     cell.check("chat", tap.chat == tap.card.prompt, f"chat={tap.chat!r}")
 
@@ -336,11 +450,14 @@ async def tap_every_card(
     shipped: bool = True,
     refusals: dict[str, tuple[str, gaps.Gap]] | None = None,
     only: frozenset[str] | None = None,
+    probe_render: RenderProbe | None = None,
 ) -> list[Cell]:
     """Serve the thread, then tap each card in rank order. ``expect`` is the served kinds.
 
     ``refusals`` names a card the server serves but whose tap is refused today: ``{kind: (typed
     reason, gap text)}``. The check is a named gap that FAILS the run once the tap is accepted.
+    ``probe_render`` runs the render step of a restating card on a twin thread (approving the
+    staged render consumes the approval Undo needs, so the thread under test is left alone).
     """
     refusals = refusals or {}
     out = await phone.serve()
@@ -367,7 +484,7 @@ async def tap_every_card(
         cell.served, cell.rank = True, first_rank.setdefault(card.kind, card.rank)
         cell.action_type, cell.title, cell.prompt = card.action_type, card.title, card.prompt
         cells.append(cell)
-        cell.check("served", True, "")
+        verify_served(cell, phone, card)
         how = await ensure_stored(phone, out)
         cell.check("stored", how == "route", f"stored by {how}")
         tap = await phone.tap(card, out)
@@ -387,6 +504,53 @@ async def tap_every_card(
         others = [c.kind for c in remaining[1:]]
         await verify_refreshed(cell, phone, tap, out, others, commit_refresh=commit_refresh)
         await verify_undo(cell, phone, tap)
+        if card.kind in RESTATE and tap.planned:
+            if probe_render is not None:
+                await probe_render(cell, card.kind)
+            else:
+                cell.na("render_kick", "not probed in this run")
         out = await phone.serve()
         verify_hidden_after(cell, card, out)
     return cells
+
+
+async def verify_render_kick(cell: Cell, twin: Phone, kind: str, monkeypatch) -> None:  # noqa: ANN001
+    """The restating card's second half, on a twin thread: tap it, approve the render it staged,
+    and the render worker is handed the plan with the card's requirement in force.
+
+    Filler: the item's cleanup setting is on when the render is dispatched and the brief binding the
+    renderer honors carries ``speech_cleanup: true``. Mute: it carries ``clip_sound: off`` for the
+    clip (whether the phone then mutes it is a device question, not provable here).
+    """
+    out = await twin.serve()
+    card = next((c for c in out.suggestions if c.kind == kind), None)
+    if card is None:
+        cell.check("render_kick", False, f"the twin thread did not serve {kind}")
+        return
+    tap = await twin.tap(card, out)
+    if not (tap.planned and tap.result.get("status") == "awaiting_approval"):
+        cell.check(
+            "render_kick", False, f"the twin tap was not accepted: {tap.refused} {tap.reply}"
+        )
+        return
+    run = await twin.approve_render(monkeypatch)
+    call = run.calls[0] if run.calls else {}
+    binding = ((call.get("creator_brief_binding") or {}).get("brief") or {}).get("requirements")
+    wanted = RESTATE_FACT[kind]
+    carried = any((r.get("facts") or {}) == wanted for r in binding or [])
+    flags = d.item_flags(twin.seeded)
+    ok = bool(
+        run.decision == "approved"
+        and len(run.calls) == 1
+        and run.execution_status == "dispatched"
+        and run.job_id
+        and carried
+        and (kind != "filler_words" or flags["speech_cleanup_enabled"] is True)
+    )
+    cell.check(
+        "render_kick",
+        ok,
+        f"decision {run.decision}; dispatch calls {len(run.calls)}; execution "
+        f"{run.execution_status}; job {bool(run.job_id)}; brief binding carries {wanted}: "
+        f"{carried}; item {flags}",
+    )

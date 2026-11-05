@@ -29,7 +29,7 @@ from __future__ import annotations
 import copy
 import json
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -171,15 +171,53 @@ def east_run(*, with_brief: bool) -> Scenario:
     )
 
 
+def localized(
+    base: Scenario,
+    *,
+    key: str,
+    language: str,
+    request: str,
+    subjects: tuple[str, ...],
+    transcript: str,
+    rationale: str,
+    profiles: tuple[str, ...],
+) -> Scenario:
+    """The same footage, edit and signals told in the other language.
+
+    The replay fixtures are English (``nermin-*``) and Turkish (``east-run-brief``); a creator of
+    either language films the same things. Only the words change here: the clip subjects (what the
+    analysis called each shot), what the one speaker says, the creator's request and the plan's
+    rationale. Every number, hash, recording and slot is the base scenario's, so a difference in a
+    result is the language and nothing else. AUTHORED, not recorded: the fixtures hold one language.
+    """
+    clips = tuple(
+        replace(clip, subject=subjects[i], transcript=transcript if clip.transcript else "")
+        for i, clip in enumerate(base.clips)
+    )
+    return replace(
+        base,
+        key=key,
+        language=language,
+        request=request,
+        clips=clips,
+        strategy={**base.strategy, "rationale": rationale},
+        profiles=profiles,
+        note=f"{base.note or base.key}, told in {'Turkish' if language == 'tr' else 'English'}",
+    )
+
+
+_NERMIN = nermin(
+    "nermin-matcha-update",
+    profiles=(EDITOR, SIGNALS, TALKING),
+    speaker="packing orders",
+    transcript="Okay, the restock just landed and I am packing the first orders.",
+)
+_EAST_BARE = east_run(with_brief=False)
+
 SCENARIOS: dict[str, Scenario] = {
     s.key: s
     for s in (
-        nermin(
-            "nermin-matcha-update",
-            profiles=(EDITOR, SIGNALS, TALKING),
-            speaker="packing orders",
-            transcript="Okay, the restock just landed and I am packing the first orders.",
-        ),
+        _NERMIN,
         nermin(
             "nermin-travel-diary",
             profiles=(EDITOR, SIGNALS),
@@ -187,8 +225,44 @@ SCENARIOS: dict[str, Scenario] = {
             transcript="This little place had the best flat white of the whole trip.",
         ),
         east_run(with_brief=True),
-        east_run(with_brief=False),
+        _EAST_BARE,
+        localized(
+            _NERMIN,
+            key="nermin-matcha-update/tr",
+            language="tr",
+            request="Matcha stoğu hakkında kısa bir güncelleme yap. Enerjik ama satışçı olmasın.",
+            subjects=("çırpma yakın çekimi", "siparişleri paketleme", "ilk yudum"),
+            transcript="Tamam, stok yeni geldi ve ilk siparişleri paketliyorum.",
+            rationale="Stok geldi, siparişler paketleniyor, ilk yudum.",
+            profiles=(EDITOR, SIGNALS, TALKING),
+        ),
+        localized(
+            _EAST_BARE,
+            key="east-run-brief/footage-only/en",
+            language="en",
+            request="20K Run · Arnavutkoy to Eminonu. Make this video 20 seconds long.",
+            subjects=(
+                "runner crossing the bridge",
+                "sunrise on the shore road",
+                "ferry on the strait",
+                "crowd at the finish line",
+                "runner talking to the camera",
+            ),
+            transcript="Twenty kilometres done, we made it to Eminonu.",
+            rationale="A sunset story of a twenty kilometre run.",
+            profiles=(EDITOR, SIGNALS, TALKING),
+        ),
     )
+}
+
+# The footage each scenario is a copy of, for the report's coverage matrix.
+FAMILY = {
+    "nermin-matcha-update": "nermin-matcha-update",
+    "nermin-matcha-update/tr": "nermin-matcha-update",
+    "nermin-travel-diary": "nermin-travel-diary",
+    "east-run-brief": "east-run-brief",
+    "east-run-brief/footage-only": "east-run-brief (no brief)",
+    "east-run-brief/footage-only/en": "east-run-brief (no brief)",
 }
 
 
@@ -385,7 +459,9 @@ def seed_thread(scenario: Scenario, profile: str, *, finished: bool = False) -> 
         )
         thread.revision = 6
         db.commit()
-    seed_strategy(seeded, scenario)
+    # A Talking take's plan is a Talking plan: approving a plan whose format differs from the item's
+    # would re-map the item's media and (rightly) switch its speech cleanup back off.
+    seed_strategy(seeded, scenario, edit_format="subtitled" if profile == TALKING else None)
     for batch in scenario.brief:
         updates = [_brief_update(u) for u in batch]
         if updates:
@@ -399,19 +475,21 @@ def _brief_update(raw: dict[str, Any]):  # noqa: ANN202
     return BriefUpdate.model_validate({"operation": "add", **raw})
 
 
-def seed_strategy(seeded: h.Seeded, scenario: Scenario) -> uuid.UUID:
+def seed_strategy(
+    seeded: h.Seeded, scenario: Scenario, *, edit_format: str | None = None
+) -> uuid.UUID:
     """The strategy draft the current render was made from: the head of the thread's drafts."""
     from app.agents._schemas.creator_agent import CreativeStrategy
     from app.kria.drafts import KriaDraftDocument, canonical_snapshot
     from app.models import CreatorEditDraft
 
-    strategy = CreativeStrategy.model_validate(scenario.strategy).model_dump(
-        mode="json", exclude_none=True
-    )
+    strategy = CreativeStrategy.model_validate(
+        {**scenario.strategy, **({"edit_format": edit_format} if edit_format else {})}
+    ).model_dump(mode="json", exclude_none=True)
     document = KriaDraftDocument(
         kind="strategy",
         intent=scenario.request[:200],
-        edit_format=scenario.edit_format,
+        edit_format=edit_format or scenario.edit_format,
         strategy=strategy,
         changes=[],
     )

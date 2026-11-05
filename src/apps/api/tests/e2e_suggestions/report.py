@@ -37,13 +37,26 @@ CHECKS: tuple[tuple[str, str], ...] = (
     ("stored", "in ring"),
     ("accepted", "accepted"),
     ("change", "real change"),
+    ("one_change", "one change"),
     ("revision", "new revision"),
     ("receipts", "receipts"),
+    ("render_kick", "render kick"),
     ("chat", "chat = prompt"),
-    ("undo", "Undo"),
     ("consumed", "consumed"),
     ("second_tap", "2nd tap refused"),
     ("refreshed", "refreshed set"),
+    ("undo", "Undo draft"),
+    ("undo_brief", "Undo brief"),
+    ("undo_setting", "Undo setting"),
+)
+# Scenario columns of the coverage matrix: (key, header).
+SCENARIO_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("nermin-matcha-update", "nermin matcha (en)"),
+    ("nermin-matcha-update/tr", "nermin matcha (tr)"),
+    ("nermin-travel-diary", "nermin travel (en)"),
+    ("east-run-brief", "east run + brief (tr)"),
+    ("east-run-brief/footage-only", "east run bare (tr)"),
+    ("east-run-brief/footage-only/en", "east run bare (en)"),
 )
 KIND_ORDER = (
     "captions",
@@ -249,6 +262,13 @@ def kind_summary(cells: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
                 }
             ),
             "action_types": sorted({c["action_type"] for c in served if c["action_type"]}),
+            "languages": sorted({c["language"] for c in served}),
+            "refusals": [
+                f"{c['scenario']}/{c['profile']}: "
+                f"{c['checks'].get('accepted', {}).get('detail', '')[:140]}"
+                for c, ok in zip(served, accepted, strict=True)
+                if not ok
+            ],
             "unshipped": [
                 {"cell": f"{c['scenario']}/{c['profile']}", "verdict": _verdict(c)}
                 for c in cells
@@ -335,6 +355,26 @@ def render_markdown(run: dict[str, list[dict[str, Any]]], meta: dict[str, str]) 
             + " |"
         )
     add("")
+    add("## Coverage matrix (kind x scenario; every cell is a real thread tapped end to end)")
+    add("")
+    heads = ["kind", *[h for _k, h in SCENARIO_COLUMNS], "first prompt"]
+    add("| " + " | ".join(heads) + " |")
+    add("| " + " | ".join("---" for _ in heads) + " |")
+    first = first_prompt_kinds(run["sections"])
+    for kind in KIND_ORDER:
+        row = [f"`{kind}`"]
+        for key, _h in SCENARIO_COLUMNS:
+            row.append(coverage_cell(cells, kind, key))
+        row.append(first.get(kind, "not offered"))
+        add("| " + " | ".join(row) + " |")
+    add("")
+    add(
+        "`pass xN`: N profiles served the card and every check held. `gap`: held except a named "
+        "gap. `-`: that footage never served the kind (its evidence, or the creator's brief, does "
+        "not support it). `chip`: offered at first prompt as a KRI-756 chip only (prompt-only; its "
+        "tap is the planner's, not a pinned card)."
+    )
+    add("")
     unserved = [k for k in KIND_ORDER if summary[k]["served"] == 0]
     if unserved:
         add("### Kinds that did not execute, and why")
@@ -386,8 +426,32 @@ def render_markdown(run: dict[str, list[dict[str, Any]]], meta: dict[str, str]) 
             f"{_negative_status(n)} | {_cell(n['detail'])} |"
         )
     add("")
+    firsts = [sec["first_prompt"] for sec in run["sections"] if sec.get("first_prompt")]
+    if firsts:
+        add("## First prompt (footage uploaded, nothing said, no render)")
+        add("")
+        add(
+            "No v2 card exists here by design (a card applies to an edit, and there is none). The "
+            "thread serves KRI-756 chips; each was tapped on its own thread and must reach the "
+            "planner once with its own words, unpinned, writing nothing behind it. The planner is "
+            "a stand-in (the real one is an LLM)."
+        )
+        add("")
+        add("| scenario | lang | chips served | tap results |")
+        add("| --- | --- | --- | --- |")
+        for data in sorted(firsts, key=lambda x: x["scenario"]):
+            taps = "; ".join(
+                f"{kind}: {'ok' if t['ok'] else 'FAIL'} (planner x{t['planner_calls']}, "
+                f"pinned {t['pinned']})"
+                for kind, t in data["taps"].items()
+            )
+            add(
+                f"| {data['scenario']} | {data['language']} | {', '.join(data['chips'])} | "
+                f"{_cell(taps)} |"
+            )
+        add("")
     for section in run["sections"]:
-        body = {k_: v for k_, v in section.items() if k_ != "test"}
+        body = {k_: v for k_, v in section.items() if k_ not in {"test", "first_prompt"}}
         if not body:
             continue
         add(f"## {section['test']}")
@@ -402,6 +466,39 @@ def render_markdown(run: dict[str, list[dict[str, Any]]], meta: dict[str, str]) 
         add(f"* {line}")
     add("")
     return "\n".join(lines) + "\n"
+
+
+def coverage_cell(cells: list[dict[str, Any]], kind: str, key: str) -> str:
+    mine = [
+        c
+        for c in cells
+        if c["kind"] == kind and c["scenario"] == key and c["served"] and c.get("shipped", True)
+    ]
+    if not mine:
+        return "-"
+    verdicts = [_verdict(c) for c in mine]
+    if any(v == "FAIL" for v in verdicts):
+        return "FAIL"
+    if any(v == "pass (gap)" for v in verdicts):
+        return f"gap x{len(mine)}"
+    return f"pass x{len(mine)}"
+
+
+def first_prompt_kinds(sections: list[dict[str, Any]]) -> dict[str, str]:
+    """Kind -> how the first prompt offers it, over every first-prompt thread of the run."""
+    seen: dict[str, list[bool]] = {}
+    for section in sections:
+        data = section.get("first_prompt")
+        if not data:
+            continue
+        for kind in data["chips"]:
+            if kind == "default_edit":
+                continue
+            seen.setdefault(kind, []).append(bool(data["taps"].get(kind, {}).get("ok")))
+    return {
+        kind: ("chip" if all(oks) else "chip (tap FAILS)") + f" x{len(oks)}"
+        for kind, oks in seen.items()
+    }
 
 
 STAND_INS = (
@@ -436,20 +533,27 @@ def _cell(text: str) -> str:
     return (text or "").replace("|", "\\|").replace("\n", " ")
 
 
-def kinds_proven(summary: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+def kinds_proven(
+    summary: dict[str, dict[str, Any]], sections: list[dict[str, Any]] | None = None
+) -> list[dict[str, Any]]:
+    first = first_prompt_kinds(sections or [])
     out = []
     for kind in KIND_ORDER:
         row = summary[kind]
+        executes = row["executes_on_unmodified_get"]
         out.append(
             {
                 "kind": kind,
-                # Literal: a card served by the UNMODIFIED GET, tapped, is applied.
-                "tap_executes": row["executes_on_unmodified_get"],
-                # The pinned seam applies the card once the ring holds it (the serve's own helpers
-                # fill the ring in the run; see GAP-1 and GAP-2).
+                # Literal: EVERY shipped cell of the kind, served by the UNMODIFIED GET and tapped,
+                # was applied. One refused cell, or a kind that is not served, makes it false.
+                "tap_executes": executes,
+                "why": _why(kind, row, executes),
+                # The pinned seam applies the card once the ring holds it.
                 "seam_executes": row["seam_executes"],
                 "cells_tapped": row["served"],
                 "refused_cells": row["refused_cells"],
+                "languages": row["languages"],
+                "first_prompt": first.get(kind, "not offered"),
                 # Cells run under a configuration that is not what ships (a patched dark constant).
                 "unshipped": row["unshipped"],
                 "checks": row["checks"],
@@ -458,6 +562,27 @@ def kinds_proven(summary: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+def _why(kind: str, row: dict[str, Any], executes: bool) -> str:
+    if executes:
+        gaps = f"; named gaps on other checks: {', '.join(row['gaps'])}" if row["gaps"] else ""
+        return (
+            f"{row['served']} served cells in {'+'.join(row['languages'])}, every one accepted and "
+            f"applied{gaps}"
+        )
+    if row["served"] == 0:
+        side = row["unshipped"]
+        return "never served as shipped (dark by design)" + (
+            "; with the constant patched on: "
+            + ", ".join(f"{u['cell']} {u['verdict']}" for u in side)
+            if side
+            else ""
+        )
+    return (
+        f"{row['refused_cells']} of {row['served']} served cells refused at the tap: "
+        + " | ".join(row["refusals"])
+    )
 
 
 def write_if_any() -> Path | None:
@@ -477,7 +602,7 @@ def write_if_any() -> Path | None:
             {
                 **meta,
                 "kinds": summary,
-                "kinds_proven": kinds_proven(summary),
+                "kinds_proven": kinds_proven(summary, run["sections"]),
                 "gaps": _collect_gaps(run["cells"], run["negatives"]),
                 "cells": run["cells"],
                 "negatives": run["negatives"],

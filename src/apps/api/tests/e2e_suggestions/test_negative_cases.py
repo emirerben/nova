@@ -21,8 +21,9 @@ Failure catalogue (each row is a line of the "Negative cases" table in
   N6  mute is dark. The evidence qualifies (a measured noisy, speechless, understood clip) but the
       card is not served while ``PINNED_TAP_APPLIES_CLIP_SOUND`` is False. With the constant patched
       on, the seam applies the typed ``clip_sound`` update and stages the approval (not shipped).
-  N7  first prompt. Before any render only the legacy default-edit chip is served; its tap stays on
-      the KRI-756 path (no pin, the planner reads the words).
+  N7  first prompt: ``test_first_prompt.py``.
+  N8  stale base and kill switches for every kind, the creator's word for the five ported kinds, and
+      the gates a hook's copy must pass: ``test_kill_and_stale.py``, ``test_creators_word.py``.
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ from tests.e2e_suggestions.flow import (
     ensure_stored,
     removed_slots,
     tap_every_card,
+    verify_render_kick,
 )
 from tests.e2e_suggestions.report import Recorder
 from tests.e2e_suggestions.threads import EDITOR, SIGNALS
@@ -411,13 +413,15 @@ async def test_n6_mute_is_dark_as_shipped(talking_world):
 
 
 @pytest.mark.asyncio
-async def test_n6_mute_with_the_constant_patched_on(talking_world, monkeypatch):
+@pytest.mark.parametrize("key", ["nermin-matcha-update", "nermin-matcha-update/tr"])
+async def test_n6_mute_with_the_constant_patched_on(talking_world, monkeypatch, key):
     """Not shipped. What the seam would do if the constant were flipped: the evidence qualifies, the
-    card serves, and a tap stages the typed update plus the render approval. Whether the RENDER then
-    mutes the clip is not provable here (the phone re-plans from the brief)."""
+    card serves, a tap stages the typed update plus the render approval, Undo takes it back, and
+    approving the render hands the render worker the plan with ``clip_sound: off`` for the clip.
+    Whether the RENDER then mutes the clip is not provable here (the phone re-plans from the
+    brief), which is why the constant stays False."""
     monkeypatch.setattr(mute_clip, "PINNED_TAP_APPLIES_CLIP_SOUND", True)
-    rec = Recorder("negative N6 mute patched")
-    key = "nermin-matcha-update"
+    rec = Recorder(f"negative N6 mute patched {key}")
     scn, seeded, phone, out = await thread_and_set(talking_world, key, SIGNALS)
     rec.negative(
         "with the constant patched on the measured wind clip is offered",
@@ -429,13 +433,20 @@ async def test_n6_mute_with_the_constant_patched_on(talking_world, monkeypatch):
     )
     mute = card_of(out, "mute_clip")
     rec.negative(
-        "the mute card says why: the measured wind in clip 3",
+        "the mute card shows the measurement: an evidence line for the wind in clip 3",
         key,
-        "an evidence line or a reason that names the noise",
-        bool(mute.evidence) or mute.why not in {"", "Clip 3"},
+        "an evidence line that names the noise, whatever the agent wrote as the reason",
+        any(
+            w in " ".join(mute.evidence).casefold() for w in ("wind", "noise", "rüzgar", "gürültü")
+        ),
         f"why={mute.why!r} evidence={mute.evidence}",
         gap=gaps.MUTE_NO_REASON,
     )
+
+    async def probe(cell, kind):  # noqa: ANN001, ANN202
+        _s, twin_seeded, twin, _o = await thread_and_set(talking_world, key, SIGNALS)
+        await verify_render_kick(cell, twin, kind, monkeypatch)
+
     await tap_every_card(
         rec,
         phone,
@@ -444,47 +455,6 @@ async def test_n6_mute_with_the_constant_patched_on(talking_world, monkeypatch):
         expect=[c.kind for c in out.suggestions],
         shipped=False,
         only=frozenset({"mute_clip"}),
-    )
-    rec.finish()
-
-
-# ── N7: first prompt ─────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("key", ["nermin-matcha-update", "east-run-brief/footage-only"])
-async def test_n7_first_prompt(talking_world, monkeypatch, key):
-    rec = Recorder(f"negative N7 first prompt {key}")
-    scn = threads.SCENARIOS[key]
-    seeded = threads.seed_first_prompt(scn)
-    phone = Phone(seeded, talking_world, prefs(key), language=scn.language)
-    out = await phone.serve()
-    rec.negative(
-        "first prompt serves the default-edit chip and no pinned v2 card",
-        key,
-        "state first_prompt, understanding done, one default_edit chip, no v2 cards",
-        out.state == "first_prompt"
-        and out.understanding == "done"
-        and not out.suggestions
-        and [c.kind for c in out.chips] == ["default_edit"],
-        f"state={out.state} understanding={out.understanding} chips={[c.kind for c in out.chips]} "
-        f"cards={[c.kind for c in out.suggestions]}",
-    )
-    planner = h.legacy_planner_answers(monkeypatch)
-    chip = out.chips[0]
-    accepted, _ = await h.submit(
-        seeded, chip.message, tap={"set_id": out.set_id, "chip_id": chip.id}
-    )
-    await h.run(accepted.turn_id)
-    stamped = h.events(seeded.thread_id, "user_message")[-1].payload.get("pinned_suggestion")
-    rec.negative(
-        "a first-prompt chip tap stays on the KRI-756 path: the planner reads its words, "
-        "nothing is pinned",
-        key,
-        "planner asked once; no pin; the chat line is the chip's message",
-        planner.await_count == 1
-        and stamped is None
-        and h.events(seeded.thread_id, "user_message")[-1].content == chip.message,
-        f"planner calls={planner.await_count} stamp={stamped}",
+        probe_render=probe,
     )
     rec.finish()

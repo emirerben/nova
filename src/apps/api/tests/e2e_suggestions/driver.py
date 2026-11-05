@@ -16,10 +16,11 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from starlette.responses import Response
+import httpx
 
 from app.database import AsyncSessionLocal, sync_session
 from app.models import CreatorAgentApproval, PlanItem
+from app.services import creator_sessions
 from app.services import suggestion_chips as sc
 from tests.e2e_suggestions import fakes
 from tests.tasks import kria_pinned_kinds_harness as k
@@ -32,6 +33,23 @@ NO_LONGER_FITS_TR = (
     "Bu öneri artık düzenlemene uymuyor. Hiçbir şey değişmedi, önerileri yeniliyorum."
 )
 TASK_ARGS = {"trigger", "expected_digest", "language", "protocol", "attempt"}
+
+# The creator-manifest resolver as the product has it. The shared pinned harness replaces it with a
+# stub that has no media and no render capabilities, which is enough for a ready edit (its editor
+# target does not read the manifest) but makes every first-prompt strategy check refuse, so a first
+# prompt would serve nothing but the default-edit chip. Captured at import, before fixtures run.
+REAL_MANIFEST_RESOLVER = creator_sessions.resolve_item_creator_context
+
+
+@dataclass
+class Dispatch:
+    """What approving a staged render did: the decision, the render task, and the dispatch call."""
+
+    decision: str
+    task: dict[str, Any]
+    calls: list[dict[str, Any]]
+    job_id: str | None
+    execution_status: str | None
 
 
 @dataclass
@@ -52,6 +70,10 @@ class Tap:
     head_after: dict[str, Any] | None
     receipts: list[dict[str, Any]] = field(default_factory=list)
     applied_event: dict[str, Any] = field(default_factory=dict)
+    # What the creator had before the tap, to compare with after an Undo.
+    brief_before: list[dict[str, Any]] = field(default_factory=list)
+    flags_before: dict[str, Any] = field(default_factory=dict)
+    brief_after: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def planned(self) -> bool:
@@ -91,6 +113,19 @@ def approvals_pending(thread_id) -> int:  # noqa: ANN001
         )
 
 
+def live_brief(thread_id) -> list[dict[str, Any]]:  # noqa: ANN001
+    """The requirements in force on the thread, as (id, kind, scope, facts), in a stable order."""
+    from app.kria.brief import load_latest_brief_sync
+
+    with sync_session() as db:
+        brief = load_latest_brief_sync(db, thread_id)
+        rows = [
+            {"id": r.id, "kind": r.kind, "scope": r.scope, "facts": dict(r.facts or {})}
+            for r in (brief.live() if brief else [])
+        ]
+    return sorted(rows, key=lambda r: r["id"])
+
+
 def item_flags(seeded: h.Seeded) -> dict[str, Any]:
     with sync_session() as db:
         item = db.get(PlanItem, seeded.item_id)
@@ -115,22 +150,30 @@ class Phone:
         self.world = world
         self.client = fakes.CassetteClient(preferences)
         self.worker_runs: list[dict[str, Any]] = []
+        self.last_wire: dict[str, Any] = {}
 
     # ── Serving ────────────────────────────────────────────────────────────────────
 
     async def get(self) -> sc.SuggestionSetOut:
-        """The real ``GET /creation-threads/{id}/suggestions`` (a worker run may be enqueued)."""
-        from app.routes import creation_threads as ct
+        """``GET /creation-threads/{id}/suggestions`` through the real ASGI app (a worker run may be
+        enqueued). Only the creator's identity is overridden; the route, its serving join, the
+        ring write and the response serializer are the product's. ``last_wire`` keeps the JSON the
+        phone would parse."""
+        from app.auth import get_current_user
+        from app.main import app
 
-        async with AsyncSessionLocal() as db:
-            return await ct.thread_suggestions(
-                SimpleNamespace(headers={}),
-                str(self.seeded.thread_id),
-                SimpleNamespace(id=self.seeded.user_id),
-                db,
-                Response(),
-                None,
-            )
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=self.seeded.user_id)
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://phone") as client:
+                response = await client.get(
+                    f"/creation-threads/{self.seeded.thread_id}/suggestions"
+                )
+        finally:
+            app.dependency_overrides.pop(get_current_user, None)
+        assert response.status_code == 200, (response.status_code, response.text[:300])
+        self.last_wire = response.json()
+        return sc.SuggestionSetOut.model_validate(self.last_wire)
 
     async def run_worker(self) -> int:
         """Run every suggester job the server enqueued, with the cassette as the model."""
@@ -180,6 +223,8 @@ class Phone:
         self.world.redis.advance(60)
         before = h.counts(seeded)
         head_before = head_of(seeded.thread_id)
+        brief_before = live_brief(seeded.thread_id)
+        flags_before = item_flags(seeded)
         applied_before = len(h.events(seeded.thread_id, "draft_applied"))
         accepted, _publish = await h.submit(
             seeded,
@@ -210,6 +255,9 @@ class Phone:
             head_after=head_of(seeded.thread_id),
             receipts=list(applied_payload.get("requirement_receipts") or []),
             applied_event=applied_payload,
+            brief_before=brief_before,
+            flags_before=flags_before,
+            brief_after=live_brief(seeded.thread_id),
         )
 
     async def undo(self) -> dict[str, Any] | None:
@@ -226,6 +274,85 @@ class Phone:
                 expected_revision=head["rev"],
             )
         return head_of(self.seeded.thread_id)
+
+    async def approve_render(self, monkeypatch) -> Dispatch:  # noqa: ANN001
+        """The creator taps "Create this video" on the approval a restating card staged, and the
+        render worker takes it: the real ``decide_approval`` then the real ``execute_kria_approval``
+        task. Only the render dispatch itself is replaced, by a stand-in that records its call and
+        writes the queued Job a real dispatch would (no worker, no FFmpeg, no device)."""
+        import uuid as _uuid
+
+        from app.kria.api_schemas import ApprovalDecisionBody
+        from app.kria.runtime import approval_fingerprint, decide_approval
+        from app.models import CreationThread, CreatorAgentExecution, Job
+        from app.tasks.content_plan_build import DispatchResult
+        from app.tasks.kria_runtime import execute_kria_approval
+
+        seeded = self.seeded
+        with sync_session() as db:
+            approval = db.execute(
+                h.select(CreatorAgentApproval).where(
+                    CreatorAgentApproval.thread_id == seeded.thread_id,
+                    CreatorAgentApproval.status == "pending",
+                )
+            ).scalar_one()
+            approval_id = approval.id
+            token = approval_fingerprint(approval)
+            draft_revision = approval.draft_revision
+            thread_revision = db.get(CreationThread, seeded.thread_id).revision
+        calls: list[dict[str, Any]] = []
+
+        def dispatch(*args, **kwargs):  # noqa: ANN002, ANN003
+            calls.append({"args": [str(a) for a in args], **kwargs})
+            with sync_session() as db:
+                item = db.get(PlanItem, seeded.item_id, with_for_update=True)
+                job = Job(
+                    user_id=seeded.user_id,
+                    status="queued",
+                    mode="generative",
+                    raw_storage_path="",
+                    selected_platforms=["tiktok"],
+                    content_plan_item_id=item.id,
+                    content_plan_ownership_epoch=0,
+                    assembly_plan={"variants": []},
+                )
+                db.add(job)
+                db.flush()
+                item.current_job_id = job.id
+                db.commit()
+                return DispatchResult("dispatched", job_id=str(job.id))
+
+        monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", dispatch)
+        monkeypatch.setattr(execute_kria_approval, "apply_async", lambda **_kw: None)
+        monkeypatch.setattr(
+            "app.tasks.kria_runtime._observe_dispatched_execution",
+            lambda _execution_id: ("dispatched", None),
+        )
+        async with AsyncSessionLocal() as db:
+            decision, _successor = await decide_approval(
+                db,
+                thread_id=seeded.thread_id,
+                approval_id=approval_id,
+                creator_id=seeded.user_id,
+                decision="approve",
+                body=ApprovalDecisionBody(
+                    expected_thread_revision=thread_revision,
+                    expected_draft_revision=draft_revision,
+                    expected_approval_fingerprint=token,
+                ),
+            )
+        task = await asyncio.to_thread(execute_kria_approval.run, str(approval_id))
+        with sync_session() as db:
+            approval = db.get(CreatorAgentApproval, approval_id)
+            execution = db.get(CreatorAgentExecution, _uuid.UUID(approval.execution_ids[0]))
+            status = execution.status if execution is not None else None
+        return Dispatch(
+            decision=decision.status,
+            task=dict(task),
+            calls=calls,
+            job_id=task.get("job_id"),
+            execution_status=status,
+        )
 
     def ring_entry(self, set_id: str) -> dict[str, Any] | None:
         return k.ring_entry(self.seeded.thread_id, set_id)
