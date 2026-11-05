@@ -1246,6 +1246,12 @@ class Settings(BaseSettings):
     # Default TRUE; false + restart (api + worker) = byte-identical to before
     # (`app.kria.route_disclosure`, agents/DECISIONS.md "Route disclosure").
     kria_route_disclosure_enabled: bool = True
+    # Green 4/5 (2026-11-04): the card's "Heads-up" names only what the creator asked for. The
+    # planner fills the hook, story structure, pacing and direction itself; a route that does not
+    # read one now says so only when a live brief ask is about it (an order ask, an on-screen text
+    # ask), and the "<pace> pacing" chip is left off a card whose route ignores pacing. Default
+    # TRUE; false + restart (api + worker) = byte-identical to before.
+    kria_headsup_asked_only_enabled: bool = True
     # KRI-1097 wave 2 (prompt fidelity on every route). ROUTE_REGISTRY_ENABLED: each render
     # route reads its own capability table (`app.kria.route_capabilities`), so voiceover,
     # Talking, Narrated, creator-song, spoken-excerpt and slide drafts get their own honest
