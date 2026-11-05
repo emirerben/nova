@@ -141,6 +141,19 @@ def list_label_asks(requirements: Iterable[Any]) -> tuple[ListLabelAsk, ...]:
     return tuple(asks)
 
 
+def is_list_label_candidate(req: Any, background_phrases: Sequence[str]) -> bool:
+    """Would the worker read this whole-video text as a list label? It carries a list marker, or it
+    IS the name of a planned background recording (``background_phrases``, sequence order).
+    The caller rules out a spoken-text cue first (that is the title/KRI-699 lane's)."""
+    [ask] = list_label_asks([req]) or [None]
+    if ask is None:
+        return False
+    if _has_explicit_marker(ask.text):
+        return True
+    entries = list(enumerate(background_phrases))
+    return req.id in match_labels([ask], entries)
+
+
 # ---------------------------------------------------------------------------------------------
 # Pairing a label with a recording
 # ---------------------------------------------------------------------------------------------

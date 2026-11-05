@@ -3336,6 +3336,46 @@ draft said "that exact text isn't in this draft" and the contract pinned the tex
 Tests: `tests/tasks/test_kri791_spoken_text_trigger.py` (replays the T1 brief, strategy
 and speech segments).
 
+### Numbered list labels on phone Talking edits (Qendresa item 19)
+
+"Add a label when each one starts: "1. Spec-kit", "2. Impeccable", ..." (her screen
+walkthrough) and "When I list the four things, show each one as big text, like "1. which
+company it sends data to?"" (her talking head) name no spoken word, so KRI-707 drew nothing
+and the draft said "that exact text isn't in this draft". Behind
+`SPOKEN_LIST_LABELS_ENABLED` (default off; gate `phone_list_labels_supported()` = the flag
+and the KRI-707 spoken-text gate), with no model or prompt change:
+
+- **Asks.** `phone_list_labels.list_label_asks`: live whole-video text requirements with no
+  spoken trigger (KRI-707 keeps those). Only a content match makes one a label: it names a
+  background recording, or it carries a list marker ("1.", "01:", "#1", "1)").
+- **Screen walkthrough.** Each label is paired by name with a `background_media.sequence`
+  entry (`match_labels`: loose-equal, contained, overlapping tokens; greedy in list order,
+  one entry per label; an unmarked text pairs only when it IS the name) and appears where
+  `lay_out` anchored that entry (`SequenceLayout.anchor_s`), never the 0 s lead-in window.
+  With item 17's flag on, "4. Agents" waits for "fourth one is agents", not the "agents"
+  inside "trading agents".
+- **Talking head.** A lone label numbered 1 that no recording names is found in the take's
+  words (tolerant: "company" typed, "companies" said), then `find_spoken_list` reads the
+  items that follow from a repeated opening word ("what ... what ... and what ..."); labels
+  2..N copy the example's marker, case and final "?". A typed list is never extended.
+- **Rows.** Ordinary text rows (`list-label-<requirement id>[-<n>]`) on the KRI-467 lane
+  (no new phone capability or protocol), each until the next label starts or 3 s, placed by
+  `place_talking_title` clear of the captions, other text and cards on screen, with the
+  face mapped into a corner speaker frame (`speaker_frame=`). Receipt:
+  `list_label_placement` (`placed` / `not_heard` / `no_time` / `same_moment` / `error`,
+  `list_found` on a spoken list).
+- **Receipts and contract.** Draft: "I'll show it when that part of your talk starts ...".
+  After render: met when placed off the face; otherwise the reason, never met. A Talking
+  edit does not pin such a label in `exact_texts` (its receipt answers it).
+
+Limits: lists whose items start with different words ("first ... second ...") or a 1-3
+letter word are not found; a lone "1." label is always read as the start of a list.
+Kill switch: `fly secrets set SPOKEN_LIST_LABELS_ENABLED=false --app nova-video` + restart
+(api + worker). Design and failure modes: `docs/reviews/qendresa-list-labels-failure-modes.md`.
+Tests: `tests/tasks/test_qendresa_list_labels_worker.py`,
+`tests/tasks/test_qendresa_spoken_list_worker.py`, `tests/pipeline/test_phone_list_labels.py`.
+Simulator check: `scripts/ios/qendresa-list-labels-e2e.py`.
+
 ## Your song montages (KRI-374)
 
 A creator attaches their own song to a phone montage ("Add your song" in the

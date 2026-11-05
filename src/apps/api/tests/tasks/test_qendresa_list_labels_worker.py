@@ -476,3 +476,52 @@ def test_10_a_label_with_a_spoken_trigger_stays_kri707_and_is_drawn_once(monkeyp
     assert rows[0]["id"].startswith("spoken-text-")
     assert not any(r["id"] == "list-label-l2" for r in _label_rows(variant))
     assert len(_label_rows(variant)) == 4
+
+
+def _contract_run(monkeypatch, *, flag: bool):
+    """The label job with the approved render contract stamped on the job as prod stamps it."""
+    from app.services.creator_render_contract import CONTRACT_FIELD, build_render_contract
+    from app.services.length_policy_state import stamp_length_policy
+
+    _flag(monkeypatch, flag)
+    # No closing text: this fixture draws none, so pinning it would refuse the render on its own.
+    brief = CreativeBrief(version=1, requirements=[*LABEL_REQS, GHOST_REQ, TITLE_REQ])
+    job = _label_job(monkeypatch, brief=brief)
+    strategy = job.all_candidates["creator_strategy"]
+    contract = build_render_contract(strategy, generation_id="generation", brief=brief)
+    assert contract is not None
+    stamped = {CONTRACT_FIELD: contract.model_dump(mode="json")}
+    stamped.update(stamp_length_policy({}, strategy, contract, mode="log_only"))
+    job.assembly_plan.update(copy.deepcopy(stamped))
+    gb._run_generative_job(str(job.id))
+    return job, contract
+
+
+def test_11_contract_does_not_pin_the_labels_so_an_unheard_one_is_not_refused(monkeypatch):
+    """The approved contract leaves list labels to their own receipt: with the never-said
+    "6. Ghost repo" the render still reaches the device, five labels drawn, contract kept."""
+    from app.services.device_render import device_record
+
+    job, contract = _contract_run(monkeypatch, flag=True)
+    assert job.status == "awaiting_device", (job.status, job.error_detail)
+    variant = job.assembly_plan["variants"][0]
+    assert [r["text"] for r in _label_rows(variant)] == LABELS
+    pinned = [t.text for t in contract.exact_texts]
+    assert not set(pinned) & {*LABELS, GHOST}
+    assert TITLE in pinned
+    assert device_record(job, "subtitled").get("contract_digest")
+
+
+def test_12_flag_off_the_labels_stay_pinned_and_the_pin_refuses_the_render(monkeypatch):
+    """Flag off is today's behaviour, observed: the contract pins every label, nothing draws them,
+    and the device pin refuses the whole render ("missing confirmed on-screen text") -- the
+    reason the contract leaves them out when the lane is on."""
+    job, contract = _contract_run(monkeypatch, flag=False)
+    pinned = [t.text for t in contract.exact_texts]
+    assert set(pinned) >= {*LABELS, GHOST}
+    # Refused, never awaiting_device.
+    assert job.status == "queued", (job.status, job.error_detail)
+    from app.services.device_render import device_record
+
+    with pytest.raises(KeyError):  # never pinned: the job has no device recipe
+        device_record(job, "subtitled")

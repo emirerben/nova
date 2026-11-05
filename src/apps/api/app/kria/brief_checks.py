@@ -9072,13 +9072,7 @@ def _is_list_label_candidate(req: BriefRequirement, facts: PlanFacts) -> bool:
 
     if _is_spoken_text_cue(req):
         return False
-    [ask] = labels.list_label_asks([req]) or [None]
-    if ask is None:
-        return False
-    if labels._has_explicit_marker(ask.text):  # noqa: SLF001
-        return True
-    entries = [(index, phrase) for index, phrase in enumerate(facts.background_phrases)]
-    return req.id in labels.match_labels([ask], entries)
+    return labels.is_list_label_candidate(req, facts.background_phrases)
 
 
 def _list_label_fact(facts: PlanFacts, req: BriefRequirement) -> ListLabelFact | None:
