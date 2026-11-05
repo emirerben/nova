@@ -205,7 +205,7 @@ def test_names_heard_during_the_opening_still_show_after_it(monkeypatch, follows
     assert layout.windows[0].index == 0
 
 
-def test_a_visual_dropped_inside_the_opening_returns_in_the_tail(monkeypatch):
+def test_names_from_the_opening_and_a_later_name_all_show_after_the_switch(monkeypatch):
     monkeypatch.setattr(settings, "background_follows_talk_enabled", True)
     words, take = _intro_talk()
     # A third tool is named late; the other two were named during the opening.
@@ -213,6 +213,120 @@ def test_a_visual_dropped_inside_the_opening_returns_in_the_tail(monkeypatch):
     layout = _lay(["Notion", "Figma", "Linear"], words=words, take_s=take, opening_s=6.0)
     assert {w.index for w in layout.windows} == {0, 1, 2}
     assert all(w.start_s >= 6.0 - 1e-9 for w in layout.windows)
+
+
+def test_a_name_heard_right_after_the_switch_crowds_out_no_intro_name(monkeypatch):
+    """S83: three tools named in the 6 s opening sit at the switch; "Miro" is heard 0.6 s after
+    it. Since #2118 nothing comes back later, so a visual squeezed under 0.5 s there would never
+    show. Each intro visual keeps at least 0.5 s, Miro starts at most 1.5 s after its word, and
+    nothing shows twice."""
+    monkeypatch.setattr(settings, "background_follows_talk_enabled", True)
+    words, t = [], 0.0
+    for text in ["Today", "Notion", "Figma", "and", "Linear"]:
+        words.append({"text": text, "start_s": t, "end_s": t + 0.4})
+        t += 0.6
+    while t < 24.5:
+        text = "Miro" if abs(t - 6.6) < 0.2 else "blah"
+        words.append({"text": text, "start_s": t, "end_s": t + 0.3})
+        t += 0.4
+    miro_said = next(w["start_s"] for w in words if w["text"] == "Miro")
+    layout = _lay(["Notion", "Figma", "Linear", "Miro"], words=words, take_s=25.0, opening_s=6.0)
+
+    shown = [w.index for w in layout.windows]
+    assert sorted(shown) == [0, 1, 2, 3], _rows(layout)
+    assert len(shown) == len(set(shown)), _rows(layout)
+    assert all(w.start_s >= 6.0 - 1e-9 for w in layout.windows), _rows(layout)
+    assert all(w.end_s - w.start_s >= seq.MIN_WINDOW_S - 1e-6 for w in layout.windows)
+    assert not [n for n in layout.notes if n.get("reason") == "window_too_short"], layout.notes
+    miro = next(w for w in layout.windows if w.index == 3)
+    assert miro.start_s <= miro_said + 3 * seq.MIN_WINDOW_S + 1e-6, _rows(layout)
+    assert layout.windows[-1].end_s == pytest.approx(25.0)
+
+
+def test_near_the_take_end_nothing_is_pushed_past_it(monkeypatch):
+    """S83's limit: with no room left, a name heard right after a late switch is not pushed past
+    the take end (no broken window); the intro names that cannot fit get the honest note."""
+    monkeypatch.setattr(settings, "background_follows_talk_enabled", True)
+    words = [
+        {"text": "Notion", "start_s": 1.0, "end_s": 1.4},
+        {"text": "Figma", "start_s": 1.6, "end_s": 2.0},
+        {"text": "Linear", "start_s": 2.2, "end_s": 2.6},
+        {"text": "blah", "start_s": 5.0, "end_s": 5.3},
+        {"text": "Miro", "start_s": 9.1, "end_s": 9.3},
+    ]
+    layout = _lay(["Notion", "Figma", "Linear", "Miro"], words=words, take_s=10.0, opening_s=8.5)
+    for w in layout.windows:
+        assert 8.5 - 1e-9 <= w.start_s < w.end_s <= 10.0 + 1e-9, _rows(layout)
+    shown = [w.index for w in layout.windows]
+    assert len(shown) == len(set(shown)) and 3 in shown, _rows(layout)
+    dropped = {n["window"] for n in layout.notes if n.get("reason") == "window_too_short"}
+    assert dropped == {0, 1, 2} - set(shown), (layout.notes, _rows(layout))
+
+
+@pytest.mark.parametrize("follows", [True, False])
+@pytest.mark.parametrize("fill", ["first_photo", "base"])
+@pytest.mark.parametrize("shape", ["on_the_word", "rotation", "mixed"])
+def test_an_opening_never_shows_a_photo_twice(monkeypatch, follows, fill, shape):
+    """S57 + S74 + S83: fb 1's take with a 6 s opening. Names said in the opening (three of fb 1's
+    eight on the word, the stadium in the mixed ask) still show once after the switch; nothing
+    returns, the last visual holds to the end, and every second after the switch is covered.
+    (Contributed by the "Open PRs ready to merge" session's independent resolution of this merge.)
+    """
+    from tests.tasks import test_background_no_repeat as fb1
+
+    monkeypatch.setattr(settings, "background_follows_talk_enabled", follows)
+    entries = {
+        "on_the_word": fb1.FB1_SHAPED,
+        "rotation": [("one", None), ("two", None), ("three", None)],
+        "mixed": [
+            ("stadium", "Kadıköy çarşısında"),
+            ("plain_one", None),
+            ("coast", "Moda sahilinde"),
+            ("plain_two", None),
+        ],
+    }[shape]
+    fill_key = entries[0][0] if fill == "first_photo" else "base"
+    opening = 6.0
+    layout = seq.lay_out(
+        [
+            seq.SequenceEntry(index=i, spoken_phrase=phrase, media_key=media)
+            for i, (media, phrase) in enumerate(entries)
+        ],
+        cadence_s=4.0,
+        take_s=fb1.TAKE_S,
+        words=fb1.WORDS,
+        keep_segments=fb1.KEEP,
+        fill_key=fill_key,
+        opening_s=opening,
+    )
+    windows = [(entries[w.index][0], w.start_s, w.end_s) for w in layout.windows]
+    described = " | ".join(f"{m} {s:.2f}-{e:.2f}" for m, s, e in windows)
+
+    # Nothing inside the opening, the first visual right at the switch, the last to the end.
+    assert windows and windows[0][1] == pytest.approx(opening), described
+    assert all(start >= opening - 1e-9 for _m, start, _e in windows), described
+    assert windows[-1][2] == pytest.approx(fb1.TAKE_S), described
+    for _m, start, end in windows:
+        assert end - start >= seq.MIN_WINDOW_S - 1e-6, described
+    for earlier, later in zip(windows, windows[1:], strict=False):
+        assert later[1] >= earlier[2] - 1e-6, described
+
+    # What is behind her after the switch: the windows, and the fill only in a gap.
+    shown: list[list] = []
+    t = opening
+    for media, start, end in [*windows, (None, fb1.TAKE_S, fb1.TAKE_S)]:
+        for name, a, b in ((fill_key, t, start), (media, start, end)):
+            if name is None or b - a <= 1e-6:
+                continue
+            if shown and shown[-1][0] == name and abs(shown[-1][2] - a) <= 1e-6:
+                shown[-1][2] = b
+            else:
+                shown.append([name, a, b])
+        t = end
+    photos = [name for name, _a, _b in shown if name != "base"]
+    assert len(photos) == len(set(photos)), f"a photo shows twice: {described}"
+    # Every photo of the ask shows: none is crowded out here, none is lost to the opening.
+    assert set(photos) == {media for media, _p in entries}, described
 
 
 def test_an_anchored_entry_heard_in_the_opening_joins_the_rotation(monkeypatch):
