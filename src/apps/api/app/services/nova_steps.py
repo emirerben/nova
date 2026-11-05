@@ -407,6 +407,8 @@ def beat_miss_sentence(trigger: str, reason: str | None) -> str:
         return f'There\'s no opening title to put "{trigger}" above'
     if reason == "no_room_above_title":
         return f'There wasn\'t room above your title for "{trigger}" without covering your face'
+    if reason == "no_room_off_captions":
+        return f'There wasn\'t room above your title for "{trigger}" without covering your captions'
     if reason == "visual_is_video":
         return f'Videos can\'t pop up on your words in this edit yet, so "{trigger}" had no video'
     if reason == "sound_not_found":

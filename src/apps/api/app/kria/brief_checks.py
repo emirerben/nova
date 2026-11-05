@@ -6463,6 +6463,14 @@ def _title_miss_problem(trigger: str, reason: str) -> str:
             en=f'There wasn\'t room above your title for "{trigger}" without covering your face',
             tr=f'Yüzünü kapatmadan başlığın üstünde "{trigger}" için yer yoktu',
         )
+    if reason == "no_room_off_captions":
+        return say(
+            en=(
+                f'There wasn\'t room above your title for "{trigger}" '
+                "without covering your captions"
+            ),
+            tr=f'Altyazıları kapatmadan başlığın üstünde "{trigger}" için yer yoktu',
+        )
     if reason == "visual_is_video":
         return say(
             en=f'"{trigger}" is a video, and only a photo or sticker can sit above the title',

@@ -12184,6 +12184,13 @@ def _place_title_logo_beats(
 
     pool: dict[str, dict] | None = None
     faces: list[NormalizedBox] | None = None
+    # Her captions while the title shows: the same boxes the title was kept clear of
+    # (`place_title_look`'s receipt), so the logo never lands on them either.
+    captions = [
+        NormalizedBox(**box)
+        for box in (title_receipt or {}).get("caption_boxes") or []
+        if isinstance(box, dict)
+    ]
     for beat in beats:
         beat_id = str(beat.get("beat_id") or f"beat-{len(placed) + len(unplaced)}")
         if not title_rows:
@@ -12230,6 +12237,7 @@ def _place_title_logo_beats(
             faces=faces,
             canvas=canvas,
             alignment=alignment,
+            avoid=captions,
         )
         if geometry is None:
             _miss(beat, miss or "no_room_above_title")

@@ -609,3 +609,46 @@ def test_the_worker_never_re_reads_her_words_only_what_dispatch_pinned(monkeypat
         "Instrument Serif",
         "Patrick Hand",
     ]
+
+
+# --- review (Emir, head 72674529a): the logo keeps off her captions -----------------------
+# Today the worker places the logo against her face only, so with her captions up in the
+# title band (KRI-827 moves them off a marked object) the logo is drawn on them.
+
+TOP_CAPTIONS = NormalizedBox(0.05, 0.10, 0.95, 0.22)
+
+
+def _captions_at(monkeypatch, *boxes):
+    """Her caption lines on screen while the title shows."""
+    monkeypatch.setattr(
+        gb, "_title_look_caption_avoid", lambda _cues, **_kw: lambda _window: list(boxes)
+    )
+
+
+def test_review_the_logo_keeps_off_her_captions(monkeypatch):
+    job = _logo_job(monkeypatch)
+    _captions_at(monkeypatch, TOP_CAPTIONS)
+
+    gb._run_generative_job(str(job.id))
+
+    variant = job.assembly_plan["variants"][0]
+    assert [e["beat_id"] for e in variant["phone_beat_receipt"]["placed"]] == ["logo"]
+    logo, _start, _end = _logo_box(job)
+    assert logo.coverage_by(TOP_CAPTIONS) <= _MAX_FACE_COVERAGE
+    rows = _title_rows(job)
+    assert logo.bottom <= min(_box(row).top for row in rows) + 1e-3
+    for row in rows:
+        assert _box(row).coverage_by(TOP_CAPTIONS) <= _MAX_FACE_COVERAGE, row["text"]
+
+
+def test_review_when_only_her_captions_leave_no_room_the_receipt_says_so(monkeypatch):
+    low_face = NormalizedBox(0.25, 0.45, 0.80, 0.80)
+    job = _logo_job(monkeypatch, face=low_face)
+    _captions_at(monkeypatch, TOP_CAPTIONS)
+
+    gb._run_generative_job(str(job.id))
+
+    receipt = job.assembly_plan["variants"][0]["phone_beat_receipt"]
+    assert [e for e in receipt["placed"] if e["beat_id"] == "logo"] == []
+    [missed] = [e for e in receipt["unplaced"] if e["beat_id"] == "logo"]
+    assert (missed["anchor"], missed["reason"]) == ("title", "no_room_off_captions")

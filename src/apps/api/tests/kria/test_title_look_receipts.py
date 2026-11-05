@@ -145,3 +145,20 @@ def test_a_draft_title_beat_says_above_your_title() -> None:
     reason = check_requirement(_logo_req(), facts).reason or ""
     assert "above your title" in reason
     assert "when you say" not in reason
+
+
+def test_review_a_logo_only_her_captions_blocked_names_her_captions() -> None:
+    """Emir's review: a logo kept off her captions is reported for them, not her face."""
+    sentence = beat_miss_sentence("GitHub logo", "no_room_off_captions")
+    assert "room above your title" in sentence and "captions" in sentence
+    assert "face" not in sentence
+    miss = {
+        "beat_id": "gh",
+        "trigger": "GitHub logo",
+        "reason": "no_room_off_captions",
+        "anchor": "title",
+    }
+    facts = plan_facts_from_phone_variant(_variant(receipt=_receipt(unplaced=[miss])))
+    reason = (check_requirement(_logo_req(), facts).reason or "").lower()
+    assert "room above your title" in reason and "captions" in reason
+    assert "couldn't find" not in reason and "face" not in reason
