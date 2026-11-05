@@ -320,6 +320,7 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         or (
             clip.hold_duration is not None
             and not _main_track_freeze(clip, track, recipe.frame_rate)
+            and not _main_track_frame_padding(clip, track, recipe.frame_rate)
         )
         or clip.overlay_above_text is not None
         or clip.overlay_pop_in is not None
@@ -623,6 +624,15 @@ def stamped_client_protocol(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     return value
+
+
+def _main_track_frame_padding(clip: Any, track: Any, frame_rate: float) -> bool:
+    """Match recipe/native validation: at most one output frame is rounding padding."""
+    return (
+        track.kind == "video"
+        and clip.hold_duration is not None
+        and 0 <= clip.hold_duration <= 1 / frame_rate + 1e-6
+    )
 
 
 def _main_track_freeze(clip: Any, track: Any, frame_rate: float) -> bool:
