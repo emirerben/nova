@@ -12,16 +12,6 @@
             },
             {
               "code": "not_applied_on_route",
-              "subject": "story_structure",
-              "text": "I can't follow the planned story structure (Arrive at the harbour, Climb to the castle, Sunset view) on this video yet, so it won't change the order of the clips"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "The guided story direction isn't applied on this video yet: it is cut as a fast montage"
-            },
-            {
-              "code": "not_applied_on_route",
               "subject": "caption_style",
               "text": "I can't apply the kinetic caption style on this video yet, so it won't be used"
             },
@@ -70,21 +60,10 @@
               "requirement_id": "g3"
             }
           ],
-          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't follow the planned story structure (Arrive at the harbour, Climb to the castle, Sunset view) on this video yet, so it won't change the order of the clips\n- The guided story direction isn't applied on this video yet: it is cut as a fast montage\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- I can't add the treatments (zoom, shake) on this video yet, so they won't be applied\n- I can't use the day in life story archetype on this video yet\n- Also not applied on this video yet: one featured hero clip, the overlay display, sound effects, crossfades between clips"
+          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- I can't add the treatments (zoom, shake) on this video yet, so they won't be applied\n- I can't use the day in life story archetype on this video yet\n- I can't feature one hero clip on this video yet, so every clip is cut the same way\n- I can't use the planned overlay display on this video yet, so it won't be shown\n- I can't add sound effects on this video yet, so none will be played\n- Also not applied on this video yet: crossfades between clips"
         },
         "voice_no_captions": {
-          "lines": [
-            {
-              "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "The balanced pacing isn't applied on this video yet: the cuts follow a fast pace"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "The native direction isn't applied on this video yet: it is cut as a fast montage"
-            }
-          ],
+          "lines": [],
           "declines": [
             {
               "code": "not_applied_on_route",
@@ -99,7 +78,7 @@
               "requirement_id": "g3"
             }
           ],
-          "card": "Heads-up for this video:\n- The balanced pacing isn't applied on this video yet: the cuts follow a fast pace\n- The native direction isn't applied on this video yet: it is cut as a fast montage"
+          "card": ""
         }
       },
       "tr": {
@@ -109,16 +88,6 @@
               "code": "not_applied_on_route",
               "subject": "intro_hook",
               "text": "Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "story_structure",
-              "text": "Planlanan hikâye yapısını (Arrive at the harbour, Climb to the castle, Sunset view) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "guided story yönü bu videoda henüz uygulanmıyor: hızlı bir montaj olarak kesiliyor"
             },
             {
               "code": "not_applied_on_route",
@@ -170,21 +139,10 @@
               "requirement_id": "g3"
             }
           ],
-          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- Planlanan hikâye yapısını (Arrive at the harbour, Climb to the castle, Sunset view) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek\n- guided story yönü bu videoda henüz uygulanmıyor: hızlı bir montaj olarak kesiliyor\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Şu efektleri (zoom, shake) bu videoda henüz ekleyemiyorum, uygulanmayacak\n- day in life hikâye kalıbını bu videoda henüz kullanamıyorum\n- Bu videoda henüz uygulanmayanlar: öne çıkan ana klip, katman gösterimi, ses efektleri, klipler arası yumuşak geçiş"
+          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Şu efektleri (zoom, shake) bu videoda henüz ekleyemiyorum, uygulanmayacak\n- day in life hikâye kalıbını bu videoda henüz kullanamıyorum\n- Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor\n- Planlanan katman gösterimini bu videoda henüz kullanamıyorum, gösterilmeyecek\n- Bu videoya henüz ses efekti ekleyemiyorum, hiçbiri çalmayacak\n- Bu videoda henüz uygulanmayanlar: klipler arası yumuşak geçiş"
         },
         "voice_no_captions": {
-          "lines": [
-            {
-              "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "balanced tempo bu videoda henüz uygulanmıyor: kesimler hızlı tempoda"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "native yönü bu videoda henüz uygulanmıyor: hızlı bir montaj olarak kesiliyor"
-            }
-          ],
+          "lines": [],
           "declines": [
             {
               "code": "not_applied_on_route",
@@ -199,7 +157,7 @@
               "requirement_id": "g3"
             }
           ],
-          "card": "Bu video için not:\n- balanced tempo bu videoda henüz uygulanmıyor: kesimler hızlı tempoda\n- native yönü bu videoda henüz uygulanmıyor: hızlı bir montaj olarak kesiliyor"
+          "card": ""
         }
       }
     },
@@ -211,16 +169,6 @@
               "code": "not_applied_on_route",
               "subject": "intro_hook",
               "text": "I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "story_structure",
-              "text": "I can't follow the planned story structure (Arrive at the harbour, Climb to the castle, Sunset view) on this video yet, so it won't change the order of the clips"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "The guided story direction isn't applied on this video yet: it is cut as a montage under your voiceover"
             },
             {
               "code": "not_applied_on_route",
@@ -282,20 +230,10 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't follow the planned story structure (Arrive at the harbour, Climb to the castle, Sunset view) on this video yet, so it won't change the order of the clips\n- The guided story direction isn't applied on this video yet: it is cut as a montage under your voiceover\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- I can't make this video the length you asked for yet: its length follows your voiceover\n- Also not applied on this video yet: the title animation, the clip label position, the treatments, the story archetype, one featured hero clip, the overlay display, sound effects"
+          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- I can't make this video the length you asked for yet: its length follows your voiceover\n- I can't animate the title (pop) on this video yet, so it shows without motion\n- I can't place the clip labels at the top on this video yet\n- I can't add the treatments (zoom, shake) on this video yet, so they won't be applied\n- I can't use the day in life story archetype on this video yet\n- Also not applied on this video yet: one featured hero clip, the overlay display, sound effects"
         },
         "voice_no_captions": {
           "lines": [
-            {
-              "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "The balanced pacing isn't applied on this video yet: the cuts keep their usual length"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "The native direction isn't applied on this video yet: it is cut as a montage under your voiceover"
-            },
             {
               "code": "not_applied_on_route",
               "subject": "target_duration_s",
@@ -321,7 +259,7 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Heads-up for this video:\n- The balanced pacing isn't applied on this video yet: the cuts keep their usual length\n- The native direction isn't applied on this video yet: it is cut as a montage under your voiceover\n- I can't make this video the length you asked for yet: its length follows your voiceover\n- I can't animate the title (fade) on this video yet, so it shows without motion"
+          "card": "Heads-up for this video:\n- I can't make this video the length you asked for yet: its length follows your voiceover\n- I can't animate the title (fade) on this video yet, so it shows without motion"
         }
       },
       "tr": {
@@ -331,16 +269,6 @@
               "code": "not_applied_on_route",
               "subject": "intro_hook",
               "text": "Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "story_structure",
-              "text": "Planlanan hikâye yapısını (Arrive at the harbour, Climb to the castle, Sunset view) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "guided story yönü bu videoda henüz uygulanmıyor: seslendirmenin altında bir montaj olarak kesiliyor"
             },
             {
               "code": "not_applied_on_route",
@@ -402,20 +330,10 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- Planlanan hikâye yapısını (Arrive at the harbour, Climb to the castle, Sunset view) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek\n- guided story yönü bu videoda henüz uygulanmıyor: seslendirmenin altında bir montaj olarak kesiliyor\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor\n- Bu videoda henüz uygulanmayanlar: başlık animasyonu, klip etiketi konumu, efektler, hikâye kalıbı, öne çıkan ana klip, katman gösterimi, ses efektleri"
+          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor\n- Başlığı (pop) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek\n- Klip etiketlerini bu videoda henüz top konumuna yerleştiremiyorum\n- Şu efektleri (zoom, shake) bu videoda henüz ekleyemiyorum, uygulanmayacak\n- day in life hikâye kalıbını bu videoda henüz kullanamıyorum\n- Bu videoda henüz uygulanmayanlar: öne çıkan ana klip, katman gösterimi, ses efektleri"
         },
         "voice_no_captions": {
           "lines": [
-            {
-              "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "balanced tempo bu videoda henüz uygulanmıyor: kesimler her zamanki uzunluğunda"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "native yönü bu videoda henüz uygulanmıyor: seslendirmenin altında bir montaj olarak kesiliyor"
-            },
             {
               "code": "not_applied_on_route",
               "subject": "target_duration_s",
@@ -441,7 +359,7 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Bu video için not:\n- balanced tempo bu videoda henüz uygulanmıyor: kesimler her zamanki uzunluğunda\n- native yönü bu videoda henüz uygulanmıyor: seslendirmenin altında bir montaj olarak kesiliyor\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor\n- Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
+          "card": "Bu video için not:\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor\n- Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
         }
       }
     },
@@ -453,21 +371,6 @@
               "code": "not_applied_on_route",
               "subject": "intro_hook",
               "text": "I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "story_structure",
-              "text": "I can't follow the planned story structure (Arrive at the harbour, Climb to the castle, Sunset view) on this video yet, so it won't change the order of the clips"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "The relaxed pacing isn't applied on this video yet: the video follows your speech"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "The guided story direction isn't applied on this video yet: the video follows your speech"
             },
             {
               "code": "not_applied_on_route",
@@ -501,20 +404,10 @@
             }
           ],
           "declines": [],
-          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't follow the planned story structure (Arrive at the harbour, Climb to the castle, Sunset view) on this video yet, so it won't change the order of the clips\n- The relaxed pacing isn't applied on this video yet: the video follows your speech\n- The guided story direction isn't applied on this video yet: the video follows your speech\n- I can't make this video the length you asked for yet: its length follows your speech\n- I can't place the clip labels at the top on this video yet\n- Also not applied on this video yet: the treatments, the story archetype, one featured hero clip, sound effects"
+          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't make this video the length you asked for yet: its length follows your speech\n- I can't place the clip labels at the top on this video yet\n- I can't add the treatments (zoom, shake) on this video yet, so they won't be applied\n- I can't use the day in life story archetype on this video yet\n- I can't feature one hero clip on this video yet, so every clip is cut the same way\n- I can't add sound effects on this video yet, so none will be played"
         },
         "voice_no_captions": {
           "lines": [
-            {
-              "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "The balanced pacing isn't applied on this video yet: the video follows your speech"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "The native direction isn't applied on this video yet: the video follows your speech"
-            },
             {
               "code": "not_applied_on_route",
               "subject": "caption_style",
@@ -539,7 +432,7 @@
               "requirement_id": "g1"
             }
           ],
-          "card": "Heads-up for this video:\n- The balanced pacing isn't applied on this video yet: the video follows your speech\n- The native direction isn't applied on this video yet: the video follows your speech\n- I can't turn captions off on this kind of edit yet, so the video will have captions\n- I can't make this video the length you asked for yet: its length follows your speech\n- I can't animate the title (fade) on this video yet, so it shows without motion"
+          "card": "Heads-up for this video:\n- I can't turn captions off on this kind of edit yet, so the video will have captions\n- I can't make this video the length you asked for yet: its length follows your speech\n- I can't animate the title (fade) on this video yet, so it shows without motion"
         }
       },
       "tr": {
@@ -549,21 +442,6 @@
               "code": "not_applied_on_route",
               "subject": "intro_hook",
               "text": "Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "story_structure",
-              "text": "Planlanan hikâye yapısını (Arrive at the harbour, Climb to the castle, Sunset view) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "relaxed tempo bu videoda henüz uygulanmıyor: video konuşmanı izliyor"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "guided story yönü bu videoda henüz uygulanmıyor: video konuşmanı izliyor"
             },
             {
               "code": "not_applied_on_route",
@@ -597,20 +475,10 @@
             }
           ],
           "declines": [],
-          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- Planlanan hikâye yapısını (Arrive at the harbour, Climb to the castle, Sunset view) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek\n- relaxed tempo bu videoda henüz uygulanmıyor: video konuşmanı izliyor\n- guided story yönü bu videoda henüz uygulanmıyor: video konuşmanı izliyor\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu konuşmanı takip ediyor\n- Klip etiketlerini bu videoda henüz top konumuna yerleştiremiyorum\n- Bu videoda henüz uygulanmayanlar: efektler, hikâye kalıbı, öne çıkan ana klip, ses efektleri"
+          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu konuşmanı takip ediyor\n- Klip etiketlerini bu videoda henüz top konumuna yerleştiremiyorum\n- Şu efektleri (zoom, shake) bu videoda henüz ekleyemiyorum, uygulanmayacak\n- day in life hikâye kalıbını bu videoda henüz kullanamıyorum\n- Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor\n- Bu videoya henüz ses efekti ekleyemiyorum, hiçbiri çalmayacak"
         },
         "voice_no_captions": {
           "lines": [
-            {
-              "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "balanced tempo bu videoda henüz uygulanmıyor: video konuşmanı izliyor"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "native yönü bu videoda henüz uygulanmıyor: video konuşmanı izliyor"
-            },
             {
               "code": "not_applied_on_route",
               "subject": "caption_style",
@@ -635,7 +503,7 @@
               "requirement_id": "g1"
             }
           ],
-          "card": "Bu video için not:\n- balanced tempo bu videoda henüz uygulanmıyor: video konuşmanı izliyor\n- native yönü bu videoda henüz uygulanmıyor: video konuşmanı izliyor\n- Bu tür bir düzenlemede altyazıları henüz kapatamıyorum, o yüzden videoda altyazı olacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu konuşmanı takip ediyor\n- Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
+          "card": "Bu video için not:\n- Bu tür bir düzenlemede altyazıları henüz kapatamıyorum, o yüzden videoda altyazı olacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu konuşmanı takip ediyor\n- Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
         }
       }
     },
@@ -647,21 +515,6 @@
               "code": "not_applied_on_route",
               "subject": "intro_hook",
               "text": "I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "story_structure",
-              "text": "I can't follow the planned story structure (Arrive at the harbour, Climb to the castle, Sunset view) on this video yet, so it won't change the order of the clips"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "The relaxed pacing isn't applied on this video yet: the cuts follow your voiceover"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "The guided story direction isn't applied on this video yet: the video follows your voiceover"
             },
             {
               "code": "not_applied_on_route",
@@ -700,20 +553,10 @@
             }
           ],
           "declines": [],
-          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't follow the planned story structure (Arrive at the harbour, Climb to the castle, Sunset view) on this video yet, so it won't change the order of the clips\n- The relaxed pacing isn't applied on this video yet: the cuts follow your voiceover\n- The guided story direction isn't applied on this video yet: the video follows your voiceover\n- I can't make this video the length you asked for yet: its length follows your voiceover\n- I can't place the clip labels at the top on this video yet\n- Also not applied on this video yet: the treatments, the story archetype, one featured hero clip, the overlay display, sound effects"
+          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't make this video the length you asked for yet: its length follows your voiceover\n- I can't place the clip labels at the top on this video yet\n- I can't add the treatments (zoom, shake) on this video yet, so they won't be applied\n- I can't use the day in life story archetype on this video yet\n- I can't feature one hero clip on this video yet, so every clip is cut the same way\n- I can't use the planned overlay display on this video yet, so it won't be shown\n- Also not applied on this video yet: sound effects"
         },
         "voice_no_captions": {
           "lines": [
-            {
-              "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "The balanced pacing isn't applied on this video yet: the cuts follow your voiceover"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "The native direction isn't applied on this video yet: the video follows your voiceover"
-            },
             {
               "code": "not_applied_on_route",
               "subject": "caption_style",
@@ -738,7 +581,7 @@
               "requirement_id": "g1"
             }
           ],
-          "card": "Heads-up for this video:\n- The balanced pacing isn't applied on this video yet: the cuts follow your voiceover\n- The native direction isn't applied on this video yet: the video follows your voiceover\n- I can't turn captions off on this kind of edit yet, so the video will have captions\n- I can't make this video the length you asked for yet: its length follows your voiceover\n- I can't animate the title (fade) on this video yet, so it shows without motion"
+          "card": "Heads-up for this video:\n- I can't turn captions off on this kind of edit yet, so the video will have captions\n- I can't make this video the length you asked for yet: its length follows your voiceover\n- I can't animate the title (fade) on this video yet, so it shows without motion"
         }
       },
       "tr": {
@@ -748,21 +591,6 @@
               "code": "not_applied_on_route",
               "subject": "intro_hook",
               "text": "Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "story_structure",
-              "text": "Planlanan hikâye yapısını (Arrive at the harbour, Climb to the castle, Sunset view) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "relaxed tempo bu videoda henüz uygulanmıyor: kesimler seslendirmeni izliyor"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "guided story yönü bu videoda henüz uygulanmıyor: video seslendirmeni izliyor"
             },
             {
               "code": "not_applied_on_route",
@@ -801,20 +629,10 @@
             }
           ],
           "declines": [],
-          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- Planlanan hikâye yapısını (Arrive at the harbour, Climb to the castle, Sunset view) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek\n- relaxed tempo bu videoda henüz uygulanmıyor: kesimler seslendirmeni izliyor\n- guided story yönü bu videoda henüz uygulanmıyor: video seslendirmeni izliyor\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor\n- Klip etiketlerini bu videoda henüz top konumuna yerleştiremiyorum\n- Bu videoda henüz uygulanmayanlar: efektler, hikâye kalıbı, öne çıkan ana klip, katman gösterimi, ses efektleri"
+          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor\n- Klip etiketlerini bu videoda henüz top konumuna yerleştiremiyorum\n- Şu efektleri (zoom, shake) bu videoda henüz ekleyemiyorum, uygulanmayacak\n- day in life hikâye kalıbını bu videoda henüz kullanamıyorum\n- Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor\n- Planlanan katman gösterimini bu videoda henüz kullanamıyorum, gösterilmeyecek\n- Bu videoda henüz uygulanmayanlar: ses efektleri"
         },
         "voice_no_captions": {
           "lines": [
-            {
-              "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "balanced tempo bu videoda henüz uygulanmıyor: kesimler seslendirmeni izliyor"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "native yönü bu videoda henüz uygulanmıyor: video seslendirmeni izliyor"
-            },
             {
               "code": "not_applied_on_route",
               "subject": "caption_style",
@@ -839,7 +657,7 @@
               "requirement_id": "g1"
             }
           ],
-          "card": "Bu video için not:\n- balanced tempo bu videoda henüz uygulanmıyor: kesimler seslendirmeni izliyor\n- native yönü bu videoda henüz uygulanmıyor: video seslendirmeni izliyor\n- Bu tür bir düzenlemede altyazıları henüz kapatamıyorum, o yüzden videoda altyazı olacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor\n- Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
+          "card": "Bu video için not:\n- Bu tür bir düzenlemede altyazıları henüz kapatamıyorum, o yüzden videoda altyazı olacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor\n- Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
         }
       }
     },
@@ -851,21 +669,6 @@
               "code": "not_applied_on_route",
               "subject": "intro_hook",
               "text": "I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "story_structure",
-              "text": "I can't follow the planned story structure (Arrive at the harbour, Climb to the castle, Sunset view) on this video yet, so it won't change the order of the clips"
-            },
-            {
-              "code": "recorded_only_on_route",
-              "subject": "pacing",
-              "text": "The relaxed pacing isn't applied on this video yet: your song sets where the cuts fall"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "The guided story direction isn't applied on this video yet: it is cut to your song"
             },
             {
               "code": "not_applied_on_route",
@@ -909,20 +712,10 @@
             }
           ],
           "declines": [],
-          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't follow the planned story structure (Arrive at the harbour, Climb to the castle, Sunset view) on this video yet, so it won't change the order of the clips\n- The relaxed pacing isn't applied on this video yet: your song sets where the cuts fall\n- The guided story direction isn't applied on this video yet: it is cut to your song\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- I can't make this video the length you asked for yet: its length follows your song\n- Also not applied on this video yet: the clip label position, the treatments, the story archetype, one featured hero clip, the overlay display, sound effects"
+          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- I can't make this video the length you asked for yet: its length follows your song\n- I can't place the clip labels at the top on this video yet\n- I can't add the treatments (zoom, shake) on this video yet, so they won't be applied\n- I can't use the day in life story archetype on this video yet\n- I can't feature one hero clip on this video yet, so every clip is cut the same way\n- Also not applied on this video yet: the overlay display, sound effects"
         },
         "voice_no_captions": {
           "lines": [
-            {
-              "code": "recorded_only_on_route",
-              "subject": "pacing",
-              "text": "The balanced pacing isn't applied on this video yet: your song sets where the cuts fall"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "The native direction isn't applied on this video yet: it is cut to your song"
-            },
             {
               "code": "not_applied_on_route",
               "subject": "target_duration_s",
@@ -942,7 +735,7 @@
               "requirement_id": "g1"
             }
           ],
-          "card": "Heads-up for this video:\n- The balanced pacing isn't applied on this video yet: your song sets where the cuts fall\n- The native direction isn't applied on this video yet: it is cut to your song\n- I can't make this video the length you asked for yet: its length follows your song\n- I can't animate the title (fade) on this video yet, so it shows without motion"
+          "card": "Heads-up for this video:\n- I can't make this video the length you asked for yet: its length follows your song\n- I can't animate the title (fade) on this video yet, so it shows without motion"
         }
       },
       "tr": {
@@ -952,21 +745,6 @@
               "code": "not_applied_on_route",
               "subject": "intro_hook",
               "text": "Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "story_structure",
-              "text": "Planlanan hikâye yapısını (Arrive at the harbour, Climb to the castle, Sunset view) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek"
-            },
-            {
-              "code": "recorded_only_on_route",
-              "subject": "pacing",
-              "text": "relaxed tempo bu videoda henüz uygulanmıyor: kesimlerin yerini şarkın belirliyor"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "guided story yönü bu videoda henüz uygulanmıyor: şarkına göre kesiliyor"
             },
             {
               "code": "not_applied_on_route",
@@ -1010,20 +788,10 @@
             }
           ],
           "declines": [],
-          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- Planlanan hikâye yapısını (Arrive at the harbour, Climb to the castle, Sunset view) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek\n- relaxed tempo bu videoda henüz uygulanmıyor: kesimlerin yerini şarkın belirliyor\n- guided story yönü bu videoda henüz uygulanmıyor: şarkına göre kesiliyor\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu şarkını takip ediyor\n- Bu videoda henüz uygulanmayanlar: klip etiketi konumu, efektler, hikâye kalıbı, öne çıkan ana klip, katman gösterimi, ses efektleri"
+          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu şarkını takip ediyor\n- Klip etiketlerini bu videoda henüz top konumuna yerleştiremiyorum\n- Şu efektleri (zoom, shake) bu videoda henüz ekleyemiyorum, uygulanmayacak\n- day in life hikâye kalıbını bu videoda henüz kullanamıyorum\n- Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor\n- Bu videoda henüz uygulanmayanlar: katman gösterimi, ses efektleri"
         },
         "voice_no_captions": {
           "lines": [
-            {
-              "code": "recorded_only_on_route",
-              "subject": "pacing",
-              "text": "balanced tempo bu videoda henüz uygulanmıyor: kesimlerin yerini şarkın belirliyor"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "native yönü bu videoda henüz uygulanmıyor: şarkına göre kesiliyor"
-            },
             {
               "code": "not_applied_on_route",
               "subject": "target_duration_s",
@@ -1043,7 +811,7 @@
               "requirement_id": "g1"
             }
           ],
-          "card": "Bu video için not:\n- balanced tempo bu videoda henüz uygulanmıyor: kesimlerin yerini şarkın belirliyor\n- native yönü bu videoda henüz uygulanmıyor: şarkına göre kesiliyor\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu şarkını takip ediyor\n- Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
+          "card": "Bu video için not:\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu şarkını takip ediyor\n- Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
         }
       }
     },
@@ -1055,16 +823,6 @@
               "code": "not_applied_on_route",
               "subject": "intro_hook",
               "text": "I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "story_structure",
-              "text": "I can't follow the planned story structure (Arrive at the harbour, Climb to the castle, Sunset view) on this video yet, so it won't change the order of the clips"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "The guided story direction isn't applied on this video yet: it is cut around the spoken lines"
             },
             {
               "code": "not_applied_on_route",
@@ -1126,20 +884,10 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't follow the planned story structure (Arrive at the harbour, Climb to the castle, Sunset view) on this video yet, so it won't change the order of the clips\n- The guided story direction isn't applied on this video yet: it is cut around the spoken lines\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- I can't add music under the spoken lines on this video yet, so it plays the clips' own sound\n- Also not applied on this video yet: the title animation, the clip label position, the treatments, the story archetype, one featured hero clip, the overlay display, sound effects"
+          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- I can't add music under the spoken lines on this video yet, so it plays the clips' own sound\n- I can't animate the title (pop) on this video yet, so it shows without motion\n- I can't place the clip labels at the top on this video yet\n- I can't add the treatments (zoom, shake) on this video yet, so they won't be applied\n- I can't use the day in life story archetype on this video yet\n- Also not applied on this video yet: one featured hero clip, the overlay display, sound effects"
         },
         "voice_no_captions": {
           "lines": [
-            {
-              "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "The balanced pacing isn't applied on this video yet: the cuts between spoken lines keep a fixed length"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "The native direction isn't applied on this video yet: it is cut around the spoken lines"
-            },
             {
               "code": "not_applied_on_route",
               "subject": "title_animation",
@@ -1160,7 +908,7 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Heads-up for this video:\n- The balanced pacing isn't applied on this video yet: the cuts between spoken lines keep a fixed length\n- The native direction isn't applied on this video yet: it is cut around the spoken lines\n- I can't animate the title (fade) on this video yet, so it shows without motion"
+          "card": "Heads-up for this video:\n- I can't animate the title (fade) on this video yet, so it shows without motion"
         }
       },
       "tr": {
@@ -1170,16 +918,6 @@
               "code": "not_applied_on_route",
               "subject": "intro_hook",
               "text": "Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "story_structure",
-              "text": "Planlanan hikâye yapısını (Arrive at the harbour, Climb to the castle, Sunset view) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "guided story yönü bu videoda henüz uygulanmıyor: konuşulan cümlelerin etrafında kesiliyor"
             },
             {
               "code": "not_applied_on_route",
@@ -1241,20 +979,10 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- Planlanan hikâye yapısını (Arrive at the harbour, Climb to the castle, Sunset view) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek\n- guided story yönü bu videoda henüz uygulanmıyor: konuşulan cümlelerin etrafında kesiliyor\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Bu videoda konuşmaların altına henüz müzik ekleyemiyorum, o yüzden kliplerin kendi sesi çalacak\n- Bu videoda henüz uygulanmayanlar: başlık animasyonu, klip etiketi konumu, efektler, hikâye kalıbı, öne çıkan ana klip, katman gösterimi, ses efektleri"
+          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Bu videoda konuşmaların altına henüz müzik ekleyemiyorum, o yüzden kliplerin kendi sesi çalacak\n- Başlığı (pop) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek\n- Klip etiketlerini bu videoda henüz top konumuna yerleştiremiyorum\n- Şu efektleri (zoom, shake) bu videoda henüz ekleyemiyorum, uygulanmayacak\n- day in life hikâye kalıbını bu videoda henüz kullanamıyorum\n- Bu videoda henüz uygulanmayanlar: öne çıkan ana klip, katman gösterimi, ses efektleri"
         },
         "voice_no_captions": {
           "lines": [
-            {
-              "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "balanced tempo bu videoda henüz uygulanmıyor: konuşmalar arasındaki kesimler sabit uzunlukta"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "native yönü bu videoda henüz uygulanmıyor: konuşulan cümlelerin etrafında kesiliyor"
-            },
             {
               "code": "not_applied_on_route",
               "subject": "title_animation",
@@ -1275,7 +1003,7 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Bu video için not:\n- balanced tempo bu videoda henüz uygulanmıyor: konuşmalar arasındaki kesimler sabit uzunlukta\n- native yönü bu videoda henüz uygulanmıyor: konuşulan cümlelerin etrafında kesiliyor\n- Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
+          "card": "Bu video için not:\n- Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
         }
       }
     },
@@ -1287,21 +1015,6 @@
               "code": "not_applied_on_route",
               "subject": "intro_hook",
               "text": "I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "story_structure",
-              "text": "I can't follow the planned story structure (Arrive at the harbour, Climb to the castle, Sunset view) on this video yet, so it won't change the order of the clips"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "The relaxed pacing isn't applied on this video yet: a slide post shows each slide for its own time"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "The guided story direction isn't applied on this video yet: a slide post shows your slides in order"
             },
             {
               "code": "not_applied_on_route",
@@ -1383,20 +1096,10 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't follow the planned story structure (Arrive at the harbour, Climb to the castle, Sunset view) on this video yet, so it won't change the order of the clips\n- The relaxed pacing isn't applied on this video yet: a slide post shows each slide for its own time\n- The guided story direction isn't applied on this video yet: a slide post shows your slides in order\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- Also not applied on this video yet: the planned music or voiceover, the length you asked for, the opening title, the closing title, a label on each shot, the title animation, the clip label position, the treatments, the story archetype, one featured hero clip, the overlay display, sound effects"
+          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- A slide post plays no added music or voiceover yet, so the planned audio won't be used\n- I can't make this video the length you asked for yet: a slide post's length follows its slides\n- I can't add the opening title (\"Kas in three days\") on this video yet\n- I can't add the closing title (\"See you next summer\") on this video yet\n- I can't put the planned label on each shot on this video yet\n- Also not applied on this video yet: the title animation, the clip label position, the treatments, the story archetype, one featured hero clip, the overlay display, sound effects"
         },
         "voice_no_captions": {
           "lines": [
-            {
-              "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "The balanced pacing isn't applied on this video yet: a slide post shows each slide for its own time"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "The native direction isn't applied on this video yet: a slide post shows your slides in order"
-            },
             {
               "code": "not_applied_on_route",
               "subject": "audio_strategy",
@@ -1427,7 +1130,7 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Heads-up for this video:\n- The balanced pacing isn't applied on this video yet: a slide post shows each slide for its own time\n- The native direction isn't applied on this video yet: a slide post shows your slides in order\n- A slide post plays no added music or voiceover yet, so the planned audio won't be used\n- I can't make this video the length you asked for yet: a slide post's length follows its slides\n- I can't animate the title (fade) on this video yet, so it shows without motion"
+          "card": "Heads-up for this video:\n- A slide post plays no added music or voiceover yet, so the planned audio won't be used\n- I can't make this video the length you asked for yet: a slide post's length follows its slides\n- I can't animate the title (fade) on this video yet, so it shows without motion"
         }
       },
       "tr": {
@@ -1437,21 +1140,6 @@
               "code": "not_applied_on_route",
               "subject": "intro_hook",
               "text": "Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "story_structure",
-              "text": "Planlanan hikâye yapısını (Arrive at the harbour, Climb to the castle, Sunset view) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "relaxed tempo bu videoda henüz uygulanmıyor: slayt gönderisi her slaytı kendi süresince gösteriyor"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "guided story yönü bu videoda henüz uygulanmıyor: slayt gönderisi slaytlarını sırayla gösteriyor"
             },
             {
               "code": "not_applied_on_route",
@@ -1533,20 +1221,10 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- Planlanan hikâye yapısını (Arrive at the harbour, Climb to the castle, Sunset view) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek\n- relaxed tempo bu videoda henüz uygulanmıyor: slayt gönderisi her slaytı kendi süresince gösteriyor\n- guided story yönü bu videoda henüz uygulanmıyor: slayt gönderisi slaytlarını sırayla gösteriyor\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Bu videoda henüz uygulanmayanlar: planlanan müzik ya da seslendirme, istediğin uzunluk, açılış başlığı, kapanış başlığı, her çekimdeki etiket, başlık animasyonu, klip etiketi konumu, efektler, hikâye kalıbı, öne çıkan ana klip, katman gösterimi, ses efektleri"
+          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Slayt gönderisi henüz eklenmiş müzik ya da seslendirme çalmıyor, planlanan ses kullanılmayacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: slayt gönderisinin uzunluğu slaytlarına bağlı\n- Açılış başlığını (\"Kas in three days\") bu videoya henüz ekleyemiyorum\n- Kapanış başlığını (\"See you next summer\") bu videoya henüz ekleyemiyorum\n- Planlanan etiketleri bu videoda henüz her çekime koyamıyorum\n- Bu videoda henüz uygulanmayanlar: başlık animasyonu, klip etiketi konumu, efektler, hikâye kalıbı, öne çıkan ana klip, katman gösterimi, ses efektleri"
         },
         "voice_no_captions": {
           "lines": [
-            {
-              "code": "not_applied_on_route",
-              "subject": "pacing",
-              "text": "balanced tempo bu videoda henüz uygulanmıyor: slayt gönderisi her slaytı kendi süresince gösteriyor"
-            },
-            {
-              "code": "not_applied_on_route",
-              "subject": "direction",
-              "text": "native yönü bu videoda henüz uygulanmıyor: slayt gönderisi slaytlarını sırayla gösteriyor"
-            },
             {
               "code": "not_applied_on_route",
               "subject": "audio_strategy",
@@ -1577,7 +1255,7 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Bu video için not:\n- balanced tempo bu videoda henüz uygulanmıyor: slayt gönderisi her slaytı kendi süresince gösteriyor\n- native yönü bu videoda henüz uygulanmıyor: slayt gönderisi slaytlarını sırayla gösteriyor\n- Slayt gönderisi henüz eklenmiş müzik ya da seslendirme çalmıyor, planlanan ses kullanılmayacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: slayt gönderisinin uzunluğu slaytlarına bağlı\n- Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
+          "card": "Bu video için not:\n- Slayt gönderisi henüz eklenmiş müzik ya da seslendirme çalmıyor, planlanan ses kullanılmayacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: slayt gönderisinin uzunluğu slaytlarına bağlı\n- Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
         }
       }
     }
