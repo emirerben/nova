@@ -536,7 +536,7 @@ def render_markdown(run: dict[str, list[dict[str, Any]]], meta: dict[str, str]) 
             )
         add("")
     for section in run["sections"]:
-        body = {k_: v for k_, v in section.items() if k_ not in {"test", "first_prompt"}}
+        body = {k_: v for k_, v in section.items() if k_ not in {"test", "family", "first_prompt"}}
         if not body:
             continue
         add(f"## {section['test']}")
