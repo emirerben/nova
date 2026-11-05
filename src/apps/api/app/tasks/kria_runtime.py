@@ -659,6 +659,7 @@ def _restate_video_moved(
     variant_key: str,
     session: CreatorAgentSession,
     pin: Mapping[str, Any],
+    state: Mapping[str, Any] | None = None,
 ) -> bool:
     """A native-editor Save (or any other writer) changed the saved video since this restate
     stood on it. A Save writes no draft, so the head hash cannot tell, and a restated plan holds
@@ -668,6 +669,11 @@ def _restate_video_moved(
     (``pin["generation_id"]``) catches a Save that landed after planning. The session's pointer is
     the generation the agent last saw: when it is set and differs, a Save landed before the tap
     and the session never read it (an editor-op tap re-syncs it; a restate must not).
+
+    The pointer alone cannot tell a card that stood on that Save from one served after it, and no
+    Save moves it, so after any Save every restating card would be dead. ``state`` (the thread's
+    ring) lets the second witness stand down for a card whose set was written after the video's
+    latest render finished: that serve read the video as it is.
     """
     variant = next(
         (
@@ -682,7 +688,11 @@ def _restate_video_moved(
     if planned_against is not None and current != planned_against:
         return True
     seen = str(session.target_generation_id or "")
-    return bool(seen and current and seen != current)
+    if not (seen and current and seen != current):
+        return False
+    from app.services.suggestions import pinned as _pinned  # noqa: PLC0415
+
+    return not _pinned.served_on_current_video(state, str(pin.get("set_id") or ""), variant)
 
 
 def _publish_cleanup_analysis(analysis_id: uuid.UUID | None) -> None:
@@ -2020,7 +2030,7 @@ def _complete_draft_turn(
             # head draft it replaces must still be the ones the tap was planned against.
             if (head.snapshot_hash if head is not None else None) != pin.get(
                 "head_hash"
-            ) or _restate_video_moved(job, variant_key, session, pin):
+            ) or _restate_video_moved(job, variant_key, session, pin, thread.state):
                 db.rollback()
                 return _pinned_tap_no_longer_fits(
                     turn_id,
@@ -2030,6 +2040,16 @@ def _complete_draft_turn(
                     planned=planned,
                     reason=_pinned.BASE_MOVED,
                 )
+            if (
+                pin.get("generation_id")
+                and session.target_generation_id
+                and session.target_generation_id != pin["generation_id"]
+            ):
+                # The card was served on a video the session's pointer never followed (a Save).
+                # Align it in this commit, as an editor-op tap does, so the draft and its approval
+                # stand on the generation the tap was planned against.
+                session.target_generation_id = pin["generation_id"]
+                generation_id = draft_generation_id = str(pin["generation_id"])
             setting = pin.get("setting")
             if setting:
                 from app.services.suggestions.kinds.filler_words import (  # noqa: PLC0415
