@@ -103,8 +103,10 @@ edit has a target: `allowed_op_families` can come back empty (`no_allowed_famili
 such as `captions` / `audio_intent: no_music` / `animation`, or the creator's `description` over the
 Turkish-aware fold, never the on-screen `literal`) withholds the card, whether it contradicts or
 restates the ask. It holds on every path (chip set, deterministic cards, an agent's pick). The brief
-is `ctx.kind_inputs["brief"]` (`suggestion_serve.BRIEF_KEY`): no key = never loaded = unchanged; a
-value that is not a brief offers nothing. The helper is not in `kinds/` because the registry guard
+is `ctx.kind_inputs["brief"]` (`suggestion_serve.BRIEF_KEY`): no key = the loader never ran (flags off) =
+unchanged; a value that is not a brief offers nothing, and so does a failed read: with a v2 flag on,
+`suggestion_serve` stores `brief_asks.UNREADABLE` under the key when the read (or the stage around
+it) raises, never leaving it absent. The helper is not in `kinds/` because the registry guard
 requires every module there to be a kind.
 
 **`PROMPT_VERSION` and ids.** With every flag off, `set_id` and `input_digest` differ from
@@ -127,3 +129,13 @@ threads show no ready cards (the safe failure). Not exercised on a device or aga
 7. A stored signal outliving its thresholds (per-signal `v`; `signals_version` feeds the set digest).
 8. Flag-off wire or `request_digest` bytes drifting (omit-when-empty serializer; digests pinned to
    values captured before the change).
+
+## Postgres-backed suggestion suites and CI
+
+`test_suggestion_freshness_postgres.py`, `test_near_dup_store_postgres.py`,
+`test_suggestion_serve_wiring_postgres.py`, `test_kria_pinned_suggestion.py`,
+`test_kria_pinned_kinds.py` and `tests/e2e_suggestions` need a migrated `*_test` database. Without
+one they skip, unless `NOVA_REQUIRE_POSTGRES_TESTS=1` (`tests/postgres_required.py`), which only the
+api test shards in `ci.yml` set: there a missing database fails collection. It is not keyed on
+`CI`, because the "Structural evals" job runs `pytest tests/evals/` with `CI=true` and no Postgres
+service. Pinned by `tests/evals/test_suggestion_gates_ci_guard.py`.

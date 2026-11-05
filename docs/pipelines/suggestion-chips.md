@@ -213,10 +213,12 @@ issued. Ledger feature name and daily-cap key: `nova.chat.suggestion_agent` (`sp
   thread language, no markup / links / handles / hype, and no run of three words, or a whole subject,
   taken from a transcript or the Gemini subject / setting / moment text. Links are refused in every
   form (`looks_like_link`: scheme, `www.`, a bare domain like `evil.com` / `bit.ly`, "dot com" /
-  "nokta com"), also in a `why`. Turkish copy may only use ASCII, Turkish letters or an ASCII letter
+  "nokta com" / "slash com", also with the letters spaced apart: "dot c o m"), also in a `why`. A word mixing
+  letters and digits ("d0t", "l1nk") is refused by `validate_copy` itself. Turkish copy may only use ASCII, Turkish letters or an ASCII letter
   plus an accent (`has_lookalike_letter`: no small-capital o, script g). The hook kind adds (in
   `hook.check_copy`): the cringe/bait list also over the text with hyphens as spaces and runs of
-  single letters joined ("Link-in-bio", "f o l l o w me"), and a paraphrase check
+  single letters joined ("Link-in-bio", "f o l l o w me") and with spaces ignored when the phrase
+  starts at a word start ("fo llow me", `squashed_phrase_hit`; "unlimited time" is not "limited time"), and a paraphrase check
   (`echoes_source`) per clause of each transcript and on-screen text: two or more shared content
   stems that make up 60% of the copy's. **Gemini metadata never becomes on-screen text.** A card never puts the copy in its `prompt` (the chat message a tap
   sends is a closed template).
