@@ -102,6 +102,8 @@ struct SongTimelineCard: View {
             .frame(minHeight: 44, alignment: .leading)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("song-timeline-answered")
+        case .superseded:
+            KriaSupersededLine().accessibilityIdentifier("song-order-superseded")
         case .active(let isSending, let submit):
             VStack(alignment: .leading, spacing: 12) {
                 header

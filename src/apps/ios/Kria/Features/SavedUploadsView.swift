@@ -17,6 +17,8 @@ struct SavedUploadsView: View {
     let capacity: Int
     @ObservedObject var uploads: BackgroundUploadCoordinator
     let onAdded: () -> Void
+    /// Offered on the empty state: close this list and pick from Photos instead. Nil hides the button.
+    var onChoosePhotos: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var selectionBudget: Int?
     @State private var localIDs: Set<UUID> = []
@@ -119,11 +121,19 @@ struct SavedUploadsView: View {
             if loading {
                 ProgressView("Loading saved uploads…").frame(maxHeight: .infinity)
             } else if error == nil {
-                ContentUnavailableView(
-                    query.isEmpty ? "No saved uploads yet" : "No matching uploads",
-                    systemImage: "square.stack",
-                    description: Text(query.isEmpty ? "Add media to a post from Photos or Files. Your uploads will appear here for reuse." : "Try another filename.")
-                )
+                Group {
+                    if query.isEmpty, let onChoosePhotos {
+                        KriaEmptyState(title: "No saved uploads yet",
+                                       message: "Add media to a post from Photos or Files. Your uploads will appear here for reuse.",
+                                       action: "Choose from Photos", actionRole: .secondary, titleStyle: .heading, onAction: onChoosePhotos)
+                    } else {
+                        ContentUnavailableView(
+                            query.isEmpty ? "No saved uploads yet" : "No matching uploads",
+                            systemImage: "square.stack",
+                            description: Text(query.isEmpty ? "Add media to a post from Photos or Files. Your uploads will appear here for reuse." : "Try another filename.")
+                        )
+                    }
+                }
                 .accessibilityIdentifier("saved-uploads-empty")
                 .frame(maxHeight: .infinity)
             } else {
