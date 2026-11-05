@@ -23,7 +23,11 @@ Footage is NOT made here: OUT_DIR must already hold REAL files (never symlinks, 
   rec1.mp4..rec5.mp4   the five "screen recordings"
 
 usage:
-  src/apps/api/.venv/bin/python scripts/ios/qendresa-list-labels-e2e.py OUT_DIR --labels on|off
+  src/apps/api/.venv/bin/python scripts/ios/qendresa-list-labels-e2e.py OUT_DIR --labels on|off [--case q2|q1]
+
+``--case q1`` is the full-frame talking head (talk.mp4 + words.json only): ONE typed example
+("1. which company it sends data to?") and the worker finds the other items in the take; it
+writes the plain ``subtitled_sentence`` device case instead (status-subtitled-sentence.json).
 
 Item 17's ``background_follows_talk_enabled`` is ON in both runs; only the labels flag differs.
 """
@@ -157,13 +161,213 @@ def _spoken_phrases(words: list[dict]) -> list[str]:
     return phrases
 
 
+Q1_LABEL = "1. which company it sends data to?"
+Q1_LEADS = ("which", "what", "what", "what")  # first word of each item, in take order
+
+
+def _q1_item_words(words: list[dict]) -> list[tuple[str, float]]:
+    """(word, start) of each item's first word: "which", then the next three "what" after it."""
+    tokens = [_token(w["text"]) for w in words]
+    at = next(
+        (
+            i
+            for i, t in enumerate(tokens[:-1])
+            if t == "which" and tokens[i + 1].startswith("compan")
+        ),
+        None,
+    )
+    if at is None:
+        raise SystemExit("'which companies' is not spoken in words.json")
+    out = [("which", float(words[at]["start_s"]))]
+    for i in range(at + 1, len(tokens)):
+        if tokens[i] == "what":
+            out.append(("what", float(words[i]["start_s"])))
+        if len(out) == 4:
+            break
+    if len(out) < 4:
+        raise SystemExit("fewer than three 'what' after 'which' in words.json")
+    return out
+
+
+def _main_q1(args: argparse.Namespace, out: Path) -> None:
+    """Q1: a full-frame talking head, ONE typed example; the worker finds the rest of the list."""
+    from app.services import phone_rollout
+    from app.tasks import generative_build as gb
+
+    case_id = "subtitled_sentence"
+    words = json.loads((out / "words.json").read_text())
+    talk = out / "talk.mp4"
+    take_s = float(
+        subprocess.check_output(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+                str(talk),
+            ]
+        )
+    )
+    settings.phone_subtitled_title_enabled = True
+    settings.phone_subtitled_spoken_text_enabled = True
+    settings.spoken_list_labels_enabled = args.labels == "on"
+    settings.phone_render_verified_features = sorted(
+        {*settings.phone_render_verified_features, "positionedText", "animatedText"}
+    )
+    if args.labels == "on":
+        assert phone_rollout.phone_list_labels_supported(), "list-label gate is closed"
+
+    sha, size = _sha(talk)
+    speaker = PhoneSourceBinding(
+        media_id="listq1-talk",
+        proxy_path="users/owner/creation/analysis-proxy-listq1-talk.mp4",
+        generation="101",
+        original=OriginalMediaDescriptor(
+            sha256=sha,
+            byte_count=size,
+            duration_s=take_s,
+            width=CANVAS["width"],
+            height=CANVAS["height"],
+            has_audio=True,
+        ),
+    )
+    cues = _cues(words)
+
+    from app.pipeline.phone_list_labels import list_label_asks
+
+    requirements = [
+        BriefRequirement(
+            id="req-label-1", kind="text", scope="global", literal=Q1_LABEL, facts={}
+        )
+    ]
+    asks = list_label_asks(requirements)
+    label_rows: list[dict] = []
+    receipt: dict | None = None
+    if args.labels == "on":
+        label_rows, receipt = gb._phone_talking_list_label_rows(
+            asks,
+            anchors=[],
+            words=words,
+            cues=cues,
+            caption_style="sentence",
+            caption_look=None,
+            shown_rows=[],
+            cards=[],
+            timeline_duration_s=take_s,
+            binding=speaker,
+            clip_path=str(talk),
+            keep_segments=[(0.0, take_s)],
+            landscape_fit="fit",
+            position_x=0.0,
+            speaker_frame=None,
+        )
+        print(f"label rows: {len(label_rows)}")
+
+    recipe = compile_phone_subtitled_plan(
+        (speaker,),
+        caption_cues=cues,
+        caption_style="sentence",
+        text_elements=label_rows,
+        text_elements_user_edited=bool(label_rows),
+    )
+    verified = sorted(set(recipe.required_capabilities) | {"positionedText"})
+    settings.phone_render_verified_features = verified
+    validate_phone_pilot_recipe(recipe, allow_editor_media=True)
+    # The plain Talking recipe already needs positionedText (captions), so dropping it
+    # must send the render to the cloud with or without label rows.
+    assert "positionedText" in recipe.required_capabilities
+
+    request_obj = make_device_request(
+        job_id=uuid.uuid4(), variant_id=case_id, revision=1, recipe=recipe
+    )
+    status = DeviceRenderStatus(
+        phase="awaiting_device", request=request_obj
+    ).model_dump(mode="json")
+    (out / "status-subtitled-sentence.json").write_text(json.dumps(status, indent=2))
+    e2e = {
+        "verified_features": verified,
+        "cases": {
+            case_id: {
+                "status_file": "status-subtitled-sentence.json",
+                "duration_s": recipe.duration,
+                "required_capabilities": sorted(recipe.required_capabilities),
+                "drop_capability": "positionedText",
+                "clips": [{"media_id": "listq1-talk", "file": "talk.mp4"}],
+                "music_asset_id": None,
+                "music_file": None,
+                "expects_source_audio": True,
+                "expects_music_audio": False,
+                "expects_narration_audio": False,
+                "samples": [],
+            }
+        },
+    }
+    (out / "e2e.json").write_text(json.dumps(e2e, indent=2))
+
+    items = _q1_item_words(words)
+    receipt_rows = (receipt or {}).get("rows", [])
+    labels_report = []
+    for i, row in enumerate(label_rows):
+        info = receipt_rows[i] if i < len(receipt_rows) else {}
+        placement = info.get("placement") or {}
+        labels_report.append(
+            {
+                "text": row.get("text"),
+                "start_s": row["start_s"],
+                "end_s": row["end_s"],
+                "y_frac": row.get("y_frac"),
+                "size_px": row.get("size_px"),
+                "placement_status": placement.get("status"),
+                "item_first_word": items[i][0] if i < len(items) else None,
+                "item_first_word_s": items[i][1] if i < len(items) else None,
+            }
+        )
+    (out / "labels.json").write_text(
+        json.dumps(
+            {
+                "case": "q1",
+                "labels_flag": args.labels,
+                "take_s": take_s,
+                "recipe_duration_s": recipe.duration,
+                "item_first_words": [{"word": w, "start_s": t} for w, t in items],
+                "labels": labels_report,
+                "receipt": receipt,
+            },
+            indent=2,
+        )
+    )
+    print(
+        f"Wrote {out} (case=q1 labels={args.labels}); duration={recipe.duration:.3f}s"
+    )
+    print(f"required_capabilities={sorted(recipe.required_capabilities)}")
+    for r in labels_report:
+        print(
+            f"{r['text']!r:45} first={r['item_first_word']}@{r['item_first_word_s']:.2f} "
+            f"start={r['start_s']:.2f} end={r['end_s']:.2f} y={r['y_frac']} "
+            f"px={r['size_px']} place={r['placement_status']}"
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("out_dir")
     parser.add_argument("--labels", choices=("on", "off"), required=True)
+    parser.add_argument(
+        "--case",
+        choices=("q2", "q1"),
+        default="q2",
+        help="q2 = screen walkthrough with background windows (default); "
+        "q1 = full-frame talking head, one typed example",
+    )
     args = parser.parse_args()
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
+    if args.case == "q1":
+        _main_q1(args, out)
+        return
 
     import app.services.phone_overlay_grounding as pool_mod
     from app.pipeline.phone_list_labels import list_label_asks
