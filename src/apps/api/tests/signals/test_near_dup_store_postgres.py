@@ -13,7 +13,6 @@ import uuid
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import OperationalError
 
 from app.cli import backfill_clip_signals as cli
 from app.config import settings
@@ -21,15 +20,26 @@ from app.database import sync_session
 from app.models import ContentPlan, Persona, PlanItem, User
 from app.services import clip_signals
 from app.services.clip_signals import near_dup_hash as nd
+from tests.postgres_required import postgres_required
 
-_db_name = make_url(settings.database_url).database or ""
-if not _db_name.endswith("_test"):
-    pytest.skip(f"refusing to write to non-test database {_db_name!r}", allow_module_level=True)
-try:
-    with sync_session() as _probe:
-        _probe.execute(text("select 1"))
-except OperationalError:
-    pytest.skip("test Postgres not reachable", allow_module_level=True)
+
+def _database_problem() -> str | None:
+    name = make_url(settings.database_url).database or ""
+    if not name.endswith("_test"):
+        return f"refusing to write to non-test database {name!r}"
+    try:
+        with sync_session() as probe:
+            probe.execute(text("select 1 from plan_items limit 1"))
+    except Exception as exc:  # noqa: BLE001 - unreachable or unmigrated: the fixtures cannot run
+        return f"nova_test Postgres not reachable or not migrated ({type(exc).__name__})"
+    return None
+
+
+_PROBLEM = _database_problem()
+if _PROBLEM and postgres_required():
+    pytest.fail(f"{_PROBLEM}: the near-dup store fixtures must run in CI", pytrace=False)
+if _PROBLEM:
+    pytest.skip(_PROBLEM, allow_module_level=True)
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is required")
 

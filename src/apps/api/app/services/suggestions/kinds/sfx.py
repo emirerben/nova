@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from app.services.suggestions.brief_asks import SFX, spoke
 from app.services.suggestions.builders import (
     PHONE_AND_CLOUD,
     editor_op_action,
@@ -22,6 +23,11 @@ from app.services.suggestions.models import ChipKind, ChipKindSpec
 
 
 def _available(ctx: SuggestionContext) -> bool:
+    # KRI-129: a creator who already said anything about sound effects is never second-guessed.
+    return not spoke(ctx, SFX) and _offerable(ctx)
+
+
+def _offerable(ctx: SuggestionContext) -> bool:
     if ctx.state == "first_prompt":
         return cap_ok(ctx, "sound_effects")
     sfx = (ctx.snapshot or {}).get("sfx")

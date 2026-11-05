@@ -1,6 +1,6 @@
 {
  "id": "duplicate_pick",
- "description": "The same (kind, targets) twice.",
+ "description": "The same (kind, targets) twice: the repeat is dropped and the answer stands (it used to void the whole answer).",
  "context": "nermin-matcha-update::first_prompt",
  "model_output": {
   "ranked": [
@@ -25,7 +25,11 @@
   ]
  },
  "expect": {
-  "fallback_reason": "schema_error"
+  "wording": "agent",
+  "kinds": [
+   "default_edit",
+   "sfx"
+  ]
  },
  "tags": [
   "adversarial"

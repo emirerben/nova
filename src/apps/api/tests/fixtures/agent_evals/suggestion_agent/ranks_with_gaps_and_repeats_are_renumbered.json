@@ -1,0 +1,47 @@
+{
+ "id": "ranks_with_gaps_and_repeats_are_renumbered",
+ "description": "Ranks 4, 4 and 9: the order the model gave stands, the ranks become 1, 2, 3.",
+ "context": "rd_music_loud",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "music",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 4
+   },
+   {
+    "kind": "sfx",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 4
+   },
+   {
+    "kind": "transition",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 9
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "cards": [
+   "music",
+   "sfx",
+   "transition"
+  ]
+ },
+ "tags": [
+  "natural"
+ ]
+}

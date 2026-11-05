@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from app.services.suggestions.brief_asks import CAPTIONS, spoke
 from app.services.suggestions.builders import (
     PHONE_AND_CLOUD,
     editor_op_action,
@@ -28,6 +29,11 @@ def _always_captioned(ctx: SuggestionContext) -> bool:
 
 
 def _available(ctx: SuggestionContext) -> bool:
+    # KRI-129: a creator who already said anything about captions is never second-guessed.
+    return not spoke(ctx, CAPTIONS) and _offerable(ctx)
+
+
+def _offerable(ctx: SuggestionContext) -> bool:
     if ctx.state == "first_prompt":
         # Gated on the footage (speech / talking to camera) and the edit format. The manifest
         # `caption_style` capability only mirrors main_creator_agent_execution_enabled and

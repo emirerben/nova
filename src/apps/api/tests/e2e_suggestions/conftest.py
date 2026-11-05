@@ -1,13 +1,13 @@
 """Shared setup for the end-to-end suggestion proof, and the writer of its report.
 
 The database guard is the same CI-aware one the pinned-tap fixtures use: with no ``*_test``
-Postgres a laptop run skips, under CI (``CI`` set; the api shards provide ``nova_test``) a missing
-or unmigrated database fails collection, so a green check can never mean "none of it ran".
+Postgres a laptop run skips; where ``NOVA_REQUIRE_POSTGRES_TESTS`` is set (the api shards, which
+provide ``nova_test``) a missing or unmigrated database fails collection, so a green check can
+never mean "none of it ran".
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -18,6 +18,7 @@ from sqlalchemy.engine import make_url
 from app.config import settings
 from app.database import engine as async_engine
 from app.database import sync_session
+from tests.postgres_required import postgres_required
 
 
 def _database_problem() -> str | None:
@@ -44,7 +45,7 @@ def pytest_collection_modifyitems(config, items):  # noqa: ANN001, ARG001
     mine = [item for item in items if HERE in Path(str(item.fspath)).resolve().parents]
     if not mine or PROBLEM is None:
         return
-    if os.environ.get("CI"):
+    if postgres_required():
         raise pytest.UsageError(f"{PROBLEM}: the end-to-end suggestion proof must run in CI")
     for item in mine:
         item.add_marker(pytest.mark.skip(reason=PROBLEM))

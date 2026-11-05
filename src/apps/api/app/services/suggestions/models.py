@@ -408,6 +408,76 @@ def agent_response_schema(kinds: Sequence[str], target_ids: Sequence[str]) -> di
     }
 
 
+_PICK_REQUIRED = frozenset({"kind", "target_ids", "why", "rank"})
+_PICK_FIELDS = _PICK_REQUIRED | {"copy"}
+
+
+def _cut(text: str, limit: int) -> str:
+    """``text`` cut to ``limit`` characters at the last word boundary that keeps most of it."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    space = cut.rfind(" ")
+    return (cut[:space] if space >= limit // 2 else cut).rstrip()
+
+
+def _tolerant(data: Any, kinds: set[str], targets: set[str]) -> dict[str, Any]:
+    """The answer with its SIZES repaired and nothing else.
+
+    OpenAI strict mode carries no ``maxLength`` / ``maxItems``, so a model that writes a 130-char
+    ``why`` or a sixth pick used to void the whole answer and send every viewer to template
+    cards. Sizes are repaired here: ``why`` is cut at a word boundary, ``copy`` past its cap is
+    dropped (a cut hook is junk), targets keep the first ``MAX_TARGETS`` distinct handles, picks
+    are ordered by the rank the model gave (ties and gaps keep the order it wrote), a repeated
+    (kind, targets) pair keeps its first, at most ``MAX_SUGGESTIONS`` stay, and ranks become
+    1..n. What is not a size stays a hard drop of the whole answer: an unissued kind or target
+    (checked on EVERY pick and handle, before anything is trimmed), an unknown field, a wrong
+    type.
+    """
+    if not isinstance(data, dict) or not isinstance(data.get("ranked"), list):
+        raise InvalidAgentOutput("schema")
+    picks = data["ranked"]
+    if not all(isinstance(p, dict) for p in picks):
+        raise InvalidAgentOutput("schema")
+    for pick in picks:
+        if not _PICK_REQUIRED <= pick.keys() <= _PICK_FIELDS or not isinstance(pick["why"], str):
+            raise InvalidAgentOutput("schema")  # an unknown field is never trimmed away unseen
+        if not (pick.get("copy") is None or isinstance(pick["copy"], str)):
+            raise InvalidAgentOutput("schema")
+        if pick.get("kind") not in kinds:
+            raise InvalidAgentOutput(
+                "unknown_kind" if isinstance(pick.get("kind"), str) else "schema"
+            )
+        ids = pick.get("target_ids")
+        if not isinstance(ids, list) or not all(isinstance(t, str) for t in ids):
+            raise InvalidAgentOutput("schema")
+        if not set(ids) <= targets:
+            raise InvalidAgentOutput("unknown_target")
+        rank = pick.get("rank")
+        if isinstance(rank, bool) or not isinstance(rank, int):
+            raise InvalidAgentOutput("schema")
+    order = sorted(range(len(picks)), key=lambda i: (picks[i]["rank"], i))
+    seen: set[tuple[str, tuple[str, ...]]] = set()
+    kept: list[dict[str, Any]] = []
+    for i in order:
+        pick = dict(picks[i])
+        ids = list(dict.fromkeys(pick["target_ids"]))[:MAX_TARGETS]
+        key = (pick["kind"], tuple(sorted(ids)))
+        if key in seen:
+            continue
+        seen.add(key)
+        pick["target_ids"] = ids
+        if isinstance(pick.get("why"), str):
+            pick["why"] = _cut(pick["why"], MAX_WHY_CHARS)
+        if isinstance(pick.get("copy"), str) and len(pick["copy"]) > MAX_COPY_CHARS:
+            pick["copy"] = None
+        kept.append(pick)
+    kept = kept[:MAX_SUGGESTIONS]
+    for rank, pick in enumerate(kept, start=1):
+        pick["rank"] = rank
+    return {**data, "ranked": kept}
+
+
 def parse_agent_output(
     raw: str | Mapping[str, Any], *, kinds: Sequence[str], target_ids: Sequence[str]
 ) -> SuggestionAgentOutput:
@@ -428,3 +498,23 @@ def parse_agent_output(
         if not set(pick.target_ids) <= issued_targets:
             raise InvalidAgentOutput("unknown_target")
     return out
+
+
+def parse_agent_output_tolerant(
+    raw: str | Mapping[str, Any], *, kinds: Sequence[str], target_ids: Sequence[str]
+) -> SuggestionAgentOutput:
+    """``parse_agent_output`` after the SIZE repairs of ``_tolerant``: what the server accepts.
+
+    ``parse_agent_output`` stays the contract the model is asked to meet (the edit-improver skill
+    eval grades raw model output against it); this is the leniency on top, because the strict
+    response schema cannot carry the caps. A kind or target outside what was issued, an unknown
+    field or a wrong type still voids the answer.
+    """
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+        repaired = _tolerant(data, set(kinds), {WHOLE_VIDEO_HANDLE, *target_ids})
+    except InvalidAgentOutput:
+        raise
+    except (ValueError, TypeError):
+        raise InvalidAgentOutput("schema") from None
+    return parse_agent_output(repaired, kinds=kinds, target_ids=target_ids)

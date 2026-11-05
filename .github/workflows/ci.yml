@@ -398,6 +398,7 @@ jobs:
           python -m alembic upgrade head
       - name: Run API test shard with timing reports
         env:
+          NOVA_REQUIRE_POSTGRES_TESTS: "1"
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_test
           REDIS_URL: redis://localhost:6379
           STORAGE_BUCKET: nova-test

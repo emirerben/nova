@@ -11,9 +11,11 @@ creator turns hold the thread row. The invariants (the pure logic is in
 * a foreign thread is the usual 404 and writes nothing; an unknown id writes nothing;
 * two dismisses at once end in one stored dismissal.
 
-Skips unless DATABASE_URL names a reachable ``*_test`` database (same guard as
-tests/services/test_suggestion_chips_postgres.py), so it runs in test-api CI and against the
-scratch database from ``scripts/dev/test-db.sh``, never against a dev database.
+Skips unless DATABASE_URL names a reachable migrated ``*_test`` database, so it runs against the
+scratch database from ``scripts/dev/test-db.sh`` and never against a dev database. Where
+``NOVA_REQUIRE_POSTGRES_TESTS`` is set (the api shards, which provide ``nova_test``) that is a
+collection failure, not a skip, so a broken CI database can never read as green
+(``test_suggestion_gates_ci_guard.py``).
 """
 
 from __future__ import annotations
@@ -40,15 +42,26 @@ from app.services.suggestions.models import (
     Suggestion,
     SuggestionOut,
 )
+from tests.postgres_required import postgres_required
 
-if not (make_url(settings.database_url).database or "").endswith("_test"):
-    pytest.skip("requires a *_test database", allow_module_level=True)
-try:
-    with sync_session() as _probe:
-        _probe.execute(text("select 1"))
-        _probe.execute(text("select 1 from creation_threads limit 1"))
-except Exception as _exc:  # noqa: BLE001 - unreachable or unmigrated => skip, never fail CI
-    pytest.skip(f"nova_test Postgres not ready: {type(_exc).__name__}", allow_module_level=True)
+
+def _database_problem() -> str | None:
+    name = make_url(settings.database_url).database or ""
+    if not name.endswith("_test"):
+        return f"refusing to use non-test database {name!r}"
+    try:
+        with sync_session() as probe:
+            probe.execute(text("select 1 from creation_threads limit 1"))
+    except Exception as exc:  # noqa: BLE001 - unreachable or unmigrated: the fixtures cannot run
+        return f"nova_test Postgres not reachable or not migrated ({type(exc).__name__})"
+    return None
+
+
+_PROBLEM = _database_problem()
+if _PROBLEM and postgres_required():
+    pytest.fail(f"{_PROBLEM}: the freshness ring fixtures must run in CI", pytrace=False)
+if _PROBLEM:
+    pytest.skip(_PROBLEM, allow_module_level=True)
 
 
 @pytest_asyncio.fixture(autouse=True)

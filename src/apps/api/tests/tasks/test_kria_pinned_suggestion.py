@@ -61,13 +61,13 @@ Applied cards (a card is one offer)
 
 Database (collection)
   FM24 the fixtures above skip when no `*_test` Postgres answers, so a laptop run can look green
-       with none of them having run. Under CI (`CI` set, where the api shards provide `nova_test`
-       migrated to head) a missing or unmigrated database fails collection instead.
+       with none of them having run. Where `NOVA_REQUIRE_POSTGRES_TESTS` is set (the api shards,
+       which provide `nova_test` migrated to head) a missing or unmigrated database fails
+       collection instead.
 """
 
 from __future__ import annotations
 
-import os
 import sys
 
 import pytest
@@ -78,6 +78,7 @@ from sqlalchemy.engine import make_url
 from app.config import settings
 from app.database import engine as async_engine
 from app.database import sync_session
+from tests.postgres_required import postgres_required
 from tests.tasks import kria_pinned_suggestion_harness as h
 
 
@@ -94,7 +95,7 @@ def _database_problem() -> str | None:
 
 
 _PROBLEM = _database_problem()
-if _PROBLEM and os.environ.get("CI"):
+if _PROBLEM and postgres_required():
     # The api shards provide nova_test migrated to head. A skip here would let every fixture
     # in this module go unrun behind a green check.
     pytest.fail(f"{_PROBLEM}: the pinned-tap fixtures must run in CI", pytrace=False)

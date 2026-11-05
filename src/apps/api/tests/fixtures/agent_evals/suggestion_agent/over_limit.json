@@ -1,6 +1,6 @@
 {
  "id": "over_limit",
- "description": "Six picks where five is the most the schema allows.",
+ "description": "Six picks where five is the most: the sixth is trimmed and the answer stands (it used to void the whole answer); one card per kind still applies.",
  "context": "rd_music_loud",
  "model_output": {
   "ranked": [
@@ -61,7 +61,21 @@
   ]
  },
  "expect": {
-  "fallback_reason": "schema_error"
+  "wording": "agent",
+  "kinds": [
+   "sfx",
+   "hook",
+   "music",
+   "transition"
+  ],
+  "cards": [
+   "sfx",
+   "music",
+   "transition"
+  ],
+  "drops": {
+   "duplicate_kind": 1
+  }
  },
  "tags": [
   "adversarial"

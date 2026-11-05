@@ -1,0 +1,28 @@
+{
+ "id": "unknown_target_beyond_the_target_cap_still_voids",
+ "description": "A fourth target handle that was never issued: the cap would trim it, but an unknown target is a hard drop of the whole answer.",
+ "context": "rd_captions_off_with_cues",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "captions",
+    "target_ids": [
+     "c1",
+     "c2",
+     "c3",
+     "c9"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 1
+   }
+  ]
+ },
+ "expect": {
+  "fallback_reason": "schema_error",
+  "wording": "fallback"
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

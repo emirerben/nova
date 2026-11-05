@@ -13,7 +13,7 @@ the phone. The `Action` stays server-side; a tap pins `{set_id, chip_id}`.
 
 | path | what |
 | --- | --- |
-| `services/suggestions/models.py` | `SuggestionKind` row, `Action` union, `Suggestion`, `SuggestionSet`, `SuggestionDigest`, `SuggestionAgentOutput` + `agent_response_schema` / `parse_agent_output`, wire `SuggestionOut` |
+| `services/suggestions/models.py` | `SuggestionKind` row, `Action` union, `Suggestion`, `SuggestionSet`, `SuggestionDigest`, `SuggestionAgentOutput` + `agent_response_schema` / `parse_agent_output` (strict) / `parse_agent_output_tolerant` (size repairs; what the agent uses), wire `SuggestionOut` |
 | `services/suggestions/context.py` | `SuggestionContext` and the read-only snapshot readers every kind shares; `snapshot_digest` (the `EditorOpsAction.base_digest`) |
 | `services/suggestions/registry.py` | `all_kinds()`, `legacy_gate()` (the engine's `CHIP_KIND_GATE`, original order), `enabled()`, `kinds_for()`, `problems()` |
 | `services/suggestions/kinds/*.py` | ONE module per kind; the explicit list is `kinds/__init__.py` |
@@ -132,6 +132,22 @@ the session's `target_job_id` is the item's current job, and the phone's export 
 variant `render_status = "ready"` (`routes/device_render._complete_device_export`). `build_editor_snapshot`
 is already device-aware (a phone Talking cut is projected from its pinned recipe). Not every ready
 edit has a target: `allowed_op_families` can come back empty (`no_allowed_families`), and a device
+**The creator's request wins (KRI-129).** `captions`, `music_level`, `sfx`, `transition` and
+`title_animation` read the brief in their own `available` through `services/suggestions/brief_asks.py`
+(`spoke(ctx, DIMENSION)`): a live requirement that says anything about the dimension (a typed fact
+such as `captions` / `audio_intent: no_music` / `animation`, or the creator's `description` over the
+Turkish-aware fold, never the on-screen `literal`) withholds the card, whether it contradicts or
+restates the ask. It holds on every path (chip set, deterministic cards, an agent's pick). The brief
+is `ctx.kind_inputs["brief"]` (`suggestion_serve.BRIEF_KEY`): no key = the loader never ran (flags off) =
+unchanged; a value that is not a brief offers nothing, and so does a failed read: with a v2 flag on,
+`suggestion_serve` stores `brief_asks.UNREADABLE` under the key when the read (or the stage around
+it) raises, never leaving it absent. The helper is not in `kinds/` because the registry guard
+requires every module there to be a kind.
+
+**`PROMPT_VERSION` and ids.** With every flag off, `set_id` and `input_digest` differ from
+origin/main by design (the digest hashes `PROMPT_VERSION`); the wire is otherwise identical. Noted at
+the constant in `services/suggestion_chips.py`.
+
 Talking / Voiceover variant keeps `sfx` closed until a Save has written `sound_effects`. Those
 threads show no ready cards (the safe failure). Not exercised on a device or against a database.
 
@@ -148,3 +164,13 @@ threads show no ready cards (the safe failure). Not exercised on a device or aga
 7. A stored signal outliving its thresholds (per-signal `v`; `signals_version` feeds the set digest).
 8. Flag-off wire or `request_digest` bytes drifting (omit-when-empty serializer; digests pinned to
    values captured before the change).
+
+## Postgres-backed suggestion suites and CI
+
+`test_suggestion_freshness_postgres.py`, `test_near_dup_store_postgres.py`,
+`test_suggestion_serve_wiring_postgres.py`, `test_kria_pinned_suggestion.py`,
+`test_kria_pinned_kinds.py` and `tests/e2e_suggestions` need a migrated `*_test` database. Without
+one they skip, unless `NOVA_REQUIRE_POSTGRES_TESTS=1` (`tests/postgres_required.py`), which only the
+api test shards in `ci.yml` set: there a missing database fails collection. It is not keyed on
+`CI`, because the "Structural evals" job runs `pytest tests/evals/` with `CI=true` and no Postgres
+service. Pinned by `tests/evals/test_suggestion_gates_ci_guard.py`.

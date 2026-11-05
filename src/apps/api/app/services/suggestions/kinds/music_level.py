@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from app.services.suggestions.brief_asks import MUSIC, spoke
 from app.services.suggestions.builders import (
     PHONE_AND_CLOUD,
     editor_op_action,
@@ -34,6 +35,7 @@ def _available(ctx: SuggestionContext) -> bool:
     # is the song's showcase and "turn it down" would hurt it.
     return (
         ctx.state == "ready"
+        and not spoke(ctx, MUSIC)  # KRI-129
         and "music" in families(ctx)
         and _present_track(ctx)
         and any_speech(ctx)
