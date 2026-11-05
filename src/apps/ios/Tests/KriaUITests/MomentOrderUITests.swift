@@ -98,7 +98,10 @@ final class MomentOrderUITests: XCTestCase {
         attach(app, "Moments card")
 
         // Reorder: the tray goes after the wave.
-        tap("moment-order-down-m-tray", in: app)
+        let handle = element(app, "moment-order-handle-m-tray")
+        bringIntoView(handle, in: app)
+        handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 3.4)))
         XCTAssertEqual(order(app), "m-wave,m-tray,m-bite")
 
         // Point at the tray with the Range picker: slide the default window right.
