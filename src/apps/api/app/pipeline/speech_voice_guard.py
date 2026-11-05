@@ -166,6 +166,7 @@ def guard_audible_speech(
     *,
     exempt: Sequence[tuple[float, float]] = (),
     sr: int = SAMPLE_RATE,
+    min_cut_s: float = MIN_CUT_S,
 ) -> tuple[CutPlan, dict[str, Any]]:
     """``plan`` with every voiced silence/filler cut given back to the edit.
 
@@ -222,7 +223,7 @@ def guard_audible_speech(
                 head = (removal.start_s, min(lo for lo, _ in voiced) - PAD_S)
                 tail = (max(hi for _, hi in voiced) + PAD_S, removal.end_s)
                 lo, hi = max(head, tail, key=lambda edge: edge[1] - edge[0])
-                if hi - lo >= MIN_CUT_S - _EPS:
+                if hi - lo >= min_cut_s - _EPS:
                     replacement = Removal(start_s=lo, end_s=hi, reason=removal.reason)
             verdicts.append((removal, replacement, voiced_s))
 
