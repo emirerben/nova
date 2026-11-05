@@ -425,6 +425,17 @@ def _lay_out_on_the_word(
             mentions[-1].append((at, idx))
         else:
             mentions.append([(at, idx)])
+    if opening_s > _EPS and mentions[0][0][0] <= opening_s + _EPS:
+        # S83: the names seated at the switch get at least MIN_WINDOW_S each. Nothing comes back
+        # later (S57), so a visual squeezed out here would never show: a mention heard sooner is
+        # pushed back just enough, and so on down the chain (each at most that much late). Never
+        # past the last half second of the take: there the honest `window_too_short` note stays.
+        floor = opening_s + len(mentions[0]) * MIN_WINDOW_S
+        for mention in mentions[1:]:
+            if mention[0][0] >= floor - _EPS or floor > take_s - MIN_WINDOW_S + _EPS:
+                break
+            mention[:] = [(max(at, floor), idx) for at, idx in mention]
+            floor = mention[0][0] + len(mention) * MIN_WINDOW_S
     windows: list[OutputWindow] = []
     for position, mention in enumerate(mentions):
         more_follow = position + 1 < len(mentions)
