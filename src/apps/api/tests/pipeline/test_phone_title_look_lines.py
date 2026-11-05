@@ -8,6 +8,7 @@ that is part of ordinary text ("24/7", "A/B testing", "and/or") or a one-letter 
 from __future__ import annotations
 
 import pytest
+
 from app.pipeline.phone_title_look import split_title_lines
 
 
