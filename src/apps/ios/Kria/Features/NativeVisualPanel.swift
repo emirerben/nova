@@ -209,9 +209,8 @@ struct NativeVisualPanel: View {
     private var mediaLibrary: some View {
         VStack(spacing: 12) {
             Button { showsGenerator = true } label: {
-                Label("Generate media", systemImage: "sparkles").frame(maxWidth: .infinity, minHeight: 44)
-            }.buttonStyle(.plain)
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(KriaColor.line, lineWidth: 1))
+                Label("Generate media", systemImage: "sparkles")
+            }.buttonStyle(KriaButtonStyle(role: .secondary, fullWidth: true))
                 .disabled(!session.canGenerateOverlayPlan)
                 .accessibilityIdentifier("native-editor-generate-media")
             if !session.rendersOnDevice {
@@ -219,9 +218,8 @@ struct NativeVisualPanel: View {
                     .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
             }
             Button { showsImporter = true } label: {
-                Label("Add photo or video", systemImage: "plus").frame(maxWidth: .infinity, minHeight: 44)
-            }.buttonStyle(.plain)
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(KriaColor.line, lineWidth: 1))
+                Label("Add photo or video", systemImage: "plus")
+            }.buttonStyle(KriaButtonStyle(role: .secondary, fullWidth: true))
                 .disabled(!session.canImportVisuals)
                 .accessibilityIdentifier("native-editor-import-visual")
             if let message = session.visualImportUnavailableMessage {

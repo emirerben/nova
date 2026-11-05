@@ -38,13 +38,14 @@ struct BrandPreviewHost: View {
                 .padding(20)
             case "projects": ProjectsDrawer(close: {}, openGallery: {})
             case "editor": NativeEditorView(project: PreviewFixtures.editorProject, initialDraft: PreviewFixtures.editorDraft, initialPlaybackURL: Bundle.main.url(forResource: "montage", withExtension: "mp4"), onBack: {})
+            case let value where value.hasPrefix("generate-"): GenerateImagePreviewHost(state: value)
             default:
                 VStack(spacing: 0) {
                     WorkspaceHeader(project: project, showsEditorSwitch: state == "ready", openProjects: {}, openEditor: {}, openAccount: {})
                     ScrollView {
                         VStack(alignment: .leading, spacing: 20) {
                             switch state {
-                            case "footage": FootageStage(format: .montage, mediaCount: 2, maximumClipCount: 10, uploads: [], progress: UploadProgressStore(), addFootage: {}, changeFormat: {})
+                            case "footage": FootageStage(format: .montage, mediaCount: 2, maximumClipCount: 10, uploads: [], progress: UploadProgressStore(), addFootage: {})
                             case "direction": DirectionStage(approval: approval, format: .montage, isBusy: false, decide: { _, _, _ in }, retrySpeechCheck: { _ in })
                             case "rendering": RenderingStage()
                             case "phone-rendering": DeviceRenderStatusCard(presentation: DeviceRenderPresentation(phase: .rendering), retry: {}, stop: {})

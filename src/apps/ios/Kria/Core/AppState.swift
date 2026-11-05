@@ -267,6 +267,9 @@ enum WorkspaceDestination: Equatable, Sendable {
     @Published private(set) var projectsNextCursor: String?
     private var isLoadingMoreProjects = false
     private var collectionGeneration = 0
+    /// The signed-in account's local storage owner (the same identity device renders use), for on-device recordings.
+    @ObservationIgnored private let localOwner: @MainActor () -> String?
+    var localAccountID: String? { localOwner() }
     init(
         api: KriaAPIClient = KriaAPI(),
         editorOperations: EditorOperations = LocalEditorOperations(),
@@ -277,6 +280,7 @@ enum WorkspaceDestination: Equatable, Sendable {
         Perf.begin("appmodel.init")
         defer { Perf.end("appmodel.init") }
         self.chatDrafts = chatDrafts
+        self.localOwner = renderOwner
         self.api = api
         self.editorOperations = editorOperations
         self.uploads = BackgroundUploadCoordinator(api: api)

@@ -29,6 +29,18 @@ struct TeleprompterScriptWidget: View {
 
     private var requiredHeight: CGFloat { Self.minimumHeight(fontSize: model.fontSize, dynamicTypeSize: dynamicTypeSize) }
 
+    /// Where the reading line is in the whole script (Paper S3.09b): a thin track with a short thumb.
+    @ViewBuilder private func progressBar(height: CGFloat) -> some View {
+        if travelDistance > 0, height > 32 {
+            let fraction = min(1, max(0, model.scrollPosition / travelDistance))
+            Capsule().fill(Color.white.opacity(0.25)).frame(width: 3, height: height)
+                .overlay(alignment: .top) {
+                    Capsule().fill(Color.white).frame(width: 3, height: 16).offset(y: (height - 16) * fraction)
+                }
+                .accessibilityHidden(true).allowsHitTesting(false)
+        }
+    }
+
     var body: some View {
         SwiftUI.TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !model.isPlaying)) { context in
             GeometryReader { proxy in
@@ -45,6 +57,8 @@ struct TeleprompterScriptWidget: View {
                         RoundedRectangle(cornerRadius: 2).fill(KriaColor.sky.opacity(0.9))
                             .frame(width: 4, height: font.lineHeight)
                             .offset(x: inset - 8, y: marker - font.lineHeight / 2)
+                        progressBar(height: max(0, proxy.size.height - headerHeight - 24))
+                            .offset(x: max(0, proxy.size.width - 12), y: 12)
                     }
                     .frame(width: proxy.size.width, height: max(0, proxy.size.height - headerHeight), alignment: .topLeading)
                     .clipped()

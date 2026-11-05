@@ -263,7 +263,7 @@ private struct NativeUpdateRequiredView: View {
                         .frame(width: 76, height: 76)
                         .background(KriaColor.sky, in: Circle())
                     Text("Update Kria to continue")
-                        .font(KriaFont.display(30))
+                        .font(KriaFont.headline(30))
                         .multilineTextAlignment(.center)
                     Text("This version of Kria is no longer supported. Get the update in TestFlight, then reopen Kria.")
                         .font(KriaFont.body(16))
