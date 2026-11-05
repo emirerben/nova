@@ -1780,6 +1780,18 @@ class Settings(BaseSettings):
         "+ worker restart — byte-identical to pre-feature behavior.",
     )
 
+    tight_pause_cut_enabled: bool = Field(
+        default=False,
+        description="Tight pauses on the phone Talking render (Qendresa 13). When the approved "
+        'brief asks for every pause to go ("cut out all my pauses so it\'s tight"), the '
+        "creator consented to Speech cleanup and the take is a single iPhone-rendered clip, "
+        "the render adds extra pause cuts so no kept pause is over about 0.3 s, writes a "
+        "`tight_pauses` report on the variant, and the receipt states what was measured. "
+        "Default off: no extra cuts and every receipt is byte-identical to before. "
+        "Kill switch: `fly secrets set TIGHT_PAUSE_CUT_ENABLED=false --app nova-video` + api "
+        "and worker restart.",
+    )
+
     speech_cleanup_budget_clamp_enabled: bool = Field(
         default=True,
         description="Explicit-consent removal clamp for required_v1 speech cleanup "
