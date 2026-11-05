@@ -522,12 +522,23 @@ async def serve_suggestion_set(
     writes, which expires the Job and makes every witness fail.
     """
     served = await _serve_core(db, thread, user, client_protocol, locale=locale)
+    if not settings.kria_suggestion_pinned_taps_enabled:
+        # A set frozen while the flag was on still carries its cards: switching the flag off must
+        # stop them now, not when the 24 h freeze ends. The freeze itself is not edited.
+        served.out = _legacy_only(served.out)
     if editor_triggers_on():
         served = _without_suppressed(served, thread)
     else:
         served.ring_has_cards = _ring_has_cards(served.out.set_id, getattr(thread, "state", None))
     await _prepare_cards(served)
     return served
+
+
+def _legacy_only(out: SuggestionSetOut) -> SuggestionSetOut:
+    """``out`` as the server sent it before v2 cards existed (byte-identical on the wire)."""
+    if not out.suggestions and out.digest is None:
+        return out
+    return out.model_copy(update={"suggestions": [], "digest": None})
 
 
 async def _serve_core(
