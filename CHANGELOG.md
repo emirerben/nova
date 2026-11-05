@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.87.0.0] - 2026-11-05
+
+### Added
+- feat(phone-talking): her comment-keyword ending with a drawn arrow (Qendresa item 14) (#2103) <!-- release-pr: 2103 -->
+
 ## [0.86.8.0] - 2026-11-05
 
 ### Changed
