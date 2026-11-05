@@ -138,9 +138,9 @@ final class SongRangeQuestionTests: XCTestCase {
     }
 
     func testSummariesRead() {
-        XCTAssertEqual(SongRangeAnswer.part(questionID: "q", range: SongFilmingRange(start: 40, end: 80)).summary, "Filmed 0:40 - 1:20")
+        XCTAssertEqual(SongRangeAnswer.part(questionID: "q", range: SongFilmingRange(start: 40, end: 80)).summary, "Song part: 0:40 to 1:20")
         XCTAssertEqual(SongRangeAnswer.part(questionID: "q", range: SongFilmingRange(start: 40, end: 80)).spokenSummary, "Filmed from 0:40 to 1:20")
-        XCTAssertEqual(SongRangeAnswer.wholeSong(questionID: "q").summary, "Whole song")
+        XCTAssertEqual(SongRangeAnswer.wholeSong(questionID: "q").summary, "Song part: whole song")
     }
 
     // MARK: parsing the stored echo
@@ -268,7 +268,7 @@ final class SongRangeQuestionTests: XCTestCase {
         XCTAssertNotNil(draft.range, "exactly five seconds is allowed")
         draft.setTo(44)
         XCTAssertNil(draft.range)
-        XCTAssertEqual(draft.message, "Pick at least five seconds of your song.")
+        XCTAssertEqual(draft.message, "Pick at least five seconds.")
         draft.setTo(30); draft.setFrom(50)
         XCTAssertEqual(draft.to, 55, "moving From past To pushes To out to keep five seconds")
         XCTAssertNotNil(draft.range)
@@ -283,13 +283,13 @@ final class SongRangeQuestionTests: XCTestCase {
         func failed(_ status: Int, _ code: String?, _ text: String?) -> APIError {
             .requestFailed(status: status, detail: RequestFailureDetail(nil, code: code, problemMessage: text))
         }
-        XCTAssertTrue(SongRangeProblem.isInvalid(failed(422, "song_range_invalid", "Pick at least five seconds of your song.")))
+        XCTAssertTrue(SongRangeProblem.isInvalid(failed(422, "song_range_invalid", "Pick at least five seconds.")))
         XCTAssertFalse(SongRangeProblem.isInvalid(failed(422, "something_else", "x")), "another 422 keeps the generic handling")
         XCTAssertFalse(SongRangeProblem.isInvalid(failed(500, "song_range_invalid", "x")))
         XCTAssertFalse(SongRangeProblem.isInvalid(.offline))
         XCTAssertEqual(SongRangeProblem(questionID: "q", error: failed(422, "song_range_invalid", "That starts after your song ends.")).message,
                        "That starts after your song ends.")
         XCTAssertEqual(SongRangeProblem(questionID: "q", error: failed(422, "song_range_invalid", nil)).message,
-                       "Pick at least five seconds of your song.", "no server copy still reads as a sentence")
+                       "Pick at least five seconds.", "no server copy still reads as a sentence")
     }
 }

@@ -31,12 +31,12 @@ import XCTest
         }
         defer { removeUIInterruptionMonitor(removePermissionMonitor) }
 
-        app.buttons["teleprompter-open"].tap()
+        openScriptFromTray(app)
         let script = app.textViews["teleprompter-script-editor"]
         XCTAssertTrue(script.waitForExistence(timeout: 8))
         paste("I am recording this on an iPhone. I can pause, retake, and keep an interrupted take.", into: script, app: app)
 
-        app.buttons["teleprompter-open-camera"].tap()
+        app.buttons["teleprompter-use-script"].tap()
         let record = app.buttons["teleprompter-record"]
         guard triggerPermissionPrompts(in: app, untilEnabled: record) else { return }
         guard waitUntilEnabled(record, timeout: 20) else {
@@ -151,11 +151,11 @@ import XCTest
         }
         defer { removeUIInterruptionMonitor(removePermissionMonitor) }
 
-        app.buttons["teleprompter-open"].tap()
+        openScriptFromTray(app)
         let script = app.textViews["teleprompter-script-editor"]
         XCTAssertTrue(script.waitForExistence(timeout: 8))
         paste("Short script.", into: script, app: app)
-        app.buttons["teleprompter-open-camera"].tap()
+        app.buttons["teleprompter-use-script"].tap()
         let record = app.buttons["teleprompter-record"]
         guard triggerPermissionPrompts(in: app, untilEnabled: record), waitUntilEnabled(record, timeout: 20) else {
             XCTFail("A physical iPhone with granted camera and microphone permission should enable Record.")
@@ -177,9 +177,9 @@ import XCTest
         #endif
     }
 
-    /// KRI-1160: where the front camera records Cinematic (iOS 26), a take with the switch on records with the script
-    /// visible, reaches Review as an ordinary movie with the look baked in, and the switch stays on for the next take.
-    /// Elsewhere the switch is off, disabled and says the take stays standard; the test then stops there.
+    /// KRI-1160: where the front camera records Cinematic (iOS 26), a take with the Cinematic capsule on records with
+    /// the script visible, reaches Review as an ordinary movie with the look baked in, and the capsule stays on for the
+    /// next take. Elsewhere the camera offers no capsule at all; the test then stops there.
     func testPhysicalCinematicTake() throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("Cinematic capture requires a physical iPhone.")
@@ -189,33 +189,31 @@ import XCTest
         }
 
         let app = launchTalking()
-        app.buttons["teleprompter-open"].tap()
+        openScriptFromTray(app)
         let script = app.textViews["teleprompter-script-editor"]
         XCTAssertTrue(script.waitForExistence(timeout: 8))
         paste("I am recording this on an iPhone in Cinematic mode.", into: script, app: app)
-        app.buttons["teleprompter-open-camera"].tap()
+        app.buttons["teleprompter-use-script"].tap()
         let record = app.buttons["teleprompter-record"]
         guard triggerPermissionPrompts(in: app, untilEnabled: record), waitUntilEnabled(record, timeout: 20) else {
             XCTFail("A physical iPhone with granted camera and microphone permission should enable Record.")
             return
         }
 
-        let cinematic = app.switches["teleprompter-cinematic"]
-        XCTAssertTrue(cinematic.waitForExistence(timeout: 5))
-        let note = app.staticTexts["teleprompter-cinematic-note"].label
-        guard cinematic.isEnabled else {
-            XCTAssertTrue(note.localizedCaseInsensitiveContains("standard"), "An unavailable switch says why: \(note)")
+        let cinematic = app.buttons["teleprompter-cinematic"]
+        guard cinematic.waitForExistence(timeout: 5) else {
             screenshot(app, named: "Cinematic unavailable on this iPhone")
-            throw XCTSkip("This iPhone cannot record Cinematic with the front camera: \(note)")
+            throw XCTSkip("This iPhone cannot record Cinematic with the front camera, so the camera offers no Cinematic capsule.")
         }
-        if (cinematic.value as? String) != "1" { cinematic.switches.firstMatch.tap() }
-        XCTAssertEqual(cinematic.value as? String, "1")
+        if !cinematic.isSelected { cinematic.tap() }
         // The camera graph is rebuilt for Cinematic; Record comes back once it is running again.
         guard waitUntilEnabled(record, timeout: 20) else {
             XCTFail("Record is enabled again after switching to Cinematic.")
             return
         }
-        XCTAssertFalse(app.staticTexts["teleprompter-cinematic-note"].label.localizedCaseInsensitiveContains("standard mode"),
+        // The capsule shows the camera's real state: selected only while the graph records Cinematic.
+        XCTAssertTrue(cinematic.isSelected, "The camera accepted Cinematic, so the capsule shows it on.")
+        XCTAssertFalse(app.staticTexts["teleprompter-cinematic-note"].exists,
                        "The camera accepted Cinematic rather than falling back.")
         XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "teleprompter-window").firstMatch.exists,
                       "The script stays on screen in Cinematic.")
@@ -238,7 +236,7 @@ import XCTest
 
         app.buttons["teleprompter-retake"].tap()
         XCTAssertTrue(waitUntilEnabled(record, timeout: 20))
-        XCTAssertEqual(app.switches["teleprompter-cinematic"].value as? String, "1", "The choice stays on for the next take.")
+        XCTAssertTrue(app.buttons["teleprompter-cinematic"].isSelected, "The choice stays on for the next take.")
         #endif
     }
 
@@ -300,11 +298,17 @@ import XCTest
         XCTAssertTrue(talking.waitForExistence(timeout: 10))
         if !talking.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
         talking.tap()
-        let attach = app.buttons["Attach footage"]
-        XCTAssertTrue(attach.waitForExistence(timeout: 8))
-        attach.tap()
-        XCTAssertTrue(app.buttons["teleprompter-open"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["chat-attach"].waitForExistence(timeout: 8))
         return app
+    }
+
+    /// The composer's + tray, then Add script: the camera opens with the script sheet first. Closing the camera leaves
+    /// Add media open, where the Script row (`teleprompter-open`) opens it again.
+    private func openScriptFromTray(_ app: XCUIApplication) {
+        app.buttons["chat-attach"].tap()
+        let addScript = app.buttons["attach-script"]
+        XCTAssertTrue(addScript.waitForExistence(timeout: 8), "Talk to camera offers the optional script")
+        addScript.tap()
     }
 
     private func paste(_ text: String, into field: XCUIElement, app: XCUIApplication) {

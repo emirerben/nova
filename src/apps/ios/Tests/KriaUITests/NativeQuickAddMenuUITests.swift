@@ -106,13 +106,17 @@ final class NativeQuickAddMenuUITests: XCTestCase {
         XCTAssertTrue(video.waitForExistence(timeout: 3))
         video.tap()
 
-        XCTAssertTrue(app.descendants(matching: .any)["native-editor-add-clip-photos"].waitForExistence(timeout: 3))
+        // The sheet opens on Record | Upload; the library sources sit behind Upload.
+        let upload = app.buttons["native-editor-add-clip-upload"]
+        XCTAssertTrue(upload.waitForExistence(timeout: 3))
         // The menu itself is gone once a sheet is up.
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-add-menu-text"].exists)
 
-        let cancel = app.buttons["Cancel"]
-        XCTAssertTrue(cancel.waitForExistence(timeout: 3))
-        cancel.tap()
+        upload.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-add-clip-photos"].waitForExistence(timeout: 3))
+        let close = app.buttons["native-editor-add-clip-close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 3))
+        close.tap()
         expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.descendants(matching: .any)["native-editor-add-clip-photos"])
         waitForExpectations(timeout: 3)
 
