@@ -19,6 +19,14 @@ enum KriaColor {
     static let successSoft = Color(hex: 0xEAF6EE)
     static let failureText = Color(hex: 0xB42318)
     static let failureSoft = Color(hex: 0xFFF0ED)
+    /// Warnings are slate, never yellow or amber: butter is the primary action and never sits in a notice.
+    static let warning = Color(hex: 0x526071)
+    static let warningSoft = Color(hex: 0xEAEEF3)
+
+    // Pressed fills (Paper "Kria iOS — Component Redesign" S4.01).
+    static let fillPressed = Color(hex: 0xE6E9EE)
+    static let butterPressed = Color(hex: 0xF2E495)
+    static let failurePressed = Color(hex: 0xF8DDD8)
 
     // Live plan "color behind the glass" (Paper -B artboards).
     /// Pill / chip fill (`--color-fill`).
@@ -50,12 +58,14 @@ private extension Color {
 }
 
 enum KriaFont {
-    static func display(_ size: CGFloat) -> Font { .custom("Fraunces", size: size, relativeTo: .title) }
     static func body(_ size: CGFloat = 16) -> Font { .custom("Inter", size: size, relativeTo: .body) }
-    /// Inter Bold display type for the signup/consent screens. Never Fraunces here (KRI-161 rule).
+    /// Inter Bold display type. Inter is the only face for app chrome; Fraunces survives only as a text-layer
+    /// font the creator can pick for their own video. New type uses `KriaType`.
     static func headline(_ size: CGFloat) -> Font { .custom("Inter", size: size, relativeTo: .largeTitle).weight(.bold) }
 }
 
+/// Legacy button styles. New and migrated surfaces use `KriaButtonStyle(role:size:)`; these stay until their
+/// call sites move over.
 struct KriaPrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     var fill = KriaColor.butter
@@ -73,8 +83,14 @@ struct KriaPrimaryButtonStyle: ButtonStyle {
     }
 }
 
+extension EnvironmentValues {
+    /// Set by a card that is itself a `fill` surface, so a secondary button inside it reads as paper instead of vanishing.
+    @Entry var kriaOnFill = false
+}
+
 struct KriaSecondaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.kriaOnFill) private var onFill
     var minHeight: CGFloat = 48
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -82,37 +98,46 @@ struct KriaSecondaryButtonStyle: ButtonStyle {
             .foregroundStyle(KriaColor.ink)
             .frame(minHeight: minHeight)
             .padding(.horizontal, 20)
-            .background(KriaColor.paper)
-            .overlay(Capsule().stroke(KriaColor.line, lineWidth: 1))
+            .background(configuration.isPressed ? KriaColor.fillPressed : (onFill ? KriaColor.paper : KriaColor.fill))
             .clipShape(Capsule())
-            .opacity(isEnabled ? (configuration.isPressed ? 0.65 : 1) : 0.45)
+            .opacity(isEnabled ? 1 : 0.45)
     }
 }
 
+/// A group heading in sentence case: `KriaType.label` in mutedInk. There is no tracked all-caps eyebrow style.
 struct KriaSectionLabel: View {
     let title: String
     var body: some View {
-        Text(title.uppercased())
-            .font(KriaFont.body(12).weight(.semibold))
-            .tracking(1.2)
-            .foregroundStyle(KriaColor.zinc)
+        Text(title)
+            .kriaType(.label)
+            .foregroundStyle(KriaColor.mutedInk)
             .accessibilityAddTraits(.isHeader)
     }
 }
 
+/// An empty or recovery state: Inter only, no illustration. `title` is the screen-level heading; pass
+/// `.heading` for a state that sits inside a sheet or list that already has a title.
 struct KriaEmptyState: View {
     let title: String
+    var message: String?
     let action: String
+    var actionRole: KriaButtonStyle.Role = .primary
+    var titleStyle: KriaType = .title
     let onAction: () -> Void
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(title).font(KriaFont.display(28)).foregroundStyle(KriaColor.ink)
-            Button(action, action: onAction).buttonStyle(KriaPrimaryButtonStyle())
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).kriaType(titleStyle).foregroundStyle(KriaColor.ink)
+            if let message {
+                Text(message).kriaType(.body).foregroundStyle(KriaColor.mutedInk)
+            }
+            Button(action, action: onAction)
+                .buttonStyle(KriaButtonStyle(role: actionRole, size: actionRole == .primary ? .large : .medium, fullWidth: true))
+                .padding(.top, 8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(24)
-        .background(KriaColor.paper)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .padding(20)
+        .background(KriaColor.paper, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 
@@ -131,18 +156,18 @@ struct KriaStatusPill: View {
     private var treatment: (foreground: Color, background: Color) {
         switch status {
         case .ready: (KriaColor.success, KriaColor.successSoft)
-        case .draft, .rendering: (KriaColor.zinc, KriaColor.softZinc)
+        case .draft: (KriaColor.mutedInk, KriaColor.fill)
+        case .rendering: (KriaColor.ink, KriaColor.selectionSoft)
         case .failed: (KriaColor.failureText, KriaColor.failureSoft)
         }
     }
 
     var body: some View {
         Text(label)
-            .font(KriaFont.body(12).weight(.semibold))
+            .kriaType(.label)
             .foregroundStyle(treatment.foreground)
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(treatment.background)
-            .clipShape(Capsule())
+            .padding(.horizontal, 10).padding(.vertical, 4)
+            .background(treatment.background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .accessibilityLabel("Project status: \(label)")
     }
 }
