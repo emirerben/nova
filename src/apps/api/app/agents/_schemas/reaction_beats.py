@@ -21,15 +21,7 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    TypeAdapter,
-    field_validator,
-    model_serializer,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from app.text_fold import loose_text
 
@@ -316,9 +308,7 @@ class BackgroundMedia(BaseModel):
     ``sequence`` is an ordered list of pool photos / videos that take turns behind the
     speaker (``media_id`` stays the FILL shown wherever no window covers the time),
     ``cadence_s`` how long an unanchored entry stays up, ``speaker_frame`` a NAMED corner for
-    the matted speaker (never geometry from the model, S37). ``keep_changing`` (Qendresa item
-    17) is the planner's record that the creator named a rhythm, so an on-the-word sequence keeps
-    rotating after the last mention instead of holding the last visual to the end.
+    the matted speaker (never geometry from the model, S37).
 
     KRI-1173 (a plain colour): ``color`` replaces ``media_id`` -- EXACTLY ONE of the two is
     set. It is the creator's colour as ``#RRGGBB`` (the repair also accepts the named presets
@@ -341,17 +331,6 @@ class BackgroundMedia(BaseModel):
         default=DEFAULT_BACKGROUND_CADENCE_S, ge=2.0, le=10.0, allow_inf_nan=False
     )
     speaker_frame: SpeakerFramePreset = "full"
-    keep_changing: bool = False
-
-    @field_validator("keep_changing", mode="before")
-    @classmethod
-    def _lenient_keep_changing(cls, value: object) -> bool:
-        # A model writing null / "true" / 1 must not fail the whole turn's schema: pydantic's lax
-        # bool reads the recognised spellings, anything else (null, junk) is "not asked".
-        try:
-            return TypeAdapter(bool).validate_python(value)
-        except ValueError:
-            return False
 
     @model_validator(mode="after")
     def _one_fill(self) -> BackgroundMedia:
@@ -376,8 +355,6 @@ class BackgroundMedia(BaseModel):
             data.pop("cadence_s", None)
         if data.get("speaker_frame") == "full":
             data.pop("speaker_frame", None)
-        if data.get("keep_changing") is False:
-            data.pop("keep_changing", None)
         return data
 
 

@@ -294,5 +294,181 @@
     }
    }
   }
+ },
+ "after_main_2118": {
+  "what": "Recipe windows recompiled (no render) after merging main with #2118 (no repeats: the last window holds to the take end for everyone): same words.json and take length, placeholder media. Flag-on cases equal the exported recipes above, so the export applies; flag off no longer cycles.",
+  "cases": {
+   "spoken_off": {
+    "flag": "off",
+    "phrases": [
+     "Spec Kit",
+     "Impeccable",
+     "Trading Agents",
+     "Number 4 Agents",
+     "Clawed Code Game Studios"
+    ],
+    "lane_drops": [],
+    "planned": [
+     {
+      "recording": 1,
+      "start_s": 0.0,
+      "end_s": 12.13,
+      "name_word_s": 6.2
+     },
+     {
+      "recording": 2,
+      "start_s": 12.13,
+      "end_s": 17.38,
+      "name_word_s": 12.13
+     },
+     {
+      "recording": 3,
+      "start_s": 17.38,
+      "end_s": 23.62,
+      "name_word_s": 17.38
+     },
+     {
+      "recording": 4,
+      "start_s": 23.62,
+      "end_s": 30.38,
+      "name_word_s": 24.12
+     },
+     {
+      "recording": 5,
+      "start_s": 30.38,
+      "end_s": 43.1,
+      "name_word_s": 30.38
+     }
+    ]
+   },
+   "spoken_on": {
+    "flag": "on",
+    "phrases": [
+     "Spec Kit",
+     "Impeccable",
+     "Trading Agents",
+     "Number 4 Agents",
+     "Clawed Code Game Studios"
+    ],
+    "lane_drops": [],
+    "planned": [
+     {
+      "recording": 1,
+      "start_s": 0.0,
+      "end_s": 12.13,
+      "name_word_s": 6.2
+     },
+     {
+      "recording": 2,
+      "start_s": 12.13,
+      "end_s": 17.38,
+      "name_word_s": 12.13
+     },
+     {
+      "recording": 3,
+      "start_s": 17.38,
+      "end_s": 23.62,
+      "name_word_s": 17.38
+     },
+     {
+      "recording": 4,
+      "start_s": 23.62,
+      "end_s": 30.38,
+      "name_word_s": 24.12
+     },
+     {
+      "recording": 5,
+      "start_s": 30.38,
+      "end_s": 43.1,
+      "name_word_s": 30.38
+     }
+    ]
+   },
+   "labels_off": {
+    "flag": "off",
+    "phrases": [
+     "Spec-kit",
+     "Impeccable",
+     "TradingAgents",
+     "number four Agents",
+     "Claude code game studio"
+    ],
+    "lane_drops": [
+     {
+      "lane": "background",
+      "window": 2,
+      "reason": "phrase_not_heard"
+     },
+     {
+      "lane": "background",
+      "window": 4,
+      "reason": "phrase_not_heard"
+     }
+    ],
+    "planned": [
+     {
+      "recording": 1,
+      "start_s": 0.0,
+      "end_s": 12.13,
+      "name_word_s": 6.2
+     },
+     {
+      "recording": 2,
+      "start_s": 12.13,
+      "end_s": 23.62,
+      "name_word_s": 12.13
+     },
+     {
+      "recording": 4,
+      "start_s": 23.62,
+      "end_s": 43.1,
+      "name_word_s": 24.12
+     }
+    ]
+   },
+   "labels_on": {
+    "flag": "on",
+    "phrases": [
+     "Spec-kit",
+     "Impeccable",
+     "TradingAgents",
+     "number four Agents",
+     "Claude code game studio"
+    ],
+    "lane_drops": [
+     {
+      "lane": "background",
+      "window": 4,
+      "reason": "phrase_not_heard"
+     }
+    ],
+    "planned": [
+     {
+      "recording": 1,
+      "start_s": 0.0,
+      "end_s": 12.13,
+      "name_word_s": 6.2
+     },
+     {
+      "recording": 2,
+      "start_s": 12.13,
+      "end_s": 17.38,
+      "name_word_s": 12.13
+     },
+     {
+      "recording": 3,
+      "start_s": 17.38,
+      "end_s": 23.62,
+      "name_word_s": 17.38
+     },
+     {
+      "recording": 4,
+      "start_s": 23.62,
+      "end_s": 43.1,
+      "name_word_s": 24.12
+     }
+    ]
+   }
+  }
  }
 }

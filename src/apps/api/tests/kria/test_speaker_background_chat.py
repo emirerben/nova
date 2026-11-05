@@ -903,66 +903,7 @@ def test_the_colour_notices_have_turkish_twins():
         assert capabilities.SPEAKER_BACKGROUND_NOTICES[key] in _KNOWN_TR
 
 
-# ------------------------------------------- Qendresa item 17: background_media.keep_changing
-
-
-def test_keep_changing_is_omitted_while_false_and_round_trips_when_true():
-    from app.agents._schemas.reaction_beats import BackgroundMedia
-
-    assert "keep_changing" not in BackgroundMedia(media_id=POOL_PHOTO).model_dump(mode="json")
-    off = _strategy(background_media=_sequence(POOL_PHOTO)).model_dump(
-        mode="json", exclude_none=True
-    )
-    assert "keep_changing" not in off["background_media"]
-    on = _strategy(background_media=_sequence(POOL_PHOTO, keep_changing=True))
-    dumped = on.model_dump(mode="json", exclude_none=True)
-    assert dumped["background_media"]["keep_changing"] is True
-    assert CreativeStrategy.model_validate(dumped).background_media.keep_changing is True
-
-
-def test_the_repair_keeps_keep_changing_only_with_an_open_gate_and_a_surviving_entry(
-    monkeypatch,
-):
-    _open_colour(monkeypatch, windows=True)
-    manifest = _manifest()
-    kept, _ = _repair(
-        manifest, _strategy(background_media=_sequence(POOL_PHOTO, keep_changing=True))
-    )
-    assert kept.background_media.keep_changing is True
-    color, _ = _repair(
-        manifest,
-        _strategy(
-            background_media={
-                "color": "#112233",
-                "sequence": [{"media_id": POOL_PHOTO}],
-                "keep_changing": True,
-            }
-        ),
-    )
-    assert color.background_media.keep_changing is True
-    gone, _ = _repair(
-        manifest,
-        _strategy(
-            background_media={
-                "media_id": POOL_PHOTO,
-                "sequence": [{"media_id": FOREIGN}],
-                "keep_changing": True,
-            }
-        ),
-    )
-    assert gone.background_media.keep_changing is False
-    lone, _ = _repair(
-        manifest, _strategy(background_media={"media_id": POOL_PHOTO, "keep_changing": True})
-    )
-    assert lone.background_media.keep_changing is False
-
-
-def test_the_repair_drops_keep_changing_with_a_closed_windows_gate(monkeypatch):
-    _open_gate(monkeypatch)
-    kept, _ = _repair(
-        _manifest(), _strategy(background_media=_sequence(POOL_PHOTO, keep_changing=True))
-    )
-    assert kept.background_media.keep_changing is False
+# ------------------------------------------- Qendresa item 17: how to write a spoken_phrase
 
 
 def test_the_follows_talk_paragraph_needs_the_flag_and_the_windows_capability(monkeypatch):
@@ -971,10 +912,10 @@ def test_the_follows_talk_paragraph_needs_the_flag_and_the_windows_capability(mo
     _open_windows(monkeypatch)
     monkeypatch.setattr(settings, "background_follows_talk_enabled", False)
     off = _render_prompt(_manifest())
-    assert section not in off and "keep_changing" not in off
+    assert section not in off
     monkeypatch.setattr(settings, "background_follows_talk_enabled", True)
     on = _render_prompt(_manifest())
-    assert on.count(section) == 1
+    assert on.count(section) == 1 and "spoken_phrase" in section
     assert on.replace("\n" + section, "") == off
     # flag on but no windows capability: nothing taught
     _open_gate(monkeypatch)
@@ -984,17 +925,3 @@ def test_the_follows_talk_paragraph_needs_the_flag_and_the_windows_capability(mo
         [f for f in settings.phone_render_verified_features if f != "speakerBackgroundWindows"],
     )
     assert section not in _render_prompt(_manifest())
-
-
-def test_keep_changing_is_lenient_about_what_the_model_writes():
-    from app.agents._schemas.reaction_beats import BackgroundMedia
-
-    def made(value):
-        return BackgroundMedia(media_id=POOL_PHOTO, keep_changing=value).keep_changing
-
-    assert made(None) is False
-    assert made("true") is True
-    assert made(1) is True
-    assert made(True) is True
-    assert made("banana") is False
-    assert made([1]) is False
