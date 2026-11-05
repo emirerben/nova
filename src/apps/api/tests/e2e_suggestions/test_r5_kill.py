@@ -19,6 +19,10 @@ Failure catalogue (written first; each row is a test below):
   K7  the capability levers a card rides on (``SILENCE_CUT_ENABLED``,
       ``SUBTITLED_ARCHETYPE_ENABLED``, ``SPEECH_CLEANUP_MODE``): the card must not stay on the
       phone for a tap that is refused.
+  K9  a kind switched ON after the thread froze a set without it. The set id is the digest's; after
+      the 24 h freeze the same digest is rebuilt WITH the new kind's card, and the ring entry of
+      that set id already holds cards (it is written once). Every card the GET serves must be one
+      the ring can resolve: the tap executes, it is not "no longer fits".
   K8  no switch works behind another one, through the product's own call sites. With the chip
       capability off the real editor-commit route and the real turn completion enqueue no
       suggester run and take no debounce slot; with it on they do.
@@ -292,7 +296,6 @@ async def test_k7_a_capability_lever_pulled_after_the_serve(
     after = await scene.phone.get()
     tap = await scene.phone.tap(card, out)
     served = s.card_of(after, "filler_words") is not None
-    refused = s.is_refused(tap)
     rec.negative(
         f"K7 {flag}={value!r}: the filler card is not on the phone for a tap that is refused",
         "nermin-matcha-update",
@@ -300,7 +303,7 @@ async def test_k7_a_capability_lever_pulled_after_the_serve(
         (not served) or s.executed(tap),
         f"served after: {s.kinds_of(after)}; tap planned={tap.planned} "
         f"refused={(tap.refused or {}).get('reason')} reply={tap.reply[:60]!r}",
-        gap=gaps.CAPABILITY_LEVER_DEAD_CARD if (served and refused) else None,
+        gap=gaps.CAPABILITY_LEVER_DEAD_CARD,
     )
     rec.finish()
 
@@ -353,4 +356,54 @@ async def test_k8_the_real_save_and_the_real_turn_refresh_only_with_the_chip_cap
             f"Save: enqueued {after_save[0]} keys {after_save[1]}; "
             f"turn: enqueued {after_turn[0]} keys {after_turn[1]}",
         )
+    rec.finish()
+
+
+# ── K9: a kind switched on after the freeze ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("key", "kind"), COMBOS, ids=IDS)
+async def test_k9_a_kind_switched_on_after_the_freeze_is_a_card_the_ring_holds(
+    talking_world, monkeypatch, key, kind
+):
+    flag, profile = PER_KIND[kind]
+    if kind == "mute_clip":
+        monkeypatch.setattr(mute_clip, "PINNED_TAP_APPLIES_CLIP_SOUND", True)
+    rec = Recorder(f"kill K9 {key} {kind} switched on after the freeze")
+    where = f"{key}/{profile}/{kind}"
+    monkeypatch.setattr(settings, flag, False)
+    scene = s.build(talking_world, key, profile)
+    first = await scene.phone.serve()
+    rec.negative(
+        f"K9 {flag} off: the first set has no {kind} card",
+        where,
+        f"no {kind}",
+        s.card_of(first, kind) is None,
+        f"served {s.kinds_of(first)}",
+    )
+    monkeypatch.setattr(settings, flag, True)
+    talking_world.redis.advance(25 * 3600)  # the 24 h freeze of the set built without the kind
+    out = await scene.phone.serve()
+    card = s.card_of(out, kind)
+    if card is None:
+        rec.negative(
+            f"K9 {flag} on: the kind is not served (nothing dead to tap)",
+            where,
+            "card absent, or served and executing",
+            True,
+            f"served {s.kinds_of(out)}",
+            gap=gaps.NEW_KIND_UNRESOLVED_CARD,
+        )
+        rec.finish()
+        return
+    tap = await scene.phone.tap(card, out)
+    rec.negative(
+        f"K9 {flag} on after the freeze lapsed: the served {kind} card executes",
+        where,
+        "planned (served and the ring can resolve it)",
+        s.executed(tap),
+        f"set {first.set_id} -> {out.set_id}; signal={tap.refused} reply={tap.reply[:60]!r}",
+        gap=gaps.NEW_KIND_UNRESOLVED_CARD,
+    )
     rec.finish()

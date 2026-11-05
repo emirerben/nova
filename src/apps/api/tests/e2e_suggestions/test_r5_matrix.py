@@ -243,6 +243,50 @@ async def test_m5_a_card_tapped_over_a_pending_approval_runs_once_it_is_denied(t
     rec.finish()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "profile"),
+    [
+        ("captions", EDITOR),
+        ("music", EDITOR),
+        ("transition", EDITOR),
+        ("sfx", EDITOR),
+        ("hook", EDITOR),
+        ("duplicates", SIGNALS),
+        ("filler_words", TALKING),
+    ],
+    ids=lambda v: str(v),
+)
+async def test_m6_a_double_tap_writes_one_change(talking_world, kind, profile):
+    """Two taps of one card, both submitted before the first turn has run (a thumb that lands
+    twice). One revision (or one approval) is written; the second tap changes nothing."""
+    rec = Recorder(f"matrix M6 double tap {kind}")
+    scene = s.build(talking_world, "nermin-matcha-update", profile)
+    out = await scene.phone.serve()
+    card = s.card_of(out, kind)
+    tap = {"set_id": out.set_id, "chip_id": card.id}
+    before = s.h.counts(scene.seeded)
+    first, _ = await s.h.submit(scene.seeded, card.prompt, tap=tap)
+    second, _ = await s.h.submit(scene.seeded, card.prompt, tap=tap)
+    ran_first = await s.h.run(first.turn_id)
+    ran_second = await s.h.run(second.turn_id)
+    after = s.h.counts(scene.seeded)
+    wrote = {name: after[name] - before[name] for name in after if after[name] != before[name]}
+    approvals = d.approvals_pending(scene.seeded.thread_id)
+    rec.negative(
+        f"M6 {kind}: a double tap applies once",
+        "nermin-matcha-update",
+        "exactly one revision, at most one approval; the second turn is ignored, not applied",
+        wrote.get("drafts") == 1
+        and approvals <= 1
+        and ran_second["status"] == "ignored"
+        and ran_first["status"] in {"completed", "awaiting_approval"},
+        f"first {ran_first['status']}, second {ran_second['status']}; rows written {wrote}; "
+        f"pending approvals {approvals}",
+    )
+    rec.finish()
+
+
 # ── M4: the coverage claim ───────────────────────────────────────────────────────────
 
 

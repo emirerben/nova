@@ -53,6 +53,26 @@ set, and after Undo: the draft, the approval, the brief and the item settings ar
 | `test_kill_and_stale.py` | S1/S2/K1/K3: the change already in the edit, a Save that moved the video, per-kind and master switches, for every kind |
 | `test_creators_word.py` | W1/W2: the creator's request withholds the card (EN and TR), and hook copy gates |
 | `test_undo_retap.py` | U1: Undo gives the card back exactly once (a hook stays spent: documented) |
+| `test_r4_serve_*.py` | the serve lane's fixtures: consent gate, kill switches, restate readiness, Turkish fold, look-alike letters, flag subordination |
+| `test_r5_save.py` | V1-V7: a native Save through the REAL editor-commit route, cards served before and after it, the fence in front of the filler card |
+| `test_r5_lifecycle.py` | L1-L5: a staged filler/mute render that is denied, lapses (lazily and by the sweep), is cancelled, outlived by a newer video or undone; then the card is tapped again |
+| `test_r5_kill.py` | K1-K8: a per-kind, signals, master or capability switch pulled after the freeze, put back, and the chip capability behind the real Save and turn |
+| `test_r5_copy_states.py` | A1-A4: the on-screen title's decision in every state, decided before and after the set was served |
+| `test_r5_turkish_asks.py` | T1-T5: the softened-k forms of "muzik", the other lanes' words, over-withholding, volume asks, English |
+| `test_r5_matrix.py` | M1-M5: the mute matrix (constant patched, marked not shipped), a held set tapped without a refresh, a card queued over a pending approval, coverage in both languages |
+| `scenes.py` | the round-5 state helpers: `route_save`, `decide`, `lapse_approval`, `sweep_expired_approvals`, `agent_reads_video` |
+
+## States, not just footage
+
+Every cell of the report carries the state its thread was in when the card was served: `baseline`
+(a ready render, nothing unusual) or what a round-5 scenario did first (`after-save`,
+`saved-and-read`, `after-deny`, `after-sweep`, `switch-pulled-and-restored`, `title-<state>`,
+`patched-constant`). The coverage matrix counts baseline cells only; the state table under it shows
+the rest, and `kinds_proven.tap_executes` is true only when EVERY shipped served cell of the kind,
+in every state, was applied.
+
+The mute kind is dark as shipped. Every mute cell runs with `PINNED_TAP_APPLIES_CLIP_SOUND` patched
+on, is marked `[not shipped]` and never counts toward `tap_executes`.
 
 ## Gaps are named and strict
 
@@ -71,3 +91,8 @@ the paid live eval measures what a model would choose.
 The model (cassette), Redis (in memory), the editor capability map (fixed open), the creator
 manifest for ready threads (a stub; first-prompt threads use the real resolver), the render dispatch
 (a recorder), and the render itself, the phone export and any device (not run).
+
+The round-5 states add: the render kick, the durable-sources prefix and the storage existence check
+of a timeline Save (no bucket), the render worker's completion write after a Save, the session
+pointer following a render (written by hand), an approval's clock (`expires_at` moved into the
+past), and the legacy planner as the answer to a typed message.
