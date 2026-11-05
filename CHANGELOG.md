@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.86.5.0] - 2026-11-05
+
+### Changed
+- feat(captions): Qendresa's caption shape on phone Talking edits (item 12) (#2104) <!-- release-pr: 2104 -->
+
 ## [0.86.4.0] - 2026-11-05
 
 ### Changed

@@ -631,6 +631,11 @@ def _compile_text_overlay(
 
         width = max(block["widths"])
         color = cloud._skia_color_from_hex(overlay["background_color"], 255)
+        # Optional box geometry (the caption box, Qendresa item 12); absent keeps today's
+        # 8 / 4 padding and radius 4 for every other caller.
+        pad_x = cloud._finite_float(overlay.get("background_padding_x_px"), 8)
+        pad_y = cloud._finite_float(overlay.get("background_padding_y_px"), 4)
+        radius = cloud._finite_float(overlay.get("background_radius_px"), 4)
         background = TextBackground(
             color=TextInk(
                 red=skia.ColorGetR(color) / 255,
@@ -638,11 +643,11 @@ def _compile_text_overlay(
                 blue=skia.ColorGetB(color) / 255,
                 alpha=1,
             ),
-            left=cloud._anchored_left_x(anchor, cx, width) - 8,
-            top=top - 4,
-            width=width + 16,
-            height=block["block_h"] + 8,
-            radius=4,
+            left=cloud._anchored_left_x(anchor, cx, width) - pad_x,
+            top=top - pad_y,
+            width=width + 2 * pad_x,
+            height=block["block_h"] + 2 * pad_y,
+            radius=radius,
         )
     return PortableTextLayer(
         id=layer_id,
@@ -922,6 +927,9 @@ def _compile_karaoke_overlay(overlay: dict, *, layer_id: str, canvas):
         left=0,
         top=0,
     )
+    # The spoken word lights up on its own when the run is shaped (today) or the overlay asks
+    # for it (`karaoke_active_only`: the dimmed-word caption look).
+    active_only = bool(shaped or overlay.get("karaoke_active_only"))
     runs, ordered_starts = [], []
     rtl = shaped and first_strong_rtl(" ".join(words))
     for row_index, row in enumerate(rows):
@@ -966,9 +974,9 @@ def _compile_karaoke_overlay(overlay: dict, *, layer_id: str, canvas):
             # runs only in active-word mode: the spoken word lights up, as in the cloud
             # word-pop burn, and its ordered starts. Positioned-glyph cues keep the
             # cumulative sweep unchanged.
-            starts=_non_decreasing(ordered_starts) if shaped else ordered_starts,
+            starts=_non_decreasing(ordered_starts) if active_only else ordered_starts,
             highlight=highlight,
-            **({"active_only": True} if shaped else {}),
+            **({"active_only": True} if active_only else {}),
         ),
     ), asset
 
