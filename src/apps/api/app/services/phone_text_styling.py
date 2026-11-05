@@ -772,7 +772,8 @@ def _background_frames(spec: dict, take_frames: list[dict], canvas) -> list[dict
     """The frames behind text on a speaker-background edit, one per background segment: its photo
     or video sampled at its start, the take sampled at that time drawn in the speaker frame. With
     no frame (a full-size matted speaker) both the background and the take count. Any media that
-    cannot be read keeps ``take_frames`` (fail-open: the colour is chosen as before)."""
+    cannot be read, or nothing to time the segments by (no take frames, no windows), keeps
+    ``take_frames`` (fail-open: the colour is chosen as before)."""
     import tempfile
     from pathlib import Path
 
@@ -780,7 +781,13 @@ def _background_frames(spec: dict, take_frames: list[dict], canvas) -> list[dict
     from app.services.pipeline_trace import record_pipeline_event
     from app.storage import download_to_file
 
-    until = max([float(f["end_s"]) for f in take_frames] + [w["end_s"] for w in spec["windows"]])
+    ends = [float(f["end_s"]) for f in take_frames] + [w["end_s"] for w in spec["windows"]]
+    if not ends:
+        # A fill-only background with no take frames: nothing times its segments, so sampling
+        # is unavailable, the same as an unreadable background (fail-open, never a failed job).
+        record_pipeline_event("text", "styling_background_sample_failed", {"reason": "no_samples"})
+        return take_frames
+    until = max(ends)
     until = min(until, 1800.0) if until > 0 else 1800.0
     frames: list[dict] = []
     try:

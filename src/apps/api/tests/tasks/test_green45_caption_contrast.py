@@ -25,6 +25,17 @@ Ways the fix could fail (written before the fix):
 5. A Talking edit WITHOUT a background changes at all (colour or outline): byte-identical.
 6. A caption colour the creator asked for is overridden.
 7. The switch off is byte-identical to before.
+
+Review (Emir): `_background_frames` took ``max()`` of the take frames' and the timed windows' ends,
+so a fill-only background with no take frames raised ValueError. Ways the review fix could fail
+(written before the fix):
+8. A fill-only background with no take frames still raises and fails the job.
+9. The re-pick on the compiler's second pass (the background registered after the environment
+   was sampled) still hits the same empty list.
+10. The guard leaves the caption without its safe choice: it must degrade exactly like an
+    unreadable background (fail-open), so the captions over the photo stay readable.
+11. Sampling quietly gives up: the trace must say the background sample failed.
+12. The guard touches the path with take frames or timed windows (the tests above stay green).
 """
 
 from __future__ import annotations
@@ -258,3 +269,42 @@ def test_a_caption_colour_the_creator_asked_for_is_kept(monkeypatch, tmp_path):
     gb._run_generative_job(str(job.id))
     assert _look(job)["caption_text_color"] == "#FFFFFF"
     assert _look(job)["caption_stroke_width"] == 0
+
+
+def test_a_fill_only_background_with_no_take_frames_degrades_like_a_failed_sample(
+    monkeypatch, tmp_path
+):
+    """8-11: one photo behind the speaker (no timed windows) and a take proxy that cannot be
+    read (no take frames): nothing times the background's segments, so sampling is unavailable,
+    exactly as for an unreadable background, and the job renders readable captions."""
+    import app.services.pipeline_trace as pipeline_trace
+    import app.storage as storage
+
+    job = _job(monkeypatch, tmp_path)
+    background = job.all_candidates["creator_strategy"]["background_media"]
+    background.pop("sequence", None)
+    background.pop("cadence_s", None)
+    backgrounds_only = storage.download_to_file
+
+    def no_take(remote, local, *args, **kwargs):
+        if "analysis-proxy-c0" in str(remote):
+            raise TimeoutError(remote)
+        return backgrounds_only(remote, local, *args, **kwargs)
+
+    events: list[tuple[str, dict]] = []
+    record = pipeline_trace.record_pipeline_event
+
+    def capture(stage, event, data=None):
+        events.append((event, dict(data or {})))
+        return record(stage, event, data)
+
+    monkeypatch.setattr(storage, "download_to_file", no_take)
+    monkeypatch.setattr(pipeline_trace, "record_pipeline_event", capture)
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device", job.error_detail
+    recipe = _recipe(job)
+    assert recipe.speaker_background is not None and not recipe.speaker_background.windows
+    assert "styling_background_sample_failed" in [event for event, _data in events], events
+    assert "styling_background_sample" not in [event for event, _data in events], events
+    assert min(ratio for _, ratio in _caption_judgements(job)) >= 4.5
