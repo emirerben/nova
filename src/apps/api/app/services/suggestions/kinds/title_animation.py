@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from app.services.suggestions.brief_asks import TITLE_ANIMATION, spoke
 from app.services.suggestions.builders import PHONE_AND_CLOUD, legacy_kind
 from app.services.suggestions.context import (
     SuggestionContext,
@@ -19,6 +20,7 @@ _ARCHETYPES = frozenset({"guided_story", "unified_montage"})
 def _available(ctx: SuggestionContext) -> bool:
     return (
         ctx.state == "ready"
+        and not spoke(ctx, TITLE_ANIMATION)  # KRI-129
         and ctx.resolved_archetype in _ARCHETYPES
         and "text" in families(ctx)  # the op is patch_text; the parser refuses it without it
         and editable_title_bar(ctx) is not None
