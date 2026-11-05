@@ -72,6 +72,41 @@ Code: `services/suggestions/pinned.py` (ring reads, lane allow-list, rebuild),
   (the client falls back to chips when the cards run out). The last 32 fingerprints are kept after
   the ring rolls over. A kind with no target (captions, music level, hook) is therefore hidden for
   that creator's thread after one apply, even if they later undo that change.
+- **No refusal is silent.** Every reply a tap can end in without applying (the planner's refusals,
+  the consent, mark, readiness and choice gates, and the commit's error replies) carries the typed
+  `suggestion_pin` record `{set_id, id, outcome: "refused", reason}` on the assistant event AND on
+  the turn's plan diagnostics (a replayed submit reads the latter). A non-transient reason marks the
+  card refused on its ring entry: the next GET hides it and mints a new set, which releases the
+  phone's "hidden until the set changes" ledger. The transient reasons, `target_unavailable` (a
+  render in flight, an editor state gone stale) and `unsaved_edits`, say nothing about the card:
+  they are typed but never mark it, and the same tap applies once the cause is gone.
+- **A restate runs only on the plan it restates.** Mute and filler re-draft the thread's plan as the
+  variant's next revision, so they are only that plan's next revision when the variant's head draft
+  IS the plan (`pinned.restate_base`); any other head is newer work and the tap refuses
+  `base_moved`. The commit also fences the video: it refuses `base_moved` when the saved variant's
+  generation differs from the one the tap was planned against, or from the one the agent session
+  last read (`tasks/kria_runtime._restate_video_moved`). A native-editor Save moves that generation
+  without writing a draft, and a restated plan holds none of the Save's edits. An editor-op tap is
+  built on the saved video, so it re-syncs the session's pointer instead. A restate whose clips
+  changed after planning is the same typed refusal, not a failed turn.
+- **Reason codes.** The planner-side codes are the constants of `services/suggestions/pinned`; the
+  codes of the commit's own stops (`consent_required`, `mark_needed`, `requirements_not_ready`,
+  `choice_needed`, `request_too_long`) are the `_PIN_*` strings in `tasks/kria_runtime.py`, plain
+  strings so a turn that is not a tap never imports the suggestion engine to build one.
+- **A refused tap writes nothing.** A reply that ends a normal turn records what the creator stated
+  (KRI-188); a refused tap stated nothing, and its typed requirement would read as the creator's own
+  ask (KRI-129). So no brief version is written for it, its receipts are dropped (they judged a
+  brief the refusal rolled back) and no "make it without these" question is offered (answering it
+  would not apply the card).
+- **Undo takes the whole tap back.** The pinned commit keeps its footprint on the draft's execution
+  (`result["pinned_undo"]`: the requirement ids it wrote, the card's pin, and for the filler card
+  the setting's pre-tap values). `undo_draft` withdraws those requirements as a server waiver in a
+  new brief version, restores `speech_cleanup_enabled` / `user_edited` if the tap's flip is still in
+  force, and clears the card's applied mark so it is an offer again (a tap on it applies once, not
+  twice). What a later turn or the creator changed since is left alone. Limits: a fingerprint a GET
+  already folded into the thread's kept list stays (`suggestion_serve.fold_suppressed`), so a new
+  set may not offer the card again; and a hook's creative-copy decision stays in the event log
+  (`fold_creative_copy(include_suggestions=True)`), so the hook card is still spent after Undo.
 
 Kill-switch window (accepted). The pin is stamped at submit and read again at claim. If
 `KRIA_SUGGESTION_PINNED_TAPS_ENABLED` is switched off, or the creator leaves the chips allow-list,
