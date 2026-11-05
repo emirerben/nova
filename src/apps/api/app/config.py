@@ -469,6 +469,18 @@ class Settings(BaseSettings):
     # secrets set PHONE_SUBTITLED_CLOSING_TITLE_ENABLED=false --app nova-video`
     # + `fly machine restart <id>` (api + worker).
     phone_subtitled_closing_title_enabled: bool = True
+    # Item 14 (Qendresa's ending): when the creator asks to end on "comment <KEYWORD>"
+    # (optionally with an arrow), a phone Talking edit draws her look instead of the
+    # lime tag: a small white handwritten "comment", the keyword big in cream under it,
+    # and a hand-drawn white arrow (`app.pipeline.phone_cta_ending`). The arrow is a
+    # freehand drawing, so this also needs the closing-title lane
+    # (`phone_subtitled_closing_title_supported`), `freehand_drawing_enabled`,
+    # "freehandDrawing" in `phone_render_verified_features` and an app build stamped
+    # with protocol >= `freehand_drawing_min_client_protocol` (older builds keep the
+    # lime tag) -- see `app.services.phone_rollout.cta_ending_planned_for`. False:
+    # byte-identical to today. Rollback: `fly secrets set
+    # CREATOR_CTA_ENDING_ENABLED=false --app nova-video` + restart api + worker.
+    creator_cta_ending_enabled: bool = False
     # KRI-707 (text on a spoken word on phone Talking edits): a brief text ask with
     # its spoken cue ("big 'ATAKAN' when I say 'Atakan'": literal + `facts.triggers`)
     # renders as an editable text row from the moment the take says the word, off the

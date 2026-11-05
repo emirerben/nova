@@ -9020,7 +9020,23 @@ def _run_phone_subtitled_job(
             if isinstance(_raw_closing_title, str) and _raw_closing_title.strip()
             else None
         )
+    # Item 14: "comment <keyword>" drawn as her ending (two text rows and an optional arrow).
+    # Computed only for a confirmed closing text, and False while the switch is off.
+    cta_planned = False
+    cta_arrow = False
+    if talking_closing_text:
+        from app.pipeline.phone_cta_text import closing_arrow_asked  # noqa: PLC0415
+        from app.services.phone_rollout import (  # noqa: PLC0415
+            cta_ending_planned_for,
+            stamped_client_protocol,
+        )
+
+        cta_planned = cta_ending_planned_for(
+            stamped_client_protocol(all_candidates.get("creator_client_protocol"))
+        )
+        cta_arrow = cta_planned and closing_arrow_asked(talking_requirements, talking_closing_text)
     closing_text_rows: list[dict] = []
+    closing_drawings: list[dict] = []
     closing_text_receipt: dict[str, Any] | None = None
     # KRI-707: the creator's text on a word they say ("big 'ATAKAN' when I say 'Atakan'"),
     # read off the pinned brief. Read only while its rollout is on, so the flag-off recipe
@@ -10166,6 +10182,7 @@ def _run_phone_subtitled_job(
                 )
 
             def _closing_rows_for(photo_card: Any) -> tuple[list[dict], dict[str, Any] | None]:
+                closing_drawings[:] = []
                 if not talking_closing_text:
                     return [], None
                 if extra_speaker_bindings:
@@ -10173,7 +10190,7 @@ def _run_phone_subtitled_job(
                     # face on its own clock, then move it to where it plays.
                     last = extra_speaker_bindings[-1]
                     last_duration_s = float(last.original.duration_s)
-                    rows, receipt = _phone_talking_closing_rows(
+                    rows, receipt, drawings = _phone_talking_closing_rows(
                         talking_closing_text,
                         photo_card=None,
                         photo_aspect=None,
@@ -10181,9 +10198,25 @@ def _run_phone_subtitled_job(
                         clip_path=clip_id_to_local.get(extra_speaker_ids[-1]),
                         keep_segments=[(0.0, last_duration_s)],
                         landscape_fit=landscape_fit,
+                        cta=cta_planned,
+                        arrow=cta_arrow,
+                        cues=cues,
+                        caption_style=caption_style,
+                        # The captions run on the whole timeline; this ending's window is
+                        # on the last speaker's own clock.
+                        caption_offset_s=talking_timeline_s - last_duration_s,
+                        caption_look=protected_caption_look,
                         **text_canvas,
                     )
                     offset_s = talking_timeline_s - last_duration_s
+                    closing_drawings[:] = [
+                        {
+                            **drawing,
+                            "start_s": float(drawing["start_s"]) + offset_s,
+                            "end_s": float(drawing["end_s"]) + offset_s,
+                        }
+                        for drawing in drawings
+                    ]
                     return [
                         {
                             **row,
@@ -10192,7 +10225,7 @@ def _run_phone_subtitled_job(
                         }
                         for row in rows
                     ], receipt
-                return _phone_talking_closing_rows(
+                rows, receipt, drawings = _phone_talking_closing_rows(
                     talking_closing_text,
                     photo_card=photo_card,
                     photo_aspect=beat_closing_aspect,
@@ -10203,8 +10236,16 @@ def _run_phone_subtitled_job(
                     position_x=speaker_position_x or 0.0,
                     protected=protected_plan,
                     caption_avoid=protected_caption_avoid,
+                    cta=cta_planned,
+                    arrow=cta_arrow,
+                    cues=cues,
+                    caption_style=caption_style,
+                    caption_look=protected_caption_look,
+                    insert_points=tuple(float(i.at_take_s) for i in inserts),
                     **text_canvas,
                 )
+                closing_drawings[:] = drawings
+                return rows, receipt
 
             def _schedule_talking_footage(blocked: list[tuple[float, float]]) -> tuple:
                 """KRI-719: the footage clips as muted full-frame cutaways over
@@ -11083,8 +11124,14 @@ def _run_phone_subtitled_job(
                             take_duration - 1e-3
                         ):
                             # An ending clip plays after the speaker: closing text
-                            # runs to the very end, which the contract checks.
-                            closing_text_rows = [{**closing_text_rows[0], "end_s": take_duration}]
+                            # (every row, and the arrow) runs to the very end, which the
+                            # contract checks.
+                            closing_text_rows = [
+                                {**row, "end_s": take_duration} for row in closing_text_rows
+                            ]
+                            closing_drawings[:] = [
+                                {**drawing, "end_s": take_duration} for drawing in closing_drawings
+                            ]
                             recipe = _compile_lanes(
                                 title_rows + spoken_text_rows + closing_text_rows
                             )
@@ -11234,6 +11281,7 @@ def _run_phone_subtitled_job(
                 except Exception:  # noqa: BLE001
                     pass
 
+            closing_drawings_final: list[dict] = [dict(d) for d in closing_drawings]
             insert_receipt: dict[str, Any] | None = None
             if insert_clips_enabled and (inserts or insert_drops):
                 # Parent KRI-1151: from here on the persisted set (captions, text rows,
@@ -11247,6 +11295,22 @@ def _run_phone_subtitled_job(
                     title_rows = _inserted((), title_rows).text_rows
                     spoken_text_rows = _inserted((), spoken_text_rows).text_rows
                     closing_text_rows = _inserted((), closing_text_rows).text_rows
+                    if closing_drawings_final:
+                        from app.pipeline.phone_talking_inserts import (  # noqa: PLC0415
+                            shift_time as _shift_drawing_time,
+                        )
+
+                        closing_drawings_final = [
+                            {
+                                **drawing,
+                                "start_s": _shift_drawing_time(float(drawing["start_s"]), inserts),
+                                "end_s": _shift_drawing_time(
+                                    float(drawing["end_s"]) - 1e-3, inserts
+                                )
+                                + 1e-3,
+                            }
+                            for drawing in closing_drawings_final
+                        ]
                     if talking_cutaway_windows:
                         talking_cutaway_windows[:] = [
                             {
@@ -11301,6 +11365,11 @@ def _run_phone_subtitled_job(
                 multiple_sources=multi_clip,
             )
 
+    if closing_drawings_final:
+        # Item 14: her ending's arrow is an ordinary freehand drawing layer.
+        from app.pipeline.phone_recipe_shared import with_drawings  # noqa: PLC0415
+
+        recipe = with_drawings(recipe, closing_drawings_final)
     if not media_lanes_enabled:
         validate_phone_pilot_recipe(recipe, allow_editor_media=bool(cutaways))
     else:
@@ -11477,6 +11546,8 @@ def _run_phone_subtitled_job(
             new_entry[SPOKEN_TEXT_FIELD] = spoken_text_receipt
         if closing_text_rows:
             new_entry["closing_title_placement"] = closing_text_receipt
+        if closing_drawings_final:
+            new_entry["drawings"] = closing_drawings_final
         if protected_caption_look is not None:
             # KRI-827: the captions moved off the marked object; the saved geometry makes
             # every later compile of this variant (the editor's Save/reopen,
@@ -12026,7 +12097,17 @@ def _protected_style_rows(
 ) -> list[dict]:
     """`generation_style_rows`, then (KRI-827) any restyle that moved or grew a protected
     row onto a face or the marked object is undone, so the placement receipt stays true."""
-    styled = generation_style_rows(rows, job_id=job_id)
+    # Item 14: her ending's two rows keep their fonts and colours; the others are restyled.
+    fixed = {i for i, row in enumerate(rows) if "cta_part" in (row.get("source_params") or {})}
+    if fixed:
+        rest = generation_style_rows(
+            [row for i, row in enumerate(rows) if i not in fixed], job_id=job_id
+        )
+        rest_iter = iter(rest)
+        styled = [row if i in fixed else next(rest_iter) for i, row in enumerate(rows)]
+        # The protected-clear pass below sees these rows unchanged.
+    else:
+        styled = generation_style_rows(rows, job_id=job_id)
     if protected is None:
         return styled
     from app.pipeline.phone_protected_text import keep_styled_rows_clear  # noqa: PLC0415
@@ -12206,10 +12287,18 @@ def _phone_talking_closing_rows(
     protected: Any = None,
     caption_avoid: Any = None,
     canvas: Any = None,
-) -> tuple[list[dict], dict[str, Any] | None]:
+    cta: bool = False,
+    arrow: bool = False,
+    cues: Any = (),
+    caption_style: str = "",
+    caption_look: Any = None,
+    caption_offset_s: float = 0.0,
+    insert_points: tuple[float, ...] = (),
+) -> tuple[list[dict], dict[str, Any] | None, list[dict]]:
     """The phone Talking edit's closing text row (KRI-514) plus its placement
-    receipt; ``([], None)`` when the text is empty or the clip has no time for
-    it. ``photo_card`` is the closing photo's `SubtitledOverlayCard` on the cut
+    receipt and its drawings (item 14's arrow; ``[]`` for the tag); ``([], None, [])``
+    when the text is empty or the clip has no time for it. ``photo_card`` is the closing
+    photo's `SubtitledOverlayCard` on the cut
     timeline (``None`` without one): the text appears with it and sits on it.
     Without one it holds for the last 3 s at the title's top spot, off the
     speaker's face."""
@@ -12235,11 +12324,60 @@ def _phone_talking_closing_rows(
     )
     row = talking_closing_element(closing_title, start_s=start_s, end_s=end_s, photo=photo)
     if row is None:
-        return [], None
+        return [], None, []
+    cta_attempted = False
     if photo is not None:
         placed, receipt = place_closing_on_photo(row, photo, canvas=canvas)
     else:
         display_width, display_height = display_dims(binding.original)
+        fit_scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
+        # An inserted clip (take-timeline ``insert_points``) inside the ending pauses the
+        # take and would split the two rows and play the arrow over the clip: keep the tag.
+        insert_in_ending = any(start_s + 1e-3 < point < end_s - 1e-3 for point in insert_points)
+        if (
+            cta
+            and not insert_in_ending
+            and (protected is None or not _protected_placement_kwargs(protected))
+        ):
+            from app.pipeline.phone_cta_ending import build_cta_ending  # noqa: PLC0415
+            from app.pipeline.phone_cta_text import cta_ending_parts  # noqa: PLC0415
+
+            if cta_ending_parts(closing_title) is not None:
+                cta_attempted = True
+
+                def _cta_caption_boxes(window: tuple[float, float]) -> Any:
+                    from app.pipeline.phone_spoken_text import caption_boxes  # noqa: PLC0415
+
+                    return caption_boxes(
+                        list(cues),
+                        window=(window[0] + caption_offset_s, window[1] + caption_offset_s),
+                        caption_style=caption_style,
+                        canvas=canvas,
+                        look=caption_look,
+                    )
+
+                ending = build_cta_ending(
+                    closing_title,
+                    arrow=arrow,
+                    start_s=start_s,
+                    end_s=end_s,
+                    canvas=canvas,
+                    clip_path=clip_path,
+                    keep_segments=keep_segments,
+                    display_width=display_width,
+                    display_height=display_height,
+                    scale=fit_scale,
+                    position_x=position_x,
+                    caption_boxes=_cta_caption_boxes,
+                )
+                if ending is not None:
+                    try:
+                        record_pipeline_event(
+                            "phone", "subtitled_closing_title_placement", ending.receipt
+                        )
+                    except Exception:  # noqa: BLE001 - observability only
+                        pass
+                    return list(ending.rows), ending.receipt, list(ending.drawings)
         placed, receipt = place_talking_title(
             row,
             clip_path=clip_path,
@@ -12247,18 +12385,20 @@ def _phone_talking_closing_rows(
             display_width=display_width,
             display_height=display_height,
             canvas=canvas,
-            scale=fit_transform(display_width, display_height, canvas, landscape_fit).scale,
+            scale=fit_scale,
             position_x=position_x,
             avoid=(
                 caption_avoid((float(row["start_s"]), float(row["end_s"]))) if caption_avoid else ()
             ),
             **_protected_placement_kwargs(protected),
         )
+    if cta_attempted:
+        receipt = {**receipt, "cta_fallback": True}
     try:
         record_pipeline_event("phone", "subtitled_closing_title_placement", receipt)
     except Exception:  # noqa: BLE001 - observability only
         pass
-    return [placed], receipt
+    return [placed], receipt, []
 
 
 def _phone_caption_spellings(snapshot: dict, quoted: tuple[str, ...]) -> tuple[str, ...]:
