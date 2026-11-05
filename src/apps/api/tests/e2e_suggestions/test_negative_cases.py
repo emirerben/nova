@@ -429,6 +429,15 @@ async def test_n6_mute_with_the_constant_patched_on(talking_world, monkeypatch):
         and card_of(out, "mute_clip").anchor.clip_ordinal == 3,
         f"served {[c.kind for c in out.suggestions]}",
     )
+    mute = card_of(out, "mute_clip")
+    rec.negative(
+        "the mute card says why: the measured wind in clip 3",
+        key,
+        "an evidence line or a reason that names the noise",
+        bool(mute.evidence) or mute.why not in {"", "Clip 3"},
+        f"why={mute.why!r} evidence={mute.evidence}",
+        gap=gaps.MUTE_NO_REASON,
+    )
     await tap_every_card(
         rec,
         phone,

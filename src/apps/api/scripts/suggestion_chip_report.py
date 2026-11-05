@@ -344,7 +344,7 @@ def add_e2e_section(add) -> None:
     twin = json.loads(E2E_JSON.read_text(encoding="utf-8"))
     add(
         f"From `.chip-eval/e2e-report.md` ({twin.get('when', '?')}, `{twin.get('sha', '?')}`). "
-        "Gaps are named G1.. in that file."
+        "Gaps are named GAP-1.. in that file."
     )
     add("")
     add("| kind | cells tapped | tap executes (unmodified GET) | seam executes | refused | gaps |")

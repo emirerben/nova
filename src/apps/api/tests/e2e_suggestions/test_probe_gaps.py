@@ -3,7 +3,7 @@
 Each test asserts its preconditions for real, then checks the BEHAVIOR WE WANT: while the defect
 stands it ends in ``pytest.xfail`` (visible in the summary, the suite stays green), and the day the
 defect is fixed it FAILS with "remove the marker". They are the exact repros the report names as
-G1 and G2:
+GAP-1 and GAP-2:
 
 * ``test_probe_g1``  a thread, one real GET, and the ring entry of the set it just served;
 * ``test_probe_g2``  a polished edit where only the new (v2-only) kinds are left to offer.
@@ -32,12 +32,12 @@ async def served_thread(world):  # noqa: ANN001, ANN202
     return phone, await phone.serve()
 
 
-G1 = (
-    "G1: GET /suggestions persists no v2 card (persist_served_set -> _server_cards runs the "
+GAP_1 = (
+    "GAP-1: GET /suggestions persists no v2 card (persist_served_set -> _server_cards runs the "
     "witnesses after db.rollback(): MissingGreenlet), so no tap can resolve"
 )
-G2 = (
-    "G2: persist_suggestion_set returns early on a set with no legacy chips, so a polished edit "
+GAP_2 = (
+    "GAP-2: persist_suggestion_set returns early on a set with no legacy chips, so a polished edit "
     "whose only card is a v2-only kind has no ring entry"
 )
 
@@ -54,8 +54,8 @@ async def test_probe_g1(world):
     phone, out = await served_thread(world)
     assert [c.kind for c in out.suggestions] == ["hook", "captions", "music", "transition", "sfx"]
     if stored_kinds(phone, out) == [c.kind for c in out.suggestions]:
-        pytest.fail("G1 is fixed: the GET stores its cards. Delete this probe and the G1 markers.")
-    pytest.xfail(G1)
+        pytest.fail("GAP-1 is fixed: the GET stores its cards. Delete this probe and the marker.")
+    pytest.xfail(GAP_1)
 
 
 @pytest.mark.asyncio
@@ -72,5 +72,5 @@ async def test_probe_g2(world):
         [c.kind for c in out.chips],
     )
     if stored_kinds(phone, out) == ["duplicates"]:
-        pytest.fail("G2 is fixed: a set with cards and no chips is stored. Delete this probe.")
-    pytest.xfail(G2)
+        pytest.fail("GAP-2 is fixed: a set with cards and no chips is stored. Delete this probe.")
+    pytest.xfail(GAP_2)

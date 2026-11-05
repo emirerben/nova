@@ -19,7 +19,7 @@ class Gap:
 
 
 RING_NOT_STORED = Gap(
-    "G1",
+    "GAP-1",
     "GET stores no v2 card in the ring",
     "app/services/suggestion_serve.py persist_served_set -> _server_cards; "
     "app/routes/creation_threads.py",
@@ -32,7 +32,7 @@ RING_NOT_STORED = Gap(
     "persist_suggestion_set writes chips only.",
 )
 NO_ENTRY = Gap(
-    "G2",
+    "GAP-2",
     "A set with no legacy chips has no ring entry",
     "app/services/suggestion_chips.py persist_suggestion_set",
     "persist_suggestion_set returns early when out.chips is empty, so a set whose only "
@@ -43,7 +43,7 @@ NO_ENTRY = Gap(
     "happens once the (at most four) legacy chips of a set are handled.",
 )
 TR_RECEIPT = Gap(
-    "G3",
+    "GAP-3",
     "Turkish card taps get a partial receipt",
     "app/kria/editor_receipts.py (_bind_by_diff, shape.cued)",
     "A Turkish card's closed prompt ('Müziği kıs', 'Ses efektleri ekle') names no dimension "
@@ -52,7 +52,7 @@ TR_RECEIPT = Gap(
     "same English cards read met.",
 )
 RESTATE_DOUBLE_TAP = Gap(
-    "G4",
+    "GAP-4",
     "Second tap on a restating card is answered without a typed signal",
     "app/kria/duplicate_send.py (answers at submit)",
     "A second tap on a filler or mute card while its approval is pending is answered by the "
@@ -61,7 +61,7 @@ RESTATE_DOUBLE_TAP = Gap(
     "refresh, and the card is not marked.",
 )
 RESTATE_NOT_READY = Gap(
-    "G5",
+    "GAP-5",
     "A served restating card is refused at the tap",
     "app/services/suggestions/kinds/filler_words.py (availability) / "
     "app/tasks/kria_runtime.py (approval readiness)",
@@ -71,7 +71,7 @@ RESTATE_NOT_READY = Gap(
     "('Bunlar olmadan hazırla'). A served card must be one the tap can apply.",
 )
 REFUSED_BRIEF = Gap(
-    "G6",
+    "GAP-6",
     "A refused restating tap still commits its brief update",
     "app/tasks/kria_runtime.py (~3160, "
     "_complete_response_turn(brief_updates=planned.brief_updates))",
@@ -81,7 +81,7 @@ REFUSED_BRIEF = Gap(
     "it as something the creator asked for.",
 )
 FILLER_UNDO = Gap(
-    "G7",
+    "GAP-7",
     "Undo of a filler tap leaves the setting on",
     "app/kria/drafts.py undo_draft (documented limit)",
     "Undo restores the parent draft and withdraws the approval, but "
@@ -89,7 +89,7 @@ FILLER_UNDO = Gap(
     "lane. Documented in test_kria_pinned_kinds.",
 )
 KILL_SWITCH_FROZEN = Gap(
-    "G8",
+    "GAP-8",
     "Switching pinned taps off does not stop the GET serving v2 cards",
     "app/services/suggestion_serve.py _serve_core (frozen set returned as stored)",
     "A served set is frozen in Redis per digest for 24 h and returned as stored. After "
@@ -97,4 +97,13 @@ KILL_SWITCH_FROZEN = Gap(
     "set's `suggestions`, so the phone shows cards whose taps are now words for the legacy "
     "planner (the free reading of a card the plan set out to remove) until the digest "
     "changes.",
+)
+MUTE_NO_REASON = Gap(
+    "GAP-9",
+    "A mute card carries no measured reason",
+    "app/services/suggestion_chips.py _measured_evidence (no mute_clip branch)",
+    "_measured_evidence has a branch for filler_words and duplicates only, so a mute card reads "
+    "'Clip 3' as its reason with no evidence line: the wind the signal measured is never shown, "
+    "and an agent reason about wind is dropped by validate_why (no footage word). The plan's "
+    "card is 'Wind in clip 3'.",
 )

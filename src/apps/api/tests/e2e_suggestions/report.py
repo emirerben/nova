@@ -446,10 +446,12 @@ def kinds_proven(summary: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
                 # Literal: a card served by the UNMODIFIED GET, tapped, is applied.
                 "tap_executes": row["executes_on_unmodified_get"],
                 # The pinned seam applies the card once the ring holds it (the serve's own helpers
-                # fill the ring in the run; see gaps G1 and G2).
+                # fill the ring in the run; see GAP-1 and GAP-2).
                 "seam_executes": row["seam_executes"],
                 "cells_tapped": row["served"],
                 "refused_cells": row["refused_cells"],
+                # Cells run under a configuration that is not what ships (a patched dark constant).
+                "unshipped": row["unshipped"],
                 "checks": row["checks"],
                 "gaps": row["gaps"],
                 "scenarios": row["scenarios"],
