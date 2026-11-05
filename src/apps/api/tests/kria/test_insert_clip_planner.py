@@ -421,6 +421,8 @@ def _extractor_prompt(**kw) -> str:
 # digest is c3c94cd31f4cdd6dcea91de409be84016351caaa111403fb43258c7c24c0114c.
 # Qendresa item 12 (creator v120) adds `caption_words` / `caption_box`; without them it is
 # 562441ab494ae1bf4c0f79dd9811163c782b8548712f05ed7334ceaba675ffe6.
+# Qendresa item 17 (creator v123, on top of v120) leaves the brief section unchanged: the pin
+# covers v120 + v123.
 _BRIEF_SECTION_BEFORE_INSERTS = "c1ff8dfa7484b1a613db57e9515f6ecd58e3bd14d41d1efa0365975df6d62269"
 
 
