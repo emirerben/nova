@@ -11,9 +11,8 @@ struct ResearchPreviewCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(strings.eyebrow)
-                    .font(KriaFont.body(11).weight(.bold))
-                    .tracking(1.3)
+                Text(strings.sourcesTitle)
+                    .kriaType(.label)
                     .foregroundStyle(KriaColor.ink)
                 Text(strings.intro)
                     .font(KriaFont.body(12))
