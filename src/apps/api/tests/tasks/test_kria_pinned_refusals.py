@@ -161,6 +161,10 @@ async def test_a_refused_restating_tap_writes_nothing_to_the_brief(
         number <= latest
         for number in brief_numbers_on_the_reply(assistant_payload(seeded.thread_id))
     ), "the reply names a brief version that was rolled back"
+    # The real GET: the refused card is not offered again, and a new set releases the phone.
+    again = await k.get_suggestions(seeded)
+    assert again.set_id != seeded.set_id
+    assert seeded.cards[kind].id not in {c.id for c in again.suggestions}
 
 
 @pytest.mark.asyncio
@@ -311,4 +315,6 @@ async def test_a_restate_whose_clips_changed_after_planning_is_a_typed_refusal(
     assert h.counts(seeded) == before
     assert k.item_row(seeded)["speech_cleanup_enabled"] is False
     assert k.ring_entry(seeded.thread_id, seeded.set_id)["refused"] == {card.id: accepted.turn_id}
+    again = await k.get_suggestions(seeded)
+    assert again.set_id != seeded.set_id and card.id not in {c.id for c in again.suggestions}
     assert published == []

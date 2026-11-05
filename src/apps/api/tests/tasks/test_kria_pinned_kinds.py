@@ -92,8 +92,9 @@ The editor-ops kinds (hook, duplicates and the four above) produce a draft whose
 the editor payload. mute_clip and filler_words cannot be expressed as an editor op, so the tap
 restates the thread's newest strategy draft unchanged as a new revision plus its exact render
 approval: the typed brief update (or the item setting) is what the tap adds, and the normal
-approval is the render. Known limit, by design: speech cleanup is an item setting (like the PATCH
-route), so Undo of that draft revision withdraws the revision and its approval, not the toggle.
+approval is the render. Speech cleanup is an item setting (like the PATCH route); Undo of that
+draft revision takes the toggle and the typed requirement back with the revision and its approval
+(``test_kria_pinned_undo``).
 
 Fixture realism. The kinds' inputs (the brief, the clip texts, the filler evidence, the duplicates'
 ``needed``) come from ``kria_pinned_kinds_harness.install_inputs``, a stand-in for the serve lane's
