@@ -279,6 +279,11 @@ def title_look_rows(
                 "x_frac": _LEFT_X_FRAC if left else 0.5,
                 "y_frac": 0.15,
                 "max_width_frac": _MAX_WIDTH_FRAC,
+                # Her cream / yellow lines sat on a dark room; on light footage they vanish
+                # (simulator render on a pink top: a single soft shadow was not enough). The
+                # renderer's two-scale shadow (broad + a tight halo on the glyph edge) keeps
+                # them readable without an outline.
+                "shadow_style": "high_visibility",
             },
             source_params={
                 "source": title_mod.TALKING_TITLE_SOURCE,

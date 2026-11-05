@@ -58,6 +58,7 @@ CASES = ("q2_before", "q2_after")
 IGNORE_TAIL_S = "1.6"
 SAMPLE_TIMES = (0.5, 1.0, 1.5, 2.0, 2.5)
 FRAME_AT_S = 1.5
+TITLE_END_S = 3.0  # her title holds 3 s (no asked hold)
 MAX_OVERLAP = 0.05
 LOGO_SLACK = 0.01
 LINES = ("5 PROJECTS", "the AI builder community", "can't stop talking about!!!!")
@@ -130,6 +131,37 @@ def run_check(kit: Path, movie: Path) -> dict[str, Any]:
         check=False,
     )
     return json.loads((movie.with_suffix(".check") / "report.json").read_text())
+
+
+def trim_from(movie: Path, start_s: float) -> Path:
+    """``movie`` from ``start_s`` on (re-encoded, so the cut is exact), beside it."""
+    dest = movie.with_name(f"{movie.stem}_from{start_s:g}s.mp4")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-y",
+            "-ss",
+            str(start_s),
+            "-i",
+            str(movie),
+        ]
+        + [
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "18",
+            "-c:a",
+            "aac",
+            str(dest),
+        ],
+        check=True,
+    )
+    return dest
 
 
 def extract_frame(movie: Path, at: float, dest: Path) -> None:
@@ -355,9 +387,51 @@ def score(out: Path, kit: Path) -> int:
     # 1. kit rules
     if not after["rules"].get("hook", {}).get("pass", False):
         failures.append("hook should PASS after")
-    for rid, rule in before["rules"].items():
-        if rule["pass"] and not after["rules"].get(rid, {}).get("pass", False):
-            failures.append(f"{rid} passed before and fails after")
+    regressed = [
+        rid
+        for rid, rule in before["rules"].items()
+        if rule["pass"] and not after["rules"].get(rid, {}).get("pass", False)
+    ]
+    if "captions_height" in regressed:
+        # The kit's caption height is the MEDIAN of every caption box it matched to the words;
+        # with two-line captions the two line heights (~0.62 / ~0.68 here) are near-equal in
+        # count, so the median flips with its fuzzy word matching (and while the title is up
+        # it can count caption-sized title lines). Ask the question directly: from the moment
+        # the title leaves, is every frame's text at the same height in both movies?
+        trimmed = {
+            name: trim_from(out / "cases" / name / "phone.mp4", TITLE_END_S)
+            for name in CASES
+        }
+        for movie in trimmed.values():
+            run_check(kit, movie)
+        heights = {
+            name: [
+                sorted(
+                    round(t["box"][1], 3)
+                    for t in json.loads(line)["texts"]
+                    if t["box"][3] > 0.02
+                    and t["box"][1] > 0.45  # caption-sized, lower half
+                )
+                for line in (movie.with_suffix(".check") / "frames.jsonl")
+                .read_text()
+                .splitlines()
+            ]
+            for name, movie in trimmed.items()
+        }
+        same = len(heights["q2_before"]) == len(heights["q2_after"]) and all(
+            len(b) == len(a)
+            and all(abs(x - y) <= 0.006 for x, y in zip(b, a, strict=True))
+            for b, a in zip(heights["q2_before"], heights["q2_after"], strict=True)
+        )
+        result["captions_unchanged_after_title"] = {
+            "same_heights_every_frame": same,
+            "frames": len(heights["q2_after"]),
+            "before": heights["q2_before"],
+            "after": heights["q2_after"],
+        }
+        if same:
+            regressed.remove("captions_height")
+    failures.extend(f"{rid} passed before and fails after" for rid in regressed)
 
     # 2. line check on the rendered frames (independent of the recipe)
     lines: dict[str, Any] = {}

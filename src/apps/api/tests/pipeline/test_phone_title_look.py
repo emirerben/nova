@@ -636,3 +636,11 @@ def test_number_only_parts_are_not_her_lines(title):
     from app.pipeline.phone_title_look import split_title_lines
 
     assert split_title_lines(title) is None
+
+
+def test_every_line_carries_a_strong_shadow_so_light_colours_read_on_light_footage():
+    """Simulator render (stand-in on a light pink top): cream and yellow lines without a
+    shadow were nearly invisible. Her V5 sits on a dark room; footage won't always."""
+    for row in _rows():
+        assert row.get("shadow_style") == "high_visibility"
+        assert row.get("shadow_enabled") is not False
