@@ -87,13 +87,24 @@ def release_abandoned_db_connections():
 
 @pytest.fixture
 def exclusive_intent_review_ledger():
-    """Hold one cross-worker lock while a test owns the shared ``intent_review`` ledger rows.
+    """Hold one cross-worker lock while a test owns the shared intent-review state.
 
-    Several suites count or delete every ``ai_cost_reservations`` row whose feature is
-    ``intent_review``. On one xdist database that is shared state: another worker's cleanup
-    removes this test's reservations mid-run (or its rows inflate this test's spend), so a
-    budget assertion fails depending on scheduling. A session-level advisory lock on its own
-    connection serializes the suites that opt in with ``pytestmark``.
+    That state is every ``ai_cost_reservations`` row whose feature is ``intent_review`` and
+    the whole ``creator_generation_reviews`` table. On one xdist database both are shared:
+
+    - the ``paid`` fixture deletes every ``intent_review`` reservation, so an unlocked user
+      removed a running review's reservation and the review ended ``unavailable`` before
+      its provider call (``KeyError: 'raw_output'``);
+    - the review sweeps (``reconcile_generation_reviews``, ``recover_intent_reviews``,
+      ``post_unposted_outcomes``) act on every row in the table, so an unlocked sweep with
+      the paid flag off stamped ``skipped:tier_off`` on another test's unposted outcome;
+    - rows an earlier test left behind are still sweep candidates, so a later test's sweep
+      posted or skipped them and its own counts included them.
+
+    A session-level advisory lock on its own connection serializes every test that opts in
+    (``pytestmark``, or through ``paid``). Every test that creates review rows or runs a
+    review sweep must hold it; then any row present when the lock is taken is a leftover,
+    and deleting them all lets each sweep see only the rows of the test that runs it.
     """
 
     db_url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
@@ -108,6 +119,8 @@ def exclusive_intent_review_ledger():
         engine.dispose()
         pytest.skip(f"Postgres not reachable for the intent_review ledger lock: {exc!r}")
     try:
+        with engine.begin() as purge:
+            purge.execute(text("DELETE FROM creator_generation_reviews"))
         yield
     finally:
         try:
