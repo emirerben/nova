@@ -289,6 +289,22 @@ def _plan_for(ctx: SuggestionContext, targets: Sequence[Target]) -> Plan | None:
     return plan
 
 
+def rebuild_targets(ctx: SuggestionContext, anchor_media_id: str) -> list[Target]:
+    """The offered group again, from a stored card's anchor (the first clip it removes).
+
+    A card stores only that anchor, so the pair is read back from the measurements as they are now:
+    the one group that still drops the anchor. The caller proves the result is the offer by
+    rendering the card's closed sentence from these targets and comparing it with what the creator
+    tapped. No group (the keeper was removed, the clips stopped matching) gives no targets.
+    """
+    plan = next((p for p in _plans(ctx) if anchor_media_id in p.drops), None)
+    ordinal = _ordinals(ctx)
+    if plan is None or any(m not in ordinal for m in plan.members):
+        return []
+    members = [anchor_media_id, *(m for m in plan.drops if m != anchor_media_id), plan.keep]
+    return [Target(key=f"clip:{m}", media_id=m, clip_ordinal=ordinal[m]) for m in members]
+
+
 def _build_action(
     ctx: SuggestionContext, targets: Sequence[Target], copy: str | None
 ) -> Action | None:

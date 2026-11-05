@@ -887,14 +887,21 @@ async def submit_turn(
         replay_turn_id = str(existing.id)
         replay_revision = int(thread.revision)
         replay_status = existing.status
+        replay_plan = getattr(existing, "plan_json", None)
         should_publish = replay_status == "pending"
         await db.rollback()
+        replayed_refusal = (
+            (replay_plan or {}).get("diagnostics", {}).get("suggestion_pin", {}).get("outcome")
+            if isinstance(replay_plan, dict) and isinstance(replay_plan.get("diagnostics"), dict)
+            else None
+        )
         return (
             TurnAccepted(
                 turn_id=replay_turn_id,
                 thread_revision=replay_revision,
                 status=replay_status,
                 replayed=True,
+                suggestion_outcome="refused" if replayed_refusal == "refused" else None,
             ),
             should_publish,
         )
@@ -1212,6 +1219,7 @@ async def submit_turn(
     outcome_payload = await request_outcome_payload(
         db, thread_id=thread.id, turn_id=turn_id, context=body.outcome_context
     )
+    pin_stamp = _pinned_suggestion_stamp(thread, body)
     event = await _append_event(
         db,
         thread,
@@ -1306,7 +1314,7 @@ async def submit_turn(
             ),
             # Suggestion blocks: a tapped v2 card is pinned to the action the thread was offered.
             # Flag off => nothing stored (existing payloads byte-identical).
-            **_pinned_suggestion_stamp(thread, body),
+            **pin_stamp,
         },
         client_event_id=body.client_event_id,
     )
@@ -1338,6 +1346,10 @@ async def submit_turn(
             turn_id=str(turn.id),
             thread_revision=int(thread.revision),
             status=turn.status,
+            # A card the thread was never offered is refused for certain: say so now.
+            suggestion_outcome=(
+                "refused" if (pin_stamp.get("pinned_suggestion") or {}).get("unresolved") else None
+            ),
         ),
         turn_status == "pending",
     )

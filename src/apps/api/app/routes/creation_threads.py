@@ -4673,7 +4673,7 @@ async def thread_suggestions(
                 input_digest=served.input_digest,
                 witness_tiers=served.witness_tiers,
             )
-        return served.out
+        return await _with_pin_outcomes(db, owner_thread_id, served.out)
     except Exception:  # noqa: BLE001 - chips are an enhancement; never fail the screen
         log.warning(
             "suggestion_chips.error",
@@ -4686,6 +4686,48 @@ async def thread_suggestions(
         except Exception:  # noqa: BLE001
             pass
         return unavailable_set()
+
+
+async def _with_pin_outcomes(
+    db: AsyncSession, thread_id: uuid.UUID, out: SuggestionSetOut
+) -> SuggestionSetOut:
+    """Hide the cards a tap already applied or was refused for, and mint a new set on a refusal.
+
+    A tap marks its card on the ring entry of the set it came from
+    (``services/suggestions/pinned``). Here, and only when ``out`` still offers such a card: the
+    card is dropped by its id (whatever the editor-triggers flag says); and when a tap was REFUSED
+    the set gets a new id, so the phone's "hidden until the set changes" ledger lets go and
+    "refreshing the ideas" is true. The new set is stored (a copy of the entry minus those cards)
+    before it is returned: a card the ring cannot find answers "no longer fits". Anything else
+    leaves ``out`` exactly as it was.
+    """
+    if not out.suggestions:
+        return out
+    from app.services.suggestion_serve import _mutate_state  # noqa: PLC0415
+    from app.services.suggestions import pinned  # noqa: PLC0415
+
+    thread = await db.get(CreationThread, thread_id)
+    state = dict(getattr(thread, "state", None) or {})
+    await db.rollback()
+    moved = pinned.walk(state, out.set_id)
+    shown = {card.id for card in out.suggestions}
+    if not (moved.hidden & shown) and moved.set_id == out.set_id:
+        return out
+    kept = [card for card in out.suggestions if card.id not in moved.hidden]
+    result = out.model_copy(
+        update={"suggestions": [c.model_copy(update={"rank": i + 1}) for i, c in enumerate(kept)]}
+    )
+    if moved.mint is None:
+        return result.model_copy(update={"set_id": moved.set_id})
+    source_id, new_id = moved.mint
+    outcome = await _mutate_state(
+        db,
+        thread_id,
+        lambda current: pinned.derive_entry(current, source_id, new_id, moved.hidden),
+    )
+    if outcome in {"written", "current"}:
+        return result.model_copy(update={"set_id": new_id})
+    return result
 
 
 class SuggestionDismissOut(BaseModel):
