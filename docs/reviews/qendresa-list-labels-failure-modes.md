@@ -59,7 +59,9 @@ hearing.
 17. **Editor.** A label row the editor cannot list or save, or a Save that moves it.
 18. **Take end.** A label for a repo named in the last second runs past the end or is a sliver.
 19. **More labels than recordings / two labels for one recording.**
-20. **Number formats.** "1.", "01:", "#1", "1)" and a label that is only a number.
+20. **Number formats.** "1.", "01:", "1)" and a label that is only a number. Not markers: "#1 PICK"
+    (a badge), "3.5 million views", "10:30 morning routine", "1.5x speed hack" (a marker's
+    punctuation must be followed by a space).
 
 ## Ways it can fail (Q1, list finder)
 21. **No list found** in a take that lists the items fast with no pauses (her V7: four items in
@@ -71,6 +73,18 @@ hearing.
 25. **Item text.** The label shows words she did not say, or drops the number.
 26. **Cards and captions.** Q1 cards (item 15) and the caption line (item 12, y ~0.62) share the
     screen; a label must avoid both and her full-frame face.
+28. **Spoken list draws wrong text / does not stop** ("the first thing is ... the second thing
+    is ...", or real items followed by "which is why ..."). Fixed by token rules only: the opener
+    comes immediately after item 1 (or after one 1-3 letter joiner), items are
+    `max(2, n1 // 2)`..`2 * n1 + 2` tokens, a 0.6 s pause inside an item ends the list, an opener
+    led by a new short joiner is the last. Honest limit: "this matters because this ..." right
+    after item 1 repeats an opener and is still read as items.
+29. **Pairing steals an entry.** "3. TradingAgents" takes the "agents" recording before
+    "4. Agents" can (brief order). Pairing is global by tier against all phrased entries.
+30. **Only item 1 found, or an item on a face, reported "met".** `list_found == 1` and any item row
+    with `face_collision` make the requirement `partial`.
+31. **Recordings without item 17.** `lay_out` anchors "agents" inside "trading agents"; labels
+    follow recordings only with item 17 on and only those still shown in the final lanes.
 27. **English-only guesses.** A list finder built on English words breaks Turkish takes and adds
     intent regexes (KRI-667 ratchet).
 

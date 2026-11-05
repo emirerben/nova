@@ -1104,7 +1104,11 @@ def _talking_list_label(requirement: Any, raw: Mapping[str, Any]) -> bool:
 
     if requirement.scope != "global" or not phone_list_labels_supported():
         return False
-    background = raw.get("background_media")
+    from app.config import settings  # noqa: PLC0415
+
+    # Like the worker (`_phone_list_label_follow`): a label follows a recording only with item
+    # 17's windows; without them only a marked label is one.
+    background = raw.get("background_media") if settings.background_follows_talk_enabled else None
     sequence = background.get("sequence") if isinstance(background, Mapping) else None
     phrases = tuple(
         entry["spoken_phrase"].strip()

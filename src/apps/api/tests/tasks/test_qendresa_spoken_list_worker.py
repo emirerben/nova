@@ -384,3 +384,34 @@ def test_08_flag_off_is_byte_identical_to_today(monkeypatch):
         "text_elements": TODAY_TEXT_ELEMENTS_SHA,
         "receipts": TODAY_RECEIPTS_SHA,
     }
+
+
+# ------------------------------------------------------------------ review round
+
+FIRST_SECOND_LIST = (
+    "the first thing is which company it sends data to the second thing is whether it keeps "
+    "your recordings the third thing is who can read your chats and the fourth thing is how "
+    "long they keep it"
+)
+FIRST_SECOND_SENTENCES = [
+    (0.0, INTRO_NO_WHAT),
+    (8.0, FIRST),
+    (13.0, JOB),
+    (LIST_AT, FIRST_SECOND_LIST),
+    (40.0, AFTER),
+    (58.0, CLOSE),
+]
+
+
+def test_10_a_first_second_third_take_draws_no_wrong_text_and_the_receipt_is_partial(
+    monkeypatch,
+):
+    """The openers ("the second thing is ...") are not right after item 1: only her typed item
+    is placed (never "2. thing is whether it keeps your recordings the third?"), the receipt
+    says the list was not found, and the finished-video requirement is not "met"."""
+    _job, variant = _run(monkeypatch, flag=True, sentences=FIRST_SECOND_SENTENCES)
+    assert [r["text"] for r in _label_rows(variant)] == [TYPED]
+    assert variant["list_label_placement"]["rows"][0]["list_found"] == 1
+    receipt = _after(variant, TYPED_REQ)
+    assert receipt.status == "partial"
+    assert "rest of your list" in (receipt.reason or "")

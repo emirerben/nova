@@ -753,6 +753,9 @@ def place_protected_title(
             scale=scale,
             position_x=position_x,
         )
+        if speaker_frame is not None:
+            # The marked object is in the speaker's own video: it moves with the face.
+            object_boxes = [frame_face_box(box, speaker_frame) for box in object_boxes]
         verified = bool(object_receipts) and all(
             r["status"] == "seen" and r["track_status"] == "tracked" for r in object_receipts
         )

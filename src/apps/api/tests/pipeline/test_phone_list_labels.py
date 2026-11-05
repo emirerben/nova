@@ -83,7 +83,7 @@ def _avoid(window, rows):
     return []
 
 
-def _rows(asks, anchors, *, words=(), duration=60.0, place=_place, avoid_for=_avoid):
+def _rows(asks, anchors, *, words=(), duration=60.0, place=_place, avoid_for=_avoid, **kw):
     return list_label_rows(
         asks,
         anchors=anchors,
@@ -92,6 +92,7 @@ def _rows(asks, anchors, *, words=(), duration=60.0, place=_place, avoid_for=_av
         canvas=_CANVAS,
         place=place,
         avoid_for=avoid_for,
+        **kw,
     )
 
 
@@ -107,7 +108,7 @@ def _status(receipt) -> dict[str, str]:
     [
         ("1. Spec-kit", "Spec-kit"),
         ("01: Life Admin Brain", "Life Admin Brain"),
-        ("#1 Spec-kit", "Spec-kit"),
+        ("#1 Spec-kit", "#1 Spec-kit"),  # a badge, not a list marker
         ("1) X", "X"),
         ("  12.   Two   words ", "Two words"),
         ("Impeccable", "Impeccable"),
@@ -120,7 +121,7 @@ def test_label_item_drops_one_leading_marker(literal, item):
     assert label_item(literal) == item
 
 
-@pytest.mark.parametrize("literal", ["1.", "#3", "07:", "2)"])
+@pytest.mark.parametrize("literal", ["1.", "07:", "2)"])
 def test_a_label_that_is_only_a_number_is_not_a_label(literal):
     assert label_item(literal) == ""
     req = BriefRequirement(id="x", kind="text", scope="global", literal=literal)
@@ -254,7 +255,8 @@ def test_a_sliver_gap_before_the_next_label_drops_the_short_one():
     asks = _asks(V5_LABELS[:2])
     anchors = _anchors([10.0, 10.2], phrases=V5_PHRASES[:2])
     rows, receipt = _rows(asks, anchors)
-    assert _status(receipt) == {"r1": "no_time", "r2": "placed"}
+    # The next label starts too soon to read this one: same_moment (no_time is the take end's).
+    assert _status(receipt) == {"r1": "same_moment", "r2": "placed"}
     assert rows[0]["start_s"] == 10.2
 
 
@@ -750,6 +752,7 @@ def test_a_turkish_list_with_the_same_opener_works_without_english_words():
     words = _talk(
         "bir ajan yapıyorum",
         "bana hangi şirkete gönderiyor neyi kaydediyor neyi okuyor ve neyi çalıştırıyor",
+        step=0.4,  # an item shorter than MIN_S is not drawn
     )
     rows, _ = _v7_rows(words, asks=(ask,))
     assert _texts(rows) == [
@@ -765,7 +768,6 @@ def test_a_turkish_list_with_the_same_opener_works_without_english_words():
     [
         ("1. which a b?", "2. what x y?"),
         ("01: Which a b", "02: What x y"),
-        ("#1 which a b!", "#2 what x y!"),
         ("1) Which a b.", "2) What x y."),
     ],
 )
@@ -779,6 +781,229 @@ def test_marker_styles_and_case_follow_the_example(example, second):
 def test_the_list_is_capped_at_ten_items():
     ask = ListLabelAsk("l1", "1. alpha beta?", "alpha beta?")
     script = "alpha beta " + " ".join("next a b" for _ in range(14))
-    rows, receipt = _v7_rows(_talk(script), asks=(ask,))
+    rows, receipt = _v7_rows(_talk(script, step=0.4), asks=(ask,))
     assert len(rows) == 10
     assert receipt["rows"][0]["list_found"] == 10
+
+
+# --- review round: spoken list that draws wrong text / does not stop (F1) --------------------
+
+
+def _parts(*script, step=0.3):
+    """``(start_s, "words ...")`` parts, a word every ``step`` s, so every pause is exact."""
+    out = []
+    for start, text in script:
+        t = start
+        for w in text.split():
+            out.append({"text": w, "start_s": round(t, 3), "end_s": round(t + step - 0.05, 3)})
+            t += step
+    return out
+
+
+_COMPANY = ListLabelAsk(
+    "q1", "1. which company it sends data to?", "which company it sends data to?"
+)
+
+
+def test_f1_a_first_second_third_take_places_only_the_typed_item():
+    """'the first thing is X. the second thing is Y ...': the openers are not right after item 1
+    and 'thing is' is not an item, so no wrong text is drawn."""
+    words = _parts(
+        (0.0, "okay so before you install any ai app check four things"),
+        (4.0, "the first thing is which company it sends data to"),
+        (8.0, "the second thing is whether it keeps your recordings"),
+        (12.0, "the third thing is who can read your chats"),
+        (16.0, "and the fourth thing is how long they keep it"),
+        (21.0, "follow for more tips like this"),
+    )
+    rows, receipt = _rows([_COMPANY], [], words=words, duration=24.0)
+    assert _texts(rows) == ["1. which company it sends data to?"]
+    assert receipt["rows"][0]["list_found"] == 1
+
+
+def test_f1_talk_after_the_real_list_adds_nothing():
+    """Four real items, the last one led by 'and', then 'which is why ... which takes ...'."""
+    words = _parts(
+        (0.0, "four things to check"),
+        (2.0, "which company it sends data to"),
+        (4.0, "which data it keeps"),
+        (6.0, "which apps it reads"),
+        (8.0, "and which people can see it"),
+        (10.0, "which is why i always check before i install"),
+        (13.0, "which takes like two minutes"),
+    )
+    rows, receipt = _rows([_COMPANY], [], words=words, duration=16.0)
+    assert _texts(rows) == [
+        "1. which company it sends data to?",
+        "2. which data it keeps?",
+        "3. which apps it reads?",
+        "4. which people can see it?",
+    ]
+    assert receipt["rows"][0]["list_found"] == 4
+
+
+def test_f1_an_opener_not_right_after_item_one_invents_nothing():
+    words = _parts(
+        (0.0, "which company it sends data to ok so this matters because this data is yours"),
+        (6.0, "and this is why you should care"),
+    )
+    rows, receipt = _rows([_COMPANY], [], words=words, duration=12.0)
+    assert len(rows) == 1 and receipt["rows"][0]["list_found"] == 1
+
+
+def test_f1_an_item_shorter_than_half_the_first_ends_the_chain():
+    # item 1 has 6 tokens: an item is 3..14 tokens, so the 2-token "which z" ends the chain.
+    words = _parts((0.0, "which company it sends data to which a b c which z which d e f"))
+    rows, _ = _rows([_COMPANY], [], words=words, duration=20.0)
+    assert len(rows) == 3
+
+
+def test_f1_a_pause_inside_an_item_ends_the_list():
+    words = _parts(
+        (0.0, "which company it sends data to"),
+        (2.0, "which alpha beta gamma"),
+        (4.0, "which delta epsilon"),
+        (6.0, "zeta eta theta which iota kappa lambda"),  # a 1 s+ pause inside the third item
+        (9.0, "which mu nu xi"),
+    )
+    rows, _ = _rows([_COMPANY], [], words=words, duration=14.0)
+    assert _texts(rows) == [
+        "1. which company it sends data to?",
+        "2. which alpha beta gamma?",
+        "3. which delta epsilon?",
+    ]
+
+
+# --- F2: pairing is global by tier, against ALL the phrased entries ----------------------------
+
+F2_PHRASES = ["spec kit", "impeccable", "a whole trading firm", "agents", "claude code"]
+
+
+def test_f2_a_better_name_wins_the_entry_before_a_contained_one_may_take_it():
+    matched = match_labels(_asks(), list(enumerate(F2_PHRASES)))
+    assert matched["r4"] == 3  # "4. Agents" IS the "agents" recording
+    assert "r3" not in matched  # "3. TradingAgents" only contained it: it never takes it
+    assert matched["r5"] == 4
+
+
+def test_f2_label_four_is_placed_at_agents_and_three_is_not():
+    anchors = [
+        LabelAnchor(0, "spec kit", 7.4, 7.4),
+        LabelAnchor(1, "impeccable", 32.5, 32.5),
+        LabelAnchor(3, "agents", 77.5, 77.5),
+        LabelAnchor(4, "claude code", 95.0, 95.0),
+    ]  # the "a whole trading firm" entry was never heard
+    words = _words([(54.3, "third one is a whole trading firm made of ai builders")])
+    rows, receipt = _rows(
+        _asks(), anchors, words=words, phrases=list(enumerate(F2_PHRASES)), duration=120.0
+    )
+    starts = {r["text"]: r["start_s"] for r in rows}
+    assert starts["4. Agents"] == 77.5
+    assert "3. TradingAgents" not in starts or starts["3. TradingAgents"] != 77.5
+    assert _status(receipt)["r4"] == "placed"
+
+
+def test_f2_a_label_paired_with_a_recording_nobody_introduced_is_not_heard():
+    asks = _asks(["Impeccable"])
+    rows, receipt = _rows(asks, [], phrases=[(0, "impeccable")])
+    assert rows == [] and _status(receipt) == {"r1": "not_heard"}
+
+
+def test_f2_a_marked_label_paired_with_an_unheard_recording_falls_back_on_the_words():
+    asks = _asks(["2. Impeccable"])
+    words = _words([(20.0, "next one is impeccable it has stars")])
+    rows, receipt = _rows(asks, [], words=words, phrases=[(0, "impeccable")])
+    assert [r["text"] for r in rows] == ["2. Impeccable"]
+    assert receipt["rows"][0]["basis"] == "words"
+
+
+# --- F3: texts that are not list markers -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "literal", ["#1 PICK", "3.5 million views", "10:30 morning routine", "1.5x speed hack"]
+)
+def test_f3_these_are_not_list_markers(literal):
+    from app.pipeline.phone_list_labels import _read_marker
+
+    assert _read_marker(literal) == (0, False)
+    assert label_item(literal) == literal
+
+
+def test_f3_a_closing_badge_is_not_a_list_label_even_when_it_is_said():
+    ask = ListLabelAsk("c1", "#1 PICK", label_item("#1 PICK"))
+    words = _words([(4.0, "my pick for this week is this little espresso bar")])
+    rows, receipt = _rows([ask], [], words=words)
+    assert rows == [] and _status(receipt) == {"c1": "not_a_list_item"}
+
+
+@pytest.mark.parametrize("literal", ["1. X", "12) Y", "07: Z", "3.\tW"])
+def test_f3_real_markers_still_read(literal):
+    from app.pipeline.phone_list_labels import _read_marker
+
+    assert _read_marker(literal)[1] is True
+
+
+# --- F6a: the marked object moves with the speaker into the frame ------------------------------
+
+
+def test_f6_protected_objects_are_mapped_into_the_speaker_frame_like_faces():
+    from app.pipeline.object_track import ObjectTrack
+    from app.pipeline.phone_subtitled_title import place_protected_title
+
+    row = _title_row(0.86)
+    frame = (0.42, 0.76, 0.80)
+
+    def none(path, anchors, **kwargs):
+        return [], {"attempted": len(anchors), "decoded": len(anchors), "detected": 0}
+
+    def place(box, speaker_frame):
+        track = ObjectTrack(label="plate", media_id="m", generation="1", seed_t_s=0.0, seed_box=box)
+        return place_protected_title(
+            row,
+            clip_path="/tmp/speaker.mp4",
+            keep_segments=[(0.0, 60.0)],
+            display_width=1080,
+            display_height=1920,
+            canvas=_CANVAS,
+            objects=[track],
+            sample=none,
+            speaker_frame=speaker_frame,
+        )
+
+    full_frame_box = NormalizedBox(0.40, 0.30, 0.60, 0.40)
+    drawn_box = frame_face_box(full_frame_box, frame)
+    expected, _ = place(drawn_box, None)  # the object where it is drawn, no frame
+    framed, receipt = place(full_frame_box, frame)
+    unmapped, _ = place(full_frame_box, None)
+    assert framed["y_frac"] == expected["y_frac"]
+    assert framed["y_frac"] != unmapped["y_frac"]
+    assert receipt["object_collision"] is False
+
+
+# --- F8: no flicker --------------------------------------------------------------------------
+
+
+def test_f8_a_label_squeezed_out_by_the_next_one_is_same_moment_not_no_time():
+    from app.pipeline.phone_list_labels import MIN_S
+
+    assert MIN_S == 0.8
+    asks = _asks(V5_LABELS[:2])
+    anchors = _anchors([10.0, 10.5], phrases=V5_PHRASES[:2])
+    rows, receipt = _rows(asks, anchors)
+    assert _status(receipt) == {"r1": "same_moment", "r2": "placed"}
+    assert [r["start_s"] for r in rows] == [10.5]
+
+
+def test_f8_a_label_a_full_min_s_before_the_next_one_is_drawn():
+    asks = _asks(V5_LABELS[:2])
+    anchors = _anchors([10.0, 10.8], phrases=V5_PHRASES[:2])
+    rows, receipt = _rows(asks, anchors)
+    assert _status(receipt) == {"r1": "placed", "r2": "placed"}
+    assert (rows[0]["start_s"], rows[0]["end_s"]) == (10.0, 10.8)
+
+
+def test_f8_no_time_is_only_for_the_take_end():
+    anchors = _anchors([5.0, 10.0, 15.0, 20.0, 59.5])
+    _rows_, receipt = _rows(_asks(), anchors, duration=60.0)
+    assert _status(receipt)["r5"] == "no_time"

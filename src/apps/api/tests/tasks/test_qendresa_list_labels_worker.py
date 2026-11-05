@@ -185,7 +185,9 @@ def _faces(monkeypatch, box: NormalizedBox = FULL_FRAME_FACE) -> None:
     monkeypatch.setattr(title_mod, "sample_face_regions", sample)
 
 
-def _label_job(monkeypatch, *, brief: CreativeBrief | None = None, background=None):
+def _label_job(
+    monkeypatch, *, brief: CreativeBrief | None = None, background=None, follows_talk: bool = True
+):
     import app.services.phone_overlay_grounding as ogm
     import app.services.phone_reaction_grounding as rgm
     import app.services.phone_visuals as phone_visuals_mod
@@ -221,6 +223,9 @@ def _label_job(monkeypatch, *, brief: CreativeBrief | None = None, background=No
     monkeypatch.setattr(rgm, "_load_ready_pool_assets", lambda *a, **k: _pool_rows())
     clear_request_context()
     monkeypatch.setattr(settings, "speaker_background_enabled", True)
+    # Labels follow the recordings only with item 17 on (`follows_talk=False`: they ground on
+    # their own words).
+    monkeypatch.setattr(settings, "background_follows_talk_enabled", follows_talk)
     monkeypatch.setattr(
         gb.settings,
         "phone_render_verified_features",
@@ -455,7 +460,8 @@ def _digests(job, variant) -> dict[str, str]:
 
 def test_09_flag_off_is_byte_identical_to_today(monkeypatch):
     """FM 14."""
-    job, variant = _run(monkeypatch, flag=False)
+    # Item 17 off, as when the digests were frozen (the fixture's default is on).
+    job, variant = _run(monkeypatch, flag=False, follows_talk=False)
     assert not _label_rows(variant)
     assert "list_label_placement" not in variant
     digests = _digests(job, variant)
@@ -525,3 +531,76 @@ def test_12_flag_off_the_labels_stay_pinned_and_the_pin_refuses_the_render(monke
 
     with pytest.raises(KeyError):  # never pinned: the job has no device recipe
         device_record(job, "subtitled")
+
+
+# ------------------------------------------------------------------ review round
+
+
+def test_f5_without_item_17_no_label_follows_a_recording(monkeypatch):
+    """Item 17 off: lay_out anchors "agents" inside "trading agents", so the labels ground on
+    their own words instead (nothing is `background`)."""
+    _job, variant = _run(monkeypatch, flag=True, follows_talk=False)
+    rows = variant["list_label_placement"]["rows"]
+    assert rows and all(r.get("basis") != "background" for r in rows)
+
+
+def test_f5_with_item_17_the_labels_follow_the_recordings(monkeypatch):
+    _job, variant = _run(monkeypatch, flag=True)
+    bases = {r["requirement_id"]: r.get("basis") for r in variant["list_label_placement"]["rows"]}
+    assert all(bases[f"l{i}"] == "background" for i in range(1, 6))
+
+
+def _lanes(*media_ids):
+    from types import SimpleNamespace
+
+    windows = [SimpleNamespace(media_id=m) for m in media_ids]
+    return SimpleNamespace(background=SimpleNamespace(windows=windows))
+
+
+def _layout():
+    from app.pipeline.phone_list_labels import LabelAnchor
+
+    return {
+        "anchors": [LabelAnchor(0, "a", 1.0, 1.0), LabelAnchor(1, "b", 5.0, 5.0)],
+        "phrases": [(0, "a"), (1, "b"), (2, "c")],
+        "entry_media": {0: "m0", 1: "m1", 2: "m2"},
+    }
+
+
+def test_f6_an_anchor_whose_windows_were_dropped_is_not_followed():
+    anchors, phrases = gb._phone_list_label_follow(_layout(), _lanes("m0"), follows_talk=True)
+    assert [a.index for a in anchors] == [0]
+    assert phrases == [(0, "a"), (1, "b"), (2, "c")]  # every phrased entry still pairs
+
+
+@pytest.mark.parametrize("lanes", [None, _lanes()])
+def test_f6_no_lanes_or_no_windows_leave_no_anchor(lanes):
+    anchors, _ = gb._phone_list_label_follow(_layout(), lanes, follows_talk=True)
+    assert anchors == []
+
+
+def test_f6_item_17_off_passes_neither():
+    assert gb._phone_list_label_follow(_layout(), _lanes("m0", "m1"), follows_talk=False) == (
+        [],
+        None,
+    )
+
+
+def test_f6_list_labels_join_the_protected_text_placements():
+    receipt = {
+        "rows": [
+            {"requirement_id": "l1", "status": "placed", "placement": {"status": "preset"}},
+            {
+                "requirement_id": "l1",
+                "list_item": 2,
+                "status": "placed",
+                "placement": {"status": "moved"},
+            },
+            {"requirement_id": "l2", "status": "not_heard"},
+        ]
+    }
+    assert gb._list_label_protected_placements(receipt) == {
+        "list:l1-1": {"status": "preset"},
+        "list:l1-2": {"status": "moved"},
+    }
+    assert gb._list_label_protected_placements(None) == {}

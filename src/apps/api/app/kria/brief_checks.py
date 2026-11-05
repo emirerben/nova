@@ -353,6 +353,11 @@ class ListLabelFact:
     status: str
     text: str = ""
     face_collision: bool = False
+    # How many items of a typed "1." list the render found on the take (its own first one
+    # included); None = the rest of the list was never looked for.
+    list_found: int | None = None
+    # A spoken item of the list (found after the typed one) could not be kept off a face.
+    items_on_face: bool = False
 
 
 @dataclass(frozen=True)
@@ -1376,7 +1381,11 @@ def plan_facts_from_strategy(
         extra["take_duration_s"] = _selected_video_seconds(strategy, manifest)
         spoken_cap = manifest.capabilities.get("phone_voiceover_spoken_text")
         extra["phone_voiceover_spoken_text"] = bool(spoken_cap and spoken_cap.available)
-    if _talking_list_labels_lane():
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if _talking_list_labels_lane() and _settings.background_follows_talk_enabled:
+        # Item 19: a label follows a recording only with item 17's windows (the worker's rule,
+        # `_phone_list_label_follow`); without them only a marked label is one.
         extra["background_phrases"] = _background_phrases(strategy)
     edit_format = strategy.get("edit_format")
     caption_style = strategy.get("caption_style")
@@ -9028,6 +9037,17 @@ def _list_label_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
     rows = receipt.get("rows") if isinstance(receipt, Mapping) else None
     if not isinstance(rows, list):
         return {}
+    # A spoken item of a list found on the take (its row carries ``list_item``) is not a
+    # requirement of its own: its face is the typed label's (`items_on_face`).
+    on_face = {
+        row["requirement_id"]
+        for row in rows
+        if isinstance(row, Mapping)
+        and isinstance(row.get("requirement_id"), str)
+        and "list_item" in row
+        and row.get("status") == "placed"
+        and row.get("face_collision") is True
+    }
     return {
         "list_labels": tuple(
             ListLabelFact(
@@ -9035,11 +9055,16 @@ def _list_label_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
                 status=str(row.get("status") or "error"),
                 text=str(row.get("text") or ""),
                 face_collision=row.get("face_collision") is True,
+                list_found=row["list_found"]
+                if isinstance(row.get("list_found"), int)
+                and not isinstance(row["list_found"], bool)
+                else None,
+                items_on_face=row["requirement_id"] in on_face,
             )
             for row in rows
             if isinstance(row, Mapping)
             and isinstance(row.get("requirement_id"), str)
-            and "list_item" not in row  # a spoken item: the typed row is the requirement's fact
+            and "list_item" not in row
         )
     }
 
@@ -9068,9 +9093,11 @@ def _talking_list_labels_lane() -> bool:
 def _is_list_label_candidate(req: BriefRequirement, facts: PlanFacts) -> bool:
     """A whole-video text with no spoken trigger that the worker would read as a list label:
     it carries a list marker, or it IS the name of a planned background recording."""
+    from app.kria.spoken_text_ask import requirement_spoken_text  # noqa: PLC0415
     from app.pipeline import phone_list_labels as labels  # noqa: PLC0415
 
-    if _is_spoken_text_cue(req):
+    # The worker's own rule (`list_label_asks`): only a text with no spoken trigger is its.
+    if requirement_spoken_text(req) is not None:
         return False
     return labels.is_list_label_candidate(req, facts.background_phrases)
 
@@ -9108,19 +9135,31 @@ def _list_label_miss(req: BriefRequirement, fact: ListLabelFact) -> RequirementR
 def _with_list_label_face(
     req: BriefRequirement, facts: PlanFacts, base: RequirementReceipt
 ) -> RequirementReceipt:
-    """Item 19: a label the render could not move off a face is not "met" (KRI-707's rule)."""
+    """Item 19: a label the render could not move off a face is not "met" (KRI-707's rule), and
+    a lone "1." whose list was not found on the take shows only that one."""
     fact = _list_label_fact(facts, req) if base.status == "met" else None
-    if fact is None or fact.status != "placed" or not fact.face_collision:
+    if fact is None or fact.status != "placed":
         return base
-    text = f"“{fact.text}”"
-    return _receipt(
-        req,
-        "partial",
-        say(
-            en=f"{text} lands on a face; I couldn't find a spot clear of it",
-            tr=f"{text} bir yüzün üstüne denk geliyor; yüzü açıkta bırakan bir yer bulamadım",
-        ),
-    )
+    if fact.face_collision or fact.items_on_face:
+        text = f"“{fact.text}”"
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"{text} lands on a face; I couldn't find a spot clear of it",
+                tr=f"{text} bir yüzün üstüne denk geliyor; yüzü açıkta bırakan bir yer bulamadım",
+            ),
+        )
+    if fact.list_found == 1:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en="I showed this one, but couldn't find the rest of your list in the take",
+                tr="Bunu gösterdim ama listenin geri kalanını çekiminde bulamadım",
+            ),
+        )
+    return base
 
 
 def _spoken_text_fact(facts: PlanFacts, req: BriefRequirement) -> SpokenTextFact | None:
@@ -10856,6 +10895,16 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         }:
             return _receipt(req, "partial", _NO_CHECKER)
         return _receipt(req, "met", None)
+    # Checked BEFORE the spoken-text branch: a wording cue ("when I talk about them") with no
+    # trigger is the worker's list label, not KRI-791's "tell me the exact word".
+    if (
+        facts.phone_talking
+        and not facts.rendered_variant
+        and _talking_list_labels_lane()
+        and _is_list_label_candidate(req, facts)
+    ):
+        # Item 19: the phone Talking worker shows the label when its part of the talk starts.
+        return _receipt(req, "partial", _TALKING_LIST_LABEL_PLAN)
     if _is_spoken_text_cue(req) and facts.edit_format in {"subtitled", "talking_head"}:
         spoken = _spoken_text_fact(facts, req)
         if spoken is not None:
@@ -10880,14 +10929,6 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         # KRI-705: a Talking edit has the same gap (a pinned line has no trigger field), and the
         # reply says so plainly instead of holding the draft behind "a simpler version?".
         return _receipt(req, "not_possible", _TALKING_NO_SPOKEN_TEXT)
-    if (
-        facts.phone_talking
-        and not facts.rendered_variant
-        and _talking_list_labels_lane()
-        and _is_list_label_candidate(req, facts)
-    ):
-        # Item 19: the phone Talking worker shows the label when its part of the talk starts.
-        return _receipt(req, "partial", _TALKING_LIST_LABEL_PLAN)
     if _is_spoken_text_cue(req) and _is_voiceover_edit(facts):
         spoken = _spoken_text_fact(facts, req)
         if spoken is not None:

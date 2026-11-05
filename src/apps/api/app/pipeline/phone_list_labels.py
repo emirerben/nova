@@ -36,9 +36,9 @@ LIST_LABEL_ELEMENT_PREFIX = "list-label-"
 # The variant's receipt of every list-label ask: placed (where and when) or why not.
 LIST_LABEL_FIELD = "list_label_placement"
 
-# Her labels stay 2.5-3 s; the shortest worth drawing; her spot (bottom, centred).
+# Her labels stay 2.5-3 s; the shortest worth drawing (no flicker); her spot (bottom, centred).
 HOLD_S = 3.0
-MIN_S = 0.3
+MIN_S = 0.8
 LABEL_Y_FRAC = 0.86
 _MAX_CHARS = 80
 _EPS = 1e-6
@@ -54,12 +54,11 @@ _T_LOOSE, _T_CONTAINED, _T_OVERLAP = 3, 2, 1
 # Tolerant hearing: a shared stem of this many letters covering this share of the shorter token.
 _STEM_MIN_LETTERS = 5
 _STEM_SHARE = 0.75
-# Spoken list: how far from the first item an opener may be, how far its repeats may be, the
-# shortest opener, the longest dropped joiner, the longest silence inside an item, the cap.
-_OPENER_SLACK = 3
+# Spoken list: the shortest opener, the longest dropped joiner, the shortest silence that ends an
+# item, the cap.
 _MIN_OPENER_LETTERS = 4
 _MAX_JOINER_LETTERS = 3
-_MAX_GAP_S = 0.5
+_MAX_GAP_S = 0.6
 MAX_LIST_ITEMS = 10
 _MIN_LIST_ITEMS = 3
 
@@ -86,19 +85,21 @@ def _collapse(text: object) -> str:
 def _read_marker(text: str) -> tuple[int, bool]:
     """(length of the leading list marker in ``text``, whether it is explicit).
 
-    A marker is an optional "#", 1-2 digits, then an optional single ".", ":" or ")". It is
-    *explicit* when "#" or that punctuation is there; a bare "5 PROJECTS" drops its number
-    too (``label_item``) but is not by itself a sign that the text is a list label."""
-    i = 1 if text.startswith("#") else 0
-    j = i
-    while j < len(text) and j - i < 2 and text[j] in _DIGITS:
+    A marker is 1-2 digits, then an optional single ".", ":" or ")" that is followed by a space
+    (or ends the text). It is *explicit* when that punctuation is there; a bare "5 PROJECTS" drops
+    its number too (``label_item``) but is not by itself a sign that the text is a list label.
+    "#1 PICK" (a badge), "3.5 million", "10:30 routine" and "1.5x speed" are not markers."""
+    j = 0
+    while j < len(text) and j < 2 and text[j] in _DIGITS:
         j += 1
-    if j == i:
+    if j == 0:
         return 0, False
     if j < len(text) and text[j] in _DIGITS:  # three digits: a year or a count, not a marker
         return 0, False
-    explicit = i == 1
+    explicit = False
     if j < len(text) and text[j] in _MARKER_PUNCTUATION:
+        if j + 1 < len(text) and not text[j + 1].isspace():  # "3.5", "10:30", "1.5x"
+            return 0, False
         j += 1
         explicit = True
     elif j < len(text) and not text[j].isspace():  # "1st", "3D": part of the word
@@ -232,34 +233,46 @@ def match_labels(
 ) -> dict[str, int]:
     """requirement_id -> the background entry index its label belongs to.
 
-    ``entries`` are (sequence entry index, spoken_phrase) of the phrased entries. Greedy in brief
-    order: a label takes, among entries nobody took, the best tier (loose-equal, contained,
-    overlapping); a tie goes to the first entry after the previous label's entry, else the lowest
-    index. An entry is never given to two labels; a label no entry names is absent."""
+    ``entries`` are (sequence entry index, spoken_phrase) of ALL the phrased entries. Assigned
+    globally by tier: every loose-equal pair first, then contained, then overlapping, so a better
+    name always wins ("4. Agents" takes the "agents" recording before "3. TradingAgents" may fall
+    back on it). Inside a tier the labels go in brief order; a label takes the first free entry
+    after the highest entry an EARLIER label already holds, else the lowest free one. An entry is
+    never given to two labels; a label no entry names is absent."""
     folded = [(index, _tokens(phrase)) for index, phrase in entries if phrase]
-    taken: set[int] = set()
-    matched: dict[str, int] = {}
-    previous: int | None = None
-    for ask in asks:
-        label = _tokens(ask.item)
+    labels = [(ask, _tokens(ask.item)) for ask in asks]
+    scores: dict[tuple[str, int], int] = {}
+    for ask, label in labels:
         # A text with no list marker ("comment SPEC KIT", a closing line) only pairs when it IS
         # the recording's name: containing or overlapping it is not enough to become a label.
         lowest = _T_OVERLAP if _has_explicit_marker(ask.text) else _T_LOOSE
-        scored = [
-            (tier, index)
-            for index, phrase in folded
-            if index not in taken
-            if (tier := _tier(label, phrase)) >= lowest
-        ]
-        if not scored:
-            continue
-        best = max(tier for tier, _index in scored)
-        candidates = sorted(index for tier, index in scored if tier == best)
-        after = [index for index in candidates if previous is not None and index > previous]
-        chosen = after[0] if after else candidates[0]
-        matched[ask.requirement_id] = chosen
-        taken.add(chosen)
-        previous = chosen
+        for index, phrase in folded:
+            tier = _tier(label, phrase)
+            if tier >= lowest:
+                scores[(ask.requirement_id, index)] = tier
+    taken: set[int] = set()
+    matched: dict[str, int] = {}
+    for tier in (_T_LOOSE, _T_CONTAINED, _T_OVERLAP):
+        for position, (ask, _label) in enumerate(labels):
+            rid = ask.requirement_id
+            if rid in matched:
+                continue
+            free = sorted(
+                index
+                for index, _ in folded
+                if index not in taken and scores.get((rid, index)) == tier
+            )
+            if not free:
+                continue
+            held = [
+                matched[a.requirement_id]
+                for a, _l in labels[:position]
+                if a.requirement_id in matched
+            ]
+            after = [index for index in free if held and index > max(held)]
+            chosen = after[0] if after else free[0]
+            matched[rid] = chosen
+            taken.add(chosen)
     return matched
 
 
@@ -410,17 +423,48 @@ def _word_stream(words: Sequence[dict]) -> list[tuple[str, int, float, float]]:
     return out
 
 
-def _opener_chain(texts: Sequence[str], p: int, item_len: int) -> list[int]:
-    """Indices of ``texts[p]`` and its exact repeats, each 2..2*item_len+2 tokens after the last."""
+def _opener_chain(
+    stream: Sequence[tuple[str, int, float, float]], texts: Sequence[str], p: int, item_len: int
+) -> tuple[list[int], int | None]:
+    """(indices of ``texts[p]`` and its exact repeats, where a pause cuts the last item or None).
+
+    Each item between two openers is max(2, item_len // 2)..2 * item_len + 2 tokens long; the chain
+    stops at the first item outside that range. A pause (``_MAX_GAP_S``) inside an item ends the
+    list there: that item is the last, cut at the pause. An opener that follows a SHORT token no
+    earlier opener followed ("... browser AND what runs", once two openers are in) is the last
+    one: a closing joiner ends a list, so talk after it ("which is why ...") is not more items."""
     token = texts[p]
     chain = [p]
+    low, high = max(2, item_len // 2), 2 * item_len + 2
+    before = {texts[p - 1]} if p > 0 else set()
     while True:
-        low = chain[-1] + 2
-        high = min(len(texts), chain[-1] + 2 * item_len + 3)
-        nxt = next((q for q in range(low, high) if texts[q] == token), None)
-        if nxt is None:
-            return chain
+        start = chain[-1]
+        nxt = next((q for q in range(start + 1, len(texts)) if texts[q] == token), None)
+        stop = nxt if nxt is not None else len(texts)
+        # The gap before a closing joiner ("... reads | and which ...") is between items.
+        scan_end = (
+            stop - 1
+            if stop - 1 > start + 1 and len(texts[stop - 1]) <= _MAX_JOINER_LETTERS
+            else stop
+        )
+        pause = next(
+            (
+                k
+                for k in range(start + 1, scan_end)
+                if stream[k][2] - stream[k - 1][3] >= _MAX_GAP_S - _EPS
+            ),
+            None,
+        )
+        if nxt is not None and pause is not None:
+            return chain, pause
+        if nxt is None or not low <= nxt - start <= high:
+            return chain, None
+        joiner = texts[nxt - 1]
+        closing = len(chain) >= 2 and len(joiner) <= _MAX_JOINER_LETTERS and joiner not in before
+        before.add(joiner)
         chain.append(nxt)
+        if closing:
+            return chain, None
 
 
 def find_spoken_list(
@@ -430,11 +474,14 @@ def find_spoken_list(
 
     Language-agnostic (no word lists): a list is the same opening word said again and again, close
     together, right after item 1 ("what it saves ... what it reads ... what runs ...").
-    Openers are tried 0-2 tokens after item 1 and must be 4+ letters long (a one-to-three-letter
-    word like "the" repeats in any sentence); the opener with the most occurrences wins, ties to
-    the earliest. At least 3 items in all (item 1 included) or nothing. A 1-3 letter token right
-    before the last occurrence ("and", "ve", "und") joins the items and is dropped; the last item
-    is as long as the mean of the earlier ones, cut at the take end and at a pause of 0.5 s."""
+    The opener must come IMMEDIATELY after item 1, or one token later when that token is a joiner
+    (3 letters or fewer) and must be 4+ letters long (a one-to-three-letter word like "the"
+    repeats in any sentence); the opener with the most occurrences wins, ties to the earliest.
+    Items are max(2, n1 // 2)..2 * n1 + 2 tokens (n1 = item 1's), and a pause of 0.6 s inside an
+    item ends the list (`_opener_chain`). At least 3 items in all (item 1 included) or nothing.
+    A 1-3 letter token right before the last occurrence ("and", "ve", "und") joins the items and
+    is dropped; the last item is as long as the mean of the earlier ones, cut at the take end and
+    at a pause."""
     stream = _word_stream(words)
     if not stream:
         return []
@@ -446,13 +493,17 @@ def find_spoken_list(
     after = max(after + 1, first + 1)
     item_len = after - first
 
+    openers = [after]
+    if after < len(texts) and len(texts[after]) <= _MAX_JOINER_LETTERS:
+        openers.append(after + 1)
     best: list[int] = []
-    for p in range(after, min(len(texts), after + _OPENER_SLACK)):
-        if len(texts[p]) < _MIN_OPENER_LETTERS:
+    best_cut: int | None = None
+    for p in openers:
+        if p >= len(texts) or len(texts[p]) < _MIN_OPENER_LETTERS:
             continue
-        chain = _opener_chain(texts, p, item_len)
+        chain, cut = _opener_chain(stream, texts, p, item_len)
         if len(chain) > len(best):
-            best = chain
+            best, best_cut = chain, cut
     if len(best) < 2 or len(best) + 1 < _MIN_LIST_ITEMS:
         return []
 
@@ -465,6 +516,8 @@ def find_spoken_list(
             end = starts[position + 1]
         elif capped:
             end = best[len(starts)]
+        elif best_cut is not None:
+            end = best_cut  # a pause inside this item ends the list
         else:
             end = min(len(texts), start + max(1, math.ceil(sum(lengths) / len(lengths))))
             for k in range(start + 1, end):  # a pause ends the item
@@ -473,7 +526,7 @@ def find_spoken_list(
                     break
         spans.append((start, end))
     # A short joiner right before the LAST occurrence belongs to neither item.
-    if not capped:
+    if not capped and len(spans) >= 2:
         prev_start, prev_end = spans[-2]
         if prev_end - prev_start > 1 and len(texts[prev_end - 1]) <= _MAX_JOINER_LETTERS:
             spans[-2] = (prev_start, prev_end - 1)
@@ -489,21 +542,19 @@ def find_spoken_list(
     ]
 
 
-def _marker_parts(text: str) -> tuple[str, str, str] | None:
-    """(prefix "#" or "", digits, punctuation) of ``text``'s explicit marker, or None."""
+def _marker_parts(text: str) -> tuple[str, str] | None:
+    """(digits, punctuation) of ``text``'s explicit marker, or None."""
     length, explicit = _read_marker(text)
     if not length or not explicit:
         return None
     marker = text[:length]
-    prefix = "#" if marker.startswith("#") else ""
-    body = marker[len(prefix) :]
-    digits = "".join(ch for ch in body if ch in _DIGITS)
-    return prefix, digits, body[len(digits) :]
+    digits = "".join(ch for ch in marker if ch in _DIGITS)
+    return digits, marker[len(digits) :]
 
 
 def marker_number(text: str) -> int | None:
     parts = _marker_parts(_collapse(text))
-    return int(parts[1]) if parts and parts[1] else None
+    return int(parts[0]) if parts and parts[0] else None
 
 
 def _trim_punctuation(word: str) -> str:
@@ -522,7 +573,7 @@ def spoken_item_text(example: str, number: int, item: SpokenItem) -> str:
     words = [w for w in (_trim_punctuation(w) for w in item.words) if w]
     if parts is None or not words:
         return ""
-    prefix, digits, punct = parts
+    digits, punct = parts
     shown = str(number).zfill(len(digits)) if digits.startswith("0") else str(number)
     example_item = label_item(text)
     first_letter = next((ch for ch in example_item if ch.isalpha()), "")
@@ -532,7 +583,7 @@ def spoken_item_text(example: str, number: int, item: SpokenItem) -> str:
     body = " ".join([head, *words[1:]])
     if example_item.rstrip()[-1:] in ("?", "!", "."):
         body += example_item.rstrip()[-1]
-    return f"{prefix}{shown}{punct} {body}"
+    return f"{shown}{punct} {body}"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -578,23 +629,36 @@ def list_label_rows(
     canvas: Any,
     place: Callable[[dict, list[NormalizedBox]], tuple[dict, dict]],
     avoid_for: Callable[[tuple[float, float], list[dict]], list[NormalizedBox]],
+    phrases: Sequence[tuple[int, str]] | None = None,
 ) -> tuple[list[dict], dict[str, Any]]:
     """One placed row per label that has its moment, plus the receipt of every ask.
 
-    Receipt statuses: placed, not_heard (a list label nobody introduced), no_time (a sliver or
-    past the take end), same_moment (another label starts at the same instant), not_a_list_item
+    ``phrases`` are (index, spoken_phrase) of EVERY phrased background entry, anchored or not
+    (default: the anchors' own), so a label never takes a part of the list another label names.
+
+    Receipt statuses: placed, not_heard (a list label nobody introduced, or a recording that was
+    never heard), no_time (a sliver at / past the take end), same_moment (another label starts at
+    the same instant, or sooner than ``MIN_S``), not_a_list_item
     (a text no recording or list marker makes a label: the title, the closing text) or error.
     ``place(row, avoid)`` moves a row off her face; ``avoid_for(window, rows_so_far)`` returns
     the caption lines, other text and cards on screen in that window. Never raises for one ask."""
     by_index = {anchor.index: anchor for anchor in anchors}
-    matched = match_labels(asks, [(a.index, a.spoken_phrase) for a in anchors if a.spoken_phrase])
+    matched = match_labels(
+        asks,
+        list(phrases)
+        if phrases is not None
+        else [(a.index, a.spoken_phrase) for a in anchors if a.spoken_phrase],
+    )
     starts: dict[str, float] = {}
     basis: dict[str, dict[str, Any]] = {}
+    unheard: set[str] = set()  # paired with a recording nobody introduced
     for ask in asks:
         entry = matched.get(ask.requirement_id)
         if entry is not None and entry in by_index:
             starts[ask.requirement_id] = label_start(by_index[entry])
             basis[ask.requirement_id] = {"basis": "background", "entry_index": entry}
+        elif entry is not None:
+            unheard.add(ask.requirement_id)
 
     # Marked labels no recording names: the item's own words, after the labels before it.
     fallback = [
@@ -668,13 +732,15 @@ def list_label_rows(
     next_start: float | None = None
     for rid in reversed(kept):
         start = round(max(0.0, starts[rid]), 3)
-        end = min(start + HOLD_S, duration)
-        if next_start is not None:
-            end = min(end, next_start)
-        end = round(end, 3)
+        end = round(min(start + HOLD_S, duration), 3)
         if end - start < MIN_S - _EPS:
-            status[rid] = "no_time"
+            status[rid] = "no_time"  # the take ends right after it starts
             continue
+        if next_start is not None and next_start - start < MIN_S - _EPS:
+            status[rid] = "same_moment"  # the next label starts too soon to read this one
+            continue
+        if next_start is not None:
+            end = round(min(end, next_start), 3)
         windows[rid] = (start, end)
         next_start = start
 
@@ -713,7 +779,7 @@ def list_label_rows(
         rid = ask.requirement_id
         if rid in status:
             outcome = status[rid]
-        elif _has_explicit_marker(ask.text):
+        elif _has_explicit_marker(ask.text) or rid in unheard:
             outcome = "not_heard"
         else:
             outcome = "not_a_list_item"

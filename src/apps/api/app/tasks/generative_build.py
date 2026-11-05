@@ -8262,8 +8262,11 @@ def _resolve_strategy_background(
 
     Item 19: given ``layout_out``, a laid-out sequence leaves ``layout_out["anchors"]`` -- a
     ``phone_list_labels.LabelAnchor`` per anchored entry (where it is said, and where its first
-    window ending after that opens), on the kept take's clock. A phone gate that strips the
-    windows clears it again: no recording is shown, so none is followed. ``None``: untouched.
+    window ending after that opens), on the kept take's clock. ``layout_out["phrases"]`` is every
+    phrased sequence entry ``(index, spoken_phrase)``, anchored or not, so a label is paired
+    against all the names in the list; ``layout_out["entry_media"]`` maps an entry index to the
+    pool row id its windows carry. A phone gate that strips the windows clears all three: no
+    recording is shown, so none is followed. ``None``: untouched.
     """
     import app.services.phone_overlay_grounding as pool_mod  # noqa: PLC0415
     from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
@@ -8364,6 +8367,13 @@ def _resolve_strategy_background(
             keep_changing=bool(request.get("keep_changing")),
         )
         lane_drops.extend(layout.notes)
+        if layout_out is not None:
+            layout_out["phrases"] = [
+                (index, str(entry.get("spoken_phrase")))
+                for index, entry in enumerate(sequence_request)
+                if str(entry.get("spoken_phrase") or "").strip()
+            ]
+            layout_out["entry_media"] = {index: str(row["id"]) for index, _e, row in entry_rows}
         if layout_out is not None and layout.anchor_s:
             from app.pipeline.phone_list_labels import LabelAnchor  # noqa: PLC0415
 
@@ -8436,12 +8446,14 @@ def _resolve_strategy_background(
         # A closed gate renders exactly what a strategy that never asked renders: no lane and no
         # reservation (the trace `speaker_background_phone_fallback` says why).
         if layout_out is not None:
-            layout_out.pop("anchors", None)
+            for key in ("anchors", "phrases", "entry_media"):
+                layout_out.pop(key, None)
         return None, frozenset()
     kept = stripped.background
     if windows and not kept.windows:
         if layout_out is not None:
-            layout_out.pop("anchors", None)
+            for key in ("anchors", "phrases", "entry_media"):
+                layout_out.pop(key, None)
         # Only the windows gate is closed: the render equals a single-background ask, so only
         # the fill is reserved (S33).
         reserved = (
@@ -11109,9 +11121,15 @@ def _run_phone_subtitled_job(
                         if lanes is not None and lanes.background is not None
                         else None
                     )
+                    _label_anchors, _label_phrases = _phone_list_label_follow(
+                        list_label_layout,
+                        lanes,
+                        follows_talk=settings.background_follows_talk_enabled,
+                    )
                     list_label_rows, list_label_receipt = _phone_talking_list_label_rows(
                         list_label_asks,
-                        anchors=list_label_layout.get("anchors") or [],
+                        anchors=_label_anchors,
+                        phrases=_label_phrases,
                         words=timeline_words,
                         cues=cues,
                         caption_style=caption_style,
@@ -11594,6 +11612,8 @@ def _run_phone_subtitled_job(
                             for row in (spoken_text_receipt or {}).get("rows", [])
                             if row.get("status") == "placed"
                         },
+                        # Item 19: a list label (and each item found on the take) is text too.
+                        **_list_label_protected_placements(list_label_receipt),
                         "captions": protected_caption_receipt,
                     },
                 ),
@@ -12655,6 +12675,7 @@ def _phone_talking_list_label_rows(
     speaker_frame: tuple[float, float, float] | None = None,
     protected: Any = None,
     canvas: Any = None,
+    phrases: Any = None,
 ) -> tuple[list[dict], dict[str, Any] | None]:
     """Item 19: one text row per numbered list label that has its moment, plus the receipt.
 
@@ -12722,6 +12743,7 @@ def _phone_talking_list_label_rows(
         canvas=canvas,
         place=place,
         avoid_for=avoid_for,
+        phrases=phrases,
     )
     receipt_rows = [row for row in receipt["rows"] if row.get("status") != "not_a_list_item"]
     if not receipt_rows:
@@ -12732,6 +12754,37 @@ def _phone_talking_list_label_rows(
     except Exception:  # noqa: BLE001 - observability only
         pass
     return rows, receipt
+
+
+def _phone_list_label_follow(
+    layout: Mapping[str, Any], lanes: Any, *, follows_talk: bool
+) -> tuple[list[Any], list[tuple[int, str]] | None]:
+    """(anchors, phrases) the list labels may follow, from `_resolve_strategy_background`'s
+    ``layout_out`` and the FINAL lanes (item 19).
+
+    Recordings are followed only with item 17 (background follows the talk) on; otherwise nothing
+    is passed and every marked label grounds on its own words. An anchor counts only when its
+    entry's media still has a window in ``lanes.background.windows`` (a later drop removes it);
+    no lanes, no background or no windows leave no anchor. ``phrases`` is every phrased entry."""
+    if not follows_talk:
+        return [], None
+    background = lanes.background if lanes is not None else None
+    shown = {window.media_id for window in (background.windows if background is not None else ())}
+    entry_media = layout.get("entry_media") or {}
+    anchors = [
+        anchor for anchor in layout.get("anchors") or [] if entry_media.get(anchor.index) in shown
+    ]
+    return anchors, list(layout.get("phrases") or [])
+
+
+def _list_label_protected_placements(receipt: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The placed list labels (and the items found on the take) as ``protected_text_receipt``
+    placements, so "text kept off X" is never claimed while one of them sits on X."""
+    return {
+        f"list:{row.get('requirement_id')}-{row.get('list_item', 1)}": row.get("placement")
+        for row in (receipt or {}).get("rows", [])
+        if row.get("status") == "placed"
+    }
 
 
 def _phone_list_label_card_boxes(lanes: Any, visuals: Any, canvas: Any) -> list[Any]:

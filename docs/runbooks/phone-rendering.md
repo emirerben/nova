@@ -3347,29 +3347,43 @@ and the KRI-707 spoken-text gate), with no model or prompt change:
 
 - **Asks.** `phone_list_labels.list_label_asks`: live whole-video text requirements with no
   spoken trigger (KRI-707 keeps those). Only a content match makes one a label: it names a
-  background recording, or it carries a list marker ("1.", "01:", "#1", "1)").
+  background recording, or it carries a list marker ("1.", "01:", "1)"; a marker is 1-2 digits and a "." / ":" / ")"
+  followed by a space, so "#1 PICK", "3.5 million views" and "10:30 routine" are not labels).
 - **Screen walkthrough.** Each label is paired by name with a `background_media.sequence`
-  entry (`match_labels`: loose-equal, contained, overlapping tokens; greedy in list order,
-  one entry per label; an unmarked text pairs only when it IS the name) and appears where
+  entry (`match_labels`: assigned globally by tier -- all loose-equal pairs, then contained,
+  then overlapping -- against EVERY phrased entry, anchored or not; one entry per label; an
+  unmarked text pairs only when it IS the name) and appears where
   `lay_out` anchored that entry (`SequenceLayout.anchor_s`), never the 0 s lead-in window.
-  With item 17's flag on, "4. Agents" waits for "fourth one is agents", not the "agents"
-  inside "trading agents".
+  Labels follow the recordings only with item 17's flag (`BACKGROUND_FOLLOWS_TALK_ENABLED`)
+  on, and only recordings still shown in the final lanes; **turn item 17 on first** so the
+  recordings and the labels agree ("4. Agents" waits for "fourth one is agents", not the
+  "agents" inside "trading agents"). With it off every marked label grounds on its own words.
 - **Talking head.** A lone label numbered 1 that no recording names is found in the take's
   words (tolerant: "company" typed, "companies" said), then `find_spoken_list` reads the
-  items that follow from a repeated opening word ("what ... what ... and what ..."); labels
-  2..N copy the example's marker, case and final "?". A typed list is never extended.
+  items that follow from a repeated opening word ("what ... what ... and what ..."): the
+  opener must come right after item 1 (or one 1-3 letter joiner later), each item is
+  `max(2, n1 // 2)` to `2 * n1 + 2` tokens long, a 0.6 s pause inside an item ends the list,
+  and an opener led by a new short joiner ("... and what") is the last. Labels 2..N copy the
+  example's marker, case and final "?". A typed list is never extended. If only item 1 is
+  found the requirement is `partial` ("couldn't find the rest of your list").
 - **Rows.** Ordinary text rows (`list-label-<requirement id>[-<n>]`) on the KRI-467 lane
-  (no new phone capability or protocol), each until the next label starts or 3 s, placed by
+  (no new phone capability or protocol), each until the next label starts or 3 s (a label
+  squeezed by a next one starting within 0.8 s is `same_moment`; `no_time` is the take end's),
+  placed by
   `place_talking_title` clear of the captions, other text and cards on screen, with the
-  face mapped into a corner speaker frame (`speaker_frame=`). Receipt:
+  face and any KRI-827 marked object mapped into a corner speaker frame (`speaker_frame=`);
+  the placements are also in the KRI-827 protected-text receipt (`list:<id>-<n>`). Receipt:
   `list_label_placement` (`placed` / `not_heard` / `no_time` / `same_moment` / `error`,
   `list_found` on a spoken list).
 - **Receipts and contract.** Draft: "I'll show it when that part of your talk starts ...".
   After render: met when placed off the face; otherwise the reason, never met. A Talking
   edit does not pin such a label in `exact_texts` (its receipt answers it).
 
-Limits: lists whose items start with different words ("first ... second ...") or a 1-3
-letter word are not found; a lone "1." label is always read as the start of a list.
+Limits: lists whose items start with different words ("the first thing is ... the second
+thing is ...") or a 1-3 letter word are not found (only the typed item 1 shows, and the
+receipt says so); a lone "1." label is always read as the start of a list; talk right after a
+list that repeats the opener without a closing joiner ("this matters because this ...") can
+still be read as items.
 Kill switch: `fly secrets set SPOKEN_LIST_LABELS_ENABLED=false --app nova-video` + restart
 (api + worker). Design and failure modes: `docs/reviews/qendresa-list-labels-failure-modes.md`.
 Tests: `tests/tasks/test_qendresa_list_labels_worker.py`,

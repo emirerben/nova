@@ -96,7 +96,16 @@ def test_draft_marked_label_says_when_it_will_show(monkeypatch):
 
 def test_draft_unmarked_text_that_is_a_planned_recording_name_is_planned(monkeypatch):
     _flag(monkeypatch, True)
+    monkeypatch.setitem(settings.__dict__, "background_follows_talk_enabled", True)
     assert _draft(_req("l2", "Impeccable")).reason == PLAN_EN
+
+
+def test_draft_without_item_17_a_recording_name_is_not_promised(monkeypatch):
+    """Like the worker: without item 17's windows no label follows a recording."""
+    _flag(monkeypatch, True)
+    monkeypatch.setitem(settings.__dict__, "background_follows_talk_enabled", False)
+    assert _draft(_req("l2", "Impeccable")).reason != PLAN_EN
+    assert _draft(_req("l1", "1. Spec-kit")).reason == PLAN_EN
 
 
 def test_draft_unmarked_text_that_only_mentions_a_name_is_not_planned(monkeypatch):
@@ -173,3 +182,72 @@ def test_after_render_unplaced_label_says_why_never_met(status, en, tr):
     assert (english.status, english.reason) == ("partial", en)
     turkish = _after(req, [_row(status)], texts=["1. Spec-kit"], lang="tr")
     assert (turkish.status, turkish.reason) == ("partial", tr)
+
+
+# --- review round ------------------------------------------------------------------------
+
+
+def _typed(rid="l1", text="1. which company it sends data to?", **kw) -> dict:
+    return {"requirement_id": rid, "text": text, "item": text[3:], "status": "placed", **kw}
+
+
+def _item(number, **kw) -> dict:
+    return {
+        "requirement_id": "l1",
+        "list_item": number,
+        "text": f"{number}. which x?",
+        "status": "placed",
+        "basis": "spoken_list",
+        "face_collision": False,
+        **kw,
+    }
+
+
+def test_f4_only_item_one_found_is_partial_not_met():
+    req = _req("l1", "1. which company it sends data to?")
+    rows = [_typed(face_collision=False, list_found=1)]
+    en = _after(req, rows)
+    assert (en.status, en.reason) == (
+        "partial",
+        "I showed this one, but couldn't find the rest of your list in the take",
+    )
+    tr = _after(req, rows, lang="tr")
+    assert (tr.status, tr.reason) == (
+        "partial",
+        "Bunu gösterdim ama listenin geri kalanını çekiminde bulamadım",
+    )
+
+
+def test_f4_a_found_list_is_met():
+    req = _req("l1", "1. which company it sends data to?")
+    rows = [_typed(face_collision=False, list_found=3), _item(2), _item(3)]
+    assert _after(req, rows).status == "met"
+
+
+def test_f4_an_item_row_on_a_face_makes_the_requirement_partial_with_the_face_reason():
+    req = _req("l1", "1. which company it sends data to?")
+    rows = [_typed(face_collision=False, list_found=3), _item(2, face_collision=True), _item(3)]
+    receipt = _after(req, rows)
+    assert receipt.status == "partial" and "face" in (receipt.reason or "")
+
+
+def test_f7_a_wording_cue_with_no_trigger_is_the_workers_list_label(monkeypatch):
+    """'... when I talk about them' makes `_is_spoken_text_cue` true, but with no trigger the
+    worker draws it as a list label, so the draft says when it will show, not 'tell me the word'."""
+    _flag(monkeypatch, True)
+    req = _req("q1", "1. which company it sends data to?")
+    req = req.model_copy(
+        update={"description": "Show each of the four things as big text when I talk about them"}
+    )
+    facts = dataclasses.replace(plan_facts_from_strategy(STRATEGY), phone_talking=True)
+    [receipt] = build_receipts([req], facts, include_unchecked=True)
+    assert (receipt.status, receipt.reason) == ("partial", PLAN_EN)
+
+
+def test_f7_a_real_trigger_stays_kri707s(monkeypatch):
+    _flag(monkeypatch, True)
+    req = _req("q1", "1. which company it sends data to?", facts={"triggers": ["company"]})
+    req = req.model_copy(update={"description": "show it when I say company"})
+    facts = dataclasses.replace(plan_facts_from_strategy(STRATEGY), phone_talking=True)
+    [receipt] = build_receipts([req], facts, include_unchecked=True)
+    assert receipt.reason != PLAN_EN

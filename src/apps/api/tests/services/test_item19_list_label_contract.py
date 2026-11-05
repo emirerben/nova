@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 import app.services.phone_rollout as rollout
+from app.config import settings
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.services.creator_render_contract import build_render_contract
 
@@ -60,8 +61,12 @@ def _strategy(edit_format: str = "subtitled") -> dict:
     }
 
 
-def _pinned(monkeypatch, *, flag: bool, edit_format: str = "subtitled") -> list[str]:
+def _pinned(
+    monkeypatch, *, flag: bool, edit_format: str = "subtitled", follows_talk: bool = True
+) -> list[str]:
     monkeypatch.setattr(rollout, "phone_list_labels_supported", lambda: flag)
+    # A label follows a recording only with item 17's windows (the worker's rule).
+    monkeypatch.setitem(settings.__dict__, "background_follows_talk_enabled", follows_talk)
     contract = build_render_contract(_strategy(edit_format), generation_id="g1", brief=_brief())
     assert contract is not None
     return [t.text for t in contract.exact_texts]
@@ -94,3 +99,11 @@ def test_flag_off_contract_is_identical_to_the_pre_item19_pin(monkeypatch):
     off = _pinned(monkeypatch, flag=False)
     on = _pinned(monkeypatch, flag=True)
     assert [t for t in off if t not in {MARKED, NAMED}] == on
+
+
+def test_without_item_17_only_a_marked_label_is_left_unpinned(monkeypatch):
+    """The worker follows a recording only with item 17's windows; without them an unmarked
+    recording name is never drawn as a label, so the contract keeps pinning it."""
+    pinned = _pinned(monkeypatch, flag=True, follows_talk=False)
+    assert MARKED not in pinned
+    assert NAMED in pinned
