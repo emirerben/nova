@@ -547,6 +547,13 @@ def prepare_saved_render_windows(job: Job, variant_id: str, prep: dict[str, Any]
             continue
         if row.get("source_kind") == "image":
             continue
+        if variant.get("render_destination") == "device" and row.get("source_end_s") is not None:
+            # Admission already checks this exact edge against the original
+            # source. The phone compiler consumes only that window and holds
+            # its final frame for any 30fps output-clock rounding. Recomputing
+            # the source span from duration * rate would reject a valid recipe
+            # (or move the creator's selected window) after it was compiled.
+            continue
         try:
             requested = float(row["in_s"])
             effective = effective_source_start(
