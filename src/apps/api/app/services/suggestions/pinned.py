@@ -165,11 +165,44 @@ def _entry_index(ring: Sequence[Any], set_id: str) -> int | None:
 
 
 def is_consumed(state: Mapping[str, Any] | None, set_id: str, suggestion_id: str) -> bool:
-    """True once a tap has applied this card from this set."""
+    """True once a tap has applied this card, from this set or from any other set of the ring.
+
+    A card is one offer, not one entry's offer. A refusal mints a derived set that copies the
+    cards and strips every mark, and an edit serves a new set: a tap that names the older set
+    must not find the card fresh because the mark sits on the newer one. The same card is the
+    same kind aimed at the same target (``fingerprint``), whatever id a set gave it.
+    """
     ring = state.get(RING_KEY) if isinstance(state, Mapping) else None
     index = _entry_index(ring, set_id) if isinstance(ring, list) else None
-    consumed = ring[index].get(CONSUMED_FIELD) if index is not None else None
-    return isinstance(consumed, Mapping) and suggestion_id in consumed
+    if index is None or not isinstance(ring, list):
+        return False
+    consumed = ring[index].get(CONSUMED_FIELD)
+    if isinstance(consumed, Mapping) and suggestion_id in consumed:
+        return True
+    from app.services.suggestion_serve import fingerprint  # noqa: PLC0415
+
+    def print_of(raw: Mapping[str, Any]) -> str:
+        return fingerprint(raw.get("kind"), raw.get("anchor"))
+
+    mine = next(
+        (
+            raw
+            for raw in ring[index].get("suggestions") or []
+            if isinstance(raw, Mapping) and raw.get("id") == suggestion_id
+        ),
+        None,
+    )
+    if mine is None:
+        return False
+    wanted = print_of(mine)
+    for entry in ring:
+        marks = entry.get(CONSUMED_FIELD) if isinstance(entry, Mapping) else None
+        if not isinstance(marks, Mapping):
+            continue
+        for raw in entry.get("suggestions") or []:
+            if isinstance(raw, Mapping) and raw.get("id") in marks and print_of(raw) == wanted:
+                return True
+    return False
 
 
 def _mark(
