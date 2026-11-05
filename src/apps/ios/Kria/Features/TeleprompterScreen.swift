@@ -7,6 +7,10 @@ struct TeleprompterScreen: View {
     let admissionMessage: (TeleprompterTakeManifest?) -> String?
     let intake: (TeleprompterTakeManifest, URL) async -> TeleprompterIntakeResult
     let intakeState: (TeleprompterTakeManifest) async -> TeleprompterIntakeResult?
+    /// Leaves the camera for the upload sources. Nil hides every Upload control on the camera.
+    let onUpload: (() -> Void)?
+    /// The creator already wrote a script in the script sheet and chose to use it.
+    let startsWithScript: Bool
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -14,7 +18,8 @@ struct TeleprompterScreen: View {
     @State private var confirmsDiscard = false
     @State private var allowsAutomaticScroll = false
     @State private var showsWindowSettings = false
-    @State private var captureControlsHeight: CGFloat = 220
+    @State private var showsSpeedSheet = false
+    @State private var captureControlsHeight: CGFloat = 160
     @State private var readingCanvas: CGRect = .zero
 
     private var manualScrolling: Bool {
@@ -27,18 +32,25 @@ struct TeleprompterScreen: View {
          speakerBackgroundEnabled: Bool = false,
          backgroundIntake: BackgroundIntake? = nil,
          backgroundStatement: BackgroundStatement? = nil,
+         startsWithScript: Bool = false,
+         onUpload: (() -> Void)? = nil,
          reportDiagnostic: @escaping (RecorderDiagnosticReport) -> Void = { _ in }) {
-        _flow = StateObject(wrappedValue: TeleprompterRecordingFlow(
-            accountID: accountID, projectID: projectID, speakerBackgroundEnabled: speakerBackgroundEnabled,
-            backgroundIntake: backgroundIntake, backgroundStatement: backgroundStatement,
-            reportDiagnostic: reportDiagnostic))
+        _flow = StateObject(wrappedValue: {
+            let flow = TeleprompterRecordingFlow(
+                accountID: accountID, projectID: projectID, speakerBackgroundEnabled: speakerBackgroundEnabled,
+                backgroundIntake: backgroundIntake, backgroundStatement: backgroundStatement,
+                reportDiagnostic: reportDiagnostic)
+            flow.useScript = startsWithScript
+            return flow
+        }())
         self.admissionMessage = admissionMessage; self.intake = intake; self.intakeState = intakeState
+        self.onUpload = onUpload
+        self.startsWithScript = startsWithScript
     }
 
     var body: some View {
         Group {
             switch flow.stage {
-            case .script: scriptEntry
             case .review: takeReview
             default: cameraScreen
             }
@@ -48,6 +60,7 @@ struct TeleprompterScreen: View {
         .interactiveDismissDisabled(flow.captureBusy || flow.usingTake)
         .task {
             await flow.load()
+            await flow.prepareCameraIfNeeded()
             // A statement the last opening could not make is retried here.
             await flow.syncBackgroundStatement()
             while !Task.isCancelled {
@@ -66,39 +79,32 @@ struct TeleprompterScreen: View {
         .onDisappear { flow.viewDisappeared() }
         .confirmationDialog("Discard this take?", isPresented: $confirmsDiscard, titleVisibility: .visible) {
             Button("Discard take", role: .destructive) { flow.discardSelected() }
-        } message: { Text("Your script and any previous take stay saved.") }
+            Button("Keep take", role: .cancel) { }
+        } message: { Text("Your script stays saved.") }
         .sheet(isPresented: $showsWindowSettings) {
             TeleprompterWindowSettings(script: flow.script, canvas: readingCanvas, canChangeFont: !flow.captureBusy, persist: { flow.persistDraft() })
                 .environment(\.dynamicTypeSize, dynamicTypeSize)
                 .presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
         }
-    }
-
-    private var scriptEntry: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    AttachmentHeading(title: "Your script", subtitle: "Read your script while filming yourself.")
-                    TeleprompterScriptEditor(script: flow.script) { flow.persistDraft() }
-                    TeleprompterReadEstimate(script: flow.script)
-                    Text("Your script is saved with this edit on this iPhone.")
-                        .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                    if let error = flow.error { errorText(error) }
-                }.padding(20)
-            }
-            .scrollDismissesKeyboard(.interactively)
-            .toolbar(.hidden, for: .navigationBar)
-            .safeAreaInset(edge: .top) { WorkspaceTopRow(title: "Record with script", leading: { Color.clear.frame(width: 44, height: 44) }, trailing: { closeButton }).background(KriaColor.paper) }
-            .safeAreaInset(edge: .bottom) {
-                TeleprompterOpenCameraButton(script: flow.script) { Task { await flow.openCamera() } }
-                    .padding(.horizontal, 20).padding(.vertical, 12).background(KriaColor.paper)
-            }
+        .sheet(isPresented: $showsSpeedSheet) {
+            TeleprompterSpeedSheet(script: flow.script, manual: manualScrolling, persist: { flow.persistDraft() })
+                .environment(\.dynamicTypeSize, dynamicTypeSize)
+                .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.height(manualScrolling ? 300 : 260), .large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $flow.showsScriptSheet) {
+            TeleprompterScriptSheet(script: flow.script, save: { flow.persistDraft() },
+                                    useScript: { flow.useScript = true; flow.persistDraft(); flow.showsScriptSheet = false },
+                                    skip: { flow.useScript = false; flow.showsScriptSheet = false })
+                .environment(\.dynamicTypeSize, dynamicTypeSize)
         }
     }
 
+    // MARK: Camera (Paper S3.08 to S3.10)
+
     private var cameraScreen: some View {
         GeometryReader { geometry in
-            let topInset: CGFloat = 60
+            let topInset: CGFloat = flow.speakerBackgroundEnabled || flow.cinematicAvailability == .available || flow.useScript ? 116 : 60
             let bottomInset: CGFloat = max(120, captureControlsHeight + 16)
             let canvas = CGRect(x: 12, y: topInset, width: max(1, geometry.size.width - 24),
                                 height: max(0, geometry.size.height - topInset - bottomInset))
@@ -108,28 +114,29 @@ struct TeleprompterScreen: View {
                     .frame(width: geometry.size.width, height: geometry.size.width * 16 / 9)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .accessibilityHidden(true)
-                TeleprompterWindowOverlay(script: flow.script, canvas: canvas, persist: { flow.persistDraft() },
-                                           openSettings: { showsWindowSettings = true })
+                if flow.useScript {
+                    TeleprompterWindowOverlay(script: flow.script, canvas: canvas, persist: { flow.persistDraft() },
+                                               openSettings: { showsWindowSettings = true })
+                }
                 VStack(spacing: 8) {
-                    HStack {
-                        KriaGlassCloseButton(identifier: "teleprompter-close", label: flow.captureBusy ? "Stop and review take" : "Close camera", action: closeCapture)
-                        Spacer()
-                        if flow.speakerBackgroundEnabled {
-                            TeleprompterBackgroundMenu(flow: flow, accessibilityLayout: dynamicTypeSize.isAccessibilitySize)
-                        }
-                        Button { showsWindowSettings = true } label: {
-                            HStack(spacing: 6) { KriaIcon(.settings); if !dynamicTypeSize.isAccessibilitySize { Text("Text window") } }
-                                .font(KriaFont.body(13).weight(.semibold)).padding(.horizontal, 12).frame(minHeight: 44)
-                        }
-                        .buttonStyle(.plain).kriaFloatingSurface(Capsule()).accessibilityLabel("Text window")
-                        .accessibilityIdentifier("teleprompter-window-settings")
-                    }.padding(.horizontal, 12)
+                    topRow
+                    if !flow.captureBusy, showsControls { optionsRow }
                     Spacer(minLength: 8)
                     cameraBottom
                         .background(GeometryReader { proxy in
                             Color.clear.preference(key: TeleprompterCaptureControlsHeight.self, value: proxy.size.height)
                         })
                 }.foregroundStyle(KriaColor.ink).padding(.top, 8).padding(.bottom, 16)
+                if flow.stage == .countdown {
+                    KriaCountdownDisc(value: flow.countdown) { flow.cancelCountdown() }
+                }
+                if let message = flow.camera.error, !flow.captureBusy, !flow.useScript {
+                    // Centred when it fits; at larger text it scrolls below the close button instead of being cut off.
+                    ViewThatFits(in: .vertical) {
+                        accessCard(message)
+                        ScrollView { accessCard(message) }.padding(.top, 60)
+                    }
+                }
             }
             .onAppear { readingCanvas = canvas }
             .onChange(of: geometry.size) { _, _ in readingCanvas = canvas }
@@ -138,133 +145,311 @@ struct TeleprompterScreen: View {
         }
     }
 
+    /// A refused camera shows the access card alone, unless a script is on: then the reading window stays.
+    private var showsControls: Bool { flow.camera.error == nil || flow.useScript }
+
+    private func accessCard(_ message: String) -> some View {
+        CameraAccessCard(kind: flow.camera.errorKind, message: message,
+                         openSettings: { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } },
+                         retry: { Task { await flow.camera.prepare() } },
+                         upload: onUpload.map { upload in { leaveForUpload(upload) } })
+    }
+
+    private var topRow: some View {
+        ZStack {
+            HStack {
+                KriaCameraCloseButton(identifier: "teleprompter-close", label: flow.captureBusy ? "Stop and review take" : "Close camera", action: closeCapture)
+                Spacer()
+                if !flow.captureBusy, showsControls {
+                    KriaCameraCapsule(title: "Script", symbol: "text.alignleft", identifier: "teleprompter-script",
+                                      isOn: flow.useScript) { flow.editScript() }
+                }
+            }
+            if flow.stage == .recording || flow.stage == .finalizing {
+                TeleprompterTimerPill(start: flow.camera.recordingStartedAt)
+            }
+        }
+        .padding(.horizontal, 16)
+    }
+
+    /// Background, Cinematic and the text window: secondary camera options, kept out of the way of the capture bar.
+    @ViewBuilder private var optionsRow: some View {
+        let showsCinematic = flow.cinematicAvailability == .available
+        if flow.speakerBackgroundEnabled || showsCinematic || flow.useScript {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    if flow.speakerBackgroundEnabled {
+                        TeleprompterBackgroundMenu(flow: flow)
+                    }
+                    if showsCinematic {
+                        TeleprompterCinematicCapsule(flow: flow, camera: flow.camera)
+                    }
+                    if flow.useScript {
+                        KriaCameraCapsule(title: "Text window", symbol: "slider.horizontal.3", identifier: "teleprompter-window-settings") { showsWindowSettings = true }
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+    }
+
     @ViewBuilder private var cameraBottom: some View {
-        VStack(spacing: 8) {
-            if let message = flow.camera.error {
-                TeleprompterCameraErrorCard(message: message, accessibilityLayout: dynamicTypeSize.isAccessibilitySize,
-                    editScript: { flow.editScript() }, retry: { Task { await flow.camera.prepare() } },
-                    openSettings: { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } })
+        VStack(spacing: 12) {
+            // With a script on, the reading window and controls stay put and the card sits above them, scrollable.
+            if let message = flow.camera.error, !flow.captureBusy, flow.useScript {
+                ScrollView { accessCard(message) }
+                    .frame(maxHeight: dynamicTypeSize.isAccessibilitySize ? 210 : 190)
             }
             if let error = flow.error { errorText(error).padding(.horizontal, 16) }
             if let note = flow.backgroundNote {
-                Text(note).font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                Text(note).kriaType(.label).foregroundStyle(Color.white)
                     .padding(.horizontal, 16).accessibilityIdentifier("teleprompter-background-note")
             }
             if flow.background != nil, flow.stage == .camera || flow.stage == .recording {
                 TeleprompterBackgroundPreviewNotice(camera: flow.camera)
             }
+            TeleprompterCinematicNote(flow: flow, camera: flow.camera)
             if flow.camera.micSilent {
                 Label("We can’t hear you. Check that nothing is covering the microphone, then stop and record again.",
                       systemImage: "mic.slash.fill")
-                    .font(KriaFont.body(14).weight(.semibold)).foregroundStyle(KriaColor.failureText)
-                    .padding(12).frame(maxWidth: .infinity, alignment: .leading).kriaGlassPanel(cornerRadius: 16)
+                    .kriaType(.label).foregroundStyle(Color.white)
+                    .padding(12).frame(maxWidth: .infinity, alignment: .leading).kriaCameraGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .padding(.horizontal, 16).accessibilityIdentifier("teleprompter-mic-silent")
             }
-            if flow.stage == .countdown {
-                VStack(spacing: 12) {
-                    Text("\(flow.countdown)").font(KriaFont.display(48).weight(.bold))
-                        .accessibilityLabel("Recording in \(flow.countdown)")
-                    Button("Cancel countdown") { flow.cancelCountdown() }.buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
-                        .accessibilityIdentifier("teleprompter-cancel-countdown")
-                }.padding(16).kriaGlassPanel(cornerRadius: 24)
-            } else if flow.stage == .starting || flow.stage == .finalizing {
-                TeleprompterSavingLabel(camera: flow.camera, starting: flow.stage == .starting)
-            } else {
-                TeleprompterCaptureControls(script: flow.script, camera: flow.camera,
-                    cinematic: .init(availability: flow.cinematicAvailability, enabled: flow.cinematicEnabled,
-                                     set: { flow.setCinematic($0) }),
-                    recording: flow.stage == .recording,
-                    manual: manualScrolling,
-                    enableAutomaticScroll: UIAccessibility.isVoiceOverRunning ? nil : { allowsAutomaticScroll = true },
-                    record: { flow.record(manual: manualScrolling) },
-                    stop: { flow.stop() })
+            if showsControls {
+                if flow.useScript, flow.stage != .starting, flow.stage != .finalizing { scriptStatusRow }
+                if flow.stage == .starting || flow.stage == .finalizing {
+                    TeleprompterSavingLabel(camera: flow.camera, starting: flow.stage == .starting)
+                } else {
+                    captureBar
+                }
             }
         }
     }
 
-    private var takeReview: some View {
-        NavigationStack {
-            ScrollView {
+    /// Speed, the place in the script and the prompter switch. Only while a script is on.
+    private var scriptStatusRow: some View {
+        TeleprompterScriptStatusRow(script: flow.script, manual: manualScrolling,
+                                    useSteady: { allowsAutomaticScroll = true }, openSpeed: { showsSpeedSheet = true })
+    }
+
+    /// Upload | capture | flip. While a take is running only the capture control stays. At accessibility sizes the
+    /// labelled Upload capsule takes its own row under the capture control, so its label never shrinks away.
+    private var captureBar: some View {
+        let recording = flow.stage == .recording
+        let idle = flow.stage == .camera
+        let capture = KriaCaptureButton(isRecording: recording, isEnabled: recording || (idle && flow.camera.phase == .ready)) {
+            if recording { flow.stop() } else { flow.record(manual: manualScrolling) }
+        }
+        let flip = Group {
+            if idle {
+                KriaCameraIconButton(symbol: "arrow.triangle.2.circlepath.camera", label: "Flip camera",
+                                     identifier: "teleprompter-flip") { flow.flipCamera() }
+            } else { Color.clear.frame(width: 44, height: 44) }
+        }
+        return Group {
+            if dynamicTypeSize.isAccessibilitySize {
                 VStack(spacing: 16) {
-                    if flow.attachmentFinished {
-                        Label("Take added to your edit", systemImage: "checkmark.circle.fill")
-                            .font(KriaFont.body(20).weight(.semibold)).foregroundStyle(KriaColor.success)
-                        Button("Done") { dismiss() }.buttonStyle(KriaPrimaryButtonStyle())
-                    } else if let take = flow.selectedTake {
-                        if take.status != .invalid {
-                            TeleprompterTakePlayer(url: flow.store.fileURL(for: take))
-                                .id(take.id)
-                                .frame(height: 340).clipShape(RoundedRectangle(cornerRadius: 20))
-                        } else {
-                            Label("This interrupted take couldn’t be played.", systemImage: "exclamationmark.triangle")
-                                .font(KriaFont.body(18)).padding(24)
-                        }
-                        if take.interrupted, take.status != .invalid {
-                            Text("\(take.stopReason?.creatorMessage ?? "Recording was interrupted.") Review this take before using it.").font(KriaFont.body(14))
-                        }
-                        if take.audioCheck?.verdict == .quiet {
-                            Text(TeleprompterRecordingFlow.quietTakeMessage).font(KriaFont.body(14))
-                                .foregroundStyle(KriaColor.mutedInk).accessibilityIdentifier("teleprompter-quiet-take")
-                        }
-                        if let cinematic = take.cinematic, take.status != .invalid {
-                            Label(cinematic.creatorMessage, systemImage: cinematic == .applied ? "camera.aperture" : "info.circle")
-                                .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                                .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("teleprompter-review-cinematic")
-                        }
-                        if take.speakerBackground != nil {
-                            Text("Your background is added with this take. The recording itself stays unedited.")
-                                .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                                .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("teleprompter-review-background")
-                        }
-                        if let note = flow.backgroundNote {
-                            Text(note).font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                                .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("teleprompter-background-note")
-                        }
-                        if let note = flow.photosNote {
-                            Text(note).font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                                .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("teleprompter-photos-note")
-                        }
-                        if flow.queueAccepted || flow.usingTake { ProgressView("Adding take to your edit…") }
-                        if let message = admissionMessage(take), !flow.queueAccepted { Text(message).font(KriaFont.body(14)).foregroundStyle(KriaColor.mutedInk) }
-                        if let error = flow.error { errorText(error).accessibilityIdentifier("teleprompter-review-error") }
-                        if take.status != .invalid, take.audioCheck?.verdict != .silent {
-                            Button(take.audioCheck?.verdict == .quiet ? "Use anyway" : "Use take") { Task { await flow.useTake(intake) } }
-                                .buttonStyle(KriaPrimaryButtonStyle()).frame(maxWidth: .infinity)
-                                .disabled(admissionMessage(take) != nil || flow.usingTake || flow.queueAccepted)
-                                .accessibilityIdentifier("teleprompter-use-take")
-                        }
-                        Button(take.audioCheck?.verdict == .silent ? "Record again" : "Retake") { Task { await flow.retake() } }.buttonStyle(KriaSecondaryButtonStyle())
-                            .disabled(flow.usingTake || flow.queueAccepted).accessibilityIdentifier("teleprompter-retake")
-                        if let previous = flow.pendingTake, previous.id != take.id {
-                            Button("Previous take") { flow.previousTake() }.buttonStyle(KriaSecondaryButtonStyle())
-                                .disabled(flow.usingTake || flow.queueAccepted)
-                            Text("Returning to the previous take discards this candidate.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
-                        }
-                        Button("Discard take", role: .destructive) { confirmsDiscard = true }.buttonStyle(KriaSecondaryButtonStyle())
-                            .disabled(flow.usingTake || flow.queueAccepted)
-                    } else if flow.needsMetadataRetry {
-                        if let error = flow.error { errorText(error) }
-                        Button("Retry saving take") { flow.retryMetadata() }.buttonStyle(KriaPrimaryButtonStyle())
-                    } else {
-                        if let error = flow.error { errorText(error) }
-                        Button("Edit script") { flow.editScript() }.buttonStyle(KriaPrimaryButtonStyle())
+                    ZStack {
+                        capture
+                        HStack { Spacer(); flip }
                     }
-                }.padding(20)
-            }.toolbar(.hidden, for: .navigationBar)
-                .safeAreaInset(edge: .top) { WorkspaceTopRow(title: "Review take", leading: { Color.clear.frame(width: 44, height: 44) }, trailing: { closeButton.disabled(flow.usingTake) }).background(KriaColor.paper) }
+                    if idle, let onUpload { KriaCameraUploadButton(fullWidth: true) { leaveForUpload(onUpload) } }
+                }
+            } else {
+                HStack {
+                    Group {
+                        if idle, let onUpload { KriaCameraUploadButton { leaveForUpload(onUpload) } }
+                        else { Color.clear.frame(height: 44) }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    capture
+                    flip.frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            }
+        }
+        .padding(.horizontal, 24)
+    }
+
+    private func leaveForUpload(_ upload: @escaping () -> Void) {
+        flow.persistDraft()
+        dismiss()
+        upload()
+    }
+
+    // MARK: Review (Paper S3.12)
+
+    private var takeReview: some View {
+        let take = flow.selectedTake
+        let silent = take?.audioCheck?.verdict == .silent
+        let admission = take.flatMap { admissionMessage($0) }
+        let blocked = admission != nil && !flow.queueAccepted
+        let failureShowing = silent || blocked || take?.status == .invalid || flow.error != nil
+        let showsBar = !flow.attachmentFinished && take != nil
+        // At accessibility sizes the whole review scrolls, so the player keeps its size and no label is cut off.
+        return Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        reviewHeader
+                        reviewContent(take: take, silent: silent, admission: admission, failureShowing: failureShowing)
+                        if showsBar, let take { reviewBar(take: take, silent: silent, blocked: blocked, admission: admission, failureShowing: failureShowing) }
+                    }
+                }
+            } else {
+                VStack(spacing: 0) {
+                    reviewHeader
+                    reviewContent(take: take, silent: silent, admission: admission, failureShowing: failureShowing)
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if showsBar, let take { reviewBar(take: take, silent: silent, blocked: blocked, admission: admission, failureShowing: failureShowing) }
+                }
+            }
         }
     }
 
-    private var closeButton: some View {
-        KriaGlassCloseButton(identifier: "teleprompter-close", label: "Close, keeping script and take") { flow.persistDraft(); dismiss() }
+    private var reviewHeader: some View {
+        HStack(spacing: 12) {
+            Button { flow.persistDraft(); dismiss() } label: { Image(systemName: "xmark").font(.system(size: 17, weight: .semibold)) }
+                .buttonStyle(.kriaIcon).accessibilityLabel("Close, keeping script and take")
+                .accessibilityIdentifier("teleprompter-close").disabled(flow.usingTake)
+            Text("Review take").kriaType(.title).foregroundStyle(KriaColor.ink).accessibilityAddTraits(.isHeader)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 24).padding(.top, 12).padding(.bottom, 12)
     }
+
+    @ViewBuilder private func reviewContent(take: TeleprompterTakeManifest?, silent: Bool, admission: String?, failureShowing: Bool) -> some View {
+        if flow.attachmentFinished {
+            VStack(spacing: 16) {
+                KriaCheckDisc(size: 24)
+                Text("Take added to your edit").kriaType(.heading).foregroundStyle(KriaColor.ink)
+                Button("Done") { dismiss() }.buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true))
+            }
+            .padding(.horizontal, 24).frame(maxHeight: .infinity)
+        } else if let take {
+            VStack(spacing: 12) {
+                if take.status != .invalid {
+                    ReviewTakePlayer(url: flow.store.fileURL(for: take)).id(take.id)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    KriaNoticeCard(tone: .failure, title: "This interrupted take couldn’t be played.")
+                        .frame(maxHeight: .infinity, alignment: .top)
+                }
+                reviewNotices(take: take, silent: silent, admission: admission)
+            }
+            .padding(.horizontal, 24)
+        } else {
+            VStack(spacing: 12) {
+                if let error = flow.error { KriaNoticeCard(tone: .failure, title: error) }
+                if flow.needsMetadataRetry {
+                    Button("Retry saving take") { flow.retryMetadata() }.buttonStyle(KriaButtonStyle(role: failureShowing ? .ink : .primary, fullWidth: true))
+                } else {
+                    Button("Record again") { Task { await flow.openCamera() } }.buttonStyle(KriaButtonStyle(role: failureShowing ? .ink : .primary, fullWidth: true))
+                }
+            }
+            .padding(.horizontal, 24).frame(maxHeight: .infinity, alignment: .top)
+        }
+    }
+
+    @ViewBuilder private func reviewNotices(take: TeleprompterTakeManifest, silent: Bool, admission: String?) -> some View {
+        VStack(spacing: 8) {
+            if take.interrupted, take.status != .invalid {
+                KriaNoticeCard(tone: .warning, title: "\(take.stopReason?.creatorMessage ?? "Recording was interrupted.") Review this take before using it.")
+            }
+            if silent {
+                KriaNoticeCard(tone: .failure, title: "This take has no sound.",
+                               message: "Your microphone didn’t record anything. Record again with the mic uncovered.")
+                    .accessibilityIdentifier("teleprompter-silent-take")
+            } else if take.audioCheck?.verdict == .quiet {
+                KriaNoticeCard(tone: .warning, title: TeleprompterRecordingFlow.quietTakeMessage)
+                    .accessibilityIdentifier("teleprompter-quiet-take")
+            }
+            if let cinematic = take.cinematic, take.status != .invalid {
+                reviewNote(cinematic.creatorMessage, id: "teleprompter-review-cinematic")
+            }
+            if take.speakerBackground != nil {
+                reviewNote("Your background is added with this take. The recording itself stays unedited.", id: "teleprompter-review-background")
+            }
+            if let note = flow.backgroundNote { reviewNote(note, id: "teleprompter-background-note") }
+            if let note = flow.photosNote { reviewNote(note, id: "teleprompter-photos-note") }
+            if flow.queueAccepted || flow.usingTake {
+                HStack(spacing: 8) { KriaSpinner(size: 16); Text("Adding take to your edit…").kriaType(.label).foregroundStyle(KriaColor.mutedInk) }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let admission, !flow.queueAccepted {
+                KriaNoticeCard(tone: .failure, title: admission).accessibilityIdentifier("teleprompter-admission")
+            }
+            if let error = flow.error, !silent, take.status != .invalid {
+                KriaNoticeCard(tone: .failure, title: error).accessibilityIdentifier("teleprompter-review-error")
+            }
+        }
+    }
+
+    private func reviewNote(_ text: String, id: String) -> some View {
+        Text(text).kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+            .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier(id)
+    }
+
+    /// The primary is butter, except while a failure notice is on screen: butter never sits beside red, so it is ink then.
+    private func reviewBar(take: TeleprompterTakeManifest, silent: Bool, blocked: Bool, admission: String?, failureShowing: Bool) -> some View {
+        let primary: KriaButtonStyle.Role = failureShowing ? .ink : .primary
+        let busy = flow.usingTake || flow.queueAccepted
+        let canUse = take.status != .invalid && !silent
+        let limitHit = blocked && (admission?.hasPrefix("This video already has") ?? false)
+        return VStack(spacing: 8) {
+            if canUse, !blocked {
+                Button(take.audioCheck?.verdict == .quiet ? "Use anyway" : "Use take") { Task { await flow.useTake(intake) } }
+                    .buttonStyle(KriaButtonStyle(role: primary, fullWidth: true, isLoading: flow.usingTake))
+                    .disabled(busy).accessibilityIdentifier("teleprompter-use-take")
+            } else if canUse, blocked {
+                Button(limitHit ? "Manage clips" : "Close") { flow.persistDraft(); dismiss() }
+                    .buttonStyle(KriaButtonStyle(role: primary, fullWidth: true)).accessibilityIdentifier("teleprompter-manage-clips")
+            } else {
+                Button { Task { await flow.retake() } } label: { Label("Record again", systemImage: KriaSourceOption.recordSymbol) }
+                    .buttonStyle(KriaButtonStyle(role: primary, fullWidth: true)).disabled(busy)
+                    .accessibilityIdentifier("teleprompter-retake")
+            }
+            // Side by side while both labels fit whole; stacked once larger text needs the width.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { reviewAlternatives(canUse: canUse, busy: busy) }
+                VStack(spacing: 8) { reviewAlternatives(canUse: canUse, busy: busy) }
+            }
+            if let previous = flow.pendingTake, previous.id != take.id {
+                Button("Go back to previous take") { flow.previousTake() }
+                    .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium, fullWidth: true)).disabled(busy)
+                    .accessibilityIdentifier("teleprompter-previous-take")
+            }
+            Button("Discard take") { confirmsDiscard = true }
+                .buttonStyle(KriaButtonStyle(role: .tertiaryDestructive, size: .medium, fullWidth: true)).disabled(busy)
+                .accessibilityIdentifier("teleprompter-discard")
+        }
+        .padding(.horizontal, 24).padding(.top, 12).padding(.bottom, 8)
+        .background(KriaColor.paper)
+    }
+
+    @ViewBuilder private func reviewAlternatives(canUse: Bool, busy: Bool) -> some View {
+        if canUse {
+            Button { Task { await flow.retake() } } label: { Label("Record again", systemImage: KriaSourceOption.recordSymbol) }
+                .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, fullWidth: true)).disabled(busy)
+                .accessibilityIdentifier("teleprompter-retake")
+        }
+        if let onUpload {
+            Button { leaveForUpload(onUpload) } label: { Label("Upload instead", systemImage: KriaSourceOption.uploadSymbol) }
+                .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, fullWidth: true)).disabled(busy)
+                .accessibilityIdentifier("review-upload")
+        }
+    }
+
     private func closeCapture() {
-        if flow.stage == .countdown { flow.cancelCountdown(); flow.editScript() }
+        if flow.stage == .countdown { flow.cancelCountdown() }
         else if flow.captureBusy { flow.stop() }
-        else { flow.editScript() }
+        else { flow.persistDraft(); dismiss() }
     }
     private func errorText(_ text: String) -> some View {
-        Text(text).font(KriaFont.body(14)).foregroundStyle(KriaColor.failureText).frame(maxWidth: .infinity, alignment: .leading)
+        Text(text).kriaType(.label).foregroundStyle(Color.white).frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -299,7 +484,6 @@ private struct TeleprompterBackgroundPreviewNotice: View {
 /// The "Background" capsule: pick a photo or video from the library, or clear it. Nothing uploads from here.
 private struct TeleprompterBackgroundMenu: View {
     @ObservedObject var flow: TeleprompterRecordingFlow
-    let accessibilityLayout: Bool
     @State private var showsPicker = false
     @State private var item: PhotosPickerItem?
     @State private var loading = false
@@ -319,10 +503,10 @@ private struct TeleprompterBackgroundMenu: View {
         } label: {
             HStack(spacing: 6) {
                 if loading { ProgressView() } else { KriaIcon(.gallery) }
-                if !accessibilityLayout { Text("Background") }
+                Text("Background").multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             }
             .font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.ink)
-            .padding(.horizontal, 12).frame(minHeight: 44).kriaFloatingSurface(Capsule())
+            .padding(.horizontal, 12).padding(.vertical, 6).frame(minHeight: 44).kriaFloatingSurface(Capsule())
         }
         .disabled(flow.captureBusy || loading)
         .accessibilityLabel("Background").accessibilityValue(stateLabel)
@@ -358,62 +542,6 @@ private struct TeleprompterBackgroundMenu: View {
     }
 }
 
-private struct TeleprompterReadEstimate: View {
-    @ObservedObject var script: TeleprompterScript
-    var body: some View { Text("About \(Int(ceil(script.estimatedReadTime))) seconds at \(script.wordsPerMinute) words/min")
-        .font(KriaFont.body(14)).foregroundStyle(KriaColor.mutedInk) }
-}
-private struct TeleprompterScriptEditor: View {
-    @ObservedObject var script: TeleprompterScript
-    let save: () -> Void
-    var body: some View {
-        TextEditor(text: Binding(get: { script.text }, set: { script.updateText($0); save() }))
-            .font(KriaFont.body(20)).foregroundStyle(KriaColor.ink)
-            .frame(minHeight: 240)
-            .padding(12).background(KriaColor.selectionSoft, in: RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(KriaColor.line))
-            .accessibilityLabel("Script").accessibilityIdentifier("teleprompter-script-editor")
-    }
-}
-private struct TeleprompterOpenCameraButton: View {
-    @ObservedObject var script: TeleprompterScript
-    let open: () -> Void
-    var body: some View {
-        Button("Open camera", action: open).buttonStyle(KriaPrimaryButtonStyle()).frame(maxWidth: .infinity)
-            .disabled(script.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .accessibilityIdentifier("teleprompter-open-camera")
-    }
-}
-private struct TeleprompterCameraErrorCard: View {
-    let message: String
-    let accessibilityLayout: Bool
-    let editScript: () -> Void
-    let retry: () -> Void
-    let openSettings: () -> Void
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(message).font(KriaFont.body(15)).fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("teleprompter-camera-error")
-                if accessibilityLayout {
-                    VStack(spacing: 8) { actions }
-                } else {
-                    HStack(spacing: 8) { actions }
-                }
-            }.frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .frame(maxHeight: accessibilityLayout ? 210 : 170)
-        .padding(16).kriaGlassPanel(cornerRadius: 20).padding(.horizontal, 16)
-    }
-
-    @ViewBuilder private var actions: some View {
-        Button("Edit script", action: editScript).buttonStyle(KriaSecondaryButtonStyle(minHeight: 44)).fixedSize(horizontal: false, vertical: true)
-            .accessibilityIdentifier("teleprompter-edit-script")
-        Button("Try again", action: retry).buttonStyle(KriaSecondaryButtonStyle(minHeight: 44)).fixedSize(horizontal: false, vertical: true)
-        Button("Settings", action: openSettings).buttonStyle(KriaSecondaryButtonStyle(minHeight: 44)).fixedSize(horizontal: false, vertical: true)
-    }
-}
 /// "Starting recording…" / "Saving take…", and KRI-1160's longer "Applying Cinematic look…" while a take is baked.
 private struct TeleprompterSavingLabel: View {
     @ObservedObject var camera: TeleprompterCamera
@@ -427,154 +555,39 @@ private struct TeleprompterSavingLabel: View {
     }
 }
 
-/// KRI-1160: the Cinematic switch's state, owned by the recording flow.
-struct TeleprompterCinematicChoice {
-    let availability: TeleprompterCinematic.Availability
-    let enabled: Bool
-    let set: (Bool) -> Void
-}
-
-private struct TeleprompterCaptureControls: View {
-    @ObservedObject var script: TeleprompterScript
+/// KRI-1160: the Cinematic capsule shows what the camera is really recording, not what was asked for. It reads
+/// the camera itself, which the screen's own flow object does not republish.
+private struct TeleprompterCinematicCapsule: View {
+    @ObservedObject var flow: TeleprompterRecordingFlow
     @ObservedObject var camera: TeleprompterCamera
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    let cinematic: TeleprompterCinematicChoice
-    let recording: Bool
-    let manual: Bool
-    let enableAutomaticScroll: (() -> Void)?
-    let record: () -> Void
-    let stop: () -> Void
-
-    private var usesAccessibilityLayout: Bool { dynamicTypeSize.isAccessibilitySize }
-    private var optionsHeight: CGFloat { usesAccessibilityLayout ? 200 : 156 }
 
     var body: some View {
-        VStack(spacing: 12) {
-            ScrollView {
-                options
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxHeight: optionsHeight)
-            .accessibilityIdentifier("teleprompter-capture-options")
-            manualReadingControls
-            captureActions
-        }.padding(16).kriaGlassPanel(cornerRadius: 24).padding(.horizontal, 16)
+        // While the graph is rebuilt for a front-camera request the capsule follows the request, then the real state.
+        let settling = flow.cinematicEnabled && camera.position == .front && camera.phase == .preparing
+        KriaCameraCapsule(title: "Cinematic", symbol: "camera.aperture", identifier: "teleprompter-cinematic",
+                          isOn: camera.cinematicActive || settling) { flow.setCinematic(!flow.cinematicEnabled) }
+    }
+}
+
+/// Says so when Cinematic is asked for but the take will be standard: the rear camera cannot record it, and the
+/// front camera may fall back.
+private struct TeleprompterCinematicNote: View {
+    @ObservedObject var flow: TeleprompterRecordingFlow
+    @ObservedObject var camera: TeleprompterCamera
+
+    private var text: String? {
+        guard flow.cinematicEnabled, camera.error == nil, camera.phase != .preparing else { return nil }
+        if camera.position == .back { return "Cinematic records with the front camera, so this take is standard." }
+        return camera.cinematicNote
     }
 
-    private var options: some View {
-        VStack(spacing: 12) {
-            // Chosen before a take; while recording the mode cannot change, so the space goes to reading controls.
-            if !recording { cinematicOption }
-            VStack(spacing: 4) {
-                HStack {
-                    Text("\(script.wordsPerMinute) words/min").font(KriaFont.body(14).weight(.semibold))
-                    Spacer()
-                    if recording { TeleprompterElapsed(start: camera.recordingStartedAt) }
-                }
-                Slider(value: Binding(get: { Double(script.wordsPerMinute) }, set: { script.setWordsPerMinute(Int($0)) }), in: 60...240, step: 5)
-                    .tint(KriaColor.sky).accessibilityLabel("Approximate reading pace")
-                    .accessibilityValue("\(script.wordsPerMinute) words per minute")
-                    .accessibilityAdjustableAction { direction in
-                        switch direction {
-                        case .increment: script.setWordsPerMinute(script.wordsPerMinute + 5)
-                        case .decrement: script.setWordsPerMinute(script.wordsPerMinute - 5)
-                        @unknown default: break
-                        }
-                    }
-                    .accessibilityIdentifier("teleprompter-pace")
-                HStack { Text("Slower"); Spacer(); Text("Faster") }.font(KriaFont.body(12))
-            }
-            if !manual {
-                Button("Back a line", action: script.backLine).buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
-                    .frame(maxWidth: .infinity)
-            }
-            if script.hasEnded { Text("End of script").font(KriaFont.body(13)) }
-        }
-    }
-
-    /// Unavailable iPhones see the switch off and disabled, with why, so a standard take is never mistaken for Cinematic.
-    private var cinematicOption: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Toggle(isOn: Binding(get: { cinematic.enabled }, set: cinematic.set)) {
-                Label("Cinematic", systemImage: "camera.aperture").font(KriaFont.body(14).weight(.semibold))
-            }
-            .tint(KriaColor.sky)
-            .disabled(cinematic.availability != .available || camera.phase == .preparing)
-            .accessibilityHint("Softly blurs the background behind you, like the Camera app’s Cinematic mode.")
-            .accessibilityIdentifier("teleprompter-cinematic")
-            Text(cinematicCaption).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+    var body: some View {
+        if let text {
+            Text(text).kriaType(.label).foregroundStyle(Color.white)
                 .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("teleprompter-cinematic-note")
-        }
-    }
-
-    private var cinematicCaption: String {
-        if let message = cinematic.availability.creatorMessage { return message }
-        if cinematic.enabled, let note = camera.cinematicNote { return note }
-        return cinematic.enabled ? "Your background is softly blurred, like the Camera app’s Cinematic mode."
-            : "Blur the background behind you, like the Camera app’s Cinematic mode."
-    }
-
-    @ViewBuilder private var manualReadingControls: some View {
-        if manual {
-            pairedActions(first: "Previous line", firstAction: script.backLine, second: "Next line", secondAction: script.nextLine)
-            if let enableAutomaticScroll {
-                Button("Use steady scrolling", action: enableAutomaticScroll).buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
-                    .frame(maxWidth: .infinity)
-            }
-        }
-    }
-
-    @ViewBuilder private func pairedActions(first: String, firstAction: @escaping () -> Void, firstIdentifier: String? = nil,
-                                            second: String, secondAction: @escaping () -> Void) -> some View {
-        let actions = Group {
-            Button(first, action: firstAction).buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
-                .accessibilityIdentifier(firstIdentifier ?? "teleprompter-action-\(first.lowercased())")
-            Button(second, action: secondAction).buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
-        }
-        if usesAccessibilityLayout { VStack(spacing: 8) { actions } }
-        else { HStack(spacing: 8) { actions } }
-    }
-
-    @ViewBuilder private var captureActions: some View {
-        if usesAccessibilityLayout {
-            VStack(spacing: 8) { actionButtons }
-        } else {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) { actionButtons }
-                VStack(spacing: 8) { actionButtons }
-            }
-        }
-    }
-
-    @ViewBuilder private var actionButtons: some View {
-        Button(action: recording ? stop : record) {
-            Group {
-                if usesAccessibilityLayout {
-                    Text(recording ? "Stop recording" : "Record")
-                } else {
-                    Label(recording ? "Stop recording" : "Record", systemImage: recording ? "stop.fill" : "record.circle")
-                }
-            }.fixedSize(horizontal: false, vertical: true)
-        }
-        .buttonStyle(KriaInkCTAButtonStyle(height: 52))
-        .frame(maxWidth: .infinity)
-        .disabled(!recording && camera.phase != .ready)
-        .accessibilityIdentifier(recording ? "teleprompter-stop-recording" : "teleprompter-record")
-
-        if !manual {
-            Button {
-                if script.isPlaying { script.pause() } else { script.resume() }
-            } label: {
-                Text(script.isPlaying ? "Stop prompter" : "Start prompter")
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.vertical, usesAccessibilityLayout ? 8 : 0)
-            }
-            .buttonStyle(KriaSecondaryButtonStyle(minHeight: 52))
-            .frame(maxWidth: .infinity)
-            .accessibilityIdentifier("teleprompter-pause-text")
+                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .kriaCameraGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .padding(.horizontal, 16).accessibilityIdentifier("teleprompter-cinematic-note")
         }
     }
 }
@@ -697,21 +710,123 @@ private struct TeleprompterWindowSettings: View {
     }
     private func apply(_ value: TeleprompterWindowPreference) { script.setWindowPreference(value); persist() }
 }
-private struct TeleprompterElapsed: View {
+
+/// Red dot and the running time, top centre while a take is on (Paper S3.09b).
+private struct TeleprompterTimerPill: View {
     let start: TimeInterval?
     var body: some View {
         SwiftUI.TimelineView(.periodic(from: .now, by: 1)) { _ in
             let elapsed = max(0, ProcessInfo.processInfo.systemUptime - (start ?? ProcessInfo.processInfo.systemUptime))
-            Label(DurationFormatter.clock(elapsed), systemImage: "circle.fill")
-                .font(KriaFont.body(14).monospacedDigit()).foregroundStyle(KriaColor.ink)
-        }.accessibilityLabel("Recording")
+            HStack(spacing: 8) {
+                Circle().fill(KriaCaptureColor.red).frame(width: 8, height: 8)
+                Text(DurationFormatter.clock(elapsed)).kriaType(.button).monospacedDigit()
+            }
+            .foregroundStyle(Color.white).padding(.horizontal, 16).frame(minHeight: 44)
+            .kriaCameraGlass(Capsule())
+        }
+        .accessibilityElement(children: .ignore).accessibilityLabel("Recording")
     }
 }
-private struct TeleprompterTakePlayer: View {
-    let url: URL
-    @State private var player: AVPlayer?
+
+/// "Line 6 of 15 · 38%": where the prompter is. Reads the script itself, so a tick redraws only this chip.
+private struct TeleprompterProgressChip: View {
+    @ObservedObject var script: TeleprompterScript
+
     var body: some View {
-        VideoPlayer(player: player).onAppear { player = AVPlayer(url: url) }
-            .onDisappear { player?.pause(); player = nil }
+        if !script.visualLines.isEmpty, script.travelDistance > 0 {
+            let total = script.visualLines.count
+            let current = (script.visualLines.lastIndex { $0.anchor <= script.scrollPosition + 1 } ?? 0) + 1
+            let percent = Int((min(1, script.scrollPosition / script.travelDistance) * 100).rounded())
+            KriaCameraCapsule(title: "Line \(current) of \(total) · \(percent)%", identifier: "teleprompter-progress")
+        }
+    }
+}
+
+/// Reading pace and the line controls, in a short sheet over the camera. It scrolls, so larger text never cuts it off.
+private struct TeleprompterSpeedSheet: View {
+    @ObservedObject var script: TeleprompterScript
+    let manual: Bool
+    let persist: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Speed").kriaType(.heading).foregroundStyle(KriaColor.ink).accessibilityAddTraits(.isHeader)
+                VStack(spacing: 4) {
+                    Text("\(script.wordsPerMinute) words/min").kriaType(.button).frame(maxWidth: .infinity, alignment: .leading)
+                    Slider(value: Binding(get: { Double(script.wordsPerMinute) }, set: { script.setWordsPerMinute(Int($0)); persist() }), in: 60...240, step: 5)
+                        .tint(KriaColor.sky).accessibilityLabel("Approximate reading pace")
+                        .accessibilityValue("\(script.wordsPerMinute) words per minute")
+                        .accessibilityAdjustableAction { direction in
+                            switch direction {
+                            case .increment: script.setWordsPerMinute(script.wordsPerMinute + 5)
+                            case .decrement: script.setWordsPerMinute(script.wordsPerMinute - 5)
+                            @unknown default: break
+                            }
+                        }
+                        .accessibilityIdentifier("teleprompter-pace")
+                    HStack(alignment: .top) { Text("Slower"); Spacer(minLength: 8); Text("Faster") }
+                        .kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { lineButtons }
+                    VStack(spacing: 8) { lineButtons }
+                }
+                if script.hasEnded { Text("End of script").kriaType(.label).foregroundStyle(KriaColor.mutedInk) }
+            }
+            .padding(24).frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .background(KriaColor.paper)
+    }
+
+    @ViewBuilder private var lineButtons: some View {
+        Button("Back a line") { script.backLine() }.buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, fullWidth: true))
+        Button("Start of script") { script.reset() }.buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, fullWidth: true))
+    }
+}
+
+
+/// Reads the script itself, so the pace and the prompter switch redraw as it changes (the flow does not republish it).
+private struct TeleprompterScriptStatusRow: View {
+    @ViewBuilder private var chips: some View {
+        KriaCameraCapsule(title: "Speed · \(script.wordsPerMinute) wpm", identifier: "teleprompter-speed", action: openSpeed)
+        TeleprompterProgressChip(script: script)
+        if !manual {
+            KriaCameraCapsule(title: script.isPlaying ? "Stop prompter" : "Start prompter", identifier: "teleprompter-pause-text") {
+                if script.isPlaying { script.pause() } else { script.resume() }
+            }
+        }
+    }
+
+    @ObservedObject var script: TeleprompterScript
+    let manual: Bool
+    let useSteady: () -> Void
+    let openSpeed: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if manual {
+                HStack(spacing: 8) {
+                    KriaCameraCapsule(title: "Previous line", identifier: "teleprompter-action-previous line") { script.backLine() }
+                    KriaCameraCapsule(title: "Next line", identifier: "teleprompter-action-next line") { script.nextLine() }
+                }
+                if !UIAccessibility.isVoiceOverRunning {
+                    KriaCameraCapsule(title: "Use steady scrolling", identifier: "teleprompter-steady", action: useSteady)
+                }
+            }
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(spacing: 8) { chips }
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) { chips }.padding(.horizontal, 16)
+                    }
+                    .accessibilityIdentifier("teleprompter-capture-options")
+                }
+            }
+        }
     }
 }
