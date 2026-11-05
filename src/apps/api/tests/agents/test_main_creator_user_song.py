@@ -83,14 +83,15 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v119 (KRI-1189, was v117 on its branch) teaches `cut_restarts` in the brief section's
 # cleanup sentence: the two brief-on hashes re-pinned (v118's sentence restores ea4b279f /
 # a855f01d); brief-off unchanged.
-# v121 (Qendresa 13) teaches `pauses: "tight"` in the same cleanup sentence: the two brief-on
-# hashes re-pinned (v119's: 10202eb7… / d3a50520…); brief-off unchanged.
+# v121 (Qendresa 13) teaches `pauses: "tight"` in the same cleanup sentence, on top of v120
+# (Qendresa 12, `caption_words` / `caption_box`): the two brief-on hashes re-pinned for both
+# (v119's: 10202eb7… / d3a50520…; v120 alone: ad987056 / 6c9afec6); brief-off unchanged.
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "89e8d14d8ab02add262c9a3a4acaa94691edce07ef37e440f437108a465c5bf4",
+    (True, True): "b4ebb285ecf45439fac6a6ef12251cfe6ee507d8f8c7760a0a37de07c7753b26",
     (True, False): "e3de37c194b88bd906568375111a33a5d8ec8bdab981a29ff6f377162710e87e",
-    (False, True): "7b7685f14ed72da217f05603862e6edbdde2ceaac2cf735d6a28c6f47637ae72",
+    (False, True): "bbccdc9144d5257ecbe3e647d944c970665902b7f8afe7f0ea8e5388992f9e52",
     (False, False): "e804c3135cb2e6eae9093216bee3ee0d97159aa120c2b1eef8e34e61a3d37240",
 }
 

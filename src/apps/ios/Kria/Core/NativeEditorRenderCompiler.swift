@@ -704,6 +704,13 @@ enum NativeEditorRenderError: Error, Equatable {
             // KRI-1007: a cue's own phases win over the all-captions default (`phone_captions.compile_caption_layers`).
             let defaultCaptionPhases = Self.captionPhases(meta["animation_phases"])
             var previousWordEnd = 0.0
+            let shape = meta["shape"]?.objectValue ?? [:]
+            let shapeBox: String? = {
+                guard let hex = shape["box"]?.stringValue, hex.count == 7, hex.first == "#",
+                      UInt32(hex.dropFirst(), radix: 16) != nil else { return nil }
+                return hex
+            }()
+            let shapeDim = shapeBox == nil && shape["dim"]?.boolValue == true
             // KRI-202: two caption_cues rows can reach the client already
             // overlapping in time (the cloud's own de-overlap guard,
             // `phone_captions._prepare_cues`, runs on a compiled copy the
@@ -746,7 +753,23 @@ enum NativeEditorRenderError: Error, Equatable {
                 let cueEnd = min(item.end, clampedCueEnd[cue.id] ?? item.end)
                 if cueEnd <= item.start { continue }
                 let phases = Self.captionPhases(cue.raw["animation_phases"]) ?? defaultCaptionPhases
-                if wordStyle || explicitHighlight == true {
+                // Qendresa item 12: `caption_meta.shape` is the creator's typed caption shape. A box draws each
+                // 1-2-word cue as one static layer on a rounded box; a karaoke layer would paint the box per word.
+                if let boxHex = shapeBox {
+                    captionStyle.background = try ink(.string(boxHex), fallback: boxHex)
+                    captionStyle.backgroundPaddingX = Self.captionBoxPadXEm * captionStyle.size
+                    captionStyle.backgroundPaddingY = Self.captionBoxPadYEm * captionStyle.size
+                    captionStyle.backgroundRadius = Self.captionBoxRadiusEm * captionStyle.size
+                }
+                // `dim`: only the spoken word takes the highlight; the rest is the caption colour dimmed. The
+                // creator's own "highlight spoken word" choice wins, so this applies only while it is unset.
+                var dimmedStyle = captionStyle
+                if shapeDim, explicitHighlight == nil {
+                    let base = captionStyle.color
+                    dimmedStyle.color = TextInk(red: base.red * Self.captionDimFactor, green: base.green * Self.captionDimFactor,
+                                                blue: base.blue * Self.captionDimFactor, alpha: base.alpha)
+                }
+                if shapeBox == nil && (wordStyle || explicitHighlight == true) {
                     let tokens = cue.text.split(whereSeparator: \.isWhitespace).map(String.init)
                     let wordValues: [JSONValue]
                     if case .array(let values) = cue.raw["words"] { wordValues = values } else { wordValues = [] }
@@ -792,7 +815,7 @@ enum NativeEditorRenderError: Error, Equatable {
                     text.append(Self.layer(try AuthoredTextLayout.compileHighlightedWords(id: "caption-" + cue.id, text: cue.text,
                         start: first, end: min(total, explicitHighlight == nil ? previousWordEnd : min(cueEnd, previousWordEnd)), starts: starts.map { $0 - first },
                         highlight: explicitHighlight == false ? captionStyle.color : try ink(meta["highlight_color"], fallback: "#C5F82A"),
-                        style: captionStyle, fontURL: font, canvas: canvas), phases: phases))
+                        style: dimmedStyle, fontURL: font, canvas: canvas), phases: phases))
                 } else if let phases {
                     text.append(try AuthoredTextLayout.compile(id: "caption-" + cue.id, text: cue.text,
                         start: item.start, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas, phases: phases))
@@ -805,7 +828,7 @@ enum NativeEditorRenderError: Error, Equatable {
                     if captionPhases != nil { text.append(layout); continue }
                     text.append(PortableTextLayer(id: layout.id, start: layout.start, end: layout.end,
                         anchorX: layout.anchorX, anchorY: layout.anchorY, rotationDegrees: 0, runs: layout.runs,
-                        effect: appearance["position_y_frac"] != nil ? .popIn : talkingCaptionFrame ? .captionPop : .none))
+                        effect: appearance["position_y_frac"] != nil ? .popIn : talkingCaptionFrame ? .captionPop : .none, background: layout.background))
                 }
             }
         }
@@ -1206,6 +1229,13 @@ enum NativeEditorRenderError: Error, Equatable {
         guard let object = value?.objectValue, let data = try? JSONEncoder().encode(object) else { return nil }
         return try? JSONDecoder().decode(TextAnimationPhases.self, from: data)
     }
+
+    /// Mirror the server constants `_CAPTION_BOX_PAD_X_EM`, `_CAPTION_BOX_PAD_Y_EM`, `_CAPTION_BOX_RADIUS_EM` and
+    /// `_CAPTION_DIM_FACTOR` in `src/apps/api/app/pipeline/phone_captions.py` (em = the caption font size).
+    static let captionBoxPadXEm = 0.40
+    static let captionBoxPadYEm = 0.18
+    static let captionBoxRadiusEm = 0.35
+    static let captionDimFactor = 0.65
 
     private static func layer(_ layer: PortableTextLayer, phases: TextAnimationPhases?) -> PortableTextLayer {
         var layer = layer

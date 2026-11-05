@@ -77,14 +77,15 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # (one `background_color` clause); removing those passages reproduces the values above.
 # Re-pinned for KRI-1189 (creator v119): the brief section's cleanup sentence teaches
 # `cut_restarts`; restoring v118's sentence reproduces 1eec0bfc / 6b81466c / 483dac4e / efb5da5d.
-# Re-pinned for Qendresa 13 (creator v121): the brief section's cleanup sentence teaches
-# `pauses: "tight"`; removing that clause reproduces the v119 values (e632c312 / cd66c5b5 /
-# 09c8a8cc / e86242d5).
+# Re-pinned for Qendresa 13 (creator v121, on top of Qendresa 12's v120 `caption_words` /
+# `caption_box`): the brief section's cleanup sentence teaches `pauses: "tight"`. v120 alone
+# was d690f1ff / ca93a669 / 2e66923b / f56fcd47; v119's values were e632c312 / cd66c5b5 /
+# 09c8a8cc / e86242d5.
 MAIN_PROMPT_SHA = {
-    "neither": "d93a318a1cdbde622d1c43685a43a497f8cf22a9ed48e6be2482b848f3899771",
-    (True, True): "c83b34b34d35f4a699537f0f78bad1260c50bc5f62a845f8d4c7ae455111d350",
-    (True, False): "7e58a6805fef60b10a0e871f921bad1cefa7635789240da27811c7e5d39e668f",
-    (False, True): "3fbcab5cdf4b8bd0752c548fe1534fbd2870f20702f39be8cf07a28497a671ff",
+    "neither": "39455ee18360da7e3780ec22a38d993b894d7869826bf6e87d6b6b25c9a07474",
+    (True, True): "06797395bfbd83d1aa897d786c39758dd0c1af444b8dc1055a486a6920c4af33",
+    (True, False): "4b2805986afd719d046bb7f93047dcbac8d76612379a1ca8bfc061c77e34961b",
+    (False, True): "83b280d6a117a66b3bfbdd79ee97ec5e3bb28bbf3d137db6634387c69e7e3fdd",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (
