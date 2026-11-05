@@ -322,6 +322,42 @@ def add_kind_section(add, kinds: list[dict]) -> None:
     add("")
 
 
+E2E_JSON = DEFAULT_OUT.parent / "e2e-report.json"
+
+
+def add_e2e_section(add) -> None:
+    """The end-to-end tap proof (``pytest tests/e2e_suggestions``), when its report is on disk.
+
+    That run needs Postgres, so this offline report only reads its JSON twin; it never runs it.
+    ``tap executes`` is the literal question (a card served by the unmodified GET, tapped, is
+    applied); ``seam executes`` is the pinned path once the ring holds the card.
+    """
+    add("### End-to-end tap proof (every served card tapped through the pinned path)")
+    add("")
+    if not E2E_JSON.exists():
+        add(
+            "Not run here. `cd src/apps/api && pytest tests/e2e_suggestions` against a scratch "
+            "`*_test` Postgres writes `.chip-eval/e2e-report.md` and `.json`."
+        )
+        add("")
+        return
+    twin = json.loads(E2E_JSON.read_text(encoding="utf-8"))
+    add(
+        f"From `.chip-eval/e2e-report.md` ({twin.get('when', '?')}, `{twin.get('sha', '?')}`). "
+        "Gaps are named G1.. in that file."
+    )
+    add("")
+    add("| kind | cells tapped | tap executes (unmodified GET) | seam executes | refused | gaps |")
+    add("| --- | --- | --- | --- | --- | --- |")
+    for row in twin.get("kinds_proven", []):
+        add(
+            f"| {row['kind']} | {row['cells_tapped']} | {'yes' if row['tap_executes'] else 'NO'} | "
+            f"{'yes' if row['seam_executes'] else 'NO'} | {row.get('refused_cells', 0)} | "
+            f"{', '.join(row['gaps']) or '-'} |"
+        )
+    add("")
+
+
 def add_agent_section(add, agent: dict) -> None:
     cass = agent["cassettes"]
     ok = sum(1 for _, _, p in cass if not p)
@@ -455,6 +491,7 @@ def render(data: dict) -> str:
     )
     add("")
     add_agent_section(add, data["agent"])
+    add_e2e_section(add)
     if data["gap_hits"]:
         add("## Known gaps (engine behaviour that contradicts the ticket, pinned as xfail)")
         add("")
