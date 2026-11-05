@@ -4432,6 +4432,48 @@ line in the editor.
 `PHONE_TALKING_RANGE_EDITS_ENABLED=true` (fly secret, restart api and worker). Rollback: set it to
 `false`; saved Range windows stay in their pinned recipes and keep rendering.
 
+## Comment-keyword ending on phone Talking edits (item 14, `CREATOR_CTA_ENDING_ENABLED`)
+
+**What it does.** A confirmed closing text of the form "comment <keyword>" ("comment READ", at most three
+keyword words, 24 characters) on a phone Talking edit is drawn the way creators like Qendresa end their
+posts, for the last 3 s: a small white handwritten "comment" (Caveat Brush), the keyword big and bold in
+cream #FCF3C3 (Bricolage Grotesque, shrunk to one line) under it, and, when an ask about the ending wants
+an arrow, a white curly arrow drawn in as a freehand drawing (`closing-arrow`) to the right. Measured from
+her posts (V4/V5/V7). The keyword is kept verbatim ("comment READ!" -> "READ!") so the two rows join back
+to the exact confirmed text; "Comment: READ" keeps the tag. The arrow head is three straight 2-point
+strokes: the phone smooths every stroke through its points (`NativeDrawingPainter.smoothPath`), so a
+corner inside one stroke would draw as a loop. Builder: `app.pipeline.phone_cta_ending.build_cta_ending`;
+worker hook: `_phone_talking_closing_rows`.
+
+**What the phone gets.** Two ordinary text rows (`closing-title`, `closing-title-keyword`, source
+`closing_title`, `cta_part` lead/keyword) and one `drawings` row, so the editor moves or deletes them like
+any other text or drawing. Both fonts ship in every build's font bundle and drawings need `freehandDrawing`
+(protocol 6), so no new protocol or verified token.
+
+**Placement.** The block (both rows and the arrow) goes just under the speaker's face when it clears the
+face and the captions on screen, else the nearest row that does, else the nearest that clears the face.
+An unconfirmed face (the KRI-183 fallback box) starts the block at her spot (top 0.60), never just under
+the box. With a closing photo, protected objects (KRI-827), an inserted clip (KRI-1151) inside the ending,
+no room off the face, a font that can't draw a character, or a text that isn't "comment <keyword>",
+today's lime tag is drawn instead (`cta_fallback` on the placement receipt when the text was a CTA).
+
+**Gates.** `CREATOR_CTA_ENDING_ENABLED` (default off) + the closing-title lane + `freehand_drawing_enabled`
++ `freehandDrawing` in `PHONE_RENDER_VERIFIED_FEATURES` + the approving build's `creator_client_protocol`
+>= `freehand_drawing_min_client_protocol`. Anything else keeps the lime tag (byte-identical; guard:
+`tests/tasks/test_phone_cta_ending_worker.py::test_switched_off_the_job_is_exactly_todays`).
+
+**Receipts.** A "comment <keyword>" closing text whose ask also names an arrow ("no arrow" is not an ask)
+is "met" only when a drawing whose time window overlaps the ending text (the `closing-arrow` drawing, or one
+she made herself) is on the finished video; the ID alone never counts, so an arrow she moves off the ending
+does not; otherwise it is "partial" and says the arrow isn't there and that she can draw one with the pen in
+the editor. An arrow asked next to any other text is never drawn, so it is always "partial"
+(`tests/kria/test_cta_ending_receipt.py`). Known gap: the draft's "I'll draw a curly arrow" does not know
+the approving app build, a closing photo or an inserted clip; the finished-video receipt corrects it. The approved contract's exact closing
+text matches the two rows joined (`creator_render_contract.verify_phone_recipe`).
+
+**Rollout.** `fly secrets set CREATOR_CTA_ENDING_ENABLED=true --app nova-video`, restart api + worker.
+Rollback: set it to `false`; endings already rendered keep their rows and arrow.
+
 ## Title look on phone Talking edits (Qendresa item 20)
 
 `TITLE_LOOK_ENABLED` (default **false**, API + worker; server only, no protocol or verified token).

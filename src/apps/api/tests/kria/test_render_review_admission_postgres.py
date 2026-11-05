@@ -57,7 +57,11 @@ from tests.kria.test_runtime_postgres_integration import _seed_runtime_project
 from tests.routes.test_phone_editor_commit import phone_job
 from tests.services.test_render_review_evidence import local_video  # noqa: F401
 
-pytestmark = pytest.mark.usefixtures("release_abandoned_db_connections")
+# Every test here creates review rows, and several run the review sweeps over the whole
+# table: hold the shared intent-review lock (see tests/conftest.py).
+pytestmark = pytest.mark.usefixtures(
+    "release_abandoned_db_connections", "exclusive_intent_review_ledger"
+)
 
 DEFAULT_OPS = [{"op": "patch_text_style", "bar_index": 0, "patch": {"color": "#FF0000"}}]
 
