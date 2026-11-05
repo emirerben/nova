@@ -39,6 +39,10 @@ CLIP_BACKDROP_MEDIA_PROTOCOL = 31
 # an unknown field a build drops on its next save.
 TILT_ZOOM_PROTOCOL = 33
 
+# Qendresa item 12: the first build whose editor reads `caption_meta.shape` (a caption box and
+# the dimmed not-yet-spoken word), so its preview and editor export match the rendered captions.
+CAPTION_SHAPE_PROTOCOL = 36
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()
