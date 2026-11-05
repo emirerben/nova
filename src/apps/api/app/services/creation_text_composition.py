@@ -386,13 +386,14 @@ def _check_added_text(
 
 
 def _ask_words(text: str) -> tuple[str, ...]:
-    """Words compared across case, accents, punctuation, emoji and line breaks."""
-    folded = "".join(
-        ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch)
-    )
-    folded = folded.casefold().replace("\u0131", "i")
-    # Any punctuation splits a word ("Istanbul'da" == "Istanbul da"); emoji never count.
-    return tuple(re.findall(r"[^\W_]+", folded))
+    """Words compared across case, accents, punctuation, emoji and line breaks.
+
+    The shared Turkish-aware fold (KRI-786): any punctuation splits a word
+    ("Istanbul'da" == "Istanbul da") and emoji never count.
+    """
+    from app.text_fold import loose_words  # noqa: PLC0415
+
+    return tuple(loose_words(text))
 
 
 def _literal_runs(words: tuple[str, ...], literals: list[tuple[str, ...]]) -> set[int] | None:
