@@ -456,6 +456,8 @@ async def tap_every_card(
     refusals: dict[str, tuple[str, gaps.Gap]] | None = None,
     only: frozenset[str] | None = None,
     probe_render: RenderProbe | None = None,
+    state: str = "baseline",
+    after_tap: Callable[[Cell, Phone, Tap], None] | None = None,
 ) -> list[Cell]:
     """Serve the thread, then tap each card in rank order. ``expect`` is the served kinds.
 
@@ -463,6 +465,8 @@ async def tap_every_card(
     reason, gap text)}``. The check is a named gap that FAILS the run once the tap is accepted.
     ``probe_render`` runs the render step of a restating card on a twin thread (approving the
     staged render consumes the approval Undo needs, so the thread under test is left alone).
+    ``state`` names what the thread went through before it was served (it labels the cells);
+    ``after_tap`` adds checks that belong to that state to each applied tap.
     """
     refusals = refusals or {}
     out = await phone.serve()
@@ -484,7 +488,7 @@ async def tap_every_card(
         if not remaining:
             break
         card = remaining[0]
-        cell = rec.cell(scn.key, profile, card.kind, scn.language)
+        cell = rec.cell(scn.key, profile, card.kind, scn.language, state=state)
         cell.shipped = shipped
         cell.served, cell.rank = True, first_rank.setdefault(card.kind, card.rank)
         cell.action_type, cell.title, cell.prompt = card.action_type, card.title, card.prompt
@@ -504,6 +508,8 @@ async def tap_every_card(
                 continue
         else:
             verify_tap(cell, phone, tap)
+            if after_tap is not None:
+                after_tap(cell, phone, tap)
         verify_consumed(cell, phone, tap)
         commit_refresh = await verify_second_tap(cell, phone, tap, out, scn.language)
         others = [c.kind for c in remaining[1:]]

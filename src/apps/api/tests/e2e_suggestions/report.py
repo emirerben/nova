@@ -78,6 +78,9 @@ class Cell:
     profile: str
     kind: str
     language: str = "en"
+    # The state the thread was in when the card was served: ``baseline`` (a ready render, nothing
+    # unusual) or what a round-5 scenario did first (a Save, a denied render, a pulled switch ...).
+    state: str = "baseline"
     served: bool = False
     # False for a cell run under a configuration that is not what ships (a patched dark constant).
     shipped: bool = True
@@ -144,8 +147,10 @@ class Recorder:
     negatives: list[Negative] = field(default_factory=list)
     sections: dict[str, Any] = field(default_factory=dict)
 
-    def cell(self, scenario: str, profile: str, kind: str, language: str = "en") -> Cell:
-        cell = Cell(scenario, profile, kind, language)
+    def cell(
+        self, scenario: str, profile: str, kind: str, language: str = "en", state: str = "baseline"
+    ) -> Cell:
+        cell = Cell(scenario, profile, kind, language, state=state)
         self.cells.append(cell)
         return cell
 
