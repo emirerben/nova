@@ -428,8 +428,9 @@ def test_08_draft_receipt_for_a_label_with_a_planned_sequence(monkeypatch):
 
 # Frozen on today's code (HEAD 2777c6f02, no list-label code in the tree): `_run(flag=False)` run
 # twice, on a clean `git archive HEAD` copy and on the worktree, printed `_digests(...)`; same
-# values every time. If these change, flag-off output changed.
-TODAY_RECIPE_SHA = "e21339b55f6b360c0303d2e94c11a8155c39604cf80d8379dbaf6d47769ff8f3"
+# values every time. If these change, flag-off output changed. The whole recipe's digest is not
+# frozen: its text geometry differs between this Mac and CI's Linux, so the recipe is compared
+# within one run instead (`test_09`).
 TODAY_TEXT_ELEMENTS_SHA = "f9423740063d4648215a3e57eabc5ebfcac610bcbf5048f3b44906e1f775ec0a"
 TODAY_RECEIPTS_SHA = "0d637b0d2774c1365fbb35ab5ce7b142c95ca9b2365b72e2738aa941a5148572"
 
@@ -458,18 +459,35 @@ def _digests(job, variant) -> dict[str, str]:
     }
 
 
+def _item19_never_runs(monkeypatch) -> None:
+    """With the flag off no list-label code may run at all (the worker, receipts or contract)."""
+    import app.pipeline.phone_list_labels as labels_mod
+
+    def ran(*_a, **_k):
+        raise AssertionError("list-label code ran with SPOKEN_LIST_LABELS_ENABLED off")
+
+    for name in ("list_label_asks", "list_label_rows", "find_spoken_list", "match_labels"):
+        monkeypatch.setattr(labels_mod, name, ran)
+    monkeypatch.setattr(gb, "_phone_talking_list_label_rows", ran)
+
+
 def test_09_flag_off_is_byte_identical_to_today(monkeypatch):
-    """FM 14."""
+    """FM 14: flag off, nothing of item 19 runs, the rows and receipts are today's (frozen), and
+    the recipe is the one the same job renders with no label in its brief (today a label with no
+    spoken trigger draws nothing)."""
+    _item19_never_runs(monkeypatch)
     # Item 17 off, as when the digests were frozen (the fixture's default is on).
     job, variant = _run(monkeypatch, flag=False, follows_talk=False)
     assert not _label_rows(variant)
     assert "list_label_placement" not in variant
     digests = _digests(job, variant)
-    assert digests == {
-        "recipe": TODAY_RECIPE_SHA,
+    assert {key: digests[key] for key in ("text_elements", "receipts")} == {
         "text_elements": TODAY_TEXT_ELEMENTS_SHA,
         "receipts": TODAY_RECEIPTS_SHA,
     }
+    plain = CreativeBrief(version=1, requirements=[TITLE_REQ, CLOSING_REQ])
+    plain_job, plain_variant = _run(monkeypatch, flag=False, follows_talk=False, brief=plain)
+    assert _digests(plain_job, plain_variant)["recipe"] == digests["recipe"]
 
 
 def test_10_a_label_with_a_spoken_trigger_stays_kri707_and_is_drawn_once(monkeypatch):

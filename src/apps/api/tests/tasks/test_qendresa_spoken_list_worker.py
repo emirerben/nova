@@ -347,7 +347,8 @@ def test_09b_draft_receipt_is_not_done_and_not_missing_with_the_flag_on(monkeypa
 # ------------------------------------------------------------------ flag off
 
 # Frozen on today's code (clean `git archive HEAD` copy, flag off): printed by `_digests(...)`.
-TODAY_RECIPE_SHA = "8a6b2f285b21231bb8479d5659f9794e92a29c8b5bfabe616b64a9fd6223549d"
+# The whole recipe's digest is not frozen: its text geometry differs between this Mac and CI's
+# Linux, so the recipe is compared within one run instead (`test_08`).
 TODAY_TEXT_ELEMENTS_SHA = "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
 TODAY_RECEIPTS_SHA = "de15ad5ec99413755e539046a12a219f49199aa1ace0ed5935ae0ebd6daa51ff"
 
@@ -374,16 +375,21 @@ def _digests(job, variant) -> dict[str, str]:
 
 
 def test_08_flag_off_is_byte_identical_to_today(monkeypatch):
-    """FM 14."""
+    """FM 14: flag off, nothing of item 19 runs, the rows and receipts are today's (frozen), and
+    the recipe is the one the same job renders with no label in its brief."""
+    from tests.tasks.test_qendresa_list_labels_worker import _item19_never_runs
+
+    _item19_never_runs(monkeypatch)
     job, variant = _run(monkeypatch, flag=False)
     assert not _label_rows(variant)
     assert "list_label_placement" not in variant
     digests = _digests(job, variant)
-    assert digests == {
-        "recipe": TODAY_RECIPE_SHA,
+    assert {key: digests[key] for key in ("text_elements", "receipts")} == {
         "text_elements": TODAY_TEXT_ELEMENTS_SHA,
         "receipts": TODAY_RECEIPTS_SHA,
     }
+    plain_job, plain_variant = _run(monkeypatch, flag=False, requirements=())
+    assert _digests(plain_job, plain_variant)["recipe"] == digests["recipe"]
 
 
 # ------------------------------------------------------------------ review round
