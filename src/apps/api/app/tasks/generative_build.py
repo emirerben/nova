@@ -12276,6 +12276,7 @@ def _phone_talking_caption_text(
     from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
     from app.pipeline.caption_spelling import (  # noqa: PLC0415
         creator_request_names,
+        creator_typed_names,
         extract_spelling_asks,
     )
     from app.pipeline.captions import resplit_cues_into_sentences  # noqa: PLC0415
@@ -12296,12 +12297,16 @@ def _phone_talking_caption_text(
     # KRI-793: plus every word the approved brief lists to spell in the captions
     # ("correct spellings: Oblea de la Casa, dulce de leche, ..."), applied last
     # so caption correction can never undo them.
-    # Green 4/5: plus the names the creator typed ("Kervan x Lumo Pamukkale show" -> "Curvan").
+    # Green 4/5: plus the names the creator typed ("Kervan x Lumo Pamukkale show" -> "Curvan"),
+    # which never respell a word the creator typed themselves ("Do not change Curvan to Kervan"
+    # types both) or a spelling above.
     request = _creator_request_text(all_candidates)
     names = creator_request_names(request) if settings.caption_request_names_enabled else ()
     cues = _apply_creator_spellings(
         cues,
-        _phone_caption_spellings(snapshot, (*extract_spelling_asks(request), *names)),
+        _phone_caption_spellings(snapshot, extract_spelling_asks(request)),
+        request_names=names,
+        typed=creator_typed_names(request) if names else (),
     )
     # KRI-849: "if you can't tell what he says, ask me": leave the unclear word out.
     cues, unclear_words_receipt = _apply_unclear_words(
@@ -12340,14 +12345,21 @@ def _settle_caption_case(cues: list, clip_metas: Any) -> list:
     return out
 
 
-def _apply_creator_spellings(cues: list, targets: tuple[str, ...]) -> list:
+def _apply_creator_spellings(
+    cues: list,
+    targets: tuple[str, ...],
+    *,
+    request_names: tuple[str, ...] = (),
+    typed: tuple[str, ...] = (),
+) -> list:
     """``cues`` with ``targets`` applied, and a `captions/creator_spellings` trace event
-    naming every caption line that changed (the evidence that the spellings arrived)."""
+    naming every caption line that changed (the evidence that the spellings arrived).
+    ``request_names`` follow, guarded by ``typed`` (`caption_spelling.apply_spelling_to_cues`)."""
     from app.pipeline.caption_spelling import apply_spelling_to_cues  # noqa: PLC0415
 
-    if not targets:
+    if not targets and not request_names:
         return cues
-    out = apply_spelling_to_cues(cues, targets)
+    out = apply_spelling_to_cues(cues, targets, request_names=request_names, typed=typed)
     changes = [
         {"before": str(old.get("text") or "")[:200], "after": str(new.get("text") or "")[:200]}
         for old, new in zip(cues, out, strict=True)
@@ -12359,7 +12371,11 @@ def _apply_creator_spellings(cues: list, targets: tuple[str, ...]) -> list:
         record_pipeline_event(
             "captions",
             "creator_spellings",
-            {"targets": list(targets), "changed": len(changes), "changes": changes[:20]},
+            {
+                "targets": [*targets, *(n for n in request_names if n not in targets)],
+                "changed": len(changes),
+                "changes": changes[:20],
+            },
         )
     except Exception:  # noqa: BLE001 - observability only
         pass

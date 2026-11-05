@@ -101,6 +101,15 @@ _NAME_TOKEN = re.compile(r"(?<![\w'’])([A-ZÇĞİÖŞÜ][a-zçğıöşü]+)(?:
 _SENTENCE_END = re.compile(r"[.!?…]\s*$|^\s*$")
 
 
+def _request_lines(text: str | None) -> list[str]:
+    """The creator's request, line by line, without its header line."""
+    return [
+        line
+        for line in (text or "").splitlines()
+        if not line.strip().casefold().startswith("full creator request")
+    ]
+
+
 def creator_request_names(text: str | None) -> tuple[str, ...]:
     """Names the creator typed (Green 4/5): capitalised words that do not start a sentence, at
     least ``_MIN_TARGET_LEN`` letters ("Kervan", "Pamukkale"; never "Make" at a sentence start,
@@ -108,9 +117,7 @@ def creator_request_names(text: str | None) -> tuple[str, ...]:
     unique, at most ``MAX_ASKS``."""
     names: list[str] = []
     seen: set[str] = set()
-    for line in (text or "").splitlines():
-        if line.strip().casefold().startswith("full creator request"):
-            continue
+    for line in _request_lines(text):
         for found in _NAME_TOKEN.finditer(line):
             name = found.group(1)
             if len(name) < _MIN_TARGET_LEN or _SENTENCE_END.search(line[: found.start()]):
@@ -119,6 +126,18 @@ def creator_request_names(text: str | None) -> tuple[str, ...]:
                 seen.add(_fold(name))
                 names.append(name)
     return tuple(names[:MAX_ASKS])
+
+
+def creator_typed_names(text: str | None) -> tuple[str, ...]:
+    """Every capitalised word the creator typed in the request, wherever it sits (a sentence
+    start too: "Curvan'ı ..."). A caption word that reads as one is already a creator spelling,
+    so a request-name target never respells it into another name ("Do not change Curvan to
+    Kervan" types both). No wording is read. The header line is skipped; in order, unique."""
+    typed: dict[str, str] = {}
+    for line in _request_lines(text):
+        for found in _NAME_TOKEN.finditer(line):
+            typed.setdefault(_fold(found.group(1)), found.group(1))
+    return tuple(typed.values())
 
 
 def _sound(word: str) -> str:
@@ -426,8 +445,48 @@ def _respell_phrases_in_text(text: str, phrases: Sequence[str]) -> str:
     return text
 
 
+def _reads_as_one_of(word: str, spellings: frozenset[str]) -> bool:
+    """True when the heard ``word`` is one of ``spellings`` (folded), a case ending after an
+    apostrophe or glued on allowed ("Curvan'ın", "Curvanın")."""
+    low = _fold(_split_ending(word)[0])
+    return low in spellings or any(
+        low[cut:] in _SUFFIXES and low[:cut] in spellings
+        for cut in range(len(low) - 1, _MIN_TARGET_LEN - 2, -1)
+    )
+
+
+def _with_request_names(
+    targets: Sequence[str], request_names: Sequence[str], typed: Iterable[str]
+) -> tuple[list[str], frozenset[str], frozenset[str]]:
+    """``targets`` then the request names they lack; those names (folded); and the creator
+    spellings those names never respell: every word typed in the request and every one-word
+    target (model-owned spellings keep their say)."""
+    have = {_fold(t) for t in targets}
+    extra: list[str] = []
+    for name in request_names:
+        if _fold(name) not in have:
+            have.add(_fold(name))
+            extra.append(name)
+    if not extra:
+        return list(targets), frozenset(), frozenset()
+    spelled = {_fold(t) for t in targets if len(_phrase_words(t)) == 1}
+    return (
+        [*targets, *extra],
+        frozenset(_fold(n) for n in extra),
+        frozenset({_fold(w) for w in typed} | spelled),
+    )
+
+
 def respell_text(text: str, targets: Sequence[str]) -> str:
     """``text`` with caption words that sound like a target replaced by that target."""
+    return _respell_text(text, targets, frozenset(), frozenset())
+
+
+def _respell_text(
+    text: str, targets: Sequence[str], guarded: frozenset[str], spelled: frozenset[str]
+) -> str:
+    """``respell_text``, where a ``guarded`` target (a request name, folded) never replaces a
+    word that already reads as one of ``spelled``."""
     if not text or not targets:
         return text
     phrases = [t for t in targets if len(_phrase_words(t)) > 1]
@@ -439,6 +498,8 @@ def respell_text(text: str, targets: Sequence[str]) -> str:
     def _swap(found: re.Match[str]) -> str:
         word = found.group(0)
         for target in words:
+            if guarded and _fold(target) in guarded and _reads_as_one_of(word, spelled):
+                continue
             replaced = _match_word(word, target)
             if replaced is not None:
                 return replaced
@@ -537,7 +598,12 @@ def _respelled_words(
     return out
 
 
-def _respell_word_list(words: list[dict[str, Any]], targets: Sequence[str]) -> list[dict[str, Any]]:
+def _respell_word_list(
+    words: list[dict[str, Any]],
+    targets: Sequence[str],
+    guarded: frozenset[str] = frozenset(),
+    spelled: frozenset[str] = frozenset(),
+) -> list[dict[str, Any]]:
     """A cue's timed words with the targets applied; a phrase spans adjacent words only.
 
     A word joins the next one into a phrase only when each holds exactly one token and no
@@ -576,7 +642,10 @@ def _respell_word_list(words: list[dict[str, Any]], targets: Sequence[str]) -> l
         words = [*out, *words[cursor:]]
     single_targets = [t for t in targets if len(_phrase_words(t)) == 1]
     return [
-        {**word, "text": respell_text(str(word.get("text") or ""), single_targets)}
+        {
+            **word,
+            "text": _respell_text(str(word.get("text") or ""), single_targets, guarded, spelled),
+        }
         for word in words
     ]
 
@@ -594,23 +663,33 @@ def is_mishearing(shown: str, target: str) -> bool:
 
 
 def apply_spelling_to_cues(
-    cues: Iterable[dict[str, Any]], targets: Sequence[str]
+    cues: Iterable[dict[str, Any]],
+    targets: Sequence[str],
+    *,
+    request_names: Sequence[str] = (),
+    typed: Iterable[str] = (),
 ) -> list[dict[str, Any]]:
     """Caption cues (text and attached word timings) with the creator's spellings applied.
 
     The cue's own start and end never change; a word's timing changes only when a phrase
     was heard as one word more or fewer (KRI-961), and only inside that hit. A touched cue
     is a copy.
+
+    ``request_names`` (Green 4/5, ``creator_request_names``) apply after ``targets`` and never
+    respell a word that is already a creator spelling: one the creator typed (``typed``,
+    ``creator_typed_names``: "Curvan" in "Do not change Curvan to Kervan") or a one-word
+    target. ``targets`` (quoted asks, brief-listed spellings) respell exactly as before.
     """
     cues = list(cues)
+    targets, guarded, spelled = _with_request_names(targets, request_names, typed)
     if not targets:
         return cues
     out: list[dict[str, Any]] = []
     for cue in cues:
-        text = respell_text(str(cue.get("text") or ""), targets)
+        text = _respell_text(str(cue.get("text") or ""), targets, guarded, spelled)
         words = cue.get("words")
         new_words = (
-            _respell_word_list(words, targets)
+            _respell_word_list(words, targets, guarded, spelled)
             if isinstance(words, list) and all(isinstance(w, dict) for w in words)
             else words
         )

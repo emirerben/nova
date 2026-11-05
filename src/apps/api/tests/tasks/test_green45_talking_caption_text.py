@@ -19,6 +19,19 @@ Ways the fix could fail (written before the fix):
 5. The case step lowercases a real name ("Pamukkale", "Lumo") or a sentence start ("Okay").
 6. The case step lowercases a capital that the independent record (Gemini) also writes.
 7. The switch off is not byte-identical to before.
+
+Review (Emir): "Do not change Curvan to Kervan" still captioned "Kervan": both names the creator
+typed became targets, and "Kervan" sound-matched "Curvan". A caption word that reads as a word the
+creator typed is already a creator spelling, so a typed-name target never respells it; no wording
+is read. Ways the review fix could fail (written before the fix):
+8. A typed name is still respelled into another typed name ("Curvan" -> "Kervan").
+9. The rule leans on wording or position: the iPhone's "Don’t", a Turkish sentence, or the name
+   starting a sentence ("Curvan'ı ...", never a target there) is missed.
+10. A case-ended caption form of the typed name ("Curvan'ın", "Curvanın") is still respelled.
+11. Over-reach: the Green 4 request (only "Kervan" typed) stops respelling "Curvan" (1).
+12. Model-owned spellings change: a quoted ask or a word the brief lists no longer respells a
+    typed word (an explicit "write "Kervan"" must still win).
+13. A typed-name target respells a word that already reads as a model-owned spelling.
 """
 
 from __future__ import annotations
@@ -26,6 +39,8 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+
+import pytest
 
 from app.config import settings
 from app.pipeline.transcribe import Word
@@ -138,6 +153,83 @@ def test_green5_captions_drop_title_case_the_take_record_does_not_have(monkeypat
     # 5, 6: real names, sentence starts and capitals both hearings agree on stay.
     assert "Pamukkale" in text and "Lumo" in text and text.startswith("Okay"), text
     assert "Sunrise" in text, text
+
+
+@pytest.mark.parametrize(
+    ("added", "heard_as"),
+    [
+        ("", "kervan celebrated"),  # 11: Green 4, only "Kervan" typed
+        ("Do not change Curvan to Kervan.", "curvan celebrated"),  # the review's own sentence
+        ("Don’t change Curvan to Kervan.", "curvan celebrated"),  # the iPhone's apostrophe
+        ("Curvan'ı Kervan olarak değiştirme.", "curvan celebrated"),  # a sentence start
+        ("Lütfen Curvan'ı Kervan yapma.", "curvan celebrated"),
+    ],
+)
+def test_a_name_the_creator_typed_is_never_respelled_into_another(monkeypatch, added, heard_as):
+    """8, 9, 11: the request types "Kervan" in its first sentence either way."""
+    request = FIXTURE["green4_request"].replace("No music.", f"No music. {added}".rstrip())
+    variant = _run(monkeypatch, request=request, binding=FIXTURE["green4_brief_binding"])
+    text = _text(variant).casefold()
+    assert f"{heard_as} its 10th year" in text, text
+
+
+def test_a_case_ended_typed_name_keeps_its_spelling(monkeypatch):
+    """10: the caption hears the typed name with a case ending."""
+    rows = copy.deepcopy(FIXTURE["take_words"])
+    index = next(i for i, w in enumerate(rows) if w["text"] == "Curvan")
+    rows[index]["text"] = "Curvan'ın"
+    request = FIXTURE["green4_request"].replace(
+        "No music.", "No music. Do not change Curvan to Kervan."
+    )
+    variant = _run(monkeypatch, request=request, binding=FIXTURE["green4_brief_binding"], rows=rows)
+    assert "curvan'ın celebrated" in _text(variant).casefold(), _text(variant)
+
+
+def test_a_quoted_spelling_still_respells_a_typed_name(monkeypatch):
+    """12: the creator's own quoted ask is model-owned wording and keeps its say."""
+    request = FIXTURE["green4_request"].replace(
+        "No music.", 'No music. Write "Kervan" in the captions, not Curvan.'
+    )
+    variant = _run(monkeypatch, request=request, binding=FIXTURE["green4_brief_binding"])
+    assert "kervan celebrated its 10th year" in _text(variant).casefold(), _text(variant)
+
+
+def test_typed_names_never_respell_a_creator_spelling():
+    """8, 10, 12, 13 in isolation, on the writer's own calls."""
+    from app.pipeline.caption_spelling import (
+        apply_spelling_to_cues,
+        creator_request_names,
+        creator_typed_names,
+    )
+
+    request = "Yorumla episode 9: Kervan x Lumo Pamukkale show. Do not change Curvan to Kervan."
+    names, typed = creator_request_names(request), creator_typed_names(request)
+    words = ["Curvan'ın", "Curvanın", "Curvan,", "Kervon", "too."]
+    cues = [
+        {
+            "text": " ".join(words),
+            "words": [
+                {"text": w, "start_s": float(i), "end_s": i + 0.5} for i, w in enumerate(words)
+            ],
+        }
+    ]
+
+    def shown(targets, *, request_names=names):
+        [cue] = apply_spelling_to_cues(cues, targets, request_names=request_names, typed=typed)
+        assert cue["text"] == " ".join(w["text"] for w in cue["words"])
+        return cue["text"]
+
+    # 8, 10: every hearing of the typed "Curvan" stays; "Kervon" (never typed) is respelled.
+    assert shown(()) == "Curvan'ın Curvanın Curvan, Kervan too."
+    # 12: a model-owned spelling (a quoted ask, a word the brief lists) respells as before.
+    assert shown(("Kervan",)) == "Kervan'ın Kervan'ın Kervan, Kervan too."
+    assert shown(("Kervan",), request_names=()) == shown(("Kervan",))
+    # 13: the typed-name target "Meropa" never turns the model-owned "Merope" back (unguarded:
+    # "Meropa Merope"); the model-owned target still respells the typed "Meropa" (12).
+    [cue] = apply_spelling_to_cues(
+        [{"text": "Merope Meropa"}], ("Merope",), request_names=("Meropa",), typed=("Meropa",)
+    )
+    assert cue["text"] == "Merope Merope"
 
 
 def test_names_switch_off_keeps_the_heard_name(monkeypatch):
