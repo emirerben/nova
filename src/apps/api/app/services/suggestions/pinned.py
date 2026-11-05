@@ -31,7 +31,6 @@ import re
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -296,41 +295,17 @@ def _entry(state: Mapping[str, Any] | None, set_id: str) -> Mapping[str, Any] | 
     return ring[index] if index is not None else None
 
 
-def _instant(raw: object) -> datetime | None:
-    """A stored ISO instant as an aware UTC time; None when it is absent or unreadable.
+def save_unread(current: object, seen: object) -> bool:
+    """True when the saved video is not the one the agent session last read.
 
-    Render stamps are naive UTC with a literal ``Z``; the ring's ``created_at`` is aware.
+    ``current`` is the variant's render baseline now; ``seen`` is the session's pointer. A native
+    Save moves the first and never the second, and the plan a restating card re-drafts holds none
+    of the Save's edits, so while this is True the card must neither be offered (the serve) nor run
+    (the tap's commit): both ask this one question. An empty side (no render yet, no pointer yet)
+    has nothing to compare and answers False.
     """
-    if not isinstance(raw, str) or not raw:
-        return None
-    try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
-
-
-def served_on_current_video(
-    state: Mapping[str, Any] | None, set_id: str, variant: Mapping[str, Any] | None
-) -> bool:
-    """True only when the set was written after the variant's latest render began and finished.
-
-    A native Save moves the saved video and never the agent session's pointer, so the pointer
-    cannot tell a card that stood on the Save from one served after it. The ring entry's time
-    against the render's own stamps can, for every writer that stamps a render (a Save, a reburn, a
-    swap). Any instant that is missing or unreadable answers False: the card is then judged by
-    the pointer alone, as before.
-    """
-    entry = _entry(state, set_id)
-    served = _instant(entry.get("created_at")) if entry is not None else None
-    if served is None or not isinstance(variant, Mapping):
-        return False
-    rendered = [
-        stamp
-        for key in ("render_started_at", "render_finished_at")
-        if (stamp := _instant(variant.get(key))) is not None
-    ]
-    return bool(rendered) and served >= max(rendered)
+    current, seen = str(current or ""), str(seen or "")
+    return bool(current and seen and current != seen)
 
 
 def pin_marks(
@@ -888,7 +863,7 @@ __all__ = [
     "restate_updates",
     "restates_strategy",
     "resolve_pin",
-    "served_on_current_video",
+    "save_unread",
     "ring_suggestions",
     "snapshot_digest",
     "stamp_pin",

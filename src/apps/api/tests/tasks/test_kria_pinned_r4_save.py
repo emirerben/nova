@@ -1,27 +1,26 @@
-"""A restating card and a native-editor Save: the card must be judged against the video it was
-served on, not against a pointer no Save moves.
+"""A restating card and a native-editor Save: a restated plan holds none of the Save's edits, so
+a restating card is offered, and runs, only while the agent session has read the saved video.
 
 Failure catalogue (written before the code; each row is a fixture below).
 
 ``_restate_video_moved`` compares the session's pointer (the generation the agent last read) with
 the saved variant. A native Save writes the variant and never the pointer (about thirty writers
-move a variant's generation; only a Kria render or an editor-op tap re-syncs it), so after ANY Save
-the pointer is stale for good.
+move a variant's generation; only a Kria render or an editor-op tap re-syncs it). A restating tap
+re-drafts the thread's PLAN and its approval mints a new Job from that plan, so whenever a Save
+the session never read is on the variant, running the card would drop the Save's edits. That holds
+whatever the card was served after; the card's serve time says nothing about the plan.
 
-  F1  A card served BEFORE a Save, tapped after it: the plan the tap would restate holds none of
-      the Save's edits. Refused ``base_moved``; no draft, approval, brief version or setting.
-  F2  A card served AFTER a Save: the serve read the saved video, so the stale pointer says nothing
-      about it. The tap runs: one draft, one approval, the setting flips, and the revision stands
-      on the real generation (the pointer is aligned in the same commit, as an editor tap does).
-      Before the fix the card was dead on its first tap, marked refused and hidden.
-  F3  The Save lands after a served-after card is tapped but before the row lock (the plan read
-      generation N, the lock finds N+1): still refused (the planner-side witness is unchanged).
-  F4  A second Save after the card was served: served before THAT Save, refused, even though an
-      earlier Save preceded the serve (the verdict is per card, not per thread).
-  F5  A card served while the Save's render was still in flight (before it finished): the video it
-      saw is not the finished one, so it is refused.
-  F6  Unreadable instants (no ring time, no render stamp): fail closed, as before.
-  F7  An editor-op card is untouched by all of this (it is built on the saved video).
+  F1  A card served BEFORE a Save, tapped after it: refused ``base_moved``; no draft, approval,
+      brief version or setting, and the session pointer is untouched by the refusal.
+  F2  A card served AFTER a Save is never offered (the serve asks the tap's own question), so no
+      creator meets a dead first tap, and no tap can run on a plan that lacks their Save. The cards
+      that do not restate (the editor kinds) are still offered.
+  F3  The Save lands after planning but before the row lock (the plan read generation N, the lock
+      finds N+1): refused, by the planner-side witness.
+  F4  The agent reads the saved video (a Kria render completes and re-syncs the pointer): the card
+      is offered again and its tap runs. The withholding lasts only while the Save is unread.
+  F5  A session that has not read any video yet (no pointer): nothing to compare; offered and runs.
+  F6  An editor-op card is untouched by all of this (it is built on the saved video).
 
 The Save is the real ``POST /plan-items/{id}/variants/{id}/editor-commit`` (through the ASGI app,
 only the creator's identity overridden); a Save that must land between the plan and the lock (F3)
@@ -160,6 +159,22 @@ def untouched(tap: d.Tap) -> bool:
     return tap.new_drafts == 0 and tap.before == tap.after
 
 
+def agent_reads_video(seeded) -> str:  # noqa: ANN001
+    """What a Kria render's completion writes: the session's pointer follows the saved video."""
+    with sync_session() as db:
+        generation = variant_baseline(db.get(Job, seeded.job_id).assembly_plan["variants"][0])
+        session = db.get(CreatorAgentSession, seeded.session_id, with_for_update=True)
+        session.target_generation_id = generation
+        db.commit()
+    return generation
+
+
+def variant_baseline(variant: dict) -> str:
+    from app.routes.generative_jobs import variant_render_baseline
+
+    return variant_render_baseline(variant)
+
+
 @pytest.mark.asyncio
 async def test_f1_a_card_served_before_a_save_is_refused_after_it(talking_world):
     seeded, phone, out = await served(talking_world)
@@ -173,33 +188,28 @@ async def test_f1_a_card_served_before_a_save_is_refused_after_it(talking_world)
     assert (tap.refused or {}).get("reason") == "base_moved", tap.refused
     assert untouched(tap)
     assert not d.item_flags(seeded)["speech_cleanup_enabled"]
+    assert pointer(seeded) == before_pointer, "a refused tap leaves the session's pointer alone"
 
 
 @pytest.mark.asyncio
-async def test_f2_a_card_served_after_a_save_runs(talking_world):
-    seeded, phone, _first = await served(talking_world)
+async def test_f2_a_card_served_after_a_save_is_never_offered(talking_world):
+    seeded, phone, first = await served(talking_world)
+    assert "filler_words" in {c.kind for c in first.suggestions}
     generation = await route_save(seeded)
     talking_world.refreshes.clear()
+
     out = await phone.serve()
-    card = card_of(out, "filler_words")
+
     assert pointer(seeded) != generation, "a Save never moves the agent's pointer"
-
-    tap = await phone.tap(card, out)
-
-    assert tap.refused is None, tap.refused
-    assert tap.planned and tap.new_drafts == 1
-    assert d.item_flags(seeded)["speech_cleanup_enabled"]
-    assert d.head_of(seeded.thread_id)["gen"] == generation
-    assert pointer(seeded) == generation
+    kinds = {c.kind for c in out.suggestions}
+    assert out.set_id != first.set_id
+    assert "filler_words" not in kinds, kinds
+    assert kinds, "the cards that do not restate the plan are still offered"
 
 
 @pytest.mark.asyncio
-async def test_f3_a_save_after_planning_is_still_refused_for_a_card_served_after_a_save(
-    talking_world, monkeypatch
-):
-    seeded, phone, _first = await served(talking_world)
-    await route_save(seeded)
-    out = await phone.serve()
+async def test_f3_a_save_after_planning_is_still_refused(talking_world, monkeypatch):
+    seeded, phone, out = await served(talking_world)
     card = card_of(out, "filler_words")
     h.after_planning(monkeypatch, lambda: native_save(seeded))
 
@@ -211,91 +221,42 @@ async def test_f3_a_save_after_planning_is_still_refused_for_a_card_served_after
 
 
 @pytest.mark.asyncio
-async def test_f4_the_verdict_is_per_card_a_second_save_refuses_the_card_served_between(
-    talking_world,
-):
+async def test_f4_the_card_returns_once_the_agent_has_read_the_saved_video(talking_world):
     seeded, phone, _first = await served(talking_world)
     await route_save(seeded)
+    generation = agent_reads_video(seeded)
+    talking_world.refreshes.clear()
+
     out = await phone.serve()
     card = card_of(out, "filler_words")
-    await route_save(seeded)
-
     tap = await phone.tap(card, out)
 
-    assert (tap.refused or {}).get("reason") == "base_moved", tap.refused
-    assert untouched(tap)
+    assert tap.refused is None, tap.refused
+    assert tap.planned and tap.new_drafts == 1
+    assert d.item_flags(seeded)["speech_cleanup_enabled"]
+    assert d.head_of(seeded.thread_id)["gen"] == generation
 
 
-def set_entry_time(seeded, set_id: str, created_at: str | None) -> None:  # noqa: ANN001
-    """Rewrite when the ring says the set was served (what the GET wrote as ``created_at``)."""
+@pytest.mark.asyncio
+async def test_f5_a_session_with_no_pointer_has_nothing_to_compare(talking_world):
+    seeded, phone, first = await served(talking_world)
     with sync_session() as db:
-        from app.models import CreationThread
-
-        thread = db.get(CreationThread, seeded.thread_id, with_for_update=True)
-        state = dict(thread.state)
-        ring = []
-        for entry in state["suggestion_sets"]:
-            entry = dict(entry)
-            if entry.get("set_id") == set_id:
-                if created_at is None:
-                    entry.pop("created_at", None)
-                else:
-                    entry["created_at"] = created_at
-            ring.append(entry)
-        state["suggestion_sets"] = ring
-        thread.state = state
+        session = db.get(CreatorAgentSession, seeded.session_id, with_for_update=True)
+        session.target_generation_id = None
         db.commit()
-
-
-def render_stamps(seeded) -> dict[str, str]:  # noqa: ANN001
-    with sync_session() as db:
-        variant = db.get(Job, seeded.job_id).assembly_plan["variants"][0]
-        return {k: variant[k] for k in ("render_started_at", "render_finished_at") if k in variant}
-
-
-@pytest.mark.asyncio
-async def test_f5_a_card_served_before_the_saves_render_finished_is_refused(talking_world):
-    seeded, phone, _first = await served(talking_world)
     await route_save(seeded)
+    talking_world.refreshes.clear()
+
     out = await phone.serve()
     card = card_of(out, "filler_words")
-    stamps = render_stamps(seeded)
-    # The set says it was written one microsecond after the render began, long before it ended.
-    started = datetime.fromisoformat(stamps["render_started_at"].replace("Z", "+00:00"))
-    set_entry_time(seeded, out.set_id, started.replace(tzinfo=UTC).isoformat())
-    h.edit_variant(
-        seeded, lambda v: v.update(render_finished_at=_stamp())
-    )  # the render finished after the serve
-
     tap = await phone.tap(card, out)
 
-    assert (tap.refused or {}).get("reason") == "base_moved", tap.refused
-    assert untouched(tap)
+    assert tap.refused is None, tap.refused
+    assert tap.planned and tap.new_drafts == 1
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("missing", ["set_time", "render_stamps"])
-async def test_f6_an_unreadable_instant_falls_back_to_the_pointer_alone(talking_world, missing):
-    seeded, phone, _first = await served(talking_world)
-    await route_save(seeded)
-    out = await phone.serve()
-    card = card_of(out, "filler_words")
-    if missing == "set_time":
-        set_entry_time(seeded, out.set_id, None)
-    else:
-        h.edit_variant(
-            seeded,
-            lambda v: (v.pop("render_started_at", None), v.pop("render_finished_at", None)),
-        )
-
-    tap = await phone.tap(card, out)
-
-    assert (tap.refused or {}).get("reason") == "base_moved", tap.refused
-    assert untouched(tap)
-
-
-@pytest.mark.asyncio
-async def test_f7_an_editor_op_card_is_built_on_the_saved_video_and_still_applies(world):
+async def test_f6_an_editor_op_card_is_built_on_the_saved_video_and_still_applies(world):
     seeded, phone, out = await served(world, EDITOR)
     card = card_of(out, "transition")
     generation = await route_save(seeded, text_elements=[{**h.HOOK, "text": "Saved by hand"}])
