@@ -718,7 +718,6 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "background_media.sequence[].spoken_phrase",
         "background_media.sequence[].hold_s",
         "background_media.cadence_s",
-        "background_media.keep_changing",
         "background_media.full_screen_opening",
         "background_media.full_screen_opening_s",
         "background_media.speaker_frame",

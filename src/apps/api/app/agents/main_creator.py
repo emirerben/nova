@@ -231,11 +231,14 @@ log = structlog.get_logger()
 # it). Every other creator prompt is byte-identical.
 # v119 (KRI-1189 lands after #2088): v117's `cut_restarts` teaching on top of v118. The
 # KRI-1189 replay fixtures keep the `2026-11-03-v117` label they were recorded under.
-# v123 (Qendresa item 17, follow-up of KRI-1175; v120-v122 reserved by items 12-14): one
-# paragraph after the windows section and the `background_media.keep_changing` field it teaches
-# (an on-the-word sequence keeps rotating after the last mention only when the creator names a
-# rhythm). Shown only with BACKGROUND_FOLLOWS_TALK_ENABLED and the windows capability; every
-# other prompt keeps its bytes.
+# v120 (Qendresa item 12): the shared brief section records the caption shape as typed facts,
+# `caption_words` (1-3 words at a time) and `caption_box` (a #RRGGBB box behind the captions).
+# On top of v119; brief_extractor v55 shares it.
+# v123 (Qendresa item 17, follow-up of KRI-1175; v121-v122 reserved by items 13-14): one
+# paragraph after the windows section teaching how to write a sequence entry's `spoken_phrase`
+# (as said in the take, with the words only said where that visual is introduced). Shown only
+# with BACKGROUND_FOLLOWS_TALK_ENABLED and the windows capability; every other prompt keeps its
+# bytes.
 # v125 (Qendresa item 16; v124 is reserved for item 15): two teachings, shown only with
 # SPEAKER_FULL_OPENING_ENABLED and the `speaker_full_opening` capability. Strategy: "start with me
 # full screen ... after that my recordings and me small in the corner" sets
@@ -744,14 +747,10 @@ the backgrounds change and where the speaker sits.
 
 # Qendresa item 17: appended after the windows section ONLY with BACKGROUND_FOLLOWS_TALK_ENABLED.
 _BACKGROUND_FOLLOWS_TALK_PROMPT_SECTION = """
-Each photo or video in an on-the-word `sequence` stays on screen while they talk about it, and the
-last one talked about stays to the end of the video. Set `background_media.keep_changing` true only
-when the creator also names a rhythm for the backgrounds ("changing every 3-5 seconds", "keep
-switching", "3 saniyede bir değişsin"): then, once every one has been talked about, they keep taking
-turns at that rhythm until the end. When a name is also said elsewhere in the take (a common word
-such as "agents"), copy the words said only where that one is introduced ("number four agents").
-How long each one stays once it is talked about ("show each for 5 seconds") is that entry's
-`hold_s`, never `cadence_s`.
+Write each `spoken_phrase` in a `sequence` the way the creator says the name in the take's
+transcript, not the way it is spelled on screen ("trading agents", not "TradingAgents"). When a
+name is also said elsewhere in the take (a common word such as "agents"), copy the words said only
+where that one is introduced ("number four agents").
 """.strip("\n")
 
 # Qendresa item 16: appended after the windows section ONLY with SPEAKER_FULL_OPENING_ENABLED and
@@ -1146,8 +1145,14 @@ they say it: {"caption_size": "small"} or "large"; {"caption_position": "middle"
 (a literal #RRGGBB hex: white #FFFFFF, black #000000, yellow #FFFF00, red #FF0000, blue
 #0000FF); {"caption_case": "lower"} or "upper"; "Captions small, white, lowercase, in the middle"
 => {"captions": "on", "caption_size": "small", "caption_color": "#FFFFFF", "caption_case":
-"lower", "caption_position": "middle"}; where the creator puts themselves, a photo, a card or the
-background ("me small at the bottom right") is never a caption position, plus
+"lower", "caption_position": "middle"}; {"caption_words": 2} (1, 2 or 3) ONLY when the creator
+says how many words show at a time ("two words at a time" => 2, "one word at a time" => 1);
+{"caption_box": "#E5E5E5"} (a literal #RRGGBB: light grey #E5E5E5, grey #9E9E9E, white #FFFFFF,
+black #000000) ONLY when they ask for a box, pill or background behind the captions; "Captions
+word by word in a light grey box near the bottom" => {"captions": "word_by_word", "caption_box":
+"#E5E5E5", "caption_position": "bottom"}; "word by word" alone sets no caption_words; where
+the creator puts themselves, a photo, a card or the background ("me small at the bottom right")
+is never a caption position, plus
 {"ask_if_unclear": "the third sauce he names"} (the creator's own words for WHICH word) when they
 say they could not make out a word and want to be asked instead of having it guessed ("I didn't
 catch the third sauce he names: if you can't tell what he says, ask me"), on the captions

@@ -46,6 +46,7 @@ from app.kria.brief_route import fold_text, loose_text, wants_filming_time_text
 from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.duplicate_send import is_duplicate_answer
 from app.kria.order_replacement import OrderReplacementProof
+from app.kria.removed_messages import is_removed, removed_turn_ids_sync
 from app.kria.reply_language import detect_chat_language
 from app.kria.select_asks import withdrawn_photo_asks
 from app.kria.text_shape_ask import TEXT_SHAPE_FACT, with_text_shape
@@ -1791,10 +1792,14 @@ def _delegation_covers_request(
         )
     ).all()
     read = {str(event_id) for event_id in read_event_ids}
+    # Steer now: a waiting message the creator took back is owed no read.
+    removed = removed_turn_ids_sync(db, thread_id, (payload for _id, _content, payload in earlier))
     return all(
         str(event_id) in read
         for event_id, content, payload in earlier
-        if str(content).strip() and not is_duplicate_answer(payload)
+        if str(content).strip()
+        and not is_duplicate_answer(payload)
+        and not is_removed(payload, removed)
     )
 
 

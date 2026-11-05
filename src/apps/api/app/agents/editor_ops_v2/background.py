@@ -306,6 +306,11 @@ def _op_set_background_color(state: Any, op: dict[str, Any]) -> None:
     state.summary = f"Put a plain {op['color']} background behind you"
 
 
+def _photo_key(media_id: object) -> str:
+    """A pool photo's identity whether it is written ``asset-<id>`` or bare (S59)."""
+    return str(media_id).removeprefix("asset-")
+
+
 def _op_set_background_sequence(state: Any, op: dict[str, Any]) -> None:
     from app.services import phone_background_sequence as sequence  # noqa: PLC0415
     from app.services.kria_editor_ops import (  # noqa: PLC0415
@@ -319,15 +324,6 @@ def _op_set_background_sequence(state: Any, op: dict[str, Any]) -> None:
     duration = background_duration_s(state.variant)
     if duration < sequence.MIN_WINDOW_S:
         raise KriaEditorOpError("I can't tell how long this video is, so I can't time backgrounds")
-    layout = sequence.lay_out(
-        [sequence.SequenceEntry(index=i) for i in range(len(ids))],
-        cadence_s=float(op.get("cadence_s") or DEFAULT_CADENCE_S),
-        take_s=duration,
-        words=None,
-        keep_segments=None,
-    )
-    if not layout.windows:
-        raise KriaEditorOpError("This video is too short to change backgrounds")
     working = _working_document(state)
     if isinstance(working, dict) and working.get("color"):
         fill: dict[str, Any] = {"kind": "color", "color": working["color"]}  # KRI-1173
@@ -339,6 +335,17 @@ def _op_set_background_sequence(state: Any, op: dict[str, Any]) -> None:
         }
     else:
         fill = {"media_id": ids[0], "kind": kinds[0], "source_start_s": 0.0}
+    # S57: the same rule as the render worker -- every photo once, the fill never repeating one.
+    layout = sequence.lay_out(
+        [sequence.SequenceEntry(index=i, media_key=_photo_key(ids[i])) for i in range(len(ids))],
+        cadence_s=float(op.get("cadence_s") or DEFAULT_CADENCE_S),
+        take_s=duration,
+        words=None,
+        keep_segments=None,
+        fill_key=_photo_key(fill["media_id"]) if fill.get("media_id") else None,
+    )
+    if not layout.windows:
+        raise KriaEditorOpError("This video is too short to change backgrounds")
     document: dict[str, Any] = {
         **fill,
         "windows": [
@@ -361,7 +368,7 @@ def _op_set_background_sequence(state: Any, op: dict[str, Any]) -> None:
     state.changed.add("speaker_background")
     state.summary = (
         f"Put {len(set(ids))} backgrounds behind you, changing about every "
-        f"{layout.cadence_s:g} seconds"
+        f"{round(layout.cadence_s, 1):g} seconds"
         if len(set(ids)) > 1
         else "Put the photo behind you"
     )

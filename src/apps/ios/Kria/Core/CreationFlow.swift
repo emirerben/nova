@@ -43,6 +43,8 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var voiceDictation: Bool? = nil
     /// KRI-756: the server offers footage-aware suggestion chips to this account. Missing = off (the old fixed chips stay).
     var suggestionChips: Bool? = nil
+    /// Steer now: a message sent while Kria works waits as "Up next" and can take over. Missing = off (today's chat).
+    var steerNow: Bool? = nil
     var requestOutcomeContext: Bool? = nil
     /// Server sends `clip_question` payloads and accepts `clip_selection` on a turn (KRI-282). Nil/false = text question only.
     var clipSelectionQuestions: Bool? = nil
@@ -100,6 +102,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var speakerBackgroundEnabled: Bool { speakerBackground == true }
     var voiceDictationEnabled: Bool { voiceDictation == true }
     var suggestionChipsEnabled: Bool { suggestionChips == true }
+    var steerNowEnabled: Bool { steerNow == true }
     var clipSelectionQuestionsEnabled: Bool { clipSelectionQuestions == true }
     var songOrderQuestionsEnabled: Bool { songOrderQuestions == true }
     /// Only meaningful together with `songOrderQuestionsEnabled`.
@@ -142,6 +145,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case speakerBackground = "speaker_background"
         case voiceDictation = "voice_dictation"
         case suggestionChips = "suggestion_chips"
+        case steerNow = "steer_now"
         case requestOutcomeContext = "request_outcome_context"
         case clipSelectionQuestions = "clip_selection_questions"
         case songOrderQuestions = "song_order_questions"
@@ -190,6 +194,7 @@ extension CreationCapabilities {
         speakerBackground = try container.decodeIfPresent(Bool.self, forKey: .speakerBackground)
         voiceDictation = try container.decodeIfPresent(Bool.self, forKey: .voiceDictation)
         suggestionChips = try container.decodeIfPresent(Bool.self, forKey: .suggestionChips)
+        steerNow = try container.decodeIfPresent(Bool.self, forKey: .steerNow)
         requestOutcomeContext = try container.decodeIfPresent(Bool.self, forKey: .requestOutcomeContext)
         clipSelectionQuestions = try container.decodeIfPresent(Bool.self, forKey: .clipSelectionQuestions)
         songOrderQuestions = try container.decodeIfPresent(Bool.self, forKey: .songOrderQuestions)

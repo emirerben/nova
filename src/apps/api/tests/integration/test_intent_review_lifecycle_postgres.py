@@ -167,7 +167,9 @@ def _clean_ledger():
 
 
 @pytest.fixture
-def paid(monkeypatch):
+def paid(monkeypatch, exclusive_intent_review_ledger):
+    # _clean_ledger deletes every intent_review reservation: only a holder of the shared
+    # lock may do that, or it deletes a running review's reservation in another worker.
     _clean_ledger()
     for name, value in dict(
         kria_intent_review_enabled=True,

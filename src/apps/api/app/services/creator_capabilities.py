@@ -1906,7 +1906,6 @@ def _repair_creator_speaker_background(
     entries: list[BackgroundSequenceEntry] = []
     cadence_s = DEFAULT_BACKGROUND_CADENCE_S
     frame = "full"
-    keep_changing = False
     asked_windows = wanted is not None and (
         bool(wanted.sequence)
         or wanted.speaker_frame != "full"
@@ -1938,8 +1937,6 @@ def _repair_creator_speaker_background(
                 notices.append(SPEAKER_BACKGROUND_NOTICES["sequence_not_found"])
             if not entries:
                 cadence_s = DEFAULT_BACKGROUND_CADENCE_S
-            else:
-                keep_changing = wanted.keep_changing
     opening = False
     opening_s: float | None = None
     if wanted is not None and wanted.full_screen_opening:
@@ -1969,7 +1966,6 @@ def _repair_creator_speaker_background(
             sequence=tuple(entries),
             cadence_s=cadence_s,
             speaker_frame=frame,
-            keep_changing=keep_changing,
             **opening_fields,
         )
     else:
@@ -1979,7 +1975,6 @@ def _repair_creator_speaker_background(
             sequence=tuple(entries),
             cadence_s=cadence_s,
             speaker_frame=frame,
-            keep_changing=keep_changing,
             **opening_fields,
         )
     update: dict[str, Any] = {"background_media": fill}

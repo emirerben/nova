@@ -1,9 +1,10 @@
-"""Qendresa item 17: each recording stays while it is talked about (S57-S68).
+"""Qendresa item 17: background names are heard when said another way (S64-S69).
 
 Pure ``lay_out`` calls over a synthetic five-topic screen walkthrough (~230 wpm) and the Green 3
-run. The flag ``BACKGROUND_FOLLOWS_TALK_ENABLED`` is off in prod, so every behaviour test turns it
-on; ``test_flag_off_windows_and_notes_are_byte_identical`` freezes what the code laid out BEFORE
-the change. Failure modes: ``docs/reviews/speaker-background-windows-failure-modes.md``.
+run. Holding the last visual to the take end is #2118's rule for everyone (S57); item 17 adds the
+hearing rules behind ``BACKGROUND_FOLLOWS_TALK_ENABLED`` (off in prod, so every behaviour test
+turns it on); ``test_flag_off_windows_and_notes_are_byte_identical`` freezes what the code lays
+out without it. Failure modes: ``docs/reviews/speaker-background-windows-failure-modes.md``.
 """
 
 from __future__ import annotations
@@ -157,34 +158,24 @@ def flag_off(monkeypatch):
     monkeypatch.setattr(settings, "background_follows_talk_enabled", False)
 
 
-# ------------------------------------------------------------------ S57
+# ------------------------------------------------------------------ Q2 B5, as she typed it
 
 
-def test_the_last_recording_stays_to_the_end(flag_on):
-    layout = _lay(AS_SPOKEN)
+def test_her_walkthrough_as_typed_follows_the_talk(flag_on):
+    """Each recording from its name to the next one's, the last to the end (kit Q2 row B5)."""
+    layout = _lay(AS_SHE_TYPED)
     _contract(layout, TAKE_S)
-    by_index: dict[int, list] = {}
-    for w in layout.windows:
-        by_index.setdefault(w.index, []).append(w)
-    for i, said in enumerate(SAID):
-        first = by_index[i][0]
+    assert [w.index for w in layout.windows] == [0, 1, 2, 3, 4]
+    for i, w in enumerate(layout.windows):
         if i == 0:
-            assert first.start_s == pytest.approx(0.0)  # the talk opens on its first visual
+            assert w.start_s == pytest.approx(0.0)  # the talk opens on its first visual
         else:
-            assert abs(first.start_s - said) <= 1.5, f"recording {i + 1}: {first.start_s} vs {said}"
-    # Each stays until the next recording's word.
-    for i in range(4):
-        assert by_index[i][-1].end_s == pytest.approx(by_index[i + 1][0].start_s, abs=1e-6)
-        assert len(by_index[i]) == 1, f"recording {i + 1} is cut into {by_index[i]}"
-    # After recording 5 starts, only recording 5 shows, to the take end.
-    start5 = by_index[4][0].start_s
-    after = [w for w in layout.windows if w.start_s >= start5 - 1e-6]
-    assert {w.index for w in after} == {4}
+            assert abs(w.start_s - SAID[i]) <= 1.5, f"recording {i + 1}: {w.start_s} vs {SAID[i]}"
+            assert layout.windows[i - 1].end_s == pytest.approx(w.start_s, abs=1e-6)
     assert layout.windows[-1].end_s == pytest.approx(TAKE_S)
-    assert len(after) == 1
 
 
-# ------------------------------------------------------------------ S64
+# ------------------------------------------------------------------ S65
 
 
 def test_her_label_spellings_are_heard(flag_on):
@@ -196,7 +187,7 @@ def test_her_label_spellings_are_heard(flag_on):
         assert abs(starts[i] - SAID[i]) <= 1.5, f"recording {i + 1}: {starts[i]} vs {SAID[i]}"
 
 
-# ------------------------------------------------------------------ S66
+# ------------------------------------------------------------------ S67
 
 
 def test_a_name_inside_another_visuals_name_is_not_its_word(flag_on):
@@ -220,7 +211,7 @@ def test_a_name_inside_another_visuals_name_is_not_its_word(flag_on):
     assert by[3].start_s == pytest.approx(four, abs=1e-6)
 
 
-# ------------------------------------------------------------------ S65
+# ------------------------------------------------------------------ S66
 
 
 def _heard(phrase, spoken):
@@ -262,7 +253,7 @@ def test_the_loose_match_never_hears_a_different_word(flag_on):
     assert second.start_s == pytest.approx(_at(words, ["game", "studio"]), abs=1e-6)
 
 
-# ------------------------------------------------------------------ S58
+# ------------------------------------------------------------------ S64
 
 
 def _green3(**kw):
@@ -280,43 +271,15 @@ def _green3(**kw):
     )
 
 
-def test_green3_with_a_stated_rhythm_still_rotates_exactly_as_before(monkeypatch):
-    monkeypatch.setattr(settings, "background_follows_talk_enabled", False)
-    before = _green3()
-    monkeypatch.setattr(settings, "background_follows_talk_enabled", True)
-    after = _green3(keep_changing=True)
-    assert _rows(after) == _rows(before)
-    assert _notes(after) == _notes(before)
-    assert after.cadence_s == before.cadence_s and after.anchored == before.anchored
-    assert len(after.windows) > len(G3_ORDER)  # the tail really rotates
-
-
-def test_a_non_default_cadence_counts_as_a_stated_rhythm(monkeypatch):
-    monkeypatch.setattr(settings, "background_follows_talk_enabled", False)
-    before = _lay(AS_SPOKEN, cadence_s=3.0)
-    monkeypatch.setattr(settings, "background_follows_talk_enabled", True)
-    after = _lay(AS_SPOKEN, cadence_s=3.0, keep_changing=False)
-    assert _rows(after) == _rows(before)
-    assert _notes(after) == _notes(before)
-    assert len(after.windows) > 5
-    # ... and the unasked default holds instead.
-    assert len(_lay(AS_SPOKEN, keep_changing=False).windows) == 5
-
-
-# ------------------------------------------------------------------ S60
-
-# Frozen from the code BEFORE item 17 (flag off): (index, start, end) rows and the notes.
+# Frozen from the code without item 17 (flag off; #2118's no-repeat layout): rows and notes.
+# As typed, "TradingAgents" and "Claude code game studio" are never heard (recordings 3 and 5).
 FROZEN_FIVE_REPOS_AS_SPOKEN = (
     [
         (0, 0.0, 26.52),
         (1, 26.52, 46.52),
         (2, 46.52, 66.26),
         (3, 66.26, 86.52),
-        (4, 86.52, 90.52),
-        (0, 90.52, 94.52),
-        (1, 94.52, 98.52),
-        (2, 98.52, 102.52),
-        (3, 102.52, 104.86),
+        (4, 86.52, 104.86),
     ],
     [],
 )
@@ -324,16 +287,7 @@ FROZEN_FIVE_REPOS_AS_TYPED = (
     [
         (0, 0.0, 26.52),
         (1, 26.52, 66.26),
-        (3, 66.26, 70.26),
-        (0, 70.26, 74.26),
-        (1, 74.26, 78.26),
-        (3, 78.26, 82.26),
-        (0, 82.26, 86.26),
-        (1, 86.26, 90.26),
-        (3, 90.26, 94.26),
-        (0, 94.26, 98.26),
-        (1, 98.26, 102.26),
-        (3, 102.26, 104.86),
+        (3, 66.26, 104.86),
     ],
     [
         (("lane", "background"), ("reason", "phrase_not_heard"), ("window", 2)),
@@ -346,9 +300,7 @@ FROZEN_GREEN3 = (
         (4, 8.106, 10.946),
         (1, 10.946, 15.346),
         (2, 15.346, 19.346),
-        (3, 19.346, 23.346),
-        (0, 23.346, 27.346),
-        (4, 27.346, 30.259),
+        (3, 19.346, 30.259),
     ],
     [],
 )
@@ -367,60 +319,31 @@ def test_flag_off_windows_and_notes_are_byte_identical(flag_off):
         and _notes(typed) == FROZEN_FIVE_REPOS_AS_TYPED[1]
     )
     assert _rows(g3) == FROZEN_GREEN3[0] and _notes(g3) == FROZEN_GREEN3[1]
-    # The new argument is ignored while the flag is off.
-    assert _rows(_lay(AS_SHE_TYPED, keep_changing=True)) == _rows(typed)
-    assert _rows(_green3(keep_changing=True)) == _rows(g3)
 
 
-# ------------------------------------------------------------------ S61 / S62
+def test_the_flag_changes_only_how_a_phrase_is_heard(monkeypatch):
+    """The flag only changes WHICH word anchors a phrase: Green 3, a talk named as spoken, a
+    rotation and a partly phrased request lay out exactly as without it."""
 
-
-def test_an_explicit_hold_on_the_last_visual_still_ends_it(flag_on):
-    start5 = next(w.start_s for w in _lay(AS_SPOKEN).windows if w.index == 4)
-    layout = _lay(AS_SPOKEN, holds={4: 3.0})
-    last = layout.windows[-1]
-    assert last.index == 4 and last.end_s == pytest.approx(last.start_s + 3.0)
-    assert last.start_s == pytest.approx(start5)
-    assert last.end_s < TAKE_S - seq.MIN_WINDOW_S  # nothing after it: the fill shows
-    # A hold that would leave under 0.5 s is absorbed to the take end.
-    sliver = _lay(AS_SPOKEN, holds={4: TAKE_S - start5 - 0.3})
-    assert sliver.windows[-1].index == 4 and sliver.windows[-1].end_s == pytest.approx(TAKE_S)
-    _contract(layout, TAKE_S)
-    _contract(sliver, TAKE_S)
-
-
-def test_two_visuals_on_the_last_mention_both_show_and_the_second_holds(flag_on):
-    layout = _lay([*AS_SPOKEN, "claude code game studios"])
-    _contract(layout, TAKE_S)
-    a = next(w for w in layout.windows if w.index == 4)
-    b = next(w for w in layout.windows if w.index == 5)
-    assert a.start_s == pytest.approx(SAID[4], abs=1.5)
-    assert a.end_s == pytest.approx(a.start_s + 4.0) and b.start_s == pytest.approx(a.end_s)
-    assert b.end_s == pytest.approx(TAKE_S) and layout.windows[-1] == b
-
-
-# ------------------------------------------------------------------ S63
-
-
-def test_rotation_and_mixed_requests_keep_their_layout(monkeypatch):
-    def both(phrases):
+    def both(run):
         monkeypatch.setattr(settings, "background_follows_talk_enabled", False)
-        off = _lay(phrases)
+        off = run()
         monkeypatch.setattr(settings, "background_follows_talk_enabled", True)
-        on = _lay(phrases)
-        return off, on
+        on = run()
+        assert _rows(on) == _rows(off) and _notes(on) == _notes(off)
+        assert on.cadence_s == off.cadence_s and on.anchored == off.anchored
+        return on
 
+    _contract(both(_green3), G3_TAKE_S)
+    _contract(both(lambda: _lay(AS_SPOKEN)), TAKE_S)
     for phrases in (
         [None] * 6,
         ["spec kit", None, "impeccable", None, "number four agents"],
     ):
-        off, on = both(phrases)
-        assert _rows(on) == _rows(off) and _notes(on) == _notes(off)
-        _contract(on, TAKE_S)
-    assert len(off.windows) > 5  # the tail of a mixed request still fills
+        _contract(both(lambda phrases=phrases: _lay(phrases)), TAKE_S)
 
 
-# ------------------------------------------------------------------ nested names (review 1)
+# ------------------------------------------------------------------ S68
 
 
 def test_a_name_that_only_occurs_inside_another_name_still_shows(monkeypatch):
@@ -442,10 +365,12 @@ def test_a_name_that_only_occurs_inside_another_name_still_shows(monkeypatch):
     off = run()
     monkeypatch.setattr(settings, "background_follows_talk_enabled", True)
     assert {w.index for w in off.windows} >= {2, 3}
-    assert _rows(run(keep_changing=True)) == _rows(off)
-    held = run()
-    assert {w.index for w in held.windows} >= {2, 3}
-    assert not [n for n in held.notes if n.get("reason") == "phrase_not_heard"]
+    on = run()
+    assert _rows(on) == _rows(off)
+    assert not [n for n in on.notes if n.get("reason") == "phrase_not_heard"]
+
+
+# ------------------------------------------------------------------ S65 (with KRI-961)
 
 
 def test_a_sound_alike_with_a_plural_is_still_heard(flag_on):
