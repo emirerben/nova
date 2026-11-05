@@ -705,6 +705,39 @@ import SwiftData
         XCTAssertEqual(model.destination, .chat(PreviewFixtures.projectID))
     }
 
+    /// Failure mode (review P2): typed text was lost when the creator left the pending chat for another chat or
+    /// the camera roll and the create then failed. It is kept, nothing is selected for them, and the next New
+    /// chat starts with it.
+    func testTextTypedBeforeLeavingIsRecoverableWhenTheCreateFailsLater() async throws {
+        for target in ["another chat", "camera roll"] {
+            var posts: [ProjectActionDeferredProtocol] = []
+            heldCreateHandler { posts.append($0) }
+            let existing = PreviewFixtures.projects[0], createdID = UUID()
+            let model = AppModel(api: deferredAPI(), chatDrafts: isolatedDrafts())
+            model.selectProject(existing)
+            model.chatDrafts.setDraft("prior words", for: existing.id)
+            model.startNewChat()
+            model.setPendingNewChatDraft("typed then left (\(target))")
+            try await waitFor { posts.count == 1 }
+            if target == "camera roll" { model.openCameraRoll() } else { XCTAssertTrue(model.selectProject(existing)) }
+
+            posts[0].finish(500, Data())
+            try await waitFor { !model.isCreatingProject }
+            XCTAssertNil(model.pendingNewChat, "\(target): a failure after leaving does not pull them back")
+            XCTAssertEqual(model.showsCameraRoll, target == "camera roll", "\(target): navigation untouched")
+            XCTAssertEqual(model.selectedProject?.id, existing.id)
+            XCTAssertEqual(model.chatDrafts.draft(for: existing.id), "prior words", "\(target): the previous chat's draft is unchanged")
+
+            model.startNewChat()
+            XCTAssertEqual(model.pendingNewChat?.draft, "typed then left (\(target))", "\(target): New chat again recovers the text")
+            try await waitFor { posts.count == 2 }
+            posts[1].finish(200, response(createdID, title: "New chat"))
+            try await waitFor { model.pendingNewChat == nil }
+            XCTAssertEqual(model.chatDrafts.draft(for: createdID), "typed then left (\(target))")
+            XCTAssertEqual(model.chatDrafts.draft(for: existing.id), "prior words")
+        }
+    }
+
     func testProjectListCannotReplaceNewerRenamedRevision() async throws {
         let project = PreviewFixtures.projects[0]
         let renamed = response(project.id, title: "Renamed on this device", revision: 7)

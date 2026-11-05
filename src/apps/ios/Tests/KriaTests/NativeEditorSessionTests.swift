@@ -5379,9 +5379,13 @@ final class NativeEditorSessionTests: XCTestCase {
         fake.phoneRenderingCapabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.map(\.rawValue))
         let request = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
         let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let status = SessionTestStatus(DeviceRenderStatusResponse(phase: "awaiting_device", request: request, baseGeneration: "generation-1", outputVerificationRequired: verification))
+        // The server's `base_generation` is the generation this request renders: the save's commit generation.
+        let status = SessionTestStatus(DeviceRenderStatusResponse(phase: "awaiting_device", request: request, baseGeneration: "next", outputVerificationRequired: verification))
         let exports = SessionTestCounter()
-        let renders = DeviceRenderSessions(fetch: { _, _ in await status.response }, factory: { _, _ in
+        let renders = DeviceRenderSessions(fetch: { _, _ in
+            if await status.failing { throw APIError.requestFailed(status: 503) }
+            return await status.response
+        }, factory: { _, _ in
             if stalledPublish {
                 return try DeviceRenderCoordinator(directory: output, exporter: SessionTestCountingExport(exports), sources: SessionTestSources(), publisher: SessionTestStalledPublisher())
             }
@@ -5470,7 +5474,7 @@ final class NativeEditorSessionTests: XCTestCase {
         let edit = try await savedPhoneEditWithFinishedRender()
         defer { try? FileManager.default.removeItem(at: edit.output) }
         let newer = deviceRenderRequest(jobID: edit.key.jobID, revision: 2, digest: "b")
-        await edit.status.set(DeviceRenderStatusResponse(phase: "awaiting_device", request: newer, baseGeneration: "generation-1"))
+        await edit.status.set(DeviceRenderStatusResponse(phase: "awaiting_device", request: newer, baseGeneration: "next"))
         await edit.session.refreshDeviceRender(retry: true)
         XCTAssertFalse(edit.session.canDownloadCurrentVideo)
         assertOwnFileNotOffered(edit, "A newer request makes the old file stale")
@@ -5521,7 +5525,7 @@ final class NativeEditorSessionTests: XCTestCase {
     func testOwnRenderIsNotOfferedOnceTheServerNeedsAttention() async throws {
         let edit = try await savedPhoneEditWithFinishedRender(stalledPublish: true)
         defer { try? FileManager.default.removeItem(at: edit.output) }
-        await edit.status.set(DeviceRenderStatusResponse(phase: "needs_attention", request: edit.request, reason: "The server needs a change", reasonCode: "unsupported_recipe", baseGeneration: "generation-1"))
+        await edit.status.set(DeviceRenderStatusResponse(phase: "needs_attention", request: edit.request, reason: "The server needs a change", reasonCode: "unsupported_recipe", baseGeneration: "next"))
         await edit.session.refreshDeviceRender()
         let presentation = try XCTUnwrap(edit.renders.presentations[edit.key])
         XCTAssertTrue(presentation.requiresServerRetry, "setup: the server asks for a retry (\(presentation))")
@@ -5574,6 +5578,67 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(writes, [edit.file])
         XCTAssertEqual(exporter.phase, .savedToPhotos)
         await edit.renders.stopAll()
+    }
+
+    /// Failure mode (review P1): R1 finished for generation G1 and its presentation stayed `synced` with its file.
+    /// The creator edited and committed G2, but the device-status read failed, so the editor kept R1 as "the
+    /// request" and linked it to G2: the export handed over the PREVIOUS edit.
+    func testFailedStatusReadAfterANewSaveDoesNotLinkThePreviousRenderToIt() async throws {
+        let edit = try await savedPhoneEditWithFinishedRender()
+        defer { try? FileManager.default.removeItem(at: edit.output) }
+        let synced = await waitUntil(timeout: .seconds(10)) { edit.renders.presentations[edit.key]?.phase == .synced }
+        XCTAssertTrue(synced, "setup: R1 is synced with its file")
+        XCTAssertEqual(try edit.session.videoDownloadRoute(deviceLocalFile: nil), .localFile(edit.file), "setup: R1 is the saved edit's video for G1")
+        edit.fake.commitResponse = EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
+        await edit.status.setFailing(true)
+        edit.session.trimSelected(edge: .trailing, to: 1.2)
+        await edit.session.save()
+        XCTAssertFalse(edit.session.hasUnsavedChanges, "setup: G2 was committed")
+        XCTAssertEqual(edit.renders.presentations[edit.key]?.localFile, edit.file, "setup: the failed read left R1's synced file in place")
+        XCTAssertFalse(edit.session.canDownloadCurrentVideo, "R1 renders G1, not the G2 just saved")
+        assertOwnFileNotOffered(edit, "A failed status read is not evidence that R1 belongs to G2")
+        await edit.renders.stopAll()
+    }
+
+    /// Control for the case above: the same second save with the status read working links the NEW request
+    /// (its `base_generation` is G2) and offers its file.
+    func testStatusReadThatNamesTheSavedGenerationLinksTheNewRender() async throws {
+        let edit = try await savedPhoneEditWithFinishedRender(stalledPublish: true)
+        defer { try? FileManager.default.removeItem(at: edit.output) }
+        let newer = deviceRenderRequest(jobID: edit.key.jobID, revision: 2, digest: "b")
+        await edit.status.set(DeviceRenderStatusResponse(phase: "awaiting_device", request: newer, baseGeneration: "g2"))
+        edit.fake.commitResponse = EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
+        edit.session.trimSelected(edge: .trailing, to: 1.2)
+        await edit.session.save()
+        let rendered = await waitUntil(timeout: .seconds(10)) { edit.renders.presentations[edit.key]?.localFile != nil && edit.renders.request(for: edit.key)?.identity == newer.identity }
+        XCTAssertTrue(rendered, "setup: R2 rendered on the phone")
+        XCTAssertTrue(edit.session.canDownloadCurrentVideo)
+        XCTAssertEqual(try edit.session.videoDownloadRoute(deviceLocalFile: nil), .localFile(try XCTUnwrap(edit.renders.presentations[edit.key]?.localFile)))
+        await edit.renders.stopAll()
+    }
+
+    /// Failure mode (review P3): a Save whose render did not start awaited the committed-variant read and then
+    /// wrote its retry state into whatever editor was loaded meanwhile.
+    func testRenderNotStartedSaveCannotWriteRetryStateIntoAnEditorLoadedMeanwhile() async throws {
+        let threadA = UUID(), jobA = UUID(), threadB = UUID(), jobB = UUID()
+        let fakeA = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "dA", itemID: "itemA", variantKey: "variant", draftRevision: 4, snapshotHash: "h", etag: "e", baseJobID: jobA.uuidString, baseGenerationID: "generation-A", snapshot: [:], canUndo: false, createdAt: .now))
+        fakeA.commitResponse = EditorCommitResponse(ok: true, generation: "gA2", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: nil, revisionHash: nil, expectedDuration: nil, renderStarted: false, renderRecovery: "Editor A's render did not start.")
+        let fakeB = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "dB", itemID: "itemB", variantKey: "variant", draftRevision: 4, snapshotHash: "h", etag: "e", baseJobID: jobB.uuidString, baseGenerationID: "generation-B", snapshot: [:], canUndo: false, createdAt: .now))
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadA, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 4))
+        await session.load(api: fakeA, threadID: threadA)
+        session.selectClip(session.draft.clips[0].id)
+        session.trimSelected(edge: .trailing, to: 1.5)
+        fakeA.suspendNextEditorVariant = true
+        let saving = Task { await session.save() }
+        let suspended = await waitUntil(timeout: .seconds(5)) { fakeA.editorVariantIsSuspended }
+        XCTAssertTrue(suspended, "setup: A's committed-variant read is outstanding")
+
+        await session.load(api: fakeB, threadID: threadB)
+        XCTAssertEqual(session.saveState, .idle, "setup: editor B is loaded and idle")
+        fakeA.resumeEditorVariant()
+        await saving.value
+        XCTAssertEqual(session.saveState, .idle, "Editor A's late Save must not write its retry state into editor B (\(session.saveState))")
+        XCTAssertFalse(session.hasUnsavedChanges)
     }
 
     /// Failure mode: cancelling a Save (leaving the editor) left the committed-variant read running and
@@ -7194,8 +7259,10 @@ private actor SessionTestFlag {
 
 private actor SessionTestStatus {
     private(set) var response: DeviceRenderStatusResponse
+    private(set) var failing = false
     init(_ response: DeviceRenderStatusResponse) { self.response = response }
     func set(_ response: DeviceRenderStatusResponse) { self.response = response }
+    func setFailing(_ value: Bool) { failing = value }
 }
 
 // Async protocol witnesses can run concurrently with the main-actor test readers.

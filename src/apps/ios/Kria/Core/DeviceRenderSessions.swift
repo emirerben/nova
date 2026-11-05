@@ -926,6 +926,11 @@ enum DeviceRenderGate: Equatable {
     /// it to fence a ready response against another device attempt.
     func request(for key: DeviceRenderKey) -> DeviceRenderRequest? { heldRequests[key] ?? requests[key] }
 
+    /// The generation the server said the request currently pinned for `key` renders (`base_generation`),
+    /// from the last status read that succeeded. A failed read leaves the previous answer, so it is evidence
+    /// about that request only, never about a later save.
+    func baseGeneration(for key: DeviceRenderKey) -> String? { baseGenerations[key] }
+
     /// Calls the server's `/device-render/retry` endpoint for a `needsAttention`
     /// identity, which mints a fresh identity (incremented recipe revision) and
     /// moves the server back to `awaiting_device`. Drops the stale local

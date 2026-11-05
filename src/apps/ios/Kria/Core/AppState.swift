@@ -498,6 +498,9 @@ enum WorkspaceDestination: Equatable, Sendable {
     @Published private(set) var pendingNewChat: PendingNewChat?
     /// Text typed into a pending chat the creator then walked away from while its create was still running.
     private var abandonedNewChatDrafts: [UUID: String] = [:]
+    /// Text from a pending chat whose create failed after (or while) the creator left it. Nothing is selected for
+    /// them; the next New chat starts with this text.
+    @Published private(set) var unsentNewChatDraft: String?
 
     func setPendingNewChatDraft(_ text: String) { pendingNewChat?.draft = text }
 
@@ -505,7 +508,10 @@ enum WorkspaceDestination: Equatable, Sendable {
     /// for the chat it makes; a failed one has nothing to keep it for.
     private func leavePendingNewChat() {
         guard let pending = pendingNewChat else { return }
-        if isCreatingProject, !pending.draft.isEmpty { abandonedNewChatDrafts[pending.id] = pending.draft }
+        if !pending.draft.isEmpty {
+            if isCreatingProject { abandonedNewChatDrafts[pending.id] = pending.draft }
+            else if pending.failure != nil { unsentNewChatDraft = pending.draft }
+        }
         pendingNewChat = nil
     }
 
@@ -518,6 +524,8 @@ enum WorkspaceDestination: Equatable, Sendable {
         // A retry after a failure is the same conversation: what was typed stays.
         var pending = PendingNewChat()
         if let failed = pendingNewChat, failed.failure != nil { pending.draft = failed.draft }
+        else if let unsent = unsentNewChatDraft { pending.draft = unsent }
+        unsentNewChatDraft = nil
         pendingNewChat = pending
         return pending.id
     }
@@ -557,8 +565,11 @@ enum WorkspaceDestination: Equatable, Sendable {
             selectedProject = project
             destination = .chat(project.id)
         } catch {
-            abandonedNewChatDrafts.removeValue(forKey: token)
-            guard pendingNewChat?.id == token else { return }
+            let left = abandonedNewChatDrafts.removeValue(forKey: token)
+            guard pendingNewChat?.id == token else {
+                if let left, !left.isEmpty { unsentNewChatDraft = left }
+                return
+            }
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") {
                 let project = ProjectSummary(id: UUID(), title: "Untitled project", status: .draft, updatedAt: .now, posterURL: nil)
