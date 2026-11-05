@@ -1767,6 +1767,34 @@ def phone_subtitled_closing_title_supported() -> bool:
     )
 
 
+def cta_ending_available() -> bool:
+    """Server-wide: may a phone Talking edit draw the creator's CTA ending (item 14)?
+
+    The ending is two text rows on the closing-title lane plus a freehand arrow, so it
+    needs the flag, the closing-title lane, and the drawing lane verified on device."""
+
+    return bool(
+        settings.creator_cta_ending_enabled
+        and phone_subtitled_closing_title_supported()
+        and settings.freehand_drawing_enabled
+        and "freehandDrawing" in set(settings.phone_render_verified_features)
+    )
+
+
+def cta_ending_planned_for(client_protocol: int | None) -> bool:
+    """May this creator's phone Talking edit draw the CTA ending (item 14)?
+
+    Read like `text_bend_planned_for`: ``client_protocol`` is the app build the creator
+    acted from (``creator_client_protocol`` on the Job). No stamp, or a build below
+    ``freehand_drawing_min_client_protocol``, keeps today's lime closing tag."""
+
+    return bool(
+        cta_ending_available()
+        and client_protocol is not None
+        and client_protocol >= settings.freehand_drawing_min_client_protocol
+    )
+
+
 def phone_subtitled_spoken_text_supported() -> bool:
     """Can a phone-rendered `subtitled` (Talking) edit show a creator's text at
     the word they say (KRI-707)? It is a plain text row on the KRI-467 lane,
