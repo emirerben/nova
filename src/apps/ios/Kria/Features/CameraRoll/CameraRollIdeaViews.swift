@@ -2,9 +2,9 @@ import SwiftUI
 
 /// Small type styles shared by the camera-roll screens (Paper "Kria iOS — Camera roll").
 extension View {
-    /// The 12 pt tracked label above a block: "IDEAS FOR THIS EVENT".
+    /// The sentence-case label above a block: "Ideas for this event".
     func cameraRollKicker() -> some View {
-        font(KriaFont.body(12).weight(.semibold)).tracking(0.72).textCase(.uppercase).foregroundStyle(KriaColor.mutedInk)
+        kriaType(.label).foregroundStyle(KriaColor.mutedInk)
     }
     /// The 28 pt screen title.
     func cameraRollTitle() -> some View {
