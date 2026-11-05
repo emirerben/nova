@@ -9002,6 +9002,37 @@ def _expire_pending_approvals() -> list[str]:
     return successors
 
 
+def _lock_plan_item_for_session_sync(  # noqa: ANN202
+    db,  # noqa: ANN001
+    session_id: uuid.UUID,
+    creator_id: uuid.UUID,
+) -> PlanItem | None:
+    """Lock ContentPlan -> PlanItem for ``session_id`` ahead of the session (the order the async
+    ``runtime._lock_strategy_plan_item`` takes). Two unlocked reads discover the immutable
+    identities to lock; None when a row is gone or is not this creator's."""
+    session_peek = db.get(CreatorAgentSession, session_id)
+    item_peek = (
+        db.get(PlanItem, session_peek.plan_item_id)
+        if session_peek is not None and session_peek.plan_item_id is not None
+        else None
+    )
+    if item_peek is None:
+        return None
+    plan_row = db.execute(
+        select(ContentPlan)
+        .where(ContentPlan.id == item_peek.content_plan_id, ContentPlan.user_id == creator_id)
+        .with_for_update(**CONTENT_PLAN_LOCK)
+    ).scalar_one_or_none()
+    if plan_row is None:
+        return None
+    return db.execute(
+        select(PlanItem)
+        .where(PlanItem.id == item_peek.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+
+
 def _expire_overdue_approval(approval_id: uuid.UUID) -> str | None:
     """Expire one approval the sweep found overdue; return the successor turn to publish.
 
@@ -9012,6 +9043,15 @@ def _expire_overdue_approval(approval_id: uuid.UUID) -> str | None:
         ref = db.get(CreatorAgentApproval, approval_id)
         if ref is None:
             return None
+        from app.kria.drafts import staged_tap_footprint_sync  # noqa: PLC0415
+
+        # A card's tap that flipped an item setting is taken back with its expired approval, so
+        # the plan item is locked first (Plan -> PlanItem -> Session ...); read unlocked, the
+        # record never changes after the draft is minted.
+        footprint = staged_tap_footprint_sync(db, ref)
+        item = None
+        if footprint is not None and footprint.get("setting"):
+            item = _lock_plan_item_for_session_sync(db, ref.session_id, ref.creator_id)
         # Canonical order (subset): Session -> Turn -> Approval -> Execution -> Thread.
         session = db.execute(
             select(CreatorAgentSession)
@@ -9079,6 +9119,10 @@ def _expire_overdue_approval(approval_id: uuid.UUID) -> str | None:
             turn.error = error
         if session.status != "rendering":
             session.status = "awaiting_feedback"
+        if footprint is not None:
+            from app.kria.drafts import withdraw_staged_tap_sync  # noqa: PLC0415
+
+            withdraw_staged_tap_sync(db, record=footprint, item=item, thread=thread)
         _append_sync_event(
             db,
             thread,
