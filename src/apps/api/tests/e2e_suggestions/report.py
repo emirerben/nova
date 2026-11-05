@@ -95,11 +95,7 @@ class Cell:
         if gap is not None:
             status = "fail" if ok else "gap"
             text = f"gap {gap.id} closed, remove the marker" if ok else detail
-            self.checks[name] = {
-                "status": status,
-                "detail": text,
-                "gap": {"id": gap.id, "title": gap.title, "owner": gap.owner, "text": gap.text},
-            }
+            self.checks[name] = {"status": status, "detail": text, "gap": gap.wire()}
         else:
             status = "pass" if ok else "fail"
             self.checks[name] = {"status": status, "detail": detail}
@@ -170,7 +166,7 @@ class Recorder:
             )
             return ok
         status = "fail" if ok else "gap"
-        marker = {"id": gap.id, "title": gap.title, "owner": gap.owner, "text": gap.text}
+        marker = gap.wire()
         shown = f"gap {gap.id} closed, remove the marker" if ok else detail
         self.negatives.append(
             Negative(case, scenario, expect, status != "fail", shown, status, marker)
@@ -184,14 +180,34 @@ class Recorder:
         assert not problems, "end-to-end proof failed:\n  " + "\n  ".join(problems)
 
 
+# What the first word of a test's name says about which part of the proof it belongs to.
+FAMILIES: dict[str, str] = {
+    "tap-every-card": "baseline matrix: every kind x footage x language",
+    "negative": "negative cases: stale base, switches, KRI-129, copy, mute dark, Undo, ring",
+    "first": "first prompt: chips only, planner-read",
+    "save": "native-editor Save, before and after the serve (R5-F)",
+    "lifecycle": "a staged render that never happens (R5-G)",
+    "kill": "switches pulled after the freeze (R5-E)",
+    "copy": "the on-screen title's decision, every state (R5-A)",
+    "turkish": "the creator's own words, Turkish and English (R5-D)",
+    "matrix": "mute matrix, held sets, queued taps, coverage (R5-M)",
+}
+
+
+def family_of(name: str) -> str:
+    return FAMILIES.get(name.split(" ", 1)[0], "other")
+
+
 def write_partial(rec: Recorder) -> None:
     folder = PARTIALS / RUN_ID
     folder.mkdir(parents=True, exist_ok=True)
     safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in rec.name)
+    family = family_of(rec.name)
     payload = {
         "name": rec.name,
-        "cells": [c.__dict__ for c in rec.cells],
-        "negatives": [n.__dict__ for n in rec.negatives],
+        "family": family,
+        "cells": [{**c.__dict__, "family": family} for c in rec.cells],
+        "negatives": [{**n.__dict__, "family": family} for n in rec.negatives],
         "sections": rec.sections,
     }
     (folder / f"{safe}.json").write_text(
@@ -224,7 +240,9 @@ def load_run() -> dict[str, list[dict[str, Any]]]:
         data = json.loads(path.read_text(encoding="utf-8"))
         out["cells"] += data["cells"]
         out["negatives"] += data["negatives"]
-        out["sections"].append({"test": data["name"], **data["sections"]})
+        out["sections"].append(
+            {"test": data["name"], "family": data.get("family", "other"), **data["sections"]}
+        )
     return out
 
 
@@ -279,9 +297,21 @@ def kind_summary(cells: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
                 for c in cells
                 if c["kind"] == kind and not c.get("shipped", True)
             ],
+            # The state the thread was in when each served card was tapped (a Save, a denied
+            # render, a pulled switch ...), with how many of those cells held.
+            "states": _states(served),
             "scenarios": sorted({f"{c['scenario']}/{c['profile']}" for c in served}),
         }
     return summary
+
+
+def _states(cells: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    found: dict[str, dict[str, int]] = {}
+    for c in cells:
+        row = found.setdefault(c.get("state", "baseline"), {"cells": 0, "pass": 0})
+        row["cells"] += 1
+        row["pass"] += 1 if _verdict(c) in {"pass", "pass (gap)"} else 0
+    return dict(sorted(found.items()))
 
 
 def _cell_order(c: dict[str, Any]) -> tuple:
@@ -380,6 +410,46 @@ def render_markdown(run: dict[str, list[dict[str, Any]]], meta: dict[str, str]) 
         "tap is the planner's, not a pinned card)."
     )
     add("")
+    add("## What was run (the families of the proof)")
+    add("")
+    add("| family | tests | cells tapped | negative checks | pass | gap | fail |")
+    add("| --- | --- | --- | --- | --- | --- | --- |")
+    tests_by_family: dict[str, int] = {}
+    for section in run["sections"]:
+        fam = section.get("family", "other")
+        tests_by_family[fam] = tests_by_family.get(fam, 0) + 1
+    for family in sorted(
+        set(tests_by_family)
+        | {c.get("family", "other") for c in cells}
+        | {n.get("family", "other") for n in negatives}
+    ):
+        mine_n = [n for n in negatives if n.get("family", "other") == family]
+        mine_c = [c for c in cells if c.get("family", "other") == family]
+        add(
+            f"| {family} | {tests_by_family.get(family, 0)} | {len(mine_c)} | {len(mine_n)} | "
+            f"{sum(1 for n in mine_n if n.get('status') == 'pass')} | "
+            f"{sum(1 for n in mine_n if n.get('status') == 'gap')} | "
+            f"{sum(1 for n in mine_n if n.get('status') == 'fail')} |"
+        )
+    add("")
+    add("## Cells by the state the thread was in (kind x state; shipped configuration only)")
+    add("")
+    states = sorted({s for k in KIND_ORDER for s in summary[k]["states"]})
+    add("| kind | " + " | ".join(states) + " |")
+    add("| --- | " + " | ".join("---" for _ in states) + " |")
+    for kind in KIND_ORDER:
+        row = [f"`{kind}`"]
+        for state in states:
+            found = summary[kind]["states"].get(state)
+            row.append(f"{found['pass']}/{found['cells']}" if found else "-")
+        add("| " + " | ".join(row) + " |")
+    add("")
+    add(
+        "`n/m`: n of m served cells held every check. `-`: that state never served the kind. "
+        "A state that serves nothing (a decided title, an open question) is proven by its "
+        "negative checks, not by a cell."
+    )
+    add("")
     unserved = [k for k in KIND_ORDER if summary[k]["served"] == 0]
     if unserved:
         add("### Kinds that did not execute, and why")
@@ -389,8 +459,10 @@ def render_markdown(run: dict[str, list[dict[str, Any]]], meta: dict[str, str]) 
             side = summary[kind]["unshipped"]
             line = f"* `{kind}`: " + ("; ".join(notes) if notes else "no cell served it")
             if side:
-                line += " Under a patched configuration (not shipped): " + "; ".join(
-                    f"{u['cell']} {u['verdict']}" for u in side
+                line += (
+                    " Under a patched configuration (not shipped): "
+                    + "; ".join(f"{n} cells {v}" for v, n in _patched(side)["verdicts"].items())
+                    + " (see Per cell)."
                 )
             add(line)
         add("")
@@ -404,10 +476,10 @@ def render_markdown(run: dict[str, list[dict[str, Any]]], meta: dict[str, str]) 
     add("## Per cell")
     add("")
     add(
-        "| scenario | profile | lang | kind | rank | chat line (the card's prompt) | verdict "
-        "| gaps / failures |"
+        "| scenario | profile | state | lang | kind | rank | chat line (the card's prompt) "
+        "| verdict | gaps / failures |"
     )
-    add("| --- | --- | --- | --- | --- | --- | --- | --- |")
+    add("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for c in sorted(cells, key=_cell_order):
         marks = []
         for name, v in c["checks"].items():
@@ -417,20 +489,28 @@ def render_markdown(run: dict[str, list[dict[str, Any]]], meta: dict[str, str]) 
                 marks.append(f"FAIL {name}: {v['detail']}")
         verdict = _verdict(c) + ("" if c.get("shipped", True) else " [not shipped]")
         add(
-            f"| {c['scenario']} | {c['profile']} | {c['language']} | `{c['kind']}` | "
-            f"{c['rank'] or '-'} | {_cell(c['prompt'])} | {verdict} | {_cell(', '.join(marks))} |"
+            f"| {c['scenario']} | {c['profile']} | {c.get('state', 'baseline')} | "
+            f"{c['language']} | `{c['kind']}` | {c['rank'] or '-'} | {_cell(c['prompt'])} | "
+            f"{verdict} | {_cell(', '.join(marks))} |"
         )
     add("")
-    add("## Negative cases")
+    add("## Negative cases, by family")
     add("")
-    add("| case | scenario | expected | result | detail |")
-    add("| --- | --- | --- | --- | --- |")
-    for n in negatives:
-        add(
-            f"| {n['case']} | {n['scenario']} | {_cell(n['expect'])} | "
-            f"{_negative_status(n)} | {_cell(n['detail'])} |"
-        )
-    add("")
+    for family in sorted({n.get("family", "other") for n in negatives}):
+        rows = [n for n in negatives if n.get("family", "other") == family]
+        counts = _negative_counts(rows)
+        add(f"<details><summary>{family}: {counts}</summary>")
+        add("")
+        add("| case | scenario | expected | result | detail |")
+        add("| --- | --- | --- | --- | --- |")
+        for n in rows:
+            add(
+                f"| {n['case']} | {n['scenario']} | {_cell(n['expect'])} | "
+                f"{_negative_status(n)} | {_cell(n['detail'])} |"
+            )
+        add("")
+        add("</details>")
+        add("")
     firsts = [sec["first_prompt"] for sec in run["sections"] if sec.get("first_prompt")]
     if firsts:
         add("## First prompt (footage uploaded, nothing said, no render)")
@@ -477,7 +557,11 @@ def coverage_cell(cells: list[dict[str, Any]], kind: str, key: str) -> str:
     mine = [
         c
         for c in cells
-        if c["kind"] == kind and c["scenario"] == key and c["served"] and c.get("shipped", True)
+        if c["kind"] == kind
+        and c["scenario"] == key
+        and c["served"]
+        and c.get("shipped", True)
+        and c.get("state", "baseline") == "baseline"
     ]
     if not mine:
         return "-"
@@ -523,9 +607,25 @@ STAND_INS = (
     "render are authored; `audio_quality` is measured from committed recordings and "
     "`near_dup_hash` is "
     "the near-duplicate lane's recorded hashes.",
+    "Stand-ins of the round-5 states: the editor Save is the real `editor-commit` route with the "
+    "render kick, the durable-sources prefix and the storage existence check replaced (there is no "
+    "bucket); the render worker's completion write is `finish_render`; the agent session's pointer "
+    "following a Kria render is written by hand (`agent_reads_video`); an approval's time running "
+    "out is its `expires_at` moved into the past; a typed message is answered by the legacy "
+    "planner double.",
+    "The mute kind is dark as shipped (`PINNED_TAP_APPLIES_CLIP_SOUND = False`). Every mute cell "
+    "runs with that constant patched on and is marked `[not shipped]`; it proves what the seam "
+    "would do, not that a phone would then mute the clip.",
     "Not exercised: a device, the render itself (a tap stages a draft or an approval; the render "
     "worker and the phone export are not run), a live model, and any paid call.",
 )
+
+
+def _negative_counts(rows: list[dict[str, Any]]) -> str:
+    ok = sum(1 for n in rows if n.get("status") == "pass")
+    gap = sum(1 for n in rows if n.get("status") == "gap")
+    bad = sum(1 for n in rows if n.get("status") == "fail")
+    return f"{len(rows)} checks, {ok} pass, {gap} gap, {bad} fail"
 
 
 def _negative_status(n: dict[str, Any]) -> str:
@@ -539,20 +639,31 @@ def _cell(text: str) -> str:
 
 
 def kinds_proven(
-    summary: dict[str, dict[str, Any]], sections: list[dict[str, Any]] | None = None
+    summary: dict[str, dict[str, Any]],
+    sections: list[dict[str, Any]] | None = None,
+    gaps: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     first = first_prompt_kinds(sections or [])
     out = []
     for kind in KIND_ORDER:
         row = summary[kind]
-        executes = row["executes_on_unmodified_get"]
+        # An open gap that lets a card of this kind be served and then refused at the tap is a
+        # served card that does not execute, whatever the cells that were tapped did.
+        dead = sorted(
+            g["id"] for g in gaps or [] if g.get("serves_dead_card") and kind in g.get("kinds", [])
+        )
+        about = sorted(g["id"] for g in gaps or [] if kind in g.get("kinds", []))
+        cells_ok = row["executes_on_unmodified_get"]
+        executes = cells_ok and not dead
         out.append(
             {
                 "kind": kind,
                 # Literal: EVERY shipped cell of the kind, served by the UNMODIFIED GET and tapped,
                 # was applied. One refused cell, or a kind that is not served, makes it false.
                 "tap_executes": executes,
-                "why": _why(kind, row, executes),
+                "why": _why(kind, row, cells_ok) + _dead_note(dead),
+                "open_gaps_about_the_kind": about,
+                "serves_a_card_the_tap_refuses": dead,
                 # The pinned seam applies the card once the ring holds it.
                 "seam_executes": row["seam_executes"],
                 "cells_tapped": row["served"],
@@ -561,12 +672,30 @@ def kinds_proven(
                 "first_prompt": first.get(kind, "not offered"),
                 # Cells run under a configuration that is not what ships (a patched dark constant).
                 "unshipped": row["unshipped"],
+                "patched": _patched(row["unshipped"]),
+                # Every state a thread was in when a served card of this kind was tapped.
+                "states": row["states"],
                 "checks": row["checks"],
                 "gaps": row["gaps"],
                 "scenarios": row["scenarios"],
             }
         )
     return out
+
+
+def _dead_note(dead: list[str]) -> str:
+    return (
+        f"; BUT a served card is refused at the tap under a named gap ({', '.join(dead)})"
+        if dead
+        else ""
+    )
+
+
+def _patched(unshipped: list[dict[str, str]]) -> dict[str, Any]:
+    verdicts: dict[str, int] = {}
+    for item in unshipped:
+        verdicts[item["verdict"]] = verdicts.get(item["verdict"], 0) + 1
+    return {"cells": len(unshipped), "verdicts": verdicts}
 
 
 def _why(kind: str, row: dict[str, Any], executes: bool) -> str:
@@ -578,9 +707,10 @@ def _why(kind: str, row: dict[str, Any], executes: bool) -> str:
         )
     if row["served"] == 0:
         side = row["unshipped"]
+        patched = _patched(side)
         return "never served as shipped (dark by design)" + (
-            "; with the constant patched on: "
-            + ", ".join(f"{u['cell']} {u['verdict']}" for u in side)
+            f"; with the constant patched on: {patched['cells']} cells, "
+            + ", ".join(f"{n} {v}" for v, n in patched["verdicts"].items())
             if side
             else ""
         )
@@ -607,7 +737,9 @@ def write_if_any() -> Path | None:
             {
                 **meta,
                 "kinds": summary,
-                "kinds_proven": kinds_proven(summary, run["sections"]),
+                "kinds_proven": kinds_proven(
+                    summary, run["sections"], _collect_gaps(run["cells"], run["negatives"])
+                ),
                 "gaps": _collect_gaps(run["cells"], run["negatives"]),
                 "cells": run["cells"],
                 "negatives": run["negatives"],
