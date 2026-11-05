@@ -39,6 +39,10 @@ final class TalkBench: @unchecked Sendable {
     static func startIfRequested() {
         guard isEnabled else { return }
         let bench = shared
+        // A fresh install each run makes the UI test's script paste misbehave, so old takes (60-80 MB each) are cleared here instead.
+        if let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            try? FileManager.default.removeItem(at: support.appendingPathComponent("KriaTeleprompter", isDirectory: true))
+        }
         try? FileManager.default.removeItem(at: bench.directory)
         try? FileManager.default.createDirectory(at: bench.directory, withIntermediateDirectories: true)
         EngineSignpost.observer = { name, milliseconds, detail in

@@ -58,6 +58,7 @@ SKIP_BUILD=0
 COOLDOWN_MAX=900
 RETRIES=2
 RESUME=0
+REINSTALL=0
 TEST_RETRIES=0
 DRY_RUN=0
 USE_TAKE=0
@@ -77,6 +78,7 @@ while [[ $# -gt 0 ]]; do
     --skip-build) SKIP_BUILD=1; shift ;;
     --retries) RETRIES="$2"; shift 2 ;;
     --resume) RESUME=1; shift ;;
+    --reinstall) REINSTALL=1; shift ;;
     --cooldown-max) COOLDOWN_MAX="$2"; shift 2 ;;
     --retry-failed-runs) TEST_RETRIES="$2"; shift 2 ;;
     --use-take) USE_TAKE=1; shift ;;
@@ -313,7 +315,7 @@ for run in $(seq 1 "$RUNS"); do
       competing="$(competing_device_users)"
       [[ -n "$competing" ]] && echo "talk-bench: WARNING another process is using the phone: $competing" >&2
       thermal_before="$(cool_down_device)"
-      uninstall_app
+      [[ "$REINSTALL" -eq 1 ]] && uninstall_app
       exit_code=0
       TEST_RUNNER_KRIA_TELEPROMPTER_HARDWARE_TEST=1 TEST_RUNNER_KRIA_TALK_BENCH=1 \
       TEST_RUNNER_KRIA_TALK_BENCH_BACKGROUND="$background" TEST_RUNNER_KRIA_TALK_BENCH_CINEMATIC="$cinematic" \
