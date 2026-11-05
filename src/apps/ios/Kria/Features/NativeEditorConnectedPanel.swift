@@ -5,6 +5,8 @@ enum NativeEditorPanel: Equatable {
     case text(String), textCreation, captions, visuals, sounds
     /// KRI-1118: the Talk-to-camera speaker background.
     case background
+    /// The framed Talk-to-camera speaker, opened by tapping them on the preview (size + corners).
+    case speaker
     /// KRI-589: a selected drawing's Edit / Animation panel.
     case drawing(String)
 
@@ -13,7 +15,7 @@ enum NativeEditorPanel: Equatable {
         case .text, .textCreation: return .text
         case .captions: return .captions
         case .visuals: return .visuals
-        case .background: return .background
+        case .background, .speaker: return .background
         case .sounds: return .sounds
         case .drawing: return .draw
         }

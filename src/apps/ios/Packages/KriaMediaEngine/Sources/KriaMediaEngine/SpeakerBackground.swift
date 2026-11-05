@@ -81,6 +81,12 @@ public struct SpeakerFrame: Codable, Equatable, Sendable {
         try validate()
     }
 
+    /// The scaled speaker picture in canvas fractions (top-left origin), before any clipping to the canvas: the canvas
+    /// scaled uniformly by `widthFraction`, so it is `widthFraction` of the width AND of the height, centred on the frame.
+    public var canvasRect: CGRect {
+        CGRect(x: xFraction - widthFraction / 2, y: yFraction - widthFraction / 2, width: widthFraction, height: widthFraction)
+    }
+
     public func validate() throws {
         guard widthFraction.isFinite, xFraction.isFinite, yFraction.isFinite,
               (SpeakerBackgroundLimits.minFrameWidthFraction...1).contains(widthFraction),
@@ -131,6 +137,19 @@ public struct SpeakerBackgroundLayer: Codable, Equatable, Sendable {
                              windows: [SpeakerBackgroundWindow]? = nil, speakerFrame: SpeakerFrame? = nil) -> SpeakerBackgroundLayer {
         SpeakerBackgroundLayer(assetID: nil, mediaKind: .color, subjectTrackID: subjectTrackID, windows: windows,
                                speakerFrame: speakerFrame, color: hex)
+    }
+
+    /// The same background with the speaker drawn at `frame` (nil = full-frame). Every other field is kept.
+    public func replacingSpeakerFrame(_ frame: SpeakerFrame?) -> SpeakerBackgroundLayer {
+        SpeakerBackgroundLayer(assetID: assetID, mediaKind: mediaKind, sourceStart: sourceStart, loop: loop,
+                               subjectTrackID: subjectTrackID, windows: windows, speakerFrame: frame, color: color)
+    }
+
+    /// `next` differs from this background only by MOVING or RESIZING an existing speaker frame (SF5): both carry a
+    /// frame and nothing else changed. Adding or removing the frame is not a move: the matte reports a frame-less
+    /// speaker differently, so that change takes the editor's full rebuild.
+    public func onlyMovesTheSpeakerFrame(to next: SpeakerBackgroundLayer) -> Bool {
+        speakerFrame != nil && next.speakerFrame != nil && next.replacingSpeakerFrame(speakerFrame) == self
     }
 
     /// The manifest kind of a photo/video fill; nil for a colour, which has no manifest asset.

@@ -5,7 +5,7 @@ import SwiftUI
 /// behind the speaker for the whole video (the Fill); "None" clears it. The pool grid is the editor's shared
 /// `NativeVisualPoolPicker`; this panel decides what a tap writes: the `speaker_background` lane, never a visual block.
 /// KRI-1162: while the server opens `speaker_background_windows`, a Sequence of pool photos and videos takes turns
-/// over the Fill, and a Speaker control draws the speaker small in a corner (presets only).
+/// over the Fill, and a Speaker control draws the speaker small in a corner (presets; the preview gesture places them freely).
 /// KRI-1173: while the server opens `speaker_background_color`, a Colour section puts a plain colour behind the speaker
 /// instead of a photo or video (five swatches and a custom colour); picking one replaces a media fill and vice versa.
 struct NativeBackgroundPanel: View {
@@ -239,9 +239,15 @@ struct NativeBackgroundPanel: View {
                 }
             }
             if speakerSelection == "custom" {
-                Text("Custom position. Pick a corner to replace it.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                Text("Placed by hand. Pick a corner to replace it.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("native-editor-background-speaker-custom")
+            }
+            if session.canMoveSpeakerOnPreview {
+                Label("Tap yourself on the video to move or resize.", systemImage: "hand.tap")
+                    .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("native-editor-background-speaker-hint")
             }
         }
     }
