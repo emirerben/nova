@@ -257,6 +257,9 @@ async def cancel_runtime_turn(
             turn_id=_uuid(turn_id, code="turn_not_found", message="Kria turn not found"),
             creator_id=user.id,
             expected_thread_revision=body.expected_thread_revision,
+            # Steer now: only a steer passes the option, so a plain cancel is called as before.
+            **({"steer": True} if body.steer else {}),
+            **({"only_if_queued": True} if body.only_if_queued else {}),
         )
         if successor_turn_id is not None:
             try:

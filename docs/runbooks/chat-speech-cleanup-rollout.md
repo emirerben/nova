@@ -53,6 +53,22 @@ setting the flag:
    above on an iPhone: the Green 3 take (`IMG_7231.MOV`) as the retake-positive source and one
    take with no restart.
 
+## Tight pauses add-on (Qendresa 13)
+
+`TIGHT_PAUSE_CUT_ENABLED` (default off; off is byte-identical) adds extra pause cuts to a
+consented phone Talking render when the approved brief records `pauses: "tight"` ("cut out all
+my pauses so it's tight"; Main Creator v121). It needs consented cleanup (`required_v1`), one
+clip, and a take whose room floor is at or below -45 dBFS; the render writes
+`variant["tight_pauses"]` and the receipt reports the measured longest pause (0.35 s limit). The
+thread projection also marks a recorded cleanup ask (`requested_in_chat`, `pause_style`) so new
+iPhone builds show Clean up speech already on; older builds ignore the fields. Design, limits
+and evidence: `docs/reviews/qendresa-13-tight-pauses.md`.
+
+1. Before enabling: a listening check of a before/after pair (`scripts/ios/qendresa-13-tight-pauses-e2e.py`)
+   on the creator's own take, plus one take with background noise (expect no tight cuts).
+2. `fly secrets set TIGHT_PAUSE_CUT_ENABLED=true --app nova-video`, restart api and worker.
+3. Kill switch: the same secret `=false` + restart; renders already pinned keep their cuts.
+
 ## Gates and sequence
 
 Deploy migration, API, web, Beat, and the dedicated `speech_analysis` Fly process

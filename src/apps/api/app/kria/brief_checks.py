@@ -539,6 +539,9 @@ class PlanFacts:
     # a title, captions, a start cut and speech cleanup; an ask outside that set is answered
     # with a plain "can't" before approval and after render (`_talking_honest_receipt`).
     phone_talking: bool = False
+    # Item 14: a drawing over the closing text's window (Kria's `closing-arrow` or her own) is
+    # on the finished video / in the editor payload.
+    closing_arrow: bool = False
     phone_voiceover_spoken_text: bool = False
     # KRI-793: True when this draft renders through the phone Talking writer, which captions
     # the take, spells the creator's listed words their way and records every caption line
@@ -568,6 +571,9 @@ class PlanFacts:
     # "no_change" (it ran and found nothing to cut), "not_run" (the render kept the whole
     # take). None = unknown or a draft.
     speech_cleanup_outcome: str | None = None
+    # Qendresa 13: the phone Talking render's ``variant["tight_pauses"]`` report (status,
+    # pauses_over_limit, longest_pause_s ...). None = the render wrote none (flag off, no ask).
+    speech_cleanup_tight: dict[str, Any] | None = None
     # KRI-1189: restarted sentences that cleanup's cut record holds (``retake`` rows) on a
     # rendered variant where cleanup ran; None = unknown or a draft.
     speech_cleanup_retakes: int | None = None
@@ -2262,6 +2268,7 @@ def plan_facts_from_editor_payload(
         composed["text"] for composed in complete_sequences(sequence_fragments)
     )
     strings.extend(composed_sequences)
+    strings.extend(_cta_joined_texts(timing_rows))
     for entry in text_diff or ():
         if not isinstance(entry, Mapping) or not isinstance(entry.get("after"), str):
             continue
@@ -2312,7 +2319,75 @@ def plan_facts_from_editor_payload(
             else None
         ),
         clip_output_durations=_editor_clip_durations(payload),
+        closing_arrow=_has_closing_arrow(payload),
     )
+
+
+def _cta_joined_texts(rows: Iterable[object]) -> list[str]:
+    """Item 14: "comment" + "READ" rows are on screen as "comment READ".
+
+    The pair is matched by role (`cta_part`) and by overlapping windows, so an editor timing
+    nudge on one row does not split the ending.
+    """
+    from app.pipeline.phone_cta_text import CTA_PART_KEY  # noqa: PLC0415
+
+    parts: dict[str, list[tuple[float, float, str]]] = {"lead": [], "keyword": []}
+    for row in _closing_rows(rows):
+        params = row["source_params"]
+        part = params.get(CTA_PART_KEY)
+        text = row.get("text")
+        window = _row_window(row)
+        if part in parts and isinstance(text, str) and text.strip() and window:
+            parts[part].append((window[0], window[1], text.strip()))
+    joined: list[str] = []
+    for lead_start, lead_end, lead in parts["lead"]:
+        for key_start, key_end, keyword in parts["keyword"]:
+            if lead_start < key_end and key_start < lead_end:
+                joined.append(f"{lead} {keyword}")
+    return joined
+
+
+def _closing_rows(rows: Iterable[object]) -> list[Mapping[str, Any]]:
+    out: list[Mapping[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, Mapping) or row.get("removed"):
+            continue
+        params = row.get("source_params")
+        if isinstance(params, Mapping) and params.get("source") == "closing_title":
+            out.append(row)
+    return out
+
+
+def _row_window(row: Mapping[str, Any]) -> tuple[float, float] | None:
+    start, end = row.get("start_s"), row.get("end_s")
+    if isinstance(start, (int, float)) and isinstance(end, (int, float)) and end > start:
+        return float(start), float(end)
+    return None
+
+
+def _has_closing_arrow(payload: Mapping[str, Any]) -> bool:
+    """Item 14: the payload's drawings hold the CTA ending's arrow.
+
+    A drawing counts only while its window overlaps the closing text rows' window: Kria's
+    `closing-arrow` and a drawing the creator made herself alike. The ID alone is not enough
+    (review of #2103): the creator can move Kria's arrow anywhere in the editor.
+    """
+    drawings = payload.get("drawings")
+    if not isinstance(drawings, list):
+        return False
+    windows = [
+        w for w in (_row_window(r) for r in _closing_rows(payload.get("text_elements") or ())) if w
+    ]
+    if not windows:
+        return False
+    closing = (min(w[0] for w in windows), max(w[1] for w in windows))
+    for d in drawings:
+        if not isinstance(d, Mapping):
+            continue
+        window = _row_window(d)
+        if window and window[0] < closing[1] and closing[0] < window[1]:
+            return True
+    return False
 
 
 def _editor_clip_durations(payload: Mapping[str, Any]) -> tuple[float, ...] | None:
@@ -2700,6 +2775,9 @@ def _rendered_speech_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
     if outcome in ("applied", "no_change"):
         facts["speech_cleanup_enabled"] = True
         facts["speech_cleanup_outcome"] = outcome
+        tight = variant.get("tight_pauses")
+        if isinstance(tight, Mapping):
+            facts["speech_cleanup_tight"] = dict(tight)
         counts = _cleanup_counts(variant)
         facts["speech_cleanup_retakes"] = counts[2] if counts else 0
     elif outcome is None and device:
@@ -5613,6 +5691,40 @@ _CLEANUP_IF_OFFERED = (
     "If Clean up speech is offered when you approve, choose it to cut the long pauses"
 )
 _CLEANUP_UNAVAILABLE = "Speech cleanup isn't available for this project yet, so the pauses stay"
+# Qendresa 13 (TIGHT_PAUSE_CUT_ENABLED): "cut out all my pauses so it's tight". Only said when the
+# flag is on and the ask wants every pause gone; the draft promises 0.3 s, the finished video
+# reports what the render measured.
+_TIGHT_PLANNED = (
+    "Speech cleanup cuts every pause down to about 0.3 s, and I'll tell you after if any "
+    "stay longer"
+)
+_TIGHT_AT_APPROVAL = (
+    "Choose Clean up speech when you approve and every pause is cut down to about 0.3 s"
+)
+_TIGHT_IF_OFFERED = (
+    "If Clean up speech is offered when you approve, choose it and every pause is cut down "
+    "to about 0.3 s"
+)
+_TIGHT_KIND_LONG_ONLY = (
+    "Speech cleanup cuts only the long pauses in this kind of video, so shorter pauses stay"
+)
+_TIGHT_RENDER_LONG_ONLY = "Speech cleanup cut only the long pauses, so shorter pauses stay"
+_TIGHT_UNMEASURED = (
+    "I couldn't measure the quiet parts of your take, so I didn't shorten the shorter pauses"
+)
+_TIGHT_NOISY = "There's background sound in your take, so I only cut the long pauses"
+# Start of the measured "some pauses are still long" reason (dynamic tail, so prefix-matched).
+_TIGHT_OVER_LIMIT = "Speech cleanup cut your pauses tight, but"
+_TIGHT_STATIC_LINES: tuple[str, ...] = (
+    _TIGHT_PLANNED,
+    _TIGHT_AT_APPROVAL,
+    _TIGHT_IF_OFFERED,
+    _TIGHT_KIND_LONG_ONLY,
+    _TIGHT_RENDER_LONG_ONLY,
+    _TIGHT_UNMEASURED,
+    _TIGHT_NOISY,
+    _TIGHT_OVER_LIMIT,
+)
 # KRI-846: said as a plain limit, never as editor work: no editor action cuts one exact spoken
 # line out (a talking-source window can be trimmed or moved since KRI-852, but there is no
 # split and no per-line cut, and a Narrated editor trims pictures, not the voice).
@@ -5739,6 +5851,12 @@ _VOICEOVER_SPOKEN_TEXT_PLAN = (
     "I'll place that text on the matching words in your recording. If they repeat, I'll need "
     "the occurrence you mean."
 )
+# Item 14: an ending that asks for an arrow next to its text. The phone Talking writer draws
+# one with the "comment READ" ending when the switch is on; otherwise the creator draws it.
+_CLOSING_ARROW_PLAN = "I'll draw a curly arrow next to your ending text"
+_CLOSING_ARROW_MISSING = (
+    "The arrow isn't in the video yet; you can draw one with the pen in the editor"
+)
 _TALKING_SPOKEN_TEXT_PLAN = (
     "I'll show it the moment you say that word in your take; if I don't hear the word, it "
     "won't appear"
@@ -5811,6 +5929,8 @@ _TALKING_HONEST_EN: tuple[str, ...] = (
     _TALKING_OPENING_CUT_PLAN,
     _TALKING_WINDOW_PLAN,
     _TALKING_SPOKEN_TEXT_PLAN,
+    _CLOSING_ARROW_PLAN,
+    _CLOSING_ARROW_MISSING,
     _TALKING_CAPTIONS_EVERY_VOICE,
     _TALKING_SPOKEN_TEXT_ANY_VOICE,
     _TALKING_SPOKEN_TEXT_PINNED,
@@ -5962,6 +6082,30 @@ _REASON_TR: dict[str, str] = {
     _CLEANUP_UNAVAILABLE: (
         "Konuşma temizliği bu proje için henüz yok, o yüzden duraklamalar kalıyor"
     ),
+    _TIGHT_PLANNED: (
+        "Konuşma temizliği her duraklamayı yaklaşık 0,3 sn'ye kadar kısaltır, daha uzun kalan "
+        "olursa sonra sana söylerim"
+    ),
+    _TIGHT_AT_APPROVAL: (
+        "Onaylarken \u201cKonuşmayı temizle\u201d seçeneğini seç, her duraklama yaklaşık "
+        "0,3 sn'ye kadar kısalır"
+    ),
+    _TIGHT_IF_OFFERED: (
+        "Onaylarken \u201cKonuşmayı temizle\u201d çıkarsa onu seç, her duraklama yaklaşık "
+        "0,3 sn'ye kadar kısalır"
+    ),
+    _TIGHT_KIND_LONG_ONLY: (
+        "Konuşma temizliği bu tür videoda yalnızca uzun duraklamaları keser, daha kısa "
+        "duraklamalar kalır"
+    ),
+    _TIGHT_RENDER_LONG_ONLY: (
+        "Konuşma temizliği yalnızca uzun duraklamaları kesti, daha kısa duraklamalar kalıyor"
+    ),
+    _TIGHT_UNMEASURED: (
+        "Çekimindeki sessiz kısımları ölçemedim, o yüzden kısa duraklamaları kısaltmadım"
+    ),
+    _TIGHT_NOISY: ("Çekiminde arka plan sesi var, o yüzden yalnızca uzun duraklamaları kestim"),
+    _TIGHT_OVER_LIMIT: "Konuşma temizliği duraklamaları sıkılaştırdı ama",
     _NAMED_CUT_STILL_IN: "Videonda hâlâ var",
     _NAMED_CUT_AT_RENDER: (
         "Söylediğin cümleyi çekiminde bir kez geçiyorsa keseceğim ve sonra sana söyleyeceğim"
@@ -6015,6 +6159,8 @@ _REASON_TR: dict[str, str] = {
         "Motor gürültüsünü azaltma yalnızca tek klipli Konuşmalı düzenlemede yapılabiliyor"
     ),
     _NOISE_REDUCTION_MISSED: "Motor gürültüsünü azaltamadım",
+    _CLOSING_ARROW_PLAN: "Kapanış yazının yanına kıvrımlı bir ok çizeceğim",
+    _CLOSING_ARROW_MISSING: "Ok henüz videoda yok; editörde kalemle bir ok çizebilirsin",
     _TALKING_SPOKEN_TEXT_PLAN: (
         "Çekiminde o kelimeyi söylediğin anda yazıyı gösteririm; kelimeyi duymazsam yazı çıkmaz"
     ),
@@ -6136,6 +6282,7 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _CLEANUP_AT_APPROVAL,
     _CLEANUP_IF_OFFERED,
     _CLEANUP_UNAVAILABLE,
+    *_TIGHT_STATIC_LINES,
     _CLEANUP_DONE,
     _CLEANUP_NOTHING_TO_CUT,
     _CLEANUP_NOT_RUN,
@@ -7019,6 +7166,68 @@ def _cuts_named_voiceover_lines(facts: PlanFacts) -> bool:
     )
 
 
+def _tight_pauses_ask(req: BriefRequirement) -> bool:
+    """Qendresa 13: the flag is on and the ask wants every pause gone, not just the long ones."""
+    from app.config import settings  # noqa: PLC0415
+    from app.kria.tight_pause_ask import wants_tight_pauses  # noqa: PLC0415
+
+    return bool(settings.tight_pause_cut_enabled) and wants_tight_pauses(req)
+
+
+def _tight_draft_lead(facts: PlanFacts, lead: str) -> str:
+    """The draft line for a tight ask: only a phone Talking edit cuts pauses down to 0.3 s."""
+    if facts.speech_cleanup_enabled is not True and facts.speech_cleanup_offered is False:
+        return lead  # cleanup unavailable: today's line
+    if not facts.phone_talking or facts.video_clip_count != 1:
+        # The render cuts a single-clip Talking take only (cutaways and inserts skip it).
+        return _TIGHT_KIND_LONG_ONLY
+    if facts.speech_cleanup_enabled:
+        return _TIGHT_PLANNED
+    if facts.speech_cleanup_offered is True:
+        return _TIGHT_AT_APPROVAL
+    return _TIGHT_IF_OFFERED
+
+
+def _tight_rendered_lead(facts: PlanFacts, lead: str, status: str) -> tuple[str, str]:
+    """The finished-video line for a tight ask, off the render's own ``tight_pauses`` report."""
+    report = facts.speech_cleanup_tight
+    if not isinstance(report, Mapping):
+        return _loc(_TIGHT_RENDER_LONG_ONLY), "partial"
+    if report.get("reason") == "noisy_take":
+        return _loc(_TIGHT_NOISY), "partial"
+    if report.get("reason") == "unmeasured":
+        return _loc(_TIGHT_UNMEASURED), "partial"
+    over = report.get("pauses_over_limit")
+    over = over if isinstance(over, int) and not isinstance(over, bool) else None
+    if report.get("status") not in ("applied", "no_change") or over is None:
+        return _loc(_TIGHT_UNMEASURED), "partial"
+    if over <= 0:
+        return _loc(lead), status
+    longest = report.get("longest_pause_s")
+    if report.get("status") == "no_change":
+        # Nothing was shortened, so never "cut your pauses tight".
+        en = f"I couldn't safely shorten {over} " + ("pauses" if over != 1 else "pause")
+        tr = f"{over} duraklamayı güvenle kısaltamadım"
+        if isinstance(longest, int | float) and not isinstance(longest, bool):
+            en += f" (the longest is {_round_s(longest)} s)"
+            tr += f" (en uzunu {_round_s(longest).replace('.', ',')} sn)"
+        en += ", so they stay" if over != 1 else ", so it stays"
+        tr += ", o yüzden kalıyorlar" if over != 1 else ", o yüzden kalıyor"
+        return say(en=en, tr=tr), "partial"
+    raw_limit = report.get("limit_s")
+    limit = f"{float(raw_limit):g}" if isinstance(raw_limit, int | float) else "0.35"
+    en = f"{_TIGHT_OVER_LIMIT} " + (
+        f"{over} still last longer than {limit} s"
+        if over != 1
+        else f"1 still lasts longer than {limit} s"
+    )
+    tr = f"{_REASON_TR[_TIGHT_OVER_LIMIT]} {over} tanesi hâlâ {limit.replace('.', ',')} sn'den uzun"
+    if isinstance(longest, int | float) and not isinstance(longest, bool):
+        en += f" (the longest is {_round_s(longest)} s)"
+        tr += f" (en uzunu {_round_s(longest).replace('.', ',')} sn)"
+    return say(en=en, tr=tr), "partial"
+
+
 def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Pauses, retakes and filler the creator asked to cut, against the draft.
 
@@ -7046,6 +7255,8 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     else:
         # Unknown whether approval offers the choice: never promise it.
         lead, status = _CLEANUP_IF_OFFERED, "partial"
+    if _tight_pauses_ask(req):
+        lead, status = _tight_draft_lead(facts, lead), "partial"
     notes = [_loc(lead)]
     if _wants_named_cuts(req):
         from app.kria.opening_cut_ask import named_cut_asks  # noqa: PLC0415
@@ -7105,7 +7316,11 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
             # KRI-821: cleanup off (no cleanup record), but the named lines were cut on their own.
             return _receipt(req, "met" if named[1] else "partial", "; ".join(named[0]))
         return _receipt(req, "partial", _CANT_CHECK_CLEANUP)
-    notes = [_loc(lead)]
+    if outcome in ("applied", "no_change") and _tight_pauses_ask(req):
+        tight_lead, status = _tight_rendered_lead(facts, lead, status)
+        notes = [tight_lead]
+    else:
+        notes = [_loc(lead)]
     if _wants_named_cuts(req):
         if named is not None:
             # KRI-821: the render's own per-line receipt says whether the line is gone.
@@ -7127,6 +7342,32 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
     return _receipt(req, status, "; ".join(notes))
 
 
+def _merge_touching_silences(rows: list[Any]) -> list[Any]:
+    """One pause cut as two rows (a tight cut's sliver touching a consented row) is one pause.
+
+    Merges ``silence`` rows whose gap is <= 1 ms; consented plans never hold touching rows, so
+    their count is unchanged. Rows without numeric bounds pass through as they are.
+    """
+
+    def span(row: Any) -> tuple[float, float] | None:
+        if not isinstance(row, Mapping) or row.get("reason") != "silence":
+            return None
+        start, end = row.get("start_s"), row.get("end_s")
+        if all(isinstance(v, int | float) and not isinstance(v, bool) for v in (start, end)):
+            return float(start), float(end)
+        return None
+
+    others = [row for row in rows if span(row) is None]
+    spans = sorted(sp for row in rows if (sp := span(row)) is not None)
+    merged: list[list[float]] = []
+    for start, end in spans:
+        if merged and start - merged[-1][1] <= 0.001:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return others + [{"reason": "silence", "start_s": start, "end_s": end} for start, end in merged]
+
+
 def _cleanup_counts(variant: Mapping[str, Any]) -> tuple[int, int, int, float | None] | None:
     """Pauses, filler sounds and retakes a variant's cut record removed, and their length.
 
@@ -7142,7 +7383,7 @@ def _cleanup_counts(variant: Mapping[str, Any]) -> tuple[int, int, int, float | 
         return None
     pauses = fillers = retakes = 0
     seconds = 0.0
-    for row in rows:
+    for row in _merge_touching_silences(rows):
         reason = row.get("reason") if isinstance(row, Mapping) else None
         if reason == "silence":
             pauses += 1
@@ -7194,8 +7435,15 @@ def speech_cleanup_review_note(
         pauses, fillers, retakes, seconds = counts
         parts_en: list[str] = []
         parts_tr: list[str] = []
+        tight = variant.get("tight_pauses")
+        added = tight.get("added_cuts") if isinstance(tight, Mapping) else None
+        if isinstance(added, int) and not isinstance(added, bool) and added > 0:
+            # Qendresa 13: tight cuts added short pauses, so none of them is a "long" pause.
+            pause_one, pause_many, pause_tr = "pause", "pauses", "duraklama"
+        else:
+            pause_one, pause_many, pause_tr = "long pause", "long pauses", "uzun duraklama"
         for count, one, many, tr in (
-            (pauses, "long pause", "long pauses", "uzun duraklama"),
+            (pauses, pause_one, pause_many, pause_tr),
             (fillers, "filler sound", "filler sounds", "dolgu sesi"),
             (retakes, "restarted sentence", "restarted sentences", "baştan başlanan cümle"),
         ):
@@ -10812,6 +11060,9 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
             "duration_s",
         }:
             return _receipt(req, "partial", _NO_CHECKER)
+        arrow_reason = _closing_arrow_reason(req, facts)
+        if arrow_reason is not None:
+            return _receipt(req, "partial", arrow_reason)
         return _receipt(req, "met", None)
     if _is_spoken_text_cue(req) and facts.edit_format in {"subtitled", "talking_head"}:
         spoken = _spoken_text_fact(facts, req)
@@ -10859,6 +11110,26 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         "partial",
         say(en="That exact text isn't in this draft.", tr="Bu tam yazı bu taslakta yok."),
     )
+
+
+def _closing_arrow_reason(req: BriefRequirement, facts: PlanFacts) -> str | None:
+    """Item 14: why a found ending text is not "met" when its ask also wants an arrow."""
+    from app.pipeline.phone_cta_text import (  # noqa: PLC0415
+        cta_ending_parts,
+        requirement_asks_arrow,
+    )
+
+    if not requirement_asks_arrow(req):
+        return None
+    is_ending = cta_ending_parts(req.literal) is not None
+    if facts.closing_arrow and is_ending:
+        return None
+    if not facts.rendered_variant and facts.phone_talking and is_ending:
+        from app.services.phone_rollout import cta_ending_available  # noqa: PLC0415
+
+        if cta_ending_available():
+            return _CLOSING_ARROW_PLAN
+    return _CLOSING_ARROW_MISSING
 
 
 def _drawn_by_contract(req: BriefRequirement, facts: PlanFacts) -> bool:

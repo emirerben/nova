@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.3.0] - 2026-11-05
+
+### Changed
+- feat(speech-cleanup): tight pauses on phone Talking when the creator asks (Qendresa 13) (#2102) <!-- release-pr: 2102 -->
+
+## [0.88.2.0] - 2026-11-05
+
+### Changed
+- fix(kria): a chat with no language yet answers in the language the creator types, not the phone's (Green 5) (#2098) <!-- release-pr: 2098 -->
+
+## [0.88.1.0] - 2026-11-05
+
+### Changed
+- fix(ios): preserve valid source windows through saved render preparation (#2122) <!-- release-pr: 2122 -->
+
+## [0.88.0.0] - 2026-11-05
+
+### Added
+- feat(ios): tap, drag and pinch the corner green-screen speaker in the editor (#2117) <!-- release-pr: 2117 -->
+
+## [0.87.0.0] - 2026-11-05
+
+### Added
+- feat(phone-talking): her comment-keyword ending with a drawn arrow (Qendresa item 14) (#2103) <!-- release-pr: 2103 -->
+
+## [0.86.8.0] - 2026-11-05
+
+### Changed
+- fix(kria): green-screen backgrounds never show the same photo twice (#2118) <!-- release-pr: 2118 -->
+
+## [0.86.7.0] - 2026-11-05
+
+### Changed
+- feat(kria): Steer now — Codex-style waiting-message bar (iOS, flag off) (#2105) <!-- release-pr: 2105 -->
+
+## [0.86.6.0] - 2026-11-05
+
+### Changed
+- test(api): isolate the intent-review Postgres suites from other xdist workers (#2119) <!-- release-pr: 2119 -->
+
 ## [0.86.5.0] - 2026-11-05
 
 ### Changed

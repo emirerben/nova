@@ -469,6 +469,18 @@ class Settings(BaseSettings):
     # secrets set PHONE_SUBTITLED_CLOSING_TITLE_ENABLED=false --app nova-video`
     # + `fly machine restart <id>` (api + worker).
     phone_subtitled_closing_title_enabled: bool = True
+    # Item 14 (Qendresa's ending): when the creator asks to end on "comment <KEYWORD>"
+    # (optionally with an arrow), a phone Talking edit draws her look instead of the
+    # lime tag: a small white handwritten "comment", the keyword big in cream under it,
+    # and a hand-drawn white arrow (`app.pipeline.phone_cta_ending`). The arrow is a
+    # freehand drawing, so this also needs the closing-title lane
+    # (`phone_subtitled_closing_title_supported`), `freehand_drawing_enabled`,
+    # "freehandDrawing" in `phone_render_verified_features` and an app build stamped
+    # with protocol >= `freehand_drawing_min_client_protocol` (older builds keep the
+    # lime tag) -- see `app.services.phone_rollout.cta_ending_planned_for`. False:
+    # byte-identical to today. Rollback: `fly secrets set
+    # CREATOR_CTA_ENDING_ENABLED=false --app nova-video` + restart api + worker.
+    creator_cta_ending_enabled: bool = False
     # KRI-707 (text on a spoken word on phone Talking edits): a brief text ask with
     # its spoken cue ("big 'ATAKAN' when I say 'Atakan'": literal + `facts.triggers`)
     # renders as an editable text row from the moment the take says the word, off the
@@ -1253,6 +1265,12 @@ class Settings(BaseSettings):
     # ask), and the "<pace> pacing" chip is left off a card whose route ignores pacing. Default
     # TRUE; false + restart (api + worker) = byte-identical to before.
     kria_headsup_asked_only_enabled: bool = True
+
+    # Green 5 (2026-11-04): a chat nothing has told its language yet (a "Suggest an edit." tap,
+    # media only, "ok") takes the language of the creator's latest message typed in another of
+    # their chats before the device language (`reply_language.creator_typed_language`). Default
+    # TRUE; false + restart (api) = byte-identical (device language, KRI-784).
+    kria_reply_language_history_enabled: bool = True
     # KRI-1097 wave 2 (prompt fidelity on every route). ROUTE_REGISTRY_ENABLED: each render
     # route reads its own capability table (`app.kria.route_capabilities`), so voiceover,
     # Talking, Narrated, creator-song, spoken-excerpt and slide drafts get their own honest
@@ -1292,6 +1310,15 @@ class Settings(BaseSettings):
     # api + worker. docs/pipelines/suggestion-chips.md.
     kria_suggestion_chips_enabled: bool = False
     kria_suggestion_chips_user_ids: Annotated[list[str], NoDecode] = []
+    # Steer now (Green 5): a message sent while Kria works shows as "Up next" in the iOS chat
+    # with a "Steer now" button; `POST …/turns/{id}/cancel {"steer": true}` stops the running
+    # turn and starts the waiting message. Default off => capability `steer_now: false`, the
+    # queued payload carries no `queued_behind_turn_id`, a steer cancel is refused 404 and the
+    # plain cancel is byte-identical. The user-id list turns it on for single accounts while
+    # the global flag is off (canary). No NEXT_PUBLIC twin. Apply: `fly secrets set -a
+    # nova-video KRIA_STEER_NOW_ENABLED=true` + restart api + worker. docs/pipelines/steer-now.md.
+    kria_steer_now_enabled: bool = False
+    kria_steer_now_user_ids: Annotated[list[str], NoDecode] = []
     # KRI-756: bounds on the chip-wording agent (`nova.chat.suggester`). NOT flags: the one
     # flag above gates the whole feature. 0 runs/thread disables only the agent (chips fall
     # back to template labels): the cost kill lever without a second flag. The daily limit
@@ -1305,6 +1332,7 @@ class Settings(BaseSettings):
         "kria_brief_binding_user_ids",
         "kria_approval_readiness_user_ids",
         "kria_suggestion_chips_user_ids",
+        "kria_steer_now_user_ids",
         "kria_intent_review_user_ids",
         mode="before",
     )
@@ -1350,6 +1378,14 @@ class Settings(BaseSettings):
             return True
         return user_id is not None and str(user_id) in {
             str(uid) for uid in self.kria_suggestion_chips_user_ids
+        }
+
+    def steer_now_for(self, user_id: object) -> bool:
+        """Global flag OR the per-account allowlist (allowlist only ever adds)."""
+        if self.kria_steer_now_enabled:
+            return True
+        return user_id is not None and str(user_id) in {
+            str(uid) for uid in self.kria_steer_now_user_ids
         }
 
     def creative_brief_for(self, user_id: object) -> bool:
@@ -1750,6 +1786,18 @@ class Settings(BaseSettings):
         "the next FULL re-render only). "
         "Kill switch: `fly secrets set SILENCE_CUT_ENABLED=false --app nova-video` "
         "+ worker restart — byte-identical to pre-feature behavior.",
+    )
+
+    tight_pause_cut_enabled: bool = Field(
+        default=False,
+        description="Tight pauses on the phone Talking render (Qendresa 13). When the approved "
+        'brief asks for every pause to go ("cut out all my pauses so it\'s tight"), the '
+        "creator consented to Speech cleanup and the take is a single iPhone-rendered clip, "
+        "the render adds extra pause cuts so no kept pause is over about 0.3 s, writes a "
+        "`tight_pauses` report on the variant, and the receipt states what was measured. "
+        "Default off: no extra cuts and every receipt is byte-identical to before. "
+        "Kill switch: `fly secrets set TIGHT_PAUSE_CUT_ENABLED=false --app nova-video` + api "
+        "and worker restart.",
     )
 
     speech_cleanup_budget_clamp_enabled: bool = Field(
