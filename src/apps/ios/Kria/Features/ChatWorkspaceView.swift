@@ -589,6 +589,15 @@ private struct CreationWorkspaceView: View {
     /// KRI-443: Stop on the live plan feed.
     @State private var isStoppingRender = false
     @State private var stopMessage: String?
+    /// Steer now: a Steer request is in flight; earlier turns the server refused to stop (their video is being made);
+    /// the plain note under the Up next row (a third message, a Steer that came too late).
+    @State private var isSteering = false
+    @State private var steerRefusedTurnIDs: Set<String> = []
+    @State private var steerNote: String?
+    /// Steer now: a message being sent while Kria works shows in the bar at once (not as a chat bubble) until the
+    /// server's queued `user_message` takes over; cleared when the send ends.
+    @State private var pendingWaitingText: String?
+    @State private var waitingClientEventID: String?
     @State private var stopUnavailableJobID: String?
     /// The server's reason the last confirmation was rejected, shown inside the card.
     @State private var confirmationConflict: CreationConfirmationConflict?
@@ -676,11 +685,13 @@ private struct CreationWorkspaceView: View {
     }
 
     private var suppressedTimelineMessages: Set<String> {
+        // Steer now: the waiting message lives in the bar, and a message the creator took back is gone.
+        let waiting = steerNowEnabled ? SteerNowPolicy.hiddenMessageEventIDs(in: events) : []
         if workspaceStage == .format, let event = events.last(where: { $0.eventType == "format_prompt" }) {
-            return [event.id]
+            return waiting.union([event.id])
         }
-        if workspaceStage == .direction, let event = activeProposalEvent { return [event.id] }
-        return []
+        if workspaceStage == .direction, let event = activeProposalEvent { return waiting.union([event.id]) }
+        return waiting
     }
 
     private var activeUploadIDs: Set<UUID> {
@@ -707,6 +718,7 @@ private struct CreationWorkspaceView: View {
             hasher.combine(message.afterSequence); hasher.combine(message.localOrder)
         }
         hasher.combine(stage?.id); hasher.combine(stage?.afterSequence)
+        hasher.combine(waitingClientEventID)
         for id in suppressed.sorted() { hasher.combine(id) }
         for upload in uploads { hasher.combine(upload.id); hasher.combine(upload.afterSequence); hasher.combine(upload.localOrder) }
         for requestID in completedThoughtSummaries.keys.sorted() {
@@ -719,7 +731,7 @@ private struct CreationWorkspaceView: View {
         if cacheable, derived.timelineKey == key { return derived.timeline }
         Perf.event("timeline.build")
         let built = ChatTimeline.build(
-            events: events, pending: pendingMessages, stage: stage,
+            events: events, pending: pendingMessages.filter { $0.clientEventID != waitingClientEventID }, stage: stage,
             suppressedMessageIDs: suppressed, uploads: uploads, thoughtSummaries: completedThoughtSummaries
         )
         derived.timelineKey = cacheable ? key : nil
@@ -962,15 +974,164 @@ private struct CreationWorkspaceView: View {
         try await model.api.cancelRender(threadID: project.id, turnID: turnID, revision: threadRevision)
     }
 
+    // MARK: Steer now
+
+    private var steerNowEnabled: Bool { capabilities?.steerNowEnabled == true && currentProject.runtimeVersion == 2 }
+    private var upNext: SteerNowPolicy.Waiting? { steerNowEnabled ? SteerNowPolicy.waiting(in: events) : nil }
+    private var steerStrings: SteerStrings { SteerStrings(ClipAnswerLanguage(threadState: threadState)) }
+
+    /// Kria is planning, its card is up, or a video is being made: a typed message now waits.
+    private var kriaIsBusy: Bool { isThinking || approval != nil || workspaceStage == .rendering }
+
+    /// Steer now: the bar on top of the input box. Tucked 13 pt under the composer's top edge (its outer padding is 12)
+    /// and inset 12 pt from its sides, like Codex's bar.
+    @ViewBuilder private var waitingBar: some View {
+        if steerNowEnabled, let waiting = upNext {
+            WaitingMessageBar(
+                text: waiting.text, strings: steerStrings, canSteer: canSteer(waiting), isBusy: isSteering, note: steerNote,
+                steer: { steerNow(waiting) }, remove: { removeWaiting(waiting, edit: false) }, edit: { removeWaiting(waiting, edit: true) }
+            )
+            .padding(.horizontal, 26).padding(.bottom, -13)
+        } else if steerNowEnabled, let text = pendingWaitingText {
+            WaitingMessageBar(text: text, strings: steerStrings, canSteer: false, isBusy: true, note: nil,
+                              steer: {}, remove: {}, edit: {})
+                .padding(.horizontal, 26).padding(.bottom, -13)
+        }
+    }
+
+    /// The trash and Edit: cancel the waiting turn only while it still waits (the server checks that atomically). The
+    /// server marks it so Kria never reads it; Edit then puts the words back in the box (ahead of anything already typed
+    /// there). A message Kria already picked up is never stopped: the bar says so and keeps the words out of the box.
+    private func removeWaiting(_ waiting: SteerNowPolicy.Waiting, edit: Bool) {
+        guard !isSteering else { return }
+        isSteering = true
+        steerNote = nil
+        Task {
+            defer { isSteering = false }
+            for attempt in 0..<2 {
+                do {
+                    let removed = try await model.api.removeWaitingMessage(threadID: project.id, turnID: waiting.turnID, revision: threadRevision)
+                    threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: removed.threadRevision)
+                    if edit {
+                        let typed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                        prompt = typed.isEmpty ? waiting.text : waiting.text + " " + typed
+                        composerFocused = true
+                    }
+                    _ = try? await refreshDelta()
+                    return
+                } catch let error as APIError where error.isConflict {
+                    if error.conflictCode == "turn_no_longer_queued" || error.conflictCode == "turn_not_cancellable" {
+                        steerNote = steerStrings.alreadyStarted
+                        await refreshNow()
+                        return
+                    }
+                    guard attempt == 0 else {
+                        steerNote = steerStrings.couldNotRemove
+                        await refreshNow()
+                        return
+                    }
+                    // The project moved on since the last read: take the latest and decide again before the second try.
+                    // Kria may have picked the message up in between; then it is not tried again.
+                    _ = try? await refreshDelta()
+                    switch SteerNowPolicy.removalRetry(for: waiting, in: events) {
+                    case .retry:
+                        continue
+                    case .alreadyStarted:
+                        steerNote = steerStrings.alreadyStarted
+                        return
+                    case .alreadyRemoved:
+                        // Gone already (removed elsewhere): Edit still gets its words back.
+                        if edit {
+                            let typed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                            prompt = typed.isEmpty ? waiting.text : waiting.text + " " + typed
+                            composerFocused = true
+                        }
+                        return
+                    }
+                } catch {
+                    steerNote = steerStrings.couldNotRemove
+                    return
+                }
+            }
+        }
+    }
+
+    private func canSteer(_ waiting: SteerNowPolicy.Waiting) -> Bool {
+        guard let behind = waiting.behindTurnID, !steerRefusedTurnIDs.contains(behind) else { return false }
+        return SteerNowPolicy.canSteer(waiting, events: events)
+    }
+
+    /// Stops the turn Kria is working on so the waiting message runs now. A stale revision (a worker event landed
+    /// since the last read) refreshes and tries once more; a turn whose video already started keeps its message
+    /// waiting and says so; a turn that already finished just refreshes.
+    private func steerNow(_ waiting: SteerNowPolicy.Waiting) {
+        guard let behind = waiting.behindTurnID, !isSteering else { return }
+        isSteering = true
+        steerNote = nil
+        Task {
+            defer { isSteering = false }
+            for attempt in 0..<2 {
+                do {
+                    let stopped = try await model.api.steerNow(threadID: project.id, turnID: behind, revision: threadRevision)
+                    threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: stopped.threadRevision)
+                    // Kria works on the waiting message now: it gets the Thinking row until its own reply lands.
+                    thinkingAnchor = afterSequence
+                    thinkingTurnID = waiting.turnID
+                    thinkingSettlesOnJobStatus = false
+                    isThinking = true
+                    _ = try? await refreshDelta()
+                    settleThinking()
+                    return
+                } catch let error as APIError where error.isConflict {
+                    switch error.conflictCode {
+                    case "turn_not_cancellable":
+                        steerRefusedTurnIDs.insert(behind)
+                        steerNote = steerStrings.videoAlreadyStarted
+                        await refreshNow()
+                        return
+                    case "nothing_to_steer_to":
+                        steerRefusedTurnIDs.insert(behind)
+                        await refreshNow()
+                        return
+                    default:
+                        // The project moved on since the last read: take the latest and try once more.
+                        guard attempt == 0 else {
+                            steerNote = steerStrings.couldNotSwitch
+                            await refreshNow()
+                            return
+                        }
+                        _ = try? await refreshDelta()
+                    }
+                } catch {
+                    steerNote = steerStrings.couldNotSwitch
+                    return
+                }
+            }
+        }
+    }
+
     private var timelineUpdateToken: String {
         let feed = planFeed.paced(by: deviceBuildStage)
-        let liveThoughtToken = liveThoughtSummaries.map { "\($0.id):\($0.status.rawValue):\($0.text.count)" }.joined(separator: "|")
-        return timeline.map(\.id).joined(separator: "|") + "|\(isThinking)|\(isSending)|\(failure?.message ?? "")"
-            + "|feed\(feed.decidedCount)/\(feed.totalCount)"
-            + "|thoughts\(liveThoughtToken)"
-            + "|finishedEdits\(finishedEditSuggestionUpdate)"
-            // KRI-769: the after-render chips arrive after the card, below the fold; a reader at the bottom follows them in.
-            + "|readyChips\(suggestionChips(for: .ready).map(\.id).joined(separator: ","))"
+        let liveThoughtToken: String = liveThoughtSummaries.map { "\($0.id):\($0.status.rawValue):\($0.text.count)" }.joined(separator: "|")
+        let timelineIDs: String = timeline.map(\.id).joined(separator: "|")
+        let failureMessage: String = failure?.message ?? ""
+        let upNextTurnID: String = upNext?.turnID ?? ""
+        let steerNoteText: String = steerNote ?? ""
+        // KRI-769: the after-render chips arrive after the card, below the fold; a reader at the bottom follows them in.
+        let readyChipIDs: String = suggestionChips(for: .ready).map(\.id).joined(separator: ",")
+        // Separate parts keep this within the compiler's type-check time limit on CI.
+        let parts: [String] = [
+            timelineIDs,
+            "\(isThinking)",
+            "\(isSending)",
+            failureMessage,
+            "upNext\(upNextTurnID)/\(steerNoteText)",
+            "feed\(feed.decidedCount)/\(feed.totalCount)",
+            "thoughts\(liveThoughtToken)",
+            "finishedEdits\(finishedEditSuggestionUpdate)",
+            "readyChips\(readyChipIDs)",
+        ]
+        return parts.joined(separator: "|")
     }
 
     private var streamingThoughtSummaries: [KriaThoughtSummary] {
@@ -1046,38 +1207,42 @@ private struct CreationWorkspaceView: View {
         )
     }
 
+    private func messageRow(_ message: ChatTranscriptMessage) -> some View {
+        ChatMessageRow(message: message, onSelectOption: { option in Task { await send(message: option) } },
+                       responseStartedAt: responsePresentation.startTime(for: message.id),
+                       requirements: briefRequirements,
+                       briefSettled: briefSettled,
+                       onCorrectGuess: { label in
+                           // One tap: the sentence is started (after whatever the creator already
+                           // typed), the keyboard is up, and only the right name is left to type.
+                           prompt = label.correctionDraft(appendingTo: prompt)
+                           composerFocused = true
+                       },
+                       clipSelectionMode: clipSelectionMode(for: message),
+                       clipSelectionMedia: clipSelectionMedia(for: message),
+                       clipSelectionLanguage: ClipAnswerLanguage(threadState: threadState),
+                       songOrderMode: songOrderMode(for: message),
+                       songOrderMedia: CreationAttachedMedia.parse(threadState),
+                       songTimeline: songTimelineConfiguration,
+                       songDurationS: CreationAttachedMedia.song(threadState)?.durationS,
+                       projectID: project.id,
+                       choiceQuestionMode: choiceQuestionMode(for: message),
+                       hidesAnswerEcho: echoesChoiceAnswer(message),
+                       questionBatch: asksTogether(message) ? questionBatches[message.id] ?? QuestionBatch() : nil,
+                       songRangeMode: songRangeMode(for: message),
+                       objectMarkMode: objectMarkMode(for: message),
+                       momentOrderMode: momentOrderMode(for: message),
+                       replyOptionsMode: replyOptionsMode(for: message),
+                       voiceoverScriptMode: voiceoverScriptMode(for: message),
+                       answerOwn: { startAnsweringOwn(message) },
+                       isAnsweringOwn: answeringQuestion != nil && composerFocused,
+                       changeHeldChoice: { questionBatches[message.id]?.releaseChoice() })
+    }
+
     @ViewBuilder private func timelineRow(_ entry: ChatTimelineEntry) -> some View {
         switch entry.content {
         case .message(let message):
-            ChatMessageRow(message: message, onSelectOption: { option in Task { await send(message: option) } },
-                           responseStartedAt: responsePresentation.startTime(for: message.id),
-                           requirements: briefRequirements,
-                           briefSettled: briefSettled,
-                           onCorrectGuess: { label in
-                               // One tap: the sentence is started (after whatever the creator already
-                               // typed), the keyboard is up, and only the right name is left to type.
-                               prompt = label.correctionDraft(appendingTo: prompt)
-                               composerFocused = true
-                           },
-                           clipSelectionMode: clipSelectionMode(for: message),
-                           clipSelectionMedia: clipSelectionMedia(for: message),
-                           clipSelectionLanguage: ClipAnswerLanguage(threadState: threadState),
-                           songOrderMode: songOrderMode(for: message),
-                           songOrderMedia: CreationAttachedMedia.parse(threadState),
-                           songTimeline: songTimelineConfiguration,
-                           songDurationS: CreationAttachedMedia.song(threadState)?.durationS,
-                           projectID: project.id,
-                           choiceQuestionMode: choiceQuestionMode(for: message),
-                           hidesAnswerEcho: echoesChoiceAnswer(message),
-                           questionBatch: asksTogether(message) ? questionBatches[message.id] ?? QuestionBatch() : nil,
-                           songRangeMode: songRangeMode(for: message),
-                           objectMarkMode: objectMarkMode(for: message),
-                           momentOrderMode: momentOrderMode(for: message),
-                           replyOptionsMode: replyOptionsMode(for: message),
-                           voiceoverScriptMode: voiceoverScriptMode(for: message),
-                           answerOwn: { startAnsweringOwn(message) },
-                           isAnsweringOwn: answeringQuestion != nil && composerFocused,
-                           changeHeldChoice: { questionBatches[message.id]?.releaseChoice() })
+            messageRow(message)
                 .id(entry.id)
             if let operationID = message.memoryOperationID {
                 SavedTextPreferenceUndo(operationID: operationID, api: model.api)
@@ -1834,13 +1999,14 @@ private struct CreationWorkspaceView: View {
                     .accessibilityLabel("Loading suggestions")
                     .accessibilityIdentifier("first-prompt-suggestions-loading")
                 }
+                waitingBar
                 ChatComposer(
                     text: promptBinding,
                     isSending: isSending || isActing,
                     canAttach: canAttachMedia,
                     canSendWithoutText: readyMediaCount > 0,
                     // be99a3f12 (origin/main): a failed attach never blocks Send.
-                    blocksSubmission: isThinking || sendReceipt != nil || pendingUploadCount > 0,
+                    blocksSubmission: (isThinking && !steerNowEnabled) || sendReceipt != nil || pendingUploadCount > 0,
                     placeholder: answeringQuestion != nil ? "Type your answer" : (readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…"),
                     answering: answeringQuestion,
                     cancelAnswering: { answeringQuestion = nil },
@@ -1877,10 +2043,13 @@ private struct CreationWorkspaceView: View {
             conversationContent
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            ChatComposer(
-                text: promptBinding, isSending: isSending || isActing,
-                canAttach: false, blocksSubmission: isThinking || sendReceipt != nil || pendingUploadCount > 0, isFocused: $composerFocused, dictation: dictationForComposer, dictationTerms: dictationContextTerms, attach: {}, send: { Task { await send() } }
-            )
+            VStack(spacing: 0) {
+                waitingBar
+                ChatComposer(
+                    text: promptBinding, isSending: isSending || isActing,
+                    canAttach: false, blocksSubmission: (isThinking && !steerNowEnabled) || sendReceipt != nil || pendingUploadCount > 0, isFocused: $composerFocused, dictation: dictationForComposer, dictationTerms: dictationContextTerms, attach: {}, send: { Task { await send() } }
+                )
+            }
         }
         .onAppear { activateDraftStorage() }
         .background(KriaColor.paper)
@@ -2240,7 +2409,15 @@ private struct CreationWorkspaceView: View {
     }
 
     private func send(message submittedMessage: String? = nil, clipSelection: ClipSelectionSubmission? = nil, songOrder: SongOrderSubmission? = nil, choiceSelection: ChoiceSelectionSubmission? = nil, songRange: SongRangeAnswer? = nil, suggestion: SuggestionTap? = nil, protectedRegion: ProtectedRegionAnswer? = nil, markQuestionID: String? = nil, momentOrder: MomentOrderAnswer? = nil, keepsDraft: Bool = false, retrying: ChatSendReceipt? = nil) async {
-        guard selectedFormat != .slides, !isSending, !isActing, !isThinking else { return }
+        // Steer now: a typed message may go while Kria works; it waits as "Up next". Card answers and chips still wait.
+        let composerSend = submittedMessage == nil && clipSelection == nil && songOrder == nil && choiceSelection == nil
+            && songRange == nil && suggestion == nil && protectedRegion == nil && momentOrder == nil && retrying == nil
+        guard selectedFormat != .slides, !isSending, !isActing, !isThinking || (steerNowEnabled && composerSend) else { return }
+        if steerNowEnabled, composerSend, upNext != nil {
+            // The server keeps one message waiting. A third stays in the composer with a plain note, never an error card.
+            steerNote = steerStrings.oneAlreadyWaiting
+            return
+        }
         if let retrying {
             guard let current = chatDrafts.submission(for: project.id),
                   current.clientEventID == retrying.clientEventID, current.phase == .unconfirmed else {
@@ -2288,6 +2465,18 @@ private struct CreationWorkspaceView: View {
             ownsSendAttempt = false
             chatDrafts.endSubmission(clientEventID: receipt.clientEventID, for: project.id)
         }
+        // Steer now: sent while Kria works, the message goes straight to the bar (it will wait), never a chat bubble.
+        let waitsBehindKria = steerNowEnabled && composerSend && kriaIsBusy
+        if waitsBehindKria {
+            pendingWaitingText = message
+            waitingClientEventID = submission.clientEventID
+        }
+        defer {
+            if waitsBehindKria {
+                pendingWaitingText = nil
+                waitingClientEventID = nil
+            }
+        }
         nextLocalOrder += 1
         let optimistic = submissionAnchor ?? ChatPendingMessage(content: message, clientEventID: submission.clientEventID,
             afterSequence: receipt.afterSequence, localOrder: nextLocalOrder, songOrder: songOrder, songRange: songRange,
@@ -2334,6 +2523,7 @@ private struct CreationWorkspaceView: View {
             pendingTurnSubmission = submission
         }
         guard model.chatDrafts.submission(for: project.id)?.clientEventID == receipt.clientEventID else { return }
+        let earlierThoughts = (requestID: thoughtRequestID, summaries: liveThoughtSummaries)
         thoughtRequestID = submission.clientEventID
         liveThoughtSummaries = []
         songRangeProblem = nil
@@ -2493,16 +2683,24 @@ private struct CreationWorkspaceView: View {
         model.uploads.clearUnreadableFailures(projectID: project.id)
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
         conversationAcceptedID = UUID()
-        thinkingAnchor = receipt.afterSequence
-        thinkingTurnID = accepted.turnID
-        thinkingSettlesOnJobStatus = false
-        isThinking = true
-        settleThinking()
+        steerNote = nil
+        let waitsUpNext = steerNowEnabled && accepted.status == "queued"
+        if waitsUpNext {
+            // Steer now: the message waits as "Up next"; whatever Kria is doing keeps its own Thinking row.
+            thoughtRequestID = earlierThoughts.requestID
+            liveThoughtSummaries = earlierThoughts.summaries
+        } else {
+            thinkingAnchor = receipt.afterSequence
+            thinkingTurnID = accepted.turnID
+            thinkingSettlesOnJobStatus = false
+            isThinking = true
+            settleThinking()
+        }
         failure = await acceptedMutationRefreshError(
             "Your message was sent, but the conversation couldn’t refresh.",
             refresh: { try await refreshDelta() }
         )
-        await fetchFinalThoughtSummary(requestID: submission.clientEventID)
+        if !waitsUpNext { await fetchFinalThoughtSummary(requestID: submission.clientEventID) }
     }
 
     /// A turn can settle before the one-second live poll sees its completed
