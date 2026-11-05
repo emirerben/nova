@@ -22,7 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.db_locks import CONTENT_PLAN_LOCK
+from app.db_locks import CONTENT_PLAN_LOCK, acquire_key_share_rows
 from app.kria.api_schemas import (
     ApprovalDecisionBody,
     ApprovalDecisionOut,
@@ -46,6 +46,7 @@ from app.kria.contracts import (
 from app.kria.duplicate_send import duplicate_reply, find_duplicate_send
 from app.kria.intent_review_copy import INTENT_REVIEW_TURN_VALUE
 from app.kria.language import is_help_question, is_status_question
+from app.kria.removed_messages import REMOVED_WHILE_WAITING
 from app.kria.reply_language import (
     remember_reply_language,
     reply_language_for,
@@ -1186,6 +1187,13 @@ async def submit_turn(
             "runtime_version": 2,
             "turn_id": str(turn_id),
             "turn_status": turn_status,
+            # Steer now: the turn this message waits behind, so the app can offer Steer now and
+            # hide it once that turn's video is being made. Flag off: nothing stored.
+            **(
+                {"queued_behind_turn_id": str(queued_replaces_turn_id)}
+                if queued_replaces_turn_id is not None and settings.steer_now_for(creator_id)
+                else {}
+            ),
             **outcome_payload,
             # Flag off: dropped silently, nothing stored (byte-identical to old clients).
             **({"camera_roll_story": _camera_roll_story} if _camera_roll_story else {}),
@@ -1386,16 +1394,71 @@ async def cancel_turn(
     turn_id: uuid.UUID,
     creator_id: uuid.UUID,
     expected_thread_revision: int,
+    steer: bool = False,
+    only_if_queued: bool = False,
 ) -> tuple[TurnCancelled, str | None]:
+    """Cancel a turn that has not committed work; promote the queued message, if any.
+
+    ``steer`` (Steer now, docs/pipelines/steer-now.md): the creator stops the running turn
+    so the message waiting behind it runs now. Refused unless a message waits behind this
+    very turn (a late tap never stops what it was meant to start) and while its video can
+    still be stopped: an approved approval is consent to render, and the render claim would
+    otherwise revive the turn after this cancel. It also closes the stopped card in the
+    chat (``approval_cancelled``) and says what happened in the chat's language. Without
+    ``steer`` this is byte-identical to before.
+
+    ``only_if_queued`` (Steer now's trash / Edit): remove the message only while it still
+    waits. Once Kria has picked it up (the turn it waited behind finished), the answer is
+    409 ``turn_no_longer_queued`` and nothing changes; without it, a retry that raced the
+    promotion was a plain cancel of the turn Kria now runs.
+    """
+    if steer and not settings.steer_now_for(creator_id):
+        raise RuntimeFailure(404, "steer_now_unavailable", "Steer now is unavailable.")
+    if steer:
+        # A Steer writes several events, and every second UPDATE of the thread row in one
+        # transaction re-checks its foreign keys (FOR KEY SHARE on each parent, taken late).
+        # An Approve tapped at the same moment holds PlanItem/Session FOR UPDATE while it
+        # waits for this Turn, so take those key-shares first, in canonical order.
+        parents = (
+            await db.execute(
+                select(
+                    CreationThread.active_plan_item_id,
+                    CreationThread.active_job_id,
+                    CreationThread.active_creator_agent_session_id,
+                ).where(CreationThread.id == thread_id, CreationThread.creator_id == creator_id)
+            )
+        ).first()
+        if parents is not None:
+            await acquire_key_share_rows(
+                db,
+                {
+                    PlanItem: parents.active_plan_item_id,
+                    Job: parents.active_job_id,
+                    CreatorAgentSession: parents.active_creator_agent_session_id,
+                },
+            )
     # Lock Turn before CreationThread per the global runtime lock order. This
     # transaction does not touch PlanItem/Job and cannot cancel a render.
-    turn = (
-        await db.execute(
-            select(CreatorAgentTurn)
-            .where(CreatorAgentTurn.id == turn_id, CreatorAgentTurn.thread_id == thread_id)
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
+    this_turn = (CreatorAgentTurn.id == turn_id, CreatorAgentTurn.thread_id == thread_id)
+    lookup = select(CreatorAgentTurn).where(*this_turn)
+    if only_if_queued:
+        # The condition is part of the locking statement, not a read before it: Postgres
+        # re-checks the WHERE on the newest row version after waiting out a promotion that
+        # holds the row, and once locked no other transaction can change the status before
+        # this one ends. `cancelled` stays readable so a repeated tap (its first answer
+        # lost) gets the same answer as before.
+        lookup = lookup.where(CreatorAgentTurn.status.in_(("queued", "cancelled")))
+    turn = (await db.execute(lookup.with_for_update())).scalar_one_or_none()
+    if turn is None and only_if_queued:
+        if (await db.execute(select(CreatorAgentTurn.id).where(*this_turn))).first() is not None:
+            thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=False)
+            raise RuntimeFailure(
+                409,
+                "turn_no_longer_queued",
+                "Kria already started on this message.",
+                recovery="refresh_replan",
+                current_revision=int(thread.revision),
+            )
     if turn is None:
         raise RuntimeFailure(404, "turn_not_found", "Kria turn not found")
     thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=True)
@@ -1429,6 +1492,11 @@ async def cancel_turn(
             recovery="manual",
             current_revision=int(thread.revision),
         )
+    steered_to = await _steer_target(db, thread=thread, turn=turn) if steer else None
+    # Steer now: the trash / Edit on a waiting message. Marked so planning never reads it.
+    removed_while_waiting = (
+        not steer and turn.status == "queued" and settings.steer_now_for(creator_id)
+    )
 
     now = datetime.now(UTC)
     approval_ids: list[str] = []
@@ -1453,14 +1521,44 @@ async def cancel_turn(
     turn.cancel_requested_at = now
     turn.status = "cancelled"
     turn.completed_at = now
+    if steered_to is not None:
+        # Both clients close a card only on an approval_* event naming it.
+        for approval_id in approval_ids:
+            await _append_event(
+                db,
+                thread,
+                role="system",
+                event_type="approval_cancelled",
+                content=None,
+                payload={"approval_id": approval_id, "turn_id": str(turn.id)},
+            )
     await _append_event(
         db,
         thread,
         role="system",
         event_type="turn_cancelled",
         content=None,
-        payload={"turn_id": str(turn.id), "approval_ids": approval_ids},
+        payload={
+            "turn_id": str(turn.id),
+            "approval_ids": approval_ids,
+            **({"steered_to_turn_id": steered_to} if steered_to is not None else {}),
+            **({REMOVED_WHILE_WAITING: True} if removed_while_waiting else {}),
+        },
     )
+    if steered_to is not None:
+        with reply_language_for(thread_reply_language(thread)):
+            stopped_line = say(
+                en="Stopped. Working on your newer message instead.",
+                tr="Durdurdum. Bunun yerine yeni mesajın üzerinde çalışıyorum.",
+            )
+        await _append_event(
+            db,
+            thread,
+            role="assistant",
+            event_type="status_update",
+            content=stopped_line,
+            payload={"turn_id": str(turn.id), "steered_to_turn_id": steered_to},
+        )
     await db.commit()
     # Read before the promotion: its rollback (nothing queued) expires every loaded row,
     # and an async session cannot lazy-load them afterwards (MissingGreenlet -> 500).
@@ -1476,6 +1574,45 @@ async def cancel_turn(
     # B, whose valid order is Turn B -> Thread.
     successor_id = await _promote_queued_successor(db, thread_id=thread_id)
     return cancelled, successor_id
+
+
+async def _steer_target(db: AsyncSession, *, thread: CreationThread, turn: CreatorAgentTurn) -> str:
+    """The queued message a Steer hands over to; refuses a Steer that cannot happen."""
+    waiting = (
+        await db.execute(
+            select(CreatorAgentTurn.id, CreatorAgentTurn.queued_replaces_turn_id).where(
+                CreatorAgentTurn.thread_id == thread.id,
+                CreatorAgentTurn.status == "queued",
+            )
+        )
+    ).first()
+    if turn.status == "queued" or waiting is None or waiting.queued_replaces_turn_id != turn.id:
+        raise RuntimeFailure(
+            409,
+            "nothing_to_steer_to",
+            "No message is waiting behind this one.",
+            recovery="refresh_replan",
+            current_revision=int(thread.revision),
+        )
+    decided = (
+        await db.execute(
+            select(CreatorAgentApproval.id)
+            .where(
+                CreatorAgentApproval.turn_id == turn.id,
+                CreatorAgentApproval.status.in_(("approved", "consumed")),
+            )
+            .limit(1)
+        )
+    ).first()
+    if decided is not None:
+        raise RuntimeFailure(
+            409,
+            "turn_not_cancellable",
+            "Your video is already being made.",
+            recovery="manual",
+            current_revision=int(thread.revision),
+        )
+    return str(waiting.id)
 
 
 async def cancel_render(

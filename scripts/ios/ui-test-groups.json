@@ -243,7 +243,19 @@
       "KriaUITests/UploadPlaceHintUITests/testPortraitScreenRecordingByNameShowsHint",
       "KriaUITests/UploadPlaceHintUITests/testSingleTalkingTakeShowsNoHint",
       "KriaUITests/UploadPlaceHintUITests/testSeveralTalkingTakesShowNoHint",
-      "KriaUITests/UploadPlaceHintUITests/testSwitchOffLeavesFootageUnchanged"
+      "KriaUITests/UploadPlaceHintUITests/testSwitchOffLeavesFootageUnchanged",
+      "KriaUITests/SteerNowUITests/testWaitingBarAndSteerWhileKriaPlans",
+      "KriaUITests/SteerNowUITests/testSteerClosesTheCardAndSaysWhy",
+      "KriaUITests/SteerNowUITests/testNoSteerWhileTheVideoIsBeingMade",
+      "KriaUITests/SteerNowUITests/testTrashRemovesTheWaitingMessage",
+      "KriaUITests/SteerNowUITests/testEditFromTheMenuPutsTheTextBackInTheBox",
+      "KriaUITests/SteerNowUITests/testHoldingTheBarOpensTheSameMenu",
+      "KriaUITests/SteerNowUITests/testThirdMessageStaysInComposerWithANote",
+      "KriaUITests/SteerNowUITests/testSteerRetriesOnceAfterAStaleRevision",
+      "KriaUITests/SteerNowUITests/testEditAfterKriaPickedTheMessageUpNeverStopsIt",
+      "KriaUITests/SteerNowUITests/testSteerAfterTheVideoStartedHidesTheButton",
+      "KriaUITests/SteerNowUITests/testTurkishChatGetsTurkishSteerWords",
+      "KriaUITests/SteerNowUITests/testSwitchOffLooksLikeToday"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -570,6 +582,9 @@
     "src/apps/ios/Kria/Features/KriaCameraChrome.swift": "creation",
     "src/apps/ios/Tests/KriaUITests/UploadPlaceHintUITests.swift": "creation",
     "src/apps/ios/Kria/Features/UploadPlaceHintFixture.swift": "creation",
-    "src/apps/ios/Kria/Core/FootagePlacement.swift": "creation"
+    "src/apps/ios/Kria/Core/FootagePlacement.swift": "creation",
+    "src/apps/ios/Kria/Core/SteerNow.swift": "creation",
+    "src/apps/ios/Kria/Features/WaitingMessageBar.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/SteerNowUITests.swift": "creation"
   }
 }

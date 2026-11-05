@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.86.6.0] - 2026-11-05
+
+### Changed
+- test(api): isolate the intent-review Postgres suites from other xdist workers (#2119) <!-- release-pr: 2119 -->
+
+## [0.86.5.0] - 2026-11-05
+
+### Changed
+- feat(captions): Qendresa's caption shape on phone Talking edits (item 12) (#2104) <!-- release-pr: 2104 -->
+
 ## [0.86.4.0] - 2026-11-05
 
 ### Changed

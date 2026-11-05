@@ -457,6 +457,9 @@ class CreationCapabilitiesOut(BaseModel):
     # (KRIA_SUGGESTION_CHIPS_ENABLED or the cohort list). Clients gate on this bool; a 404 or
     # empty chips list means "render nothing". No NEXT_PUBLIC twin.
     suggestion_chips: bool = False
+    # Steer now: a message sent while Kria works waits as "Up next"; the app may cancel the
+    # running turn with `steer: true` (KRIA_STEER_NOW_ENABLED or the cohort list). iOS only.
+    steer_now: bool = False
     request_outcome_context: bool = False
     # KRI-815: a reply may carry `voiceover_script` (a footage-grounded script with a
     # record/import continuation) when KRIA_VOICEOVER_SCRIPT_ENABLED. False/absent = the app
@@ -4154,6 +4157,7 @@ async def capabilities(
         "live_plan_review_enabled": bool(settings.live_plan_review_enabled),
         "live_plan_review_version": CONTRACT_VERSION if settings.live_plan_review_enabled else 1,
         "suggestion_chips": bool(settings.suggestion_chips_for(user.id)),
+        "steer_now": bool(settings.steer_now_for(user.id)),
         "request_outcome_context": True,
         "voiceover_script_cards": bool(settings.kria_voiceover_script_enabled),
     }

@@ -853,6 +853,15 @@ class Settings(BaseSettings):
     # `fly secrets set TEXT_BEND_ENABLED=false` (api + worker) + restart.
     text_bend_enabled: bool = True
     text_bend_min_client_protocol: int = 9
+    # Qendresa item 12: the caption SHAPE a creator types on a phone Talking edit ("two words at
+    # a time", "in a light grey box"): the brief's `caption_words` / `caption_box` facts cut the
+    # cues to 1-3 words, draw white with the spoken word bright and the others dimmed (no
+    # lime), or black text in a rounded box placed low. Default FALSE. Applied only when
+    # `captionShape` AND `authoredText` are in PHONE_RENDER_VERIFIED_FEATURES and the approving
+    # app build declares >= `client_protocol.CAPTION_SHAPE_PROTOCOL` (its editor draws the box);
+    # otherwise captions are byte-identical to before and the receipt says what was not drawn.
+    # Apply: `fly secrets set PHONE_CAPTION_SHAPE_ENABLED=true` (api + worker) + restart.
+    phone_caption_shape_enabled: bool = False
     # KRI-1007: caption entrance/exit/loop/speed (`animation_phases` on a caption row, or
     # the all-captions default `caption_meta.animation_phases`). Drawn on device from the
     # recipe's existing `animationPhases`. Default TRUE; the editor capability
@@ -1289,6 +1298,15 @@ class Settings(BaseSettings):
     # api + worker. docs/pipelines/suggestion-chips.md.
     kria_suggestion_chips_enabled: bool = False
     kria_suggestion_chips_user_ids: Annotated[list[str], NoDecode] = []
+    # Steer now (Green 5): a message sent while Kria works shows as "Up next" in the iOS chat
+    # with a "Steer now" button; `POST …/turns/{id}/cancel {"steer": true}` stops the running
+    # turn and starts the waiting message. Default off => capability `steer_now: false`, the
+    # queued payload carries no `queued_behind_turn_id`, a steer cancel is refused 404 and the
+    # plain cancel is byte-identical. The user-id list turns it on for single accounts while
+    # the global flag is off (canary). No NEXT_PUBLIC twin. Apply: `fly secrets set -a
+    # nova-video KRIA_STEER_NOW_ENABLED=true` + restart api + worker. docs/pipelines/steer-now.md.
+    kria_steer_now_enabled: bool = False
+    kria_steer_now_user_ids: Annotated[list[str], NoDecode] = []
     # KRI-756: bounds on the chip-wording agent (`nova.chat.suggester`). NOT flags: the one
     # flag above gates the whole feature. 0 runs/thread disables only the agent (chips fall
     # back to template labels): the cost kill lever without a second flag. The daily limit
@@ -1302,6 +1320,7 @@ class Settings(BaseSettings):
         "kria_brief_binding_user_ids",
         "kria_approval_readiness_user_ids",
         "kria_suggestion_chips_user_ids",
+        "kria_steer_now_user_ids",
         "kria_intent_review_user_ids",
         mode="before",
     )
@@ -1347,6 +1366,14 @@ class Settings(BaseSettings):
             return True
         return user_id is not None and str(user_id) in {
             str(uid) for uid in self.kria_suggestion_chips_user_ids
+        }
+
+    def steer_now_for(self, user_id: object) -> bool:
+        """Global flag OR the per-account allowlist (allowlist only ever adds)."""
+        if self.kria_steer_now_enabled:
+            return True
+        return user_id is not None and str(user_id) in {
+            str(uid) for uid in self.kria_steer_now_user_ids
         }
 
     def creative_brief_for(self, user_id: object) -> bool:

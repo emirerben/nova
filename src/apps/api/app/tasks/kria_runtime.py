@@ -96,6 +96,7 @@ from app.kria.planner import (
     turn_deadline,
 )
 from app.kria.registry import KRIA_TOOLS
+from app.kria.removed_messages import is_removed, removed_turn_ids_sync
 from app.kria.reply_language import (
     bind_reply_language,
     current_reply_language,
@@ -312,20 +313,25 @@ def _text_timing_conflict_plan(exc: TextTimingConflict) -> KriaTurnPlan:
 
 def _full_creator_request_sync(db, *, thread_id: uuid.UUID, through_sequence: int) -> str | None:  # noqa: ANN001
     """Pin every creator instruction visible to the approved source turn."""
+    rows = db.execute(
+        select(CreationThreadEvent.content, CreationThreadEvent.payload)
+        .where(
+            CreationThreadEvent.thread_id == thread_id,
+            CreationThreadEvent.role == "user",
+            CreationThreadEvent.sequence <= through_sequence,
+            CreationThreadEvent.content.is_not(None),
+        )
+        .order_by(CreationThreadEvent.sequence)
+    ).all()
+    removed = removed_turn_ids_sync(db, thread_id, (payload for _content, payload in rows))
     messages = [
         str(content).strip()
-        for content, payload in db.execute(
-            select(CreationThreadEvent.content, CreationThreadEvent.payload)
-            .where(
-                CreationThreadEvent.thread_id == thread_id,
-                CreationThreadEvent.role == "user",
-                CreationThreadEvent.sequence <= through_sequence,
-                CreationThreadEvent.content.is_not(None),
-            )
-            .order_by(CreationThreadEvent.sequence)
-        ).all()
-        # KRI-552: a re-sent copy of a message adds no instruction to the pinned request.
-        if str(content).strip() and not is_duplicate_answer(payload)
+        for content, payload in rows
+        # KRI-552: a re-sent copy of a message adds no instruction to the pinned request;
+        # Steer now: neither does a waiting message the creator removed.
+        if str(content).strip()
+        and not is_duplicate_answer(payload)
+        and not is_removed(payload, removed)
     ]
     request = "\n".join(messages)
     return request if len(request) <= 12_000 else None
@@ -2110,6 +2116,9 @@ def _complete_draft_turn(
                         facts,
                         phone_talking=phone_talking,
                         caption_words_at_render=talking_writer,
+                        # Qendresa item 12: a caption shape is promised only to a build that
+                        # draws it.
+                        client_protocol=client_protocol,
                         # KRI-1024: any phone writer draws text with the phone's fonts, so a
                         # literal none of them draws is a "Couldn't" before approval.
                         phone_text=defers_text_to_phone(
