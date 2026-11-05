@@ -112,7 +112,8 @@ _REGEX_CUES: dict[str, re.Pattern[str]] = {
     "outline": re.compile(r"\b(outline|stroke|kontur\w*)\b"),
     # Turkish softens a final k before a vowel (muzik -> muzigi, klip -> klibi).
     "music": re.compile(r"\b(music|song|track|muzi[kg]\w*|sarki\w*)\b"),
-    "volume": re.compile(r"\b(volume|louder|quieter|softer|mute\w*|audio|ses\w*)\b"),
+    # "ses efektleri" is Turkish for sound effects; on its own "ses" is the volume.
+    "volume": re.compile(r"\b(volume|louder|quieter|softer|mute\w*|audio|ses(?! efekt)\w*)\b"),
     "sfx": re.compile(r"\b(sound effects?|sfx|whoosh\w*|efekt\w*)\b"),
     "camera": re.compile(r"\b(zoom\w*|shake|camera effects?|kamera\w*)\b"),
     "transition": re.compile(r"\b(transitions?|crossfade\w*|dissolve|gecis\w*)\b"),
@@ -127,8 +128,6 @@ _REGEX_CUES: dict[str, re.Pattern[str]] = {
     ),
 }
 _CLIP_NOUN = re.compile(r"\b(clips?|shots?|videos?|footage|kli[pb]\w*|cekim\w*)\b")
-# "ses efektleri" is Turkish for sound effects; on its own "ses" is the volume.
-_SOUND_EFFECT_TR = re.compile(r"\bses efekt\w*")
 _TEXT_NOUN = re.compile(
     r"\b(texts?|titles?|labels?|captions?|words?|yazi\w*|baslik\w*|etiket\w*)\b"
 )
@@ -292,8 +291,6 @@ def _fact_cues(req: BriefRequirement) -> set[str]:
 
 def _named_cues(req: BriefRequirement, text: str) -> set[str]:
     names = {name for name, pattern in _REGEX_CUES.items() if pattern.search(text)}
-    if "volume" in names and not _REGEX_CUES["volume"].search(_SOUND_EFFECT_TR.sub(" ", text)):
-        names.discard("volume")
     if "size" in names and re.search(r"(buyuk|kucuk) harf", text):
         # "buyuk harf" is a case ask; a bare "big"/"small" next to it is not a size ask.
         if not re.search(r"\b(size|sizes|bigger|larger|smaller|boyut\w*)\b", text):
