@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.2.0] - 2026-11-05
+
+### Changed
+- fix(kria): a chat with no language yet answers in the language the creator types, not the phone's (Green 5) (#2098) <!-- release-pr: 2098 -->
+
 ## [0.88.1.0] - 2026-11-05
 
 ### Changed
