@@ -1627,7 +1627,7 @@
     {
       "id": "kri-756-suggestion-chips",
       "needs_native": true,
-      "api_tests": "tests/evals/test_edit_improver_skill.py tests/evals/test_suggestion_agent_evals.py tests/evals/test_suggestion_chips_evals.py tests/evals/test_suggestion_freshness.py tests/evals/test_suggestion_freshness_postgres.py tests/evals/test_suggestion_kind_dupes.py tests/evals/test_suggestion_kind_filler.py tests/evals/test_suggestion_kind_hook.py tests/evals/test_suggestion_kind_mute.py tests/kria/test_request_digest_pin.py tests/scripts/test_suggestion_chip_funnel.py tests/services/test_suggestion_chips_guards.py tests/services/test_suggestion_registry_guards.py tests/services/test_suggestion_serve_wiring.py tests/services/test_suggestion_serve_wiring_postgres.py tests/signals/test_audio_quality.py tests/signals/test_near_dup_hash.py tests/signals/test_near_dup_store_postgres.py tests/tasks/test_kria_pinned_suggestion.py",
+      "api_tests": "tests/evals/test_edit_improver_skill.py tests/evals/test_suggestion_agent_evals.py tests/evals/test_suggestion_chips_evals.py tests/evals/test_suggestion_freshness.py tests/evals/test_suggestion_freshness_postgres.py tests/evals/test_suggestion_kind_dupes.py tests/evals/test_suggestion_kind_filler.py tests/evals/test_suggestion_kind_hook.py tests/evals/test_suggestion_kind_mute.py tests/kria/test_request_digest_pin.py tests/scripts/test_suggestion_chip_funnel.py tests/services/test_suggestion_chips_guards.py tests/services/test_suggestion_registry_guards.py tests/services/test_suggestion_serve_wiring.py tests/services/test_suggestion_serve_wiring_postgres.py tests/signals/test_audio_quality.py tests/signals/test_near_dup_hash.py tests/signals/test_near_dup_store_postgres.py tests/tasks/test_kria_pinned_kinds.py tests/tasks/test_kria_pinned_suggestion.py",
       "xctests": [
         "KriaTests/SuggestionChipsTests/testContractResponseDecodesInRankOrderAndDropsOnlyTheBrokenChip",
         "KriaTests/SuggestionChipsTests/testADeliveredSetIsNeverReRankedOrRelabelledUnderTheSameSetID",
@@ -1801,7 +1801,9 @@
         "src/apps/api/tests/signals/test_audio_quality.py",
         "src/apps/api/tests/signals/test_near_dup_hash.py",
         "src/apps/api/tests/signals/test_near_dup_store_postgres.py",
+        "src/apps/api/tests/tasks/kria_pinned_kinds_harness.py",
         "src/apps/api/tests/tasks/kria_pinned_suggestion_harness.py",
+        "src/apps/api/tests/tasks/test_kria_pinned_kinds.py",
         "src/apps/api/tests/tasks/test_kria_pinned_suggestion.py",
         "src/apps/api/tests/tasks/test_task_time_limits.py",
         "src/apps/ios/Kria/Core/CreationFlow.swift",
