@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.86.7.0] - 2026-11-05
+
+### Changed
+- feat(kria): Steer now — Codex-style waiting-message bar (iOS, flag off) (#2105) <!-- release-pr: 2105 -->
+
+## [0.86.6.0] - 2026-11-05
+
+### Changed
+- test(api): isolate the intent-review Postgres suites from other xdist workers (#2119) <!-- release-pr: 2119 -->
+
+## [0.86.5.0] - 2026-11-05
+
+### Changed
+- feat(captions): Qendresa's caption shape on phone Talking edits (item 12) (#2104) <!-- release-pr: 2104 -->
+
+## [0.86.4.0] - 2026-11-05
+
+### Changed
+- fix(kria): the card's heads-up names only what the creator asked for (Green 4/5) (#2096) <!-- release-pr: 2096 -->
+
+## [0.86.3.0] - 2026-11-05
+
+### Changed
+- test(api): isolate the AI-budget ledger tests from other xdist workers (KRI-1190) (#2101) <!-- release-pr: 2101 -->
+
 ## [0.86.2.0] - 2026-11-05
 
 ### Fixed

@@ -35,7 +35,9 @@ _SUMMARY = "A fast montage of the night boat ride."
 _EN = "I can't change clip speed on your iPhone yet, so the clips play at normal speed."
 _TR = "iPhone'unda klip hızını henüz değiştiremiyorum, o yüzden klipler normal hızda oynuyor."
 # The phone montage keeps its fast cut for this plan's guided story (a speed ask, or no story
-# lines to build it from), so the card says so for every account (KRI-1097 route registry).
+# lines to build it from). The guided story is the planner's own direction, not an ask, so since
+# Green 4/5 (`kria_headsup_asked_only_enabled`) the card no longer names it; with the switch off
+# it says so for every account (KRI-1097 route registry).
 _HEADS_UP = (
     "Heads-up for this video:\n"
     "- The guided story direction isn't applied on this video yet: it is cut as a fast montage"
@@ -141,8 +143,8 @@ async def test_the_prod_speed_ask_is_announced_in_the_reply_and_on_the_approval_
 
     assert status == "awaiting_approval"
     # The model's own summary stays; the notice is its own line, never a question.
-    assert reply == f"{_SUMMARY}\n{_EN}\n{_HEADS_UP}"
-    assert card == f"Render this draft: {_SUMMARY} {_EN} {_HEADS_UP}"
+    assert reply == f"{_SUMMARY}\n{_EN}"
+    assert card == f"Render this draft: {_SUMMARY} {_EN}"
 
 
 @pytest.mark.asyncio
@@ -152,8 +154,8 @@ async def test_a_turkish_chat_gets_the_turkish_sentence(monkeypatch):
     )
 
     assert status == "awaiting_approval"
-    assert reply == f"{_SUMMARY}\n{_TR}\n{_HEADS_UP_TR}"
-    assert card.endswith(f"{_TR} {_HEADS_UP_TR}")
+    assert reply == f"{_SUMMARY}\n{_TR}"
+    assert card.endswith(_TR)
     assert _EN not in reply and _EN not in card
 
 
@@ -161,7 +163,7 @@ async def test_a_turkish_chat_gets_the_turkish_sentence(monkeypatch):
 @pytest.mark.parametrize(
     ("description", "clip", "heads_up"),
     [
-        ("Fast pacing", _PROXY, _HEADS_UP),  # pacing, not clip speed
+        ("Fast pacing", _PROXY, None),  # pacing, not clip speed
         ("Speed the river shots up 2x", _CLOUD, None),  # a cloud render is not the iPhone
     ],
 )
@@ -184,5 +186,16 @@ async def test_with_a_verified_speed_renderer_the_draft_promises_nothing_it_cann
 
     assert status == "awaiting_approval"
     assert _EN not in reply and _EN not in card
-    assert reply == f"{_SUMMARY}\n{_HEADS_UP}"
-    assert card == f"Render this draft: {_SUMMARY} {_HEADS_UP}"
+    assert reply == _SUMMARY
+    assert card == f"Render this draft: {_SUMMARY}"
+
+
+@pytest.mark.asyncio
+async def test_switch_off_names_the_planners_direction_as_before(monkeypatch):
+    """`kria_headsup_asked_only_enabled` off: the card is byte-identical to before Green 4/5."""
+    monkeypatch.setattr(settings, "kria_headsup_asked_only_enabled", False)
+    status, reply, card = await _draft(monkeypatch, "Speed the river shots up 2x")
+
+    assert status == "awaiting_approval"
+    assert reply == f"{_SUMMARY}\n{_EN}\n{_HEADS_UP}"
+    assert card == f"Render this draft: {_SUMMARY} {_EN} {_HEADS_UP}"

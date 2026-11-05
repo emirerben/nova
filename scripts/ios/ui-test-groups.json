@@ -238,7 +238,19 @@
       "KriaUITests/FootageSourcesUITests/testScriptRowOpensTheCameraWithTheScriptSheetFirst",
       "KriaUITests/GeneratedMediaUITests/testRejectedImageEditRequiresEditAndExplicitNewSubmission",
       "KriaUITests/GeneratedMediaUITests/testRejectedOverlayKeepsItsPromptAndTryAgainRunsAtOnce",
-      "KriaUITests/GeneratedMediaUITests/testTwoOverlaysEachWithTheirOwnPromptAreUsedTogether"
+      "KriaUITests/GeneratedMediaUITests/testTwoOverlaysEachWithTheirOwnPromptAreUsedTogether",
+      "KriaUITests/SteerNowUITests/testWaitingBarAndSteerWhileKriaPlans",
+      "KriaUITests/SteerNowUITests/testSteerClosesTheCardAndSaysWhy",
+      "KriaUITests/SteerNowUITests/testNoSteerWhileTheVideoIsBeingMade",
+      "KriaUITests/SteerNowUITests/testTrashRemovesTheWaitingMessage",
+      "KriaUITests/SteerNowUITests/testEditFromTheMenuPutsTheTextBackInTheBox",
+      "KriaUITests/SteerNowUITests/testHoldingTheBarOpensTheSameMenu",
+      "KriaUITests/SteerNowUITests/testThirdMessageStaysInComposerWithANote",
+      "KriaUITests/SteerNowUITests/testSteerRetriesOnceAfterAStaleRevision",
+      "KriaUITests/SteerNowUITests/testEditAfterKriaPickedTheMessageUpNeverStopsIt",
+      "KriaUITests/SteerNowUITests/testSteerAfterTheVideoStartedHidesTheButton",
+      "KriaUITests/SteerNowUITests/testTurkishChatGetsTurkishSteerWords",
+      "KriaUITests/SteerNowUITests/testSwitchOffLooksLikeToday"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -562,6 +574,9 @@
     "src/apps/ios/Kria/Features/GeneratedMediaProblems.swift": "creation",
     "src/apps/ios/Kria/Features/GeneratedOverlaySet.swift": "creation",
     "src/apps/ios/Kria/Features/GeneratedOverlaysSheet.swift": "creation",
-    "src/apps/ios/Kria/Features/KriaCameraChrome.swift": "creation"
+    "src/apps/ios/Kria/Features/KriaCameraChrome.swift": "creation",
+    "src/apps/ios/Kria/Core/SteerNow.swift": "creation",
+    "src/apps/ios/Kria/Features/WaitingMessageBar.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/SteerNowUITests.swift": "creation"
   }
 }

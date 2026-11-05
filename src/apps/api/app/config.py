@@ -853,6 +853,15 @@ class Settings(BaseSettings):
     # `fly secrets set TEXT_BEND_ENABLED=false` (api + worker) + restart.
     text_bend_enabled: bool = True
     text_bend_min_client_protocol: int = 9
+    # Qendresa item 12: the caption SHAPE a creator types on a phone Talking edit ("two words at
+    # a time", "in a light grey box"): the brief's `caption_words` / `caption_box` facts cut the
+    # cues to 1-3 words, draw white with the spoken word bright and the others dimmed (no
+    # lime), or black text in a rounded box placed low. Default FALSE. Applied only when
+    # `captionShape` AND `authoredText` are in PHONE_RENDER_VERIFIED_FEATURES and the approving
+    # app build declares >= `client_protocol.CAPTION_SHAPE_PROTOCOL` (its editor draws the box);
+    # otherwise captions are byte-identical to before and the receipt says what was not drawn.
+    # Apply: `fly secrets set PHONE_CAPTION_SHAPE_ENABLED=true` (api + worker) + restart.
+    phone_caption_shape_enabled: bool = False
     # KRI-1007: caption entrance/exit/loop/speed (`animation_phases` on a caption row, or
     # the all-captions default `caption_meta.animation_phases`). Drawn on device from the
     # recipe's existing `animationPhases`. Default TRUE; the editor capability
@@ -930,16 +939,16 @@ class Settings(BaseSettings):
     # `speaker_background_color_phone_fallback`) and the creator keeps their own room.
     # Design: docs/reviews/speaker-background-color-failure-modes.md.
     speaker_background_color_min_client_protocol: int = 34
-    # Qendresa item 17 (follow-up of KRI-1175): on a sequence laid out "on the word" (every entry
-    # phrased), each photo / video stays while it is talked about and the LAST one stays to the
-    # take end, unless the planner recorded a stated rhythm (`background_media.keep_changing`,
-    # or a cadence other than the 4 s default), which keeps the S51 tail rotation (Green 3,
-    # "changing every 3-5 seconds"). Also lets a phrase be heard spelled another way (joined /
-    # split words, a final plural "s") and not inside another entry's longer phrase. Server
-    # only, no protocol. Default FALSE: off, windows and the Main Creator prompt are
-    # byte-identical. Apply: `fly secrets set BACKGROUND_FOLLOWS_TALK_ENABLED=true --app
-    # nova-video` + restart (api + worker); rollback = `...=false` + restart. Design:
-    # docs/reviews/speaker-background-windows-failure-modes.md (S57-S69).
+    # Qendresa item 17 (follow-up of KRI-1175): lets a background phrase be heard spelled
+    # another way (joined / split words, a final plural "s") and not inside another entry's
+    # longer phrase, and shows the Main Creator v123 paragraph that records a stated rhythm as
+    # `background_media.keep_changing`. The last visual talked about holding to the take end is
+    # no longer this flag's: since #2118 (S57, no photo twice) every sequence does it, and a
+    # stated rhythm changes no window. Server only, no protocol. Default FALSE: off, windows
+    # and the Main Creator prompt are byte-identical to main. Apply: `fly secrets set
+    # BACKGROUND_FOLLOWS_TALK_ENABLED=true --app nova-video` + restart (api + worker); rollback
+    # = `...=false` + restart. Design: docs/reviews/speaker-background-windows-failure-modes.md
+    # (S64-S76); read the rollout note in docs/pipelines/speaker-background.md first.
     background_follows_talk_enabled: bool = False
     # KRI-1192: the app bundles Noto Sans KR / Noto Sans Arabic (the script-fallback faces that
     # draw Hangul and Arabic captions) from protocol 35. A phone recipe naming one requires
@@ -1249,6 +1258,12 @@ class Settings(BaseSettings):
     # Default TRUE; false + restart (api + worker) = byte-identical to before
     # (`app.kria.route_disclosure`, agents/DECISIONS.md "Route disclosure").
     kria_route_disclosure_enabled: bool = True
+    # Green 4/5 (2026-11-04): the card's "Heads-up" names only what the creator asked for. The
+    # planner fills the hook, story structure, pacing and direction itself; a route that does not
+    # read one now says so only when a live brief ask is about it (an order ask, an on-screen text
+    # ask), and the "<pace> pacing" chip is left off a card whose route ignores pacing. Default
+    # TRUE; false + restart (api + worker) = byte-identical to before.
+    kria_headsup_asked_only_enabled: bool = True
     # KRI-1097 wave 2 (prompt fidelity on every route). ROUTE_REGISTRY_ENABLED: each render
     # route reads its own capability table (`app.kria.route_capabilities`), so voiceover,
     # Talking, Narrated, creator-song, spoken-excerpt and slide drafts get their own honest
@@ -1288,6 +1303,15 @@ class Settings(BaseSettings):
     # api + worker. docs/pipelines/suggestion-chips.md.
     kria_suggestion_chips_enabled: bool = False
     kria_suggestion_chips_user_ids: Annotated[list[str], NoDecode] = []
+    # Steer now (Green 5): a message sent while Kria works shows as "Up next" in the iOS chat
+    # with a "Steer now" button; `POST …/turns/{id}/cancel {"steer": true}` stops the running
+    # turn and starts the waiting message. Default off => capability `steer_now: false`, the
+    # queued payload carries no `queued_behind_turn_id`, a steer cancel is refused 404 and the
+    # plain cancel is byte-identical. The user-id list turns it on for single accounts while
+    # the global flag is off (canary). No NEXT_PUBLIC twin. Apply: `fly secrets set -a
+    # nova-video KRIA_STEER_NOW_ENABLED=true` + restart api + worker. docs/pipelines/steer-now.md.
+    kria_steer_now_enabled: bool = False
+    kria_steer_now_user_ids: Annotated[list[str], NoDecode] = []
     # KRI-756: bounds on the chip-wording agent (`nova.chat.suggester`). NOT flags: the one
     # flag above gates the whole feature. 0 runs/thread disables only the agent (chips fall
     # back to template labels): the cost kill lever without a second flag. The daily limit
@@ -1301,6 +1325,7 @@ class Settings(BaseSettings):
         "kria_brief_binding_user_ids",
         "kria_approval_readiness_user_ids",
         "kria_suggestion_chips_user_ids",
+        "kria_steer_now_user_ids",
         "kria_intent_review_user_ids",
         mode="before",
     )
@@ -1346,6 +1371,14 @@ class Settings(BaseSettings):
             return True
         return user_id is not None and str(user_id) in {
             str(uid) for uid in self.kria_suggestion_chips_user_ids
+        }
+
+    def steer_now_for(self, user_id: object) -> bool:
+        """Global flag OR the per-account allowlist (allowlist only ever adds)."""
+        if self.kria_steer_now_enabled:
+            return True
+        return user_id is not None and str(user_id) in {
+            str(uid) for uid in self.kria_steer_now_user_ids
         }
 
     def creative_brief_for(self, user_id: object) -> bool:

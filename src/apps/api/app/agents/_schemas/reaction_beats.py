@@ -317,8 +317,9 @@ class BackgroundMedia(BaseModel):
     speaker (``media_id`` stays the FILL shown wherever no window covers the time),
     ``cadence_s`` how long an unanchored entry stays up, ``speaker_frame`` a NAMED corner for
     the matted speaker (never geometry from the model, S37). ``keep_changing`` (Qendresa item
-    17) is the planner's record that the creator named a rhythm, so an on-the-word sequence keeps
-    rotating after the last mention instead of holding the last visual to the end.
+    17) is the planner's record that the creator named a rhythm. It was meant to keep an
+    on-the-word sequence rotating after the last mention; since the no-repeat rule (S57) no
+    sequence rotates back, so the layout is the same with or without it (S65).
 
     KRI-1173 (a plain colour): ``color`` replaces ``media_id`` -- EXACTLY ONE of the two is
     set. It is the creator's colour as ``#RRGGBB`` (the repair also accepts the named presets

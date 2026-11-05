@@ -1,7 +1,8 @@
-"""Qendresa item 17 (S59): the planner's `keep_changing` flag reaches the layout through the real
-worker. Green 3 ("changing every 3-5 seconds") sets it and keeps rotating after the last
-mention; a sequence without it (Qendresa) ends on the last visual talked about. The flag
-`BACKGROUND_FOLLOWS_TALK_ENABLED` off = today's windows for both."""
+"""Qendresa item 17 (S66): the planner's `keep_changing` flag reaches the layout through the real
+worker. Green 3 ("changing every 3-5 seconds") sets it and lays out exactly as flag off; since
+#2118 (S57, no photo twice) that means no rotation after the last mention either, so with or
+without it the sequence ends on the last visual talked about (S65). The flag
+`BACKGROUND_FOLLOWS_TALK_ENABLED` off = main's windows for both."""
 
 from __future__ import annotations
 

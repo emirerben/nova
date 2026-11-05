@@ -174,8 +174,11 @@ and the frame, tracing `speaker_background_windows_phone_fallback` (`reason`: `w
   `capabilities.speaker_background_windows`. Repair keeps only this item's pool photos/videos, drops the rest with a
   `Couldn't …` notice, and drops the frame when the windows capability is closed.
 - Worker: entries with a `spoken_phrase` start at the first loose match in the take's caption-cue words; the others fill the
-  remaining time in order, `cadence_s` each, cycling to the take end. An unheard phrase falls back to the cadence with a
-  `phrase_not_heard` receipt note. Window visuals are reserved from cards (`used_media_ids`).
+  remaining time in order, `cadence_s` each. **The same photo never comes up twice** (S57–S63, 2026-11-05): nothing cycles,
+  the window before a gap holds through it, the last photo holds to the take end, a rotation shows each photo once
+  (cadence stretched to cover the take), a photo listed twice keeps one window (`duplicate_media`), and a fill that is one of
+  the sequence's photos never shows in a gap. An unheard phrase falls back to the cadence with a `phrase_not_heard` receipt
+  note. Window visuals are reserved from cards (`used_media_ids`).
 - Copilot ops `set_background_sequence {asset_ids, cadence_s?}`, `set_speaker_frame {preset}`, `clear_speaker_frame`;
   `set_background` stays the single fill, `remove_background` clears everything. Snapshot `background` carries `windows`,
   `speaker_frame` and `windows_available` while open.
@@ -194,19 +197,22 @@ within 120 s). Until then every request renders the single fill background exact
 
 ### Each visual stays while it is talked about (`BACKGROUND_FOLLOWS_TALK_ENABLED`, Qendresa item 17)
 
-Server only, default off (off = windows and the Main Creator prompt byte-identical). On, for a sequence laid out on the
-word (every entry has a `spoken_phrase`): the last visual talked about stays to the take end instead of the S51 tail
-rotation, unless the planner recorded a stated rhythm (`background_media.keep_changing: true`, taught by Main Creator v123
-only with the flag on, or a `cadence_s` other than the default 4), which keeps the S51 tail rotation (Green 3, "changing every
-3-5 seconds"). Phrases also match a name spelled another way (joined / split words, a final plural "s"), as a last resort
-after the exact and KRI-961 matchers, and not inside another entry's longer phrase ("agents" inside "trading agents") while it is heard elsewhere too.
-Failure modes S57-S69 in `docs/reviews/speaker-background-windows-failure-modes.md`.
+Server only, default off (off = windows and the Main Creator prompt byte-identical). On, phrases also match a name
+spelled another way (joined / split words, a final plural "s"), as a last resort after the exact and KRI-961 matchers,
+and not inside another entry's longer phrase ("agents" inside "trading agents") while it is heard elsewhere too. The
+planner records a stated rhythm as `background_media.keep_changing: true` (taught by Main Creator v123 only with the flag
+on). Item 17 was written to keep the S51 tail rotation for a stated rhythm and hold the last visual otherwise; since the
+no-repeat rule above (#2118, S57) the last visual talked about holds to the take end for every sequence, flag on or off,
+rhythm or not, so `keep_changing` is carried to the worker but changes no window (no repeats is the hard rule).
+Failure modes S64-S76 in `docs/reviews/speaker-background-windows-failure-modes.md`.
 
 - Apply: `fly secrets set BACKGROUND_FOLLOWS_TALK_ENABLED=true --app nova-video` + restart (api + worker).
 - Rollback: `...=false` + restart; never a code revert.
-- Before turning it on: a strategy approved earlier with a rhythm ask has no `keep_changing` and would re-render holding
-  its last visual (S68). Check one live v123 turn on a rhythm ask and on a "while I talk about it" ask first (paid, about
-  $0.10-0.50 each, not run).
+- Before turning it on: decide whether a stated rhythm may repeat photos (S65). Until then the flag-on v123 paragraph
+  still tells the planner that with `keep_changing` the backgrounds "keep taking turns at that rhythm until the end",
+  which is not what renders; rewrite or drop that sentence, or let a rhythm repeat. Then check one live v123 turn on a
+  rhythm ask and on a "while I talk about it" ask (paid, about $0.10-0.50 each, not run). A strategy approved earlier
+  with a rhythm ask re-renders holding its last visual either way (S75).
 
 ## Solid-colour fill (KRI-1173)
 

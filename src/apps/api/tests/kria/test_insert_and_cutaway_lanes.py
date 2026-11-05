@@ -77,11 +77,13 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # (one `background_color` clause); removing those passages reproduces the values above.
 # Re-pinned for KRI-1189 (creator v119): the brief section's cleanup sentence teaches
 # `cut_restarts`; restoring v118's sentence reproduces 1eec0bfc / 6b81466c / 483dac4e / efb5da5d.
+# Re-pinned for Qendresa item 12 (creator v120): the brief section teaches `caption_words` /
+# `caption_box`; v119's values were e632c312 / cd66c5b5 / 09c8a8cc / e86242d5.
 MAIN_PROMPT_SHA = {
-    "neither": "e632c3123ed1938eea58d6492ce058fa5d3a94bc7647ba491c64a4a0834116bf",
-    (True, True): "cd66c5b586d77b8b3120a719dff7127f7ca665cdcccc53cbeecce4bdea9e4cca",
-    (True, False): "09c8a8cc93e0eb0a9a864a4ec516901addada16df89fe95d2e3009f4452e5d57",
-    (False, True): "e86242d53d0dcd3a46e0e38292099b5d93ae20756171768ed36d2533ca5dbb05",
+    "neither": "d690f1fff54cd0e48027489421ca915e742b8d436d87d57617ef5d7fb4bcf0be",
+    (True, True): "ca93a6693df52a00c6267e4847414465fbb17e93882284c1aeff12187d4fcd21",
+    (True, False): "2e66923bee2432a0c4b34c02cd8043bb796f30b1af4289fd75419e9ab8a44568",
+    (False, True): "f56fcd475b572999074364f37881f60cee22bd7ea06e6e319f701566a5e55621",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (

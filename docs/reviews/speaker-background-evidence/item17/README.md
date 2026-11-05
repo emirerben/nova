@@ -19,7 +19,9 @@ What is on screen (OCR of the exported MP4, 2 frames/s), seconds:
 - Each recording starts on the word that names it; recording 1 also covers the lead-in before its
   name (the existing first-window rule).
 - Flag off reproduces the bug (recordings 1 and 2 cycle back after the last one). Flag on: the last
-  recording holds to the end.
+  recording holds to the end. This run predates the merge with #2118 (no photo twice, S57): on
+  main the flag-off layout also holds recording 5 to the end, so the "flag off" row above is the
+  pre-#2118 baseline, not what main renders now (not re-run on the simulator).
 - Typed labels: the stand-in voice's "Claude" is transcribed "Clawed", which no matcher (exact,
   KRI-961 near-hearing, item 17 loose/plural) hears as "Claude code", so recording 5 is dropped as
   `phrase_not_heard`. The planner is taught to copy the transcript's spelling; her real take reads
