@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.3.0] - 2026-11-05
+
+### Changed
+- feat(speech-cleanup): tight pauses on phone Talking when the creator asks (Qendresa 13) (#2102) <!-- release-pr: 2102 -->
+
 ## [0.88.2.0] - 2026-11-05
 
 ### Changed
