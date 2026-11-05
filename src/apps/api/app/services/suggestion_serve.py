@@ -759,6 +759,8 @@ def refresh_for_thread(
     """
     if not editor_triggers_on():
         return False
+    if creator_id is not None and not settings.suggestion_chips_for(creator_id):
+        return False  # before the debounce slot: a creator without chips must cost nothing
     try:
         window = int(settings.kria_suggestion_refresh_debounce_s)
         if attempt == 0 and window > 0:
@@ -781,8 +783,10 @@ def refresh_for_thread(
 
 def refresh_for_item(item_id: object, *, trigger: str) -> int:
     """``refresh_for_thread`` for every active v2 thread on a plan item. Never raises."""
-    if not editor_triggers_on():
-        return 0
+    if not editor_triggers_on() or not (
+        settings.kria_suggestion_chips_enabled or settings.kria_suggestion_chips_user_ids
+    ):
+        return 0  # chips off for everyone: not even a lookup
     try:
         identifier = item_id if isinstance(item_id, uuid.UUID) else uuid.UUID(str(item_id))
         return sum(
