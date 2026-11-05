@@ -1027,3 +1027,66 @@ def test_f8_no_time_is_only_for_the_take_end():
     anchors = _anchors([5.0, 10.0, 15.0, 20.0, 59.5])
     _rows_, receipt = _rows(_asks(), anchors, duration=60.0)
     assert _status(receipt)["r5"] == "no_time"
+
+
+# --- review of #2116: a label is drawn whole or not at all, never cut mid-word ----------------
+
+# 99 characters: past the old 80-character cut, which fell inside "everything".
+LONG_LABEL = (
+    "1. which company it sends your data to, and whether it keeps a copy of everything you "
+    "ever typed"
+)
+LONG_PHRASE = "which company it sends your data to"
+
+
+def _fits(row) -> bool:
+    from app.pipeline.phone_subtitled_title import _measure_title_box
+
+    box = _measure_title_box(row, canvas=_CANVAS)
+    return box.right - box.left <= 0.9 + 1e-6 and box.bottom - box.top <= 0.14 + 1e-6
+
+
+def test_a_long_requested_label_is_drawn_whole_never_cut_mid_word():
+    assert len(LONG_LABEL) > 80 and LONG_LABEL[:80].endswith("everythin")
+    rows, receipt = _rows(_asks([LONG_LABEL]), _anchors([5.0], phrases=[LONG_PHRASE]))
+    assert _status(receipt) == {"r1": "placed"}
+    [row] = rows
+    assert row["text"] == LONG_LABEL  # every word, as she typed it
+    assert _fits(row), "wrapped and shrunk into the label band, not run off it"
+
+
+def test_a_label_too_long_to_fit_whole_is_left_out_and_says_so():
+    huge = LONG_LABEL + ", and for how long, and who else gets to see it later on" * 3
+    rows, receipt = _rows(_asks([huge]), _anchors([5.0], phrases=[LONG_PHRASE]))
+    assert rows == [], "never a shortened label in its place"
+    [row] = receipt["rows"]
+    assert row["status"] == "too_long" and row["text"] == huge
+    assert "element_id" not in row
+
+
+def test_every_drawn_label_is_its_whole_text():
+    """Whatever the length: a placed label's row reads exactly the label and fits; otherwise
+    it is ``too_long`` and nothing is drawn."""
+    words = LONG_LABEL.split()
+    for n in range(2, 2 * len(words) + 1, 2):
+        text = " ".join((words * 2)[:n])
+        rows, receipt = _rows(_asks([text]), _anchors([5.0], phrases=[LONG_PHRASE]))
+        [status] = _status(receipt).values()
+        if status == "placed":
+            assert [r["text"] for r in rows] == [text]
+            assert _fits(rows[0]), text
+        else:
+            assert status == "too_long" and rows == [], (status, text)
+
+
+def test_a_long_spoken_item_is_drawn_whole_too():
+    item = (
+        "what it quietly synchronizes between personal computers automatically without permission"
+    )
+    listed = V7_LIST.replace("what it saves on my machine", item)
+    rows, receipt = _v7_rows(_talk(V7_INTRO, listed))
+    second = f"2. {item}?"
+    assert len(second) > 80
+    assert _texts(rows)[:2] == ["1. which company it sends data to?", second]
+    assert _fits(rows[1])
+    assert receipt["rows"][1]["text"] == second and receipt["rows"][1]["status"] == "placed"

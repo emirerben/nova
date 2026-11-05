@@ -604,6 +604,36 @@ def test_f6_item_17_off_passes_neither():
     )
 
 
+LONG_LABEL_1 = (
+    "1. Spec-kit by GitHub: you write the spec, it writes the plan, then it turns that plan "
+    "into tasks"
+)
+
+
+def test_f9_a_long_label_is_drawn_whole_and_its_receipt_reads_the_drawn_row(monkeypatch):
+    """Review of #2116: a requested label past 80 characters was cut mid-word on the video while
+    the receipt kept the whole text. It is drawn whole (wrapped and shrunk to the label band),
+    the phone recipe carries every word, and the finished-video receipt reads the drawn row."""
+    long_req = _req("l1", LONG_LABEL_1)
+    assert len(LONG_LABEL_1) > 80
+    job, variant = _run(monkeypatch, flag=True, brief=_brief(labels=[long_req, *LABEL_REQS[1:]]))
+    [row] = [r for r in _label_rows(variant) if r["id"] == "list-label-l1"]
+    assert row["text"] == LONG_LABEL_1
+    box = _measure_title_box(row, canvas=_STORY_CANVAS)
+    assert box.right - box.left <= 0.9 + 1e-6 and box.bottom - box.top <= 0.14 + 1e-6
+    drawn = [" ".join(run.text for run in layer.runs) for layer in _recipe(job).text_layers]
+    assert LONG_LABEL_1 in drawn
+    assert _after(variant, long_req).status == "met"
+    # A label row that does not read her words is never "met", whatever else is on screen.
+    cut = copy.deepcopy(variant)
+    for element in cut["text_elements"]:
+        if element["id"] == "list-label-l1":
+            element["text"] = LONG_LABEL_1[:80]
+    cut["text_elements"].append({"id": "other", "text": LONG_LABEL_1})
+    receipt = _after(cut, long_req)
+    assert receipt.status == "partial" and "not your exact words" in (receipt.reason or "")
+
+
 def test_f6_list_labels_join_the_protected_text_placements():
     receipt = {
         "rows": [

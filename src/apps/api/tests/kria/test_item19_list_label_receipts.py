@@ -251,3 +251,71 @@ def test_f7_a_real_trigger_stays_kri707s(monkeypatch):
     facts = dataclasses.replace(plan_facts_from_strategy(STRATEGY), phone_talking=True)
     [receipt] = build_receipts([req], facts, include_unchecked=True)
     assert receipt.reason != PLAN_EN
+
+
+# --- review of #2116: the exact-text check reads the label row the video draws ----------------
+
+LONG = (
+    "1. which company it sends your data to, and whether it keeps a copy of everything you "
+    "ever typed"
+)
+
+
+def _drawn(req: BriefRequirement, drawn: str | None, *, status="placed", texts=(), lang=None):
+    """After a render whose list-label row reads ``drawn`` (None: no such row on the video);
+    the placement receipt keeps the asked text, as the worker writes it."""
+    row = _row(status, text=req.literal, item=req.literal[3:], face_collision=False)
+    if status == "placed":
+        row["element_id"] = f"list-label-{req.id}"
+    elements = [{"id": f"list-label-{req.id}", "text": drawn}] if drawn is not None else []
+    variant = {
+        "resolved_archetype": "subtitled",
+        "edit_format": "subtitled",
+        "text_elements": elements + [{"id": "x", "text": t} for t in texts],
+        "list_label_placement": {"version": 1, "rows": [row]},
+    }
+    facts = plan_facts_from_phone_variant(variant)
+    token = bind_reply_language(lang) if lang else None
+    try:
+        [receipt] = build_receipts([req], facts, include_unchecked=True)
+    finally:
+        if token is not None:
+            release_reply_language(token)
+    return receipt
+
+
+def test_after_render_a_shortened_label_is_never_met():
+    """The old 80-character cut drew "... a copy of everythin": the receipt row still held the
+    whole text, and any other text with the same words made it "met"."""
+    req = _req("l1", LONG)
+    cut = LONG[:80]
+    for texts in ((LONG,), ()):
+        receipt = _drawn(req, cut, texts=texts)
+        assert receipt.status == "partial", texts
+        assert receipt.reason == f"The label on the video reads “{cut}”, not your exact words"
+    turkish = _drawn(req, cut, texts=(LONG,), lang="tr")
+    assert (turkish.status, turkish.reason) == (
+        "partial",
+        f"Videodaki etiket “{cut}” yazıyor, tam senin yazdığın gibi değil",
+    )
+
+
+def test_after_render_the_whole_label_is_met():
+    req = _req("l1", LONG)
+    assert _drawn(req, LONG).status == "met"
+    # Spacing and letter case are not the creator's words changing.
+    assert _drawn(req, "  ".join(LONG.upper().split())).status == "met"
+
+
+def test_after_render_a_label_too_long_to_fit_says_so():
+    req = _req("l1", LONG)
+    english = _drawn(req, None, status="too_long", texts=(LONG,))
+    assert (english.status, english.reason) == (
+        "partial",
+        "That label is too long to fit on the screen whole, so I left it out instead of cutting it",
+    )
+    turkish = _drawn(req, None, status="too_long", lang="tr")
+    assert (turkish.status, turkish.reason) == (
+        "partial",
+        "Bu etiket ekrana tam sığmayacak kadar uzun; kesmek yerine hiç koymadım",
+    )

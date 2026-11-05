@@ -48,7 +48,6 @@ LABEL_STROKE_WIDTH = 8.0
 _MAX_LABEL_WIDTH_FRAC = 0.9
 _MAX_LABEL_HEIGHT_FRAC = 0.14
 _MIN_LABEL_SIZE_PX = 48.0
-_MAX_CHARS = 80
 _EPS = 1e-6
 _DIGITS = "0123456789"
 _MARKER_PUNCTUATION = ".:)"
@@ -609,11 +608,17 @@ def label_start(anchor: LabelAnchor) -> float:
     return float(anchor.anchor_s)
 
 
+class LabelTooLong(ValueError):
+    """The whole label does not fit the label band even at the smallest size."""
+
+
 def _label_element(ask: ListLabelAsk, *, start_s: float, end_s: float, canvas: Any) -> dict:
+    """The label's text row: ALL of ``ask.text`` (never cut, so never cut mid-word), wrapped and
+    shrunk into the label band; `LabelTooLong` when even the smallest size does not fit."""
     from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
     from app.pipeline.phone_subtitled_title import _measure_title_box  # noqa: PLC0415
 
-    text = ask.text[:_MAX_CHARS]
+    text = ask.text
     fields = {**narrated_title_placement(text, canvas=canvas, explicit=True)}
     fields["y_frac"] = LABEL_Y_FRAC  # her spot (bottom, centred) unless a face/caption is there
     # Her look (V5): bold cream letters with a dark outline, readable over a screen recording
@@ -636,18 +641,27 @@ def _label_element(ask: ListLabelAsk, *, start_s: float, end_s: float, canvas: A
         source_params={"source": LIST_LABEL_SOURCE, "requirement_id": ask.requirement_id},
     )
     row = element.model_dump(mode="json", exclude_none=True)
+
+    def _in_band(box: NormalizedBox) -> bool:
+        return (
+            box.right - box.left <= _MAX_LABEL_WIDTH_FRAC
+            and box.bottom - box.top <= _MAX_LABEL_HEIGHT_FRAC
+        )
+
     # The title fit is measured in the title font: shrink until the label fits the width and
     # about two lines (her V7 items), so it can find a spot clear of the face and captions.
     size = float(row.get("size_px") or 96)
+    fits = False
     while size > _MIN_LABEL_SIZE_PX:
         box = _measure_title_box({**row, "size_px": size}, canvas=canvas)
-        if (
-            box.right - box.left <= _MAX_LABEL_WIDTH_FRAC
-            and box.bottom - box.top <= _MAX_LABEL_HEIGHT_FRAC
-        ):
+        if _in_band(box):
+            fits = True
             break
         size = round(size * 0.92, 1)
     row["size_px"] = max(size, _MIN_LABEL_SIZE_PX)
+    if not fits and not _in_band(_measure_title_box(row, canvas=canvas)):
+        # Review of #2116: her words are never cut to make the label fit; the receipt says why.
+        raise LabelTooLong(f"{len(text)} characters do not fit the label band")
     return row
 
 
@@ -669,7 +683,8 @@ def list_label_rows(
 
     Receipt statuses: placed, not_heard (a list label nobody introduced, or a recording that was
     never heard), no_time (a sliver at / past the take end), same_moment (another label starts at
-    the same instant, or sooner than ``MIN_S``), not_a_list_item
+    the same instant, or sooner than ``MIN_S``), too_long (the whole label does not fit the label
+    band even at the smallest size; it is never drawn shortened), not_a_list_item
     (a text no recording or list marker makes a label: the title, the closing text) or error.
     ``place(row, avoid)`` moves a row off her face; ``avoid_for(window, rows_so_far)`` returns
     the caption lines, other text and cards on screen in that window. Never raises for one ask."""
@@ -787,6 +802,9 @@ def list_label_rows(
             row = _label_element(ask, start_s=start, end_s=end, canvas=canvas)
             avoid = avoid_for((start, end), list(rows))
             placed, placement = place(row, list(avoid))
+        except LabelTooLong:
+            status[rid] = "too_long"  # left out whole, never drawn shortened
+            continue
         except Exception as exc:  # noqa: BLE001 - one ask never fails the render
             log.warning("phone_list_labels.failed", error=str(exc)[:200])
             status[rid] = "error"

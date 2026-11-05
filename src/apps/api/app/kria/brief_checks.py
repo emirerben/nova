@@ -349,10 +349,13 @@ class ListLabelFact:
     """One numbered list label as a phone Talking render handled it (Qendresa item 19)."""
 
     requirement_id: str
-    # "placed" | "not_heard" | "no_time" | "same_moment" | "error"
+    # "placed" | "not_heard" | "no_time" | "same_moment" | "too_long" | "error"
     status: str
     text: str = ""
     face_collision: bool = False
+    # What the label's own row on the video reads (`text_elements` by the receipt's
+    # ``element_id``); None = no such row to read (removed, or an older receipt).
+    shown_text: str | None = None
     # How many items of a typed "1." list the render found on the take (its own first one
     # included); None = the rest of the list was never looked for.
     list_found: int | None = None
@@ -9048,6 +9051,16 @@ def _list_label_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
         and row.get("status") == "placed"
         and row.get("face_collision") is True
     }
+    # The rows the video draws: a label is judged by its own row, never by the receipt's copy
+    # of the ask (review of #2116: a label cut short on screen kept its whole text there).
+    elements = variant.get("text_elements")
+    drawn = {
+        element["id"]: str(element.get("text") or "")
+        for element in (elements if isinstance(elements, list) else [])
+        if isinstance(element, Mapping)
+        and isinstance(element.get("id"), str)
+        and not element.get("removed")
+    }
     return {
         "list_labels": tuple(
             ListLabelFact(
@@ -9055,6 +9068,9 @@ def _list_label_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
                 status=str(row.get("status") or "error"),
                 text=str(row.get("text") or ""),
                 face_collision=row.get("face_collision") is True,
+                shown_text=drawn.get(row["element_id"])
+                if isinstance(row.get("element_id"), str)
+                else None,
                 list_found=row["list_found"]
                 if isinstance(row.get("list_found"), int)
                 and not isinstance(row["list_found"], bool)
@@ -9123,6 +9139,14 @@ def _list_label_miss(req: BriefRequirement, fact: ListLabelFact) -> RequirementR
         reason = say(
             en="Another label starts at the same moment, so this one isn't shown",
             tr="Aynı anda başka bir etiket başlıyor, bu yüzden bu gösterilmedi",
+        )
+    elif fact.status == "too_long":
+        reason = say(
+            en=(
+                "That label is too long to fit on the screen whole, so I left it out instead of "
+                "cutting it"
+            ),
+            tr="Bu etiket ekrana tam sığmayacak kadar uzun; kesmek yerine hiç koymadım",
         )
     else:
         reason = say(
@@ -10844,6 +10868,22 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
     label = _list_label_fact(facts, req) if facts.list_labels is not None else None
     if label is not None and label.status != "placed":
         return _list_label_miss(req, label)
+    if (
+        label is not None
+        and label.shown_text is not None
+        and _fold(label.shown_text) != _fold(req.literal or "")
+    ):
+        # Review of #2116: the exact text is checked on the label's own row, so a label drawn
+        # shortened (or reworded) is never "met" because another text holds the same words.
+        shown = f"“{label.shown_text}”"
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"The label on the video reads {shown}, not your exact words",
+                tr=f"Videodaki etiket {shown} yazıyor, tam senin yazdığın gibi değil",
+            ),
+        )
     # A rendered spoken-text receipt must prove timing, not just matching caption copy.
     if _is_voiceover_edit(facts) and _is_spoken_text_cue(req) and facts.rendered_variant:
         spoken = _spoken_text_fact(facts, req)

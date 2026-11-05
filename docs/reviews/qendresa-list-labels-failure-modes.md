@@ -87,6 +87,17 @@ hearing.
     follow recordings only with item 17 on and only those still shown in the final lanes.
 27. **English-only guesses.** A list finder built on English words breaks Turkish takes and adds
     intent regexes (KRI-667 ratchet).
+32. **Cut label (review of #2116).** A label past 80 characters was cut mid-word on the video
+    ("... a copy of everythin") while the receipt row kept the whole text, and any other text with
+    the same words made the receipt "met". Now a label (typed or a spoken item) is drawn whole,
+    wrapped and shrunk into the label band (<= 0.9 wide, <= 0.14 tall, >= 48 px); one that cannot
+    fit even then is left out with status `too_long` and an honest receipt, never shortened. The
+    finished-video check reads the label's own row (`text_elements` by `element_id`): a row that
+    does not read her exact words is `partial` ("The label on the video reads ..."). Tests:
+    `test_a_long_requested_label_is_drawn_whole_never_cut_mid_word`,
+    `test_every_drawn_label_is_its_whole_text`, `test_a_long_spoken_item_is_drawn_whole_too`,
+    `test_after_render_a_shortened_label_is_never_met`,
+    `test_f9_a_long_label_is_drawn_whole_and_its_receipt_reads_the_drawn_row`.
 
 ## Checks
 - Kit rule `labels` in `~/Downloads/kria-qendresa-test/tools/score.py` (each label on screen within
