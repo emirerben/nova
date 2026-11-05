@@ -25,13 +25,14 @@ final class SongRangeUITests: XCTestCase {
         return app
     }
 
-    /// Attachments sheet, on the song step where the attached song is listed.
+    /// Attachments sheet, on the song step where the attached song is listed: the composer's + tray, then Add song.
     private func openSongStep(_ app: XCUIApplication) {
-        let attach = app.buttons["Attach footage"]
+        let attach = app.buttons["chat-attach"]
         XCTAssertTrue(attach.waitForExistence(timeout: 10))
         attach.tap()
-        XCTAssertTrue(app.buttons["attachment-next"].waitForExistence(timeout: 5))
-        app.buttons["attachment-next"].tap()
+        let addSong = app.buttons["attach-song"]
+        XCTAssertTrue(addSong.waitForExistence(timeout: 5), "the tray offers Add song where the server advertises it")
+        addSong.tap()
         XCTAssertTrue(app.staticTexts["Add your song"].waitForExistence(timeout: 5))
     }
 
@@ -88,7 +89,7 @@ final class SongRangeUITests: XCTestCase {
         XCTAssertFalse(app.buttons["song-range-save"].isEnabled)
         let reason = app.descendants(matching: .any)["song-range-error"]
         XCTAssertTrue(reason.waitForExistence(timeout: 3))
-        XCTAssertEqual(reason.label, "Pick at least five seconds of your song.")
+        XCTAssertEqual(reason.label, "Pick at least five seconds.")
         choose(app, "song-range-to", "0:50")
         XCTAssertTrue(app.buttons["song-range-save"].isEnabled)
         XCTAssertFalse(reason.exists)

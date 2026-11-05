@@ -47,11 +47,13 @@ import XCTest
         openSettings(app)
         let settings = app.navigationBars["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        XCTAssertFalse(app.staticTexts["Account"].exists, "The Account heading is gone")
         attachScreenshot("settings-top", app: app)
         let entry = app.buttons["account-whats-new"]
         XCTAssertTrue(entry.waitForExistence(timeout: 5))
         XCTAssertLessThan(entry.frame.minY, app.buttons["account-text-preferences"].frame.minY, "What’s New is the first row")
+        // The Account heading belongs to the Sign out group at the foot of the page, never as a title above What’s New.
+        let accountHeading = app.staticTexts["Account"]
+        if accountHeading.exists { XCTAssertGreaterThan(accountHeading.frame.minY, entry.frame.minY, "no Account title above What’s New") }
         entry.tap()
 
         XCTAssertTrue(app.navigationBars["What’s New"].waitForExistence(timeout: 5))

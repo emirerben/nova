@@ -109,7 +109,7 @@ final class SongRangeTests: XCTestCase {
         var draft = try XCTUnwrap(SongRangeDraft(duration: 90, existing: SongFilmingRange(start: 40, end: 80)))
         draft.setTo(43)
         XCTAssertEqual(draft.to, 43)
-        XCTAssertEqual(draft.message, "Pick at least five seconds of your song.")
+        XCTAssertEqual(draft.message, "Pick at least five seconds.")
         XCTAssertNil(draft.range)
         draft.setTo(45)
         XCTAssertNil(draft.message)
