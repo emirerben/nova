@@ -2320,7 +2320,7 @@ def _cta_joined_texts(rows: Iterable[object]) -> list[str]:
     The pair is matched by role (`cta_part`) and by overlapping windows, so an editor timing
     nudge on one row does not split the ending.
     """
-    from app.pipeline.phone_cta_ending import CTA_PART_KEY  # noqa: PLC0415
+    from app.pipeline.phone_cta_text import CTA_PART_KEY  # noqa: PLC0415
 
     parts: dict[str, list[tuple[float, float, str]]] = {"lead": [], "keyword": []}
     for row in _closing_rows(rows):
@@ -2362,7 +2362,7 @@ def _has_closing_arrow(payload: Mapping[str, Any]) -> bool:
     Either Kria's `closing-arrow`, or a drawing the creator made herself that overlaps the
     closing text rows' window.
     """
-    from app.pipeline.phone_cta_ending import CTA_ARROW_ID  # noqa: PLC0415
+    from app.pipeline.phone_cta_text import CTA_ARROW_ID  # noqa: PLC0415
 
     drawings = payload.get("drawings")
     if not isinstance(drawings, list):
@@ -10856,7 +10856,7 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
 
 def _closing_arrow_reason(req: BriefRequirement, facts: PlanFacts) -> str | None:
     """Item 14: why a found ending text is not "met" when its ask also wants an arrow."""
-    from app.pipeline.phone_cta_ending import (  # noqa: PLC0415
+    from app.pipeline.phone_cta_text import (  # noqa: PLC0415
         cta_ending_parts,
         requirement_asks_arrow,
     )

@@ -9021,7 +9021,7 @@ def _run_phone_subtitled_job(
     cta_planned = False
     cta_arrow = False
     if talking_closing_text:
-        from app.pipeline.phone_cta_ending import closing_arrow_asked  # noqa: PLC0415
+        from app.pipeline.phone_cta_text import closing_arrow_asked  # noqa: PLC0415
         from app.services.phone_rollout import (  # noqa: PLC0415
             cta_ending_planned_for,
             stamped_client_protocol,
@@ -12335,10 +12335,8 @@ def _phone_talking_closing_rows(
             and not insert_in_ending
             and (protected is None or not _protected_placement_kwargs(protected))
         ):
-            from app.pipeline.phone_cta_ending import (  # noqa: PLC0415
-                build_cta_ending,
-                cta_ending_parts,
-            )
+            from app.pipeline.phone_cta_ending import build_cta_ending  # noqa: PLC0415
+            from app.pipeline.phone_cta_text import cta_ending_parts  # noqa: PLC0415
 
             if cta_ending_parts(closing_title) is not None:
                 cta_attempted = True

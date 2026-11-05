@@ -2765,7 +2765,7 @@ def verify_phone_recipe(
     # layer. A recipe carries only `text-<index>` layer ids (no element ids), so the pair is
     # recognised structurally: two visible layers that follow each other in the text lane,
     # share a window (within a frame), and read "comment <keyword>". One joined row is added.
-    from app.pipeline.phone_cta_ending import cta_ending_parts  # noqa: PLC0415
+    from app.pipeline.phone_cta_text import cta_ending_parts  # noqa: PLC0415
 
     for (lead_id, lead_text, lead_start, lead_end), (
         key_id,
