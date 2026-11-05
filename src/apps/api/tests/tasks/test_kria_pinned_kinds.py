@@ -155,6 +155,12 @@ NO_LONGER_FITS = (
     "This suggestion no longer fits your edit. Nothing was changed, and I'm refreshing the ideas."
 )
 HOOK_TEXT = "Whisk first and ask later"
+SAVE_FIRST = "Save your edits first, then tap this suggestion again. Nothing was changed."
+HAND_EDITED = {
+    "base_generation": "generation-1",
+    "client_state_id": "state-1",
+    "lanes": {"text_elements": [{**h.HOOK, "text": "Creator hook"}]},
+}
 
 
 async def tap_and_run(seeded, kind, **kwargs):  # noqa: ANN001, ANN003, ANN202
@@ -911,14 +917,9 @@ async def test_mute_unsaved_editor_edits_are_never_re_planned_over(world, monkey
     mute_world(monkeypatch)
     seeded = h.seed_ready_thread()
     await serve_mute(seeded)
-    hand_edited = {
-        "base_generation": "generation-1",
-        "client_state_id": "state-1",
-        "lanes": {"text_elements": [{**h.HOOK, "text": "Creator hook"}]},
-    }
     before = h.counts(seeded)
-    accepted, _ = await tap_and_run(seeded, "mute_clip", editor_state=hand_edited)
-    assert last_reply(seeded.thread_id) == NO_LONGER_FITS
+    accepted, _ = await tap_and_run(seeded, "mute_clip", editor_state=HAND_EDITED)
+    assert last_reply(seeded.thread_id) == SAVE_FIRST
     assert pin_record(accepted.turn_id)["reason"] == "unsaved_edits"
     assert h.counts(seeded) == before
 
@@ -1304,3 +1305,32 @@ async def test_a_restate_applies_again_once_undo_returns_the_head_to_the_plan(
     assert result["status"] == "awaiting_approval", result
     assert head(seeded.thread_id)["snap"]["kind"] == "strategy"
     assert signal_of(seeded.thread_id) is None
+
+
+@pytest.mark.parametrize("kind", RESTATE_KINDS)
+@pytest.mark.asyncio
+async def test_unsaved_edits_do_not_spend_a_restating_card(world, monkeypatch, published, kind):
+    """R6: hand edits not saved yet say nothing about the card. The refusal is typed but does not
+    mark the card, the read mints no new set, and the very same tap applies once the edits are
+    saved."""
+    seeded = h.seed_ready_thread()
+    await serve_restate_beside_transition(seeded, monkeypatch, kind)
+    card = seeded.cards[kind]
+    before = h.counts(seeded)
+
+    await tap_and_run(seeded, kind, editor_state=HAND_EDITED)
+
+    assert last_reply(seeded.thread_id) == SAVE_FIRST
+    assert signal_of(seeded.thread_id) == {
+        "set_id": seeded.set_id,
+        "id": card.id,
+        "outcome": "refused",
+        "reason": "unsaved_edits",
+    }
+    assert h.counts(seeded) == before
+    assert "refused" not in k.ring_entry(seeded.thread_id, seeded.set_id)
+    assert (await k.get_suggestions(seeded)).set_id == seeded.set_id, "no new set was minted"
+
+    _, result = await tap_and_run(seeded, kind)  # saved: no unsaved lanes on the phone any more
+    assert result["status"] == "awaiting_approval", result
+    assert h.counts(seeded)["drafts"] == before["drafts"] + 1

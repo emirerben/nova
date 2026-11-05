@@ -6422,6 +6422,12 @@ def no_longer_fits_reply() -> str:
     return say(en=_NO_LONGER_FITS, tr=_NO_LONGER_FITS_TR)
 
 
+_UNSAVED_EDITS_REPLY = "Save your edits first, then tap this suggestion again. Nothing was changed."
+_UNSAVED_EDITS_REPLY_TR = (
+    "Önce düzenlemelerini kaydet, sonra bu öneriye tekrar dokun. Hiçbir şey değişmedi."
+)
+
+
 async def plan_pinned_suggestion_turn(
     db: AsyncSession,
     *,
@@ -6512,7 +6518,10 @@ async def plan_pinned_suggestion_turn(
         return _no_longer_fits(pinned.OP_NOT_ALLOWED)
     if restate and editor_state is not None and editor_state_has_lanes(editor_state):
         # The creator's hand edits are not saved yet. Restating the plan would re-plan over them.
-        return _no_longer_fits(pinned.UNSAVED_EDITS)
+        # The card is still good once they save, so it is not "no longer fits" and stays tappable.
+        return _reply(
+            say(en=_UNSAVED_EDITS_REPLY, tr=_UNSAVED_EDITS_REPLY_TR), pinned.UNSAVED_EDITS
+        )
 
     target = await _load_editor_target(
         db, thread_id=thread_id, item=item, **_state_kw(editor_state)

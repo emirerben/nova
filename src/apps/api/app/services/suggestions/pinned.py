@@ -85,8 +85,9 @@ TARGET_UNAVAILABLE = "target_unavailable"
 NO_STRATEGY = "no_strategy"
 UNSAVED_EDITS = "unsaved_edits"
 SETTING_REFUSED = "setting_refused"
-# A refusal that says nothing about the card itself: the creator can tap it again later.
-TRANSIENT_REASONS = frozenset({TARGET_UNAVAILABLE})
+# A refusal that says nothing about the card itself: the creator can tap it again later (a render
+# in flight, hand edits not saved yet). It is recorded but never marks the card refused.
+TRANSIENT_REASONS = frozenset({TARGET_UNAVAILABLE, UNSAVED_EDITS})
 
 
 def is_pin_id(chip_id: object) -> bool:
