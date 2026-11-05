@@ -211,6 +211,9 @@ struct NativeEditorTemporaryVideo: Sendable {
         let above: UIImage
         let media: UIImage
         let rect: CGRect
+        /// The speaker's face in canvas fractions (top-left origin) when `selection` is the framed speaker and Vision
+        /// found one on `media`; the safe-zone guide follows it instead of the whole box (SF9).
+        var face: CGRect? = nil
     }
     @Published private(set) var mediaInteractionFrame: MediaInteractionFrame?
     private let previewFrameRenderer: NativePreviewFrameRenderer
@@ -265,13 +268,16 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     private func prepareMediaInteraction() {
         guard !isDirectManipulating, !isPlaying, let selection,
-              selection.kind == .mediaOverlay || selection.kind == .visualBlock,
+              selection.kind == .mediaOverlay || selection.kind == .visualBlock || selection.kind == .speaker,
               let preview = sourcePreview, let item = player?.currentItem,
               sourcePreviewState == .ready else { return }
         let mediaID: String
         switch selection.kind {
         case .mediaOverlay: mediaID = "overlay:" + selection.id
         case .visualBlock: mediaID = "visual-\(selection.id)-\(selection.id)"
+        case .speaker:
+            guard canMoveSpeakerOnPreview else { return }
+            mediaID = EditorSelection.speakerID
         default: return
         }
         let sequence = textInteractionSequence
@@ -281,7 +287,14 @@ struct NativeEditorTemporaryVideo: Sendable {
             do {
                 try await Task.sleep(for: .milliseconds(100))
                 try Task.checkCancellation()
-                let layers = try preview.mediaInteractionLayers(id: mediaID, time: time)
+                // The framed speaker splits around the cut-out instead of a media layer (SF4).
+                let layers: (below: AVVideoComposition, above: AVVideoComposition, media: AVVideoComposition, rect: CGRect)
+                if selection.kind == .speaker {
+                    let split = try preview.speakerInteractionLayers(time: time)
+                    layers = (split.below, split.above, split.speaker, split.rect)
+                } else {
+                    layers = try preview.mediaInteractionLayers(id: mediaID, time: time)
+                }
                 @MainActor func image(_ composition: AVVideoComposition) async throws -> UIImage {
                     try Task.checkCancellation()
                     let generator = AVAssetImageGenerator(asset: item.asset)
@@ -296,10 +309,15 @@ struct NativeEditorTemporaryVideo: Sendable {
                 async let above = image(layers.above)
                 async let media = image(layers.media)
                 let rendered = try await (below, above, media)
+                // SF9: the guide follows the speaker's face; Vision runs once per still, off the main thread.
+                var face: CGRect?
+                if selection.kind == .speaker, let still = rendered.2.cgImage {
+                    face = await Task.detached(priority: .userInitiated) { NativeSpeakerFrameGesture.faceRect(in: still) }.value
+                }
                 guard let self, !Task.isCancelled, self.textInteractionSequence == sequence,
                       self.selection == selection else { return }
                 self.mediaInteractionFrame = MediaInteractionFrame(selection: selection, time: time,
-                    below: rendered.0, above: rendered.1, media: rendered.2, rect: layers.rect)
+                    below: rendered.0, above: rendered.1, media: rendered.2, rect: layers.rect, face: face)
             } catch {
                 guard !Task.isCancelled else { return }
                 #if DEBUG
@@ -3743,6 +3761,7 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     func previewSelectionBounds(for selection: EditorSelection, at time: Double) -> TextSelectionBounds? {
         guard sourcePreviewState == .ready else { return nil }
+        if selection.kind == .speaker { return canMoveSpeakerOnPreview ? sourcePreview?.speakerSelectionBounds(time: time) : nil }
         if selection.kind == .mediaOverlay { return sourcePreview?.mediaSelectionBounds(id: "overlay:" + selection.id, time: time) }
         if selection.kind == .visualBlock,
            document.visualBlocks.first(where: { $0.id == selection.id })?.kind == "media" {
@@ -5526,7 +5545,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     /// Draws the speaker small in a corner (`small_bottom_right`, `small_bottom_left`, `small_top_right`,
-    /// `small_top_left`) or full-frame (`full`). Presets only; the editor never writes free geometry.
+    /// `small_top_left`) or full-frame (`full`). Free geometry comes only from the preview gesture
+    /// (`setSpeakerFrameCenter` / `setSpeakerFrameWidth`).
     @discardableResult
     func setSpeakerFrame(preset: String) -> Bool {
         guard canEditSpeakerBackgroundWindows, var background = document.speakerBackground else { return false }
@@ -5537,12 +5557,40 @@ struct NativeEditorTemporaryVideo: Sendable {
         return true
     }
 
+    /// The speaker can be selected, moved and resized on the preview: the frame controls are open and the speaker is
+    /// drawn small. A full-frame speaker is never selectable: it would cover the canvas and swallow tap-to-expand.
+    var canMoveSpeakerOnPreview: Bool { canEditSpeakerBackgroundWindows && speakerFrame != nil }
+
+    /// Moves the framed speaker's centre (canvas fractions, top-left origin), clamped to the wire's range (SF3).
+    /// A same-value sample is not an edit. The preview gesture wraps its samples in one direct-manipulation
+    /// transaction, so a whole drag is one undo step (SF6).
+    func setSpeakerFrameCenter(x: Double, y: Double) {
+        guard let frame = speakerFrame else { return }
+        setSpeakerFrameValue(EditorSpeakerFrame.clamped(widthFraction: frame.widthFraction, xFraction: x, yFraction: y))
+    }
+
+    /// Resizes the framed speaker about its centre: `width` is the fraction of the canvas width, clamped to
+    /// [0.2, 1] (SF3).
+    func setSpeakerFrameWidth(_ width: Double) {
+        guard let frame = speakerFrame else { return }
+        setSpeakerFrameValue(EditorSpeakerFrame.clamped(widthFraction: width, xFraction: frame.xFraction, yFraction: frame.yFraction))
+    }
+
+    private func setSpeakerFrameValue(_ next: EditorSpeakerFrame?) {
+        guard canMoveSpeakerOnPreview, let next, var background = document.speakerBackground,
+              background.speakerFrame != next else { return }
+        background.speakerFrame = next
+        transactDocument(section: .speakerBackground) { $0.speakerBackground = background }
+    }
+
     /// Back to the speaker filling the frame. A no-op (and no unsaved change) when it already does.
     @discardableResult
     func clearSpeakerFrame() -> Bool {
         guard canEditSpeakerBackgroundWindows, var background = document.speakerBackground, background.speakerFrame != nil else { return false }
         background.speakerFrame = nil
         transactDocument(section: .speakerBackground) { $0.speakerBackground = background }
+        // A full-frame speaker is not a preview object any more (SF2).
+        if selection?.kind == .speaker { select(nil) }
         return true
     }
 
@@ -5554,6 +5602,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     func removeSpeakerBackground() -> Bool {
         guard canEditSpeakerBackground, document.speakerBackground != nil else { return false }
         transactDocument(section: .speakerBackground) { $0.speakerBackground = nil }
+        if selection?.kind == .speaker { select(nil) }
         return true
     }
 
@@ -6020,6 +6069,9 @@ struct NativeEditorTemporaryVideo: Sendable {
         case .speakerBackgroundWindow:
             // Not a persisted tombstone: the window just leaves the `speaker_background` object.
             return removeSpeakerBackgroundWindow(id: selected.id)
+        case .speaker:
+            // The speaker is the take itself: there is nothing to delete. Full screen is a Speaker choice instead.
+            return false
         case .carousel:
             guard document.carouselMoment != nil else { return false }
             transactDocument(section: .carouselMoment) { document in
@@ -6046,6 +6098,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         case .cameraEffect: return cleanDocument.cameraEffects.contains { $0.id == selection.id }
         case .drawing: return cleanDocument.drawings.contains { $0.id == selection.id }
         case .speakerBackgroundWindow: return cleanDocument.speakerBackground?.windows.contains { $0.localID == selection.id } ?? false
+        case .speaker: return cleanDocument.speakerBackground?.speakerFrame != nil
         case .carousel: return cleanDocument.carouselMoment?["id"] == .string(selection.id)
         }
     }

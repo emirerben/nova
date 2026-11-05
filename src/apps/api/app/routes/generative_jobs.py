@@ -1210,7 +1210,8 @@ class EditorCommitSpeakerBackgroundWindow(BaseModel):
 
 class EditorCommitSpeakerFrame(BaseModel):
     """Where the matted speaker is drawn (KRI-1162): the document's ``speaker_frame``. The app
-    writes it from a named corner preset; the server never takes a corner name on the wire."""
+    writes a named corner preset or, when the creator drags or pinches the speaker on the
+    preview, any frame inside these ranges; the server never takes a corner name on the wire."""
 
     model_config = {"extra": "forbid"}
 

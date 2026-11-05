@@ -154,6 +154,10 @@ struct NativeEditorView: View {
                     .presentationDragIndicator(.visible)
             }
             .onChange(of: session.selectionRequest) { _, _ in routeSelection() }
+            // A drag that starts on an unselected speaker selects them mid-gesture, when routing waits; open their panel on release.
+            .onChange(of: session.isDirectManipulating) { _, active in
+                if !active, session.selection?.kind == .speaker, panel != .speaker { routeSelection() }
+            }
             // KRI-1162: the BACKGROUND lane's fill strip and a window's inspector open the Background tool.
             .onChange(of: session.backgroundToolRequest) { _, _ in
                 inspector = nil
@@ -722,6 +726,11 @@ struct NativeEditorView: View {
             NativeVisualPanel(session: session, uploads: model.uploads, projectID: project.id, panelDrafts: panelDrafts) { changePanel(to: nil) }
         case .background:
             NativeBackgroundPanel(session: session, uploads: model.uploads, projectID: project.id) { changePanel(to: nil) }
+        case .speaker:
+            NativeSpeakerPanel(session: session) {
+                if session.selection?.kind == .speaker { session.select(nil, seekToStart: false) }
+                changePanel(to: nil)
+            }
         case .sounds:
             NativeSoundsPanel(session: session, panelDrafts: panelDrafts) { changePanel(to: nil) }
         case .drawing(let id):
@@ -751,6 +760,9 @@ struct NativeEditorView: View {
             if let selection = session.finishTextCreation() { textCreated(selection) }
         case .text: textEditingDone()
         case .captions, .visuals, .background, .sounds, .drawing: changePanel(to: nil)
+        case .speaker:
+            if session.selection?.kind == .speaker { session.select(nil, seekToStart: false) }
+            changePanel(to: nil)
         case nil: break
         }
     }
@@ -876,6 +888,7 @@ struct NativeEditorView: View {
         guard !session.isDirectManipulating, !session.isTimingGestureActive else { return }
         guard let selection = session.selection else {
             if case .text = panel { changePanel(to: nil) }
+            if panel == .speaker { changePanel(to: nil) }
             selectedTextForActions = nil
             selectedSoundEffectForActions = nil
             return
@@ -883,6 +896,10 @@ struct NativeEditorView: View {
         if selection.kind != .soundEffect { selectedSoundEffectForActions = nil }
         if [.mediaOverlay, .visualBlock, .motionScene, .cameraEffect].contains(selection.kind) {
             changePanel(to: .visuals)
+            return
+        }
+        if selection.kind == .speaker {
+            changePanel(to: .speaker)
             return
         }
         if selection.kind == .drawing {
@@ -1115,6 +1132,7 @@ private enum NativeEditorInspector: Identifiable {
             case .drawing: return "Drawing"
             case .carousel: return "Carousel"
             case .speakerBackgroundWindow: return "Background"
+            case .speaker: return "You"
             }
         case .adjust: return "Adjust"
         case .crop: return "Crop"
