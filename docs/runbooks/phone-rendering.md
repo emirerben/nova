@@ -4420,7 +4420,10 @@ stacked hook title: one ordinary text row per line (`opening-title`, `opening-ti
 - **Logo above the title:** a reaction beat with `anchor: "title"` (Main Creator v129 teaches it
   only while the flag is on) becomes a card right above the block for the title's window
   (`beat-<id>-1`, source time like every beat card). The title is placed so the biggest logo
-  fits; a logo that cannot fit off her face and captions is reported `no_room_above_title`.
+  fits off her face and her captions (with captions up in the title band, the block drops just
+  enough for the logo to sit between them and the title); the worker places the logo against
+  the same caption boxes (`caption_boxes` in the title receipt). A logo with no room is
+  reported `no_room_above_title` (her face) or `no_room_off_captions` (only her captions).
 - **Receipts / approval:** the brief and `verify_phone_recipe` find her title in its " / " form
   when it is drawn line by line (exact lines, shown together, top to bottom).
 - **Rollback:** `fly secrets set TITLE_LOOK_ENABLED=false` + restart api and worker. Strategies

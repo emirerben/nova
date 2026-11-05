@@ -17,9 +17,10 @@ Ways this could go wrong, and the guard for each:
 * F4: rows overlap each other, run off the frame or cover her face. `place_title_look`
   measures every row, stacks them with a fixed gap, and only accepts a spot that is inside
   the frame and clear of every face and marked object; then it moves, then shrinks.
-* F8: the logo covers the title, rises into the platform header, or sits on her face.
-  `place_title_logo` anchors the logo's bottom edge above the block, slides it sideways,
-  then shrinks it, and names the reason when nothing fits.
+* F8: the logo covers the title, rises into the platform header, or sits on her face or
+  her captions. `place_title_logo` anchors the logo's bottom edge above the block, slides
+  it sideways, then shrinks it, and names the reason when nothing fits (her face, or only
+  her captions); `place_title_look` places the block where that logo fits off both.
 * F17: the approval check accepts a stack that is not her title. `stacked_title_matches`
   needs every line's exact text, shown together, in top-to-bottom order.
 """
@@ -400,6 +401,11 @@ def _candidates(
     if logo and first < _LOGO_ROOM_TOP:
         # The same spot, lowered just enough for a logo above it.
         found.append(("logo_room", _LOGO_ROOM_TOP))
+    if logo:
+        # Captions up in the title band (KRI-827 moves them off a marked object): the block
+        # sits just low enough for the biggest logo between those captions and the block.
+        under = sorted({a.bottom + _LOGO_GAP + _LOGO_MAX_HEIGHT + _LOGO_GAP for a in avoid})
+        found.extend(("logo_under_captions", top) for top in under if top > first)
     if faces:
         found.append(("below_face", max(f.bottom for f in faces) + _FACE_GAP))
         above = min(f.top for f in faces) - _FACE_GAP - height
@@ -492,9 +498,12 @@ def place_title_look(
                 max(b.bottom for b in boxes),
             )
             # The biggest logo `place_title_logo` draws (full width AND full height, in pixels):
-            # room for this box at a spot is room for any real logo there.
+            # room for this box at a spot is room for any real logo there. Off her captions
+            # too: the worker places the real logo against the same boxes.
             biggest = (_LOGO_WIDTH * canvas.width) / (_LOGO_MAX_HEIGHT * canvas.height)
-            geometry, _miss = place_title_logo(block, aspect=biggest, faces=hard, canvas=canvas)
+            geometry, _miss = place_title_logo(
+                block, aspect=biggest, faces=hard, canvas=canvas, avoid=avoid
+            )
             return geometry is not None
 
         best: tuple[tuple[float, float], str, float, list[dict], list[NormalizedBox]] | None = None
@@ -564,6 +573,8 @@ def place_title_look(
             "block": block.as_dict(),
             "face_boxes": [f.as_dict() for f in faces],
             "object_boxes": [b.as_dict() for b in object_boxes],
+            # The captions kept clear of; the logo above the block keeps clear of these.
+            "caption_boxes": [a.as_dict() for a in avoid],
             "faces": receipt.get("faces"),
             "scale": factor,
             "objects": object_receipts,
@@ -571,7 +582,13 @@ def place_title_look(
         }
     except Exception as exc:  # noqa: BLE001 - a placement nicety never blocks a render
         log.warning("phone_title_look.placement_failed", error=str(exc)[:200])
-        return list(rows), {"status": "error", "error": str(exc)[:200]}
+        failed: dict[str, Any] = {"status": "error", "error": str(exc)[:200]}
+        try:
+            # The logo still keeps off her captions when the title could not be placed.
+            failed["caption_boxes"] = [a.as_dict() for a in avoid]
+        except Exception:  # noqa: BLE001 - the error receipt never raises
+            pass
+        return list(rows), failed
 
 
 # --- logo --------------------------------------------------------------------------------
@@ -602,33 +619,43 @@ def place_title_logo(
 ) -> tuple[dict | None, str | None]:
     """The logo's centre and width (fraction of canvas width) right above ``block``.
 
-    Its bottom edge sits just above the block. When that covers a face it slides sideways,
-    then shrinks. Never narrower than a phone card can be (0.05 of the width), and never
-    lower than the caption-band line the compiler pulls every card centre up to.
-    ``(None, "no_room_above_title")`` when nothing fits."""
+    Its bottom edge sits just above the block. When that covers a face or a caption in
+    ``avoid`` (her captions while the title shows) it slides sideways, then shrinks. Never
+    narrower than a phone card can be (0.05 of the width), and never lower than the
+    caption-band line the compiler pulls every card centre up to. When nothing fits:
+    ``(None, "no_room_off_captions")`` if a spot off her face was there but only on her
+    captions, else ``(None, "no_room_above_title")``."""
     aspect = aspect if aspect > 0 else 1.0
     to_height = canvas.width / (aspect * canvas.height)  # logo height per unit of width
     width = min(_LOGO_WIDTH, _LOGO_MAX_HEIGHT / to_height)
     bottom = block.top - _LOGO_GAP
-    others = [*faces, *avoid]
-    for shrink in _LOGO_SHRINKS:
-        w = math.floor(width * shrink * 10**_Y_DECIMALS) / 10**_Y_DECIMALS
-        h = w * to_height
-        top = bottom - h
-        if w < _CARD_MIN_WIDTH or top < _Y_MIN - 1e-6 or top + h / 2 > CAPTION_BAND_TOP_FRAC:
-            continue
-        home = block.left + w / 2 if alignment == "left" else (block.left + block.right) / 2
-        edges = (_LOGO_EDGE + w / 2, 1.0 - _LOGO_EDGE - w / 2)
-        for cx in (home, block.left + w / 2, block.right - w / 2, *edges):
-            if cx - w / 2 < _LOGO_X_MIN - 1e-6 or cx + w / 2 > _LOGO_X_MAX + 1e-6:
+
+    def spot(others: Sequence[NormalizedBox]) -> dict | None:
+        for shrink in _LOGO_SHRINKS:
+            w = math.floor(width * shrink * 10**_Y_DECIMALS) / 10**_Y_DECIMALS
+            h = w * to_height
+            top = bottom - h
+            if w < _CARD_MIN_WIDTH or top < _Y_MIN - 1e-6 or top + h / 2 > CAPTION_BAND_TOP_FRAC:
                 continue
-            box = NormalizedBox(cx - w / 2, top, cx + w / 2, bottom)
-            if _worst([box], others) <= _MAX_COVERAGE:
-                return {
-                    "x_frac": round(cx, _Y_DECIMALS),
-                    "y_frac": round(top + h / 2, _Y_DECIMALS),
-                    "scale": round(w, _Y_DECIMALS),
-                }, None
+            home = block.left + w / 2 if alignment == "left" else (block.left + block.right) / 2
+            edges = (_LOGO_EDGE + w / 2, 1.0 - _LOGO_EDGE - w / 2)
+            for cx in (home, block.left + w / 2, block.right - w / 2, *edges):
+                if cx - w / 2 < _LOGO_X_MIN - 1e-6 or cx + w / 2 > _LOGO_X_MAX + 1e-6:
+                    continue
+                box = NormalizedBox(cx - w / 2, top, cx + w / 2, bottom)
+                if _worst([box], others) <= _MAX_COVERAGE:
+                    return {
+                        "x_frac": round(cx, _Y_DECIMALS),
+                        "y_frac": round(top + h / 2, _Y_DECIMALS),
+                        "scale": round(w, _Y_DECIMALS),
+                    }
+        return None
+
+    geometry = spot([*faces, *avoid])
+    if geometry is not None:
+        return geometry, None
+    if avoid and spot(faces) is not None:
+        return None, "no_room_off_captions"
     return None, "no_room_above_title"
 
 

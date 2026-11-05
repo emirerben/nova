@@ -623,6 +623,78 @@ def test_the_logo_never_sits_where_the_phone_would_clamp_it():
     assert geometry is None or geometry["y_frac"] <= 0.62 + 1e-6
 
 
+# --- review (Emir, head 72674529a): the logo keeps off her captions -----------------------
+# Ways this can fail: (1) the title's logo-room check ignores her captions, so the title takes
+# a spot whose only logo room is on them; (2) the logo is placed without her captions and lands
+# on them; (3) with her captions passed, placement gives up instead of moving the title so the
+# logo fits between her captions and the title; (4) the new spot puts the title or the logo on
+# her face, off the frame, or on her captions; (5) the miss blames her face when only her
+# captions were in the way; (6) layouts with no caption in the way move.
+
+# Captions moved up into the title band (KRI-827: off a marked object at the bottom).
+TOP_CAPTIONS = NormalizedBox(0.05, 0.10, 0.95, 0.22)
+
+
+@pytest.mark.parametrize("faces", [(), (V5_FACE,)], ids=["no-face", "v5-face"])
+@pytest.mark.parametrize("aspect", [1.0, 3.0, 0.4])
+def test_review_the_title_leaves_logo_room_clear_of_her_captions(faces, aspect):
+    placed, receipt = _place(_rows(), *faces, avoid=[TOP_CAPTIONS], reserve_logo=True)
+
+    block = title_block_box(placed, canvas=CANVAS)
+    face_boxes = [NormalizedBox(*face) for face in faces]
+    # Today: the title takes a spot whose only logo room is on her captions, so the logo
+    # placed with her captions finds no room (and placed without them, covers them).
+    geometry, reason = place_title_logo(
+        block, aspect=aspect, faces=face_boxes, canvas=CANVAS, avoid=[TOP_CAPTIONS]
+    )
+    assert reason is None, (block, receipt)
+    logo = _logo_box(geometry, aspect)
+    assert logo.coverage_by(TOP_CAPTIONS) <= 0.05
+    assert all(logo.coverage_by(face) <= 0.05 for face in face_boxes)
+    assert logo.bottom <= block.top + 1e-3
+    assert logo.top >= 0.06 - 1e-6
+    assert receipt["logo_room"] is True, receipt
+    assert receipt["text_overlap"] is False
+    for box in _boxes(placed):
+        assert all(box.coverage_by(face) <= 0.05 for face in face_boxes)
+        assert box.coverage_by(TOP_CAPTIONS) <= 0.05
+    # The worker places the logo against the same caption boxes the title kept clear of.
+    assert receipt["caption_boxes"] == [TOP_CAPTIONS.as_dict()]
+
+
+def test_review_a_logo_only_her_captions_block_names_her_captions():
+    block = _block(top=0.23, bottom=0.45)
+
+    assert place_title_logo(block, aspect=1.0, faces=[], canvas=CANVAS)[1] is None
+    geometry, reason = place_title_logo(
+        block, aspect=1.0, faces=[], canvas=CANVAS, avoid=[TOP_CAPTIONS]
+    )
+    assert geometry is None
+    assert reason == "no_room_off_captions"
+
+
+def test_review_a_logo_her_face_blocks_still_names_her_face():
+    face = NormalizedBox(0.0, 0.06, 1.0, 0.22)
+    geometry, reason = place_title_logo(
+        _block(top=0.23, bottom=0.45), aspect=1.0, faces=[face], canvas=CANVAS, avoid=[TOP_CAPTIONS]
+    )
+    assert geometry is None
+    assert reason == "no_room_above_title"
+
+
+@pytest.mark.parametrize("aspect", [1.0, 3.0, 0.4])
+def test_review_captions_out_of_the_logos_way_change_nothing(aspect):
+    """Her usual bottom-band captions never touch the logo: its spot is today's exactly."""
+    placed, receipt = _place(_rows(), V5_FACE, avoid=[CAPTIONS], reserve_logo=True)
+    block = title_block_box(placed, canvas=CANVAS)
+    face = [NormalizedBox(*V5_FACE)]
+
+    assert receipt["logo_room"] is True
+    assert place_title_logo(
+        block, aspect=aspect, faces=face, canvas=CANVAS, avoid=[CAPTIONS]
+    ) == place_title_logo(block, aspect=aspect, faces=face, canvas=CANVAS)
+
+
 def test_a_caption_style_in_the_same_sentence_never_reaches_a_title_line():
     ask = title_look_ask(
         'Title "a b / c d" in serif and handwriting, the captions bold.', line_count=2
