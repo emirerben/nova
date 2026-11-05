@@ -248,4 +248,4 @@ The end-to-end proof (`tests/e2e_suggestions`, `tests/e2e_suggestions/README.md`
 path for every kind in English and Turkish: GET -> the real worker body with a cassette -> GET ->
 `submit_turn` -> `run_kria_turn`. A check that fails because of a defect in code the proof does not
 own carries a named `Gap`; the day it passes the run fails with "gap closed, remove the marker".
-GAP-5, GAP-10 and GAP-11 were closed by the serve strip and the Turkish word list above.
+GAP-4 was closed by the typed duplicate-send signal; GAP-5, GAP-10 and GAP-11 were closed by the serve strip and the Turkish word list above.
