@@ -1190,6 +1190,9 @@ capability `upload_place_hint`. When on, the Add media sheet tells a creator tha
 recording placed in Footage next to a talking take belongs in Overlays (the visuals pool),
 with a one-tap move. Detection is local and free: preview shape plus screen-recording
 filenames or the Photos screen-recording subtype. No model call, no upload. The key is
-additive (older builds ignore it), so there is no client protocol bump. Off: the sheet is
+additive (older builds ignore it), so there is no client protocol bump. The move starts the
+overlay first and only then takes the clip out of Footage; a clip still uploading goes through
+`BackgroundUploadCoordinator.withdraw`, which cancels it, or detaches it if its upload finished
+and attached meanwhile (Photos picks use `deselect`), so the file ends in exactly one place. Off: the sheet is
 unchanged. Apply or roll back: `fly secrets set UPLOAD_PLACE_HINT_ENABLED=true|false -a nova-video`
 and restart the api (workers do not read it).

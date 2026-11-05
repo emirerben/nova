@@ -839,6 +839,38 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         return await detach(mediaID: mediaID, role: current.role, projectID: projectID, itemID: itemID, recordID: current.recordID)
     }
 
+    /// Item 24 "Move to Overlays": takes a Footage clip that was still uploading out of the project, whatever its upload
+    /// did meanwhile. For a clip with no Photos ledger entry (a Files clip); `deselect` covers Photos picks. The move
+    /// copies the file and starts the overlay first, so the upload can finish and attach in between: `cancel(recordID:)`
+    /// then found no record and returned, and the same file stayed in Footage and Overlays. Like `deselect`: a clip still
+    /// sending is cancelled, one whose bytes reached storage may attach and is then detached. `mediaID` is the record's
+    /// reserved media id, as listed when the hint showed.
+    func withdraw(recordID: UUID, mediaID listedMediaID: String?, projectID: UUID) async -> DeselectOutcome {
+        var knownMediaID = listedMediaID
+        if let record = records.first(where: { $0.id == recordID }) {
+            knownMediaID = record.mediaID ?? knownMediaID
+            if record.uploadCompleted != true, (progress[record.id] ?? 0) < 1 {
+                await cancel(recordID: record.id)
+                return .cancelledUpload
+            }
+            // The bytes already reached storage. Let the attach that is in flight land, then treat it as attached.
+            await attachmentTasks[projectID]?.task.value
+            if records.contains(where: { $0.id == recordID }) {
+                await cancel(recordID: recordID)   // attach failed; there is nothing to detach
+                return .cancelledUpload
+            }
+        }
+        guard let mediaID = knownMediaID else { return .notTracked }
+        do {
+            // Left without attaching (removed some other way): nothing is in Footage, and no removal to refuse.
+            let latest = try await api.project(threadID: projectID)
+            guard CreationAttachedMedia.parse(latest.state ?? [:]).contains(where: { $0.id == mediaID }) else { return .discarded }
+        } catch {
+            return .refused("Couldn’t remove it. \(error.localizedDescription)")
+        }
+        return await detach(mediaID: mediaID, role: .clip, projectID: projectID, itemID: nil, recordID: recordID)
+    }
+
     /// Detaches an attached clip (`remove_media`, which also deletes the blob server-side) or visual.
     /// Serialized with attaches so it can't race one on the thread's optimistic `expected_revision`.
     private func detach(mediaID: String, role: CreationMediaRole, projectID: UUID, itemID: String?, recordID: UUID) async -> DeselectOutcome {

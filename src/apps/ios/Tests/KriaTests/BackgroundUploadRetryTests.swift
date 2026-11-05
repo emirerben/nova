@@ -1330,3 +1330,119 @@ extension BackgroundUploadRetryTests {
         UserDefaults.standard.set(try JSONEncoder().encode([projectID.uuidString: selection]), forKey: "\(key).photo-selection")
     }
 }
+
+// MARK: Item 24: "Move to Overlays" on a Footage clip that is still uploading (review of #2112)
+
+/// A server for one project: reserves `clip-1`, attaches it, and removes it only while it is attached (409 otherwise,
+/// like `remove_media`). PUTs finish at once unless `holdPut`.
+@MainActor private final class FootageMoveServer {
+    let projectID: UUID
+    private(set) var attached: Set<String> = []
+    private(set) var removed: [String] = []
+    var holdPut = false
+
+    init(projectID: UUID) {
+        self.projectID = projectID
+        UploadRetryProtocol.handler = { [weak self] transport in
+            guard let self else { return }
+            let request = transport.request
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "PUT" {
+                if !self.holdPut { transport.finish(200, Data()) }
+                return
+            }
+            if path.hasSuffix("/upload-urls") { transport.finish(200, reservationResponse); return }
+            if path.hasSuffix("/media") {
+                self.attached.insert("clip-1")
+                transport.finish(200, self.thread())
+                return
+            }
+            if path.hasSuffix("/actions") {
+                let body = (try? JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request))) as? [String: Any]
+                let requested = (body?["payload"] as? [String: Any])?["media_id"] as? String
+                guard let mediaID = requested, self.attached.remove(mediaID) != nil else {
+                    transport.finish(409, Data(#"{"detail":"That media is no longer attached"}"#.utf8))
+                    return
+                }
+                self.removed.append(mediaID)
+                transport.finish(200, self.thread())
+                return
+            }
+            transport.finish(200, self.thread())   // GET creation-threads/{id}
+        }
+    }
+
+    func thread() -> Data {
+        let media = attached.sorted().map { #"{"media_id":"\#($0)","filename":"Screen Recording.mov","kind":"video"}"# }.joined(separator: ",")
+        return Data(#"{"id":"\#(projectID.uuidString)","title":"t","status":"draft","revision":1,"runtime_version":2,"updated_at":"2026-09-09T12:00:00Z","events":[],"state":{"media":[\#(media)]}}"#.utf8)
+    }
+}
+
+/// The move copies the clip and starts its overlay before it takes the clip out of Footage, so a Files clip (no Photos
+/// ledger entry) that was still uploading can finish and attach in between. Ways it can fail, each checked below or by
+/// the code it mirrors (`deselect`): the attach lands first and the clip stays in Footage with no warning (the review's
+/// finding: `cancel(recordID:)` finds no record and returns); an upload still sending is not cancelled; a clip that left
+/// without attaching gets a removal the server refuses (a false "Remove it from Footage"); the attach is in flight and
+/// is cancelled under it (waits on the attach chain, as `deselect` does).
+extension BackgroundUploadRetryTests {
+    private func footageMove(holdPut: Bool) async throws -> (BackgroundUploadCoordinator, FootageMoveServer, UploadRecoveryRecord) {
+        let key = "kria.test.move-to-overlays.\(UUID().uuidString)"
+        let projectID = UUID()
+        let source = FileManager.default.temporaryDirectory.appending(path: "Screen Recording \(UUID().uuidString).mov")
+        try Data("a screen recording".utf8).write(to: source)
+        let project = BackgroundUploadCoordinator.projectDirectory(projectID).root
+        addTeardownBlock {
+            for suffix in ["", ".preparing", ".photo-selection"] { UserDefaults.standard.removeObject(forKey: key + suffix) }
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: project)
+        }
+        let server = FootageMoveServer(projectID: projectID)
+        server.holdPut = holdPut
+        let configuration = UploadRetryProtocol.configuration()
+        let api = KriaAPI(baseURL: URL(string: "https://uploads.test")!, tokenStore: NativeEditorMemoryTokenStore(), session: URLSession(configuration: configuration))
+        let coordinator = BackgroundUploadCoordinator(api: api, defaultsKey: key, sessionConfiguration: configuration, backgroundActivity: RecordingBackgroundActivityAssertion())
+        let accepted = await coordinator.enqueue(fileURL: source, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource, role: .clip)
+        XCTAssertTrue(accepted)
+        let record = try XCTUnwrap(coordinator.records.first)
+        return (coordinator, server, record)
+    }
+
+    func testMovingAFilesClipThatFinishedUploadingMeanwhileTakesItOutOfFootage() async throws {
+        let (coordinator, server, record) = try await footageMove(holdPut: false)
+        // While the overlay copy is made, the upload finishes and Footage attaches the clip. Background URLSession's
+        // completion can take seconds on a busy CI simulator, so poll for the attach.
+        for _ in 0..<400 where !coordinator.records.isEmpty { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertTrue(coordinator.records.isEmpty, "the upload finished and attached")
+        XCTAssertEqual(server.attached, ["clip-1"])
+        // What the move did before this fix: no record any more, so nothing happened and no warning was shown.
+        await coordinator.cancel(recordID: record.id)
+        XCTAssertEqual(server.attached, ["clip-1"], "a plain cancel leaves the attached clip in Footage")
+
+        let outcome = await coordinator.withdraw(recordID: record.id, mediaID: record.mediaID, projectID: record.projectID)
+
+        XCTAssertEqual(outcome, .detached)
+        XCTAssertEqual(server.removed, ["clip-1"], "taken out of Footage: the file ends in Overlays only")
+        XCTAssertTrue(server.attached.isEmpty)
+    }
+
+    func testMovingAFilesClipStillUploadingCancelsTheUpload() async throws {
+        let (coordinator, server, record) = try await footageMove(holdPut: true)
+
+        let outcome = await coordinator.withdraw(recordID: record.id, mediaID: record.mediaID, projectID: record.projectID)
+
+        XCTAssertEqual(outcome, .cancelledUpload)
+        XCTAssertTrue(coordinator.records.isEmpty)
+        XCTAssertTrue(server.attached.isEmpty, "a cancelled upload never attaches")
+        XCTAssertTrue(server.removed.isEmpty)
+    }
+
+    func testMovingAClipThatLeftWithoutAttachingSendsNoRemoval() async throws {
+        let (coordinator, server, record) = try await footageMove(holdPut: true)
+        await coordinator.cancel(recordID: record.id)   // gone some other way, never attached
+
+        let outcome = await coordinator.withdraw(recordID: record.id, mediaID: record.mediaID, projectID: record.projectID)
+
+        XCTAssertEqual(outcome, .discarded, "nothing is in Footage, so no warning")
+        XCTAssertTrue(server.removed.isEmpty)
+    }
+}

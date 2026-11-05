@@ -584,7 +584,14 @@ struct AttachmentSheet: View {
             await removeAttached(attachment)
             return mediaRemovalError == nil
         }
-        if let recordID = clip.recordID { await model.uploads.cancel(recordID: recordID) }
+        if let recordID = clip.recordID {
+            // Still uploading when the hint showed: it may have finished and attached while the overlay was started,
+            // so cancel or detach it, whichever it needs. A plain cancel then found no record and left it in Footage.
+            switch await model.uploads.withdraw(recordID: recordID, mediaID: clip.originalMediaID, projectID: projectID) {
+            case .discarded, .cancelledUpload, .detached, .alreadyInProgress, .notTracked: return true
+            case .refused: return false
+            }
+        }
         return true
     }
 
