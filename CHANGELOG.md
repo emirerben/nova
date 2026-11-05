@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.86.2.0] - 2026-11-05
+
+### Fixed
+- fix(kria): planner hears the whole talking take (shared speech budget) (#2100) <!-- release-pr: 2100 -->
+
 ## [0.86.1.0] - 2026-11-05
 
 ### Changed
