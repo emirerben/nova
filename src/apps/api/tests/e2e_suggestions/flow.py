@@ -45,7 +45,6 @@ GAP_TR_RECEIPT = gaps.TR_RECEIPT
 GAP_RESTATE_DOUBLE_TAP = gaps.RESTATE_DOUBLE_TAP
 GAP_RESTATE_NOT_READY = gaps.RESTATE_NOT_READY
 GAP_REFUSED_BRIEF = gaps.REFUSED_BRIEF
-GAP_FILLER_UNDO = gaps.FILLER_UNDO
 
 
 async def ensure_stored(phone: Phone, out) -> str:  # noqa: ANN001
@@ -330,7 +329,6 @@ async def verify_undo(cell: Cell, phone: Phone, tap: Tap) -> bool:
             "undo_setting",
             back,
             f"speech_cleanup_enabled back to False: {back}",
-            gap=GAP_FILLER_UNDO,
         )
     return True
 
