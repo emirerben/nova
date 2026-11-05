@@ -22,6 +22,11 @@ import UIKit
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var error: String?
+    /// Why `error` is showing, so the camera can offer Open Settings for a privacy refusal and Try again otherwise.
+    @Published private(set) var errorKind: ErrorKind?
+    /// Which way the lens faces. Selfie by default; `flip()` switches and the next `prepare()` rebuilds the graph.
+    @Published private(set) var position: AVCaptureDevice.Position = .front
+    enum ErrorKind: Equatable { case cameraAccess, microphoneAccess, restricted, other }
     @Published private(set) var recordingStartedAt: TimeInterval?
     @Published private(set) var finalizedURL: URL?
     /// Why the current or last take stopped; nil while it is still going.
@@ -61,6 +66,8 @@ import UIKit
     private nonisolated(unsafe) var movieOutput: AVCaptureMovieFileOutput?
     private nonisolated(unsafe) var videoInput: AVCaptureDeviceInput?
     private nonisolated(unsafe) var wantsCinematic = false
+    private nonisolated(unsafe) var wantsPosition: AVCaptureDevice.Position = .front
+    private nonisolated(unsafe) var configuredPosition: AVCaptureDevice.Position = .front
     /// What the current graph was built for; a different `wantsCinematic` rebuilds it.
     private nonisolated(unsafe) var configuredCinematic = false
     /// Whether the take in flight was started with Cinematic asked for.
@@ -114,6 +121,14 @@ import UIKit
         if configuredCinematic { publishCinematicState() }
     }
 
+    /// Switches between the selfie and the rear camera. Refused during a take; the caller re-runs `prepare()`.
+    func flip() {
+        guard phase != .recording, phase != .finalizing, !startRequested else { return }
+        let next: AVCaptureDevice.Position = position == .front ? .back : .front
+        position = next
+        captureQueue.async { [weak self] in self?.wantsPosition = next }
+    }
+
     /// KRI-1160: applied by the next `prepare()`, which rebuilds the graph. Never reconfigures a running take.
     func setCinematicRequested(_ requested: Bool) {
         guard requested != cinematicRequested else { return }
@@ -121,6 +136,8 @@ import UIKit
         if !requested { cinematicNote = nil }
         captureQueue.async { [weak self] in self?.wantsCinematic = requested }
     }
+
+    static let cinematicFallbackNote = "Cinematic couldn’t start on this camera, so you’re recording in standard mode."
 
     /// Reads whether the graph really records Cinematic, after it was built or changed.
     private nonisolated func publishCinematicState() {
@@ -130,7 +147,7 @@ import UIKit
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.cinematicActive = active
-            self.cinematicNote = fellBack ? "Cinematic couldn’t start on this camera, so you’re recording in standard mode." : nil
+            self.cinematicNote = fellBack ? Self.cinematicFallbackNote : nil
         }
     }
 
@@ -147,13 +164,26 @@ import UIKit
         let generation = operationGeneration
         phase = .preparing
         error = nil
+        errorKind = nil
         stopReason = nil
         finalizedURL = nil
 
-        if Self.usesUnavailableUITestFixture {
-            fail(message: "The front camera is unavailable in this test environment. Use a physical iPhone to record with your script.")
+        if let refusal = Self.unavailableUITestFixture {
+            fail(message: refusal.message, kind: refusal.kind)
             return
         }
+
+        #if DEBUG
+        // UI-test/screenshot fixture: the simulator has no camera, so show the ready controls over a dark preview.
+        if Self.usesReadyUITestFixture {
+            phase = .ready
+            if let cinematic = Self.cinematicUITestFixture {
+                cinematicActive = cinematic == .on && cinematicRequested
+                cinematicNote = cinematic == .fallback && cinematicRequested ? Self.cinematicFallbackNote : nil
+            }
+            return
+        }
+        #endif
 
         guard await requestPermissionsIfNeeded(generation: generation) else { return }
         guard generation == operationGeneration else { return }
@@ -253,7 +283,7 @@ import UIKit
         let microphone = AVCaptureDevice.authorizationStatus(for: .audio)
         guard camera != .restricted, microphone != .restricted else {
             guard generation == operationGeneration else { return false }
-            fail(message: "Camera or microphone access is restricted on this iPhone. Choose a video instead.")
+            fail(message: "Camera or microphone access is restricted on this iPhone. Upload a video instead.", kind: .restricted)
             return false
         }
         let cameraAllowed: Bool
@@ -264,7 +294,7 @@ import UIKit
         }
         guard generation == operationGeneration else { return false }
         guard cameraAllowed else {
-            fail(message: "Camera access is off. Allow it in Settings to record with your script, or choose a video instead.")
+            fail(message: "Turn it on in Settings to record here, or upload a video you already have.", kind: .cameraAccess)
             return false
         }
         let microphoneAllowed: Bool
@@ -275,7 +305,7 @@ import UIKit
         }
         guard generation == operationGeneration else { return false }
         guard microphoneAllowed else {
-            fail(message: "Microphone access is off. Allow it in Settings to record a video with sound, or choose a video instead.")
+            fail(message: "Turn it on in Settings to record with sound, or upload a video.", kind: .microphoneAccess)
             return false
         }
         return true
@@ -303,7 +333,7 @@ import UIKit
                     if self.isConfigured {
                         let micGone = self.session.inputs.compactMap { $0 as? AVCaptureDeviceInput }
                             .contains { $0.device.hasMediaType(.audio) && !$0.device.isConnected }
-                        if !self.needsRebuild, !micGone, self.configuredCinematic == self.wantsCinematic {
+                        if !self.needsRebuild, !micGone, self.configuredCinematic == self.wantsCinematic, self.configuredPosition == self.wantsPosition {
                             if !self.session.isRunning { self.session.startRunning() }
                             continuation.resume()
                             return
@@ -318,10 +348,11 @@ import UIKit
                     }
                     self.needsRebuild = false
                     // KRI-1160: Cinematic needs a front camera and format that support it; nil keeps the standard graph.
-                    let wantsCinematic = self.wantsCinematic
+                    let wantsPosition = self.wantsPosition
+                    let wantsCinematic = self.wantsCinematic && wantsPosition == .front
                     var cinematicCamera: (device: AVCaptureDevice, format: AVCaptureDevice.Format)?
                     if wantsCinematic, #available(iOS 26.0, *) { cinematicCamera = TeleprompterCinematic.frontCinematicCamera() }
-                    guard let camera = cinematicCamera?.device ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) else {
+                    guard let camera = cinematicCamera?.device ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: wantsPosition) else {
                         throw CameraError.frontCameraUnavailable
                     }
                     guard let microphone = AVCaptureDevice.default(for: .audio) else {
@@ -372,6 +403,7 @@ import UIKit
                     }
                     self.videoInput = videoInput
                     self.configuredCinematic = wantsCinematic
+                    self.configuredPosition = wantsPosition
                     self.publishCinematicState()
                     self.movieOutput = output
                     self.isConfigured = true
@@ -480,6 +512,9 @@ import UIKit
     func sceneBecameActive() { note("scene_active") }
 
     private func handle(_ signal: TakeStopSignal) {
+        #if DEBUG
+        if Self.usesReadyUITestFixture { return }
+        #endif
         guard let reason = TakeStopPolicy.reason(for: signal) else { return }
         guard phase == .preparing || phase == .ready || phase == .recording || phase == .finalizing else { return }
         markNeedsRebuild("interruption")
@@ -608,8 +643,9 @@ import UIKit
         phase = .idle
     }
 
-    private func fail(message: String) {
+    private func fail(message: String, kind: ErrorKind = .other) {
         error = message
+        errorKind = kind
         phase = .failed
         recordingStartedAt = nil
         startRequested = false
@@ -627,11 +663,42 @@ import UIKit
         onFinalized?(nil, message)
     }
 
-    private static var usesUnavailableUITestFixture: Bool {
+    #if DEBUG
+    private static var usesReadyUITestFixture: Bool {
         let process = ProcessInfo.processInfo
-        return process.arguments.contains("-ui-testing-chat")
-            && process.environment["KRIA_TELEPROMPTER_CAMERA_UNAVAILABLE"] == "1"
+        return process.arguments.contains("-ui-testing-chat") && process.environment["KRIA_TELEPROMPTER_CAMERA_READY"] == "1"
     }
+    #endif
+
+    /// UI-test fixture: the camera refuses, as a creator who turned access off (or a managed iPhone) sees it.
+    /// `1` is the unavailable-hardware card; `camera_access`, `microphone_access` and `restricted` are the privacy ones.
+    private static var unavailableUITestFixture: (kind: ErrorKind, message: String)? {
+        let process = ProcessInfo.processInfo
+        guard process.arguments.contains("-ui-testing-chat"),
+              let value = process.environment["KRIA_TELEPROMPTER_CAMERA_UNAVAILABLE"] else { return nil }
+        switch value {
+        case "camera_access": return (.cameraAccess, "Turn it on in Settings to record here, or upload a video you already have.")
+        case "microphone_access": return (.microphoneAccess, "Turn it on in Settings to record with sound, or upload a video.")
+        case "restricted": return (.restricted, "Camera or microphone access is restricted on this iPhone. Upload a video instead.")
+        case "1": return (.other, "The camera is unavailable in this test environment. Use a physical iPhone to record.")
+        default: return nil
+        }
+    }
+
+    #if DEBUG
+    enum CinematicFixture { case on, fallback }
+    /// Simulators have no Cinematic camera: `on` shows a graph that records Cinematic, `fallback` one that fell back.
+    /// Either makes the Cinematic capsule available. Only with the ready fixture.
+    static var cinematicUITestFixture: CinematicFixture? {
+        let process = ProcessInfo.processInfo
+        guard process.arguments.contains("-ui-testing-chat") else { return nil }
+        switch process.environment["KRIA_TELEPROMPTER_CINEMATIC_FIXTURE"] {
+        case "on": return .on
+        case "fallback": return .fallback
+        default: return nil
+        }
+    }
+    #endif
 }
 
 extension TeleprompterCamera: AVCaptureFileOutputRecordingDelegate {
@@ -750,8 +817,8 @@ private extension TeleprompterCamera {
 
         var errorDescription: String? {
             switch self {
-            case .frontCameraUnavailable: "The front camera is unavailable here. Recording with a script needs a physical iPhone."
-            case .microphoneUnavailable: "The microphone is unavailable. Choose a video instead."
+            case .frontCameraUnavailable: "The camera is unavailable here. Recording needs a physical iPhone."
+            case .microphoneUnavailable: "The microphone is unavailable. Upload a video instead."
             case .couldNotConfigure: "The camera could not be configured. Try closing another app that is using the camera."
             case .cancelled: "Camera setup was cancelled."
             }
@@ -847,12 +914,14 @@ struct TeleprompterCameraPreview: UIViewRepresentable {
         let view = PreviewView()
         view.previewLayer.session = camera.session
         view.previewLayer.videoGravity = .resizeAspect
+        view.mirrored = camera.position == .front
         view.configurePreviewConnection()
         return view
     }
 
     func updateUIView(_ uiView: PreviewView, context: Context) {
         if uiView.previewLayer.session !== camera.session { uiView.previewLayer.session = camera.session }
+        uiView.mirrored = camera.position == .front
         // `makeUIView` often precedes async preparation. This runs again after the controller
         // publishes its prepared phase, when the layer finally has a video connection.
         uiView.configurePreviewConnection()
@@ -861,6 +930,8 @@ struct TeleprompterCameraPreview: UIViewRepresentable {
     final class PreviewView: UIView {
         override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
         var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
+        /// Selfie comfort only: the rear camera is shown as it films.
+        var mirrored = true
 
         override func layoutSubviews() {
             super.layoutSubviews()
@@ -872,7 +943,7 @@ struct TeleprompterCameraPreview: UIViewRepresentable {
             if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
             if connection.isVideoMirroringSupported {
                 connection.automaticallyAdjustsVideoMirroring = false
-                connection.isVideoMirrored = true
+                connection.isVideoMirrored = mirrored
             }
         }
     }

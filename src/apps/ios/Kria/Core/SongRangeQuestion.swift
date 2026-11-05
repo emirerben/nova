@@ -124,11 +124,11 @@ struct SongRangeAnswer: Encodable, Equatable, Sendable {
         }
     }
 
-    /// The read-only line once answered, e.g. "Filmed 0:40 - 1:20".
+    /// The read-only line once answered, e.g. "Song part: 0:40 to 1:20".
     var summary: String {
         switch choice {
-        case .wholeSong: "Whole song"
-        case .part(let range): range.summary
+        case .wholeSong: "Song part: whole song"
+        case .part(let range): "Song part: \(SongRangeMath.timecode(range.start)) to \(SongRangeMath.timecode(range.end))"
         case .unreadable: "Song part answered"
         }
     }
@@ -194,7 +194,7 @@ struct SongRangeProblem: Equatable {
         return status == 422 && detail.code == SongRangeAnswer.invalidProblemCode
     }
 
-    /// The server's copy ("Pick at least five seconds of your song."), else the same sentence the pickers use.
+    /// The server's copy ("Pick at least five seconds."), else the same sentence the pickers use.
     init(questionID: String, error: APIError) {
         self.questionID = questionID
         if case .requestFailed(_, let detail) = error {

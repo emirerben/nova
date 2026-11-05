@@ -7,6 +7,7 @@ import XCTest
     func testIncomingRecordingAcknowledgmentStartsScriptBeforeStoredPhaseChanges() {
         let flow = TeleprompterRecordingFlow(accountID: "test", projectID: UUID())
         flow.script.updateText("Read this after recording starts.")
+        flow.useScript = true
         flow.stage = .starting
         XCTAssertEqual(flow.camera.phase, .idle)
         flow.cameraChanged(.recording)

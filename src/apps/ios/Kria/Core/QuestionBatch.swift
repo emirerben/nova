@@ -16,6 +16,12 @@ struct QuestionBatch: Equatable {
         choiceText = text
     }
 
+    /// "Change": lets the creator pick the held option again; the clips answer stays held.
+    mutating func releaseChoice() {
+        choice = nil
+        choiceText = nil
+    }
+
     mutating func hold(clips: ClipSelectionSubmission, text: String) {
         self.clips = clips
         clipsText = text
@@ -29,7 +35,7 @@ struct QuestionBatch: Equatable {
 
     /// Under the choice card once it is answered and the clips are not.
     var choiceNote: String? {
-        choice != nil && clips == nil ? "Now choose the clips below. I'll send both answers together." : nil
+        choice != nil && clips == nil ? "Got it. Now choose your clips below, and I’ll send both." : nil
     }
 
     /// Under the clip card once the clips are chosen and the choice is not.
