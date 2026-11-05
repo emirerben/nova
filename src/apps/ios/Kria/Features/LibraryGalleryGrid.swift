@@ -12,6 +12,8 @@ struct LibraryGalleryGrid: View {
     @Binding var selection: [PhotosPickerItem]
     let limit: Int
     let kinds: LibraryMediaKinds
+    /// First cell of the grid: film instead of picking. Nil hides the cell.
+    var onRecord: (() -> Void)?
     @State private var assets: PHFetchResult<PHAsset>?
     @State private var dragBase: LibraryGallerySelection?
     @State private var limitMessage: String?
@@ -42,6 +44,7 @@ struct LibraryGalleryGrid: View {
                     end: { dragBase = nil }
                 ) {
                     LazyVGrid(columns: columns, spacing: 2) {
+                        if let onRecord { recordCell(onRecord) }
                         ForEach(0..<assets.count, id: \.self) { index in
                             tile(assets.object(at: index), index: index).dragSelectTile(index: index)
                         }
@@ -54,7 +57,10 @@ struct LibraryGalleryGrid: View {
             } else {
                 ProgressView().frame(maxHeight: .infinity)
             }
-            footer
+            if let limitMessage {
+                Text(limitMessage).kriaType(.caption).foregroundStyle(KriaColor.mutedInk).frame(minHeight: 28)
+                    .accessibilityIdentifier("gallery-limit")
+            }
         }
         .sensoryFeedback(.selection, trigger: selection.count)
         .sensoryFeedback(.warning, trigger: tapToken)
@@ -65,8 +71,17 @@ struct LibraryGalleryGrid: View {
         kinds == .videos ? "videos" : kinds == .images ? "photos" : "photos or videos"
     }
 
-    private var footer: some View {
-        GalleryFooter(text: limitMessage ?? "\(selection.count) of \(limit) selected · slide across to select", identifier: "gallery-count")
+    private func recordCell(_ record: @escaping () -> Void) -> some View {
+        Button(action: record) {
+            VStack(spacing: 8) {
+                Image(systemName: KriaSourceOption.recordSymbol).font(.system(size: 24)).foregroundStyle(KriaColor.ink)
+                Text("Record").kriaType(.label).foregroundStyle(KriaColor.ink).lineLimit(1).minimumScaleFactor(0.5)
+            }
+            .padding(.horizontal, 4)
+            .frame(maxWidth: .infinity).aspectRatio(1, contentMode: .fit)
+            .background(KriaColor.fill).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).accessibilityIdentifier("gallery-record")
     }
 
     private func load() {

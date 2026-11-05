@@ -20,7 +20,7 @@ struct ProjectsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                HStack(alignment: .firstTextBaseline) { Text("Projects").font(KriaFont.display(34)); Spacer(); Button(action: { Task { await model.createProject() } }) { Image(systemName: "plus").font(.headline).frame(width: 44, height: 44).background(KriaColor.sky).clipShape(Circle()) }.accessibilityLabel("New project") }
+                HStack(alignment: .firstTextBaseline) { Text("Projects").font(KriaFont.headline(34)); Spacer(); Button(action: { Task { await model.createProject() } }) { Image(systemName: "plus").font(.headline).frame(width: 44, height: 44).background(KriaColor.sky).clipShape(Circle()) }.accessibilityLabel("New project") }
                 Text("A home for the stories you’re shaping.").foregroundStyle(KriaColor.zinc)
                 if model.projects.isEmpty {
                     switch model.projectsState {
@@ -33,7 +33,7 @@ struct ProjectsView: View {
                         .accessibilityElement(children: .combine)
                     case .failed(let message):
                         VStack(alignment: .leading, spacing: 14) {
-                            Text("Projects couldn’t load.").font(KriaFont.display(24))
+                            Text("Projects couldn’t load.").font(KriaFont.headline(24))
                             Text(message).font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
                             Button("Try again") { Task { await model.loadProjects() } }
                                 .buttonStyle(KriaSecondaryButtonStyle())
@@ -63,7 +63,7 @@ struct ProjectRow: View {
             ProjectPosterView(project: project)
                 .frame(width: 88, height: 112)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            VStack(alignment: .leading, spacing: 8) { Text(project.title).font(KriaFont.display(21)); KriaStatusPill(status: project.status); Text(project.updatedAt, style: .relative).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc) }
+            VStack(alignment: .leading, spacing: 8) { Text(project.title).font(KriaFont.headline(21)); KriaStatusPill(status: project.status); Text(project.updatedAt, style: .relative).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc) }
             Spacer(); Image(systemName: "chevron.right").foregroundStyle(KriaColor.zinc)
         }.padding(12).background(Color.white.opacity(0.7)).clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous)).accessibilityElement(children: .combine).accessibilityHint("Open project")
     }
@@ -76,7 +76,7 @@ struct ProjectDetailView: View {
     private var currentProject: ProjectSummary { model.projects.first(where: { $0.id == project.id }) ?? project }
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 22) {
-            Text(currentProject.title).font(KriaFont.display(34)); KriaStatusPill(status: currentProject.status)
+            Text(currentProject.title).font(KriaFont.headline(34)); KriaStatusPill(status: currentProject.status)
             if currentProject.status == .ready {
                 NavigationLink(destination: ResultsView(project: currentProject)) {
                     ProjectPosterView(project: currentProject)
@@ -220,12 +220,12 @@ struct GalleryView: View {
                         ForEach(GalleryFilter.allCases) { option in
                             Button(option.title) { filter = option }
                                 .font(KriaFont.body(12).weight(.medium))
-                                .foregroundStyle(KriaColor.ink)
-                                .padding(.horizontal, 12)
+                                .foregroundStyle(filter == option ? KriaColor.paper : KriaColor.ink)
+                                .padding(.horizontal, 14)
                                 .frame(minHeight: 44)
-                                .background(filter == option ? KriaColor.selectionSoft : Color.white)
-                                .overlay(Capsule().stroke(KriaColor.border, lineWidth: filter == option ? 0 : 1))
+                                .background(filter == option ? KriaColor.ink : KriaColor.fill)
                                 .clipShape(Capsule())
+                                .accessibilityAddTraits(filter == option ? .isSelected : [])
                         }
                     }
 
@@ -243,7 +243,7 @@ struct GalleryView: View {
                         case .failed(let message):
                             VStack(alignment: .leading, spacing: 10) {
                                 Text("Your gallery couldn’t load.")
-                                    .font(KriaFont.display(22))
+                                    .font(KriaFont.headline(22))
                                 Text(message)
                                     .font(KriaFont.body(13))
                                     .foregroundStyle(KriaColor.zinc)
@@ -255,7 +255,7 @@ struct GalleryView: View {
                         case .empty, .loaded:
                             VStack(alignment: .leading, spacing: 10) {
                                 Text("Your next cut will live here.")
-                                    .font(KriaFont.display(22))
+                                    .font(KriaFont.headline(22))
                                 Button("Refresh") { Task { await model.loadLibrary() } }
                                     .font(KriaFont.body(13).weight(.semibold))
                                     .frame(minHeight: 44)
@@ -349,12 +349,11 @@ private struct GalleryProjectCard: View {
                 }
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(alignment: .topTrailing) {
-                Text(project.workspaceStatusLabel.uppercased())
-                    .font(KriaFont.body(8).weight(.bold))
-                    .tracking(0.8)
+                Text(project.workspaceStatusLabel)
+                    .kriaType(.caption)
                     .foregroundStyle(KriaColor.ink)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
                     .background(project.status == .ready ? KriaColor.sage : Color.white.opacity(0.9))
                     .clipShape(Capsule())
                     .padding(7)
@@ -643,7 +642,7 @@ struct CreationThreadView: View {
             VStack(alignment: .leading, spacing: 16) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
-                        if events.isEmpty { Text("What should this cut make someone feel?").font(KriaFont.display(24)) }
+                        if events.isEmpty { Text("What should this cut make someone feel?").font(KriaFont.headline(24)) }
                         ForEach(events.compactMap(ChatTranscriptMessage.from(event:))) { message in
                             ChatMessageRow(message: message)
                         }

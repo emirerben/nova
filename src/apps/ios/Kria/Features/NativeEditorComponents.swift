@@ -737,7 +737,7 @@ struct NativeEditorUnavailableView: View {
                     .frame(width: 42, height: 42)
                     .background(KriaColor.sage)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                Text(title).font(KriaFont.display(25))
+                Text(title).font(KriaFont.headline(25))
             }
             Text(reason)
                 .font(KriaFont.body(15))
