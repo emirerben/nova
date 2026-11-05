@@ -22,6 +22,11 @@ Failure catalogue, written before any code
   H6  a paraphrase of what was said or shown: the same content words reordered or with a word
       swapped keep clear of the "3 words in a row" check. Compared clause by clause, with a
       stricter threshold than the verbatim check, over transcripts and on-screen text.
+  H8  the same attacks, one step further (low-severity review round): a spaced-out TLD ("evil dot
+      c o m", "evil d o t com"), "slash" for the dot, a word split once ("fo llow me", "lin k in
+      bio", "subs cribe"), and letters swapped for digits ("evil d0t com", "l1nk in bio"). The
+      hook gate refuses every digit already, but ``validate_copy`` runs first on the pick path and
+      is the gate any future copy kind inherits, so it must hold on its own.
   H7  over-blocking: ordinary hooks ("Matcha for the slow start", a place name, a real moment that
       shares ONE topic word with the transcript, a Turkish line with real Turkish letters, a
       word with an accent) must still pass, or the gate would silence every card.
@@ -38,7 +43,7 @@ import pytest
 
 from app.config import settings
 from app.services import suggestion_chips as sc
-from app.services.suggestion_chip_copy import validate_why
+from app.services.suggestion_chip_copy import validate_copy, validate_why
 from app.services.suggestions.kinds import hook
 from app.services.suggestions.models import RankedPick, SuggestionAgentOutput
 from tests.evals import suggestion_chips_harness as h
@@ -147,6 +152,45 @@ BAIT_EN = [
 @pytest.mark.parametrize("copy", BAIT_EN)
 def test_bait_that_only_differs_by_hyphens_or_spacing_is_refused(copy):
     assert_refused(en(), copy)
+
+
+# ── H8: residual obfuscations ────────────────────────────────────────────────────────
+
+OBFUSCATED_EN = [
+    "Visit evil dot c o m for free",
+    "Visit evil d o t com for free",
+    "Visit evil slash com for free",
+    "Visit evil dot c.o.m for free",
+    "fo llow me for slow mornings",
+    "lin k in bio for slow mornings",
+    "fol low me",
+    "subs cribe for more",
+]
+
+
+@pytest.mark.parametrize("copy", OBFUSCATED_EN)
+def test_a_link_or_bait_split_up_by_spaces_is_refused(copy):
+    assert_refused(en(), copy)
+
+
+@pytest.mark.parametrize("copy", ["evil d0t com", "l1nk in bio", "fo11ow me", "Visit evil.c0m"])
+def test_letters_swapped_for_digits_are_refused_by_the_copy_gate_itself(copy):
+    got, reason = validate_copy(copy, language="en")
+    assert got is None and reason, copy
+
+
+@pytest.mark.parametrize(
+    "copy",
+    [
+        "Following the slow Sunday routine",  # "follow" + "ing", not the phrase "follow me"
+        "Unlimited time at the roastery",  # "limited time" inside a word is not the bait phrase
+        "A slash of lemon in the glass",
+        "Link the pour to the pastry",
+        "Watching the dot on the latte settle",
+    ],
+)
+def test_the_squashed_views_do_not_catch_ordinary_words(copy):
+    assert_served(en(), copy)
 
 
 # ── H4: lookalike letters ────────────────────────────────────────────────────────────

@@ -689,21 +689,66 @@ def shares_run(text: str, sources: Iterable[str], *, n: int = _RUN) -> bool:
 # no space. "http" and "www." alone left every link without a scheme on the screen.
 _BARE_DOMAIN = re.compile(r"(?<![^\W_])[\w-]*[^\W\d_][\w-]*\.[^\W\d_]{2,}(?![^\W_])")
 # A link spelled out so that no dot is typed ("evil dot com", Turkish "evil nokta com").
-_SPELLED_DOT = frozenset({"dot", "nokta"})
+_SPELLED_DOT = frozenset({"dot", "nokta", "slash"})
 _SPELLED_TLDS = frozenset(
     "com net org io co ly me tv app shop xyz info biz gg to cc link store online site "
     "ai dev tr".split()
 )
 
 
+def _join_singles(tokens: Sequence[str]) -> list[str]:
+    """A run of single-letter tokens read as one word: ``d o t`` -> ``dot``."""
+    out: list[str] = []
+    run: list[str] = []
+    for token in tokens:
+        if len(token) == 1:
+            run.append(token)
+            continue
+        if run:
+            out.append("".join(run))
+            run = []
+        out.append(token)
+    if run:
+        out.append("".join(run))
+    return out
+
+
 def looks_like_link(text: str) -> bool:
     """A URL in any of the forms a title must never carry: scheme, ``www.``, a bare domain, or
-    one spelled out with "dot" / "nokta". Display text only; never decides an action."""
+    one spelled out with "dot" / "nokta" / "slash", even with its letters spaced apart. Display
+    text only; never decides an action."""
     low = text.casefold()
     if "http" in low or "www." in low or _BARE_DOMAIN.search(low):
         return True
-    words = _tokens(text)
+    words = _join_singles(_tokens(text))
     return any(word in _SPELLED_DOT and nxt in _SPELLED_TLDS for word, nxt in zip(words, words[1:]))
+
+
+def squashed_phrase_hit(text: str, phrases: Iterable[object]) -> bool:
+    """Does a plain phrase appear in ``text`` once the spaces inside it are ignored?
+
+    "fo llow me" and "lin k in bio" split a word once, which the spaced-letters join does not see.
+    The match must start where a word of ``text`` starts, so "unlimited time" is not "limited
+    time". Phrases that squash to fewer than six letters are skipped ("dm me", "pov" would hit
+    inside ordinary words). Only plain-string phrases take part; an ending-sensitive ``Marker``
+    keeps its own word-boundary matcher.
+    """
+    squashed, starts = "", set()
+    for word in text.split():
+        letters = "".join(ch for ch in _fold(word) if ch.isalpha())
+        if letters:
+            starts.add(len(squashed))
+            squashed += letters
+    for phrase in phrases:
+        if not isinstance(phrase, str):
+            continue
+        needle = "".join(ch for ch in _fold(phrase) if ch.isalpha())
+        at = squashed.find(needle) if len(needle) >= 6 else -1
+        while at != -1:
+            if at in starts:
+                return True
+            at = squashed.find(needle, at + 1)
+    return False
 
 
 _TR_LETTERS = frozenset("çğıöşüÇĞİÖŞÜ")
@@ -782,6 +827,8 @@ def echoes_source(text: str, sources: Iterable[str], *, language: str = "en") ->
     return False
 
 
+# A word that mixes letters and digits ("d0t", "l1nk"): leetspeak that dodges every phrase list.
+_LETTERS_AND_DIGITS = re.compile(r"(?=[^\W_]*\d)(?=[^\W_]*[^\W\d_])[^\W_]+")
 _COPY_CHARS = re.compile(r"^[^\W_]+(?:[ \-',.!?:][^\W_]+)*[.!?]?$", re.UNICODE)
 
 
@@ -810,7 +857,7 @@ def validate_copy(
         return None, "length"
     if any(ch in text for ch in "{}<>$`\\|[]*_#@") or looks_like_link(text):
         return None, "markup"
-    if not _COPY_CHARS.match(text):
+    if not _COPY_CHARS.match(text) or _LETTERS_AND_DIGITS.search(text):
         return None, "chars"
     if _hits_stoplist(text):
         return None, "stoplist"
