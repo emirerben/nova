@@ -537,6 +537,23 @@ _PIN_CHOICE_NEEDED = "choice_needed"
 _PIN_REQUEST_TOO_LONG = "request_too_long"
 
 
+def _refusal_brief_updates(
+    planned: PlannedKriaTurn, updates: tuple[BriefUpdate, ...]
+) -> tuple[BriefUpdate, ...]:
+    """What a reply that ends a turn writes to the brief (KRI-188: it records what the creator
+    stated). A refused tap stated nothing: its typed requirement describes a change that did not
+    happen, and a live one is read as the creator's own ask (KRI-129)."""
+    return () if planned.suggestion_pin is not None else updates
+
+
+def _refusal_receipts(
+    planned: PlannedKriaTurn, receipts: list[dict[str, Any]] | None
+) -> list[dict[str, Any]] | None:
+    """The receipts judged the speculative brief, which a refused tap rolls back, so they name a
+    version that is never written. Dropped for a tap; every other reply keeps them."""
+    return None if planned.suggestion_pin is not None else receipts
+
+
 def _pin_refusal_for(planned: PlannedKriaTurn, reason: str) -> dict[str, Any] | None:
     """The typed refusal for a tap that ends in a reply instead of a draft; None for any turn
     that is not a pinned tap (so every other reply is exactly what it was)."""
@@ -606,6 +623,37 @@ def _pinned_tap_no_longer_fits(
         pinned_refusal=signal,
     )
     return replace(completed, response_only=True)
+
+
+def _restate_video_moved(
+    job: Job | None,
+    variant_key: str,
+    session: CreatorAgentSession,
+    pin: Mapping[str, Any],
+) -> bool:
+    """A native-editor Save (or any other writer) changed the saved video since this restate
+    stood on it. A Save writes no draft, so the head hash cannot tell, and a restated plan holds
+    none of the creator's saved edits: approving it renders from the plan and drops them.
+
+    Two witnesses, both read under the row locks. The generation the tap was planned against
+    (``pin["generation_id"]``) catches a Save that landed after planning. The session's pointer is
+    the generation the agent last saw: when it is set and differs, a Save landed before the tap
+    and the session never read it (an editor-op tap re-syncs it; a restate must not).
+    """
+    variant = next(
+        (
+            row
+            for row in ((job.assembly_plan or {}).get("variants") or [] if job is not None else [])
+            if isinstance(row, dict) and str(row.get("variant_id") or "") == variant_key
+        ),
+        None,
+    )
+    current = variant_render_baseline(variant) if variant is not None else ""
+    planned_against = pin.get("generation_id")
+    if planned_against is not None and current != planned_against:
+        return True
+    seen = str(session.target_generation_id or "")
+    return bool(seen and current and seen != current)
 
 
 def _publish_cleanup_analysis(analysis_id: uuid.UUID | None) -> None:
@@ -1861,7 +1909,21 @@ def _complete_draft_turn(
             from app.kria.brief_binding import media_identity, snapshot_media  # noqa: PLC0415
 
             if media_identity(planned.media_snapshot) != media_identity(snapshot_media(item)):
-                raise RuntimeError("Your clips changed after planning; please plan again")
+                if planned.suggestion_pin is None:
+                    raise RuntimeError("Your clips changed after planning; please plan again")
+                # A tapped restate answers like every other refusal; failing the turn would
+                # leave the card tappable and the phone with no typed reply.
+                from app.services.suggestions import pinned as _pinned  # noqa: PLC0415
+
+                db.rollback()
+                return _pinned_tap_no_longer_fits(
+                    turn_id,
+                    lease_owner=lease_owner,
+                    lease_epoch=lease_epoch,
+                    claimed_thread_revision=claimed_thread_revision,
+                    planned=planned,
+                    reason=_pinned.BASE_MOVED,
+                )
         # KRI-506: consent is checked under the revision fence for BOTH draft kinds.
         # A planner/editor shortcut or an exhausted question budget cannot bypass it.
         from app.kria.brief_binding import snapshot_media as _copy_media  # noqa: PLC0415
@@ -1926,7 +1988,9 @@ def _complete_draft_turn(
         if pin is not None and apply_intent.tool_name == "draft.apply_strategy":
             # A restate (a typed brief update, an item setting): the plan it restates and the
             # head draft it replaces must still be the ones the tap was planned against.
-            if (head.snapshot_hash if head is not None else None) != pin.get("head_hash"):
+            if (head.snapshot_hash if head is not None else None) != pin.get(
+                "head_hash"
+            ) or _restate_video_moved(job, variant_key, session, pin):
                 db.rollback()
                 return _pinned_tap_no_longer_fits(
                     turn_id,
@@ -3069,12 +3133,13 @@ def _complete_draft_turn(
                 lease_epoch=lease_epoch,
                 claimed_thread_revision=claimed_thread_revision,
                 plan=mark_plan,
-                brief_updates=planned.brief_updates
-                if automatic_omission
-                else effective_brief_updates,
+                brief_updates=_refusal_brief_updates(
+                    planned,
+                    planned.brief_updates if automatic_omission else effective_brief_updates,
+                ),
                 brief_delegated=planned.brief_delegated,
                 brief_delegation_read_ids=planned.brief_delegation_read_ids,
-                requirement_receipts=requirement_receipts,
+                requirement_receipts=_refusal_receipts(planned, requirement_receipts),
                 brief_coverage={
                     **(planned.brief_coverage or {}),
                     "stage": "draft",
@@ -3117,8 +3182,12 @@ def _complete_draft_turn(
                 )
             )
             policy_problem = (readiness_report or {}).get("policy_problem")
-            can_offer_simpler = simpler_keeps_an_ask and (
-                not readiness_required or bool(unmet_ids) and not policy_problem
+            can_offer_simpler = (
+                simpler_keeps_an_ask
+                and (not readiness_required or bool(unmet_ids) and not policy_problem)
+                # "Make it without these" would consent to omissions at a brief version this
+                # refusal never writes, and answering it would not apply the tapped card.
+                and planned.suggestion_pin is None
             )
             # KRI-968: name what the simpler version leaves out before the creator picks it,
             # and record those ids on the question so a tap consents to exactly them.
@@ -3158,10 +3227,10 @@ def _complete_draft_turn(
                 lease_epoch=lease_epoch,
                 claimed_thread_revision=claimed_thread_revision,
                 plan=recovery,
-                brief_updates=planned.brief_updates,
+                brief_updates=_refusal_brief_updates(planned, planned.brief_updates),
                 brief_delegated=planned.brief_delegated,
                 brief_delegation_read_ids=planned.brief_delegation_read_ids,
-                requirement_receipts=requirement_receipts,
+                requirement_receipts=_refusal_receipts(planned, requirement_receipts),
                 brief_coverage={
                     **(planned.brief_coverage or {}),
                     "stage": "draft",
@@ -3284,12 +3353,13 @@ def _complete_draft_turn(
                     plan=blocked_plan,
                     # Auto omissions were speculative and rolled back too. Preserve
                     # the original request; recompute omissions after the real choice.
-                    brief_updates=planned.brief_updates
-                    if automatic_omission
-                    else effective_brief_updates,
+                    brief_updates=_refusal_brief_updates(
+                        planned,
+                        planned.brief_updates if automatic_omission else effective_brief_updates,
+                    ),
                     brief_delegated=planned.brief_delegated,
                     brief_delegation_read_ids=planned.brief_delegation_read_ids,
-                    requirement_receipts=requirement_receipts,
+                    requirement_receipts=_refusal_receipts(planned, requirement_receipts),
                     brief_coverage={
                         **(planned.brief_coverage or {}),
                         "stage": "draft",
