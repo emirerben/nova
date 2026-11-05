@@ -13,7 +13,7 @@ the phone. The `Action` stays server-side; a tap pins `{set_id, chip_id}`.
 
 | path | what |
 | --- | --- |
-| `services/suggestions/models.py` | `SuggestionKind` row, `Action` union, `Suggestion`, `SuggestionSet`, `SuggestionDigest`, `SuggestionAgentOutput` + `agent_response_schema` / `parse_agent_output`, wire `SuggestionOut` |
+| `services/suggestions/models.py` | `SuggestionKind` row, `Action` union, `Suggestion`, `SuggestionSet`, `SuggestionDigest`, `SuggestionAgentOutput` + `agent_response_schema` / `parse_agent_output` (strict) / `parse_agent_output_tolerant` (size repairs; what the agent uses), wire `SuggestionOut` |
 | `services/suggestions/context.py` | `SuggestionContext` and the read-only snapshot readers every kind shares; `snapshot_digest` (the `EditorOpsAction.base_digest`) |
 | `services/suggestions/registry.py` | `all_kinds()`, `legacy_gate()` (the engine's `CHIP_KIND_GATE`, original order), `enabled()`, `kinds_for()`, `problems()` |
 | `services/suggestions/kinds/*.py` | ONE module per kind; the explicit list is `kinds/__init__.py` |
@@ -97,6 +97,20 @@ the session's `target_job_id` is the item's current job, and the phone's export 
 variant `render_status = "ready"` (`routes/device_render._complete_device_export`). `build_editor_snapshot`
 is already device-aware (a phone Talking cut is projected from its pinned recipe). Not every ready
 edit has a target: `allowed_op_families` can come back empty (`no_allowed_families`), and a device
+**The creator's request wins (KRI-129).** `captions`, `music_level`, `sfx`, `transition` and
+`title_animation` read the brief in their own `available` through `services/suggestions/brief_asks.py`
+(`spoke(ctx, DIMENSION)`): a live requirement that says anything about the dimension (a typed fact
+such as `captions` / `audio_intent: no_music` / `animation`, or the creator's `description` over the
+Turkish-aware fold, never the on-screen `literal`) withholds the card, whether it contradicts or
+restates the ask. It holds on every path (chip set, deterministic cards, an agent's pick). The brief
+is `ctx.kind_inputs["brief"]` (`suggestion_serve.BRIEF_KEY`): no key = never loaded = unchanged; a
+value that is not a brief offers nothing. The helper is not in `kinds/` because the registry guard
+requires every module there to be a kind.
+
+**`PROMPT_VERSION` and ids.** With every flag off, `set_id` and `input_digest` differ from
+origin/main by design (the digest hashes `PROMPT_VERSION`); the wire is otherwise identical. Noted at
+the constant in `services/suggestion_chips.py`.
+
 Talking / Voiceover variant keeps `sfx` closed until a Save has written `sound_effects`. Those
 threads show no ready cards (the safe failure). Not exercised on a device or against a database.
 

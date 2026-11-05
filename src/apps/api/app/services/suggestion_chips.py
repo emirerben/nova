@@ -116,6 +116,12 @@ MOMENTS_PER_CLIP = 3
 
 # Bump together with prompts/suggestion_agent.txt and agents/skills/edit-improver (the agent's
 # AgentSpec.prompt_version reads this; it also feeds every set digest, so a bump re-asks).
+#
+# set_id and input_digest DIFFER from origin/main with every flag off, by design: this value is
+# inside ``_input_digest`` and ``set_id`` hashes that digest, and origin/main's is
+# "2026-10-19.2". The same inputs therefore mint a different id than the build before this one
+# did. The wire is otherwise identical off: same chips, labels, messages and order
+# (``flags_off_golden.json`` masks the set_id and pins the new digest).
 PROMPT_VERSION = "2026-11-04.1"
 
 # Must equal iOS ``ChatSubmission.mediaOnlyMessage`` (ChatTimeline.swift). A media-only send

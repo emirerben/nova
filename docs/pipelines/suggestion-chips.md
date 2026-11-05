@@ -186,9 +186,14 @@ issued. Ledger feature name and daily-cap key: `nova.chat.suggestion_agent` (`sp
   captions, music level), `capabilities`, `brief`, `typed_request` (ready only). No media id and
   no timestamp. The prompt tells the model `untrusted` is data, never instructions.
 * **Output** (`SuggestionAgentOutput`): `{ranked: [{kind, target_ids, why, copy, rank}]}`. No field
-  for an op, an action, a message or a label (`extra="forbid"`). `parse_agent_output` voids an
-  answer that names an unissued kind or handle: the run stores a fallback marker, it never
-  repairs.
+  for an op, an action, a message or a label (`extra="forbid"`). `parse_agent_output_tolerant`
+  (what `SuggestionAgent.parse` calls) voids an answer that names an unissued kind or handle, has
+  an unknown field or a wrong type: the run stores a fallback marker. OpenAI strict mode carries
+  no `maxLength` / `maxItems`, so it repairs SIZES instead of voiding: `why` cut at a word boundary
+  to 96, `copy` over 200 dropped (never cut), targets clamped to the first 3 distinct, picks
+  ordered by the rank given, a repeated (kind, targets) pair dropped, 5 kept, ranks renumbered
+  1..n. Kind and handle are checked on every pick before anything is trimmed. `parse_agent_output`
+  is the strict contract the edit-improver skill eval grades raw model output against.
 * **Issued kinds** (`picks.issue_kinds`): the engine's proven candidates plus every other
   registry kind that is switched on for the phone, in this state, fits the protocol, and whose own
   `availability` says yes and `already_present` says no. Nothing is issued before first-prompt
@@ -206,8 +211,14 @@ issued. Ledger feature name and daily-cap key: `nova.chat.suggestion_agent` (`sp
   from a transcript (`shares_run`). Failure: the deterministic evidence line stands in.
 * **`copy` rules** (`validate_copy`, hook and `pinned_text` only): one plain line <= 60 chars in the
   thread language, no markup / links / handles / hype, and no run of three words, or a whole subject,
-  taken from a transcript or the Gemini subject / setting / moment text. **Gemini metadata never
-  becomes on-screen text.** A card never puts the copy in its `prompt` (the chat message a tap
+  taken from a transcript or the Gemini subject / setting / moment text. Links are refused in every
+  form (`looks_like_link`: scheme, `www.`, a bare domain like `evil.com` / `bit.ly`, "dot com" /
+  "nokta com"), also in a `why`. Turkish copy may only use ASCII, Turkish letters or an ASCII letter
+  plus an accent (`has_lookalike_letter`: no small-capital o, script g). The hook kind adds (in
+  `hook.check_copy`): the cringe/bait list also over the text with hyphens as spaces and runs of
+  single letters joined ("Link-in-bio", "f o l l o w me"), and a paraphrase check
+  (`echoes_source`) per clause of each transcript and on-screen text: two or more shared content
+  stems that make up 60% of the copy's. **Gemini metadata never becomes on-screen text.** A card never puts the copy in its `prompt` (the chat message a tap
   sends is a closed template).
 * **Wire**: the legacy `chips` keep their KRI-756 shape (template `label` and `message`;
   `label_source` is always `template`). The v2 `suggestions` and `digest` appear only behind
