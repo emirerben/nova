@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.1.0] - 2026-11-05
+
+### Changed
+- fix(ios): preserve valid source windows through saved render preparation (#2122) <!-- release-pr: 2122 -->
+
 ## [0.88.0.0] - 2026-11-05
 
 ### Added
