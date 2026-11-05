@@ -240,3 +240,47 @@ def test_the_switch_waits_for_the_hook_title():
     x, why = _open(words=words, take_s=12.0, heard=2.6, title=3.0)
     assert why is None and x is not None and x >= 3.0 - 1e-6
     assert not _inside_a_word(x, words, None)
+
+
+def test_a_short_take_never_switches_before_the_title_ends():
+    """Review of #2111: a 3.5 s take whose title ends at 3 s switched at 2.5 s, mid-title."""
+    words = [
+        {"text": "hey", "start_s": 0.1, "end_s": 0.5},
+        {"text": "this", "start_s": 0.7, "end_s": 1.0},
+        {"text": "is", "start_s": 1.2, "end_s": 1.4},
+        {"text": "short.", "start_s": 1.6, "end_s": 2.0},
+        {"text": "bye", "start_s": 3.3, "end_s": 3.4},
+    ]
+    # The title cannot finish and still leave a second of corner: no opening, honestly.
+    assert _open(words=words, take_s=3.5, title=3.0) == (None, "take_too_short")
+    assert _open(words=words, take_s=3.5, title=3.0, stated=2.0) == (None, "take_too_short")
+    assert _open(words=words, take_s=3.5, title=3.0, heard=2.2) == (None, "take_too_short")
+    # One second after the title is enough: the switch lands exactly when the title leaves.
+    x, why = _open(words=words, take_s=4.0, title=3.0)
+    assert why is None and x == pytest.approx(3.0)
+    # A title past eight seconds is not honoured, so a short take keeps its opening.
+    x, why = _open(words=words, take_s=3.5, title=9.0)
+    assert why is None and 1.0 - 1e-6 <= x <= 2.5 + 1e-6
+
+
+def test_the_opening_always_outlasts_the_title_and_leaves_a_corner():
+    rng = random.Random(2111)
+    for trial in range(25):
+        t, words = 0.0, []
+        for _ in range(rng.randint(4, 30)):
+            dur = rng.uniform(0.1, 0.8)
+            words.append({"text": "w.", "start_s": round(t, 3), "end_s": round(t + dur, 3)})
+            t += dur + rng.choice([0.0, 0.05, 0.3, 0.8])
+        for take in [x / 4 for x in range(6, 49)]:  # 1.5 s .. 12 s
+            for title in [None, 1.0, 2.0, 2.5, 3.0, 3.5, 5.0, 7.5, 9.0]:
+                for stated in [None, 1.0, 3.0, 6.0]:
+                    x, why = _open(words=words, take_s=take, title=title, stated=stated)
+                    case = (trial, take, title, stated, x)
+                    if x is None:
+                        assert why == "take_too_short", case
+                        continue
+                    assert why is None, case
+                    if title is not None and title <= seq.OPENING_TITLE_MAX_S:
+                        assert x >= title - 1e-6, case  # never before the title ends
+                    assert x >= seq.OPENING_MIN_S - 1e-6, case
+                    assert take - x >= seq.OPENING_MIN_S - 1e-6, case  # a real corner after it
