@@ -693,6 +693,38 @@ def _place(
     original = deepcopy(row)
     obstacles = [as_obstacle(item) for item in obstacles]
     authored = set((row.get("source_params") or {}).get("creator_style_fields") or [])
+    # Item 21: a middle pin keeps the middle column and only slides up or down to a clear spot.
+    middle_pin = (
+        role == "pinned"
+        and (row.get("source_params") or {}).get("pin_zone") == "middle"
+        and (not position_fixed or wanted.get("position") in (None, "middle"))
+    )
+    if middle_pin:
+        if _slide_middle_pin(row, original=original, obstacles=obstacles, canvas=canvas):
+            return row
+        row.update(_placement(original))
+        overlaps = _fit_least_bad(
+            row,
+            original=original,
+            authored=authored,
+            role=role,
+            positions=["authored"],
+            obstacles=obstacles,
+            canvas=canvas,
+            block_rows=block_rows,
+            anchors=LABEL_ANCHORS,
+        )
+        record_text_fit_relaxed(
+            row,
+            role=role,
+            reason="no_clear_placement",
+            rung=_RELAXED_FIT.name,
+            obstacles=obstacles,
+            overlaps=overlaps,
+            wanted_position="middle",
+            requested_position=None,
+        )
+        return row
     # Pins/captions retain their lane's established anchors unless the creator
     # asks otherwise. Reserve their complete measured rectangles for titles.
     lane_fixed = False
@@ -764,6 +796,50 @@ def _place(
         requested_position=asked if fixed else None,
     )
     return row
+
+
+# Item 21: the safe band a middle line's block must stay inside, and how far it may slide.
+_MIDDLE_BAND = (0.10, 0.90)
+_MIDDLE_STEP = 0.01
+_MIDDLE_MAX_SLIDE = 0.40
+
+
+def _slide_middle_pin(row: dict, *, original: dict, obstacles: list[Obstacle], canvas) -> bool:
+    """Centre `row` in the middle column; if something is there, take the nearest clear y.
+
+    Offsets run 0, +0.01, -0.01, +0.02, -0.02 ... +-0.40: the clear spot nearest the centre
+    wins, below before above at the same distance. Never "below first at any distance": past
+    the Kria wordmark a line lands at y ~0.85, under the platform's own caption and buttons.
+    The measured block (not its animation sweep) must sit inside the safe band, the sweep must
+    be clear. Size and width are the authored ones, so the line is never shrunk. Returns False
+    when no spot is clear (the caller falls back to the relaxed path)."""
+    centred_hit: list[str] = []
+    steps = int(round(_MIDDLE_MAX_SLIDE / _MIDDLE_STEP))
+    offsets = [0.0]
+    for step in range(1, steps + 1):
+        offsets += [round(step * _MIDDLE_STEP, 4), round(-step * _MIDDLE_STEP, 4)]
+    row.update(position="custom", x_frac=0.5, alignment="center")
+    for offset in offsets:
+        row["y_frac"] = round(0.5 + offset, 4)
+        try:
+            block = measure_box(row, canvas)
+            swept = animation_box(row, block, canvas)
+        except _fit_errors():
+            return False
+        hits = [o for o in obstacles if _overlap(swept, o.box)]
+        if offset == 0.0:
+            centred_hit = sorted({o.kind for o in hits})
+        if hits or block[1] < _MIDDLE_BAND[0] or block[3] > _MIDDLE_BAND[1]:
+            continue
+        source = dict(row.get("source_params") or {})
+        if offset != 0.0:
+            source["moved_off"] = centred_hit
+        else:
+            source.pop("moved_off", None)
+        row["source_params"] = source
+        return True
+    row.update(_placement(original))
+    return False
 
 
 def _candidates(

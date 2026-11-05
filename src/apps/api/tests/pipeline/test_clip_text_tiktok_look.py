@@ -181,9 +181,10 @@ def test_middle_tiktok_pin_is_centred_white_tiktok_sans_for_the_whole_video(monk
 # 2 / 3 -----------------------------------------------------------------------------------
 
 
-def test_middle_pin_moves_below_her_face_and_says_so(monkeypatch) -> None:
+def test_middle_pin_moves_off_her_face_and_says_so(monkeypatch) -> None:
     """Failure mode 4: V2's face spans y 0.29-0.67; the line moves to the nearest clear spot
-    below it, keeps the look, and leaves the receipt fact ``moved_off == ["face"]``."""
+    (here above it: below, the Kria wordmark keep-out pushes it to y ~0.85, under TikTok's own
+    caption), keeps the look, and leaves the receipt fact ``moved_off == ["face"]``."""
     _flag(monkeypatch, True)
     strategy = _strategy([_middle_pin()])
     face = {"start_s": 0.0, "end_s": 11.0, "box": FACE_V2, "kind": "face"}
@@ -194,10 +195,37 @@ def test_middle_pin_moves_below_her_face_and_says_so(monkeypatch) -> None:
 
     swept = _block(pin)
     assert not _overlap(swept, FACE_V2)
-    assert swept[1] > FACE_V2[3]
+    assert swept[3] < FACE_V2[1] and swept[1] >= 0.08, f"not just above her face: {swept}"
     assert pin["source_params"]["moved_off"] == ["face"]
     assert pin["x_frac"] == pytest.approx(0.5, abs=0.01)
     assert pin["color"].upper() == "#FFFFFF" and pin["font_family"] == "TikTok Sans Bold"
+
+
+def test_her_look_survives_the_workers_provisional_font(monkeypatch) -> None:
+    """Failure mode 7/8 as the worker runs it: the phone job plans under the text policy with
+    real glyph coverage, so the planner fills the snapshot's ``font_family`` with a provisional
+    curated face (KRI-1024) although she named no font. Her look's font must still win."""
+    from app.pipeline.unified_montage import skia_font_covers
+    from app.services.phone_text_styling import phone_text_policy_scope
+
+    _flag(monkeypatch, True)
+    strategy = _strategy([_middle_pin()])
+    policy = {
+        "version": 1,
+        "preferences": {"all_text": {}},
+        "requested": requested_style(strategy, PROMPT),
+    }
+    with phone_text_policy_scope(policy):
+        plan = plan_unified_montage(
+            [_clip()], brief_view(None), strategy=strategy, font_covers=skia_font_covers
+        )
+        rows = compile_execution_plan(plan.guided_edit(), track=None)["text_elements"]
+        styled = resolve_phone_text_style(
+            rows, preferences={"all_text": {}}, requested=policy["requested"], selected_fonts={}
+        )
+    pin = _pin(styled)
+    assert pin["font_family"] == "TikTok Sans Bold", pin["font_family"]
+    assert pin["color"].upper() == "#FFFFFF"
 
 
 def test_middle_pin_stays_centred_when_the_face_is_elsewhere(monkeypatch) -> None:

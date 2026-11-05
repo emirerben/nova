@@ -2589,6 +2589,9 @@ class Settings(BaseSettings):
     creator_memory_enabled: bool = False
     # KRI-648: stamped only at dispatch; legacy generations are never restyled.
     phone_text_styling_enabled: bool = False
+    # Qendresa item 21: a pin may sit in the middle and carry TikTok's native text look.
+    # Default off; with it off a stray middle_center pin is drawn as top_center, no look.
+    clip_text_tiktok_look_enabled: bool = False
     # KRI-336: all three rollout conditions precede owner opt-in. No public cohort.
     creator_edit_learning_enabled: bool = False
     creator_edit_learning_privacy_approved: bool = False
