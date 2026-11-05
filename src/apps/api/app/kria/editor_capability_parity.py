@@ -222,6 +222,16 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
             "clear_speaker_frame",
         ),
     ),
+    # Moving / resizing the framed speaker by hand on the preview writes free geometry. The
+    # agent picks only the named corners (set_speaker_frame / clear_speaker_frame above):
+    # presets, never raw numbers from the model (KRI-1162 S37). Rows:
+    # docs/reviews/speaker-frame-direct-manipulation-failure-modes.md (SF12).
+    "speaker_frame_by_hand": _g(
+        "agent_unsupported",
+        "setSpeakerFrameCenter setSpeakerFrameWidth",
+        reason="Free speaker position and size come from a finger on the preview; the agent "
+        "places the speaker only in a named corner (set_speaker_frame), by design.",
+    ),
     "video_shape": _g(
         "agent_unsupported",
         "setVideoShape",

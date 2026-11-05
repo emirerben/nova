@@ -1269,6 +1269,12 @@ class Settings(BaseSettings):
     # ask), and the "<pace> pacing" chip is left off a card whose route ignores pacing. Default
     # TRUE; false + restart (api + worker) = byte-identical to before.
     kria_headsup_asked_only_enabled: bool = True
+
+    # Green 5 (2026-11-04): a chat nothing has told its language yet (a "Suggest an edit." tap,
+    # media only, "ok") takes the language of the creator's latest message typed in another of
+    # their chats before the device language (`reply_language.creator_typed_language`). Default
+    # TRUE; false + restart (api) = byte-identical (device language, KRI-784).
+    kria_reply_language_history_enabled: bool = True
     # KRI-1097 wave 2 (prompt fidelity on every route). ROUTE_REGISTRY_ENABLED: each render
     # route reads its own capability table (`app.kria.route_capabilities`), so voiceover,
     # Talking, Narrated, creator-song, spoken-excerpt and slide drafts get their own honest
@@ -1776,6 +1782,18 @@ class Settings(BaseSettings):
         "the next FULL re-render only). "
         "Kill switch: `fly secrets set SILENCE_CUT_ENABLED=false --app nova-video` "
         "+ worker restart — byte-identical to pre-feature behavior.",
+    )
+
+    tight_pause_cut_enabled: bool = Field(
+        default=False,
+        description="Tight pauses on the phone Talking render (Qendresa 13). When the approved "
+        'brief asks for every pause to go ("cut out all my pauses so it\'s tight"), the '
+        "creator consented to Speech cleanup and the take is a single iPhone-rendered clip, "
+        "the render adds extra pause cuts so no kept pause is over about 0.3 s, writes a "
+        "`tight_pauses` report on the variant, and the receipt states what was measured. "
+        "Default off: no extra cuts and every receipt is byte-identical to before. "
+        "Kill switch: `fly secrets set TIGHT_PAUSE_CUT_ENABLED=false --app nova-video` + api "
+        "and worker restart.",
     )
 
     speech_cleanup_budget_clamp_enabled: bool = Field(
