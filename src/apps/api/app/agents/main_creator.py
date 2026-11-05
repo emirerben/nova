@@ -234,11 +234,11 @@ log = structlog.get_logger()
 # v120 (Qendresa item 12): the shared brief section records the caption shape as typed facts,
 # `caption_words` (1-3 words at a time) and `caption_box` (a #RRGGBB box behind the captions).
 # On top of v119; brief_extractor v55 shares it.
-# v123 (Qendresa item 17, follow-up of KRI-1175; v120-v122 reserved by items 12-14): one
-# paragraph after the windows section and the `background_media.keep_changing` field it teaches
-# (an on-the-word sequence keeps rotating after the last mention only when the creator names a
-# rhythm). Shown only with BACKGROUND_FOLLOWS_TALK_ENABLED and the windows capability; every
-# other prompt keeps its bytes.
+# v123 (Qendresa item 17, follow-up of KRI-1175; v121-v122 reserved by items 13-14): one
+# paragraph after the windows section teaching how to write a sequence entry's `spoken_phrase`
+# (as said in the take, with the words only said where that visual is introduced). Shown only
+# with BACKGROUND_FOLLOWS_TALK_ENABLED and the windows capability; every other prompt keeps its
+# bytes.
 MAIN_CREATOR_PROMPT_VERSION = "2026-11-04-v123"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
@@ -741,14 +741,10 @@ the backgrounds change and where the speaker sits.
 
 # Qendresa item 17: appended after the windows section ONLY with BACKGROUND_FOLLOWS_TALK_ENABLED.
 _BACKGROUND_FOLLOWS_TALK_PROMPT_SECTION = """
-Each photo or video in an on-the-word `sequence` stays on screen while they talk about it, and the
-last one talked about stays to the end of the video. Set `background_media.keep_changing` true only
-when the creator also names a rhythm for the backgrounds ("changing every 3-5 seconds", "keep
-switching", "3 saniyede bir değişsin"): then, once every one has been talked about, they keep taking
-turns at that rhythm until the end. When a name is also said elsewhere in the take (a common word
-such as "agents"), copy the words said only where that one is introduced ("number four agents").
-How long each one stays once it is talked about ("show each for 5 seconds") is that entry's
-`hold_s`, never `cadence_s`.
+Write each `spoken_phrase` in a `sequence` the way the creator says the name in the take's
+transcript, not the way it is spelled on screen ("trading agents", not "TradingAgents"). When a
+name is also said elsewhere in the take (a common word such as "agents"), copy the words said only
+where that one is introduced ("number four agents").
 """.strip("\n")
 
 # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED) on a phone Montage / Voiceover

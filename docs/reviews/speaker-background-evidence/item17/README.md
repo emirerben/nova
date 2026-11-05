@@ -1,4 +1,4 @@
-# Qendresa item 17: simulator export (2026-11-05)
+# Qendresa item 17: simulator export (2026-11-05, before #2118 was merged in)
 
 The real phone Talking recipe (compiled by `scripts/ios/phone-background-windows-e2e.py` through
 `_strategy_background_request` → `_resolve_strategy_background` → `compile_phone_subtitled_plan`)
@@ -29,3 +29,19 @@ What is on screen (OCR of the exported MP4, 2 frames/s), seconds:
   60–135 s), caption words (item 12), ending (item 14), and `rhythm` (her recordings scroll
   constantly, 0.55 s median; the drawn stand-ins scroll slowly; a held last recording lengthens the
   gap by design).
+
+## After merging main with #2118 (2026-11-06)
+
+#2118 ("the same photo never comes up twice") makes the last window hold to the take end for
+everyone, so item 17 no longer changes the hold; it keeps only the name hearing behind the flag.
+The recipe was recompiled at the merged code (same words and take length, placeholder media; no
+new render), `after_main_2118` in the JSON:
+
+| Case | Recording windows (s) |
+|---|---|
+| Flag off, names as spoken | 1: 0–12.1 · 2: 12.1–17.4 · 3: 17.4–23.6 · 4: 23.6–30.4 · 5: 30.4–43.1 (no cycling) |
+| Flag on, names as spoken | identical to flag off, and to the exported "flag on, names as spoken" recipe |
+| Flag off, her typed labels | 1 · 2: 12.1–23.6 · 4: 23.6–43.1; "TradingAgents" and "Claude code game studio" never heard (3 and 5 never show) |
+| Flag on, her typed labels | 1 · 2 · 3: 17.4–23.6 · 4: 23.6–43.1 (identical to the exported recipe); only "Clawed" stays unheard |
+
+The two flag-on exports above therefore show what the merged code sends to the phone.
