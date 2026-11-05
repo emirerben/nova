@@ -630,9 +630,10 @@ async def _withdraw_pinned_tap(
     rewrote has a different ``source_turn_id``, and a setting they flipped themselves is theirs.
     The caller holds the item and the thread row locked, which orders the brief version.
     """
-    if undone.source_execution_id is None:
+    source_id = getattr(undone, "source_execution_id", None)
+    if source_id is None:
         return
-    execution = await db.get(CreatorAgentExecution, undone.source_execution_id)
+    execution = await db.get(CreatorAgentExecution, source_id)
     record = (execution.result or {}).get("pinned_undo") if execution is not None else None
     if not isinstance(record, dict):
         return
