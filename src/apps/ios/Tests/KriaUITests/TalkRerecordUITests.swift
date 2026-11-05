@@ -24,7 +24,7 @@ import XCTest
         XCTAssertFalse(app.buttons["rerecord-make-again"].exists, "the plan turn was sent once, not left owed")
         capture(app, "Fresh video after re-record")
 
-        app.buttons["Attach footage"].tap()
+        openAddMedia(app)
         XCTAssertTrue(app.buttons["Remove Recorded take.mov"].waitForExistence(timeout: 10), "the new take is attached")
         XCTAssertFalse(app.buttons["Remove \(Self.oldTake)"].exists, "the old take is gone")
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Remove '")).count, 1, "one speaker, not two")
@@ -40,10 +40,11 @@ import XCTest
         let app = launch(mode: "no-audio")
         openRerecordCamera(app)
         app.buttons["teleprompter-use-take"].tap()
-        let error = app.staticTexts["teleprompter-review-error"]
+        // The error is a notice card: the identifier is on the card, the words on its text.
+        let error = app.otherElements["teleprompter-review-error"]
         XCTAssertTrue(error.waitForExistence(timeout: 60))
-        XCTAssertTrue(error.label.contains("no sound"))
-        XCTAssertTrue(error.label.contains("Your current take is unchanged."))
+        XCTAssertTrue(error.staticTexts.matching(NSPredicate(format: "label CONTAINS 'no sound'")).firstMatch.exists)
+        XCTAssertTrue(error.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Your current take is unchanged.'")).firstMatch.exists)
         capture(app, "Swap refused, take kept")
         app.buttons["teleprompter-close"].tap()
 
@@ -52,7 +53,7 @@ import XCTest
         XCTAssertFalse(app.staticTexts["Made it again from your new take."].exists)
         XCTAssertFalse(app.buttons["rerecord-make-again"].exists)
 
-        app.buttons["Attach footage"].tap()
+        openAddMedia(app)
         XCTAssertTrue(app.buttons["Remove \(Self.oldTake)"].waitForExistence(timeout: 10), "the old take is still attached")
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Remove '")).count, 1)
         capture(app, "Old take intact after a refused swap")
@@ -62,9 +63,10 @@ import XCTest
         let app = launch(mode: "busy-twice")
         openRerecordCamera(app)
         app.buttons["teleprompter-use-take"].tap()
-        let error = app.staticTexts["teleprompter-review-error"]
+        // The error is a notice card: the identifier is on the card, the words on its text.
+        let error = app.otherElements["teleprompter-review-error"]
         XCTAssertTrue(error.waitForExistence(timeout: 60))
-        XCTAssertTrue(error.label.contains("still being made"))
+        XCTAssertTrue(error.staticTexts.matching(NSPredicate(format: "label CONTAINS 'still being made'")).firstMatch.exists)
         let use = app.buttons["teleprompter-use-take"]
         XCTAssertTrue(use.isEnabled, "the take is kept and can be sent again")
         use.tap()
@@ -75,10 +77,10 @@ import XCTest
 
     func testFullSlotOffersReplaceInsteadOfRefusing() {
         let app = launch(mode: "slot-full", maxClips: "1")
-        let attach = app.buttons["Attach footage"]
+        let attach = app.buttons["chat-attach"]
         XCTAssertTrue(attach.waitForExistence(timeout: 20))
         attach.tap()
-        app.buttons["teleprompter-open"].tap()
+        app.buttons["attach-record"].tap()
         let use = app.buttons["teleprompter-use-take"]
         XCTAssertTrue(use.waitForExistence(timeout: 20))
         XCTAssertTrue(use.isEnabled, "a full slot is not a refusal when replace is offered")
@@ -95,7 +97,18 @@ import XCTest
         let app = launch(mode: "no-replace")
         XCTAssertTrue(app.staticTexts["Your first cut is ready"].waitForExistence(timeout: 20))
         XCTAssertFalse(app.buttons["ready-rerecord"].exists, "a server that does not offer replace shows no action")
-        XCTAssertTrue(app.buttons["Attach footage"].isEnabled, "reopening Add media on a ready video still works")
+        XCTAssertTrue(app.buttons["chat-attach"].isEnabled, "reopening Add media on a ready video still works")
+    }
+
+    /// Add media on a ready video: the composer plus, Record, then closing the camera lands on the clip list.
+    private func openAddMedia(_ app: XCUIApplication) {
+        let attach = app.buttons["chat-attach"]
+        XCTAssertTrue(attach.waitForExistence(timeout: 20))
+        attach.tap()
+        app.buttons["attach-record"].tap()
+        let close = app.buttons["teleprompter-close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 20))
+        close.tap()
     }
 
     private func openRerecordCamera(_ app: XCUIApplication) {
