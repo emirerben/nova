@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "evidence": "Numeric excerpt of two simulator exports of the same real talking take (iPhone engine, DeviceMontageRenderE2ETests on an iOS 26.5 iPhone Air simulator, 2026-11-04). No media, transcripts or signed URLs are included.",
+  "take": {
+    "kind": "real human talking take, Turkish, quiet room (stand-in; not the creator's footage)",
+    "duration_s": 82.68,
+    "word_stamps": "local faster-whisper small (stand-in for production whisper-1)",
+    "room_floor_dbfs": -58.1
+  },
+  "measure": "ffmpeg highpass=f=90,silencedetect=n=-38dB:d=0.12 between first+0.2 s and last-0.2 s whisper.cpp word; pass when longest <= 0.35 s",
+  "before_consented_cleanup_today": {
+    "export_s": 72.31,
+    "removals": 10,
+    "longest_pause_s": 1.593,
+    "pauses_over_0_35_s": 14,
+    "pauses_rule": "FAIL",
+    "whisper_cpp_words": 135
+  },
+  "after_tight_pauses": {
+    "export_s": 64.95,
+    "removals": 30,
+    "keep_segments": 22,
+    "longest_pause_s": 0.33,
+    "pauses_over_0_35_s": 0,
+    "pauses_rule": "PASS",
+    "whisper_cpp_words": 135,
+    "render_report": {"status": "applied", "added_cuts": 20, "added_removed_ms": 7360, "longest_pause_s": 0.33, "longest_pause_before_s": 1.59, "pauses_over_limit": 0, "guard_dropped": 0, "capped": false}
+  },
+  "word_check": {
+    "aligned_differences": 3,
+    "differences": "two spellings of the same word and one word the kit's own script notes whisper hears either way; no cut lies on any of them",
+    "whole_word_removal_control_caught": true,
+    "partial_clip_controls_caught": {"mid_word_0_4_s": false, "tail_0_15_s": false},
+    "partial_clip_limit": "whisper.cpp fills in a partly clipped word from context; partial clipping is covered by the quiet-floor rule and a listening check, not by this check"
+  },
+  "kit_score_rules_q1": {
+    "before": {"length": "PASS", "vertical": "PASS", "audio": "PASS", "pauses": "FAIL 1.59", "captions_on": "PASS", "hook": "PASS", "voice_only": "PASS"},
+    "after": {"length": "PASS", "vertical": "PASS", "audio": "PASS", "pauses": "PASS 0.33", "captions_on": "PASS", "hook": "PASS", "voice_only": "PASS"},
+    "unchanged_failures": "speech_en (Turkish stand-in), captions_short, captions_height, screen, full_speaker, rhythm (other build-list items)"
+  },
+  "second_take_audio_only": {
+    "kind": "real two-voice Turkish take (off-camera speaker)",
+    "longest_pause_before_s": 0.8,
+    "longest_pause_after_s": 0.8,
+    "pauses_over_limit_after": 9,
+    "voice_guard_dropped": 8,
+    "receipt": "partial: names the pauses still over 0.35 s"
+  },
+  "scope_limit": "Does not establish the creator's own footage, production whisper-1 stamps, a physical iPhone, or the listening check."
+}

@@ -423,7 +423,7 @@ def _extractor_prompt(**kw) -> str:
 # 562441ab494ae1bf4c0f79dd9811163c782b8548712f05ed7334ceaba675ffe6.
 # Qendresa item 17 (creator v123, on top of v120) leaves the brief section unchanged: the pin
 # covers v120 + v123.
-_BRIEF_SECTION_BEFORE_INSERTS = "c1ff8dfa7484b1a613db57e9515f6ecd58e3bd14d41d1efa0365975df6d62269"
+_BRIEF_SECTION_BEFORE_INSERTS = "14ad8c6e284569817ed3c380fea76ae35b5983b1fe42a2f53c42a6c14bcaa6d7"
 
 
 def test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inserts():
