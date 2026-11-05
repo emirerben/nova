@@ -14,8 +14,10 @@ byte-identically, and nothing is transcribed or stored. Apply:
 1. **Timed transcript.** `ClipSpeech.segments` (`schemas/clip_understanding.py`) holds timed
    sentence segments. `analyze_kria_clips` adds them after vision analysis for a clip with speech
    (`_with_speech_segments`, cached whisper via `services/speech_segments.transcribe_stored_clip`).
-   `prompt_view(include_segments=True)` shows a compact list to the chat agent. Best effort: a
-   failure never fails the analysis.
+   `prompt_view(include_segments=True)` shows a compact list to the chat agent (whole sentences:
+   the creator's own clips share `CHAT_EVIDENCE_SPEECH_BUDGET_CHARS` = 6000 characters, at least
+   480 each; Visuals keep 480 — `services/creator_sessions.py`). Best effort: a failure never fails
+   the analysis.
 2. **Entry.** `_run_generative_job_impl` calls `services/phone_speech_montage_job.run_phone_speech_montage_job`
    before `_run_phone_unified_montage_job`. It returns `False` (fall through) unless some clip has
    speech, or the creator's words mention speech and no clip has any.
