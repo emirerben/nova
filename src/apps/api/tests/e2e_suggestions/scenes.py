@@ -48,10 +48,13 @@ class Scene:
         return build(self.world, self.key, self.profile)
 
 
-def build(world, key: str, profile: str, *, brief: tuple = ()) -> Scene:  # noqa: ANN001
+def build(  # noqa: ANN001
+    world, key: str, profile: str, *, brief: tuple = (), scn: Scenario | None = None
+) -> Scene:
     """Seed a thread (the footage, the render, the plan, the signals) and give it a phone. A
-    Talking take also gets the speech-cleanup analysis its filler card is built from."""
-    scn = threads.SCENARIOS[key]
+    Talking take also gets the speech-cleanup analysis its filler card is built from. ``scn``
+    replaces the scenario ``key`` names (the cassette is still ``key``'s)."""
+    scn = scn or threads.SCENARIOS[key]
     seeded = threads.seed_thread(scn, profile)
     if profile == TALKING:
         threads.seed_cleanup_analysis(seeded, language=scn.language)
