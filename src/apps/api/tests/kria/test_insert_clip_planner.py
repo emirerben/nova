@@ -249,7 +249,7 @@ def test_the_planner_is_taught_the_field_only_while_the_rollout_is_open(monkeypa
     from app.agents.main_creator import MAIN_CREATOR_PROMPT_VERSION, _insert_clip_section
 
     section = _insert_clip_section(cutaways_open=False)
-    assert MAIN_CREATOR_PROMPT_VERSION.endswith("-v120")
+    assert MAIN_CREATOR_PROMPT_VERSION.endswith("-v121")
     _open(monkeypatch, insert=True)
     manifest = _julio_manifest()
     open_prompt = _render_prompt(manifest)
@@ -419,9 +419,10 @@ def _extractor_prompt(**kw) -> str:
 # 90ef88660728fd8938da0de42c9874b73d52e25664c5633a6c8b2fd63066a718.
 # KRI-1189 (creator v119) teaches `cut_restarts` in the cleanup sentence; with v118's sentence the
 # digest is c3c94cd31f4cdd6dcea91de409be84016351caaa111403fb43258c7c24c0114c.
-# Qendresa item 12 (creator v120) adds `caption_words` / `caption_box`; without them it is
-# 562441ab494ae1bf4c0f79dd9811163c782b8548712f05ed7334ceaba675ffe6.
-_BRIEF_SECTION_BEFORE_INSERTS = "c1ff8dfa7484b1a613db57e9515f6ecd58e3bd14d41d1efa0365975df6d62269"
+# Qendresa 13 (creator v121, on top of Qendresa 12's v120 caption facts) adds the `pauses: "tight"`
+# clause to the cleanup sentence; without both
+# it the digest is 562441ab494ae1bf4c0f79dd9811163c782b8548712f05ed7334ceaba675ffe6.
+_BRIEF_SECTION_BEFORE_INSERTS = "14ad8c6e284569817ed3c380fea76ae35b5983b1fe42a2f53c42a6c14bcaa6d7"
 
 
 def test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inserts():

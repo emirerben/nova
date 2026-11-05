@@ -238,7 +238,19 @@
       "KriaUITests/FootageSourcesUITests/testScriptRowOpensTheCameraWithTheScriptSheetFirst",
       "KriaUITests/GeneratedMediaUITests/testRejectedImageEditRequiresEditAndExplicitNewSubmission",
       "KriaUITests/GeneratedMediaUITests/testRejectedOverlayKeepsItsPromptAndTryAgainRunsAtOnce",
-      "KriaUITests/GeneratedMediaUITests/testTwoOverlaysEachWithTheirOwnPromptAreUsedTogether"
+      "KriaUITests/GeneratedMediaUITests/testTwoOverlaysEachWithTheirOwnPromptAreUsedTogether",
+      "KriaUITests/SteerNowUITests/testWaitingBarAndSteerWhileKriaPlans",
+      "KriaUITests/SteerNowUITests/testSteerClosesTheCardAndSaysWhy",
+      "KriaUITests/SteerNowUITests/testNoSteerWhileTheVideoIsBeingMade",
+      "KriaUITests/SteerNowUITests/testTrashRemovesTheWaitingMessage",
+      "KriaUITests/SteerNowUITests/testEditFromTheMenuPutsTheTextBackInTheBox",
+      "KriaUITests/SteerNowUITests/testHoldingTheBarOpensTheSameMenu",
+      "KriaUITests/SteerNowUITests/testThirdMessageStaysInComposerWithANote",
+      "KriaUITests/SteerNowUITests/testSteerRetriesOnceAfterAStaleRevision",
+      "KriaUITests/SteerNowUITests/testEditAfterKriaPickedTheMessageUpNeverStopsIt",
+      "KriaUITests/SteerNowUITests/testSteerAfterTheVideoStartedHidesTheButton",
+      "KriaUITests/SteerNowUITests/testTurkishChatGetsTurkishSteerWords",
+      "KriaUITests/SteerNowUITests/testSwitchOffLooksLikeToday"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -383,7 +395,11 @@
       "KriaUITests/OverlayGenerationUITests/testAvailabilityCheckFailureCanBeRetriedWithoutLeavingThePanel",
       "KriaUITests/BackgroundLaneUITests/testDraggingAWindowMovesTheInspectorAndTheSave",
       "KriaUITests/BackgroundLaneUITests/testTheSequenceTilesAddAndRemoveWindowsAndTheSpeakerControlSetsThePreset",
-      "KriaUITests/BackgroundLaneUITests/testAProjectWithoutWindowsKeepsItsLanesAndHidesTheWindowControls"
+      "KriaUITests/BackgroundLaneUITests/testAProjectWithoutWindowsKeepsItsLanesAndHidesTheWindowControls",
+      "KriaUITests/SpeakerFrameDirectManipulationUITests/testTapDragAndPinchMoveAndResizeTheSpeaker",
+      "KriaUITests/SpeakerFrameDirectManipulationUITests/testOneDragIsOneUndoStep",
+      "KriaUITests/SpeakerFrameDirectManipulationUITests/testDragAndPinchPastTheLimitsSaveAFrameInRange",
+      "KriaUITests/SpeakerFrameDirectManipulationUITests/testFullFrameSpeakerIsNotSelectable"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -551,6 +567,8 @@
     "src/apps/ios/Kria/Features/NativeBackgroundPanel.swift": "editor",
     "src/apps/ios/Tests/KriaUITests/SpeakerBackgroundUITests.swift": "editor",
     "src/apps/ios/Tests/KriaUITests/BackgroundLaneUITests.swift": "editor",
+    "src/apps/ios/Tests/KriaUITests/SpeakerFrameDirectManipulationUITests.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeSpeakerPanel.swift": "editor",
     "src/apps/ios/Kria/Core/WhatsNew.swift": "projects",
     "src/apps/ios/Kria/Core/WhatsNewReleases.swift": "projects",
     "src/apps/ios/Kria/Features/WhatsNewView.swift": "projects",
@@ -562,6 +580,9 @@
     "src/apps/ios/Kria/Features/GeneratedMediaProblems.swift": "creation",
     "src/apps/ios/Kria/Features/GeneratedOverlaySet.swift": "creation",
     "src/apps/ios/Kria/Features/GeneratedOverlaysSheet.swift": "creation",
-    "src/apps/ios/Kria/Features/KriaCameraChrome.swift": "creation"
+    "src/apps/ios/Kria/Features/KriaCameraChrome.swift": "creation",
+    "src/apps/ios/Kria/Core/SteerNow.swift": "creation",
+    "src/apps/ios/Kria/Features/WaitingMessageBar.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/SteerNowUITests.swift": "creation"
   }
 }

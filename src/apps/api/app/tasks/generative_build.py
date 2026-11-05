@@ -8345,13 +8345,17 @@ def _resolve_strategy_background(
                     index=index,
                     spoken_phrase=entry.get("spoken_phrase"),
                     hold_s=entry.get("hold_s"),
+                    # S57/S59: the pool row is the photo; two entries naming it are one photo.
+                    media_key=str(row["id"]),
                 )
-                for index, entry, _row in entry_rows
+                for index, entry, row in entry_rows
             ],
             cadence_s=float(request.get("cadence_s") or 4.0),
             take_s=float(take_s) if take_s is not None else 0.0,
             words=words,
             keep_segments=keep_segments,
+            # A colour fill is a base outside the sequence; a pool fill may be one of its photos.
+            fill_key=str(fill_row["id"]) if fill_row is not None else None,
         )
         lane_drops.extend(layout.notes)
         for placed in layout.windows:
@@ -9016,7 +9020,23 @@ def _run_phone_subtitled_job(
             if isinstance(_raw_closing_title, str) and _raw_closing_title.strip()
             else None
         )
+    # Item 14: "comment <keyword>" drawn as her ending (two text rows and an optional arrow).
+    # Computed only for a confirmed closing text, and False while the switch is off.
+    cta_planned = False
+    cta_arrow = False
+    if talking_closing_text:
+        from app.pipeline.phone_cta_text import closing_arrow_asked  # noqa: PLC0415
+        from app.services.phone_rollout import (  # noqa: PLC0415
+            cta_ending_planned_for,
+            stamped_client_protocol,
+        )
+
+        cta_planned = cta_ending_planned_for(
+            stamped_client_protocol(all_candidates.get("creator_client_protocol"))
+        )
+        cta_arrow = cta_planned and closing_arrow_asked(talking_requirements, talking_closing_text)
     closing_text_rows: list[dict] = []
+    closing_drawings: list[dict] = []
     closing_text_receipt: dict[str, Any] | None = None
     # KRI-707: the creator's text on a word they say ("big 'ATAKAN' when I say 'Atakan'"),
     # read off the pinned brief. Read only while its rollout is on, so the flag-off recipe
@@ -9465,6 +9485,7 @@ def _run_phone_subtitled_job(
             speech_cleanup_snapshot: HydratedSpeechCleanupSnapshot | None = None
             cut_plan: CutPlan | None = None
             speech_cleanup_outcome_context: dict[str, Any] | None = None
+            tight_pauses_report: dict[str, Any] | None = None
             if cleanup_required:
                 try:
                     speech_cleanup_snapshot = hydrate_job_speech_cleanup_snapshot(
@@ -9487,6 +9508,26 @@ def _run_phone_subtitled_job(
                 speech_cleanup_outcome_context = speech_cleanup_snapshot.outcome_context(
                     analysis_view="full_clip"
                 )
+                if not multi_clip:
+                    # Qendresa 13: "cut all my pauses so it's tight" -- extra pause cuts on top
+                    # of the consented plan, before the opening cut and before the outcome
+                    # bookkeeping below, so they count as cleanup.
+                    consented_plan = cut_plan
+                    cut_plan, tight_pauses_report = _phone_tight_pause_cut(
+                        snapshot,
+                        cut_plan,
+                        speech_cleanup_snapshot.source_words(),
+                        clip_path=clip_path,
+                        duration_s=float(probe.duration_s),
+                    )
+                    if cut_plan is not consented_plan:
+                        # The public receipt reads only these two counts: report what was cut.
+                        speech_cleanup_outcome_context["output_removal_count"] = (
+                            _merged_removal_count(cut_plan.removed)
+                        )
+                        speech_cleanup_outcome_context["output_removed_ms"] = max(
+                            0, int(round(cut_plan.time_saved_s * 1000))
+                        )
             # KRI-628: "start the video at '...'" cuts the speech before that line out of
             # the cleanup plan (the plan's keep segments are the only trim this render has).
             # KRI-790: "...and end right after '...'" cuts everything after that line too.
@@ -10162,6 +10203,7 @@ def _run_phone_subtitled_job(
                 )
 
             def _closing_rows_for(photo_card: Any) -> tuple[list[dict], dict[str, Any] | None]:
+                closing_drawings[:] = []
                 if not talking_closing_text:
                     return [], None
                 if extra_speaker_bindings:
@@ -10169,7 +10211,7 @@ def _run_phone_subtitled_job(
                     # face on its own clock, then move it to where it plays.
                     last = extra_speaker_bindings[-1]
                     last_duration_s = float(last.original.duration_s)
-                    rows, receipt = _phone_talking_closing_rows(
+                    rows, receipt, drawings = _phone_talking_closing_rows(
                         talking_closing_text,
                         photo_card=None,
                         photo_aspect=None,
@@ -10177,9 +10219,25 @@ def _run_phone_subtitled_job(
                         clip_path=clip_id_to_local.get(extra_speaker_ids[-1]),
                         keep_segments=[(0.0, last_duration_s)],
                         landscape_fit=landscape_fit,
+                        cta=cta_planned,
+                        arrow=cta_arrow,
+                        cues=cues,
+                        caption_style=caption_style,
+                        # The captions run on the whole timeline; this ending's window is
+                        # on the last speaker's own clock.
+                        caption_offset_s=talking_timeline_s - last_duration_s,
+                        caption_look=protected_caption_look,
                         **text_canvas,
                     )
                     offset_s = talking_timeline_s - last_duration_s
+                    closing_drawings[:] = [
+                        {
+                            **drawing,
+                            "start_s": float(drawing["start_s"]) + offset_s,
+                            "end_s": float(drawing["end_s"]) + offset_s,
+                        }
+                        for drawing in drawings
+                    ]
                     return [
                         {
                             **row,
@@ -10188,7 +10246,7 @@ def _run_phone_subtitled_job(
                         }
                         for row in rows
                     ], receipt
-                return _phone_talking_closing_rows(
+                rows, receipt, drawings = _phone_talking_closing_rows(
                     talking_closing_text,
                     photo_card=photo_card,
                     photo_aspect=beat_closing_aspect,
@@ -10199,8 +10257,16 @@ def _run_phone_subtitled_job(
                     position_x=speaker_position_x or 0.0,
                     protected=protected_plan,
                     caption_avoid=protected_caption_avoid,
+                    cta=cta_planned,
+                    arrow=cta_arrow,
+                    cues=cues,
+                    caption_style=caption_style,
+                    caption_look=protected_caption_look,
+                    insert_points=tuple(float(i.at_take_s) for i in inserts),
                     **text_canvas,
                 )
+                closing_drawings[:] = drawings
+                return rows, receipt
 
             def _schedule_talking_footage(blocked: list[tuple[float, float]]) -> tuple:
                 """KRI-719: the footage clips as muted full-frame cutaways over
@@ -11079,8 +11145,14 @@ def _run_phone_subtitled_job(
                             take_duration - 1e-3
                         ):
                             # An ending clip plays after the speaker: closing text
-                            # runs to the very end, which the contract checks.
-                            closing_text_rows = [{**closing_text_rows[0], "end_s": take_duration}]
+                            # (every row, and the arrow) runs to the very end, which the
+                            # contract checks.
+                            closing_text_rows = [
+                                {**row, "end_s": take_duration} for row in closing_text_rows
+                            ]
+                            closing_drawings[:] = [
+                                {**drawing, "end_s": take_duration} for drawing in closing_drawings
+                            ]
                             recipe = _compile_lanes(
                                 title_rows + spoken_text_rows + closing_text_rows
                             )
@@ -11230,6 +11302,7 @@ def _run_phone_subtitled_job(
                 except Exception:  # noqa: BLE001
                     pass
 
+            closing_drawings_final: list[dict] = [dict(d) for d in closing_drawings]
             insert_receipt: dict[str, Any] | None = None
             if insert_clips_enabled and (inserts or insert_drops):
                 # Parent KRI-1151: from here on the persisted set (captions, text rows,
@@ -11243,6 +11316,22 @@ def _run_phone_subtitled_job(
                     title_rows = _inserted((), title_rows).text_rows
                     spoken_text_rows = _inserted((), spoken_text_rows).text_rows
                     closing_text_rows = _inserted((), closing_text_rows).text_rows
+                    if closing_drawings_final:
+                        from app.pipeline.phone_talking_inserts import (  # noqa: PLC0415
+                            shift_time as _shift_drawing_time,
+                        )
+
+                        closing_drawings_final = [
+                            {
+                                **drawing,
+                                "start_s": _shift_drawing_time(float(drawing["start_s"]), inserts),
+                                "end_s": _shift_drawing_time(
+                                    float(drawing["end_s"]) - 1e-3, inserts
+                                )
+                                + 1e-3,
+                            }
+                            for drawing in closing_drawings_final
+                        ]
                     if talking_cutaway_windows:
                         talking_cutaway_windows[:] = [
                             {
@@ -11297,6 +11386,11 @@ def _run_phone_subtitled_job(
                 multiple_sources=multi_clip,
             )
 
+    if closing_drawings_final:
+        # Item 14: her ending's arrow is an ordinary freehand drawing layer.
+        from app.pipeline.phone_recipe_shared import with_drawings  # noqa: PLC0415
+
+        recipe = with_drawings(recipe, closing_drawings_final)
     if not media_lanes_enabled:
         validate_phone_pilot_recipe(recipe, allow_editor_media=bool(cutaways))
     else:
@@ -11473,6 +11567,8 @@ def _run_phone_subtitled_job(
             new_entry[SPOKEN_TEXT_FIELD] = spoken_text_receipt
         if closing_text_rows:
             new_entry["closing_title_placement"] = closing_text_receipt
+        if closing_drawings_final:
+            new_entry["drawings"] = closing_drawings_final
         if protected_caption_look is not None:
             # KRI-827: the captions moved off the marked object; the saved geometry makes
             # every later compile of this variant (the editor's Save/reopen,
@@ -11582,6 +11678,8 @@ def _run_phone_subtitled_job(
                 probe_s=float(probe.duration_s),
                 original_s=float(binding.original.duration_s),
             )
+        if tight_pauses_report is not None:
+            new_entry["tight_pauses"] = tight_pauses_report
         if cut_plan is not None and not opening_cut_only:
             # The source `_speech_cleanup_outcome_context` the device-export completion route
             # (`app.routes.device_render._device_speech_cleanup_outcome`) reads to publish the
@@ -11912,6 +12010,79 @@ def _phone_opening_cut(
     return cut_plan, receipts
 
 
+def _merged_removal_count(removed: Sequence[Any], *, join_s: float = 0.001) -> int:
+    """Removals counted as the creator sees them: ones touching within ``join_s`` are one cut."""
+    count = 0
+    last_end: float | None = None
+    for row in sorted(removed, key=lambda r: r.start_s):
+        if last_end is None or row.start_s > last_end + join_s:
+            count += 1
+        last_end = row.end_s if last_end is None else max(last_end, row.end_s)
+    return count
+
+
+def _phone_tight_pause_cut(
+    snapshot: dict,
+    cut_plan: CutPlan,
+    words: Sequence[Any],
+    *,
+    clip_path: str,
+    duration_s: float,
+) -> tuple[CutPlan, dict[str, Any] | None]:
+    """Qendresa 13: layer tight-pause cuts on the consented speech-cleanup plan.
+
+    Runs only with ``TIGHT_PAUSE_CUT_ENABLED`` and an approved brief (``creator_brief_binding``)
+    that asks to cut every pause (``brief_tight_pauses``). Otherwise ``(cut_plan, None)`` with the
+    SAME plan object, so the render is byte-identical. Returns the plan plus the
+    ``variant["tight_pauses"]`` receipt. Never raises: a failure keeps the consented plan and
+    reports ``unavailable`` (the render is never failed for a pause the creator did not consent
+    to by name)."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.tight_pause_ask import brief_tight_pauses  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    if not settings.tight_pause_cut_enabled:
+        return cut_plan, None
+    raw_binding = snapshot.get("creator_brief_binding")
+    if not raw_binding:
+        return cut_plan, None
+    try:
+        brief = BriefBinding.model_validate(raw_binding).resolve()
+        if not brief_tight_pauses(brief):
+            return cut_plan, None
+    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
+        log.warning("phone_tight_pauses.binding_unreadable", error=str(exc)[:200])
+        return cut_plan, None
+    try:
+        from app.pipeline.tight_pause_cut import apply_tight_pauses  # noqa: PLC0415
+
+        new_plan, report = apply_tight_pauses(cut_plan, clip_path, list(words), duration_s)
+        receipt = report.to_variant()
+    except Exception as exc:  # noqa: BLE001 - the consented plan stands
+        log.warning("phone_tight_pauses.failed", error=str(exc)[:200])
+        new_plan = cut_plan
+        receipt = {
+            "version": 1,
+            "status": "unavailable",
+            "target_s": None,
+            "limit_s": None,
+            "added_cuts": 0,
+            "added_removed_ms": 0,
+            "longest_pause_s": None,
+            "longest_pause_before_s": None,
+            "pauses_over_limit": None,
+            "guard_dropped": 0,
+            "guard_trimmed": 0,
+            "capped": False,
+            "reason": "failed",
+        }
+    try:
+        record_pipeline_event("phone", "tight_pauses", receipt)
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return new_plan, receipt
+
+
 def _phone_speaker_framing(
     snapshot: dict,
     *,
@@ -12022,7 +12193,17 @@ def _protected_style_rows(
 ) -> list[dict]:
     """`generation_style_rows`, then (KRI-827) any restyle that moved or grew a protected
     row onto a face or the marked object is undone, so the placement receipt stays true."""
-    styled = generation_style_rows(rows, job_id=job_id)
+    # Item 14: her ending's two rows keep their fonts and colours; the others are restyled.
+    fixed = {i for i, row in enumerate(rows) if "cta_part" in (row.get("source_params") or {})}
+    if fixed:
+        rest = generation_style_rows(
+            [row for i, row in enumerate(rows) if i not in fixed], job_id=job_id
+        )
+        rest_iter = iter(rest)
+        styled = [row if i in fixed else next(rest_iter) for i, row in enumerate(rows)]
+        # The protected-clear pass below sees these rows unchanged.
+    else:
+        styled = generation_style_rows(rows, job_id=job_id)
     if protected is None:
         return styled
     from app.pipeline.phone_protected_text import keep_styled_rows_clear  # noqa: PLC0415
@@ -12202,10 +12383,18 @@ def _phone_talking_closing_rows(
     protected: Any = None,
     caption_avoid: Any = None,
     canvas: Any = None,
-) -> tuple[list[dict], dict[str, Any] | None]:
+    cta: bool = False,
+    arrow: bool = False,
+    cues: Any = (),
+    caption_style: str = "",
+    caption_look: Any = None,
+    caption_offset_s: float = 0.0,
+    insert_points: tuple[float, ...] = (),
+) -> tuple[list[dict], dict[str, Any] | None, list[dict]]:
     """The phone Talking edit's closing text row (KRI-514) plus its placement
-    receipt; ``([], None)`` when the text is empty or the clip has no time for
-    it. ``photo_card`` is the closing photo's `SubtitledOverlayCard` on the cut
+    receipt and its drawings (item 14's arrow; ``[]`` for the tag); ``([], None, [])``
+    when the text is empty or the clip has no time for it. ``photo_card`` is the closing
+    photo's `SubtitledOverlayCard` on the cut
     timeline (``None`` without one): the text appears with it and sits on it.
     Without one it holds for the last 3 s at the title's top spot, off the
     speaker's face."""
@@ -12231,11 +12420,60 @@ def _phone_talking_closing_rows(
     )
     row = talking_closing_element(closing_title, start_s=start_s, end_s=end_s, photo=photo)
     if row is None:
-        return [], None
+        return [], None, []
+    cta_attempted = False
     if photo is not None:
         placed, receipt = place_closing_on_photo(row, photo, canvas=canvas)
     else:
         display_width, display_height = display_dims(binding.original)
+        fit_scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
+        # An inserted clip (take-timeline ``insert_points``) inside the ending pauses the
+        # take and would split the two rows and play the arrow over the clip: keep the tag.
+        insert_in_ending = any(start_s + 1e-3 < point < end_s - 1e-3 for point in insert_points)
+        if (
+            cta
+            and not insert_in_ending
+            and (protected is None or not _protected_placement_kwargs(protected))
+        ):
+            from app.pipeline.phone_cta_ending import build_cta_ending  # noqa: PLC0415
+            from app.pipeline.phone_cta_text import cta_ending_parts  # noqa: PLC0415
+
+            if cta_ending_parts(closing_title) is not None:
+                cta_attempted = True
+
+                def _cta_caption_boxes(window: tuple[float, float]) -> Any:
+                    from app.pipeline.phone_spoken_text import caption_boxes  # noqa: PLC0415
+
+                    return caption_boxes(
+                        list(cues),
+                        window=(window[0] + caption_offset_s, window[1] + caption_offset_s),
+                        caption_style=caption_style,
+                        canvas=canvas,
+                        look=caption_look,
+                    )
+
+                ending = build_cta_ending(
+                    closing_title,
+                    arrow=arrow,
+                    start_s=start_s,
+                    end_s=end_s,
+                    canvas=canvas,
+                    clip_path=clip_path,
+                    keep_segments=keep_segments,
+                    display_width=display_width,
+                    display_height=display_height,
+                    scale=fit_scale,
+                    position_x=position_x,
+                    caption_boxes=_cta_caption_boxes,
+                )
+                if ending is not None:
+                    try:
+                        record_pipeline_event(
+                            "phone", "subtitled_closing_title_placement", ending.receipt
+                        )
+                    except Exception:  # noqa: BLE001 - observability only
+                        pass
+                    return list(ending.rows), ending.receipt, list(ending.drawings)
         placed, receipt = place_talking_title(
             row,
             clip_path=clip_path,
@@ -12243,18 +12481,20 @@ def _phone_talking_closing_rows(
             display_width=display_width,
             display_height=display_height,
             canvas=canvas,
-            scale=fit_transform(display_width, display_height, canvas, landscape_fit).scale,
+            scale=fit_scale,
             position_x=position_x,
             avoid=(
                 caption_avoid((float(row["start_s"]), float(row["end_s"]))) if caption_avoid else ()
             ),
             **_protected_placement_kwargs(protected),
         )
+    if cta_attempted:
+        receipt = {**receipt, "cta_fallback": True}
     try:
         record_pipeline_event("phone", "subtitled_closing_title_placement", receipt)
     except Exception:  # noqa: BLE001 - observability only
         pass
-    return [placed], receipt
+    return [placed], receipt, []
 
 
 def _phone_caption_spellings(snapshot: dict, quoted: tuple[str, ...]) -> tuple[str, ...]:

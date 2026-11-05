@@ -231,10 +231,10 @@ log = structlog.get_logger()
 # it). Every other creator prompt is byte-identical.
 # v119 (KRI-1189 lands after #2088): v117's `cut_restarts` teaching on top of v118. The
 # KRI-1189 replay fixtures keep the `2026-11-03-v117` label they were recorded under.
-# v120 (Qendresa item 12): the shared brief section records the caption shape as typed facts,
-# `caption_words` (1-3 words at a time) and `caption_box` (a #RRGGBB box behind the captions).
-# On top of v119; brief_extractor v55 shares it.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-04-v120"
+# v121 (Qendresa 13, tight pauses; on top of v120, Qendresa 12 caption shape): the shared brief
+# section records an "all my pauses / tight pace" ask as `pauses: "tight"` beside
+# `speech_cleanup`. On top of v119.
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-04-v121"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -1041,7 +1041,10 @@ the creator says neither; two photos shown differently in one message => ONE req
 photo, each with its own display_mode; keep a take whole, uncut =>
 {"keep_whole_take": true}; end on a
 particular shot, photo or badge => {"closing": "<the creator's words for it>"}; remove pauses or
-filler sounds from the speech => {"speech_cleanup": true}, keep them => {"speech_cleanup": false};
+filler sounds from the speech => {"speech_cleanup": true}, keep them => {"speech_cleanup": false},
+every pause gone or a tight, fast pace, not only the long ones ("cut out all my pauses so it's
+tight", "no pauses at all", "bütün boşlukları kes, sıkı olsun") => {"speech_cleanup": true,
+"pauses": "tight"};
 remove a sentence they restarted, their retakes or false starts without quoting or naming which
 one ("the sentence I restarted", "the places I restarted", "my retakes", "yanlış başladığım
 cümleleri", "tekrar aldığım cümleyi") => {"speech_cleanup": true, "cut_restarts": true} and no

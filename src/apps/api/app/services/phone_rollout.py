@@ -320,6 +320,7 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         or (
             clip.hold_duration is not None
             and not _main_track_freeze(clip, track, recipe.frame_rate)
+            and not _main_track_frame_padding(clip, track, recipe.frame_rate)
         )
         or clip.overlay_above_text is not None
         or clip.overlay_pop_in is not None
@@ -623,6 +624,15 @@ def stamped_client_protocol(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     return value
+
+
+def _main_track_frame_padding(clip: Any, track: Any, frame_rate: float) -> bool:
+    """Match recipe/native validation: at most one output frame is rounding padding."""
+    return (
+        track.kind == "video"
+        and clip.hold_duration is not None
+        and 0 <= clip.hold_duration <= 1 / frame_rate + 1e-6
+    )
 
 
 def _main_track_freeze(clip: Any, track: Any, frame_rate: float) -> bool:
@@ -1764,6 +1774,34 @@ def phone_subtitled_closing_title_supported() -> bool:
         settings.phone_subtitled_closing_title_enabled
         and phone_subtitled_title_supported()
         and "authoredText" in settings.phone_render_verified_features
+    )
+
+
+def cta_ending_available() -> bool:
+    """Server-wide: may a phone Talking edit draw the creator's CTA ending (item 14)?
+
+    The ending is two text rows on the closing-title lane plus a freehand arrow, so it
+    needs the flag, the closing-title lane, and the drawing lane verified on device."""
+
+    return bool(
+        settings.creator_cta_ending_enabled
+        and phone_subtitled_closing_title_supported()
+        and settings.freehand_drawing_enabled
+        and "freehandDrawing" in set(settings.phone_render_verified_features)
+    )
+
+
+def cta_ending_planned_for(client_protocol: int | None) -> bool:
+    """May this creator's phone Talking edit draw the CTA ending (item 14)?
+
+    Read like `text_bend_planned_for`: ``client_protocol`` is the app build the creator
+    acted from (``creator_client_protocol`` on the Job). No stamp, or a build below
+    ``freehand_drawing_min_client_protocol``, keeps today's lime closing tag."""
+
+    return bool(
+        cta_ending_available()
+        and client_protocol is not None
+        and client_protocol >= settings.freehand_drawing_min_client_protocol
     )
 
 
