@@ -12,8 +12,9 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError, ProgrammingError
+from sqlalchemy.pool import NullPool
 
 from app.agents._runtime import (
     AiBudgetExceededError,
@@ -37,10 +38,14 @@ from app.services.ai_cost_control import (
     settle_paid_call_cost,
 )
 
+# Session advisory-lock key: one test using ``ledger`` at a time across xdist workers.
+_LEDGER_LOCK_KEY = 2026110402
+
 
 @pytest.fixture
 def ledger(monkeypatch: pytest.MonkeyPatch):
-    prefix = f"test-ai-cost-control:{uuid.uuid4()}"
+    run = uuid.uuid4()
+    prefix = f"test-ai-cost-control:{run}"
     try:
         with sync_engine.connect() as conn:
             conn.execute(text("SELECT 1 FROM ai_cost_reservations LIMIT 0"))
@@ -62,20 +67,38 @@ def ledger(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "ai_weekly_smoke_max_cost_usd", 0.20)
     monkeypatch.setattr(settings, "ai_reservation_ttl_seconds", 300)
     monkeypatch.setattr(settings, "ai_unknown_reservation_ttl_seconds", 300)
-    yield prefix
-    with sync_engine.begin() as conn:
-        conn.execute(
-            text("DELETE FROM ai_cost_reservations WHERE idempotency_key LIKE :prefix"),
-            {"prefix": f"{prefix}%"},
-        )
-        conn.execute(
-            text("DELETE FROM ai_budget_overrides WHERE reason = :reason"),
-            {"reason": prefix},
-        )
-        conn.execute(
-            text("DELETE FROM users WHERE email LIKE :prefix"),
-            {"prefix": f"{prefix}%"},
-        )
+    # The xdist workers share one database, and every cap sums the live rows of one
+    # ``period_start`` (environment, provider credit, canary purpose). Another worker's
+    # reservation (the intent-review suites reserve production OpenAI calls; neighbouring
+    # tests here reserve $0.06 images) tipped these $0.01-$0.10 caps at random (KRI-1190).
+    # A period no other test uses makes each cap count only this test's own reservations;
+    # the cap arithmetic, locks and SQL under test are unchanged.
+    private_period = datetime(1970, 1, 1, tzinfo=UTC) + timedelta(microseconds=run.int % 2**48)
+    monkeypatch.setattr("app.services.ai_cost_control._month_start", lambda _now: private_period)
+    # Budget overrides have no period: the override test's row raises the production cap
+    # for any test reserving meanwhile. These tests take milliseconds, so run them one at a
+    # time. Closing the unpooled connection releases the lock even if teardown fails.
+    lock_engine = create_engine(sync_engine.url, poolclass=NullPool)
+    lock = lock_engine.connect()
+    try:
+        lock.execute(text("SELECT pg_advisory_lock(:key)"), {"key": _LEDGER_LOCK_KEY})
+        yield prefix
+        with sync_engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM ai_cost_reservations WHERE idempotency_key LIKE :prefix"),
+                {"prefix": f"{prefix}%"},
+            )
+            conn.execute(
+                text("DELETE FROM ai_budget_overrides WHERE reason = :reason"),
+                {"reason": prefix},
+            )
+            conn.execute(
+                text("DELETE FROM users WHERE email LIKE :prefix"),
+                {"prefix": f"{prefix}%"},
+            )
+    finally:
+        lock.close()
+        lock_engine.dispose()
 
 
 def _request(
