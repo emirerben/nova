@@ -312,7 +312,8 @@ def test_03_the_device_recipe_draws_the_labels_at_the_same_times(on):
     recipe = _recipe(job)
     layers = {}
     for layer in recipe.text_layers:
-        text = "".join(run.text for run in layer.runs)
+        # A long label wraps onto several runs (one per line): read them as one line of text.
+        text = " ".join(run.text for run in layer.runs)
         if text in LABELS:
             layers[text] = layer
     assert sorted(layers) == sorted(LABELS)

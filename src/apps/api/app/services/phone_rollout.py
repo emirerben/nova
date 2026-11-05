@@ -1754,6 +1754,13 @@ def phone_subtitled_spoken_text_supported() -> bool:
     return bool(settings.phone_subtitled_spoken_text_enabled and phone_subtitled_title_supported())
 
 
+def phone_list_labels_supported() -> bool:
+    """Can a phone Talking edit show numbered list labels (Qendresa item 19)? The flag AND the
+    spoken-text gate: the rows ride the same authoredText text lane, so no new capability."""
+
+    return bool(settings.spoken_list_labels_enabled and phone_subtitled_spoken_text_supported())
+
+
 def phone_narrated_title_preview_supported() -> bool:
     """Can the requesting app build show a phone `narrated` edit's opening
     title in its editor preview (KRI-455)?

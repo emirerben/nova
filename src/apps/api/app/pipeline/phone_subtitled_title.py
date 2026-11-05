@@ -521,6 +521,23 @@ def _face_boxes(
     return [], receipt
 
 
+def frame_face_box(box: NormalizedBox, frame: tuple[float, float, float]) -> NormalizedBox:
+    """A full-frame face box where the matted speaker is drawn in a speaker frame.
+
+    ``frame`` is (width_fraction, x_fraction, y_fraction): the speaker layer is scaled
+    uniformly by ``w`` (same aspect as the canvas) and centred at (x, y), so a full-frame
+    fraction ``f`` lands at ``centre + (f - 0.5) * w``."""
+    width, x_center, y_center = (float(value) for value in frame)
+
+    def x_at(value: float) -> float:
+        return x_center + (value - 0.5) * width
+
+    def y_at(value: float) -> float:
+        return y_center + (value - 0.5) * width
+
+    return NormalizedBox(x_at(box.left), y_at(box.top), x_at(box.right), y_at(box.bottom))
+
+
 def place_talking_title(
     row: dict,
     *,
@@ -535,6 +552,7 @@ def place_talking_title(
     avoid: Sequence[NormalizedBox] = (),
     objects: Sequence[ObjectTrack] = (),
     protect_all_faces: bool = False,
+    speaker_frame: tuple[float, float, float] | None = None,
 ) -> tuple[dict, dict[str, Any]]:
     """``row`` moved off the speaker's face (and clear of the captions), plus
     a receipt for the job debug view. Never raises: anything that goes wrong
@@ -553,7 +571,11 @@ def place_talking_title(
     when nothing clears them is it left at the least-covering spot with
     ``object_collision`` set -- a face never wins over the object. Without any, the
     placement is exactly what it was. ``protect_all_faces`` keeps every detected face
-    clear, not only the dominant one (the creator named "her face")."""
+    clear, not only the dominant one (the creator named "her face").
+
+    ``speaker_frame`` (width, x, y fractions; item 19) is where the matted speaker is drawn
+    small in a corner: every sampled face box is mapped there (`frame_face_box`) so a row is
+    kept off the face as drawn. ``None`` (the default) leaves the placement unchanged."""
     default_y = float(row.get("y_frac") or 0.15)
     if objects or protect_all_faces:
         return place_protected_title(
@@ -569,6 +591,7 @@ def place_talking_title(
             avoid=avoid,
             objects=objects,
             protect_all_faces=protect_all_faces,
+            speaker_frame=speaker_frame,
         )
     try:
         faces, receipt = _face_boxes(
@@ -582,6 +605,8 @@ def place_talking_title(
             sample=sample or sample_face_regions,
             position_x=position_x,
         )
+        if speaker_frame is not None:
+            faces = [frame_face_box(face, speaker_frame) for face in faces]
         probe = _translate_centered_box_to_y(_measure_title_box(row, canvas=canvas), default_y)
         chosen, decision = choose_title_y_frac(probe, default_y, faces, avoid=avoid)
         if avoid:
@@ -691,6 +716,7 @@ def place_protected_title(
     position_x: float = 0.0,
     avoid: Sequence[NormalizedBox] = (),
     protect_all_faces: bool = False,
+    speaker_frame: tuple[float, float, float] | None = None,
 ) -> tuple[dict, dict[str, Any]]:
     """KRI-827: ``row`` kept off every face and every marked object for its whole window.
 
@@ -715,6 +741,8 @@ def place_protected_title(
             position_x=position_x,
             all_faces=protect_all_faces,
         )
+        if speaker_frame is not None:
+            faces = [frame_face_box(face, speaker_frame) for face in faces]
         object_boxes, object_receipts = _object_boxes_for(
             objects,
             window=window,
