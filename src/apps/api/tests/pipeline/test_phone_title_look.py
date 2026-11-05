@@ -552,3 +552,87 @@ def test_captions_never_stand_in_for_a_line():
 
 def test_a_single_line_wanted_title_never_matches():
     assert stacked_title_matches(_evidence(), "5 PROJECTS", tolerance_s=0.05) == []
+
+
+# --- fresh-review findings (written before the fixes) ------------------------------------
+
+
+def test_room_kept_for_a_logo_is_room_for_the_real_square_logo():
+    """The reservation must test the logo's real height, not a box a third as tall."""
+    face = (0.15, 0.06, 0.85, 0.15)
+    placed, receipt = _place(_rows(), face, reserve_logo=True)
+
+    if receipt["logo_room"]:
+        geometry, reason = place_title_logo(
+            title_block_box(placed, canvas=CANVAS),
+            aspect=1.0,
+            faces=[NormalizedBox(*face)],
+            canvas=CANVAS,
+        )
+        assert reason is None
+
+
+CAPTIONS = NormalizedBox(0.10, 0.70, 0.90, 0.80)  # where her captions sit during the title
+
+
+def test_the_block_stays_off_her_captions_when_any_spot_allows_it():
+    placed, receipt = _place(_rows(), V5_FACE, avoid=[CAPTIONS])
+
+    assert receipt["text_overlap"] is False
+    assert all(box.coverage_by(CAPTIONS) <= 0.05 for box in _boxes(placed))
+    assert all(box.coverage_by(NormalizedBox(*V5_FACE)) <= 0.05 for box in _boxes(placed))
+
+
+def test_captions_win_over_the_logo_and_the_receipt_says_there_was_no_room():
+    """Text on text is never drawn to make room for a logo: the logo is reported instead."""
+    placed, receipt = _place(_rows(), V5_FACE, avoid=[CAPTIONS], reserve_logo=True)
+
+    assert all(box.coverage_by(CAPTIONS) <= 0.05 for box in _boxes(placed))
+    if receipt["logo_room"]:
+        geometry, reason = place_title_logo(
+            title_block_box(placed, canvas=CANVAS),
+            aspect=1.0,
+            faces=[NormalizedBox(*V5_FACE)],
+            canvas=CANVAS,
+        )
+        assert reason is None
+
+
+def test_a_face_high_in_frame_leaves_room_for_title_logo_and_captions():
+    face = (0.30, 0.10, 0.70, 0.40)
+    placed, receipt = _place(_rows(), face, avoid=[CAPTIONS], reserve_logo=True)
+
+    assert receipt["logo_room"] is True
+    assert receipt["text_overlap"] is False
+
+
+def test_a_tall_narrow_logo_is_never_narrower_than_a_card_can_be():
+    geometry, reason = place_title_logo(_block(top=0.4), aspect=0.12, faces=[], canvas=CANVAS)
+
+    assert geometry is None or geometry["scale"] >= 0.05
+    if geometry is None:
+        assert reason == "no_room_above_title"
+
+
+def test_the_logo_never_sits_where_the_phone_would_clamp_it():
+    """The compiler pulls a card centre up to the caption-band line (0.62)."""
+    geometry, reason = place_title_logo(
+        _block(top=0.80, bottom=0.92), aspect=1.0, faces=[], canvas=CANVAS
+    )
+
+    assert geometry is None or geometry["y_frac"] <= 0.62 + 1e-6
+
+
+def test_a_caption_style_in_the_same_sentence_never_reaches_a_title_line():
+    ask = title_look_ask(
+        'Title "a b / c d" in serif and handwriting, the captions bold.', line_count=2
+    )
+
+    assert ask.line_kinds == ("serif", "handwritten")
+
+
+@pytest.mark.parametrize("title", ["Day 1 / 30", "5 / 10", "2024 / 2025"])
+def test_number_only_parts_are_not_her_lines(title):
+    from app.pipeline.phone_title_look import split_title_lines
+
+    assert split_title_lines(title) is None

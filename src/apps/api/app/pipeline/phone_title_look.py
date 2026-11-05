@@ -38,6 +38,7 @@ import structlog
 from app.pipeline import phone_subtitled_title as title_mod
 from app.pipeline.cloud_render_evidence import normalize_text
 from app.pipeline.narrated_title import TITLE_FONT_FAMILY, narrated_title_placement
+from app.pipeline.phone_subtitled_lanes import CAPTION_BAND_TOP_FRAC
 from app.pipeline.render_geometry import NormalizedBox
 
 log = structlog.get_logger(__name__)
@@ -80,9 +81,8 @@ _LOGO_MAX_HEIGHT = 0.16
 _LOGO_GAP = 0.01
 _LOGO_X_MIN, _LOGO_X_MAX = 0.02, 0.98
 _LOGO_SHRINKS = (1.0, 0.8, 0.6)
-# The biggest logo `place_title_logo` ever draws (full width AND full height): a block with room
-# for this box at some spot has room for any real logo there (narrower or shorter fits inside it).
-_LOGO_ROOM_ASPECT = _LOGO_WIDTH / _LOGO_MAX_HEIGHT * 1920 / 1080
+_LOGO_EDGE = 0.06  # the logo's side margin when it slides to the frame edge
+_CARD_MIN_WIDTH = 0.05  # `SubtitledOverlayCard.scale` floor
 # The highest block top that leaves that box room above it under the header margin.
 _LOGO_ROOM_TOP = _Y_MIN + _LOGO_MAX_HEIGHT + _LOGO_GAP
 
@@ -109,6 +109,9 @@ def split_title_lines(title: str | None) -> list[str] | None:
     if not _MIN_LINES <= len(parts) <= _MAX_LINES:
         return None
     if any(len(part.replace(" ", "")) < _MIN_LINE_CHARS for part in parts):
+        return None
+    # "Day 1 / 30", "5 / 10": a number on its own is a fraction or a count, not a line.
+    if any(not any(char.isalpha() for char in part) for part in parts):
         return None
     return parts
 
@@ -160,6 +163,7 @@ _COLOUR_WORDS = (
 _CHUNK_SPLIT = re.compile(r"[,;:\n.]|\s(?:and|then|ve)\s")
 _SENTENCE_SPLIT = re.compile(r"[.!?\n]+")
 _TITLE_WORDS = re.compile(r"\b(?:title|heading|ba[şs]l[ıi]k\w*)\b")
+_OTHER_TEXT_WORDS = re.compile(r"\b(?:captions?|subtitles?|labels?|altyaz\w*|etiket\w*)\b")
 _TOP_LEFT = re.compile(
     r"\b(?:title|heading)\b[^.;!?\n]{0,40}\btop[\s-]*left\b"
     r"|\btop[\s-]*left\b[^.;!?\n]{0,40}\b(?:title|heading)\b"
@@ -182,6 +186,8 @@ def _per_line_styles(request_text: str, line_count: int) -> tuple[list[str], lis
         sentence for sentence in _SENTENCE_SPLIT.split(asked) if _TITLE_WORDS.search(sentence)
     )
     for chunk in _CHUNK_SPLIT.split(about_title):
+        if _OTHER_TEXT_WORDS.search(chunk) and not _TITLE_WORDS.search(chunk):
+            continue  # "the title serif, the captions bold": that clause styles the captions
         found = [m.lastgroup for m in _STYLE_WORDS.finditer(chunk)]
         kinds.extend(kind for kind in found if kind)
         colors.extend([_colour_in(chunk)] if len(found) == 1 else [None] * len(found))
@@ -310,7 +316,12 @@ def _stack(boxes: Sequence[NormalizedBox], top: float) -> list[NormalizedBox]:
 
 
 def _candidates(
-    height: float, faces: Sequence[NormalizedBox], position: str | None, *, logo: bool = False
+    height: float,
+    faces: Sequence[NormalizedBox],
+    position: str | None,
+    *,
+    logo: bool = False,
+    avoid: Sequence[NormalizedBox] = (),
 ) -> list[tuple[str, float]]:
     """(kind, block top) in the order to try them."""
     first = 0.5 - height / 2 if position == "middle" else _BLOCK_TOP
@@ -322,6 +333,9 @@ def _candidates(
         found.append(("below_face", max(f.bottom for f in faces) + _FACE_GAP))
         above = min(f.top for f in faces) - _FACE_GAP - height
         found.append(("above_face", above))
+    if avoid:
+        # Between her face and her captions: the block's bottom just above the captions.
+        found.append(("above_captions", min(a.top for a in avoid) - _FACE_GAP - height))
     return found
 
 
@@ -406,40 +420,44 @@ def place_title_look(
                 max(b.right for b in boxes),
                 max(b.bottom for b in boxes),
             )
-            geometry, _miss = place_title_logo(
-                block, aspect=_LOGO_ROOM_ASPECT, faces=hard, canvas=canvas
-            )
+            # The biggest logo `place_title_logo` draws (full width AND full height, in pixels):
+            # room for this box at a spot is room for any real logo there.
+            biggest = (_LOGO_WIDTH * canvas.width) / (_LOGO_MAX_HEIGHT * canvas.height)
+            geometry, _miss = place_title_logo(block, aspect=biggest, faces=hard, canvas=canvas)
             return geometry is not None
 
         best: tuple[tuple[float, float], str, float, list[dict], list[NormalizedBox]] | None = None
-        chosen = None
-        without_logo = None  # the title-only choice, when no spot leaves room for the logo
-        for factor in _SHRINK:
+        # Every face-clear spot at every size, ranked: clear of her captions (and with room
+        # for the logo she asked for) first; text on text only when nothing else is clear.
+        # Within a rank the bigger size wins, then the earlier spot.
+        options: list[tuple[tuple[int, int, int], tuple]] = []
+        for size_rank, factor in enumerate(_SHRINK):
             sized = _sized(base, factor)
             measured = [_measure(r, canvas) for r in sized]
             height = sum(b.height for b in measured) + _GAP_FRAC * (len(measured) - 1)
-            fits: list[tuple[str, list[NormalizedBox], float]] = []
-            for kind, top in _candidates(height, faces, position, logo=reserve_logo):
+            spots = _candidates(height, faces, position, logo=reserve_logo, avoid=avoid)
+            for spot_rank, (kind, top) in enumerate(spots):
                 boxes = _stack(measured, top)
                 if not _inside(boxes):
                     continue
                 coverage = _worst(boxes, hard)
                 if best is None or (coverage, -factor) < best[0]:
                     best = ((coverage, -factor), kind, factor, sized, boxes)
-                if coverage <= _MAX_COVERAGE:
-                    fits.append((kind, boxes, coverage))
-            if fits and reserve_logo:
-                if without_logo is None:
-                    without_logo = _pick(fits, avoid, factor, sized)
-                fits = [f for f in fits if logo_fits(f[1])]
-            if fits:
-                chosen = _pick(fits, avoid, factor, sized)
-                break
-        logo_room = chosen is not None if reserve_logo else None
-        if chosen is None and without_logo is not None:
-            chosen = without_logo
+                if coverage > _MAX_COVERAGE:
+                    continue
+                overlap = bool(avoid) and _worst(boxes, avoid) > _MAX_COVERAGE
+                logo_ok = not reserve_logo or logo_fits(boxes)
+                tier = 2 * int(overlap) + int(not logo_ok)
+                options.append(
+                    (
+                        (tier, size_rank, spot_rank),
+                        (kind, factor, sized, boxes, coverage, overlap, logo_ok),
+                    )
+                )
+        chosen = min(options, key=lambda option: option[0])[1] if options else None
+        logo_room = bool(chosen and chosen[6]) if reserve_logo else None
         if chosen is not None:
-            kind, factor, sized, boxes, coverage, overlap = chosen
+            kind, factor, sized, boxes, coverage, overlap, _logo_ok = chosen
             status = (
                 "shrunk"
                 if factor < 1.0
@@ -474,6 +492,7 @@ def place_title_look(
             "lines": len(placed),
             "block": block.as_dict(),
             "face_boxes": [f.as_dict() for f in faces],
+            "object_boxes": [b.as_dict() for b in object_boxes],
             "faces": receipt.get("faces"),
             "scale": factor,
             "objects": object_receipts,
@@ -482,18 +501,6 @@ def place_title_look(
     except Exception as exc:  # noqa: BLE001 - a placement nicety never blocks a render
         log.warning("phone_title_look.placement_failed", error=str(exc)[:200])
         return list(rows), {"status": "error", "error": str(exc)[:200]}
-
-
-def _pick(
-    fits: Sequence[tuple[str, list[NormalizedBox], float]],
-    avoid: Sequence[NormalizedBox],
-    factor: float,
-    sized: list[dict],
-) -> tuple[str, float, list[dict], list[NormalizedBox], float, bool]:
-    """The first fitting spot that also keeps clear of ``avoid`` (captions), else the first."""
-    clean = [f for f in fits if _worst(f[1], avoid) <= _MAX_COVERAGE]
-    kind, boxes, coverage = (clean or fits)[0]
-    return kind, factor, sized, boxes, coverage, not clean and bool(avoid)
 
 
 # --- logo --------------------------------------------------------------------------------
@@ -525,7 +532,9 @@ def place_title_logo(
     """The logo's centre and width (fraction of canvas width) right above ``block``.
 
     Its bottom edge sits just above the block. When that covers a face it slides sideways,
-    then shrinks. ``(None, "no_room_above_title")`` when nothing fits."""
+    then shrinks. Never narrower than a phone card can be (0.05 of the width), and never
+    lower than the caption-band line the compiler pulls every card centre up to.
+    ``(None, "no_room_above_title")`` when nothing fits."""
     aspect = aspect if aspect > 0 else 1.0
     to_height = canvas.width / (aspect * canvas.height)  # logo height per unit of width
     width = min(_LOGO_WIDTH, _LOGO_MAX_HEIGHT / to_height)
@@ -535,10 +544,11 @@ def place_title_logo(
         w = math.floor(width * shrink * 10**_Y_DECIMALS) / 10**_Y_DECIMALS
         h = w * to_height
         top = bottom - h
-        if top < _Y_MIN - 1e-6:
+        if w < _CARD_MIN_WIDTH or top < _Y_MIN - 1e-6 or top + h / 2 > CAPTION_BAND_TOP_FRAC:
             continue
         home = block.left + w / 2 if alignment == "left" else (block.left + block.right) / 2
-        for cx in (home, block.left + w / 2, block.right - w / 2, _Y_MIN + w / 2, 0.94 - w / 2):
+        edges = (_LOGO_EDGE + w / 2, 1.0 - _LOGO_EDGE - w / 2)
+        for cx in (home, block.left + w / 2, block.right - w / 2, *edges):
             if cx - w / 2 < _LOGO_X_MIN - 1e-6 or cx + w / 2 > _LOGO_X_MAX + 1e-6:
                 continue
             box = NormalizedBox(cx - w / 2, top, cx + w / 2, bottom)

@@ -8647,9 +8647,10 @@ def _demote_beat_receipt(
         visual_survives = bool(entry.get("visual_label")) and beat_id not in card_failed_beats
         sound_survives = bool(entry.get("sound_label")) and beat_id not in sound_failed_beats
         if not visual_survives and not sound_survives:
-            moved.append(
-                {"beat_id": beat_id, "trigger": entry.get("trigger", ""), "reason": reason}
-            )
+            missed = {"beat_id": beat_id, "trigger": entry.get("trigger", ""), "reason": reason}
+            if entry.get("anchor") == "title":  # item 20: never read back as an unheard word
+                missed["anchor"] = "title"
+            moved.append(missed)
             continue
         survivor: dict = {"beat_id": beat_id, "trigger": entry.get("trigger", "")}
         if visual_survives:
@@ -10034,6 +10035,11 @@ def _run_phone_subtitled_job(
                     caption_avoid=protected_caption_avoid,
                     request_text=str(all_candidates.get("creator_request") or ""),
                     reserve_logo=beats_enabled and _asks_title_logo(all_candidates),
+                    look_caption_avoid=(
+                        _title_look_caption_avoid(cues, caption_style=caption_style, **text_canvas)
+                        if settings.title_look_enabled
+                        else None
+                    ),
                     **text_canvas,
                 )
 
@@ -10622,7 +10628,7 @@ def _run_phone_subtitled_job(
                 ):
                     # Qendresa item 20: a logo she wants above the opening title is shown
                     # with the title (not on a spoken word); report every outcome.
-                    title_cards, beat_receipt = _place_title_logo_beats(
+                    title_cards, beat_receipt = _place_title_logo_beats_safely(
                         title_anchored,
                         title_rows=title_rows,
                         title_receipt=title_receipt,
@@ -12076,6 +12082,25 @@ def _protected_caption_avoid(
     return boxes
 
 
+def _title_look_caption_avoid(cues: list[dict], *, caption_style: str, canvas: Any = None) -> Any:
+    """Item 20: the caption lines on screen during a window (their default look), for her
+    stacked title and its logo to keep clear of; the title look's sibling of
+    `_protected_caption_avoid`, which only reports moved captions."""
+    from app.pipeline.phone_spoken_text import caption_boxes  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+
+    canvas = canvas if canvas is not None else _STORY_CANVAS
+
+    def boxes(window: tuple[float, float]) -> list[Any]:
+        try:
+            return caption_boxes(cues, window=window, caption_style=caption_style, canvas=canvas)
+        except Exception as exc:  # noqa: BLE001 - a placement nicety never blocks a render
+            log.warning("phone_title_look.caption_boxes_failed", error=str(exc)[:200])
+            return []
+
+    return boxes
+
+
 def _is_title_anchored(beat: Any) -> bool:
     return isinstance(beat, dict) and beat.get("anchor") == "title"
 
@@ -12089,6 +12114,27 @@ def _empty_beat_receipt() -> dict[str, Any]:
         "unplaced": [],
         "closing": {"status": "none", "badge": "none"},
     }
+
+
+def _place_title_logo_beats_safely(
+    beats: list[dict], *, beat_receipt: dict[str, Any], **kwargs: Any
+) -> tuple[list[Any], dict[str, Any]]:
+    """`_place_title_logo_beats`, but a logo never fails the render: on any error every title
+    logo is reported unplaced (reason ``error``) and nothing is drawn for it."""
+    try:
+        return _place_title_logo_beats(beats, beat_receipt=beat_receipt, **kwargs)
+    except Exception as exc:  # noqa: BLE001 - a sticker never fails the job
+        log.warning("phone_title_logo.failed", error=str(exc)[:200])
+        unplaced = list(beat_receipt.get("unplaced") or []) + [
+            {
+                "beat_id": str(beat.get("beat_id") or ""),
+                "trigger": str(beat.get("trigger") or ""),
+                "reason": "error",
+                "anchor": "title",
+            }
+            for beat in beats
+        ]
+        return [], {**beat_receipt, "unplaced": unplaced}
 
 
 def _place_title_logo_beats(
@@ -12156,7 +12202,9 @@ def _place_title_logo_beats(
         if faces is None:
             raw_faces = (title_receipt or {}).get("face_boxes")
             if isinstance(raw_faces, list):
-                faces = [NormalizedBox(**box) for box in raw_faces]
+                # Her faces and anything she marked to keep text off (KRI-827).
+                raw_objects = (title_receipt or {}).get("object_boxes") or []
+                faces = [NormalizedBox(**box) for box in [*raw_faces, *raw_objects]]
             else:
                 display_width, display_height = display_dims(binding.original)
                 window = (
@@ -12196,7 +12244,8 @@ def _place_title_logo_beats(
             _miss(beat, "no_title")
             continue
         card = SubtitledOverlayCard(
-            id=f"{beat_id}-title",
+            # `beat-<id>-<n>` like every beat card, so a later bind/compile drop demotes it.
+            id=f"beat-{beat_id}-1",
             media_id=str(asset["id"]),
             gcs_path=asset["gcs_path"],
             generation=str(asset.get("gcs_generation")),
@@ -12391,6 +12440,7 @@ def _phone_talking_title_rows(
     canvas: Any = None,
     request_text: str = "",
     reserve_logo: bool = False,
+    look_caption_avoid: Any = None,
 ) -> tuple[list[dict], dict[str, Any] | None]:
     """The phone Talking edit's opening title row (KRI-467), placed off the
     speaker's face, plus its placement receipt; ``([], None)`` when the title
@@ -12401,7 +12451,8 @@ def _phone_talking_title_rows(
     Qendresa item 20 (``TITLE_LOOK_ENABLED``): a title typed with " / " breaks becomes one
     row per line in her look (`phone_title_look`), stacked as one block off her face, and
     ``reserve_logo`` (she asked for a logo above the title) places the title so the logo
-    fits right above it. Off, or a plain title with no logo asked: today's single row."""
+    fits right above it; both keep clear of her captions (``look_caption_avoid``) whenever
+    any spot allows it. Off, or a plain title with no logo asked: today's single row."""
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
 
@@ -12461,8 +12512,25 @@ def _phone_talking_title_rows(
         **_protected_placement_kwargs(protected),
     }
     if look or (reserve_logo and settings.title_look_enabled):
-        from app.pipeline.phone_title_look import place_title_look  # noqa: PLC0415
+        from app.pipeline.phone_title_look import (  # noqa: PLC0415
+            TITLE_LOOK_PARAM,
+            place_title_look,
+        )
 
+        if not look:
+            # A one-line title under her logo keeps the spot that leaves the logo room: the
+            # styling pass leaves look rows where they are.
+            rows = [
+                {
+                    **rows[0],
+                    "source_params": {
+                        **(rows[0].get("source_params") or {}),
+                        TITLE_LOOK_PARAM: {"line": 1, "lines": 1, "style": "plain"},
+                    },
+                }
+            ]
+        if not caption_avoid and look_caption_avoid:
+            common["avoid"] = look_caption_avoid(window)
         placed_rows, receipt = place_title_look(
             rows, position=position, reserve_logo=reserve_logo, **common
         )

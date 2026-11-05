@@ -497,3 +497,92 @@ def test_a_title_logo_beat_with_the_flag_off_goes_to_grounding_as_before(monkeyp
     grounding.assert_called_once()
     [beat] = grounding.call_args.kwargs["beats"]
     assert beat["beat_id"] == "logo"
+
+
+# --- fresh-review findings (written before the fixes) ------------------------------------
+
+
+def test_the_stacked_title_is_placed_clear_of_her_captions(monkeypatch):
+    import app.pipeline.phone_title_look as look_mod
+
+    seen: list = []
+    real = look_mod.place_title_look
+
+    def spy(rows, **kwargs):
+        placed, receipt = real(rows, **kwargs)
+        seen.append((list(kwargs.get("avoid") or ()), placed, receipt))
+        return placed, receipt
+
+    monkeypatch.setattr(look_mod, "place_title_look", spy)
+    _look(monkeypatch)
+    _faces(monkeypatch, [ProtectedRegion(0.0, 3.0, NormalizedBox(0.30, 0.10, 0.70, 0.40), "face")])
+    job, *_ = _titled(
+        monkeypatch,
+        transcript_words=_words(
+            ("Five", 0.1, 0.4), ("projects", 0.4, 0.9), ("the", 0.9, 1.0), ("AI", 1.0, 1.2)
+        ),
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    [(avoid, placed, receipt)] = seen
+    assert avoid, "the captions on screen during the title were not passed"
+    assert receipt["text_overlap"] is False
+    for row in placed:
+        assert all(_box(row).coverage_by(caption) <= _MAX_FACE_COVERAGE for caption in avoid)
+
+
+def test_a_logo_whose_card_fails_to_bind_is_reported_not_placed(monkeypatch):
+    job = _logo_job(monkeypatch)
+
+    def broken_bind(*_a, **_k):
+        raise RuntimeError("visual bytes unavailable")
+
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", broken_bind)
+
+    gb._run_generative_job(str(job.id))
+
+    receipt = job.assembly_plan["variants"][0]["phone_beat_receipt"]
+    assert [e for e in receipt["placed"] if e["beat_id"] == "logo"] == []
+    [missed] = [e for e in receipt["unplaced"] if e["beat_id"] == "logo"]
+    assert missed["anchor"] == "title"
+
+
+def test_a_logo_that_cannot_be_placed_never_fails_the_render(monkeypatch):
+    import app.pipeline.phone_title_look as look_mod
+
+    job = _logo_job(monkeypatch)
+
+    def boom(*_a, **_k):
+        raise ValueError("bad geometry")
+
+    monkeypatch.setattr(look_mod, "place_title_logo", boom)
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    receipt = job.assembly_plan["variants"][0]["phone_beat_receipt"]
+    [missed] = [e for e in receipt["unplaced"] if e["beat_id"] == "logo"]
+    assert (missed["anchor"], missed["reason"]) == ("title", "error")
+
+
+def test_a_one_line_title_keeps_its_spot_under_its_logo_through_the_styling_pass(monkeypatch):
+    import app.services.phone_text_styling as styling
+
+    single = "lets build an agent that reads an APP before I trust it!!"
+    job = _logo_job(monkeypatch)
+    job.all_candidates["creator_strategy"]["opening_title"] = single
+    monkeypatch.setattr(gb.settings, "phone_text_styling_enabled", True)
+    monkeypatch.setattr(styling, "select_fonts", lambda rows, policy, **_k: {"title": "Unbounded"})
+    job.assembly_plan[styling.PHONE_TEXT_STYLE_FIELD] = {
+        "version": 1,
+        "preferences": {"all_text": {}},
+        "requested": {},
+    }
+
+    gb._run_generative_job(str(job.id))
+
+    [row] = _title_rows(job)
+    assert row["text"] == single
+    logo, _start, _end = _logo_box(job)
+    assert logo.bottom <= _box(row).top + 1e-3
