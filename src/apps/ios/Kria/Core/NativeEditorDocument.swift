@@ -1113,6 +1113,8 @@ private extension EditorDocument {
             ("stroke_width", ["caption_stroke_width"]),
             ("shadow_enabled", ["caption_shadow_enabled"]),
             ("appearance", ["caption_editor_style"]),
+            // Qendresa item 12: the creator's typed caption shape (box / dim), kept verbatim so Save round-trips it.
+            ("shape", ["caption_shape"]),
             // KRI-1007: a cue-native variant stores the all-captions animation beside its caption fields.
             ("animation_phases", ["caption_animation_phases"]),
         ]

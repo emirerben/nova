@@ -1265,7 +1265,10 @@ enum KriaClientProtocolContract {
     /// 35 (KRI-1192): bundles Noto Sans KR / Noto Sans Arabic script-fallback faces and draws Greek, Cyrillic, Hangul
     /// and Arabic captions in one covering face (`scriptFonts`). The server sends a recipe naming those faces only to
     /// this protocol and answers 426 `client_update_required` (`script_fonts`) to an older build.
-    static let version = 35
+    /// 36 (Qendresa item 12): the editor reads `caption_meta.shape` (`caption_shape`) and draws the creator's typed
+    /// caption box / dimmed-word look exactly like the cloud recipe. The server renders a shaped caption only for this
+    /// protocol (`CAPTION_SHAPE_PROTOCOL`).
+    static let version = 36
     static let header = "X-Kria-Client-Protocol"
 }
 
