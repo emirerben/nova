@@ -81,8 +81,9 @@ from app.pipeline.prompt_loader import load_prompt
 # `background_color` on a plain-colour background ask.
 # v54 (KRI-1189 lands after #2088): v52's `cut_restarts` teaching on top of v53. The
 # KRI-1189 replay fixtures keep the `2026-11-03-v52` label they were recorded under.
-# v55 (Qendresa item 12): the shared brief section records `caption_words` and `caption_box`.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-04-v55"
+# v56 (Qendresa 13, tight pauses; v55 is reserved by another open item): the shared brief section
+# records an "all my pauses / tight pace" ask as `pauses: "tight"` beside `speech_cleanup`.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-04-v56"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
