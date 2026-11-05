@@ -725,9 +725,10 @@ async def staged_tap_footprint(
     that carries a setting means the item is written): the row it reads never changes after the
     draft is minted.
     """
-    if approval.draft_id is None:
+    draft_id = getattr(approval, "draft_id", None)
+    if draft_id is None:
         return None
-    draft = await db.get(CreatorEditDraft, approval.draft_id)
+    draft = await db.get(CreatorEditDraft, draft_id)
     source_id = getattr(draft, "source_execution_id", None)
     if source_id is None:
         return None
@@ -736,9 +737,10 @@ async def staged_tap_footprint(
 
 def staged_tap_footprint_sync(db: Any, approval: CreatorAgentApproval) -> dict[str, Any] | None:
     """``staged_tap_footprint`` for the sync sweeper."""
-    if approval.draft_id is None:
+    draft_id = getattr(approval, "draft_id", None)
+    if draft_id is None:
         return None
-    draft = db.get(CreatorEditDraft, approval.draft_id)
+    draft = db.get(CreatorEditDraft, draft_id)
     source_id = getattr(draft, "source_execution_id", None)
     if source_id is None:
         return None

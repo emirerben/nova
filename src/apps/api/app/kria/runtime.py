@@ -1466,39 +1466,18 @@ async def cancel_turn(
     turn_id: uuid.UUID,
     creator_id: uuid.UUID,
     expected_thread_revision: int,
+    _plan_item: PlanItem | None = None,
+    _item_locked: bool = False,
 ) -> tuple[TurnCancelled, str | None]:
-    # A cancelled approval takes back the suggestion tap that staged it (see
-    # `_withdraw_staged_tap`); when that tap flipped an item setting the plan item is locked
-    # first, ahead of Turn and Thread, from an unlocked peek of the immutable identities.
-    plan_item = None
-    turn_peek = await db.get(CreatorAgentTurn, turn_id)
-    if turn_peek is not None and turn_peek.status == "awaiting_approval":
-        staged = (
-            (
-                await db.execute(
-                    select(CreatorAgentApproval).where(
-                        CreatorAgentApproval.turn_id == turn_id,
-                        CreatorAgentApproval.status == "pending",
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for peeked in staged:
-            if await _staged_tap_writes_item(db, peeked):
-                plan_item = await _lock_strategy_plan_item(
-                    db, session_id=turn_peek.session_id, creator_id=creator_id
-                )
-                break
-    # Lock Turn before CreationThread per the global runtime lock order. Apart from the staged
-    # tap above, this transaction does not touch PlanItem/Job and cannot cancel a render.
+    # Lock Turn before CreationThread per the global runtime lock order. This
+    # transaction does not touch PlanItem/Job and cannot cancel a render, except to take back
+    # the item setting a staged suggestion tap flipped (below, behind a re-entry that locks the
+    # plan item first).
     turn = (
         await db.execute(
             select(CreatorAgentTurn)
             .where(CreatorAgentTurn.id == turn_id, CreatorAgentTurn.thread_id == thread_id)
             .with_for_update()
-            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     if turn is None:
@@ -1552,10 +1531,29 @@ async def cancel_turn(
             .scalars()
             .all()
         )
+        if not _item_locked:
+            for approval in approvals:
+                if await _staged_tap_writes_item(db, approval):
+                    # The plan item is locked ahead of Turn and Thread: release these locks and
+                    # come back holding it (the order `_expire_blocking_approval` takes).
+                    session_id = turn.session_id
+                    await db.rollback()
+                    locked_item = await _lock_strategy_plan_item(
+                        db, session_id=session_id, creator_id=creator_id
+                    )
+                    return await cancel_turn(
+                        db,
+                        thread_id=thread_id,
+                        turn_id=turn_id,
+                        creator_id=creator_id,
+                        expected_thread_revision=expected_thread_revision,
+                        _plan_item=locked_item,
+                        _item_locked=True,
+                    )
         for approval in approvals:
             approval.status = "cancelled"
             approval_ids.append(str(approval.id))
-            await _withdraw_staged_tap(db, approval=approval, item=plan_item, thread=thread)
+            await _withdraw_staged_tap(db, approval=approval, item=_plan_item, thread=thread)
     turn.cancel_requested_at = now
     turn.status = "cancelled"
     turn.completed_at = now
