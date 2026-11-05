@@ -1,6 +1,6 @@
 {
   "field": "text_case",
-  "contract": "apply_text_case (app/agents/_schemas/text_element.py) and applyTextCase (src/apps/web/src/lib/overlay-layout.ts) must produce IDENTICAL strings. The burn dict (build_overlays_from_text_elements) and the CSS preview layout (resolveTextElementsLayout) both carry the transformed text; the stored element keeps the user's casing. KRI-781: Turkish i rules (i<->İ, ı<->I) apply to the whole text when the case's optional top-level `language` is Turkish; otherwise only to whitespace-delimited words that contain a Turkish-only letter (ı İ ğ Ğ ş Ş). Every other word is cased exactly as before, so English naming a Turkish place keeps English i's and word-by-word casing equals whole-text casing. Cases with `language` are helper-only (a stored element carries no language), so the burn-dict/layout halves skip them.",
+  "contract": "apply_text_case (app/agents/_schemas/text_element.py) and applyTextCase (src/apps/web/src/lib/overlay-layout.ts) must produce IDENTICAL strings. The burn dict (build_overlays_from_text_elements) and the CSS preview layout (resolveTextElementsLayout) both carry the transformed text; the stored element keeps the user's casing. KRI-781: Turkish i rules (i<->İ, ı<->I) apply to the whole text when the case's optional top-level `language` is Turkish; otherwise only to whitespace-delimited words that contain a Turkish-only letter (ı İ ğ Ğ ş Ş). Every other word is cased exactly as before, so English naming a Turkish place keeps English i's and word-by-word casing equals whole-text casing. Cases with `language` are helper-only (a stored element carries no language), so the burn-dict/layout halves skip them. KRI-1192: a whitespace-delimited word with a Greek letter upper-cases with the Greek rule (ICU el: accents dropped, a dialytika added where a removed accent kept two vowels apart, the one-letter word ή keeps its accent); title case keeps the initial's accent.",
   "asserted_by": [
     "src/apps/api/tests/pipeline/test_text_element_parity_contract.py",
     "src/apps/web/src/__tests__/lib/text-element-parity-contract.test.ts"
@@ -197,6 +197,102 @@
         "text_case": "title"
       },
       "expected": { "text": "This Is İstanbul" }
+    },
+    {
+      "name": "upper-greek-drops-accents",
+      "element": {
+        "id": "tc-upper-greek-drops-accents",
+        "text": "καλημέρα Ελλάδα",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "text_case": "upper"
+      },
+      "expected": { "text": "ΚΑΛΗΜΕΡΑ ΕΛΛΑΔΑ" }
+    },
+    {
+      "name": "upper-greek-diphthong-dialytika",
+      "element": {
+        "id": "tc-upper-greek-diphthong-dialytika",
+        "text": "ρολόι τσάι άυλος",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "text_case": "upper"
+      },
+      "expected": { "text": "ΡΟΛΟΪ ΤΣΑΪ ΑΫΛΟΣ" }
+    },
+    {
+      "name": "upper-greek-keeps-dialytika",
+      "element": {
+        "id": "tc-upper-greek-keeps-dialytika",
+        "text": "προϊόν Μαΐου",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "text_case": "upper"
+      },
+      "expected": { "text": "ΠΡΟΪΟΝ ΜΑΪΟΥ" }
+    },
+    {
+      "name": "upper-greek-disjunctive-eta",
+      "element": {
+        "id": "tc-upper-greek-disjunctive-eta",
+        "text": "Αθήνα ή Θεσσαλονίκη",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "text_case": "upper"
+      },
+      "expected": { "text": "ΑΘΗΝΑ Ή ΘΕΣΣΑΛΟΝΙΚΗ" }
+    },
+    {
+      "name": "upper-greek-polytonic",
+      "element": {
+        "id": "tc-upper-greek-polytonic",
+        "text": "ἄνθρωπος ᾄδω",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "text_case": "upper"
+      },
+      "expected": { "text": "ΑΝΘΡΩΠΟΣ ΑΙΔΩ" }
+    },
+    {
+      "name": "upper-english-with-greek-word",
+      "element": {
+        "id": "tc-upper-english-with-greek-word",
+        "text": "Visit Αθήνα today",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "text_case": "upper"
+      },
+      "expected": { "text": "VISIT ΑΘΗΝΑ TODAY" }
+    },
+    {
+      "name": "title-greek-keeps-initial-accent",
+      "element": {
+        "id": "tc-title-greek-keeps-initial-accent",
+        "text": "όπως ΚΑΛΗΜΕΡΑ",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "text_case": "title"
+      },
+      "expected": { "text": "Όπως Καλημερα" }
+    },
+    {
+      "name": "lower-greek",
+      "element": {
+        "id": "tc-lower-greek",
+        "text": "ΚΑΛΗΜΕΡΑ ΑΘΗΝΑ",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "text_case": "lower"
+      },
+      "expected": { "text": "καλημερα αθηνα" }
     }
   ]
 }

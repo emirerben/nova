@@ -1484,8 +1484,63 @@ def _authored_lines(
     return font, size, lines
 
 
+def karaoke_word_lefts(
+    words: list[str], widths: list[float], gap: float, left: float, *, rtl: bool
+) -> list[float]:
+    """Left x of each word of one karaoke row, in spoken (logical) order.
+
+    A left-to-right row places the words left to right from ``left``, exactly as the
+    karaoke painters always have. A right-to-left row (KRI-1192: Arabic) fills the
+    same span from its right edge, so the first spoken word is the rightmost and the
+    highlight sweeps right to left; a run of left-to-right words inside it (a brand
+    or a Latin phrase) keeps its own left-to-right order, as the bidi algorithm lays
+    it out. Shared by the cloud Skia karaoke and the phone recipe compiler.
+    """
+    if not rtl:
+        lefts = []
+        x = left
+        for width in widths:
+            lefts.append(x)
+            x += width + gap
+        return lefts
+    groups: list[tuple[bool, list[int]]] = []
+    for index, word in enumerate(words):
+        ltr = _first_strong_direction(word) == "L"
+        if ltr and groups and groups[-1][0]:
+            groups[-1][1].append(index)
+        else:
+            groups.append((ltr, [index]))
+    lefts = [0.0] * len(words)
+    right = left + sum(widths) + gap * max(0, len(words) - 1)
+    for _ltr, indices in groups:
+        span = sum(widths[i] for i in indices) + gap * (len(indices) - 1)
+        x = right - span
+        right = x - gap
+        for i in indices:
+            lefts[i] = x
+            x += widths[i] + gap
+    return lefts
+
+
+def _first_strong_direction(text: str) -> str | None:
+    """ "L" or "R" for the first strong letter of ``text`` (bidi rule P2), else None."""
+    import unicodedata  # noqa: PLC0415
+
+    for ch in text:
+        direction = unicodedata.bidirectional(ch)
+        if direction == "L":
+            return "L"
+        if direction in ("R", "AL"):
+            return "R"
+    return None
+
+
 def _auto_shape(typeface: skia.Typeface, text: str, shape_text: bool) -> bool:
     """Shape whenever the face lacks a glyph (inline emoji, a rare symbol), KRI-826.
+
+    KRI-1192: also whenever the text joins or runs right to left (Arabic): the
+    glyph-safe face (Noto Sans Arabic) maps every letter, but drawString would set
+    them isolated and left to right (`portable_text_layout.needs_text_shaping`).
 
     The unshaped drawString path draws such a character as an empty box, while the
     phone compile already shapes it (`portable_text_layout.compile_text_overlay`) and
@@ -1537,9 +1592,21 @@ def _wrap_text_to_lines(
 
 
 def _wrap_word_indices(
-    words: list[str], font: skia.Font, max_width: float, spacing_px: float = 0.0
+    words: list[str],
+    font: skia.Font,
+    max_width: float,
+    spacing_px: float = 0.0,
+    *,
+    shape_text: bool = False,
 ) -> list[list[int]]:
-    """Balanced word-wrap that preserves original word indices."""
+    """Balanced word-wrap that preserves original word indices.
+
+    ``shape_text`` (KRI-1192: right-to-left/joining words) measures shaped widths.
+    """
+    if shape_text:
+        return balanced_word_wrap_indices(
+            words, lambda s: _measure_line(font, s, spacing_px, shape_text=True), max_width
+        )
     if spacing_px == 0.0:
         return balanced_word_wrap_indices(words, font.measureText, max_width)
     return balanced_word_wrap_indices(
@@ -2869,7 +2936,12 @@ def _draw_karaoke_line(
     font.setSubpixel(True)
     max_width = _overlay_max_width_px(overlay, render_canvas)
     spacing_px = _overlay_letter_spacing_px(overlay, initial_size)
-    line_word_indices = _wrap_word_indices(words, font, max_width, spacing_px)
+    # KRI-1192 F7: Arabic words are shaped and placed right to left
+    # (`karaoke_word_lefts`, shared with the phone recipe); other text is unchanged.
+    from app.pipeline.portable_text_layout import needs_text_shaping  # noqa: PLC0415
+
+    shaped = needs_text_shaping(" ".join(words))
+    line_word_indices = _wrap_word_indices(words, font, max_width, spacing_px, shape_text=shaped)
     if not line_word_indices:
         return
 
@@ -2877,7 +2949,7 @@ def _draw_karaoke_line(
     # the tracking on BOTH of its sides (word|sp|space|sp|word), so word-drawn
     # lines occupy exactly the width _measure_line reports for the full line.
     space_w = font.measureText(" ") + 2.0 * spacing_px
-    word_widths = [_measure_line(font, w, spacing_px) for w in words]
+    word_widths = [_measure_line(font, w, spacing_px, shape_text=shaped) for w in words]
     line_texts = [" ".join(words[i] for i in line) for line in line_word_indices]
 
     cx, cy = _resolve_anchor(overlay, render_canvas)
@@ -2887,6 +2959,7 @@ def _draw_karaoke_line(
         line_texts,
         line_spacing=resolve_line_spacing(overlay.get("line_spacing")),
         letter_spacing_px=spacing_px,
+        shape_text=shaped,
     )
     block_top = _vertical_block_top(_resolve_vertical_anchor(overlay), cy, block["block_h"])
     first_baseline = block_top + block["ascent_offset"]
@@ -2897,28 +2970,33 @@ def _draw_karaoke_line(
     shadow_style = _text_shadow_style(overlay)
     glow_kwargs = _resolve_glow_kwargs(overlay)
 
+    rtl = shaped and _first_strong_direction(" ".join(words)) == "R"
     for line_idx, line in enumerate(line_word_indices):
         line_w = sum(word_widths[i] for i in line) + space_w * max(0, len(line) - 1)
         x = _anchored_left_x(anchor, cx, line_w)
         baseline_y = first_baseline + line_idx * block["line_step"]
-        for i in line:
+        lefts = karaoke_word_lefts(
+            [words[i] for i in line], [word_widths[i] for i in line], space_w, x, rtl=rtl
+        )
+        for left, i in zip(lefts, line, strict=True):
             already_sung = starts[i] <= t_local
             color = highlight_color if already_sung else primary_color
             draw_kwargs: dict[str, Any] = {"shadow_style": shadow_style}
             if spacing_px != 0.0:
                 draw_kwargs["letter_spacing_px"] = spacing_px
+            if shaped:
+                draw_kwargs["shape_text"] = True
             draw_kwargs.update(glow_kwargs)
             _draw_line_with_layers(
                 canvas,
                 words[i],
-                x,
+                left,
                 baseline_y,
                 font,
                 color,
                 stroke_px,
                 **draw_kwargs,
             )
-            x += word_widths[i] + space_w
 
 
 def _lyric_line_alpha(overlay: dict, t_local: float, duration_s: float) -> float:

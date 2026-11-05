@@ -2120,6 +2120,17 @@
       ]
     },
     {
+      "id": "kri-1192-caption-languages",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_kri1192_caption_languages.py tests/pipeline/test_kri1192_script_fallback.py tests/pipeline/test_kri1192_caption_render.py tests/pipeline/test_kri1192_en_tr_byte_identity.py tests/kria/test_kri1192_script_fonts.py tests/pipeline/test_font_identification.py tests/pipeline/test_font_identification_regression.py tests/pipeline/test_narrated_assembler.py tests/pipeline/test_caption_language.py",
+      "paths": [
+        "src/apps/api/app/pipeline/font_identification.py",
+        "src/apps/api/app/pipeline/narrated_assembler.py",
+        "src/apps/api/tests/fixtures/kri1192_caption_languages/en_tr_golden_hashes.json",
+        "src/apps/api/tests/fixtures/kri1192_caption_languages/fleurs_whisper_turbo.json"
+      ]
+    },
+    {
       "id": "kri-1015-mixed-caption-language",
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri1015_mixed_caption_language_replay.py tests/kria/test_kri1015_caption_language_receipts.py tests/services/test_kri1015_dispatch_caption_language.py tests/pipeline/test_caption_language.py tests/tasks/test_subtitled_caption_language.py",

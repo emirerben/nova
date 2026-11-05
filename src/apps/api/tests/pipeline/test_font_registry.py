@@ -82,10 +82,17 @@ class TestFontRegistryFile:
         in phrase sequences, then by 4 more (Rascal, Big Curls, ZT Bros Oskon 90s,
         Alte Haas Grotesk — all 100% Free dafont fonts).
         KRI-648 restores Inter Medium without changing the bundled font count.
+        KRI-1192 adds 4 script-fallback faces (Noto Sans KR / Arabic, Regular + Bold):
+        deprecated so nothing offers them, drawn only by the whole-run glyph fallback.
         """
         fonts = _FONT_REGISTRY.get("fonts", {})
-        assert len(fonts) == 52
-        assert sum(1 for entry in fonts.values() if entry.get("deprecated") is True) == 7
+        script_faces = sum(1 for entry in fonts.values() if entry.get("script_fallback") is True)
+        assert script_faces == 4
+        assert len(fonts) == 52 + script_faces
+        assert (
+            sum(1 for entry in fonts.values() if entry.get("deprecated") is True)
+            == 7 + script_faces
+        )
         assert sum(1 for entry in fonts.values() if entry.get("deprecated") is not True) == 45
 
     def test_expected_styles(self):
