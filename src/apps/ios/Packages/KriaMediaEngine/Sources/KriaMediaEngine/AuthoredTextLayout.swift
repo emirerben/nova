@@ -57,11 +57,17 @@ public enum AuthoredTextLayout {
         public var shadows: [TextBlurLayer]
         public var bottomAligned: Bool
         public var background: TextInk?
+        /// Box padding / corner radius in canvas px. Defaults mirror `portable_text_layout`'s 8/4/4 box.
+        public var backgroundPaddingX: Double = 8
+        public var backgroundPaddingY: Double = 4
+        public var backgroundRadius: Double = 4
         public init(fontAssetID: String, size: Double = 72, widthFraction: Double = 0.9,
                     xFraction: Double = 0.5, yFraction: Double = 0.5, rotation: Double = 0,
                     alignment: Alignment = .center, color: TextInk,
                     stroke: TextInk = .init(red: 0, green: 0, blue: 0, alpha: 1),
-                    strokeWidth: Double = 0, shadows: [TextBlurLayer] = [], background: TextInk? = nil, bottomAligned: Bool = false, fontVariations: [String: Double] = [:], letterSpacing: Double = 0, lineSpacing: Double = 1.15, wrapsLines: Bool = true, bend: Double = 0) {
+                    strokeWidth: Double = 0, shadows: [TextBlurLayer] = [], background: TextInk? = nil, bottomAligned: Bool = false, fontVariations: [String: Double] = [:], letterSpacing: Double = 0, lineSpacing: Double = 1.15, wrapsLines: Bool = true, bend: Double = 0,
+                    backgroundPaddingX: Double = 8, backgroundPaddingY: Double = 4, backgroundRadius: Double = 4) {
+            self.backgroundPaddingX = backgroundPaddingX; self.backgroundPaddingY = backgroundPaddingY; self.backgroundRadius = backgroundRadius
             self.bend = bend
             self.wrapsLines = wrapsLines
             self.lineSpacing = lineSpacing
@@ -200,8 +206,9 @@ public enum AuthoredTextLayout {
         let background = style.background.map { color in
             let left = runs.map(\.x).min() ?? anchorX
             let right = zip(runs, lines).map { $0.0.x + $0.1.1 }.max() ?? anchorX
-            return TextBackground(color: color, left: left - 8, top: top - 4,
-                                  width: right - left + 16, height: blockHeight + 8, radius: 4)
+            return TextBackground(color: color, left: left - style.backgroundPaddingX, top: top - style.backgroundPaddingY,
+                                  width: right - left + 2 * style.backgroundPaddingX, height: blockHeight + 2 * style.backgroundPaddingY,
+                                  radius: style.backgroundRadius)
         }
         let layerEffect: PortableTextLayer.Effect = phases == nil ? legacyEffect : (typewriter ? .typewriter : .none)
         let bend: Double? = !TextBend.isStraight(style.bend) && PortableTextLayer.bendSupported(effect: layerEffect, phasesTypewriter: typewriter)

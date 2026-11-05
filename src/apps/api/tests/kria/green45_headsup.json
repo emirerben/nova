@@ -1,0 +1,149 @@
+{
+ "_about": "Green 4 / Green 5 (2026-11-04). Strategies as the Main Creator planned them (turn plans of threads BB229F28 and D842DE91) and the Green 4 brief the request produced. Rationale text omitted.",
+ "green4": {
+  "request": "Yorumla episode 9: Kervan x Lumo Pamukkale show. Make the whole video like a green screen: me small at the bottom right in front, and behind me full screen whichever photo or video I'm talking about, changing every 3-5 seconds. Cut the pauses and the sentence I restarted. Captions small, white, lowercase, in the middle. No music.",
+  "strategy": {
+   "pacing": "balanced",
+   "direction": "native",
+   "intro_hook": "Yorumla episode 9: Kervan x Lumo Pamukkale show.",
+   "edit_format": "subtitled",
+   "caption_style": "clean",
+   "audio_strategy": "original_audio",
+   "render_program": "native",
+   "story_structure": [
+    "Hook: Yorumla episode 9 fashion show review",
+    "Green screen rotation for fashion show clips at Pamukkale",
+    "Green screen rotation for Lumo tablets and drone filming",
+    "Synergy conclusion"
+   ],
+   "background_media": {
+    "media_id": "asset-c2724da0-66e9-4346-8a14-d0ee70965f7e",
+    "sequence": [
+     {
+      "media_id": "asset-c2724da0-66e9-4346-8a14-d0ee70965f7e",
+      "spoken_phrase": "sunrise fashion show"
+     },
+     {
+      "media_id": "asset-76d47455-4fd1-4cae-b655-1c657f6b1ca0",
+      "spoken_phrase": "at Pamukkale"
+     },
+     {
+      "media_id": "asset-10e7a6f3-896a-468a-a85f-be950b9bdb4b",
+      "spoken_phrase": "Lumo tablets"
+     },
+     {
+      "media_id": "asset-f139cdc5-dcf4-4d93-bae7-05a220d6367b",
+      "spoken_phrase": "mounted on drones"
+     }
+    ],
+    "speaker_frame": "small_bottom_right"
+   },
+   "target_duration_s": 25,
+   "selected_media_ids": [
+    "analysis-proxy-ios-3C07B175-8EE8-4331-8B65-1535A84CBB75.mp4"
+   ],
+   "video_reuse_policy": "once",
+   "optional_treatments": []
+  },
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "style",
+    "facts": {
+     "speaker_small": true,
+     "background_changes": true,
+     "speaker_background": true
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "green screen with speaker at bottom right, changing every 3-5 seconds",
+    "source_turn_id": "ba3e1816-663f-499e-bc91-c2ac8156cebb"
+   },
+   {
+    "id": "r2",
+    "kind": "style",
+    "facts": {
+     "cut_restarts": true,
+     "speech_cleanup": true
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "cut pauses and restarted sentences",
+    "source_turn_id": "ba3e1816-663f-499e-bc91-c2ac8156cebb"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "facts": {
+     "captions": "on",
+     "caption_case": "lower",
+     "caption_size": "small",
+     "caption_color": "#FFFFFF",
+     "caption_position": "middle"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "small, white, lowercase captions in the middle",
+    "source_turn_id": "ba3e1816-663f-499e-bc91-c2ac8156cebb"
+   },
+   {
+    "id": "r4",
+    "kind": "audio",
+    "facts": {
+     "audio_intent": "no_music"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "no music",
+    "source_turn_id": "ba3e1816-663f-499e-bc91-c2ac8156cebb"
+   }
+  ]
+ },
+ "green5_chip": {
+  "request": "Suggest an edit.",
+  "strategy": {
+   "pacing": "balanced",
+   "direction": "native",
+   "intro_hook": "Kervan x Lumo Teknoloji Ortaklığı",
+   "edit_format": "subtitled",
+   "caption_style": "auto",
+   "audio_strategy": "original_audio",
+   "render_program": "native",
+   "story_structure": [
+    "Kervan'ın 10. yıl defilesine giriş",
+    "Pamukkale'den çarpıcı görüntüler",
+    "Lumo tabletlerdeki çizimlerin gösterimi",
+    "Dronlarla çekim detayları ve kapanış"
+   ],
+   "background_media": {
+    "media_id": "asset-425f1d80-d35a-40cb-bef7-52bc593804c4",
+    "sequence": [
+     {
+      "media_id": "asset-f34285eb-8733-460a-a387-93c52321484b",
+      "spoken_phrase": "Pamukkale"
+     },
+     {
+      "media_id": "asset-960d0234-5bf7-4b3f-b401-94d074948e82",
+      "spoken_phrase": "Lumo tablets"
+     },
+     {
+      "media_id": "asset-a56cd6f3-55d5-4a96-b2b0-ce20a77ad2ad",
+      "spoken_phrase": "drones"
+     }
+    ],
+    "speaker_frame": "small_bottom_right"
+   },
+   "target_duration_s": 31,
+   "selected_media_ids": [
+    "analysis-proxy-ios-0E11551C-6D3C-40DE-B444-9EBFFCAA34D6.mp4"
+   ],
+   "video_reuse_policy": "once",
+   "optional_treatments": []
+  },
+  "requirements": []
+ }
+}

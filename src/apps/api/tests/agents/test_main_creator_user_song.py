@@ -83,12 +83,14 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v119 (KRI-1189, was v117 on its branch) teaches `cut_restarts` in the brief section's
 # cleanup sentence: the two brief-on hashes re-pinned (v118's sentence restores ea4b279f /
 # a855f01d); brief-off unchanged.
+# v120 (Qendresa item 12) teaches `caption_words` / `caption_box`: the two brief-on hashes
+# re-pinned (v119's were 10202eb7 / d3a50520); brief-off unchanged.
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "10202eb7ab0d90f34a6463517c176093a3e1eccc3ebf61c191d925676e583b0b",
+    (True, True): "ad987056b01f01e58c0ace7421b636874c425f7d0c3aef0893ca5d3583ce821f",
     (True, False): "e3de37c194b88bd906568375111a33a5d8ec8bdab981a29ff6f377162710e87e",
-    (False, True): "d3a50520d939eacc8dda736ad774546ef7892d6808b6b9ac0692f21e83af5285",
+    (False, True): "6c9afec6661a1ccba1fb8d5ce851736ddb6f765e060bd71ab2b43fbebe18e589",
     (False, False): "e804c3135cb2e6eae9093216bee3ee0d97159aa120c2b1eef8e34e61a3d37240",
 }
 

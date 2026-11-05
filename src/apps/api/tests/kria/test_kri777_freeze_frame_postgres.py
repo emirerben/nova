@@ -53,8 +53,9 @@ _FREEZE_TR = "Atakan'ın ısırığında kareyi bir saniye dondur"
 _EN = "I can't freeze a frame in this edit yet, so that moment plays normally"
 _TR = "Bu düzenlemede henüz bir kareyi donduramıyorum, o yüzden o an normal akıyor"
 # The phone montage keeps its fast cut for this plan (the photo's own text keeps the guided story
-# out) and holds clips by its own default, not the plan's unasked balanced pace; the card says
-# both for every account (KRI-1097 route registry).
+# out) and holds clips by its own default, not the plan's unasked balanced pace. Both are the
+# planner's own choices, so since Green 4/5 (`kria_headsup_asked_only_enabled`) the card no longer
+# names them; with the switch off it says both for every account (KRI-1097 route registry).
 _HEADS_UP = (
     "Heads-up for this video:\n"
     "- The balanced pacing isn't applied on this video yet: the cuts follow a fast pace\n"
@@ -199,9 +200,7 @@ async def test_m2_freeze_is_a_couldnt_line_and_never_reaches_the_approval_card(m
 
     # A limit of every edit, not a simplification: the draft goes ahead to approval.
     assert status == "awaiting_approval"
-    assert reply == (
-        f"Not everything you asked for made it in:\n- Couldn't: {_FREEZE_EN} ({_EN})\n{_HEADS_UP}"
-    )
+    assert reply == (f"Not everything you asked for made it in:\n- Couldn't: {_FREEZE_EN} ({_EN})")
     assert card == f"Render this draft: {reply}"
     for said in (reply, card, *payload["changes"]):
         assert "freeze the frame on the bite" not in said, said
@@ -217,9 +216,7 @@ async def test_a_turkish_chat_gets_the_turkish_couldnt(monkeypatch):
     status, reply, card, payload = await _draft(monkeypatch, freeze=_FREEZE_TR, language="tr")
 
     assert status == "awaiting_approval"
-    assert reply == (
-        f"İstediklerinin hepsi videoya giremedi:\n- Yapamadım: {_FREEZE_TR} ({_TR})\n{_HEADS_UP_TR}"
-    )
+    assert reply == (f"İstediklerinin hepsi videoya giremedi:\n- Yapamadım: {_FREEZE_TR} ({_TR})")
     assert card.endswith(reply)
     assert _EN not in reply and _EN not in card
     assert "freeze the frame on the bite" not in card
@@ -231,5 +228,15 @@ async def test_without_a_freeze_ask_the_models_summary_stays(monkeypatch):
     status, reply, card, _payload = await _draft(monkeypatch, freeze=None)
 
     assert status == "awaiting_approval"
+    assert reply == _SUMMARY
+    assert card == f"Render this draft: {_SUMMARY}"
+
+
+@pytest.mark.asyncio
+async def test_switch_off_names_the_planners_pace_and_direction_as_before(monkeypatch):
+    """`kria_headsup_asked_only_enabled` off: byte-identical to before Green 4/5, EN and TR."""
+    monkeypatch.setattr(settings, "kria_headsup_asked_only_enabled", False)
+    _status, reply, _card, _payload = await _draft(monkeypatch, freeze=None)
     assert reply == f"{_SUMMARY}\n{_HEADS_UP}"
-    assert card == f"Render this draft: {_SUMMARY} {_HEADS_UP}"
+    _status, reply, _card, _payload = await _draft(monkeypatch, freeze=_FREEZE_TR, language="tr")
+    assert reply.endswith(f"({_TR})\n{_HEADS_UP_TR}")
