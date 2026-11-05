@@ -12,15 +12,15 @@ creator turns hold the thread row. The invariants (the pure logic is in
 * two dismisses at once end in one stored dismissal.
 
 Skips unless DATABASE_URL names a reachable migrated ``*_test`` database, so it runs against the
-scratch database from ``scripts/dev/test-db.sh`` and never against a dev database. Under CI
-(``CI`` set; the api shards provide ``nova_test``) that is a collection failure, not a skip, so
-a broken CI database can never read as green (``test_suggestion_gates_ci_guard.py``).
+scratch database from ``scripts/dev/test-db.sh`` and never against a dev database. Where
+``NOVA_REQUIRE_POSTGRES_TESTS`` is set (the api shards, which provide ``nova_test``) that is a
+collection failure, not a skip, so a broken CI database can never read as green
+(``test_suggestion_gates_ci_guard.py``).
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -42,6 +42,7 @@ from app.services.suggestions.models import (
     Suggestion,
     SuggestionOut,
 )
+from tests.postgres_required import postgres_required
 
 
 def _database_problem() -> str | None:
@@ -57,7 +58,7 @@ def _database_problem() -> str | None:
 
 
 _PROBLEM = _database_problem()
-if _PROBLEM and os.environ.get("CI"):
+if _PROBLEM and postgres_required():
     pytest.fail(f"{_PROBLEM}: the freshness ring fixtures must run in CI", pytrace=False)
 if _PROBLEM:
     pytest.skip(_PROBLEM, allow_module_level=True)

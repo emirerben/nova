@@ -104,8 +104,6 @@ lane's recorded hashes. The filler analysis row is a stub (the engine run is the
 
 from __future__ import annotations
 
-import os
-
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
@@ -116,6 +114,7 @@ from app.database import engine as async_engine
 from app.database import sync_session
 from app.services.kria_editor_ops import KriaEditorOpError, TextTimingConflict
 from app.tasks.kria_runtime import ApprovedCreatorRequestTooLongError
+from tests.postgres_required import postgres_required
 from tests.tasks import kria_pinned_kinds_harness as k
 from tests.tasks import kria_pinned_suggestion_harness as h
 
@@ -133,7 +132,7 @@ def _database_problem() -> str | None:
 
 
 _PROBLEM = _database_problem()
-if _PROBLEM and os.environ.get("CI"):
+if _PROBLEM and postgres_required():
     # FM24: a skip here would let every fixture go unrun behind a green check.
     pytest.fail(f"{_PROBLEM}: the pinned-kind fixtures must run in CI", pytrace=False)
 if _PROBLEM:

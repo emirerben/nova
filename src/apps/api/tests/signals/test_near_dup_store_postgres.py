@@ -7,7 +7,6 @@ a second run finds nothing left to do.
 
 from __future__ import annotations
 
-import os
 import shutil
 import uuid
 
@@ -21,6 +20,7 @@ from app.database import sync_session
 from app.models import ContentPlan, Persona, PlanItem, User
 from app.services import clip_signals
 from app.services.clip_signals import near_dup_hash as nd
+from tests.postgres_required import postgres_required
 
 
 def _database_problem() -> str | None:
@@ -36,7 +36,7 @@ def _database_problem() -> str | None:
 
 
 _PROBLEM = _database_problem()
-if _PROBLEM and os.environ.get("CI"):
+if _PROBLEM and postgres_required():
     pytest.fail(f"{_PROBLEM}: the near-dup store fixtures must run in CI", pytrace=False)
 if _PROBLEM:
     pytest.skip(_PROBLEM, allow_module_level=True)
