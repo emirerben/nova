@@ -86,7 +86,9 @@ from app.pipeline.prompt_loader import load_prompt
 # v54 (KRI-1189 lands after #2088): v52's `cut_restarts` teaching on top of v53. The
 # KRI-1189 replay fixtures keep the `2026-11-03-v52` label they were recorded under.
 # v55 (Qendresa item 12): the shared brief section records `caption_words` and `caption_box`.
-# v60 (Qendresa item 16; v56-v59 are reserved for items 13-15 and 17): with
+# v56 (Qendresa 13, tight pauses; v55 is reserved by another open item): the shared brief section
+# records an "all my pauses / tight pace" ask as `pauses: "tight"` beside `speech_cleanup`.
+# v60 (Qendresa item 16; v56 is Qendresa 13; v57-v59 are reserved for items 14, 15 and 17): with
 # SPEAKER_FULL_OPENING_ENABLED the shared brief section records `speaker_full_opening` /
 # `speaker_full_opening_s` ("start with me full screen"). The extractor has no manifest, so the
 # flag alone gates it; the main planner also needs the capability, and a fact recorded where the

@@ -234,6 +234,9 @@ log = structlog.get_logger()
 # v120 (Qendresa item 12): the shared brief section records the caption shape as typed facts,
 # `caption_words` (1-3 words at a time) and `caption_box` (a #RRGGBB box behind the captions).
 # On top of v119; brief_extractor v55 shares it.
+# v121 (Qendresa 13, tight pauses; on top of v120, Qendresa 12 caption shape): the shared brief
+# section records an "all my pauses / tight pace" ask as `pauses: "tight"` beside
+# `speech_cleanup`. On top of v119.
 # v123 (Qendresa item 17, follow-up of KRI-1175; v121-v122 reserved by items 13-14): one
 # paragraph after the windows section teaching how to write a sequence entry's `spoken_phrase`
 # (as said in the take, with the words only said where that visual is introduced). Shown only
@@ -1115,7 +1118,10 @@ the creator says neither; two photos shown differently in one message => ONE req
 photo, each with its own display_mode; keep a take whole, uncut =>
 {"keep_whole_take": true}; end on a
 particular shot, photo or badge => {"closing": "<the creator's words for it>"}; remove pauses or
-filler sounds from the speech => {"speech_cleanup": true}, keep them => {"speech_cleanup": false};
+filler sounds from the speech => {"speech_cleanup": true}, keep them => {"speech_cleanup": false},
+every pause gone or a tight, fast pace, not only the long ones ("cut out all my pauses so it's
+tight", "no pauses at all", "bütün boşlukları kes, sıkı olsun") => {"speech_cleanup": true,
+"pauses": "tight"};
 remove a sentence they restarted, their retakes or false starts without quoting or naming which
 one ("the sentence I restarted", "the places I restarted", "my retakes", "yanlış başladığım
 cümleleri", "tekrar aldığım cümleyi") => {"speech_cleanup": true, "cut_restarts": true} and no

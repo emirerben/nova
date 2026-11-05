@@ -83,17 +83,20 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v119 (KRI-1189, was v117 on its branch) teaches `cut_restarts` in the brief section's
 # cleanup sentence: the two brief-on hashes re-pinned (v118's sentence restores ea4b279f /
 # a855f01d); brief-off unchanged.
-# v120 (Qendresa item 12) teaches `caption_words` / `caption_box`: the two brief-on hashes
-# re-pinned (v119's were 10202eb7 / d3a50520); brief-off unchanged.
-# v123 (Qendresa item 17, on top of v120): its paragraph renders only with
+# v121 (Qendresa 13) teaches `pauses: "tight"` in the same cleanup sentence, on top of v120
+# (Qendresa 12, `caption_words` / `caption_box`): the two brief-on hashes re-pinned for both
+# (v119's: 10202eb7… / d3a50520…; v120 alone: ad987056 / 6c9afec6); brief-off unchanged.
+# v123 (Qendresa item 17, on top of v121): its paragraph renders only with
 # BACKGROUND_FOLLOWS_TALK_ENABLED and the windows capability, which these renders never have, so
-# all four hashes are v120's, unchanged (the pins cover v120 + v123).
+# all four hashes are v121's, unchanged (the pins cover v121 + v123).
+# v125 (Qendresa item 16): its teachings render only with SPEAKER_FULL_OPENING_ENABLED and the
+# `speaker_full_opening` capability, so the pins cover v125 too.
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "ad987056b01f01e58c0ace7421b636874c425f7d0c3aef0893ca5d3583ce821f",
+    (True, True): "b4ebb285ecf45439fac6a6ef12251cfe6ee507d8f8c7760a0a37de07c7753b26",
     (True, False): "e3de37c194b88bd906568375111a33a5d8ec8bdab981a29ff6f377162710e87e",
-    (False, True): "6c9afec6661a1ccba1fb8d5ce851736ddb6f765e060bd71ab2b43fbebe18e589",
+    (False, True): "bbccdc9144d5257ecbe3e647d944c970665902b7f8afe7f0ea8e5388992f9e52",
     (False, False): "e804c3135cb2e6eae9093216bee3ee0d97159aa120c2b1eef8e34e61a3d37240",
 }
 
