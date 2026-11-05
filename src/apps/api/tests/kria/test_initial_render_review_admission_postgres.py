@@ -28,6 +28,9 @@ from tests.kria.test_initial_render_review_authority_postgres import (
 from tests.kria.test_prepared_execution_postgres import broker  # noqa: F401
 from tests.services.test_render_review_evidence import local_video  # noqa: F401
 
+# Admits a review row: hold the shared intent-review lock (see tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("exclusive_intent_review_ledger")
+
 
 @pytest.fixture(autouse=True)
 def canonical_admission(monkeypatch, local_video):
