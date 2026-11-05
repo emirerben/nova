@@ -1376,6 +1376,10 @@ async def persist_suggestion_set(
     in place by the final set (same set_id, same chip ids), so a tap on the pending
     ``default_edit`` chip is attributed too. A final entry is never rewritten.
 
+    A set needs an entry when it offers anything: legacy chips OR v2 cards. A set whose only
+    cards are v2-only kinds (a polished edit, or one whose four legacy chips are handled) has no
+    chips, and without an entry the cards have nothing to be attached to. Its ``chips`` are ``[]``.
+
     No event, no revision bump, no migration. The row is taken ``FOR UPDATE SKIP LOCKED``
     so the GET never waits behind a turn that holds the thread. A locked row is retried
     twice (0.1s, 0.25s, so at most ~0.35s of added latency); if it is still locked the write
@@ -1388,7 +1392,7 @@ async def persist_suggestion_set(
 
     from app.models import CreationThread  # noqa: PLC0415
 
-    if out.status not in ("ok", "pending") or not out.chips or not out.set_id:
+    if out.status not in ("ok", "pending") or not (out.chips or out.suggestions) or not out.set_id:
         return False
     final = out.status == "ok"
     row = None
