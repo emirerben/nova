@@ -114,6 +114,8 @@ from sqlalchemy.engine import make_url
 from app.config import settings
 from app.database import engine as async_engine
 from app.database import sync_session
+from app.services.kria_editor_ops import KriaEditorOpError, TextTimingConflict
+from app.tasks.kria_runtime import ApprovedCreatorRequestTooLongError
 from tests.tasks import kria_pinned_kinds_harness as k
 from tests.tasks import kria_pinned_suggestion_harness as h
 
@@ -155,6 +157,7 @@ NO_LONGER_FITS = (
     "This suggestion no longer fits your edit. Nothing was changed, and I'm refreshing the ideas."
 )
 HOOK_TEXT = "Whisk first and ask later"
+CONSENT_REPLY = "Let's review the edit plan with your saved wording before changing this video."
 SAVE_FIRST = "Save your edits first, then tap this suggestion again. Nothing was changed."
 HAND_EDITED = {
     "base_generation": "generation-1",
@@ -691,6 +694,181 @@ async def test_a_transient_refusal_keeps_the_card_tappable(world, monkeypatch):
     assert pin_record(accepted.turn_id)["reason"] == "target_unavailable"
     assert signal_of(seeded.thread_id)["reason"] == "target_unavailable"
     assert "refused" not in k.ring_entry(seeded.thread_id, seeded.set_id)
+
+
+# ── No refusal is silent: every gate and error reply of a tap is typed, marked and replayable ──
+
+
+async def tap_run_and_replay(seeded, kind, **kwargs):  # noqa: ANN001, ANN003, ANN202
+    """Tap, let the worker answer, then submit the very same tap again (a client retry).
+
+    Returns the first ack and the replayed ack: the phone reads ``suggestion_outcome`` off both."""
+    card = seeded.cards[kind]
+    asked_at = h.revision(seeded.thread_id)
+    accepted, _ = await h.tap(seeded, kind, expected_revision=asked_at, **kwargs)
+    await h.run(accepted.turn_id)
+    replay, _ = await h.submit(
+        seeded,
+        card.prompt,
+        tap={"set_id": seeded.set_id, "chip_id": card.id},
+        event_id=h.turn_row(accepted.turn_id).client_event_id,
+        expected_revision=asked_at,
+        editor_state=kwargs.get("editor_state"),
+    )
+    return accepted, replay
+
+
+async def assert_typed_refusal(seeded, kind, accepted, replay, reason, *, marked=True):  # noqa: ANN001
+    """R5: the same record on the assistant event and the plan, the replayed ack says refused, and
+    a card the refusal says something about is marked (the next read hides it, mints a set)."""
+    card = seeded.cards[kind]
+    record = {"set_id": seeded.set_id, "id": card.id, "outcome": "refused", "reason": reason}
+    assert signal_of(seeded.thread_id) == record
+    assert pin_record(accepted.turn_id) == record
+    assert replay.replayed and replay.suggestion_outcome == "refused"
+    entry = k.ring_entry(seeded.thread_id, seeded.set_id)
+    if not marked:
+        assert "refused" not in entry
+        return
+    assert entry["refused"] == {card.id: accepted.turn_id}
+    again = await k.get_suggestions(seeded)
+    assert again.set_id != seeded.set_id, "a new set, so the phone's ledger lets go"
+    assert card.id not in {c.id for c in again.suggestions}
+
+
+@pytest.mark.asyncio
+async def test_the_consent_gate_refusal_is_typed_marked_and_replayable(world, monkeypatch):
+    """R5/K5: the creative-copy consent gate (KRI-506) ends the hook tap inside the row lock; that
+    reply carries the same record as every other refusal."""
+    k.install_inputs(monkeypatch, stale_copy_states=True)
+    seeded = h.seed_ready_thread(k.ready_variant_without_title())
+    await k.serve_cards(seeded, k.pick("hook", copy_text=HOOK_TEXT), k.pick("sfx", rank=2))
+    add_creator_title(seeded, await h.media_digest_of(seeded))
+    before = h.counts(seeded)
+
+    accepted, replay = await tap_run_and_replay(seeded, "hook")
+
+    assert last_reply(seeded.thread_id) == CONSENT_REPLY
+    await assert_typed_refusal(seeded, "hook", accepted, replay, "consent_required")
+    assert h.counts(seeded)["drafts"] == before["drafts"]
+
+
+@pytest.mark.asyncio
+async def test_the_readiness_gate_refusal_is_typed_marked_and_replayable(
+    world, monkeypatch, published
+):
+    """R5: a live ask no draft can meet holds a restate back (approval readiness); the creator is
+    told what is missing, and the tap's card is spent in the same typed way."""
+    from app.kria.brief import BriefUpdate
+
+    monkeypatch.setattr(settings, "kria_approval_readiness_enabled", True)
+    seeded = h.seed_ready_thread()
+    await serve_restate_beside_transition(seeded, monkeypatch, "filler_words")
+    k.write_brief(
+        seeded,
+        BriefUpdate(
+            kind="text", scope="title", literal="Hello Moon", description="Title says Hello Moon"
+        ),
+    )
+    drafts_before = h.counts(seeded)["drafts"]
+
+    accepted, replay = await tap_run_and_replay(seeded, "filler_words")
+
+    assert last_reply(seeded.thread_id).startswith("I can't make this yet")
+    await assert_typed_refusal(seeded, "filler_words", accepted, replay, "requirements_not_ready")
+    assert h.counts(seeded)["drafts"] == drafts_before and h.counts(seeded)["approvals"] == 0
+    assert k.item_row(seeded)["speech_cleanup_enabled"] is False, "the flip rolled back with it"
+
+
+@pytest.mark.parametrize(
+    ("gate", "reason"),
+    [("_protected_region_gate_sync", "mark_needed"), ("_unresolved_choice_plan", "choice_needed")],
+)
+@pytest.mark.asyncio
+async def test_the_question_gates_refusal_is_typed_marked_and_replayable(
+    world, monkeypatch, published, gate, reason
+):
+    """R5: the mark gate and the choice gate each end a restate with a question for the creator.
+    Their own predicates are exercised by their own suites (they need a protected-object brief
+    and an open conflict); here the real turn path is driven with the gate's verdict forced, so
+    what is proven is that the reply a gate produces never leaves a tap silent."""
+    from app.kria.contracts import KriaTurnPlan
+    from app.tasks import kria_runtime
+
+    asked = KriaTurnPlan(mode="respond", turn_value="question", response="Which one do you mean?")
+    verdict = (
+        (asked, {"requirement_ids": ["r1"]})
+        if gate == "_protected_region_gate_sync"
+        else (
+            asked,
+            "unresolved_choice",
+        )
+    )
+    monkeypatch.setattr(kria_runtime, gate, lambda *args, **kwargs: verdict)
+    seeded = h.seed_ready_thread()
+    await serve_restate_beside_transition(seeded, monkeypatch, "filler_words")
+
+    accepted, replay = await tap_run_and_replay(seeded, "filler_words")
+
+    assert last_reply(seeded.thread_id) == "Which one do you mean?"
+    await assert_typed_refusal(seeded, "filler_words", accepted, replay, reason)
+    assert k.item_row(seeded)["speech_cleanup_enabled"] is False
+
+
+def _raises(error):  # noqa: ANN001, ANN202
+    def compile_that_fails(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise error
+
+    return compile_that_fails
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (lambda: KriaEditorOpError("speed is not supported on this recipe"), "op_refused"),
+        (lambda: TextTimingConflict(1.0, 2.0, ("t1",)), "op_refused"),
+        (lambda: ApprovedCreatorRequestTooLongError(), "request_too_long"),
+    ],
+    ids=["op_unsupported", "text_timing", "request_too_long"],
+)
+@pytest.mark.asyncio
+async def test_a_commit_error_reply_is_typed_marked_and_replayable(
+    world, monkeypatch, error, reason
+):
+    """R5: the errors the draft commit answers with a reply (not a crash) are refusals too."""
+    from app.tasks import kria_runtime
+
+    seeded = h.seed_ready_thread()
+    await k.serve_cards(seeded)
+    monkeypatch.setattr(kria_runtime, "compile_editor_ops", _raises(error()))
+    before = h.counts(seeded)
+
+    accepted, replay = await tap_run_and_replay(seeded, "sfx")
+
+    await assert_typed_refusal(seeded, "sfx", accepted, replay, reason)
+    assert h.counts(seeded) == before
+
+
+@pytest.mark.asyncio
+async def test_a_state_gone_stale_under_the_lock_is_typed_but_leaves_the_card_tappable(
+    world, monkeypatch
+):
+    """R5/R6: the phone's unsaved state was built on a render that a Save replaced between the
+    plan and the row lock. Nothing is wrong with the card, so the record is typed (the phone can
+    tell) and the card is not spent."""
+    seeded = h.seed_ready_thread()
+    await k.serve_cards(seeded)
+
+    def a_save_replaced_the_render(variant):
+        variant["render_generation_id"] = "generation-2"
+
+    h.after_planning(monkeypatch, lambda: h.edit_variant(seeded, a_save_replaced_the_render))
+    before = h.counts(seeded)
+
+    accepted, replay = await tap_run_and_replay(seeded, "sfx", editor_state=HAND_EDITED)
+
+    await assert_typed_refusal(seeded, "sfx", accepted, replay, "target_unavailable", marked=False)
+    assert h.counts(seeded) == before
 
 
 # ── Mute a noisy clip: a typed brief update, re-planned from the thread's own plan ───

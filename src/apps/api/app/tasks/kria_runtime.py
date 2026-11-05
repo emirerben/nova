@@ -527,6 +527,41 @@ def _pin_refusal_signal(pin: dict[str, Any] | None, reason: str) -> dict[str, An
     }
 
 
+# Reason codes of the draft commit's own stops, the shared gates every draft passes (the codes of
+# the seam's planner-side refusals live in ``services/suggestions/pinned``). Plain strings, so a
+# turn that is not a pinned tap never imports the suggestion engine to build one.
+_PIN_CONSENT_REQUIRED = "consent_required"
+_PIN_MARK_NEEDED = "mark_needed"
+_PIN_REQUIREMENTS_NOT_READY = "requirements_not_ready"
+_PIN_CHOICE_NEEDED = "choice_needed"
+_PIN_REQUEST_TOO_LONG = "request_too_long"
+
+
+def _pin_refusal_for(planned: PlannedKriaTurn, reason: str) -> dict[str, Any] | None:
+    """The typed refusal for a tap that ends in a reply instead of a draft; None for any turn
+    that is not a pinned tap (so every other reply is exactly what it was)."""
+    if planned.suggestion_pin is None:
+        return None
+    return _pin_refusal_signal(planned.suggestion_pin, reason)
+
+
+def _pin_refusal_for_error(planned: PlannedKriaTurn, exc: Exception) -> dict[str, Any] | None:
+    """``_pin_refusal_for`` for the errors the draft commit answers with a reply."""
+    if planned.suggestion_pin is None:
+        return None
+    from app.services.suggestions import pinned as _pinned  # noqa: PLC0415
+
+    if isinstance(exc, EditorStateSpeechCutError):
+        reason = _pinned.UNSAVED_EDITS
+    elif isinstance(exc, EditorStateReplyError):
+        reason = _pinned.TARGET_UNAVAILABLE
+    elif isinstance(exc, (ApprovedCreatorRequestTooLongError, BriefBindingRequestTooLongError)):
+        reason = _PIN_REQUEST_TOO_LONG
+    else:  # an op the recipe cannot hold, a text timing conflict
+        reason = _pinned.OP_REFUSED
+    return _pin_refusal_signal(planned.suggestion_pin, reason)
+
+
 def planned_pin_refusal(plan: KriaTurnPlan) -> dict[str, Any] | None:
     """The refusal a pinned plan recorded on its diagnostics (planner side), else None."""
     record = (plan.diagnostics or {}).get("suggestion_pin")
@@ -567,7 +602,6 @@ def _pinned_tap_no_longer_fits(
             mode="respond",
             turn_value="recovery",
             response=no_longer_fits_reply(),
-            diagnostics={"suggestion_pin": signal},
         ),
         pinned_refusal=signal,
     )
@@ -619,6 +653,12 @@ def _complete_response_turn(
     brief_delegation_read_ids: tuple[str, ...] = (),
     pinned_refusal: dict[str, Any] | None = None,
 ) -> _Completion:
+    if pinned_refusal is not None:
+        # The one place every refusal of a tap is recorded, whichever gate or error ended it: on
+        # the assistant event (below) and on the plan, which a replayed submit reads back.
+        plan = plan.model_copy(
+            update={"diagnostics": {**(plan.diagnostics or {}), "suggestion_pin": pinned_refusal}}
+        )
     with sync_session() as db:
         turn = db.execute(
             select(CreatorAgentTurn).where(CreatorAgentTurn.id == turn_id).with_for_update()
@@ -1847,6 +1887,7 @@ def _complete_draft_turn(
                 brief_delegation_read_ids=planned.brief_delegation_read_ids,
                 brief_coverage={"stage": "draft", "reason": KEEP_OPEN_REASON},
                 brief_expected_version=planned.brief_expected_version,
+                pinned_refusal=_pin_refusal_for(planned, _PIN_CONSENT_REQUIRED),
             )
             return replace(completed, response_only=True)
 
@@ -3041,6 +3082,7 @@ def _complete_draft_turn(
                     "protected_region_requirement_ids": mark_question["requirement_ids"],
                 },
                 brief_expected_version=planned.brief_expected_version,
+                pinned_refusal=_pin_refusal_for(planned, _PIN_MARK_NEEDED),
             )
             return replace(completed, response_only=True)
         if (
@@ -3134,6 +3176,7 @@ def _complete_draft_turn(
                     ),
                 },
                 brief_expected_version=planned.brief_expected_version,
+                pinned_refusal=_pin_refusal_for(planned, _PIN_REQUIREMENTS_NOT_READY),
             )
             return replace(completed, response_only=True)
         approval_summary = arguments.summary
@@ -3262,6 +3305,7 @@ def _complete_draft_turn(
                         ),
                     },
                     brief_expected_version=planned.brief_expected_version,
+                    pinned_refusal=_pin_refusal_for(planned, _PIN_CHOICE_NEEDED),
                 )
                 return replace(completed, response_only=True)
         if settings.brief_binding_for(thread.creator_id):
@@ -4925,6 +4969,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         lease_epoch=lease_epoch,
                         claimed_thread_revision=claimed_thread_revision,
                         plan=planned.plan,
+                        pinned_refusal=_pin_refusal_for_error(planned, exc),
                     )
                 except EditorStateReplyError as exc:
                     # The creator's unsaved state is stale (video changed) or the op
@@ -4945,6 +4990,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         lease_epoch=lease_epoch,
                         claimed_thread_revision=claimed_thread_revision,
                         plan=planned.plan,
+                        pinned_refusal=_pin_refusal_for_error(planned, exc),
                     )
                 except KriaEditorOpError as exc:
                     # KRI-219: an op the recipe cannot represent (e.g. speed on a
@@ -4974,8 +5020,9 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         lease_epoch=lease_epoch,
                         claimed_thread_revision=claimed_thread_revision,
                         plan=planned.plan,
+                        pinned_refusal=_pin_refusal_for_error(planned, exc),
                     )
-                except (ApprovedCreatorRequestTooLongError, BriefBindingRequestTooLongError):
+                except (ApprovedCreatorRequestTooLongError, BriefBindingRequestTooLongError) as exc:
                     planned = replace(
                         planned,
                         plan=KriaTurnPlan(
@@ -5001,6 +5048,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         lease_epoch=lease_epoch,
                         claimed_thread_revision=claimed_thread_revision,
                         plan=planned.plan,
+                        pinned_refusal=_pin_refusal_for_error(planned, exc),
                     )
             if not completion.committed:
                 if completion.requeue_turn_id is not None:

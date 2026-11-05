@@ -294,23 +294,27 @@ def seed_duplicate_pair(seeded: base.Seeded) -> None:
 
 
 async def get_suggestions(seeded: base.Seeded):  # noqa: ANN201
-    """The real ``GET /creation-threads/{id}/suggestions`` for this thread (Redis down: the
-    deterministic set; the cards' ids and the set id are the ones the serve would store)."""
+    """The real ``GET /creation-threads/{id}/suggestions`` for this thread, answering with the
+    deterministic set (template labels, no agent run) whether or not a Redis is reachable: with
+    one up the route would otherwise park the first read as ``pending`` for a worker that is not
+    here. The cards' ids and the set id are the ones the serve would store."""
     from types import SimpleNamespace
+    from unittest.mock import patch
 
     from starlette.responses import Response
 
     from app.routes import creation_threads as ct
 
     async with AsyncSessionLocal() as db:
-        return await ct.thread_suggestions(
-            SimpleNamespace(headers={}),
-            str(seeded.thread_id),
-            SimpleNamespace(id=seeded.user_id),
-            db,
-            Response(),
-            None,
-        )
+        with patch.object(settings, "kria_suggester_max_runs_per_thread", 0):
+            return await ct.thread_suggestions(
+                SimpleNamespace(headers={}),
+                str(seeded.thread_id),
+                SimpleNamespace(id=seeded.user_id),
+                db,
+                Response(),
+                None,
+            )
 
 
 # ── The thread's own plan (what a restating tap re-drafts) ───────────────────────────
