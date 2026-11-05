@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.0.0] - 2026-11-05
+
+### Added
+- feat(ios): tap, drag and pinch the corner green-screen speaker in the editor (#2117) <!-- release-pr: 2117 -->
+
 ## [0.87.0.0] - 2026-11-05
 
 ### Added
