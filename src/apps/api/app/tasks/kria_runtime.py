@@ -625,6 +625,35 @@ def _pinned_tap_no_longer_fits(
     return replace(completed, response_only=True)
 
 
+def _pinned_undo_entry(
+    planned: PlannedKriaTurn,
+    turn_id: uuid.UUID,
+    brief: CreativeBrief | None,
+    setting_undo: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """The tap's own footprint, kept on the draft's execution so Undo can take it all back
+    (``kria/drafts.undo_draft``): the requirements this turn wrote and the setting it flipped.
+    Empty for any turn that is not a pinned tap, so every other execution is what it was."""
+    if planned.suggestion_pin is None:
+        return {}
+    written = [
+        req.id
+        for req in (brief.live() if brief is not None else [])
+        if req.source_turn_id == str(turn_id)
+    ]
+    if not written and setting_undo is None:
+        return {}
+    return {
+        "pinned_undo": {
+            "turn_id": str(turn_id),
+            "set_id": planned.suggestion_pin.get("set_id"),
+            "id": planned.suggestion_pin.get("id"),
+            "requirement_ids": written,
+            **({"setting": setting_undo} if setting_undo is not None else {}),
+        }
+    }
+
+
 def _restate_video_moved(
     job: Job | None,
     variant_key: str,
@@ -1967,6 +1996,7 @@ def _complete_draft_turn(
         ).scalar_one_or_none()
         pin = planned.suggestion_pin
         publish_analysis_id: uuid.UUID | None = None
+        setting_undo: dict[str, Any] | None = None
         if pin is not None:
             # Every pinned tap: the brief it was typed against must still be the brief now. A
             # moved brief is a card that no longer fits, not a "please retry" failure.
@@ -2004,10 +2034,12 @@ def _complete_draft_turn(
             if setting:
                 from app.services.suggestions.kinds.filler_words import (  # noqa: PLC0415
                     apply_item_setting,
+                    setting_undo_record,
                 )
                 from app.services.suggestions.models import ItemSettingAction  # noqa: PLC0415
 
-                outcome = apply_item_setting(db, item, ItemSettingAction(**setting))
+                setting_action = ItemSettingAction(**setting)
+                outcome = apply_item_setting(db, item, setting_action)
                 if not outcome.applied:
                     if outcome.publish_analysis_id is not None:
                         # The scheduler re-queued the analysis (and put the setting back). Rolling
@@ -2025,6 +2057,7 @@ def _complete_draft_turn(
                         reason=outcome.reason or _pinned.SETTING_REFUSED,
                     )
                 publish_analysis_id = outcome.publish_analysis_id
+                setting_undo = setting_undo_record(setting_action, outcome)
         if apply_intent.tool_name == "draft.apply_editor_ops":
             variant = (
                 next(
@@ -3509,6 +3542,7 @@ def _complete_draft_turn(
                 **({"editor_diff": editor_diff_trace} if editor_diff_trace else {}),
                 **state_trace,
                 **({"plan_review_before": restore_record} if restore_record else {}),
+                **_pinned_undo_entry(planned, turn.id, brief, setting_undo),
             },
             started_at=datetime.now(UTC),
             completed_at=datetime.now(UTC),

@@ -1062,8 +1062,9 @@ async def test_mute_a_live_sound_ask_blocks_the_card(world, monkeypatch):
 @pytest.mark.asyncio
 async def test_mute_a_second_tap_on_the_applied_card_changes_nothing(world, monkeypatch):
     """K4: while the first tap's approval waits, the identical re-send is answered in one line
-    (KRI-552); after the draft is withdrawn the card is a deliberate new ask on a changed brief
-    and is refused as already applied. Neither writes anything."""
+    (KRI-552) and writes nothing. Once Undo has taken the tap back (draft, approval and the typed
+    requirement) the card is an offer again: a tap now applies exactly once, not a second time on
+    top of the first (``test_kria_pinned_undo`` pins the full cycle)."""
     from app.kria.drafts import undo_draft
 
     mute_world(monkeypatch)
@@ -1083,10 +1084,10 @@ async def test_mute_a_second_tap_on_the_applied_card_changes_nothing(world, monk
             expected_revision=head(seeded.thread_id)["rev"],
         )
     undone = h.counts(seeded)
-    accepted, _ = await tap_and_run(seeded, "mute_clip")
-    assert last_reply(seeded.thread_id) == NO_LONGER_FITS
-    assert h.counts(seeded) == undone
-    assert pin_record(accepted.turn_id)["reason"] == "consumed"
+    _, again = await tap_and_run(seeded, "mute_clip")
+    assert again["status"] == "awaiting_approval", again
+    after = h.counts(seeded)
+    assert after["drafts"] == undone["drafts"] + 1 and after["approvals"] == undone["approvals"] + 1
 
 
 @pytest.mark.asyncio
@@ -1380,7 +1381,7 @@ async def test_filler_a_newer_head_draft_under_the_lock_refuses_before_flipping(
 
 
 @pytest.mark.asyncio
-async def test_filler_a_second_tap_after_it_applied_is_refused(world, monkeypatch, published):
+async def test_filler_a_tap_after_undo_applies_once_more(world, monkeypatch, published):
     from app.kria.drafts import undo_draft
 
     seeded = h.seed_ready_thread()
@@ -1394,10 +1395,10 @@ async def test_filler_a_second_tap_after_it_applied_is_refused(world, monkeypatc
             expected_revision=head(seeded.thread_id)["rev"],
         )
     undone = h.counts(seeded)
-    accepted, _ = await tap_and_run(seeded, "filler_words")
-    assert last_reply(seeded.thread_id) == NO_LONGER_FITS
-    assert h.counts(seeded) == undone
-    assert pin_record(accepted.turn_id)["reason"] == "consumed"
+    _, again = await tap_and_run(seeded, "filler_words")
+    assert again["status"] == "awaiting_approval", again
+    after = h.counts(seeded)
+    assert after["drafts"] == undone["drafts"] + 1 and after["approvals"] == undone["approvals"] + 1
 
 
 @pytest.mark.asyncio
