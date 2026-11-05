@@ -368,7 +368,8 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
         if ask.color is not None:
             rule["color"] = ask.color
         elif ask.box is not None:
-            rule["color"] = "#000000"  # text on the box; the contrast colour never repaints it
+            # Text on the box, in the ink that reads on it; the contrast colour never repaints it.
+            rule["color"] = _readable_on(ask.box)
         if ask.position is not None:
             rule["position"] = ask.position
     if (
@@ -565,7 +566,8 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
 def _apply_caption_shape(resolved, ask, over_face: bool, cues: list[dict], canvas):
     """Qendresa item 12: the look of the caption SHAPE the stamp kept (words and / or box).
 
-    A box look: black bold text on a rounded box, low (0.79) or middle (0.62). A words-only
+    A box look: bold text that reads on a rounded box (black on her light grey, white on a dark
+    box, or her colour, outlined when it would vanish), low (0.79) or middle (0.62). A words-only
     look: the not-yet-spoken word dimmed, no lime, under the face (0.62) or low (0.79). Records
     the shape on the policy for `generation_style_fields` and the receipt; ``resolved`` and
     ``over_face`` come back unchanged when the stamped ask carries no shape.
@@ -586,12 +588,15 @@ def _apply_caption_shape(resolved, ask, over_face: bool, cues: list[dict], canva
     placed_y = {"middle": 0.62, "bottom": 0.79}.get(spot) if spot is not None else None
     updates: dict = {}
     if ask.box is not None:
-        updates.update(
-            text_color=ask.color or "#000000",
-            outline_px=0,
-            shadow_enabled=False,
-            box_color=ask.box,
-        )
+        # No colour asked: black or white, whichever reads on her box (black on light grey).
+        fill = ask.color or _readable_on(ask.box)
+        updates.update(text_color=fill, outline_px=0, shadow_enabled=False, box_color=ask.box)
+        if _contrast(fill, ask.box) < _CAPTION_BOX_MIN_CONTRAST:
+            # Her colour stays hers (KRI-1177) but would vanish into her box ("white captions in
+            # a light grey box"): an outline in the ink that reads on the box keeps it legible.
+            from app.pipeline.phone_captions import _CAPTION_OUTLINE_PX
+
+            updates.update(outline_px=_CAPTION_OUTLINE_PX, stroke_color=_readable_on(ask.box))
         if ask.size is None:
             updates["text_size_px"] = 64
         policy["_caption_shape"] = {"words": words, "box": ask.box}
@@ -613,6 +618,29 @@ def _apply_caption_shape(resolved, ask, over_face: bool, cues: list[dict], canva
         # Not her spot: keep the face-aware one (`_place` already dodged the faces).
         return shaped, _shape_over_face(shaped, cues, faces, canvas)
     return candidate, covers
+
+
+# Text on an asked caption box must read against the box: WCAG's minimum contrast for large
+# text (captions draw at 52-96 px). Black or white always reaches at least 4.5:1 on any fill.
+_CAPTION_BOX_MIN_CONTRAST = 3.0
+
+
+def _relative_luminance(color: str) -> float:
+    """WCAG relative luminance of a ``#RRGGBB`` colour (the curve `automatic_fill` uses)."""
+    channels = [int(color[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+    r, g, b = (c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast(a: str, b: str) -> float:
+    """WCAG contrast ratio of two ``#RRGGBB`` colours (1 = same, 21 = black on white)."""
+    high, low = sorted((_relative_luminance(a), _relative_luminance(b)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def _readable_on(fill: str) -> str:
+    """Black or white, whichever has more contrast on ``fill``."""
+    return max(("#000000", "#FFFFFF"), key=lambda ink: _contrast(ink, fill))
 
 
 def _shape_over_face(look, cues: list[dict], faces: list, canvas) -> bool:
@@ -964,6 +992,8 @@ def generation_style_fields() -> dict:
                 "position_x_frac": look.position_x_frac,
                 "position_y_frac": look.position_y_frac,
                 "max_width_frac": look.max_width_frac,
+                # Only the caption box's legibility outline sets it; a Save and the editor keep it.
+                **({"stroke_color": look.stroke_color} if look.stroke_color is not None else {}),
             },
         )
     return result

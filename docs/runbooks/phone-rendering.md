@@ -3995,7 +3995,7 @@ What the phone Talking writer draws (`phone_text_styling.generation_caption_cues
 | Ask | Cues | Look | Spot (block centre) |
 |---|---|---|---|
 | N words, no box | split to <= N words on the cue's word times, no gaps inside a cue | white (or the asked colour); only the spoken word takes it, the others are that colour x 0.65 (`karaoke.active_only`); no lime | middle -> y 0.62, bottom -> y 0.79, otherwise as before |
-| box (+ N words) | <= N words (2 when not asked) | black (or the asked colour) text, no outline or shadow, 64 px unless a size was asked, one static layer per cue on an opaque rounded `TextBackground` (padding 0.40 x 0.18 em, radius 0.35 em) | bottom or no spot -> y 0.79, middle -> y 0.62 |
+| box (+ N words) | <= N words (2 when not asked) | black or white text, whichever reads on the box (or the asked colour; one under 3:1 on the box gets a 4 px outline in that readable ink, stored as `caption_editor_style.stroke_color`), otherwise no outline, no shadow, 64 px unless a size was asked, one static layer per cue on an opaque rounded `TextBackground` (padding 0.40 x 0.18 em, radius 0.35 em) | bottom or no spot -> y 0.79, middle -> y 0.62 |
 
 A box is never put under a karaoke layer: the engine paints a karaoke layer's box once per word,
 so a later word's box would hide the earlier words. The variant keeps

@@ -31,6 +31,7 @@ Ways this can go wrong, and the test that catches each (F-numbers: the item-12 f
   new facts. F20 old build / token off / no protocol stamp -> today's captions.
 - F22 an editor Save recompiles from the variant -> same shape.
 - F24/F25 receipt honest both ways.
+- B1-B5 (review on 2080f66) the box text always reads on the asked box: see the last section.
 """
 
 from __future__ import annotations
@@ -473,3 +474,90 @@ def test_the_draft_review_never_promises_a_shape_to_an_old_build(monkeypatch):
     assert bc.check_requirement(Q2_CAPTIONS, old).status != "met"
     new = dataclasses.replace(_draft_facts(), client_protocol=36)
     assert bc.check_requirement(Q2_CAPTIONS, new).status == "met"
+
+
+# --------------------------------------------- the box text always reads (review, 2080f66)
+
+# With no colour asked a box's text was always black, so "captions in a black box" drew black
+# on black with no outline. Ways the fix can go wrong, each caught below:
+# - B1 no colour asked on a dark box: the text is still black, or any colour under 4.5:1 on it.
+# - B2 the readable colour is drawn but not stored on the variant, so an editor Save and the
+#   iPhone editor (both rebuild from `caption_text_color` / `caption_editor_style`) paint the
+#   invisible text again.
+# - B3 an asked colour that vanishes into the asked box ("white captions in a light grey box")
+#   stays unreadable; or it is silently repainted (the colour is hers, KRI-1177) while the
+#   receipt still calls the look met.
+# - B4 an asked colour that already reads on the box is repainted or outlined.
+# - B5 the light grey box (Q2) or a caption with no box changes: the Q1 / Q2 / flag-off tests.
+
+
+def _ink_hex(ink) -> str:
+    return "#{:02X}{:02X}{:02X}".format(*_rgb255(ink))
+
+
+def _wcag_contrast(a: str, b: str) -> float:
+    def luminance(color: str) -> float:
+        channels = [int(color[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+        r, g, b = (c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    high, low = sorted((luminance(a), luminance(b)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+@pytest.mark.parametrize(
+    ("color", "box", "fill", "outline"),
+    [
+        (None, "#000000", "#FFFFFF", None),  # B1: the review's case
+        (None, "#0000FF", "#FFFFFF", None),  # B1: any dark box
+        ("#FFFFFF", "#000000", "#FFFFFF", None),  # B4: her colour reads, so it is left alone
+        ("#FFFFFF", "#E5E5E5", "#FFFFFF", "#000000"),  # B3: her colour, outlined to read
+        ("#000000", "#000000", "#000000", "#FFFFFF"),  # B3
+    ],
+    ids=["black_box", "blue_box", "white_on_black", "white_on_light_grey", "black_on_black"],
+)
+def test_box_text_always_reads_on_the_asked_box(monkeypatch, color, box, fill, outline):
+    facts = {"captions": "on", "caption_box": box, "caption_position": "bottom"}
+    if color is not None:
+        facts["caption_color"] = color
+    asked = BriefRequirement(
+        id="boxcolor",
+        kind="style",
+        scope="global",
+        description="Captions in a box at the bottom",
+        facts=facts,
+    )
+    job = _shape_job(monkeypatch, [asked], request="Captions in a box at the bottom.", corner=False)
+    variant = _run(job)
+    drawn = _caption_layers(job)
+    # B2: an editor Save rebuilds the captions from the variant alone.
+    saved = compile_caption_layers(
+        variant["caption_cues"],
+        canvas_width=int(CANVAS_W),
+        canvas_height=int(CANVAS_H),
+        style=variant["voiceover_caption_style"],
+        look=caption_look_from_variant(variant),
+    )
+    assert drawn and len(saved) == len(drawn)
+    for layer in [*drawn, *saved]:
+        assert layer.background is not None, layer.id
+        assert _ink_hex(layer.background.color) == box
+        for run in layer.runs:
+            assert _ink_hex(run.fill) == fill, (layer.id, run.text)
+            if outline is None:
+                assert run.stroke_width == 0  # the clean box look: no outline needed
+                assert _wcag_contrast(fill, box) >= 4.5
+            else:
+                assert run.stroke_width > 0, (layer.id, run.text)
+                assert _ink_hex(run.stroke) == outline
+                assert _wcag_contrast(outline, box) >= 4.5
+    # B2: the fields the iPhone editor reads.
+    assert variant["caption_text_color"] == fill
+    if outline is None:
+        assert variant["caption_stroke_width"] == 0
+        assert "stroke_color" not in variant["caption_editor_style"]
+    else:
+        assert variant["caption_stroke_width"] > 0
+        assert variant["caption_editor_style"]["stroke_color"] == outline
+    # B3: the asked colour is on screen, so the review may call the look met.
+    assert _receipt(asked, variant).status == "met"
