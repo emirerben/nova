@@ -1265,6 +1265,12 @@ class Settings(BaseSettings):
     # ask), and the "<pace> pacing" chip is left off a card whose route ignores pacing. Default
     # TRUE; false + restart (api + worker) = byte-identical to before.
     kria_headsup_asked_only_enabled: bool = True
+
+    # Green 5 (2026-11-04): a chat nothing has told its language yet (a "Suggest an edit." tap,
+    # media only, "ok") takes the language of the creator's latest message typed in another of
+    # their chats before the device language (`reply_language.creator_typed_language`). Default
+    # TRUE; false + restart (api) = byte-identical (device language, KRI-784).
+    kria_reply_language_history_enabled: bool = True
     # KRI-1097 wave 2 (prompt fidelity on every route). ROUTE_REGISTRY_ENABLED: each render
     # route reads its own capability table (`app.kria.route_capabilities`), so voiceover,
     # Talking, Narrated, creator-song, spoken-excerpt and slide drafts get their own honest
