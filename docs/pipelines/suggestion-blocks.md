@@ -1,4 +1,4 @@
-# AI suggestion blocks (scaffold)
+# AI suggestion blocks
 
 Evolves the KRI-756 chips ([`suggestion-chips`](suggestion-chips.md)) into "Improve" cards on the
 iPhone app. iOS and the iOS-required backend only; `src/apps/web` is untouched. Everything here is
@@ -17,6 +17,9 @@ the phone. The `Action` stays server-side; a tap pins `{set_id, chip_id}`.
 | `services/suggestions/context.py` | `SuggestionContext` and the read-only snapshot readers every kind shares; `snapshot_digest` (the `EditorOpsAction.base_digest`) |
 | `services/suggestions/registry.py` | `all_kinds()`, `legacy_gate()` (the engine's `CHIP_KIND_GATE`, original order), `enabled()`, `kinds_for()`, `problems()` |
 | `services/suggestions/kinds/*.py` | ONE module per kind; the explicit list is `kinds/__init__.py` |
+| `services/suggestions/pinned.py` | the ring reads a tap resolves against, the lane allow-lists, the registry rebuild, the restate base |
+| `services/suggestions/brief_asks.py` | "did the creator already say something about this lane?" for the five ported editor kinds (KRI-129) |
+| `services/suggestion_serve.py` | the GET's read path: freeze, ring write, and the strip of cards the tap would refuse |
 | `services/clip_signals/` | per-clip measured signals, stored at `analysis["signals"]` next to `analysis["understanding"]` |
 | `app/cli/backfill_clip_signals.py` | read-only skeleton; `--write` is refused until a store is wired |
 
@@ -30,13 +33,16 @@ still driven by the KRI-756 engine unchanged; the v2 path uses `build_action` (N
 
 | module | kind | v2 action | state |
 | --- | --- | --- | --- |
-| `captions`, `sfx`, `transition`, `music_level` | KRI-756 kinds | `EditorOpsAction` from the row's own `op`, proved by `editor_ops_witness` | ported, live in the engine |
+| `captions`, `sfx`, `transition`, `music_level` | KRI-756 kinds | `EditorOpsAction` from the row's own `op`, proved by `editor_ops_witness` | ported, live in the engine and as v2 cards |
 | `default_edit`, `opener_clip`, `title_animation`, `pinned_text` | KRI-756 kinds | none | ported, legacy only |
-| `hook` | KRI-756 kind | `CopyDecisionAction` (stub) | legacy ported; v2 stub |
-| `mute_clip` | new | `BriefUpdateAction` (`clip_sound` off, `clip:<media_id>`) | stub |
-| `filler_words` | new | `ItemSettingAction` (`speech_cleanup_enabled`) + re-render | stub |
-| `duplicates` | new | `EditorOpsAction` (`remove_clip`) | stub |
-| `generated_overlay` | new | `AsyncGenerateAction` | stub |
+| `hook` | KRI-756 kind | `CopyDecisionAction`: the agent's exact text, applied as one `set_title` op; the tap records the creative-copy decision (`source="suggestion"`) | v2 card behind `KRIA_SUGGESTION_HOOK_COPY_ENABLED`; the chip stays the only first-prompt hook |
+| `mute_clip` | new | `BriefUpdateAction` (`clip_sound` off, `clip:<media_id>`) + the staged render approval | implemented but **dark by design** (`mute_clip.PINNED_TAP_APPLIES_CLIP_SOUND = False`): a pinned tap stages the typed requirement and the approval, but only a phone re-plan from the brief applies it. Run `verify-phone-render` or a device, plus the real-clip audio calibration, before the constant flips |
+| `filler_words` | new | `ItemSettingAction` (`speech_cleanup_enabled`) + the staged render approval | v2 card behind `KRIA_SUGGESTION_FILLER_WORDS_ENABLED`; evidence is the speech-cleanup preflight row, no second detector |
+| `duplicates` | new | `EditorOpsAction` (`remove_clip` on the weaker take) | v2 card behind `KRIA_SUGGESTION_DUPLICATES_ENABLED`; evidence is the `near_dup_hash` signal |
+| `generated_overlay` | new | `AsyncGenerateAction` | stub, never served (last phase) |
+
+Skill: `agents/skills/edit-improver/SKILL.md` (real body, under the 6000-character budget; proven by
+`tests/evals/test_edit_improver_skill.py`).
 
 ## Wire (additive)
 
@@ -66,6 +72,24 @@ Code: `services/suggestions/pinned.py` (ring reads, lane allow-list, rebuild),
   the draft's own transaction. A marked card is never rebuilt: a rebuild derives a new change from
   the edit as it is now, so a relative card (music level = 60% of the current mix) would apply a
   fresh step on every later tap. Only the exact stored action on its exact base can run again.
+  `pinned.is_consumed` counts a mark on ANY ring entry, matched by kind and anchor fingerprint, so a
+  tap on an applied card from an older set is refused `consumed` too, not applied a second time.
+- **The GET stores every card it serves.** `serve_suggestion_set` builds the cards inside the live
+  read session (`_prepare_cards`, carried on `Served.cards`) and `persist_served_set` only writes
+  what it was handed: the route rolls the session back before writing, which expires the `Job` the
+  editor witnesses close over. A set needs a ring entry when it offers chips OR cards (a set of
+  v2-only kinds has `chips: []`), and a card the ring does not hold answers "no longer fits"
+  however good it was.
+- **The master switch reaches a frozen set.** With `KRIA_SUGGESTION_PINNED_TAPS_ENABLED` off,
+  `serve_suggestion_set` drops `suggestions` and `digest` from a set frozen while it was on (chips
+  and set id untouched, the freeze not edited), so turning it back on restores the cards. The
+  reverse is a rollout caveat: a set frozen while the flag was OFF has no cards, and flipping it on
+  serves that chips-only set until the digest changes (an edit) or the 24 h freeze ends.
+- **Restating cards are offered only while the head is the plan.** `mute_clip` and `filler_words`
+  get no loader input while `pinned.restate_base` says `base_moved` (the head draft is newer editor
+  work), so they are not shown over an editor head; they return after Undo or when the head is the
+  plan again. With `KRIA_SUGGESTION_EDITOR_TRIGGERS_ENABLED` off the digest does not track the head,
+  so the strip below is what keeps a frozen set honest.
 - **Handled cards never come back.** A refreshed set has a new `set_id`, but a dismissed or applied
   card is hidden on read by its kind and target fingerprint (`suggestion_serve.fingerprint`: kind,
   clip media id or ordinal, text bar, moment), from both `suggestions` and the legacy `chips`
@@ -108,6 +132,42 @@ Code: `services/suggestions/pinned.py` (ring reads, lane allow-list, rebuild),
   set may not offer the card again; and a hook's creative-copy decision stays in the event log
   (`fold_creative_copy(include_suggestions=True)`), so the hook card is still spent after Undo.
 
+### Serve and tap agree (`suggestion_serve._strip_dead_cards`)
+
+A set is frozen for 24 h; the tap re-checks everything at the draft commit. A served card whose tap
+is refused is a dead tap, so the GET asks the tap's own questions and leaves out the cards it would
+refuse. The strip happens on the way out: the stored set and the ring keep the cards the set was
+built with (a card that comes back needs no new run), ranks are renumbered, a set with no card left
+drops its v2 digest, and the legacy chips are never touched. A check that cannot be made leaves its
+cards out (what cannot be proven is not offered). The questions, in the tap's order:
+
+1. **Kind switch** (`pinned.kind_enabled`): a kind whose own flag was pulled after the serve
+   (`KRIA_SUGGESTION_{HOOK_COPY,DUPLICATES,FILLER_WORDS,MUTE_CLIP}_ENABLED`) is gone on the next GET,
+   like the master switch.
+2. **Consent gate** (`creative_copy_gate.creative_copy_problem`, KRI-506): the same function over
+   the same events and media. An editor-ops card (and the hook, one editor op) is committed with no
+   plan, so ANY decision about an on-screen title refuses it: open (authorship, write_my_own,
+   generate, revise), stale (the footage changed after the answer), approved, creator-supplied,
+   cancelled, on the opening or the closing title. A restating card is committed with the head
+   plan, so only a plan that disagrees with the decision refuses it (a different title, or a
+   cancelled title the plan still carries); one whose plan agrees stays. Open states also hold the
+   whole set back in the loader, legacy chips included, as before.
+3. **Approval readiness** (GAP-5): a restating tap re-drafts the head plan with one more
+   requirement and is held (`requirements_not_ready`) when a requirement the card did not write is
+   still unmet by the plan. `_restate_held` asks the draft check's own functions
+   (`plan_facts_from_strategy` -> `build_receipts` -> `needs_creator_choice`) about the same plan
+   and brief. It reads only the plan and the brief; facts that need the phone montage preflight or
+   the research step stay unknown, which is an unchecked receipt, never a verdict. An account on
+   approval readiness (`KRIA_APPROVAL_READINESS_*`) gets no restating card at all: the pinned
+   restate never resolves `planned.readiness_manifest`, so `assess_readiness` answers "I haven't
+   established which renderer can make this edit yet" for every requirement. Remove that switch
+   when `plan_pinned_suggestion_turn` resolves the manifest the way `_plan_with_live_agent` does.
+4. **A plan to restate** (`pinned.restate_base`): no strategy draft, or a head that is newer
+   editor work, leaves the restating cards out.
+
+`refresh_for_item` / `refresh_for_thread` (the editor-triggers refresh) do nothing without the chip
+capability: no thread lookup, no Redis debounce key, no run, for everyone or for this creator.
+
 Kill-switch window (accepted). The pin is stamped at submit and read again at claim. If
 `KRIA_SUGGESTION_PINNED_TAPS_ENABLED` is switched off, or the creator leaves the chips allow-list,
 between those two points, the stamp is ignored and the card's words go to the legacy planner, the
@@ -121,7 +181,7 @@ same as a KRI-756 chip. Turning the flag off therefore means "legacy behavior fr
 `KRIA_SUGGESTION_EDITOR_TRIGGERS_ENABLED`, `KRIA_SUGGESTION_{HOOK_COPY,MUTE_CLIP,FILLER_WORDS,
 DUPLICATES,GENERATED_OVERLAY}_ENABLED`. Settings: `KRIA_SUGGESTER_MODEL` (default `gpt-6.1-sol`),
 `KRIA_SUGGESTER_MAX_USD`, `AI_OPENAI_SUGGESTIONS_BUDGET_USD` (0 = no spend),
-`KRIA_SUGGESTION_REFRESH_DEBOUNCE_S`. Skill: `agents/skills/edit-improver` (placeholder body).
+`KRIA_SUGGESTION_REFRESH_DEBOUNCE_S`. Skill: `agents/skills/edit-improver` (see above).
 
 ## Ready-state editor target on phone threads (checked by reading the code)
 
@@ -132,6 +192,9 @@ the session's `target_job_id` is the item's current job, and the phone's export 
 variant `render_status = "ready"` (`routes/device_render._complete_device_export`). `build_editor_snapshot`
 is already device-aware (a phone Talking cut is projected from its pinned recipe). Not every ready
 edit has a target: `allowed_op_families` can come back empty (`no_allowed_families`), and a device
+Talking / Voiceover variant keeps `sfx` closed until a Save has written `sound_effects`. Those
+threads show no ready cards (the safe failure). Not exercised on a device.
+
 **The creator's request wins (KRI-129).** `captions`, `music_level`, `sfx`, `transition` and
 `title_animation` read the brief in their own `available` through `services/suggestions/brief_asks.py`
 (`spoke(ctx, DIMENSION)`): a live requirement that says anything about the dimension (a typed fact
@@ -142,16 +205,22 @@ is `ctx.kind_inputs["brief"]` (`suggestion_serve.BRIEF_KEY`): no key = the loade
 unchanged; a value that is not a brief offers nothing, and so does a failed read: with a v2 flag on,
 `suggestion_serve` stores `brief_asks.UNREADABLE` under the key when the read (or the stage around
 it) raises, never leaving it absent. The helper is not in `kinds/` because the registry guard
-requires every module there to be a kind.
+requires every module there to be a kind. The word lists run over the folded text, so a Turkish suffix
+that softens the stem must be listed in its folded form: "müzik" -> "müziği / müziğin / müziğe" is
+`muzig`, and the volume asks ("sesi / sesini" + kıs, azalt, düşür, artır, yükselt, kapat) are listed
+verb by verb. `tests/e2e_suggestions/test_r4_serve_turkish_fold.py` is the table.
 
 **`PROMPT_VERSION` and ids.** With every flag off, `set_id` and `input_digest` differ from
 origin/main by design (the digest hashes `PROMPT_VERSION`); the wire is otherwise identical. Noted at
 the constant in `services/suggestion_chips.py`.
 
-Talking / Voiceover variant keeps `sfx` closed until a Save has written `sound_effects`. Those
-threads show no ready cards (the safe failure). Not exercised on a device or against a database.
+**Hook copy gate.** `suggestion_chip_copy.has_lookalike_letter` refuses a letter that only looks
+like another (`ᴏ`, `ɡ`, `Ｏ`, `ſ`, `𝗼`, `ﬁ`) and passes an ASCII letter plus accents. It reads the
+shared fold (`app.text_fold.strip_marks`), never a private NFD (KRI-786 guard
+`tests/kria/test_single_text_fold.py`); `tests/e2e_suggestions/test_r4_serve_lookalike.py` compares
+every Unicode letter with a frozen copy of the original check.
 
-## Failure modes this scaffold was written against
+## Failure modes the first scaffold was written against
 
 1. A kind with no witness or surface ships unchecked (`registry.problems`, guard test + negative controls).
 2. An unregistered kind module, or a stub that starts offering (explicit list, disk-vs-list guard).
@@ -174,3 +243,9 @@ one they skip, unless `NOVA_REQUIRE_POSTGRES_TESTS=1` (`tests/postgres_required.
 api test shards in `ci.yml` set: there a missing database fails collection. It is not keyed on
 `CI`, because the "Structural evals" job runs `pytest tests/evals/` with `CI=true` and no Postgres
 service. Pinned by `tests/evals/test_suggestion_gates_ci_guard.py`.
+
+The end-to-end proof (`tests/e2e_suggestions`, `tests/e2e_suggestions/README.md`) drives the real
+path for every kind in English and Turkish: GET -> the real worker body with a cassette -> GET ->
+`submit_turn` -> `run_kria_turn`. A check that fails because of a defect in code the proof does not
+own carries a named `Gap`; the day it passes the run fails with "gap closed, remove the marker".
+GAP-5, GAP-10 and GAP-11 were closed by the serve strip and the Turkish word list above.
