@@ -1020,8 +1020,8 @@ def test_flag_off_the_brief_sections_are_the_bytes_they_were_before_the_opening(
 
     monkeypatch.setattr(settings, "speaker_full_opening_enabled", False)
     # Frozen from the tree before item 16 (the shared brief section and its extractor narrowing):
-    # main 653beb1de (item 12's caption facts + item 13's #2102 `pauses: "tight"`; item 17 leaves
-    # the section unchanged). Re-freeze deliberately when the shared brief section changes
+    # main 653beb1de (item 12's caption facts + Qendresa 13's `pauses: "tight"`); item 17's #2110
+    # leaves these bytes unchanged. Re-freeze deliberately when the shared brief section changes
     # underneath item 16.
     assert brief_prompt_section() is _BRIEF_PROMPT_SECTION
     assert digest(brief_prompt_section()) == (
