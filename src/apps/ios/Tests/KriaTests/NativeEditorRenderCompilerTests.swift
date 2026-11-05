@@ -445,6 +445,75 @@ import KriaMediaEngine
         XCTAssertNotNil(layer.karaoke)
     }
 
+    // Qendresa item 12 (caption shape). Ways this could fail: box missing; box drawn per word (karaoke layer);
+    // wrong padding/radius; dim applied over the creator's own highlight choice; dim colour wrong; a document
+    // without `caption_shape` changing at all.
+    private func shapedCaptionLayers(shape: JSONValue?, appearance: [String: JSONValue] = [:], text: String = "One more",
+                                     color: String = "#FFFFFF") throws -> [PortableTextLayer] {
+        let (source, clip) = talkingSource(duration: 4)
+        var meta: [String: JSONValue] = ["style": .string("word"), "color": .string(color), "highlight_color": .string("#FFFFFF")]
+        if !appearance.isEmpty { meta["appearance"] = .object(appearance) }
+        if let shape { meta["shape"] = shape }
+        let document = EditorDocument(editFormat: "subtitled", clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: 4)],
+            captionMeta: meta, captionCues: [.init(id: "cue", startS: 0.5, endS: 3.5, text: text)])
+        let item = NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue"), start: 0.5, end: 3.5)
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        return try compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source], deviceCaptions: true).recipe.textLayers
+    }
+
+    func testCaptionShapeBoxDrawsOneStaticLayerPerCueOnAPaddedRoundedBox() throws {
+        let layers = try shapedCaptionLayers(shape: .object(["version": .number(1), "words": .number(2), "box": .string("#E5E5E5")]),
+                                             color: "#000000")
+        XCTAssertEqual(layers.count, 1)
+        let layer = layers[0]
+        XCTAssertNil(layer.karaoke, "a karaoke layer would paint the box once per word")
+        let box = try XCTUnwrap(layer.background)
+        let grey = 229.0 / 255
+        XCTAssertEqual(box.color, TextInk(red: grey, green: grey, blue: grey, alpha: 1))
+        let size = try XCTUnwrap(layer.runs.first?.fontSize)
+        XCTAssertEqual(box.radius, 0.35 * size, accuracy: 0.001)
+        let left = layer.runs.map(\.x).min() ?? 0
+        XCTAssertEqual(left - box.left, 0.40 * size, accuracy: 0.001, "padding x")
+        XCTAssertEqual(layer.runs.first?.fill, TextInk(red: 0, green: 0, blue: 0, alpha: 1))
+        let plain = try shapedCaptionLayers(shape: nil, appearance: ["highlight_spoken_word": .bool(false)])
+        XCTAssertNil(plain[0].background)
+    }
+
+    func testCaptionShapeBoxIgnoresAnInvalidHex() throws {
+        let layers = try shapedCaptionLayers(shape: .object(["box": .string("grey")]))
+        XCTAssertNil(layers[0].background)
+    }
+
+    func testCaptionShapeDimKeepsOnlyTheSpokenWordBright() throws {
+        let layers = try shapedCaptionLayers(shape: .object(["version": .number(1), "words": .number(2), "dim": .bool(true)]))
+        XCTAssertEqual(layers.count, 1)
+        let karaoke = try XCTUnwrap(layers[0].karaoke)
+        XCTAssertEqual(karaoke.activeOnly, true)
+        XCTAssertEqual(karaoke.highlight, TextInk(red: 1, green: 1, blue: 1, alpha: 1))
+        XCTAssertNil(layers[0].background)
+        XCTAssertFalse(layers[0].runs.isEmpty)
+        for run in layers[0].runs {
+            XCTAssertEqual(run.fill, TextInk(red: 0.65, green: 0.65, blue: 0.65, alpha: 1))
+        }
+    }
+
+    func testCaptionShapeDimYieldsToTheCreatorsHighlightChoice() throws {
+        let dimShape = JSONValue.object(["dim": .bool(true)])
+        for highlighted in [false, true] {
+            let appearance: [String: JSONValue] = ["highlight_spoken_word": .bool(highlighted)]
+            let shaped = try shapedCaptionLayers(shape: dimShape, appearance: appearance)
+            let plain = try shapedCaptionLayers(shape: nil, appearance: appearance)
+            XCTAssertEqual(shaped, plain, "an explicit highlight setting wins over dim (highlighted=\(highlighted))")
+        }
+    }
+
+    func testNoCaptionShapeLeavesTheLayersUnchanged() throws {
+        let without = try shapedCaptionLayers(shape: nil)
+        let empty = try shapedCaptionLayers(shape: .object(["version": .number(1), "words": .number(2)]))
+        XCTAssertEqual(without, empty)
+        XCTAssertEqual(without[0].runs.first?.fill, TextInk(red: 1, green: 1, blue: 1, alpha: 1))
+    }
+
     /// Nothing left to fall back to: the failure is named, permanent (no Retry that cannot work) and honest.
     func testMoreCuesThanTheEngineCapIsANamedPermanentFailure() throws {
         XCTAssertThrowsError(try wordCaptionProgram(words: 501, wordsPerCue: 1, highlighted: true)) { error in

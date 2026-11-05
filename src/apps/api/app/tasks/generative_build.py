@@ -8178,8 +8178,7 @@ def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
 
     KRI-1162: plus ``sequence`` (``[{media_id, source_start_s, spoken_phrase, hold_s}]``),
     ``cadence_s`` and ``speaker_frame`` (a preset name) -- each present only when the strategy
-    carries it, so a single-background strategy yields exactly the pre-KRI-1162 dict. Qendresa
-    item 17: ``keep_changing: True`` only when entries exist and the planner set a real ``True``.
+    carries it, so a single-background strategy yields exactly the pre-KRI-1162 dict.
     """
     strategy = all_candidates.get("creator_strategy")
     raw = strategy.get("background_media") if isinstance(strategy, dict) else None
@@ -8229,8 +8228,6 @@ def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
         cadence = raw.get("cadence_s")
         if isinstance(cadence, (int, float)) and not isinstance(cadence, bool):
             request["cadence_s"] = float(cadence)
-        if raw.get("keep_changing") is True:
-            request["keep_changing"] = True
     frame = raw.get("speaker_frame")
     if isinstance(frame, str) and frame in SPEAKER_FRAME_PRESETS:
         request["speaker_frame"] = frame
@@ -8433,14 +8430,17 @@ def _resolve_strategy_background(
                     index=index,
                     spoken_phrase=entry.get("spoken_phrase"),
                     hold_s=entry.get("hold_s"),
+                    # S57/S59: the pool row is the photo; two entries naming it are one photo.
+                    media_key=str(row["id"]),
                 )
-                for index, entry, _row in entry_rows
+                for index, entry, row in entry_rows
             ],
             cadence_s=float(request.get("cadence_s") or 4.0),
             take_s=float(take_s) if take_s is not None else 0.0,
             words=words,
             keep_segments=keep_segments,
-            keep_changing=bool(request.get("keep_changing")),
+            # A colour fill is a base outside the sequence; a pool fill may be one of its photos.
+            fill_key=str(fill_row["id"]) if fill_row is not None else None,
             **({"opening_s": opening_end_s} if opening_end_s is not None else {}),
         )
         lane_drops.extend(layout.notes)

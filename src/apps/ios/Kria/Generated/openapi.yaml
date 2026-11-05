@@ -1812,6 +1812,11 @@
             "title": "Speaker Background Color",
             "type": "boolean"
           },
+          "steer_now": {
+            "default": false,
+            "title": "Steer Now",
+            "type": "boolean"
+          },
           "suggestion_chips": {
             "default": false,
             "title": "Suggestion Chips",
@@ -13382,6 +13387,16 @@
             "minimum": 0,
             "title": "Expected Thread Revision",
             "type": "integer"
+          },
+          "only_if_queued": {
+            "default": false,
+            "title": "Only If Queued",
+            "type": "boolean"
+          },
+          "steer": {
+            "default": false,
+            "title": "Steer",
+            "type": "boolean"
           }
         },
         "required": [

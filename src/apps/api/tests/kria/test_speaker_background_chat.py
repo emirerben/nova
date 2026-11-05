@@ -903,66 +903,7 @@ def test_the_colour_notices_have_turkish_twins():
         assert capabilities.SPEAKER_BACKGROUND_NOTICES[key] in _KNOWN_TR
 
 
-# ------------------------------------------- Qendresa item 17: background_media.keep_changing
-
-
-def test_keep_changing_is_omitted_while_false_and_round_trips_when_true():
-    from app.agents._schemas.reaction_beats import BackgroundMedia
-
-    assert "keep_changing" not in BackgroundMedia(media_id=POOL_PHOTO).model_dump(mode="json")
-    off = _strategy(background_media=_sequence(POOL_PHOTO)).model_dump(
-        mode="json", exclude_none=True
-    )
-    assert "keep_changing" not in off["background_media"]
-    on = _strategy(background_media=_sequence(POOL_PHOTO, keep_changing=True))
-    dumped = on.model_dump(mode="json", exclude_none=True)
-    assert dumped["background_media"]["keep_changing"] is True
-    assert CreativeStrategy.model_validate(dumped).background_media.keep_changing is True
-
-
-def test_the_repair_keeps_keep_changing_only_with_an_open_gate_and_a_surviving_entry(
-    monkeypatch,
-):
-    _open_colour(monkeypatch, windows=True)
-    manifest = _manifest()
-    kept, _ = _repair(
-        manifest, _strategy(background_media=_sequence(POOL_PHOTO, keep_changing=True))
-    )
-    assert kept.background_media.keep_changing is True
-    color, _ = _repair(
-        manifest,
-        _strategy(
-            background_media={
-                "color": "#112233",
-                "sequence": [{"media_id": POOL_PHOTO}],
-                "keep_changing": True,
-            }
-        ),
-    )
-    assert color.background_media.keep_changing is True
-    gone, _ = _repair(
-        manifest,
-        _strategy(
-            background_media={
-                "media_id": POOL_PHOTO,
-                "sequence": [{"media_id": FOREIGN}],
-                "keep_changing": True,
-            }
-        ),
-    )
-    assert gone.background_media.keep_changing is False
-    lone, _ = _repair(
-        manifest, _strategy(background_media={"media_id": POOL_PHOTO, "keep_changing": True})
-    )
-    assert lone.background_media.keep_changing is False
-
-
-def test_the_repair_drops_keep_changing_with_a_closed_windows_gate(monkeypatch):
-    _open_gate(monkeypatch)
-    kept, _ = _repair(
-        _manifest(), _strategy(background_media=_sequence(POOL_PHOTO, keep_changing=True))
-    )
-    assert kept.background_media.keep_changing is False
+# ------------------------------------------- Qendresa item 17: how to write a spoken_phrase
 
 
 def test_the_follows_talk_paragraph_needs_the_flag_and_the_windows_capability(monkeypatch):
@@ -971,10 +912,10 @@ def test_the_follows_talk_paragraph_needs_the_flag_and_the_windows_capability(mo
     _open_windows(monkeypatch)
     monkeypatch.setattr(settings, "background_follows_talk_enabled", False)
     off = _render_prompt(_manifest())
-    assert section not in off and "keep_changing" not in off
+    assert section not in off
     monkeypatch.setattr(settings, "background_follows_talk_enabled", True)
     on = _render_prompt(_manifest())
-    assert on.count(section) == 1
+    assert on.count(section) == 1 and "spoken_phrase" in section
     assert on.replace("\n" + section, "") == off
     # flag on but no windows capability: nothing taught
     _open_gate(monkeypatch)
@@ -984,20 +925,6 @@ def test_the_follows_talk_paragraph_needs_the_flag_and_the_windows_capability(mo
         [f for f in settings.phone_render_verified_features if f != "speakerBackgroundWindows"],
     )
     assert section not in _render_prompt(_manifest())
-
-
-def test_keep_changing_is_lenient_about_what_the_model_writes():
-    from app.agents._schemas.reaction_beats import BackgroundMedia
-
-    def made(value):
-        return BackgroundMedia(media_id=POOL_PHOTO, keep_changing=value).keep_changing
-
-    assert made(None) is False
-    assert made("true") is True
-    assert made(1) is True
-    assert made(True) is True
-    assert made("banana") is False
-    assert made([1]) is False
 
 
 # ----------------------------------------- Qendresa item 16: start full screen (S79, S82)
@@ -1092,24 +1019,26 @@ def test_flag_off_the_brief_sections_are_the_bytes_they_were_before_the_opening(
         return hashlib.sha256(text.encode()).hexdigest()
 
     monkeypatch.setattr(settings, "speaker_full_opening_enabled", False)
-    # Frozen from the tree before item 16 (the shared brief section and its extractor narrowing).
+    # Frozen from the tree before item 16 (the shared brief section and its extractor narrowing):
+    # item 17's #2110 at 113399d67 (main 56e21de1a, with item 12's caption facts). Re-freeze
+    # deliberately when the shared brief section changes underneath item 16.
     assert brief_prompt_section() is _BRIEF_PROMPT_SECTION
     assert digest(brief_prompt_section()) == (
-        "562441ab494ae1bf4c0f79dd9811163c782b8548712f05ed7334ceaba675ffe6"
+        "c1ff8dfa7484b1a613db57e9515f6ecd58e3bd14d41d1efa0365975df6d62269"
     )
     assert digest(brief_prompt_section(True)) == (
-        "af985463dadc95b0650cb151876be9dbc34ace21d2fe070cc800a92f0ccaf4c5"
+        "0fca4c5bd27400c6af70364849c3e781b3696e111a37dca4db4592cbebcf481c"
     )
     assert digest(_narrow_brief_section(False)) == (
-        "2d958315757e8f5a08c38d47cb0b62a478c45c712f0e8b9a62cd1d21276b90ef"
+        "caf3d9bb1cd8e8c09e48694824d0e64f28ffa3e581f90c9a04c203607f707ef9"
     )
     assert digest(_narrow_brief_section(True)) == (
-        "1e26b084eb4827cdfce9f02612b60482b94bdca49afbd26adee05b80cee0c453"
+        "958f1020f4b1f77cca64693f2806c437ce1fa905f1e8cf8d95477737f00f10c0"
     )
-    # and the whole extractor prompt, byte for byte (captured before the change)
+    # and the whole extractor prompt, byte for byte (captured from that same tree)
     for insert_open, expected in (
-        (False, "8ee1c407332c0711d0eeb06d3cc7143d161bde65208f4e583f8f4f6f67ac75d7"),
-        (True, "fe01ae9ed86bd46d376ba8b3b7509b74d43dd20f6fb01b6823b151c5ce53d709"),
+        (False, "e5c019dda3dc5ef1dcb63335ce4f0ec3197b1fa5f871e17d224a316b4782c7c0"),
+        (True, "0f7f250721a140da1d6e3940c95d9f74fc56144f06d22782f66c3dec94cfc531"),
     ):
         rendered = BriefExtractorAgent(None).render_prompt(
             BriefExtractionInput(

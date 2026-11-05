@@ -606,6 +606,27 @@ def text_bend_planned_for(client_protocol: int | None) -> bool:
     )
 
 
+def caption_shape_planned_for(client_protocol: int | None) -> bool:
+    """May a phone Talking render draw the caption shape the creator typed (Qendresa item 12)?
+
+    Read like `freeze_frame_planned_for`: ``client_protocol`` is the approving app build
+    (``creator_client_protocol`` on the Job). True iff the kill switch is on, ``captionShape``
+    (device check of the editor's caption box) and ``authoredText`` (the engine's text box and
+    active-word highlight) are in ``phone_render_verified_features``, and that build declares
+    at least ``CAPTION_SHAPE_PROTOCOL``. No stamp, an older build or any gate off: captions are
+    exactly today's, and the caption receipt says the shape was not drawn.
+    """
+    from app.services.client_protocol import CAPTION_SHAPE_PROTOCOL  # noqa: PLC0415
+
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        settings.phone_caption_shape_enabled
+        and {"captionShape", "authoredText"} <= verified
+        and client_protocol is not None
+        and client_protocol >= CAPTION_SHAPE_PROTOCOL
+    )
+
+
 def clip_speed_planned_for() -> bool:
     """May a phone montage plan retime a cut for the creator's speed ask (KRI-689)?
 

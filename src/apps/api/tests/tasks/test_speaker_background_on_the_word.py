@@ -66,6 +66,8 @@ NAMES = {visual["pool_id"]: name for name, visual in KIT.items()}
 # five in filename order, no phrase, no cadence -- the rotation the creator did not ask for.
 STORED_BACKGROUND = GREEN3["stored_background_media"]
 STORED_ORDER = [entry["media_id"].removeprefix("asset-") for entry in STORED_BACKGROUND["sequence"]]
+# The stored fill (one of the five photos): since S57 the layout never lets it repeat a photo.
+STORED_FILL = STORED_BACKGROUND["media_id"].removeprefix("asset-")
 # What the v114 windows paragraph asks the planner for on this input: every entry phrased with
 # the take's own words; both drone visuals on the one mention of drones. Kept in the STORED
 # (filename) order on purpose: the layout must follow the talk, not the list.
@@ -112,19 +114,32 @@ def _word_output_s(word: str) -> float:
 # ------------------------------------------------------------------ layout helpers + the check
 
 
-def _lay_out(order, phrases=None, *, holds=None, words=WORDS, keep=KEEP, take_s=TAKE_S, **kw):
+def _lay_out(
+    order,
+    phrases=None,
+    *,
+    holds=None,
+    words=WORDS,
+    keep=KEEP,
+    take_s=TAKE_S,
+    fill=STORED_FILL,
+    **kw,
+):
     """`lay_out` exactly as the worker calls it, over ``order`` (pool ids); windows by media."""
     phrases = phrases or {}
     holds = holds or {}
     layout = seq.lay_out(
         [
-            seq.SequenceEntry(index=i, spoken_phrase=phrases.get(media), hold_s=holds.get(media))
+            seq.SequenceEntry(
+                index=i, spoken_phrase=phrases.get(media), hold_s=holds.get(media), media_key=media
+            )
             for i, media in enumerate(order)
         ],
         cadence_s=kw.get("cadence_s", CADENCE_S),
         take_s=take_s,
         words=words,
         keep_segments=keep,
+        fill_key=fill,
     )
     return layout, [(order[w.index], w.start_s, w.end_s) for w in layout.windows]
 
@@ -209,21 +224,20 @@ def _describe(windows) -> str:
 # ------------------------------------------------------------------ S54: nothing else changes
 
 
-def test_green3_stored_strategy_still_rotates_exactly_as_before():
-    """The planner's stored strategy (no phrase) is a rotation, byte-for-byte what prod drew:
-    eight 4 s windows in list order, repeating (`phone_lane_receipt.background.windows == 8`)."""
+def test_green3_stored_strategy_shows_each_photo_once():
+    """The planner's stored strategy (no phrase) is a rotation. Prod (9bad2d75) drew eight 4 s
+    windows in list order, repeating three photos; since S57 (2026-11-05, S4 "fb 1": "the same
+    photo never comes up twice") each photo shows once, in list order, stretched to the end."""
     layout, windows = _lay_out(STORED_ORDER)
 
-    assert layout.notes == ()
+    assert layout.notes == ({"lane": "background", "reason": "cadence_stretched"},)
+    each = TAKE_S / len(STORED_ORDER)
     assert [(NAMES[m], round(s, 3), round(e, 3)) for m, s, e in windows] == [
-        ("IMG_7120", 0.0, 4.0),
-        ("IMG_7122", 4.0, 8.0),
-        ("IMG_7123", 8.0, 12.0),
-        ("IMG_7125", 12.0, 16.0),
-        ("IMG_7127", 16.0, 20.0),
-        ("IMG_7120", 20.0, 24.0),
-        ("IMG_7122", 24.0, 28.0),
-        ("IMG_7123", 28.0, round(TAKE_S, 3)),
+        ("IMG_7120", 0.0, round(each, 3)),
+        ("IMG_7122", round(each, 3), round(2 * each, 3)),
+        ("IMG_7123", round(2 * each, 3), round(3 * each, 3)),
+        ("IMG_7125", round(3 * each, 3), round(4 * each, 3)),
+        ("IMG_7127", round(4 * each, 3), round(TAKE_S, 3)),
     ]
 
 
@@ -301,57 +315,45 @@ def test_the_opening_visual_covers_the_lead_in():
     )
 
 
-def test_green3_the_tail_keeps_changing_at_the_cadence():
-    """After the last mention ("drones", 15.3 s into a 30.3 s edit) the visuals keep taking
-    turns every ~4 s to the end, in the order they were first shown, never one held for 11 s."""
+def test_green3_the_last_photo_holds_to_the_end():
+    """S51 reversed 2026-11-05 (S57): after the last mention ("drones", 15.3 s into a 30.3 s
+    edit) the visuals used to take turns again every ~4 s; now the last one stays to the end --
+    a longer scene beats showing a photo twice."""
     _layout, windows = _lay_out(STORED_ORDER, PHRASES)
-    visible = _visible(windows, fill=SUNRISE)
+    visible = _visible(windows, fill=STORED_FILL)
 
-    all_shown_at = max(_first_window_start(windows, m) for m in PHRASES)
-    tail = [row for row in visible if row[1] >= all_shown_at - 1e-6]
-    assert tail[-1][2] == pytest.approx(TAKE_S, abs=1e-6)
-    longest = CADENCE_S + max(seq.MIN_WINDOW_S, CADENCE_S / 2.0)  # cadence + an absorbed sliver
-    for media, start, end in tail:
-        assert end - start <= longest + 1e-6, (
-            f"{NAMES[media]} held {end - start:.1f} s: {_describe(tail)}"
-        )
-    assert len(tail) >= 3, f"the tail does not keep changing: {_describe(tail)}"
-    first_order = [
-        m
-        for m, _s in sorted(
-            ((m, _first_window_start(windows, m)) for m in PHRASES), key=lambda kv: kv[1]
-        )
-    ]
-    after_last = [media for media, _s, _e in tail[1:]]
-    assert after_last == [first_order[i % len(first_order)] for i in range(len(after_last))], (
-        f"the tail does not take turns in first-shown order: {_describe(tail)}"
-    )
+    assert len({m for m, _s, _e in visible}) == len(visible) == len(PHRASES), _describe(visible)
+    last_mention_at = max(_first_window_start(windows, m) for m in PHRASES)
+    tail = [row for row in visible if row[1] >= last_mention_at - 1e-6]
+    assert len(tail) == 1 and tail[0][2] == pytest.approx(TAKE_S, abs=1e-6), _describe(tail)
 
 
-def test_a_long_tail_stretches_instead_of_passing_forty_windows():
-    """A ten-minute take whose mentions all come in the first 16 s: the tail's cadence stretches
-    so the recipe stays within 40 windows, and the last window still ends at the take end."""
+def test_a_long_tail_is_one_window():
+    """A ten-minute take whose mentions all come in the first 16 s: one window per photo, the
+    last held to the take end (it used to stretch a cycling tail to stay within 40 windows)."""
     long_take = 600.0
     layout, windows = _lay_out(STORED_ORDER, PHRASES, keep=None, take_s=long_take, cadence_s=2.0)
 
     _assert_phone_contract(windows, take_s=long_take)
+    assert len(windows) == len(PHRASES)
     assert windows[-1][2] == pytest.approx(long_take, abs=1e-6)
-    assert {"lane": "background", "reason": "cadence_stretched"} in layout.notes
+    assert {"lane": "background", "reason": "cadence_stretched"} not in layout.notes
     _assert_on_their_words(windows, keep=None)
 
 
 def test_an_explicit_hold_still_ends_the_window_early():
     """A creator-asked length (`hold_s`) ends the window; the fill shows until the next mention,
-    unless what is left would only be a sliver, which the window absorbs."""
+    unless what is left would only be a sliver, which the window absorbs. The fill here is a base
+    outside the sequence (a colour): over one of the photos the hold gives way instead (S60)."""
     post_at = _word_output_s("technology")
     tablets_at = seq.to_output_time(LUMO_TABLETS_SOURCE_S, KEEP)
 
-    _layout, held = _lay_out(STORED_ORDER, PHRASES, holds={COLLAB_POST: 1.5})
+    _layout, held = _lay_out(STORED_ORDER, PHRASES, holds={COLLAB_POST: 1.5}, fill=None)
     post = next(w for w in held if w[0] == COLLAB_POST)
     assert post[1:] == (pytest.approx(post_at, abs=1e-6), pytest.approx(post_at + 1.5, abs=1e-6))
     assert next(w for w in held if w[0] == TABLET)[1] == pytest.approx(tablets_at, abs=1e-6)
 
-    _layout, sliver = _lay_out(STORED_ORDER, PHRASES, holds={COLLAB_POST: 2.6})
+    _layout, sliver = _lay_out(STORED_ORDER, PHRASES, holds={COLLAB_POST: 2.6}, fill=None)
     post = next(w for w in sliver if w[0] == COLLAB_POST)
     assert post[2] == pytest.approx(tablets_at, abs=1e-6), (
         f"a {tablets_at - post_at - 2.6:.2f} s fill flash was left: {_describe(sliver)}"
@@ -361,14 +363,13 @@ def test_an_explicit_hold_still_ends_the_window_early():
 def test_entries_sharing_a_mention_that_cannot_all_fit_drop_the_last_with_a_note():
     """Seven visuals on "technology partner" with "Lumo tablets" 2.84 s later: they share the
     span in list order, half a second at least each; the ones that cannot fit are dropped and
-    each drop is on the receipt. A drop never stops the turns after the last mention (S51)."""
+    each drop is on the receipt. After the last mention the tablet holds to the end (S57)."""
     shared = [f"00000000-0000-4000-8000-00000000000{i}" for i in range(7)]
     order = [*shared, TABLET]
     phrases = {**{media: "technology partner" for media in shared}, TABLET: "Lumo tablets"}
     layout, windows = _lay_out(order, phrases)
 
     _assert_phone_contract(windows)
-    # First appearances (the tail after the last mention shows them again, S51).
     in_group = list(dict.fromkeys(m for m, _s, _e in windows if m in shared))
     assert len(in_group) >= 2, f"the visuals sharing a mention lost all but one: {windows}"
     assert in_group == shared[: len(in_group)], "the shared mention does not keep list order"
@@ -376,10 +377,8 @@ def test_entries_sharing_a_mention_that_cannot_all_fit_drop_the_last_with_a_note
     assert dropped == set(range(len(in_group), len(shared)))
     tablet = next(w for w in windows if w[0] == TABLET)
     assert tablet[1] == pytest.approx(seq.to_output_time(LUMO_TABLETS_SOURCE_S, KEEP), abs=1e-6)
-    after = [w for w in windows if w[1] >= tablet[2] - 1e-6]
-    assert len(after) >= 3 and after[-1][2] == pytest.approx(TAKE_S, abs=1e-6), (
-        f"the background stops changing after the last mention: {windows}"
-    )
+    assert tablet[2] == pytest.approx(TAKE_S, abs=1e-6), f"the tablet does not hold: {windows}"
+    assert len({m for m, _s, _e in windows}) == len(windows), f"a photo repeats: {windows}"
 
 
 # ------------------------------------------------------------------ S52/S56: wrong content

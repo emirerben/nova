@@ -188,10 +188,11 @@ def test_green3_review_says_what_was_done(monkeypatch):
     gb._run_generative_job(str(job.id))
     variant = job.assembly_plan["variants"][0]
 
-    # Count (K1): windows over distinct photos / videos.
+    # Count (K1): distinct photos / videos. Since S57 (2026-11-05) each one has exactly one
+    # window (it used to be more windows than photos: the tail took turns again).
     background = variant["phone_lane_receipt"]["background"]
     assert background["media"] == 3
-    assert background["windows"] > background["media"]
+    assert background["windows"] == background["media"]
 
     receipts = {
         r.requirement_id: r
