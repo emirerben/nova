@@ -86,7 +86,7 @@ from app.pipeline.prompt_loader import load_prompt
 # `background_color` on a plain-colour background ask.
 # v54 (KRI-1189 lands after #2088): v52's `cut_restarts` teaching on top of v53. The
 # KRI-1189 replay fixtures keep the `2026-11-03-v52` label they were recorded under.
-# v66 (item 23, Related KRI-1129; v55-v65 are held by other open PRs): with
+# v66 (item 23, Related KRI-1129), on top of v55 (Qendresa 12 caption shape): with
 # BRIEF_LONG_REQUEST_ENABLED the shared brief section says "at most 32 objects" instead of 16.
 # Flag off: byte-identical.
 BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-05-v66"

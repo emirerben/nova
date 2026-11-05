@@ -3187,6 +3187,44 @@
         "scripts/kria/score_q2_long_prompt.py",
         "docs/reviews/qendresa-23-long-prompts.md"
       ]
+    },
+    {
+      "id": "steer-now",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_steer_now_postgres.py",
+      "xctests": [
+        "KriaTests/SteerNowPolicyTests/testAQueuedMessageIsUpNextBehindTheRunningTurn",
+        "KriaTests/SteerNowPolicyTests/testSteerNowWhileTheEarlierTurnPlans",
+        "KriaTests/SteerNowPolicyTests/testSteerNowWhileTheEarlierCardIsUp",
+        "KriaTests/SteerNowPolicyTests/testNoSteerNowOnceTheVideoIsApprovedOrBeingMade",
+        "KriaTests/SteerNowPolicyTests/testTheWaitingMessageIsHiddenFromTheChat",
+        "KriaTests/SteerNowPolicyTests/testARemovedMessageStaysHidden",
+        "KriaTests/SteerNowPolicyTests/testASteeredMessageJoinsTheChat",
+        "KriaTests/SteerNowPolicyTests/testARemovalIsRetriedOnlyWhileTheMessageStillWaits",
+        "KriaTests/SteerNowPolicyTests/testARemovalIsNotRetriedOnceKriaPickedTheMessageUp",
+        "KriaTests/SteerNowPolicyTests/testARemovalIsNotRetriedOnceTheMessageIsGone",
+        "KriaTests/SteerNowPolicyTests/testCapabilityDefaultsOffWhenKeyIsMissing",
+        "KriaUITests/SteerNowUITests/testWaitingBarAndSteerWhileKriaPlans",
+        "KriaUITests/SteerNowUITests/testSteerClosesTheCardAndSaysWhy",
+        "KriaUITests/SteerNowUITests/testNoSteerWhileTheVideoIsBeingMade",
+        "KriaUITests/SteerNowUITests/testTrashRemovesTheWaitingMessage",
+        "KriaUITests/SteerNowUITests/testEditFromTheMenuPutsTheTextBackInTheBox",
+        "KriaUITests/SteerNowUITests/testHoldingTheBarOpensTheSameMenu",
+        "KriaUITests/SteerNowUITests/testThirdMessageStaysInComposerWithANote",
+        "KriaUITests/SteerNowUITests/testSteerRetriesOnceAfterAStaleRevision",
+        "KriaUITests/SteerNowUITests/testEditAfterKriaPickedTheMessageUpNeverStopsIt",
+        "KriaUITests/SteerNowUITests/testSteerAfterTheVideoStartedHidesTheButton",
+        "KriaUITests/SteerNowUITests/testTurkishChatGetsTurkishSteerWords",
+        "KriaUITests/SteerNowUITests/testSwitchOffLooksLikeToday"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/removed_messages.py",
+        "src/apps/api/tests/kria/test_steer_now_postgres.py",
+        "src/apps/ios/Kria/Core/SteerNow.swift",
+        "src/apps/ios/Kria/Features/WaitingMessageBar.swift",
+        "src/apps/ios/Tests/KriaTests/SteerNowPolicyTests.swift",
+        "src/apps/ios/Tests/KriaUITests/SteerNowUITests.swift"
+      ]
     }
   ]
 }
