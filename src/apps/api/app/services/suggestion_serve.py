@@ -158,6 +158,9 @@ async def with_transcripts(db: Any, thread: Any, ctx: SuggestionContext) -> Sugg
 
 # Kinds whose card reads something the editor snapshot and the clip rows cannot say.
 INPUT_KINDS = ("hook", "mute_clip", "filler_words", "duplicates")
+# The kinds whose tap re-drafts the thread's plan (a brief update or an item setting). They are
+# only the variant's next revision while its head draft IS the plan (``pinned.restate_base``).
+RESTATING_KINDS = frozenset({"mute_clip", "filler_words"})
 BRIEF_KEY = "brief"  # kind_inputs: the latest CreativeBrief (None = the thread has none)
 
 
@@ -345,6 +348,20 @@ async def _head_snapshot_hash(db: Any, thread: Any) -> str | None:
     ).scalar_one_or_none()
 
 
+async def _plan_is_head(db: Any, thread: Any, ctx: SuggestionContext) -> bool:
+    """False when a restating tap would be refused ``base_moved``: the variant's head draft is
+    newer work (an editor draft) than the plan the tap re-drafts. The tap's own check, asked at
+    offer time, so a card is not shown that its tap would refuse (and hide for good)."""
+    from app.services.suggestions import pinned  # noqa: PLC0415
+
+    try:
+        base = await pinned.restate_base(db, thread_id=thread.id, ctx=ctx)
+    except Exception:  # noqa: BLE001 - a card that cannot be proven is not offered
+        log.warning("suggestion_chips.error", stage="restate_base", exc_info=True)
+        return False
+    return base.reason != pinned.BASE_MOVED
+
+
 async def _with_v2_inputs(
     db: Any, thread: Any, item: Any, ctx: SuggestionContext
 ) -> SuggestionContext:
@@ -352,6 +369,13 @@ async def _with_v2_inputs(
     from app.services.suggestions.kinds import mute_clip  # noqa: PLC0415
 
     kinds = input_kinds_on()
+    if (
+        ctx.state == "ready"
+        and kinds & RESTATING_KINDS
+        and not await _plan_is_head(db, thread, ctx)
+    ):
+        # No input, no card: each kind fails closed without its own read.
+        kinds = kinds - RESTATING_KINDS
     inputs: dict[str, Any] = dict(ctx.kind_inputs)
     brief: Any = None
     brief_ok = False
