@@ -186,7 +186,7 @@ final class ChatTimelineTests: XCTestCase {
         }
         XCTAssertEqual(UploadFailureBanner.message(for: [failure(.unreadable)]), "1 file couldn’t be read and won’t be sent")
         XCTAssertEqual(UploadFailureBanner.message(for: [failure(.unreadable), failure(.unreadable)]), "2 files couldn’t be read and won’t be sent")
-        XCTAssertEqual(UploadFailureBanner.message(for: [failure(.uploadFailed)]), "1 file didn’t upload and won’t be sent unless you retry")
+        XCTAssertEqual(UploadFailureBanner.message(for: [failure(.uploadFailed)]), "1 file couldn’t upload")
         XCTAssertEqual(UploadFailureBanner.message(for: [failure(.cannotResume)]), "1 file couldn’t be resumed and won’t be sent")
         XCTAssertEqual(UploadFailureBanner.message(for: [failure(.unreadable), failure(.uploadFailed)]), "2 files won’t be sent")
         XCTAssertFalse(UploadFailureBanner.canRetry([failure(.unreadable), failure(.cannotResume)]))

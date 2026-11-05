@@ -205,8 +205,22 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(prompt.waitForExistence(timeout: 20))
         XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.textFields["Message Kria"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["Attach footage"].exists)
-        XCTAssertFalse(app.buttons["Attach footage"].isEnabled)
+        // + is always there. Before a video format is chosen it opens the tray with Record and Upload greyed out
+        // and says why, instead of opening Add media.
+        let plus = app.buttons["Attach footage"]
+        XCTAssertTrue(plus.exists)
+        XCTAssertTrue(plus.isEnabled)
+        plus.tap()
+        let reason = app.staticTexts["attach-tray-reason"]
+        XCTAssertTrue(reason.waitForExistence(timeout: 5))
+        XCTAssertEqual(reason.label, "Choose a video format first.")
+        XCTAssertFalse(app.buttons["attach-record"].isEnabled)
+        XCTAssertFalse(app.buttons["attach-upload"].isEnabled)
+        app.buttons["attach-upload"].tap()
+        XCTAssertFalse(app.buttons["upload-source-photos"].exists, "a greyed-out Upload does not open the sources")
+        XCTAssertFalse(app.buttons["source-upload"].exists, "no Add media sheet opens before a format is chosen")
+        app.buttons["chat-attach"].tap()
+        XCTAssertTrue(reason.waitForNonExistence(timeout: 5), "the x closes the tray")
         XCTAssertTrue(app.staticTexts["Montage"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["Voiceover"].exists)
 
@@ -283,7 +297,7 @@ final class CreationUITests: XCTestCase {
         }
         let monitor = addUIInterruptionMonitor(withDescription: "Photos access", handler: allowFullAccess)
         defer { removeUIInterruptionMonitor(monitor) }
-        let photos = app.buttons["Choose from Photos"]
+        let photos = app.buttons["upload-source-photos"]
         XCTAssertTrue(photos.waitForExistence(timeout: 3))
         photos.tap()
         let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
@@ -293,12 +307,10 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(tile0.waitForExistence(timeout: 40), app.debugDescription)
         XCTAssertTrue(tile2.exists)
         let count = app.staticTexts["gallery-count"]
-        // Apple's picker stays one tap away from the in-app gallery (and back).
-        app.buttons["gallery-toggle-picker"].tap()
-        XCTAssertTrue(app.scrollViews["photosView_content_scroll_view"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["photos-picker-done"].exists)
-        app.buttons["gallery-toggle-picker"].tap()
-        XCTAssertTrue(tile0.waitForExistence(timeout: 15), "the toggle returns to the in-app gallery")
+        // The gallery leads with a Record cell and a Files switch; Add stays disabled until something is picked.
+        XCTAssertTrue(app.buttons["gallery-record"].exists)
+        XCTAssertTrue(app.buttons["gallery-files"].exists)
+        XCTAssertFalse(app.buttons["photos-picker-done"].isEnabled)
         // Slide across three tiles: all selected, numbered in touch order.
         tile0.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             .press(
@@ -336,6 +348,115 @@ final class CreationUITests: XCTestCase {
             "A loader failure means the Photos asset could not be read")
     }
 
+    /// Cancel in the Kria gallery puts back what was ticked when it opened: a clip ticked this visit is not kept,
+    /// and the host does not move on as if footage had been chosen.
+    func testGalleryCancelRevertsThisVisitsTicks() {
+        let app = XCUIApplication()
+        app.resetAuthorizationStatus(for: .photos)
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-seed-photo-video", "-ui-testing-seed-photo-videos"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launch()
+        createFreshChat(in: app)
+        let card = app.buttons["format-montage"]
+        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.tap()
+        let chooseVideos = app.buttons["choose-videos"]
+        XCTAssertTrue(chooseVideos.waitForExistence(timeout: 5))
+        chooseVideos.tap()
+        func allowFullAccess(_ alert: XCUIElement) -> Bool {
+            guard alert.buttons.count == 3 else { return false }
+            alert.buttons.element(boundBy: 1).tap()
+            return true
+        }
+        let monitor = addUIInterruptionMonitor(withDescription: "Photos access", handler: allowFullAccess)
+        defer { removeUIInterruptionMonitor(monitor) }
+        let photos = app.buttons["upload-source-photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 3))
+        photos.tap()
+        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
+
+        let tile0 = app.buttons["gallery-tile-0"]
+        XCTAssertTrue(tile0.waitForExistence(timeout: 40), app.debugDescription)
+        let count = app.staticTexts["gallery-count"]
+        tile0.tap()
+        XCTAssertTrue(eventually { count.label.hasPrefix("1 of") }, count.label)
+        XCTAssertEqual(app.buttons["photos-picker-done"].label, "Add 1 clip")
+        app.buttons["gallery-cancel"].tap()
+
+        let upload = app.buttons["source-upload"]
+        XCTAssertTrue(upload.waitForExistence(timeout: 5), "Cancel returns to Add media on the same step")
+        XCTAssertTrue(eventually(timeout: 10) { upload.isHittable })
+        upload.tap()
+        XCTAssertTrue(photos.waitForExistence(timeout: 5))
+        photos.tap()
+        XCTAssertTrue(tile0.waitForExistence(timeout: 20))
+        XCTAssertTrue(eventually { count.label.hasPrefix("0 of") }, "the cancelled tick was undone: \(count.label)")
+        XCTAssertFalse(app.buttons["photos-picker-done"].isEnabled)
+    }
+
+    /// The shipped composer path end to end: + opens the Record | Upload tray, Upload asks where from, and choosing
+    /// Photos opens Add media with the gallery already presented. Cancel returns to Add media; the pick is then
+    /// added from the same gallery and reaches upload.
+    func testComposerTrayUploadFromPhotosOpensTheGalleryAndAddsThePick() {
+        let app = XCUIApplication()
+        app.resetAuthorizationStatus(for: .photos)
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-seed-photo-video", "-ui-testing-seed-photo-videos"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launch()
+        createFreshChat(in: app)
+        let card = app.buttons["format-montage"]
+        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.tap()
+        func allowFullAccess(_ alert: XCUIElement) -> Bool {
+            guard alert.buttons.count == 3 else { return false }
+            alert.buttons.element(boundBy: 1).tap()
+            return true
+        }
+        let monitor = addUIInterruptionMonitor(withDescription: "Photos access", handler: allowFullAccess)
+        defer { removeUIInterruptionMonitor(monitor) }
+
+        let plus = app.buttons["chat-attach"]
+        XCTAssertTrue(plus.waitForExistence(timeout: 10))
+        plus.tap()
+        XCTAssertTrue(app.buttons["attach-record"].waitForExistence(timeout: 5), "the tray leads with Record")
+        let upload = app.buttons["attach-upload"]
+        XCTAssertTrue(upload.exists)
+        XCTAssertFalse(app.buttons["upload-source-photos"].exists, "Photos only appears once Upload is chosen")
+        upload.tap()
+        let photos = app.buttons["upload-source-photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 5), "Upload asks where from")
+        XCTAssertTrue(app.buttons["upload-source-files"].exists)
+        photos.tap()
+        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
+
+        let tile0 = app.buttons["gallery-tile-0"]
+        XCTAssertTrue(tile0.waitForExistence(timeout: 40), "choosing Photos in the tray presents the gallery at once\n\(app.debugDescription)")
+        let count = app.staticTexts["gallery-count"]
+        tile0.tap()
+        XCTAssertTrue(eventually { count.label.hasPrefix("1 of") }, count.label)
+        app.buttons["gallery-cancel"].tap()
+        XCTAssertTrue(app.buttons["source-upload"].waitForExistence(timeout: 5), "Cancel lands on Add media, not back in the tray")
+        XCTAssertFalse(app.buttons["attach-upload"].exists)
+
+        app.buttons["source-upload"].tap()
+        XCTAssertTrue(photos.waitForExistence(timeout: 5))
+        photos.tap()
+        XCTAssertTrue(tile0.waitForExistence(timeout: 20))
+        XCTAssertTrue(eventually { count.label.hasPrefix("0 of") }, "the cancelled tick was undone: \(count.label)")
+        tile0.tap()
+        XCTAssertTrue(eventually { count.label.hasPrefix("1 of") }, count.label)
+        let done = app.buttons["photos-picker-done"]
+        XCTAssertTrue(done.isEnabled)
+        done.tap()
+        // The offline fixture has no upload reservations: a pick READ from Photos surfaces that decode error.
+        let reachedUpload = app.staticTexts["The data couldn\u{2019}t be read because it isn\u{2019}t in the correct format."]
+        XCTAssertTrue(reachedUpload.waitForExistence(timeout: 25), app.debugDescription)
+    }
+
     /// Full-access Photos returns to the attachment flow on Done. A selected
     /// talking-to-camera clip advances to overlays; Done there returns to chat.
     /// The single pick closes Apple's picker on its own only while the server
@@ -365,7 +486,7 @@ final class CreationUITests: XCTestCase {
         }
         let monitor = addUIInterruptionMonitor(withDescription: "Photos access", handler: allowFullAccess)
         defer { removeUIInterruptionMonitor(monitor) }
-        let photos = app.buttons["Choose from Photos"]
+        let photos = app.buttons["upload-source-photos"]
         XCTAssertTrue(photos.waitForExistence(timeout: 3))
         photos.tap()
         let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
@@ -373,9 +494,16 @@ final class CreationUITests: XCTestCase {
 
         let done = app.buttons["photos-picker-done"]
         XCTAssertTrue(done.waitForExistence(timeout: 10))
-        done.tap()
-        XCTAssertTrue(photos.waitForExistence(timeout: 5), "Done returns to Add media")
+        // Add stays disabled until something is picked, so leaving with nothing is Cancel.
+        XCTAssertFalse(done.isEnabled)
+        app.buttons["gallery-cancel"].tap()
+        let upload = app.buttons["source-upload"]
+        XCTAssertTrue(upload.waitForExistence(timeout: 5), "Cancel returns to Add media")
+        let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: upload)
+        XCTAssertEqual(XCTWaiter.wait(for: [hittable], timeout: 10), .completed)
 
+        upload.tap()
+        XCTAssertTrue(photos.waitForExistence(timeout: 5))
         photos.tap()
         XCTAssertTrue(done.waitForExistence(timeout: 10))
         let video = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Video'")).firstMatch
@@ -393,6 +521,10 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(picker.frame.contains(selectionPoint), "The selected video must be inside the visible Photos picker")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
             .withOffset(CGVector(dx: selectionPoint.x, dy: selectionPoint.y)).tap()
+        // The gallery stays open until the creator confirms with the pinned Add button.
+        XCTAssertTrue(done.isEnabled)
+        XCTAssertEqual(done.label, "Add 1 clip")
+        done.tap()
         // Filling the picker advances the attachment flow after dismissal.
         // Talking-to-camera has no voiceover step, so it lands on overlays.
         XCTAssertTrue(app.staticTexts["Add overlays"].waitForExistence(timeout: 10))
@@ -401,21 +533,28 @@ final class CreationUITests: XCTestCase {
         // This offline chat fixture does not implement upload reservations. The
         // imported asset must still be retained as a named, dismissible failure;
         // closing the picker alone would also pass if the selection were lost.
-        XCTAssertTrue(app.staticTexts["footage-upload-failures-message"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@", "won\u{2019}t be sent", "couldn\u{2019}t be")).firstMatch.waitForExistence(timeout: 10))
         chooseVideos.tap()
         XCTAssertTrue(photos.waitForExistence(timeout: 3))
+        // The simulator library also holds videos other tests seed, so which file sorts first varies.
         let selectedClipFailure = app.staticTexts.matching(
-            NSPredicate(format: "label BEGINSWITH 'kria-outro-paper.mp4: '")
+            NSPredicate(format: "label MATCHES '.+\\.(mp4|mov): .+'")
         ).firstMatch
         XCTAssertTrue(selectedClipFailure.waitForExistence(timeout: 3),
             "The selected Photos asset remains available as a named upload failure")
-        let dismissFailure = app.buttons.matching(NSPredicate(
+        // Choosing videos opens the Upload from list over the failure card; close it to reach Dismiss.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
+        XCTAssertTrue(photos.waitForNonExistence(timeout: 5))
+        // The chat behind the sheet shows the same failure with its own Dismiss; the sheet's is the one on top.
+        let dismissButtons = app.buttons.matching(NSPredicate(
             format: "label == 'Dismiss' AND identifier != 'footage-upload-failures-dismiss'"
-        )).firstMatch
-        XCTAssertTrue(dismissFailure.isHittable)
+        ))
+        let onTop = NSPredicate { _, _ in dismissButtons.allElementsBoundByIndex.contains { $0.isHittable } }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: onTop, object: nil)], timeout: 10), .completed)
+        let dismissFailure = dismissButtons.allElementsBoundByIndex.first { $0.isHittable }!
         dismissFailure.tap()
         XCTAssertFalse(selectedClipFailure.exists)
-        XCTAssertTrue(photos.isHittable, "The user can choose the clip again after dismissing the failure")
+        XCTAssertTrue(app.buttons["source-upload"].isHittable, "The user can choose the clip again after dismissing the failure")
     }
 
     /// KRI-719: with multi-clip Talking on, the Talking footage step explains the talking video plus
@@ -432,13 +571,13 @@ final class CreationUITests: XCTestCase {
         if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
         XCTAssertTrue(card.waitForExistence(timeout: 5))
         card.tap()
-        XCTAssertTrue(app.staticTexts["Choose the video of you talking, plus any clips to show while you talk."].waitForExistence(timeout: 5),
+        XCTAssertTrue(app.staticTexts["Record yourself talking, or upload that video. Add clips to show while you talk."].waitForExistence(timeout: 5),
                       app.debugDescription)
-        XCTAssertTrue(app.staticTexts["MP4, MOV · up to 10 clips"].exists)
+        XCTAssertTrue(app.staticTexts["Up to 10 clips"].exists)
         let chooseVideos = app.buttons["choose-videos"]
         XCTAssertTrue(chooseVideos.waitForExistence(timeout: 5))
         chooseVideos.tap()
-        XCTAssertTrue(app.staticTexts["The video of you talking, plus any clips to show while you talk."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Record yourself, or upload a video you already have. Add clips to show while you talk."].waitForExistence(timeout: 5))
         func allowFullAccess(_ alert: XCUIElement) -> Bool {
             guard alert.buttons.count == 3 else { return false }
             alert.buttons.element(boundBy: 1).tap()
@@ -446,7 +585,7 @@ final class CreationUITests: XCTestCase {
         }
         let monitor = addUIInterruptionMonitor(withDescription: "Photos access", handler: allowFullAccess)
         defer { removeUIInterruptionMonitor(monitor) }
-        let photos = app.buttons["Choose from Photos"]
+        let photos = app.buttons["upload-source-photos"]
         XCTAssertTrue(photos.waitForExistence(timeout: 3))
         photos.tap()
         let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
@@ -471,7 +610,7 @@ final class CreationUITests: XCTestCase {
         let reachedUpload = app.staticTexts["The data couldn\u{2019}t be read because it isn\u{2019}t in the correct format."]
         XCTAssertTrue(reachedUpload.waitForExistence(timeout: 25), app.debugDescription)
         if app.buttons["attachment-done"].exists { app.buttons["attachment-done"].tap() }
-        let failures = app.staticTexts["footage-upload-failures-message"]
+        let failures = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@", "won\u{2019}t be sent", "couldn\u{2019}t be")).firstMatch
         XCTAssertTrue(failures.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(eventually(timeout: 10) { failures.label.hasPrefix("3 files") }, failures.label)
     }
@@ -704,10 +843,10 @@ final class CreationUITests: XCTestCase {
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
 
-        let banner = app.staticTexts["footage-upload-failures-message"]
+        let banner = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@", "won\u{2019}t be sent", "couldn\u{2019}t be")).firstMatch
         XCTAssertTrue(banner.waitForExistence(timeout: 8))
         XCTAssertEqual(banner.label, "1 file couldn’t be read and won’t be sent")
-        XCTAssertTrue(app.buttons["footage-upload-failures-dismiss"].exists)
+        XCTAssertTrue(app.buttons["Dismiss"].exists)
 
         let send = app.buttons["Send clips"]
         XCTAssertTrue(send.waitForExistence(timeout: 5))
@@ -730,11 +869,11 @@ final class CreationUITests: XCTestCase {
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
 
-        let banner = app.staticTexts["footage-upload-failures-message"]
+        let banner = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@", "couldn\u{2019}t upload", "couldn\u{2019}t be")).firstMatch
         XCTAssertTrue(banner.waitForExistence(timeout: 8))
-        XCTAssertEqual(banner.label, "1 file didn’t upload and won’t be sent unless you retry")
+        XCTAssertEqual(banner.label, "1 file couldn’t upload")
         XCTAssertFalse(banner.label.contains("read"))
-        XCTAssertTrue(app.buttons["footage-upload-failures-retry"].exists)
+        XCTAssertTrue(app.buttons["Retry"].exists)
 
         let send = app.buttons["Send clips"]
         XCTAssertTrue(send.waitForExistence(timeout: 5))
@@ -1292,6 +1431,8 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_REPLY_FIXTURE"] = mode
+        // The tapped answer block spins while its message is pending; a running spinner keeps XCUITest from idling.
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
         app.launch()
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
@@ -1306,30 +1447,34 @@ final class CreationUITests: XCTestCase {
         shot.name = name; shot.lifetime = .keepAlways; add(shot)
     }
 
-    /// A question that offers answers shows them as chips plus "Other…"; a chip sends its exact text as an
-    /// ordinary message, "Other…" only opens the composer, and an answered question leaves no chips behind.
+    /// A question that offers answers shows them as stacked blocks plus "Type my own"; a block sends its exact text as
+    /// an ordinary message, "Type my own" only opens the composer, and an answered question leaves no blocks behind.
     func testReplyOptionChipsSendTheTappedLabelAndOtherOnlyFocusesTheComposer() {
         let app = launchReplyFixture("options")
         let first = app.buttons["reply-option-0"], second = app.buttons["reply-option-1"], third = app.buttons["reply-option-2"]
-        let other = app.buttons["reply-option-other"]
+        let other = app.buttons["answer-type-my-own"]
         XCTAssertTrue(second.waitForExistence(timeout: 15))
         XCTAssertEqual(first.label, "About 1 second")
         XCTAssertEqual(second.label, "About 0.8 seconds")
         XCTAssertEqual(third.label, "About 0.5 seconds")
-        XCTAssertEqual(other.label, "Other…")
+        XCTAssertEqual(other.label, "Type my own")
         for chip in [first, second, third, other] { XCTAssertGreaterThanOrEqual(chip.frame.height, 44, chip.identifier) }
         // The prose above the chips is unchanged (old builds rely on it).
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Kria: The clips are about 1.3 seconds each")).firstMatch.exists)
         attachScreenshot(app, "reply-option-chips")
 
-        // "Other…": the creator is put in the composer, and nothing is sent.
-        let sentBefore = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "You:")).count
+        // "Type my own": the creator is put in the composer, and nothing is sent.
+        // A message sent here would be answered by the fixture, which repeats the question: count those replies rather
+        // than "You:" bubbles, because the transcript is lazy and opening the keyboard can scroll older bubbles into view.
+        let questionReplies = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Kria: The clips are about 1.3 seconds each"))
+        let repliesBefore = questionReplies.count
+        XCTAssertGreaterThan(repliesBefore, 0)
         other.tap()
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Other… focuses the composer")
-        RunLoop.current.run(until: Date().addingTimeInterval(1))
-        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "You:")).count, sentBefore,
-                       "Other… must not send a message")
-        XCTAssertFalse(app.staticTexts["You: Other…"].exists)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Type my own focuses the composer")
+        RunLoop.current.run(until: Date().addingTimeInterval(2))
+        XCTAssertEqual(questionReplies.count, repliesBefore, "Type my own must not send a message")
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "reply[Type my own]")).firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["You: Type my own"].exists)
         XCTAssertTrue(second.exists, "The question is still open")
         attachScreenshot(app, "reply-option-other-composer-focused")
 
@@ -1343,7 +1488,7 @@ final class CreationUITests: XCTestCase {
             .waitForExistence(timeout: 10), "the server received the chip text as the message")
         // Answered: no tappable chips remain in the history.
         XCTAssertTrue(app.buttons["reply-option-1"].waitForNonExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["reply-option-other"].exists)
+        XCTAssertFalse(app.buttons["answer-type-my-own"].exists)
     }
 
     /// After an edit the result is said once: a short lead, then one static row per ask with its reason
@@ -1415,6 +1560,8 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_QUESTION_BATCH"] = "1"
+        // The tapped answer block spins while its message is pending; a running spinner keeps XCUITest from idling.
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
         app.launch()
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
@@ -1438,7 +1585,8 @@ final class CreationUITests: XCTestCase {
         let sentBefore = sent.count
         approve.tap()
         XCTAssertTrue(app.staticTexts["choice-batch-note"].waitForExistence(timeout: 3))
-        XCTAssertEqual(approve.value as? String, "Selected")
+        XCTAssertTrue(approve.isSelected)
+        attachScreenshot(app, "choice-batch-held")
         XCTAssertEqual(sent.count, sentBefore, "the title answer waits for the clips")
         choose.tap()
         XCTAssertTrue(app.descendants(matching: .any)["clip-sheet"].waitForExistence(timeout: 5))
@@ -1451,6 +1599,7 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["You: Use this wording · My friend in the red cap: clip 2"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["choice-card-answered"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["clip-card-answered"].exists)
+        attachScreenshot(app, "choice-batch-answered")
     }
 
     /// The other order: clips first (held, the picker card says so), then the title tap sends both.
@@ -1479,6 +1628,8 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_CHOICE_QUESTION"] = capability
+        // The tapped answer block spins while its message is pending; a running spinner keeps XCUITest from idling.
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
         app.launch()
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
@@ -1495,12 +1646,18 @@ final class CreationUITests: XCTestCase {
         let chronological = app.buttons["choice-option-chronological"]
         XCTAssertTrue(grouped.waitForExistence(timeout: 3))
         XCTAssertTrue(chronological.exists)
-        XCTAssertEqual(grouped.label, "Group by sport, chronological inside each sport (recommended)")
+        XCTAssertEqual(grouped.label, "Group by sport, chronological inside each sport, Each sport plays as one block., recommended")
         XCTAssertEqual(chronological.label, "Keep it strictly chronological; sports may interleave")
         XCTAssertGreaterThanOrEqual(grouped.frame.height, 44)
         XCTAssertGreaterThanOrEqual(chronological.frame.height, 44)
+        attachScreenshot(app, "choice-question-blocks")
         grouped.tap()
-        XCTAssertTrue(app.staticTexts["You: Group by sport, chronological inside each sport"].waitForExistence(timeout: 10))
+        // Answered: the "You chose" capsule is the one place the choice shows. The echoed bubble carries the same
+        // text, so it is not drawn as well.
+        let answered = app.descendants(matching: .any)["choice-card-answered"]
+        XCTAssertTrue(answered.waitForExistence(timeout: 10))
+        XCTAssertEqual(answered.label, "You chose: Group by sport, chronological inside each sport")
+        XCTAssertFalse(app.staticTexts["You: Group by sport, chronological inside each sport"].exists)
         let echo = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "choice[group_first]")).firstMatch
         XCTAssertTrue(echo.waitForExistence(timeout: 10), "server received the structured choice_selection")
         // Answered: the card collapses to a read-only summary and the options are gone.
@@ -1684,6 +1841,10 @@ final class CreationUITests: XCTestCase {
         let attach = app.buttons["Attach footage"]
         XCTAssertTrue(attach.waitForExistence(timeout: 10))
         attach.tap()
+        // The song leads a lip-sync: the tray's Add song row opens Add media on the song step.
+        let addSong = app.buttons["attach-song"]
+        XCTAssertTrue(addSong.waitForExistence(timeout: 5), "the tray offers Add song for a lip-sync")
+        addSong.tap()
         XCTAssertTrue(app.staticTexts["Add your song"].waitForExistence(timeout: 5), "the sheet opens on the song step")
         XCTAssertTrue(app.staticTexts["Add the song you’re lip-syncing to."].exists)
         XCTAssertTrue(app.descendants(matching: .any)["attachment-step-song"].firstMatch.exists)

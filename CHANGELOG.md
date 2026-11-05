@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.86.1.0] - 2026-11-05
+
+### Changed
+- feat(ios): redesign generate image, AI questions and Record + Upload (KRI-1193) (#2095) <!-- release-pr: 2095 -->
+
 ## [0.86.0.0] - 2026-11-04
 
 ### Added

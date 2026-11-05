@@ -51,7 +51,7 @@ final class ChatMessageCopyTests: XCTestCase {
 
             // Option chips keep their own labels and plain taps.
             for option in message.options {
-                let expected = option == message.recommendedOption ? "\(option) (recommended)" : option
+                let expected = option == message.recommendedOption ? "\(option), recommended" : option
                 let chip = try XCTUnwrap(elements.first { $0.accessibilityLabel == expected }, "Missing option chip \(expected)")
                 XCTAssertTrue(chip.accessibilityTraits.contains(.button))
                 XCTAssertNil(chip.accessibilityCustomActions?.first { $0.name == "Copy" })

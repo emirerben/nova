@@ -257,7 +257,7 @@ final class CreationChatFixture: @unchecked Sendable {
         if mode == "invalid", start != nil || end != nil { return (422, "song_range_invalid", "That starts after your song ends.") }
         guard let start, let end else { return nil }
         if start >= 90 { return (422, "song_range_invalid", "That starts after your song ends.") }
-        if end - start < 5 { return (422, "song_range_invalid", "Pick at least five seconds of your song.") }
+        if end - start < 5 { return (422, "song_range_invalid", "Pick at least five seconds.") }
         return nil
     }
     /// KRI-756: the server's `SuggestionSetOut`, shaped like the real contract. `ready` once a render finished,
@@ -533,8 +533,13 @@ final class CreationChatFixture: @unchecked Sendable {
             if parts.last == "narration-script" { return response(script) }
             if parts.count == 3, request.httpMethod == "POST" {
                 generatedMediaPostCount += 1
-                if ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA_REJECT_ONCE"] == "1" {
-                    if generatedMediaPostCount == 1 {
+                // "1" rejects the first request; "edit" rejects the first Edit image request and lets everything before it through.
+                let rejectMode = ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA_REJECT_ONCE"]
+                if rejectMode == "1" || rejectMode == "edit" {
+                    let isRejectedRequest = rejectMode == "1"
+                        ? generatedMediaPostCount == 1
+                        : (body["capability"] as? String == "image_edit" && rejectedGeneratedMediaEvent == nil)
+                    if isRejectedRequest {
                         rejectedGeneratedMediaEvent = body["client_event_id"] as? String
                         return response(["detail": "Source changed before submission"], status: 409)
                     }
@@ -545,11 +550,17 @@ final class CreationChatFixture: @unchecked Sendable {
                 if ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA_RECOVERED"] == "1" {
                     return response(["detail": "Recovery must not POST generation again"], status: 409)
                 }
-                if body["capability"] as? String == "image", let eventID = body["client_event_id"] as? String {
+                if let capability = body["capability"] as? String, capability == "image" || capability == "image_edit",
+                   let eventID = body["client_event_id"] as? String {
                     let imageURL = "https://generated-media-image.invalid/cover.jpg"
-                    let operation: [String: Any] = ["id": eventID, "state": "ready", "capability": "image",
+                    var operation: [String: Any] = ["id": eventID, "state": "ready", "capability": capability,
                         "asset_id": "generated-" + eventID, "preview_url": imageURL, "source_url": imageURL,
                         "retryable": false, "fixture_title": body["editable_title"] ?? ""]
+                    // An edit echoes the source it was made from, which is what the approval check compares.
+                    if capability == "image_edit" {
+                        operation["source_asset_id"] = body["source_asset_id"] ?? NSNull()
+                        operation["source_generation"] = body["source_generation"] ?? NSNull()
+                    }
                     generatedMediaOperations[eventID] = operation
                     return response(operation)
                 }
@@ -574,14 +585,15 @@ final class CreationChatFixture: @unchecked Sendable {
             guard let operation = generatedMediaOperations[operationID] else { return response(["detail": "Unknown fixture request"], status: 404) }
             if request.httpMethod == "GET" { generatedMediaLookupCount += 1 }
             if parts.last == "accept", request.httpMethod == "POST" {
-                if operation["capability"] as? String == "image" {
+                if ["image", "image_edit"].contains(operation["capability"] as? String ?? "") {
                     if ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA_RECOVERED"] == "1",
                        generatedMediaPostCount != 1 || generatedMediaLookupCount < 1 {
                         return response(["detail": "Recovery counters did not prove one POST and a status lookup"], status: 409)
                     }
-                    generatedMediaAssets[itemID] = [["id": operation["asset_id"]!, "kind": "image", "status": "ready",
+                    generatedMediaAssets[itemID, default: []].removeAll { $0["id"] as? String == operation["asset_id"] as? String }
+                    generatedMediaAssets[itemID, default: []].append(["id": operation["asset_id"]!, "kind": "image", "status": "ready",
                         "source_filename": operation["fixture_title"] ?? "", "preview_url": operation["preview_url"]!,
-                        "source_url": operation["source_url"]!, "generation": "1"]]
+                        "source_url": operation["source_url"]!, "generation": "1"])
                     return response(operation)
                 }
                 guard body["script_id"] as? String == "vos-fixture", body["script_version"] as? Int == 1,
@@ -654,7 +666,7 @@ final class CreationChatFixture: @unchecked Sendable {
             let start = body["start_s"] as? Double, end = body["end_s"] as? Double
             if let start, let end {
                 if start >= songSeconds { return problem(422, "song_range_invalid", "That starts after your song ends.") }
-                if end - start < 5 { return problem(422, "song_range_invalid", "Pick at least five seconds of your song.") }
+                if end - start < 5 { return problem(422, "song_range_invalid", "Pick at least five seconds.") }
                 media[songIndex]["song_range"] = ["start_s": start, "end_s": min(end, songSeconds)]
             } else {
                 media[songIndex].removeValue(forKey: "song_range")
