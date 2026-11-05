@@ -11,6 +11,7 @@ suggestion store (see ``fakes``).
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
@@ -275,11 +276,19 @@ class Phone:
             )
         return head_of(self.seeded.thread_id)
 
-    async def approve_render(self, monkeypatch) -> Dispatch:  # noqa: ANN001
+    async def approve_render(
+        self,
+        monkeypatch,
+        *,
+        between: Callable[[], None] | None = None,  # noqa: ANN001
+    ) -> Dispatch:
         """The creator taps "Create this video" on the approval a restating card staged, and the
         render worker takes it: the real ``decide_approval`` then the real ``execute_kria_approval``
         task. Only the render dispatch itself is replaced, by a stand-in that records its call and
-        writes the queued Job a real dispatch would (no worker, no FFmpeg, no device)."""
+        writes the queued Job a real dispatch would (no worker, no FFmpeg, no device).
+
+        ``between`` runs after the approval and before the worker claims it: what happens in the
+        queue's gap (a Save, an editor tap)."""
         import uuid as _uuid
 
         from app.kria.api_schemas import ApprovalDecisionBody
@@ -341,6 +350,8 @@ class Phone:
                     expected_approval_fingerprint=token,
                 ),
             )
+        if between is not None:
+            between()
         task = await asyncio.to_thread(execute_kria_approval.run, str(approval_id))
         with sync_session() as db:
             approval = db.get(CreatorAgentApproval, approval_id)

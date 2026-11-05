@@ -22,6 +22,9 @@ the next render, a requirement KRI-129 reads as their own ask, and a card that s
   G8  An approval no card staged is untouched by all of this (byte-for-byte as before).
   G9  Undo still takes the tap back exactly as it did (the shared body moved).
   G10 The creator cancels the awaiting turn: same state as G1.
+  G11 The approval was APPROVED, then the render worker found the video had moved on before it
+      claimed it (``approval_target_stale``): no render ever starts, so the tap is taken back.
+  G12 The worker refused the claim for a missing voiceover (``voiceover_required``): same.
 """
 
 from __future__ import annotations
@@ -323,3 +326,62 @@ async def test_g10_cancelling_the_awaiting_turn_takes_its_tap_back(talking_world
 
     assert approval_status(seeded) == "cancelled"
     assert_taken_back(seeded, phone, tap, before)
+
+
+def newer_video(seeded):  # noqa: ANN001, ANN201
+    """What an editor-op tap (or a Kria render) writes: the session's pointer moves on."""
+
+    def move() -> None:
+        with sync_session() as db:
+            session = db.get(CreatorAgentSession, seeded.session_id, with_for_update=True)
+            session.target_generation_id = "generation-9"
+            db.commit()
+
+    return move
+
+
+@pytest.mark.asyncio
+async def test_g11_a_claim_that_finds_the_video_moved_takes_its_tap_back(
+    talking_world, monkeypatch
+):
+    seeded, phone, out, card, before, tap = await staged(talking_world)
+
+    dispatch = await phone.approve_render(monkeypatch, between=newer_video(seeded))
+
+    assert approval_status(seeded) == "cancelled"
+    assert dispatch.calls == [], "no render started"
+    assert_taken_back(seeded, phone, tap, before)
+
+
+@pytest.mark.asyncio
+async def test_g12_a_claim_refused_for_a_missing_voiceover_takes_its_tap_back(
+    talking_world, monkeypatch
+):
+    seeded, phone, out, card, before, tap = await staged(talking_world)
+
+    def needs_a_voiceover() -> None:
+        from sqlalchemy.orm.attributes import flag_modified
+
+        from app.models import CreatorEditDraft
+
+        with sync_session() as db:
+            draft = db.execute(
+                h.select(CreatorEditDraft).where(
+                    CreatorEditDraft.thread_id == seeded.thread_id,
+                    CreatorEditDraft.is_head.is_(True),
+                )
+            ).scalar_one()
+            snapshot = dict(draft.snapshot_json)
+            snapshot["strategy"] = {**snapshot["strategy"], "audio_strategy": "voiceover"}
+            draft.snapshot_json = snapshot
+            flag_modified(draft, "snapshot_json")
+            item = db.get(h.PlanItem, seeded.item_id, with_for_update=True)
+            item.voiceover_gcs_path = None
+            db.commit()
+
+    dispatch = await phone.approve_render(monkeypatch, between=needs_a_voiceover)
+
+    assert dispatch.calls == [], "no render started"
+    assert approval_status(seeded) == "cancelled"
+    assert_taken_back(seeded, phone, tap, before)
+

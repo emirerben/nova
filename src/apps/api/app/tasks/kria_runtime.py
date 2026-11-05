@@ -5529,6 +5529,25 @@ def _verify_prepared_execution(
 
 def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim | None:
     """Consume exact consent into a durable accepted execution.
+def _withdraw_tap_of_cancelled_claim(
+    db,  # noqa: ANN001 - SQLAlchemy sync Session
+    approval: CreatorAgentApproval,
+    item: PlanItem,
+    thread: CreationThread,
+) -> None:
+    """The claim cancelled an approval a suggestion card staged, so no render will ever start:
+    take the tap back, as a denial or an expiry does. The claim already holds the plan item and the
+    thread locked, in canonical order. A no-op for an approval no card staged."""
+    from app.kria.drafts import (  # noqa: PLC0415
+        staged_tap_footprint_sync,
+        withdraw_staged_tap_sync,
+    )
+
+    footprint = staged_tap_footprint_sync(db, approval)
+    if footprint is not None:
+        withdraw_staged_tap_sync(db, record=footprint, item=item, thread=thread)
+
+
 
     This transaction performs no broker or renderer work. A crash after commit
     leaves ``accepted`` as the recovery ledger for the minute reconciler.
@@ -5835,6 +5854,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             approval.status = "cancelled"
             execution.status = "stale"
             execution.error = {
+            _withdraw_tap_of_cancelled_claim(db, approval, item, thread)
                 "code": stale_code,
                 "retryable": False,
                 "recovery": "refresh_replan",
@@ -5923,6 +5943,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                 approval.status = "cancelled"
                 execution.status = "failed"
                 execution.error = {
+                _withdraw_tap_of_cancelled_claim(db, approval, item, thread)
                     "code": "voiceover_required",
                     "retryable": False,
                     "recovery": "ask_user",
@@ -6116,6 +6137,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                     approval.status = "cancelled"
                     execution.status = "failed"
                     execution.error = {"code": code, "retryable": False, "recovery": "revise"}
+                    _withdraw_tap_of_cancelled_claim(db, approval, item, thread)
                     execution.completed_at = now
                     turn.status = "failed"
                     turn.completed_at = now
