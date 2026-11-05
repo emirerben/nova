@@ -242,6 +242,8 @@ enum NativeEditorUITestFixtures {
         var lane: JSONValue?
         if let data = defaults.data(forKey: savedSpeakerBackgroundKey), let saved = try? JSONDecoder().decode(JSONValue.self, from: data) {
             lane = saved
+        } else if windowsOn, ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-frame") {
+            lane = seededSpeakerFrame
         } else if windowsOn {
             lane = seededSpeakerBackgroundWindows
         }
@@ -254,6 +256,13 @@ enum NativeEditorUITestFixtures {
         }
         return value
     }
+
+    /// The lane `-ui-testing-editor-speaker-frame` (with the windows gate) starts from: the speaker small at the bottom
+    /// right (`small_bottom_right`) over a plain colour, which the simulator preview can draw without any pool media.
+    static let seededSpeakerFrame: JSONValue = .object([
+        "kind": .string("color"), "color": .string("#2B6CB0"),
+        "speaker_frame": .object(["width_fraction": .number(0.42), "x_fraction": .number(0.76), "y_fraction": .number(0.8)]),
+    ])
 
     /// The lane `-ui-testing-editor-speaker-background-windows` starts from.
     static let seededSpeakerBackgroundWindows: JSONValue = .object([

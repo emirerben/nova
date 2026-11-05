@@ -155,7 +155,7 @@ Capability row: `speakerBackgroundWindows`.
 | Recipe (`SpeakerBackgroundLayer`) | `windows: [{asset_id, media_kind, source_start, start, end}]` and `speaker_frame`, omitted while unused (every first-cut recipe keeps its digest). `EditRecipeV2` requires a matching-kind `VisualRenderAsset` per window, `end` within the recipe, and derives `speakerBackgroundWindows`. Shared fixture: `tests/fixtures/speaker-background-parity/v2.json`. |
 | Compile (`_compile_background`) | Pins the fill and every window (`_pin_background_visual`), clips windows to the edit (a window starting at or past the end is dropped), one manifest asset per distinct visual. |
 | Editor document / Save | `speaker_background` gains `windows` and `speaker_frame` (keys absent while unused). `EditorCommitSpeakerBackground` accepts them; every window id is pinned from THIS item's pool before validation (`background_pin_requests`). 422 `speaker_background_windows_disabled` (reason), `speaker_background_window_invalid`, and the first-cut per-visual codes; 426 `client_update_required` `feature: "speaker_background_windows"` for a build below 32 that sets them, Saves a variant already carrying them, or polls a pinned recipe using them (`phone_editor.py`, `device_render.py`). Capability `editor_capabilities.speaker_background_windows`. |
-| Speaker frame | Written only from a named preset (`SPEAKER_FRAME_PRESETS` in `portable_speaker_background.py`): `small_bottom_right` {0.42, 0.76, 0.80}, `small_bottom_left`, `small_top_right`, `small_top_left`; `full` = absent. The phone masks the full-size speaker first, then scales and places the cut-out. |
+| Speaker frame | The chat writes only a named preset (`SPEAKER_FRAME_PRESETS` in `portable_speaker_background.py`): `small_bottom_right` {0.42, 0.76, 0.80}, `small_bottom_left`, `small_top_right`, `small_top_left`; `full` = absent. The iPhone editor also writes any in-range frame when the creator drags or pinches the speaker on the preview (see "Moving the speaker by hand" below). The phone masks the full-size speaker first, then scales and places the cut-out. |
 
 ### Gates
 
@@ -194,6 +194,21 @@ and the frame, tracing `speaker_background_windows_phone_fallback` (`reason`: `w
 `speakerBackgroundWindows` joins `PHONE_RENDER_VERIFIED_FEATURES` only after the physical iPhone check in the failure-mode
 doc (three photo windows + corner speaker in preview and export, a silent looping video window, a 60 s ten-window export
 within 120 s). Until then every request renders the single fill background exactly as before.
+
+### Moving the speaker by hand (iPhone editor)
+
+On a variant whose editor opens `speaker_background_windows`, a speaker drawn small (a `speaker_frame` is set) is a
+preview object: tapping them selects them and opens the "You" panel (size slider, the four corners, Full screen); a drag
+moves the centre, a pinch or any corner handle resizes about the centre. The session clamps every sample to the wire
+range (width 0.2–1, centre 0–1) and one gesture is one undo step. Nothing on the wire changed: the server already
+accepted any in-range frame, so there is no protocol bump or new token, and the chat still writes presets only
+(`brief_checks` calls a hand-placed frame "custom"; parity group `speaker_frame_by_hand` is `agent_unsupported`).
+
+The live drag uses three stills of the same compositor instruction (`LivePreviewComposition.speakerInteractionLayers`:
+under the speaker / the framed cut-out / above it) and moves only the middle one, so the finger shows the render's
+pixels. A frame-only change updates the player in place (`updateText` accepts a background that only moves an existing
+frame); Full ↔ corner still takes the full rebuild. The safe-zone guide follows the speaker's face (Vision, once per
+gesture) rather than the whole box. Failure modes SF1–SF13: `docs/reviews/speaker-frame-direct-manipulation-failure-modes.md`.
 
 ### Names heard when said another way (`BACKGROUND_FOLLOWS_TALK_ENABLED`, Qendresa item 17)
 

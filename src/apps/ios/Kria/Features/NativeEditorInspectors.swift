@@ -73,6 +73,9 @@ struct NativeSelectionInspector: View {
             NativeSelectedEffectInspector(selection: selection, session: session)
         case .speakerBackgroundWindow:
             NativeSelectedBackgroundWindowInspector(selection: selection, session: session)
+        case .speaker:
+            // The speaker opens its own bottom panel (`NativeSpeakerPanel`); this sheet is only a fallback.
+            Form { Section { Text("Drag yourself on the video to move. Pinch to resize.").foregroundStyle(KriaColor.zinc) } }
         }
     }
 }

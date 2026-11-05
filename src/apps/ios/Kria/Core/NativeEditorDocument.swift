@@ -13,11 +13,18 @@ enum EditorSelectionKind: String, Codable, CaseIterable, Hashable, Sendable {
     /// KRI-1162: one timed Talk-to-camera background (`speaker_background.windows[]`). Client-only: a selection
     /// is never encoded to the server, and the id is the window's local `bg-<n>` block id.
     case speakerBackgroundWindow = "speaker_background_window"
+    /// The Talk-to-camera speaker drawn small in a frame (`speaker_background.speaker_frame`), moved and resized by hand
+    /// on the preview. Client-only like the windows; the id is always `EditorSelection.speakerID`.
+    case speaker
 }
 
 struct EditorSelection: Codable, Equatable, Hashable, Sendable {
     let kind: EditorSelectionKind
     let id: String
+
+    /// There is one speaker per Talk-to-camera edit.
+    static let speakerID = "speaker"
+    static let speaker = EditorSelection(kind: .speaker, id: speakerID)
 }
 
 /// A server-validated removal.  These live with the document so undo/redo and
@@ -446,8 +453,9 @@ struct EditorSpeakerBackgroundWindow: Equatable, Sendable {
     }
 }
 
-/// Where the matted speaker is drawn (canvas fractions; x/y are the centre). The editor writes only the named
-/// presets; a frame the server sends that is not a preset is shown as "Custom" and kept untouched.
+/// Where the matted speaker is drawn (canvas fractions; x/y are the centre). The Speaker buttons write the named
+/// presets; moving or pinching the speaker on the preview writes any frame inside the wire's range (`clamped`).
+/// A frame that is not a preset lights no preset button.
 struct EditorSpeakerFrame: Equatable, Sendable {
     var widthFraction: Double
     var xFraction: Double
@@ -477,6 +485,15 @@ struct EditorSpeakerFrame: Equatable, Sendable {
 
     init(widthFraction: Double, xFraction: Double, yFraction: Double) {
         self.widthFraction = widthFraction; self.xFraction = xFraction; self.yFraction = yFraction
+    }
+
+    /// The nearest frame the wire accepts (SF3): width in [0.2, 1], centre in [0, 1], rounded to 1/10000 so a drag
+    /// never saves float noise. Nil for a non-finite value, which no gesture should ever turn into a frame.
+    static func clamped(widthFraction: Double, xFraction: Double, yFraction: Double) -> EditorSpeakerFrame? {
+        guard widthFraction.isFinite, xFraction.isFinite, yFraction.isFinite else { return nil }
+        func round4(_ value: Double) -> Double { (value * 10_000).rounded() / 10_000 }
+        return EditorSpeakerFrame(widthFraction: round4(min(1, max(SpeakerBackgroundLimits.minFrameWidthFraction, widthFraction))),
+                                  xFraction: round4(min(1, max(0, xFraction))), yFraction: round4(min(1, max(0, yFraction))))
     }
 
     init?(json: JSONValue) {

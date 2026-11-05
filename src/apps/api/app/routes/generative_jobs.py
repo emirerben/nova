@@ -1242,6 +1242,9 @@ class EditorCommitSpeakerFullScreenWindow(BaseModel):
     end_s: float = Field(ge=0.0, le=1800.0, allow_inf_nan=False)
 
 
+# The docstring below is part of the generated tool / mobile contracts (kria_contracts), so it
+# stays as written. Besides the named corner presets, the iPhone editor also writes any frame
+# inside these ranges when the creator drags or pinches the speaker on the preview.
 class EditorCommitSpeakerFrame(BaseModel):
     """Where the matted speaker is drawn (KRI-1162): the document's ``speaker_frame``. The app
     writes it from a named corner preset; the server never takes a corner name on the wire."""

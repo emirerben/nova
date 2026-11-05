@@ -235,6 +235,16 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     # Qendresa item 18: aim a screen-recording background at its text (left / centre / right and a
     # zoom). Chat reaches it with `set_background_focus`; the getter is a read-only query.
     "background_focus": _g("agent_ops", "setSpeakerBackgroundFocus", ("set_background_focus",)),
+    # Moving / resizing the framed speaker by hand on the preview writes free geometry. The
+    # agent picks only the named corners (set_speaker_frame / clear_speaker_frame above):
+    # presets, never raw numbers from the model (KRI-1162 S37). Rows:
+    # docs/reviews/speaker-frame-direct-manipulation-failure-modes.md (SF12).
+    "speaker_frame_by_hand": _g(
+        "agent_unsupported",
+        "setSpeakerFrameCenter setSpeakerFrameWidth",
+        reason="Free speaker position and size come from a finger on the preview; the agent "
+        "places the speaker only in a named corner (set_speaker_frame), by design.",
+    ),
     "video_shape": _g(
         "agent_unsupported",
         "setVideoShape",
