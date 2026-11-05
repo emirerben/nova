@@ -351,6 +351,26 @@ def test_a_long_label_gets_a_size_that_fits_the_width():
     assert long_[0]["size_px"] < short[0]["size_px"]
 
 
+def test_a_label_has_her_look_and_fits_two_lines_of_the_canvas():
+    """Simulator 2026-11-05: white serif labels vanished into README text and the kit's OCR
+    read them in a few frames only. Her V5 look: bold cream letters with a dark outline, drawn
+    with the portable stroke the phone already supports. A long item (her V7) stays within the
+    width and about two lines, so the placer can find a spot clear of the face and captions."""
+    from app.pipeline.phone_subtitled_title import _measure_title_box
+
+    rows, _ = _rows(
+        _asks(["1. which company it sends data to?"]),
+        _anchors([5.0], phrases=["which company it sends data to"]),
+    )
+    row = rows[0]
+    assert row["font_family"] == "TikTok Sans Bold"
+    assert row["color"] == "#FCF3C3"
+    assert row["stroke_color"] == "#141414" and row["stroke_width"] > 0
+    box = _measure_title_box(row, canvas=_CANVAS)
+    assert box.right - box.left <= 0.9 + 1e-6
+    assert box.bottom - box.top <= 0.14 + 1e-6
+
+
 def test_avoid_is_asked_per_window_with_the_rows_so_far():
     seen = []
 

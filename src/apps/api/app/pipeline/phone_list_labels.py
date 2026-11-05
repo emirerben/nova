@@ -40,6 +40,14 @@ LIST_LABEL_FIELD = "list_label_placement"
 HOLD_S = 3.0
 MIN_S = 0.8
 LABEL_Y_FRAC = 0.86
+# Her label look (V5 OCR + frames): bold cream text with a dark outline.
+LABEL_FONT_FAMILY = "TikTok Sans Bold"
+LABEL_COLOR = "#FCF3C3"
+LABEL_STROKE_COLOR = "#141414"
+LABEL_STROKE_WIDTH = 8.0
+_MAX_LABEL_WIDTH_FRAC = 0.9
+_MAX_LABEL_HEIGHT_FRAC = 0.14
+_MIN_LABEL_SIZE_PX = 48.0
 _MAX_CHARS = 80
 _EPS = 1e-6
 _DIGITS = "0123456789"
@@ -603,10 +611,20 @@ def label_start(anchor: LabelAnchor) -> float:
 
 def _label_element(ask: ListLabelAsk, *, start_s: float, end_s: float, canvas: Any) -> dict:
     from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_title import _measure_title_box  # noqa: PLC0415
 
     text = ask.text[:_MAX_CHARS]
     fields = {**narrated_title_placement(text, canvas=canvas, explicit=True)}
-    fields["y_frac"] = LABEL_Y_FRAC  # her spot; the fitted size_px keeps a long label in width
+    fields["y_frac"] = LABEL_Y_FRAC  # her spot (bottom, centred) unless a face/caption is there
+    # Her look (V5): bold cream letters with a dark outline, readable over a screen recording
+    # (thin white serif text vanished into README text on the simulator). Drawn with the
+    # outline the portable text layer already supports: no new phone capability.
+    fields.update(
+        font_family=LABEL_FONT_FAMILY,
+        color=LABEL_COLOR,
+        stroke_color=LABEL_STROKE_COLOR,
+        stroke_width=LABEL_STROKE_WIDTH,
+    )
     element = TextElement(
         id=f"{LIST_LABEL_ELEMENT_PREFIX}{ask.requirement_id}",
         text=text,
@@ -617,7 +635,20 @@ def _label_element(ask: ListLabelAsk, *, start_s: float, end_s: float, canvas: A
         effect="fade-in",
         source_params={"source": LIST_LABEL_SOURCE, "requirement_id": ask.requirement_id},
     )
-    return element.model_dump(mode="json", exclude_none=True)
+    row = element.model_dump(mode="json", exclude_none=True)
+    # The title fit is measured in the title font: shrink until the label fits the width and
+    # about two lines (her V7 items), so it can find a spot clear of the face and captions.
+    size = float(row.get("size_px") or 96)
+    while size > _MIN_LABEL_SIZE_PX:
+        box = _measure_title_box({**row, "size_px": size}, canvas=canvas)
+        if (
+            box.right - box.left <= _MAX_LABEL_WIDTH_FRAC
+            and box.bottom - box.top <= _MAX_LABEL_HEIGHT_FRAC
+        ):
+            break
+        size = round(size * 0.92, 1)
+    row["size_px"] = max(size, _MIN_LABEL_SIZE_PX)
+    return row
 
 
 def list_label_rows(
