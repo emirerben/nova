@@ -1,4 +1,4 @@
-# Green-screen backgrounds: never show the same picture twice — failure modes (draft, before code)
+# Green-screen backgrounds: never show the same picture twice — incident and decision
 
 **Ask (co-founder, 2026-11-04, on the S4 "fb 1" export):** "Aynı resmi iki kere göstermediği an 10/10" — the
 result is right once no background picture is shown twice.
@@ -8,27 +8,31 @@ picture shown 2–3 times (11 repeats). An offline replay of `phone_background_s
 stored sequence, word timings and speech cut reproduces all 19 windows to the hundredth of a second, so the
 loop is the layout's, not the phone's.
 
-**Why it loops today:** two rules in `phone_background_sequence.py`, both deliberate:
-- on the word (every entry phrased): "once every visual was shown, those without `hold_s` take turns every
-  `cadence_s` … to the take end" — contract row **S51** (PR #2091, Green 3), written because holding one picture
-  for the rest of the take broke "changing every 3–5 seconds";
-- rotation (an entry without a phrase): the unanchored entries cycle `cadence_s` each until the take ends (S39).
+**Why it looped:** two deliberate rules in `phone_background_sequence.py`:
+- on the word (every entry phrased): once every visual was shown, they took turns every `cadence_s` to the take
+  end — contract row S51 (PR #2091, Green 3), written so "changing every 3–5 seconds" stayed true;
+- rotation (an entry without a phrase): the unanchored entries cycled `cadence_s` each until the take ended (S39).
 In fb 1 the planner saw only the first ~30 s of speech (PR #2100), so all 8 mentions sat before 29 s and the
 remaining 44 s were tail cycling.
 
-**The clash:** "change every 3–5 s" and "never repeat" cannot both hold when pictures × 5 s < video length
-(fb 1: 9 pictures, 73 s → 15–25 changes needed). One of the two has to give, and the creator should hear which.
+**The clash and the decision (2026-11-05):** "change every 3–5 s" and "never repeat" cannot both hold when
+pictures × 5 s < video length. Options considered: a plain colour between photos (rejected: "araya dümdüz renk
+girmesi saçma"), asking the creator (rejected for the same reason), keeping S51 (rejected: repeats). **Decided
+(Yasin, approved by Emir): photos stay in a row, each one stays until the next photo is mentioned — a longer scene
+is fine — and the same photo never comes up twice.** No question to the creator, nothing plain in between.
 
-| # | Failure | Proposed guard (needs a product decision before it is built) |
+The edge rules are rows S57–S63 of `docs/reviews/speaker-background-windows-failure-modes.md`.
+
+| # | Failure | Decided guard |
 |---|---|---|
-| N1 | After the last mention the shown pictures take turns again (fb 1: 44 s of loop). | The tail extends the last window to the take end instead of cycling (replaces S51). |
-| N2 | Rotation (no phrases) cycles a short list over a long take. | Each picture shown once: the cadence stretches to `max(cadence_s, take_s / pictures)`; the existing `cadence_stretched` note fires. |
-| N3 | The planner lists the same picture twice (two entries, one `media_id`). | Only the first entry gets a window; a note says it was merged. |
-| N4 | The fill (the strategy's own `media_id`, usually entry 0) shows in a gap and repeats entry 0. | With a sequence, a gap is covered by the window before it, not the fill. |
-| N5 | A picture is held far longer than the asked pace and the creator is not told. | Receipt + reply say "N pictures for M s: each stays about X s" before rendering (needs the brief check; may be a follow-up). |
-| N6 | A video window longer than the clip makes the clip loop (looks like a repeat). | Open question: freeze on the last frame vs loop; check what the phone does today. |
-| N7 | Stored strategies re-rendered later (editor Save, retake) change look without being asked. | Same layout on re-render; decide whether a flag gates the new rule. |
-| N8 | Two different uploads of the same photo. | Out of scope (no content hashing); noted. |
+| N1 | After the last mention the shown pictures take turns again (fb 1: 44 s of loop). | The last window holds to the take end (S57, replaces S51). |
+| N2 | Rotation (no phrases) cycles a short list over a long take. | Each picture once; the cadence stretches to `max(cadence_s, take / pictures, take / 40)` (S57, replaces S39's cycling). |
+| N3 | The planner lists the same picture twice. | The first-heard entry keeps its window; the other gets a `duplicate_media` note (S59). |
+| N4 | The fill (usually entry 0) shows in a gap and repeats a picture. | When the fill is one of the pictures, the window before a gap holds through it (S58, S60). |
+| N5 | A picture is held far longer than the asked pace and the creator is not told. | The receipt never names a pace (S63); remaining gap: "Yapıldı" beside the creator's own "every 3–5 s" wording. |
+| N6 | A video window longer than the clip makes the clip loop. | Open: the phone loops a background video (`loop: true`); not changed here. |
+| N7 | Stored strategies re-rendered later (editor Save, retake) change look. | They follow the new rule on re-render (no flag): the decision applies to every edit. |
+| N8 | Two different uploads of the same photo. | Out of scope (no content hashing). |
 
-Regression red test: `src/apps/api/tests/tasks/test_background_no_repeat.py` (invented Turkish take with fb 1's
-timing shape; the real transcript stays out of git).
+Regression tests: `src/apps/api/tests/tasks/test_background_no_repeat.py` (invented Turkish take with fb 1's
+timing shape; the real transcript stays out of git) plus the flipped S39/S51/S54 tests.
