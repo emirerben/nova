@@ -659,14 +659,19 @@ def full_screen_opening_end(
     the first recording's word when heard 2-8 s in, else 5 s, never before the hook title ends
     (when it ends within 8 s). It snaps to the middle of the gap between two kept words within
     1.5 s (preferring a sentence end within 1.0 s), else to the nearest word end, so the switch
-    never falls inside a spoken word. At least 1 s of take must be on either side.
+    never falls inside a spoken word. At least 1 s of take must be on either side; a take too
+    short to hold the opening through the title AND leave 1 s after it gets no opening.
     """
     lo, hi = OPENING_MIN_S, float(take_s) - OPENING_MIN_S
     if hi < lo - _EPS:
         return None, "take_too_short"
     if title_end_s is not None and title_end_s <= OPENING_TITLE_MAX_S:
-        # The switch never lands before the hook title ends (still leaving a second of take).
-        lo = min(max(lo, float(title_end_s)), hi)
+        # The switch never lands before the hook title ends, and a real corner (1 s) still
+        # follows it: a take too short for both gets no opening (S73, S75), never a switch
+        # while the title is still on screen.
+        lo = max(lo, float(title_end_s))
+        if hi < lo - _EPS:
+            return None, "take_too_short"
     if stated_s is not None:
         target = float(stated_s)
     elif first_heard_s is not None and (
