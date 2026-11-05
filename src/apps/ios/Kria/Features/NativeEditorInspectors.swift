@@ -1180,7 +1180,7 @@ private struct NativeSelectedEffectInspector: View {
         Form {
             Section {
                 Label(title, systemImage: editable ? "slider.horizontal.3" : "lock")
-                    .font(KriaFont.display(25))
+                    .font(KriaFont.headline(25))
                 if let record, let kind = record.kind { LabeledContent("Kind", value: kind) }
                 if let detail { LabeledContent(detail.0, value: detail.1) }
                 if !editable {
