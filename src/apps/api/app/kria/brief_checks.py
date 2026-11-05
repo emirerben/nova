@@ -9037,7 +9037,9 @@ def _list_label_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
                 face_collision=row.get("face_collision") is True,
             )
             for row in rows
-            if isinstance(row, Mapping) and isinstance(row.get("requirement_id"), str)
+            if isinstance(row, Mapping)
+            and isinstance(row.get("requirement_id"), str)
+            and "list_item" not in row  # a spoken item: the typed row is the requirement's fact
         )
     }
 

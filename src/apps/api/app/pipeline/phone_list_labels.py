@@ -19,6 +19,7 @@ methods and names are compared as `phone_reaction_grounding.fold_tokens` tokens.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -49,6 +50,18 @@ _OVERLAP_SHARE = 2.0 / 3.0
 
 # Match tiers, best first.
 _T_LOOSE, _T_CONTAINED, _T_OVERLAP = 3, 2, 1
+
+# Tolerant hearing: a shared stem of this many letters covering this share of the shorter token.
+_STEM_MIN_LETTERS = 5
+_STEM_SHARE = 0.75
+# Spoken list: how far from the first item an opener may be, how far its repeats may be, the
+# shortest opener, the longest dropped joiner, the longest silence inside an item, the cap.
+_OPENER_SLACK = 3
+_MIN_OPENER_LETTERS = 4
+_MAX_JOINER_LETTERS = 3
+_MAX_GAP_S = 0.5
+MAX_LIST_ITEMS = 10
+_MIN_LIST_ITEMS = 3
 
 
 @dataclass(frozen=True)
@@ -254,7 +267,53 @@ def _hearings(stream: Sequence[Any], timed: list[dict], item: str) -> list[tuple
         exact
         or sequence._loose_hearings(stream, phrase)  # noqa: SLF001
         or sequence._plural_toggled_hearings(stream, timed, phrase)  # noqa: SLF001
+        or _tolerant_hearings(stream, _tokens(item))
     )
+
+
+def _token_like(a: str, b: str) -> bool:
+    """Equal, a plural of each other (+s / +es), or a long shared stem ("company"/"companies")."""
+    if a == b or a + "s" == b or b + "s" == a or a + "es" == b or b + "es" == a:
+        return True
+    shared = 0
+    for left, right in zip(a, b, strict=False):
+        if left != right:
+            break
+        shared += 1
+    return shared >= _STEM_MIN_LETTERS and shared >= _STEM_SHARE * min(len(a), len(b)) - _EPS
+
+
+def _tolerant_hearings(stream: Sequence[Any], item: list[str]) -> list[tuple[float, float]]:
+    """Last resort: where most of the item's tokens are said in order, each a near-match.
+
+    A window of n-1..n+1 spoken tokens that starts on a token matching the item's first token and
+    matches at least max(2, ceil(2n/3)) item tokens in order (``_token_like``)."""
+    n = len(item)
+    need = max(_MIN_OVERLAP_TOKENS, -(-2 * n // 3))
+    if n < 2:
+        return []
+    texts = [token.text for token in stream]
+    hits: list[tuple[float, float]] = []
+    for i, first in enumerate(texts):
+        if not _token_like(first, item[0]):
+            continue
+        best: tuple[int, int, int] | None = None  # (matches, -length, end)
+        for length in range(max(1, n - 1), n + 2):
+            window = texts[i : i + length]
+            pointer = 0
+            matches = 0
+            last = i
+            for offset, token in enumerate(window):
+                if pointer < n and _token_like(token, item[pointer]):
+                    pointer += 1
+                    matches += 1
+                    last = i + offset
+            candidate = (matches, -(last - i + 1), last + 1)
+            if best is None or candidate[:2] > best[:2]:
+                best = candidate
+        if best is not None and best[0] >= need:
+            hits.append((float(stream[i].start_s), float(stream[best[2] - 1].end_s)))
+    return hits
 
 
 def ground_on_words(
@@ -263,7 +322,17 @@ def ground_on_words(
     *,
     after_s: Mapping[str, float] | None = None,
 ) -> dict[str, float]:
-    """requirement_id -> start_s of the item's hearing on ``words``' timeline.
+    """requirement_id -> start_s of the item's hearing (see `_ground_spans`)."""
+    return {rid: span[0] for rid, span in _ground_spans(asks, words, after_s=after_s).items()}
+
+
+def _ground_spans(
+    asks: Sequence[ListLabelAsk],
+    words: Sequence[dict],
+    *,
+    after_s: Mapping[str, float] | None = None,
+) -> dict[str, tuple[float, float]]:
+    """requirement_id -> (start_s, end_s) of the item's hearing on ``words``' timeline.
 
     In label order, each item's first hearing at/after the previous label's chosen time (and its
     own ``after_s`` floor), found exactly / by KRI-961, else loosely, else with the plural
@@ -275,7 +344,7 @@ def ground_on_words(
     stream = grounding._token_stream(timed)  # noqa: SLF001
     folded = {ask.requirement_id: tuple(_tokens(ask.item)) for ask in asks}
     heard = {ask.requirement_id: _hearings(stream, timed, ask.item) for ask in asks}
-    chosen: dict[str, float] = {}
+    chosen: dict[str, tuple[float, float]] = {}
     previous = 0.0
     for ask in asks:
         rid = ask.requirement_id
@@ -293,11 +362,164 @@ def ground_on_words(
                 for o_start, o_end in spans
             )
         ]
-        pick = next((start for start, _end in free if start >= floor - _EPS), None)
+        pick = next(((start, end) for start, end in free if start >= floor - _EPS), None)
         if pick is not None:
             chosen[rid] = pick
-            previous = pick
+            previous = pick[0]
     return chosen
+
+
+# ---------------------------------------------------------------------------------------------
+# The rest of a spoken list (Q1: "1. ..." typed, the other items only said)
+# ---------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SpokenItem:
+    start_s: float  # when the item's first word starts
+    words: tuple[str, ...]  # the item's words as transcribed (punctuation kept)
+
+
+def _word_stream(words: Sequence[dict]) -> list[tuple[str, int, float, float]]:
+    """(folded token, word index, start_s, end_s) for every token of the take's words."""
+    from app.services.phone_reaction_grounding import fold_tokens  # noqa: PLC0415
+
+    out: list[tuple[str, int, float, float]] = []
+    for index, word in enumerate(words):
+        if not isinstance(word, Mapping):
+            continue
+        try:
+            start = float(word.get("start_s"))
+            end = float(word.get("end_s", start))
+        except (TypeError, ValueError):
+            continue
+        out.extend((token, index, start, end) for token in fold_tokens(word.get("text")))
+    return out
+
+
+def _opener_chain(texts: Sequence[str], p: int, item_len: int) -> list[int]:
+    """Indices of ``texts[p]`` and its exact repeats, each 2..2*item_len+2 tokens after the last."""
+    token = texts[p]
+    chain = [p]
+    while True:
+        low = chain[-1] + 2
+        high = min(len(texts), chain[-1] + 2 * item_len + 3)
+        nxt = next((q for q in range(low, high) if texts[q] == token), None)
+        if nxt is None:
+            return chain
+        chain.append(nxt)
+
+
+def find_spoken_list(
+    words: Sequence[dict], *, first_start_s: float, first_end_s: float
+) -> list[SpokenItem]:
+    """Items 2.. of a list whose item 1 is said at [first_start_s, first_end_s] -- or [].
+
+    Language-agnostic (no word lists): a list is the same opening word said again and again, close
+    together, right after item 1 ("what it saves ... what it reads ... what runs ...").
+    Openers are tried 0-2 tokens after item 1 and must be 4+ letters long (a one-to-three-letter
+    word like "the" repeats in any sentence); the opener with the most occurrences wins, ties to
+    the earliest. At least 3 items in all (item 1 included) or nothing. A 1-3 letter token right
+    before the last occurrence ("and", "ve", "und") joins the items and is dropped; the last item
+    is as long as the mean of the earlier ones, cut at the take end and at a pause of 0.5 s."""
+    stream = _word_stream(words)
+    if not stream:
+        return []
+    texts = [token for token, _w, _s, _e in stream]
+    first = next((i for i, row in enumerate(stream) if row[2] >= first_start_s - 1e-3), None)
+    if first is None:
+        return []
+    after = max((i for i, row in enumerate(stream) if row[3] <= first_end_s + 1e-3), default=first)
+    after = max(after + 1, first + 1)
+    item_len = after - first
+
+    best: list[int] = []
+    for p in range(after, min(len(texts), after + _OPENER_SLACK)):
+        if len(texts[p]) < _MIN_OPENER_LETTERS:
+            continue
+        chain = _opener_chain(texts, p, item_len)
+        if len(chain) > len(best):
+            best = chain
+    if len(best) < 2 or len(best) + 1 < _MIN_LIST_ITEMS:
+        return []
+
+    capped = len(best) > MAX_LIST_ITEMS - 1
+    starts = best[: MAX_LIST_ITEMS - 1]
+    lengths = [item_len] + [b - a for a, b in zip(starts, starts[1:], strict=False)]
+    spans: list[tuple[int, int]] = []
+    for position, start in enumerate(starts):
+        if position + 1 < len(starts):
+            end = starts[position + 1]
+        elif capped:
+            end = best[len(starts)]
+        else:
+            end = min(len(texts), start + max(1, math.ceil(sum(lengths) / len(lengths))))
+            for k in range(start + 1, end):  # a pause ends the item
+                if stream[k][2] - stream[k - 1][3] >= _MAX_GAP_S - _EPS:
+                    end = k
+                    break
+        spans.append((start, end))
+    # A short joiner right before the LAST occurrence belongs to neither item.
+    if not capped:
+        prev_start, prev_end = spans[-2]
+        if prev_end - prev_start > 1 and len(texts[prev_end - 1]) <= _MAX_JOINER_LETTERS:
+            spans[-2] = (prev_start, prev_end - 1)
+    return [
+        SpokenItem(
+            start_s=float(stream[a][2]),
+            words=tuple(
+                str(words[w].get("text") or "") for w in range(stream[a][1], stream[b - 1][1] + 1)
+            ),
+        )
+        for a, b in spans
+        if b > a
+    ]
+
+
+def _marker_parts(text: str) -> tuple[str, str, str] | None:
+    """(prefix "#" or "", digits, punctuation) of ``text``'s explicit marker, or None."""
+    length, explicit = _read_marker(text)
+    if not length or not explicit:
+        return None
+    marker = text[:length]
+    prefix = "#" if marker.startswith("#") else ""
+    body = marker[len(prefix) :]
+    digits = "".join(ch for ch in body if ch in _DIGITS)
+    return prefix, digits, body[len(digits) :]
+
+
+def marker_number(text: str) -> int | None:
+    parts = _marker_parts(_collapse(text))
+    return int(parts[1]) if parts and parts[1] else None
+
+
+def _trim_punctuation(word: str) -> str:
+    start, end = 0, len(word)
+    while start < end and not word[start].isalnum():
+        start += 1
+    while end > start and not word[end - 1].isalnum():
+        end -= 1
+    return word[start:end]
+
+
+def spoken_item_text(example: str, number: int, item: SpokenItem) -> str:
+    """The label for a spoken item, in ``example``'s style ("1. which ...?" -> "2. what ...?")."""
+    text = _collapse(example)
+    parts = _marker_parts(text)
+    words = [w for w in (_trim_punctuation(w) for w in item.words) if w]
+    if parts is None or not words:
+        return ""
+    prefix, digits, punct = parts
+    shown = str(number).zfill(len(digits)) if digits.startswith("0") else str(number)
+    example_item = label_item(text)
+    first_letter = next((ch for ch in example_item if ch.isalpha()), "")
+    head = words[0]
+    if first_letter:
+        head = (head[:1].upper() if first_letter.isupper() else head[:1].lower()) + head[1:]
+    body = " ".join([head, *words[1:]])
+    if example_item.rstrip()[-1:] in ("?", "!", "."):
+        body += example_item.rstrip()[-1]
+    return f"{prefix}{shown}{punct} {body}"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -365,6 +587,7 @@ def list_label_rows(
     fallback = [
         ask for ask in asks if ask.requirement_id not in starts and _has_explicit_marker(ask.text)
     ]
+    spans: dict[str, tuple[float, float]] = {}
     if fallback:
         floors: dict[str, float] = {}
         for ask in fallback:
@@ -376,14 +599,50 @@ def list_label_rows(
             if earlier:
                 floors[ask.requirement_id] = max(earlier)
         try:
-            for rid, at in ground_on_words(fallback, words, after_s=floors).items():
+            spans = _ground_spans(fallback, words, after_s=floors)
+            for rid, (at, _end) in spans.items():
                 starts[rid] = at
                 basis[rid] = {"basis": "words"}
         except Exception as exc:  # noqa: BLE001 - the take's words are a fallback, not a must
             log.warning("phone_list_labels.ground_failed", error=str(exc)[:200])
 
+    # Q1: ONE typed "1. ..." example heard on the take: the rest of the list is what she says next.
+    found: dict[str, int] = {}
+    extras: dict[str, list[ListLabelAsk]] = {}
+    marked = [ask for ask in asks if _has_explicit_marker(ask.text)]
+    if (
+        len(marked) == 1
+        and marked[0].requirement_id in spans
+        and marker_number(marked[0].text) == 1
+    ):
+        parent = marked[0]
+        try:
+            items = find_spoken_list(
+                words,
+                first_start_s=spans[parent.requirement_id][0],
+                first_end_s=spans[parent.requirement_id][1],
+            )
+            found[parent.requirement_id] = 1
+            for offset, item in enumerate(items):
+                number = offset + 2
+                text = spoken_item_text(parent.text, number, item)
+                if not text:
+                    continue
+                sub = ListLabelAsk(
+                    requirement_id=f"{parent.requirement_id}-{number}",
+                    text=text,
+                    item=label_item(text),
+                )
+                extras.setdefault(parent.requirement_id, []).append(sub)
+                starts[sub.requirement_id] = item.start_s
+                basis[sub.requirement_id] = {"basis": "spoken_list", "list_item": number}
+            found[parent.requirement_id] = 1 + len(extras.get(parent.requirement_id, []))
+        except Exception as exc:  # noqa: BLE001 - a list that is not found is just item 1
+            log.warning("phone_list_labels.spoken_list_failed", error=str(exc)[:200])
+    every = [*asks, *(sub for subs in extras.values() for sub in subs)]
+
     status: dict[str, str] = {}
-    order = {ask.requirement_id: position for position, ask in enumerate(asks)}
+    order = {ask.requirement_id: position for position, ask in enumerate(every)}
     timed = sorted(starts, key=lambda rid: (round(starts[rid], 3), order[rid]))
     kept: list[str] = []
     for rid in timed:
@@ -406,7 +665,7 @@ def list_label_rows(
         windows[rid] = (start, end)
         next_start = start
 
-    by_id = {ask.requirement_id: ask for ask in asks}
+    by_id = {ask.requirement_id: ask for ask in every}
     rows: list[dict] = []
     receipt: dict[str, dict[str, Any]] = {}
     for rid in kept:
@@ -452,8 +711,19 @@ def list_label_rows(
                 "item": ask.item,
                 "status": outcome,
                 **receipt.get(rid, {}),
+                **({"list_found": found[rid]} if rid in found else {}),
             }
         )
+        for sub in extras.get(rid, []):
+            receipt_rows.append(
+                {
+                    "requirement_id": rid,
+                    "list_item": basis[sub.requirement_id]["list_item"],
+                    "text": sub.text,
+                    "status": status.get(sub.requirement_id, "not_heard"),
+                    **receipt.get(sub.requirement_id, {}),
+                }
+            )
     rows.sort(key=lambda row: float(row["start_s"]))
     return rows, {"version": 1, "rows": receipt_rows}
 
@@ -467,10 +737,15 @@ __all__ = [
     "MIN_S",
     "LabelAnchor",
     "ListLabelAsk",
+    "MAX_LIST_ITEMS",
+    "SpokenItem",
+    "find_spoken_list",
     "ground_on_words",
     "label_item",
     "label_start",
     "list_label_asks",
     "list_label_rows",
+    "marker_number",
     "match_labels",
+    "spoken_item_text",
 ]

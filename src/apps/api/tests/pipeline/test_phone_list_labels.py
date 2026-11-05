@@ -583,3 +583,202 @@ def test_lay_out_with_no_anchor_has_an_empty_anchor_s():
         [seq.SequenceEntry(0, None)], cadence_s=4.0, take_s=10.0, words=[], keep_segments=None
     )
     assert layout.anchor_s == {}
+
+
+# --- Q1: the rest of a spoken list (failure modes 21-27) ---------------------------------
+
+V7_INTRO = (
+    "let's build an agent that reads an app before i trust it because every app tells you "
+    "what it does and none of them tell you where your data goes so the first thing i do "
+    "is install ray then i give it one job for any site i send"
+)
+V7_LIST = (
+    "tell me which companies it sends data to what it saves on my machine what it reads "
+    "from my browser and what runs the moment the page loads that i never asked for and "
+    "for each one where in the code i found it"
+)
+V7_ASK = ListLabelAsk("l1", "1. which company it sends data to?", "which company it sends data to?")
+
+
+def _talk(*parts, step=0.2):
+    """Words at a steady pace, one sentence after another with a 1 s breath between."""
+    out, t = [], 0.0
+    for part in parts:
+        for w in part.split():
+            out.append({"text": w, "start_s": round(t, 3), "end_s": round(t + step - 0.03, 3)})
+            t += step
+        t += 1.0
+    return out
+
+
+def _v7_rows(words, asks=(V7_ASK,), duration=60.0):
+    return _rows(list(asks), [], words=words, duration=duration)
+
+
+def _texts(rows):
+    return [r["text"] for r in rows]
+
+
+def test_tolerant_hearing_hears_company_as_companies():
+    words = _talk(V7_INTRO, V7_LIST)
+    assert ground_on_words([V7_ASK], words)  # the plural would not be heard before
+    stream_start = next(w["start_s"] for w in words if w["text"] == "which")
+    assert ground_on_words([V7_ASK], words)["l1"] == pytest.approx(stream_start)
+
+
+def test_tolerant_hearing_needs_most_of_the_item():
+    words = _talk("which company is that one then")
+    assert ground_on_words([V7_ASK], words) == {}
+
+
+def test_tolerant_hearing_never_hears_a_one_word_item():
+    ask = ListLabelAsk("a", "1. Notion", "Notion")
+    assert ground_on_words([ask], _talk("notions are fine")) == {}
+
+
+def test_v7_spoken_list_gives_four_items_and_trims_the_and():
+    words = _talk(V7_INTRO, V7_LIST)
+    rows, receipt = _v7_rows(words)
+    assert _texts(rows) == [
+        "1. which company it sends data to?",
+        "2. what it saves on my machine?",
+        "3. what it reads from my browser?",
+        "4. what runs the moment the page loads?",
+    ]
+    assert [r["id"] for r in rows] == [
+        "list-label-l1",
+        "list-label-l1-2",
+        "list-label-l1-3",
+        "list-label-l1-4",
+    ]
+    for row, nxt in zip(rows, rows[1:], strict=False):
+        assert row["end_s"] == pytest.approx(nxt["start_s"])
+    assert rows[-1]["end_s"] - rows[-1]["start_s"] == pytest.approx(HOLD_S)
+    typed, *spoken = receipt["rows"]
+    assert typed["list_found"] == 4 and typed["status"] == "placed"
+    assert [(r["requirement_id"], r["list_item"], r["basis"]) for r in spoken] == [
+        ("l1", 2, "spoken_list"),
+        ("l1", 3, "spoken_list"),
+        ("l1", 4, "spoken_list"),
+    ]
+    assert all(r["status"] == "placed" and r["element_id"] for r in spoken)
+
+
+def test_the_last_item_is_cut_at_the_take_end():
+    words = _talk(V7_INTRO, V7_LIST)
+    last_start = next(w["start_s"] for w in words[::-1] if w["text"] == "what" and w["start_s"] > 0)
+    rows, _ = _v7_rows(words, duration=last_start + 1.0)
+    assert rows[-1]["end_s"] == pytest.approx(last_start + 1.0)
+
+
+def test_a_pause_ends_the_last_item():
+    spoken = (
+        "tell me which companies it sends data to what it saves on my machine "
+        "what it reads from my browser and what runs"
+    )
+    words = _talk(spoken, "the moment the page loads")  # a 1 s breath after "runs"
+    rows, _ = _v7_rows(words)
+    assert _texts(rows)[-1] == "4. what runs?"
+
+
+def test_ordinary_talk_after_the_item_is_not_a_list():
+    words = _talk(
+        V7_INTRO,
+        "which companies it sends data to is the scary part because nobody reads the policy "
+        "and nobody checks the network tab so you simply never find out",
+    )
+    rows, receipt = _v7_rows(words)
+    assert _texts(rows) == ["1. which company it sends data to?"]
+    assert receipt["rows"][0]["list_found"] == 1
+
+
+def test_the_intro_what_does_not_start_a_list_when_the_item_is_elsewhere():
+    words = _talk(V7_INTRO, "so which companies it sends data to is the only question that matters")
+    rows, receipt = _v7_rows(words)
+    assert len(rows) == 1 and receipt["rows"][0]["list_found"] == 1
+
+
+def test_two_items_alone_are_not_a_list():
+    words = _talk("tell me which companies it sends data to what it saves on my machine ok done")
+    rows, receipt = _v7_rows(words)
+    assert len(rows) == 1 and receipt["rows"][0]["list_found"] == 1
+
+
+def test_a_typed_list_is_never_extended():
+    second = ListLabelAsk("l2", "2. what it saves on my machine?", "what it saves on my machine?")
+    rows, receipt = _v7_rows(_talk(V7_INTRO, V7_LIST), asks=(V7_ASK, second))
+    assert _texts(rows) == ["1. which company it sends data to?", "2. what it saves on my machine?"]
+    assert all("list_item" not in r for r in receipt["rows"])
+
+
+def test_only_a_label_numbered_one_starts_a_list():
+    ask = ListLabelAsk(
+        "l2", "2. which company it sends data to?", "which company it sends data to?"
+    )
+    rows, _ = _v7_rows(_talk(V7_INTRO, V7_LIST), asks=(ask,))
+    assert len(rows) == 1
+
+
+def test_a_bare_number_is_not_a_list_marker():
+    ask = ListLabelAsk("l1", "1 which company it sends data to?", "which company it sends data to?")
+    rows, _ = _v7_rows(_talk(V7_INTRO, V7_LIST), asks=(ask,))
+    assert len(rows) <= 1
+
+
+def test_a_closing_text_beside_the_one_marked_label_does_not_block_the_list():
+    closing = ListLabelAsk("c", "comment read", "comment read")
+    rows, _ = _v7_rows(_talk(V7_INTRO, V7_LIST), asks=(V7_ASK, closing))
+    assert len(rows) == 4
+
+
+def test_a_label_a_recording_names_is_not_extended():
+    anchors = [
+        LabelAnchor(index=0, spoken_phrase="which company", anchor_s=5.0, window_start_s=5.0)
+    ]
+    rows, _ = _rows([V7_ASK], anchors, words=_talk(V7_INTRO, V7_LIST))
+    assert len(rows) == 1
+
+
+def test_item_one_never_said_places_nothing():
+    rows, receipt = _v7_rows(_talk(V7_INTRO, "what it saves on my machine what it reads from it"))
+    assert rows == [] and receipt["rows"][0]["status"] == "not_heard"
+    assert "list_found" not in receipt["rows"][0]
+
+
+def test_a_turkish_list_with_the_same_opener_works_without_english_words():
+    ask = ListLabelAsk("t1", "1. hangi şirkete gönderiyor?", "hangi şirkete gönderiyor?")
+    words = _talk(
+        "bir ajan yapıyorum",
+        "bana hangi şirkete gönderiyor neyi kaydediyor neyi okuyor ve neyi çalıştırıyor",
+    )
+    rows, _ = _v7_rows(words, asks=(ask,))
+    assert _texts(rows) == [
+        "1. hangi şirkete gönderiyor?",
+        "2. neyi kaydediyor?",
+        "3. neyi okuyor?",
+        "4. neyi çalıştırıyor?",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("example", "second"),
+    [
+        ("1. which a b?", "2. what x y?"),
+        ("01: Which a b", "02: What x y"),
+        ("#1 which a b!", "#2 what x y!"),
+        ("1) Which a b.", "2) What x y."),
+    ],
+)
+def test_marker_styles_and_case_follow_the_example(example, second):
+    from app.pipeline.phone_list_labels import SpokenItem, spoken_item_text
+
+    item = SpokenItem(1.0, ("What,", "x", "y!"))
+    assert spoken_item_text(example, 2, item) == second
+
+
+def test_the_list_is_capped_at_ten_items():
+    ask = ListLabelAsk("l1", "1. alpha beta?", "alpha beta?")
+    script = "alpha beta " + " ".join("next a b" for _ in range(14))
+    rows, receipt = _v7_rows(_talk(script), asks=(ask,))
+    assert len(rows) == 10
+    assert receipt["rows"][0]["list_found"] == 10

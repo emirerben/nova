@@ -253,7 +253,8 @@ def test_03_the_device_recipe_draws_the_labels(on):
     recipe = _recipe(job)
     layers = {}
     for layer in recipe.text_layers:
-        text = _squash("".join(run.text for run in layer.runs))
+        # A wrapped label has one run per line: join them with a space, as the Q2 sibling does.
+        text = _squash(" ".join(run.text for run in layer.runs))
         if text in EXPECTED:
             layers[text] = layer
     assert sorted(layers) == sorted(EXPECTED)
