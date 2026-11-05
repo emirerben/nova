@@ -469,6 +469,18 @@ class Settings(BaseSettings):
     # secrets set PHONE_SUBTITLED_CLOSING_TITLE_ENABLED=false --app nova-video`
     # + `fly machine restart <id>` (api + worker).
     phone_subtitled_closing_title_enabled: bool = True
+    # Item 14 (Qendresa's ending): when the creator asks to end on "comment <KEYWORD>"
+    # (optionally with an arrow), a phone Talking edit draws her look instead of the
+    # lime tag: a small white handwritten "comment", the keyword big in cream under it,
+    # and a hand-drawn white arrow (`app.pipeline.phone_cta_ending`). The arrow is a
+    # freehand drawing, so this also needs the closing-title lane
+    # (`phone_subtitled_closing_title_supported`), `freehand_drawing_enabled`,
+    # "freehandDrawing" in `phone_render_verified_features` and an app build stamped
+    # with protocol >= `freehand_drawing_min_client_protocol` (older builds keep the
+    # lime tag) -- see `app.services.phone_rollout.cta_ending_planned_for`. False:
+    # byte-identical to today. Rollback: `fly secrets set
+    # CREATOR_CTA_ENDING_ENABLED=false --app nova-video` + restart api + worker.
+    creator_cta_ending_enabled: bool = False
     # KRI-707 (text on a spoken word on phone Talking edits): a brief text ask with
     # its spoken cue ("big 'ATAKAN' when I say 'Atakan'": literal + `facts.triggers`)
     # renders as an editable text row from the moment the take says the word, off the
@@ -1253,6 +1265,12 @@ class Settings(BaseSettings):
     # ask), and the "<pace> pacing" chip is left off a card whose route ignores pacing. Default
     # TRUE; false + restart (api + worker) = byte-identical to before.
     kria_headsup_asked_only_enabled: bool = True
+
+    # Green 5 (2026-11-04): a chat nothing has told its language yet (a "Suggest an edit." tap,
+    # media only, "ok") takes the language of the creator's latest message typed in another of
+    # their chats before the device language (`reply_language.creator_typed_language`). Default
+    # TRUE; false + restart (api) = byte-identical (device language, KRI-784).
+    kria_reply_language_history_enabled: bool = True
     # KRI-1097 wave 2 (prompt fidelity on every route). ROUTE_REGISTRY_ENABLED: each render
     # route reads its own capability table (`app.kria.route_capabilities`), so voiceover,
     # Talking, Narrated, creator-song, spoken-excerpt and slide drafts get their own honest
@@ -1760,6 +1778,18 @@ class Settings(BaseSettings):
         "the next FULL re-render only). "
         "Kill switch: `fly secrets set SILENCE_CUT_ENABLED=false --app nova-video` "
         "+ worker restart — byte-identical to pre-feature behavior.",
+    )
+
+    tight_pause_cut_enabled: bool = Field(
+        default=False,
+        description="Tight pauses on the phone Talking render (Qendresa 13). When the approved "
+        'brief asks for every pause to go ("cut out all my pauses so it\'s tight"), the '
+        "creator consented to Speech cleanup and the take is a single iPhone-rendered clip, "
+        "the render adds extra pause cuts so no kept pause is over about 0.3 s, writes a "
+        "`tight_pauses` report on the variant, and the receipt states what was measured. "
+        "Default off: no extra cuts and every receipt is byte-identical to before. "
+        "Kill switch: `fly secrets set TIGHT_PAUSE_CUT_ENABLED=false --app nova-video` + api "
+        "and worker restart.",
     )
 
     speech_cleanup_budget_clamp_enabled: bool = Field(
