@@ -31,7 +31,7 @@ laundering, mute dark and first prompt.
 
 A check that fails because of code outside this directory carries a `Gap` (`gaps.py`): the report
 prints it, the run stays green, and the day the check passes the run fails with "gap closed, remove
-the marker". `test_probe_gaps.py` holds the minimal repros of GAP-1 and GAP-2.
+the marker". `test_probe_gaps.py` keeps the minimal repros of the closed GAP-1 and GAP-2 as plain regression tests.
 
 The cassette is a preference list, not a recorded model answer: the call's own strict
 `response_schema` decides which of its kinds and clip handles are possible answers, so one file

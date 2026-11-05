@@ -18,30 +18,6 @@ class Gap:
     text: str
 
 
-RING_NOT_STORED = Gap(
-    "GAP-1",
-    "GET stores no v2 card in the ring",
-    "app/services/suggestion_serve.py persist_served_set -> _server_cards; "
-    "app/routes/creation_threads.py",
-    "GET /suggestions serves the cards but persists none of them: persist_served_set -> "
-    "_server_cards re-runs every witness after the route's own db.rollback(), the Job is "
-    "expired, compile_editor_ops raises MissingGreenlet, each editor-ops card fails its "
-    "witness (witness_op_refused) and nothing is attached. A tap on any v2 card then "
-    "answers 'no longer fits' (reason unresolved). With "
-    "KRIA_SUGGESTION_EDITOR_TRIGGERS_ENABLED off nothing stores them at all, because "
-    "persist_suggestion_set writes chips only.",
-)
-NO_ENTRY = Gap(
-    "GAP-2",
-    "A set with no legacy chips has no ring entry",
-    "app/services/suggestion_chips.py persist_suggestion_set",
-    "persist_suggestion_set returns early when out.chips is empty, so a set whose only "
-    "cards are v2-only kinds (duplicates, mute, filler) has no ring entry at all and a tap "
-    "on its cards answers 'no longer fits' (reason unresolved). That is the state of a "
-    "polished edit (title, captions, crossfades, a sound effect, a quiet song): the legacy "
-    "chips have nothing left to add, so exactly the new kinds can never be tapped. The same "
-    "happens once the (at most four) legacy chips of a set are handled.",
-)
 TR_RECEIPT = Gap(
     "GAP-3",
     "Turkish card taps get a partial receipt",
@@ -79,16 +55,6 @@ REFUSED_BRIEF = Gap(
     "refused filler card leaves a live 'speech_cleanup: true' requirement (r5) in the brief "
     "although nothing was applied (speech_cleanup_enabled stays false). KRI-129 then treats "
     "it as something the creator asked for.",
-)
-KILL_SWITCH_FROZEN = Gap(
-    "GAP-8",
-    "Switching pinned taps off does not stop the GET serving v2 cards",
-    "app/services/suggestion_serve.py _serve_core (frozen set returned as stored)",
-    "A served set is frozen in Redis per digest for 24 h and returned as stored. After "
-    "KRIA_SUGGESTION_PINNED_TAPS_ENABLED is switched off the GET keeps serving the frozen "
-    "set's `suggestions`, so the phone shows cards whose taps are now words for the legacy "
-    "planner (the free reading of a card the plan set out to remove) until the digest "
-    "changes.",
 )
 MUTE_NO_REASON = Gap(
     "GAP-9",

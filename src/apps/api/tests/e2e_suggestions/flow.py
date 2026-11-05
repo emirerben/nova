@@ -13,14 +13,8 @@ because of a defect in production code that this lane may not touch carries a na
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from types import SimpleNamespace
 from typing import Any
 
-from app.database import AsyncSessionLocal
-from app.models import CreationThread
-from app.services import suggestion_chips as sc
-from app.services import suggestion_serve as serve
 from tests.e2e_suggestions import driver as d
 from tests.e2e_suggestions import gaps
 from tests.e2e_suggestions.driver import Phone, Tap
@@ -39,8 +33,6 @@ LANE = {
 }
 RESTATE = frozenset({"mute_clip", "filler_words"})
 
-GAP_RING = gaps.RING_NOT_STORED
-GAP_NO_ENTRY = gaps.NO_ENTRY
 GAP_TR_RECEIPT = gaps.TR_RECEIPT
 GAP_RESTATE_DOUBLE_TAP = gaps.RESTATE_DOUBLE_TAP
 GAP_RESTATE_NOT_READY = gaps.RESTATE_NOT_READY
@@ -48,52 +40,13 @@ GAP_REFUSED_BRIEF = gaps.REFUSED_BRIEF
 
 
 async def ensure_stored(phone: Phone, out) -> str:  # noqa: ANN001
-    """How this set's cards reached the ring: ``route`` (the real GET stored them), ``attached``
-    (the set's entry was there without cards) or ``created`` (the GET wrote no entry at all).
+    """``route`` when the real GET stored the cards it served in the ring, else ``missing``.
 
-    The last two are the gaps ``GAP_RING`` and ``GAP_NO_ENTRY``. The cards are then built the way
-    the serve is meant to build them, inside a live session, with the serve's own helpers, and
-    written the way ``persist_suggestion_set`` writes an entry, so the taps below still run
-    against the ring the phone would have had. Once the route stores them this returns ``route``
-    and nothing here runs.
+    Nothing is written on the phone's behalf: a tap against a ring the route did not fill is the
+    bug this reports, so the run fails on the ``stored`` cell instead of papering over it.
     """
     entry = phone.ring_entry(out.set_id)
-    if entry and entry.get("suggestions"):
-        return "route"
-    seeded = phone.seeded
-    async with AsyncSessionLocal() as db:
-        thread = await db.get(CreationThread, seeded.thread_id)
-        served = await serve.serve_suggestion_set(
-            db, thread, SimpleNamespace(id=seeded.user_id), None
-        )
-        assert served.out.set_id == out.set_id, "the set moved while it was being stored"
-        cards = await serve._server_cards(served)
-        await db.rollback()
-        assert cards, "the serve's own helper could not rebuild the cards in a live session"
-
-        def write(state: dict) -> tuple[dict | None, str]:
-            attached = serve.attach_cards(state, out.set_id, cards)
-            if attached is not None:
-                return attached, "written"
-            ring = [e for e in state.get(sc.RING_KEY) or [] if isinstance(e, dict)]
-            if any(e.get("set_id") == out.set_id for e in ring):
-                return None, "current"
-            entry = {
-                "set_id": out.set_id,
-                "state": out.state,
-                "digest": served.input_digest,
-                "media_digest": served.media_digest,
-                "created_at": datetime.now(UTC).isoformat(),
-                "final": True,
-                "wording": out.wording,
-                "prompt_version": sc.PROMPT_VERSION,
-                "chips": [],
-                "suggestions": cards,
-            }
-            return {**state, sc.RING_KEY: [*ring, entry][-sc.RING_SIZE :]}, "written"
-
-        await serve._mutate_state(db, seeded.thread_id, write)
-    return "attached" if entry else "created"
+    return "route" if entry and entry.get("suggestions") else "missing"
 
 
 def removed_slots(head: dict[str, Any] | None) -> set[str]:
@@ -416,12 +369,7 @@ async def tap_every_card(
         cells.append(cell)
         cell.check("served", True, "")
         how = await ensure_stored(phone, out)
-        cell.check(
-            "stored",
-            how == "route",
-            f"stored by {how}",
-            gap={"route": None, "attached": GAP_RING, "created": GAP_NO_ENTRY}[how],
-        )
+        cell.check("stored", how == "route", f"stored by {how}")
         tap = await phone.tap(card, out)
         tapped.append(card.kind)
         if card.kind in refusals:

@@ -1,14 +1,11 @@
-"""Minimal repros of the two defects that stop a served card from being tappable at all.
+"""Regression guards for the two defects that stopped a served card from being tappable at all.
 
-Each test asserts its preconditions for real, then checks the BEHAVIOR WE WANT: while the defect
-stands it ends in ``pytest.xfail`` (visible in the summary, the suite stays green), and the day the
-defect is fixed it FAILS with "remove the marker". They are the exact repros the report names as
-GAP-1 and GAP-2:
+They were the strict-xfail repros of GAP-1 and GAP-2 and now assert the behavior directly:
 
 * ``test_probe_g1``  a thread, one real GET, and the ring entry of the set it just served;
 * ``test_probe_g2``  a polished edit where only the new (v2-only) kinds are left to offer.
 
-Run one alone:  ``pytest tests/e2e_suggestions/test_probe_gaps.py::test_probe_g1 -rx``
+Run one alone:  ``pytest tests/e2e_suggestions/test_probe_gaps.py::test_probe_g1``
 """
 
 from __future__ import annotations
@@ -32,16 +29,6 @@ async def served_thread(world):  # noqa: ANN001, ANN202
     return phone, await phone.serve()
 
 
-GAP_1 = (
-    "GAP-1: GET /suggestions persists no v2 card (persist_served_set -> _server_cards runs the "
-    "witnesses after db.rollback(): MissingGreenlet), so no tap can resolve"
-)
-GAP_2 = (
-    "GAP-2: persist_suggestion_set returns early on a set with no legacy chips, so a polished edit "
-    "whose only card is a v2-only kind has no ring entry"
-)
-
-
 def stored_kinds(phone, out) -> list[str] | None:  # noqa: ANN001
     entry = phone.ring_entry(out.set_id)
     if entry is None:
@@ -53,9 +40,7 @@ def stored_kinds(phone, out) -> list[str] | None:  # noqa: ANN001
 async def test_probe_g1(world):
     phone, out = await served_thread(world)
     assert [c.kind for c in out.suggestions] == ["hook", "captions", "music", "transition", "sfx"]
-    if stored_kinds(phone, out) == [c.kind for c in out.suggestions]:
-        pytest.fail("GAP-1 is fixed: the GET stores its cards. Delete this probe and the marker.")
-    pytest.xfail(GAP_1)
+    assert stored_kinds(phone, out) == [c.kind for c in out.suggestions]
 
 
 @pytest.mark.asyncio
@@ -71,6 +56,4 @@ async def test_probe_g2(world):
         [c.kind for c in out.suggestions],
         [c.kind for c in out.chips],
     )
-    if stored_kinds(phone, out) == ["duplicates"]:
-        pytest.fail("GAP-2 is fixed: a set with cards and no chips is stored. Delete this probe.")
-    pytest.xfail(GAP_2)
+    assert stored_kinds(phone, out) == ["duplicates"]

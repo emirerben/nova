@@ -247,7 +247,6 @@ async def test_n3_flags_off(talking_world, monkeypatch):
         "suggestions empty and absent from the JSON",
         not fresh.suggestions and "suggestions" not in json.loads(fresh.model_dump_json()),
         f"cards={len(fresh.suggestions)}",
-        gap=gaps.KILL_SWITCH_FROZEN,
     )
 
     # Pinned taps on, editor triggers off (a partial rollout): the cards are served, none is stored.
@@ -262,7 +261,6 @@ async def test_n3_flags_off(talking_world, monkeypatch):
         bool(served.suggestions) and bool(entry.get("suggestions")),
         f"served {[c.kind for c in served.suggestions]}, "
         f"stored {len(entry.get('suggestions') or [])}",
-        gap=gaps.RING_NOT_STORED,
     )
     monkeypatch.setattr(settings, "kria_suggestion_editor_triggers_enabled", True)
 
