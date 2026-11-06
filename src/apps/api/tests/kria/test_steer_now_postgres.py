@@ -64,8 +64,20 @@ try:
 except OperationalError:
     pytest.skip("nova_test Postgres not reachable", allow_module_level=True)
 
+from tests.e2e_suggestions import conftest as e2e_world  # noqa: E402
+from tests.e2e_suggestions import driver as d  # noqa: E402
+from tests.e2e_suggestions import threads  # noqa: E402
+from tests.e2e_suggestions.driver import Phone  # noqa: E402
+from tests.e2e_suggestions.threads import TALKING  # noqa: E402
 from tests.kria.test_creative_brief import _ASK, _MANIFEST  # noqa: E402
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project  # noqa: E402
+from tests.tasks.test_kria_pinned_r4_withdraw import card_of, prefs  # noqa: E402
+
+# The suggestion proof's world (every v2 flag on, models and brokers poisoned, an in-memory Redis),
+# bound by assignment so its fixtures are this module's own (the shape the withdraw tests use).
+_dispose_async_engine = e2e_world._dispose_async_engine
+world = e2e_world.world
+talking_world = e2e_world.talking_world
 
 GREEN5_CHIP = "Suggest an edit."
 GREEN5_PROMPT = (
@@ -1042,3 +1054,54 @@ async def test_the_still_waiting_check_and_the_removal_are_one_step() -> None:
     assert (answer.status_code, answer.code) == (409, "turn_no_longer_queued")
     assert _status(waiting.turn_id) == "pending"
     assert _cancelled_turn_ids(thread_id) == []
+
+
+# -- Steer now over a staged suggestion tap -------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_steer_now_over_a_staged_filler_tap_takes_it_back_and_says_so(talking_world) -> None:  # noqa: ANN001
+    """F22: the card on screen is a tapped "Remove filler words" approval, and B waits behind it.
+
+    Closing a staged tap that flipped an item setting releases its locks and re-enters
+    `cancel_turn` holding the plan item first. The re-entry has to be the same call: a Steer that
+    came back as a plain cancel stopped the card without saying so (no `approval_cancelled`, no
+    `steered_to_turn_id`, no stop line), and the chat kept offering a card that was gone.
+    """
+    scn = threads.SCENARIOS["nermin-matcha-update"]
+    seeded = threads.seed_thread(scn, TALKING)
+    threads.seed_cleanup_analysis(seeded, language=scn.language)
+    phone = Phone(seeded, talking_world, prefs(), language=scn.language)
+    out = await phone.serve()
+    flags_before = d.item_flags(seeded)
+    brief_before = d.live_brief(seeded.thread_id)
+    tap = await phone.tap(card_of(out, "filler_words"), out)
+    assert tap.planned and d.approvals_pending(seeded.thread_id) == 1
+    assert d.item_flags(seeded) != flags_before, "the tap flipped the setting this test is about"
+    with sync_session() as db:
+        approval_id = str(
+            db.execute(
+                select(CreatorAgentApproval.id).where(
+                    CreatorAgentApproval.thread_id == seeded.thread_id,
+                    CreatorAgentApproval.status == "pending",
+                )
+            ).scalar_one()
+        )
+    waiting = await _send(seeded.user_id, seeded.thread_id, "and use a calmer song")
+    assert waiting.status == "queued"
+
+    answer = await _steer(seeded.user_id, seeded.thread_id, tap.accepted.turn_id)
+
+    assert not isinstance(answer, RuntimeFailure), answer
+    assert _status(tap.accepted.turn_id) == "cancelled"
+    # The tap is taken back: the setting, the requirement it wrote and its spent card.
+    assert d.item_flags(seeded) == flags_before
+    assert d.live_brief(seeded.thread_id) == brief_before
+    assert (phone.ring_entry(tap.set_id) or {}).get("consumed") in (None, {})
+    # And the chat says it was a Steer: the card closes, the stop line is the turn's own.
+    assert _card_closed_in_chat(seeded.thread_id, approval_id)
+    stop = _events(seeded.thread_id, "turn_cancelled")[-1]
+    assert stop.payload["steered_to_turn_id"] == waiting.turn_id
+    line = _events(seeded.thread_id, "status_update")[-1]
+    assert (line.payload["turn_id"], line.content) == (tap.accepted.turn_id, STOP_LINE_EN)
+    assert _status(waiting.turn_id) == "pending"
