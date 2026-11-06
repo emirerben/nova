@@ -210,3 +210,18 @@ Correction: add only `KriaUITests/CreationUITests/testDelayedNewChatAcceptsTypin
 - Inventory matches; shared AppState input still selects full; `git diff --check` passed.
 
 These checks ran before this evidence-only report addition; all test inputs are identical to the committed correction. Native production/test/build inputs are unchanged from `477b91f63`, whose 63-test pass remains attributed to that SHA. Final-head native re-execution, preship and hosted results are recorded separately in PR evidence; this report does not preclaim their outcome. Main integration is not needed for this missing registration. Broader validation gaps remain as above.
+
+## Pinned-main integration ad2f4af1 (2026-11-06)
+
+Combined native/test/build inputs were verified at `ecbb6a8ee9f71d9b5fe82f99648ab6ad7a2a790b`, merging pinned main `ad2f4af1cc5890fe7ca9737bb2ede5645496793c` without conflicts. Backup: `backup/iphone-latency-before-main-ad2f4af-f22d2733`. Independent source review found no material integration defect. Both delayed-create and explicitly gated place-hint fixtures, six UI registrations and main upload withdrawal/cancellation guards are preserved. NativeEditorSession, DeviceRenderSessions and media-engine files are unchanged from the previously reviewed speed head. Unpublished Cunda code is not included.
+
+Executed at the combined head:
+- CI selection/required contracts: **160 passed**, `/tmp/kria-speed-ad2-ci.log`.
+- UI-selection contracts: **26 passed**, `/tmp/kria-speed-ad2-ui-selection.log`.
+- Focused native: **133 passed, 0 failures/skips**, `/tmp/kria-speed-ad2-native.log`; includes ProjectActions, 18 save/receipt session cases, NativeEditorExport, BackgroundUploadRetry and FootagePlacement. Bundle: `/tmp/kria-latency-dd/Logs/Test/Test-Kria-2026.11.06_08-13-01-+0000.xcresult`.
+- Exact delayed-New-Chat plus five UploadPlaceHint UI tests: **6 passed, 0 failures/skips**, 134.315s, `/tmp/kria-speed-ad2-ui.log`; bundle `/tmp/kria-latency-dd/Logs/Test/Test-Kria-2026.11.06_08-14-55-+0000.xcresult`.
+- Preship and diff whitespace checks passed.
+
+Commands are preserved in `/tmp/kria-speed-ad2-bounded.sh`: project regeneration, scoped xcodebuild test, then serial test-without-building UI execution. Synthetic pending chat 0 ms / real identity 522 ms for 500 ms injected delay; Save 905 ms for four 300 ms calls, each once. No real-device speed claim.
+
+This report-only successor preserves all consumed native/UI/selection inputs byte-for-byte. A fresh final-head focused native run and final preship are reported separately in the PR body. The six UI results above remain attributed to ecbb6a8ee. Full native hosted evidence from f22 is prior-head only. Lifecycle formal is still incomplete after resource interruption; it was not started during this integration validation. Physical-device timing, export fidelity, broad model correspondence and the historical cancellation flake remain open under KRI-640.
