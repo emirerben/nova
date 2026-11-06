@@ -29,7 +29,7 @@ import hashlib
 import json
 import re
 import unicodedata
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -125,9 +125,14 @@ class StoredCard:
     action_digest: str
 
 
-def ring_suggestions(sset: SuggestionSet) -> list[dict[str, Any]]:
+def ring_cards(cards: Iterable[Suggestion]) -> list[dict[str, Any]]:
     """The ``suggestions`` value of a ring entry: what ``stored_card`` reads back."""
-    return [s.model_dump(mode="json") for s in sset.suggestions]
+    return [s.model_dump(mode="json") for s in cards]
+
+
+def ring_suggestions(sset: SuggestionSet) -> list[dict[str, Any]]:
+    """``ring_cards`` of a whole set."""
+    return ring_cards(sset.suggestions)
 
 
 def stored_card(

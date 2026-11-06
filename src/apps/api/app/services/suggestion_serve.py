@@ -602,7 +602,7 @@ async def serve_suggestion_set(
         served = _without_suppressed(served, thread)
     else:
         served.ring_has_cards = _ring_has_cards(
-            served.out.set_id, getattr(thread, "state", None), _shown_ids(served)
+            served.out.set_id, getattr(thread, "state", None), _served_ids(served)
         )
     await _prepare_cards(served)
     return served
@@ -1343,10 +1343,14 @@ def _ring_has_cards(
     return False
 
 
-def _shown_ids(served: Served) -> list[str]:
-    """The cards the ring must hold for this read: every one the set was built with, including
-    the ones the strip took off this read's wire (they come back without a new run)."""
-    return [c.id for c in (served.unfiltered or served.out).suggestions]
+def _served_ids(served: Served) -> list[str]:
+    """The cards the ring must hold for this read to be served: the ones on the wire.
+
+    Not the ones the strip took off: a card the strip withheld (its tap would be refused) is
+    stored when it builds, so it comes back without a new run, but a card the server could not
+    rebuild must not keep the others from being served (``_built_set``).
+    """
+    return [c.id for c in served.out.suggestions]
 
 
 def _without_suppressed(served: Served, thread: Any) -> Served:
@@ -1359,7 +1363,7 @@ def _without_suppressed(served: Served, thread: Any) -> Served:
     suppressed = suppressed_set(state)
     served.unfiltered = served.unfiltered or served.out
     served.needs_fold = fold_suppressed(state or {}) is not None if suppressed else False
-    served.ring_has_cards = _ring_has_cards(served.out.set_id, state, _shown_ids(served))
+    served.ring_has_cards = _ring_has_cards(served.out.set_id, state, _served_ids(served))
     out = served.out
     if not suppressed:
         return served
@@ -1448,20 +1452,20 @@ def _folded(state: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
 async def _server_cards(served: Served) -> list[dict[str, Any]] | None:
     """The v2 cards of the set that was served, actions included, for the ring entry.
 
-    Rebuilt from the same context, plan and cached picks the wire cards came from. If the rebuilt
-    ids differ from the served ids (the picks expired from Redis in between) nothing is stored:
-    a tap on such a card answers "no longer fits" instead of running a different change.
+    Rebuilt from the same context, plan and cached picks the wire cards came from. A card whose id
+    is not among the rebuilt ones (the picks expired from Redis in between) is not stored: a tap on
+    it answers "no longer fits" instead of running a different change.
     """
-    from app.services.suggestions.pinned import ring_suggestions  # noqa: PLC0415
+    from app.services.suggestions.pinned import ring_cards  # noqa: PLC0415
 
     shown = served.unfiltered or served.out
     if not shown.suggestions or served.ctx is None or served.plan is None:
         return None
-    built = await _built_set(served)
+    built = await _built_cards(served)
     if built is None:
         log.info("suggestion_chips.cards_not_stored", set_id=shown.set_id)
         return None
-    return ring_suggestions(built)
+    return ring_cards(built)
 
 
 async def _assembled(served: Served) -> Any | None:
@@ -1481,17 +1485,22 @@ async def _assembled(served: Served) -> Any | None:
     return built
 
 
-async def _built_set(served: Served) -> Any | None:
-    """``_assembled`` when its ids are the ones served, else None.
+async def _built_cards(served: Served) -> list[Any] | None:
+    """The cards ``_assembled`` rebuilds that were served, else None when none of them is.
 
-    The ring write reads it: cards whose ids differ (the picks expired from Redis in between) are
-    not stored, a tap on such a card answers "no longer fits" instead of running a different one.
+    The ring write reads it. A card whose id the rebuild no longer produces (the picks expired
+    from Redis in between, its kind would not build it now) is left out: a tap on it answers "no
+    longer fits" instead of running a different change. The cards that do rebuild are stored, in
+    the order they were built, so one that cannot be rebuilt costs that card and not its
+    neighbours.
     """
     shown = served.unfiltered or served.out
     built = await _assembled(served)
-    if built is not None and [s.id for s in built.suggestions] != [s.id for s in shown.suggestions]:
+    if built is None:
         return None
-    return built
+    wanted = {s.id for s in shown.suggestions}
+    kept = [s for s in built.suggestions if s.id in wanted]
+    return kept or None
 
 
 async def _offered_cards(thread: Any, served: Served) -> dict[str, Any]:
@@ -1570,7 +1579,7 @@ async def persist_served_set(
     shown = served.unfiltered or served.out
     if shown.suggestions and shown.status == "ok" and not served.ring_has_cards:
         cards = served.cards if served.cards_built else await _server_cards(served)
-        if not await _store_cards(db, thread_id, shown.set_id, cards or [], _shown_ids(served)):
+        if not await _store_cards(db, thread_id, shown.set_id, cards or [], _served_ids(served)):
             # The cards are an enhancement of a set that serves without them. A card the ring does
             # not hold answers "no longer fits" however good it was, so the phone gets the chips
             # now (same set id) and the next read builds and stores the cards again.
