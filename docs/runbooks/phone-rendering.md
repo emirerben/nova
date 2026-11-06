@@ -4598,7 +4598,7 @@ stacked hook title: one ordinary text row per line (`opening-title`, `opening-ti
   asks; asked spot, under the face, between face and captions, above the face, then 0.85 / 0.72
   / 0.6 size. Faces and marked objects are hard limits; captions are kept clear whenever any spot
   allows it. Held 3 s unless she gave a hold. The styling pass leaves these rows as built.
-- **Logo above the title:** a reaction beat with `anchor: "title"` (Main Creator v129 teaches it
+- **Logo above the title:** a reaction beat with `anchor: "title"` (Main Creator v135 teaches it
   only while the flag is on) becomes a card right above the block for the title's window
   (`beat-<id>-1`, source time like every beat card). The title is placed so the biggest logo
   fits off her face and her captions (with captions up in the title band, the block drops just

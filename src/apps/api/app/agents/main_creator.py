@@ -237,11 +237,12 @@ log = structlog.get_logger()
 # v131 (item 23, Related KRI-1129), on top of v120 (Qendresa 12 caption shape): with
 # BRIEF_LONG_REQUEST_ENABLED the brief section says "at most 32 objects" instead of 16.
 # Flag off: every prompt byte-identical.
-# v129 (Qendresa item 20, TITLE_LOOK_ENABLED): only while `title_look_enabled` is on, the Talking
+# v135 (Qendresa item 20, TITLE_LOOK_ENABLED): only while `title_look_enabled` is on, the Talking
 # reaction-beats section gains one rule: a logo/sticker she wants with or above the opening title
 # is a beat with `anchor: "title"`; the title stays in `opening_title`, " / " included. Flag off:
-# every prompt keeps its bytes. On top of v131 (#2106); the PR keeps its reserved number.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-05-v129"
+# every prompt keeps its bytes. On top of v131 (#2106). Reserved as v129, renumbered once main
+# passed it; v132-v134 are held by unmerged branches.
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-06-v135"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
