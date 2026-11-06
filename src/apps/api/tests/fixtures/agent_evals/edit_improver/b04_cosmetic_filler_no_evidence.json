@@ -1,0 +1,42 @@
+{
+  "id": "b04_cosmetic_filler_no_evidence",
+  "why_bad": "sfx card with no measured evidence behind it",
+  "expect": "fail",
+  "expect_failures": [
+    "no_evidence",
+    "why_ungrounded"
+  ],
+  "input": {
+    "state": "ready",
+    "language": "en",
+    "creator_request": "",
+    "issued": [
+      {
+        "kind": "sfx",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": []
+          }
+        ]
+      }
+    ],
+    "evidence": {},
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": []
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "sfx",
+        "target_ids": [
+          "all"
+        ],
+        "why": "Adds punch to the cuts",
+        "copy": null,
+        "rank": 1
+      }
+    ]
+  }
+}

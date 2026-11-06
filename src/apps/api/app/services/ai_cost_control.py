@@ -48,8 +48,8 @@ _EXPERIMENT_PURPOSES = frozenset(
     {"live_eval", "provider_smoke", "manual_qa", "omni_lab", "experiment"}
 )
 _OPTIONAL_PURPOSES = frozenset({"optional_background", "style_vision"})
-# KRI-756: ledger feature name of the suggestion-chip wording agent (nova.chat.suggester).
-_SUGGESTER_FEATURE = "chip_suggester"
+# Ledger feature name of the suggestion agent: `Agent._run_on_model` uses `spec.name` verbatim.
+_SUGGESTER_FEATURE = "nova.chat.suggestion_agent"
 # KRI-1171: ledger feature name of the paid intent review.
 _INTENT_REVIEW_FEATURE = "intent_review"
 _CANARY_PURPOSES = frozenset({"release_canary", "internal_canary"})
@@ -671,8 +671,10 @@ _GENERATED_CAPABILITIES = {
     "generated_image_edit": "image",
     "generated_narration": "narration",
 }
-_FEATURE_CAPABILITIES = {"intent_review": "intent_review"}
-_ALWAYS_ENFORCED_CAPABILITIES = frozenset({"image", "narration", "intent_review"})
+_FEATURE_CAPABILITIES = {"intent_review": "intent_review", _SUGGESTER_FEATURE: "suggestions"}
+# Capabilities whose reservations are enforced even while AI_COST_CONTROL_ENABLED is off, so a
+# missing ledger never becomes unmetered spend. Their provider is always OpenAI.
+_ALWAYS_ENFORCED_CAPABILITIES = frozenset({"image", "narration", "intent_review", "suggestions"})
 _CREDIT_PROVIDERS = frozenset({"openai", "anthropic"})
 
 
@@ -689,10 +691,13 @@ def _credit_capability(request: PaidCallRequest) -> str | None:
         inferred = "evaluation"
     capability = request.capability or inferred
     if capability is not None and (
-        capability not in {"image", "narration", "evaluation", "intent_review"}
+        capability not in {"image", "narration", "evaluation", "intent_review", "suggestions"}
         or (inferred is not None and capability != inferred)
         or request.provider not in _CREDIT_PROVIDERS
-        or (capability in {"image", "narration", "intent_review"} and request.provider != "openai")
+        or (
+            capability in {"image", "narration", "intent_review", "suggestions"}
+            and request.provider != "openai"
+        )
     ):
         raise AiCostControlPolicyError(scope="credit:capability", reason="invalid_capability")
     if capability in {"image", "narration"}:
@@ -739,13 +744,19 @@ def _credit_spend(
                    CASE WHEN feature IN ('generated_image', 'generated_image_edit') THEN 'image'
                         WHEN feature = 'generated_narration' THEN 'narration'
                         WHEN feature = 'intent_review' THEN 'intent_review'
+                        WHEN feature = :suggester_feature THEN 'suggestions'
                         WHEN usage_purpose IN ('live_eval', 'provider_smoke') AND
                              ((provider = 'openai' AND requested_model = 'gpt-6.1-sol') OR
                               (provider = 'anthropic' AND requested_model = 'claude-sonnet-5-5'))
                         THEN 'evaluation'
                         ELSE usage_json->>'_budget_capability' END = :capability)
         """),
-        {"provider": provider, "period_start": period_start, "capability": capability},
+        {
+            "provider": provider,
+            "period_start": period_start,
+            "capability": capability,
+            "suggester_feature": _SUGGESTER_FEATURE,
+        },
     ).scalar_one()
     return Decimal(str(value))
 
@@ -1071,8 +1082,8 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                     )
 
             if request.feature == _SUGGESTER_FEATURE and creator_id is not None:
-                # KRI-756: a new feature name escapes the director check above, so the chip
-                # wording agent gets its own literal per-user daily cap.
+                # A new feature name escapes the director check above, so the suggestion agent
+                # gets its own literal per-user daily cap.
                 used = int(
                     conn.execute(
                         text(
@@ -1090,7 +1101,7 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                 )
                 if used >= settings.kria_suggester_daily_limit_per_user:
                     _reject(
-                        scope="chip_suggester:user_day",
+                        scope="suggestions:user_day",
                         reset_at=_next_day(now),
                         cached_behavior_available=request.cached_behavior_available,
                     )

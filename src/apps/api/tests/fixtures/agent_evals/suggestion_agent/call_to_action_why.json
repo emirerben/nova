@@ -1,0 +1,27 @@
+{
+ "id": "call_to_action_why",
+ "description": "Hype register and links are refused in a why.",
+ "context": "rd_music_loud",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "music",
+    "target_ids": [
+     "all"
+    ],
+    "why": "Pouring matcha, go viral at example.com",
+    "copy": null,
+    "rank": 1
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "why": {
+   "music": false
+  }
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

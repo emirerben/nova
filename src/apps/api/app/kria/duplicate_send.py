@@ -58,6 +58,8 @@ class DuplicateSend:
     state: DuplicateState
     # The review the first turn already showed the creator (state "finished" only).
     review: str = ""
+    # The suggestion card the earlier message was a tap on, when it was one.
+    tapped: dict[str, str] | None = None
 
 
 def normalized(message: str | None) -> str:
@@ -147,7 +149,41 @@ async def find_duplicate_send(
     state = _state_of(turn, review, now=now or datetime.now(UTC))
     if state is None:
         return None
-    return DuplicateSend(turn_id=turn.id, state=state, review=review)
+    stamped = payload.get("pinned_suggestion")
+    tapped = (
+        {"set_id": str(stamped.get("set_id") or ""), "id": str(stamped.get("id") or "")}
+        if isinstance(stamped, dict) and not stamped.get("unresolved")
+        else None
+    )
+    return DuplicateSend(turn_id=turn.id, state=state, review=review, tapped=tapped)
+
+
+def refused_card_tap(
+    duplicate: DuplicateSend, stamp: dict[str, Any] | None
+) -> dict[str, str] | None:
+    """The typed refusal record for a tap that repeats a card's tap still in flight, else None.
+
+    ``stamp`` is what this submit stamped (``pinned.stamp_pin``): the repeat is a tap on a card
+    this thread was offered, and the earlier message was a tap too whose change is already staged
+    (an approval waits, a render runs, or it just finished), so the repeat is refused as
+    ``consumed`` like every later tap on a spent card. A repeat while the first tap is still being
+    planned has no outcome to name yet (it may yet be refused for a transient reason and stay
+    tappable). A repeat of words the creator typed, or a submit that was not stamped (the switch is
+    off), has no record and is answered exactly as before.
+    """
+    if (
+        duplicate.tapped is None
+        or duplicate.state == "working"
+        or not isinstance(stamp, dict)
+        or stamp.get("unresolved")
+    ):
+        return None
+    return {
+        "set_id": str(stamp.get("set_id") or ""),
+        "id": str(stamp.get("id") or ""),
+        "outcome": "refused",
+        "reason": "consumed",
+    }
 
 
 def duplicate_reply(duplicate: DuplicateSend) -> str:

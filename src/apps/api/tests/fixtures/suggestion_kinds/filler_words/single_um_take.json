@@ -1,0 +1,90 @@
+{
+ "about": "Synthetic take with one stray 'um' in 16 words: the no-card case the threshold exists for.",
+ "language": "en",
+ "duration_s": 6.84,
+ "words": [
+  {
+   "text": "So",
+   "start_s": 0.0,
+   "end_s": 0.2
+  },
+  {
+   "text": "um",
+   "start_s": 0.32,
+   "end_s": 0.67
+  },
+  {
+   "text": "I",
+   "start_s": 0.79,
+   "end_s": 0.94
+  },
+  {
+   "text": "went",
+   "start_s": 1.06,
+   "end_s": 1.36
+  },
+  {
+   "text": "to",
+   "start_s": 1.48,
+   "end_s": 1.63
+  },
+  {
+   "text": "the",
+   "start_s": 1.75,
+   "end_s": 1.9
+  },
+  {
+   "text": "market",
+   "start_s": 2.02,
+   "end_s": 2.47
+  },
+  {
+   "text": "yesterday",
+   "start_s": 2.59,
+   "end_s": 3.14
+  },
+  {
+   "text": "and",
+   "start_s": 3.26,
+   "end_s": 3.41
+  },
+  {
+   "text": "it",
+   "start_s": 3.53,
+   "end_s": 3.65
+  },
+  {
+   "text": "was",
+   "start_s": 3.77,
+   "end_s": 3.97
+  },
+  {
+   "text": "crowded.",
+   "start_s": 4.09,
+   "end_s": 4.69
+  },
+  {
+   "text": "Anyway,",
+   "start_s": 4.81,
+   "end_s": 5.21
+  },
+  {
+   "text": "it",
+   "start_s": 5.33,
+   "end_s": 5.48
+  },
+  {
+   "text": "was",
+   "start_s": 5.6,
+   "end_s": 5.8
+  },
+  {
+   "text": "fun.",
+   "start_s": 5.92,
+   "end_s": 6.32
+  }
+ ],
+ "expect": {
+  "filler_sounds": 1
+ }
+}

@@ -1,0 +1,167 @@
+{
+  "input_digest": "6d0f3c7c34dc986a5a7dec688521aec0",
+  "media_digest": "57d7d9c4b5e01fc54c6c06f2",
+  "wire": {
+    "anchor": {
+      "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "media_digest": "57d7d9c4b5e01fc54c6c06f2",
+      "render_generation_id": "generation-1",
+      "variant_id": "original_text"
+    },
+    "chips": [
+      {
+        "anchor": {
+          "clip_ordinal": null,
+          "media_id": null,
+          "moment": null,
+          "text_bar_index": null
+        },
+        "capability": "family:title",
+        "default_edit": false,
+        "id": "sc_5fdac413f372",
+        "kind": "hook",
+        "label": "Add a hook to the opening",
+        "label_source": "template",
+        "message": "Add a hook that matches the video",
+        "rank": 1,
+        "requires_protocol": null,
+        "why": "There is no title yet"
+      },
+      {
+        "anchor": {
+          "clip_ordinal": null,
+          "media_id": null,
+          "moment": null,
+          "text_bar_index": null
+        },
+        "capability": "family:caption",
+        "default_edit": false,
+        "id": "sc_caf42eba516d",
+        "kind": "captions",
+        "label": "Add captions",
+        "label_source": "template",
+        "message": "Add captions",
+        "rank": 2,
+        "requires_protocol": null,
+        "why": null
+      },
+      {
+        "anchor": {
+          "clip_ordinal": null,
+          "media_id": null,
+          "moment": null,
+          "text_bar_index": null
+        },
+        "capability": "family:sfx",
+        "default_edit": false,
+        "id": "sc_bd3a989539a7",
+        "kind": "sfx",
+        "label": "Add sound effects",
+        "label_source": "template",
+        "message": "Add sound effects",
+        "rank": 3,
+        "requires_protocol": null,
+        "why": "3 clips have no speech"
+      },
+      {
+        "anchor": {
+          "clip_ordinal": null,
+          "media_id": null,
+          "moment": null,
+          "text_bar_index": null
+        },
+        "capability": "family:transition",
+        "default_edit": false,
+        "id": "sc_358de8486b55",
+        "kind": "transition",
+        "label": "Add transitions",
+        "label_source": "template",
+        "message": "Add transitions between the clips",
+        "rank": 4,
+        "requires_protocol": null,
+        "why": "3 clips joined by hard cuts"
+      }
+    ],
+    "digest": {
+      "brief_version": null,
+      "language": "en",
+      "media_digest": "57d7d9c4b5e01fc54c6c06f2",
+      "prompt_version": "2026-11-04.1",
+      "signals_version": "",
+      "snapshot_hash": "b11ce8f48d3cd41f461401aa2245d78e",
+      "state": "ready"
+    },
+    "retry_after_s": null,
+    "schema_version": 1,
+    "set_id": "<set>",
+    "state": "ready",
+    "status": "ok",
+    "suggestions": [
+      {
+        "action_type": "editor_ops",
+        "anchor": {
+          "clip_ordinal": null,
+          "media_id": null,
+          "moment": null,
+          "text_bar_index": null
+        },
+        "copy_text": null,
+        "cost_usd": null,
+        "evidence": [],
+        "id": "ss_caf42eba516d",
+        "kind": "captions",
+        "prompt": "Add captions",
+        "rank": 1,
+        "requires_protocol": null,
+        "title": "Add captions",
+        "why": ""
+      },
+      {
+        "action_type": "editor_ops",
+        "anchor": {
+          "clip_ordinal": null,
+          "media_id": null,
+          "moment": null,
+          "text_bar_index": null
+        },
+        "copy_text": null,
+        "cost_usd": null,
+        "evidence": [],
+        "id": "ss_bd3a989539a7",
+        "kind": "sfx",
+        "prompt": "Add sound effects",
+        "rank": 2,
+        "requires_protocol": null,
+        "title": "Add sound effects",
+        "why": "3 clips have no speech"
+      },
+      {
+        "action_type": "editor_ops",
+        "anchor": {
+          "clip_ordinal": null,
+          "media_id": null,
+          "moment": null,
+          "text_bar_index": null
+        },
+        "copy_text": null,
+        "cost_usd": null,
+        "evidence": [],
+        "id": "ss_358de8486b55",
+        "kind": "transition",
+        "prompt": "Add transitions between the clips",
+        "rank": 3,
+        "requires_protocol": null,
+        "title": "Add transitions",
+        "why": "3 clips joined by hard cuts"
+      }
+    ],
+    "understanding": "done",
+    "wording": "fallback"
+  },
+  "witness_tiers": {
+    "captions": "editor",
+    "hook": "editor",
+    "sfx": "editor",
+    "transition": "editor"
+  }
+}

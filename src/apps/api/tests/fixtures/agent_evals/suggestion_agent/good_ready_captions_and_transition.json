@@ -1,0 +1,54 @@
+{
+ "id": "good_ready_captions_and_transition",
+ "description": "Ready: captions then transitions, each a witnessed editor-ops card.",
+ "context": "rd_captions_off_with_cues",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "captions",
+    "target_ids": [
+     "all"
+    ],
+    "why": "Creator talking to camera in a kitchen",
+    "copy": null,
+    "rank": 1
+   },
+   {
+    "kind": "transition",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 2
+   },
+   {
+    "kind": "hook",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 3
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "kinds": [
+   "captions",
+   "transition",
+   "hook"
+  ],
+  "cards": [
+   "captions",
+   "transition"
+  ],
+  "why": {
+   "captions": true
+  }
+ },
+ "tags": [
+  "natural"
+ ]
+}

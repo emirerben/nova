@@ -1,0 +1,12 @@
+{
+ "id": "markdown_fenced_json",
+ "description": "Valid JSON inside a markdown fence: strict mode never returns this, and the server does not repair it.",
+ "context": "nermin-matcha-update::first_prompt",
+ "raw_text": "```json\n{\"ranked\": [{\"kind\": \"sfx\", \"target_ids\": [\"all\"], \"why\": \"\", \"copy\": null, \"rank\": 1}]}\n```",
+ "expect": {
+  "fallback_reason": "schema_error"
+ },
+ "tags": [
+  "adversarial"
+ ]
+}
