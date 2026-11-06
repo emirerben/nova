@@ -36,16 +36,19 @@ the only stand-ins (see ``scenes``).
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 import pytest
 
+from app.config import settings
 from tests.e2e_suggestions import scenes as s
 from tests.e2e_suggestions.driver import NO_LONGER_FITS, NO_LONGER_FITS_TR
 from tests.e2e_suggestions.flow import RESTATE, tap_every_card, verify_render_kick
 from tests.e2e_suggestions.report import Recorder
 from tests.e2e_suggestions.threads import EDITOR, TALKING
+from tests.tasks import kria_pinned_suggestion_harness as h
 
 KEYS = ["nermin-matcha-update", "nermin-matcha-update/tr"]
 IDS = ["en", "tr"]
@@ -97,6 +100,21 @@ async def begin(world, key: str) -> Played:  # noqa: ANN001
     scene = s.build(world, key, TALKING)
     first = await scene.phone.serve()
     return Played(scene, first, pointer_at_start=s.pointer(scene.seeded))
+
+
+def kria_render_lands(played: Played) -> str:
+    """A Kria render completes: the saved video is now its output and the agent has read it (the
+    only writer of the pointer besides an editor tap). It is a NEW saved video, so the suggestion
+    digest moves with it; writing the pointer alone would leave a frozen set standing for 24 h."""
+    stamp = uuid.uuid4().hex
+    h.edit_variant(
+        played.scene.seeded,
+        lambda v: v.update(render_generation_id=stamp, render_status="ready", ok=True),
+    )
+    generation = s.agent_reads_video(played.scene.seeded)
+    assert generation not in played.saves, "the render did not mint a new saved video"
+    played.saves.append(generation)
+    return generation
 
 
 async def save(played: Played, which: dict) -> str:
@@ -160,7 +178,7 @@ async def o5(world, key, rec, where) -> Played:  # noqa: ANN001
     await save(played, FIRST)
     await tap_editor(played, rec, "music", where=where, note="after a Save ")
     await played.scene.phone.undo()
-    generation = s.agent_reads_video(played.scene.seeded)
+    generation = kria_render_lands(played)
     if rec is not None:
         rec.negative(
             "O5 the agent's read moves the pointer to the saved video and Undo does not undo it",
@@ -203,16 +221,32 @@ ORDERS: dict[str, tuple[Order, bool]] = {
 }
 
 
+# The brief changes what a tap writes (a requirement, a receipt) and nothing about the pointer, so
+# the orders that move it run with the brief off as well.
+CASES = [(key, name, True) for name in ORDERS for key in KEYS] + [
+    (key, name, False)
+    for name in list(ORDERS)[:1] + list(ORDERS)[2:3] + list(ORDERS)[4:5]
+    for key in KEYS
+]
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("name", list(ORDERS), ids=[n.split(" ", 1)[0] for n in ORDERS])
-@pytest.mark.parametrize("key", KEYS, ids=IDS)
+@pytest.mark.parametrize(
+    ("key", "name", "brief"),
+    CASES,
+    ids=[
+        f"{n.split(' ', 1)[0]}-{'en' if k == KEYS[0] else 'tr'}-brief-{'on' if b else 'off'}"
+        for k, n, b in CASES
+    ],
+)
 async def test_every_order_ends_with_cards_that_execute_and_a_save_that_stands(
-    talking_world, monkeypatch, key, name
+    talking_world, monkeypatch, key, name, brief
 ):
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", brief)
     play, read = ORDERS[name]
     short = name.split(" ", 1)[0]
-    rec = Recorder(f"save {short} order {key}")
-    where = f"{key}/talking/{name}"
+    rec = Recorder(f"save {short} order {key} brief={brief}")
+    where = f"{key}/talking/{name}/brief-{'on' if brief else 'off'}"
     played = await play(talking_world, key, rec, where)
     scene, held = played.scene, s.card_of(played.first, "filler_words")
     saved = played.saves[-1]
@@ -259,7 +293,7 @@ async def test_every_order_ends_with_cards_that_execute_and_a_save_that_stands(
         scene.scn,
         TALKING,
         expect=kinds,
-        state=f"order-{short.lower()}",
+        state=f"order-{short.lower()}" + ("" if brief else "-brief-off"),
         probe_render=probe,
     )
 
@@ -275,5 +309,68 @@ async def test_every_order_ends_with_cards_that_execute_and_a_save_that_stands(
             "typed refusal base_moved, nothing written, the speech cleanup stays off",
             s.is_refused(tap, "base_moved"),
             f"signal={tap.refused} reply={tap.reply[:70]!r} rows {tap.before} -> {tap.after}",
+        )
+    rec.finish()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", KEYS, ids=IDS)
+async def test_a_readiness_account_after_a_save_waits_for_the_agent_to_read_the_video(
+    talking_world, monkeypatch, key
+):
+    """An account on approval readiness: Save -> the filler card is withheld (the Save is unread),
+    every other card executes; the agent reads the saved video -> the filler card is served and its
+    whole tap works (the renderer is resolved the way the live planner does)."""
+    from tests.tasks.test_kria_pinned_r5_readiness import plan_names_its_clips, readiness_on
+
+    rec = Recorder(f"save readiness Save then read {key}")
+    readiness_on(monkeypatch)
+    scene = s.build(talking_world, key, TALKING)
+    plan_names_its_clips(scene.seeded)
+    talking_world.refreshes.clear()
+    await s.route_save(scene.seeded, **FIRST[TALKING])
+    out = await scene.phone.serve()
+    kinds = s.kinds_of(out)
+    rec.negative(
+        "the Save is unread: no restating card on a readiness account either",
+        key,
+        "no filler_words; the other cards served",
+        "filler_words" not in kinds and {"captions", "music", "sfx"} <= set(kinds),
+        f"served {kinds}",
+    )
+    await tap_every_card(
+        rec, scene.phone, scene.scn, TALKING, expect=kinds, state="readiness-after-save"
+    )
+    generation = kria_render_lands(
+        Played(scene, None, saves=[s.baseline(scene.seeded)], pointer_at_start=None)
+    )
+    talking_world.redis.advance(60)
+    read = await scene.phone.serve()
+    rec.negative(
+        "the agent has read the saved video: the filler card is served again",
+        key,
+        f"filler_words served (pointer == {generation!r})",
+        "filler_words" in s.kinds_of(read),
+        f"served {s.kinds_of(read)}",
+    )
+
+    async def probe(cell, kind):  # noqa: ANN001, ANN202
+        twin = s.build(talking_world, key, TALKING)
+        plan_names_its_clips(twin.seeded)
+        talking_world.refreshes.clear()
+        await s.route_save(twin.seeded, **FIRST[TALKING])
+        kria_render_lands(Played(twin, None, saves=[s.baseline(twin.seeded)]))
+        await verify_render_kick(cell, twin.phone, kind, monkeypatch)
+
+    if "filler_words" in s.kinds_of(read):
+        await tap_every_card(
+            rec,
+            scene.phone,
+            scene.scn,
+            TALKING,
+            expect=s.kinds_of(read),
+            only=frozenset({"filler_words"}),
+            state="readiness-saved-and-read",
+            probe_render=probe,
         )
     rec.finish()

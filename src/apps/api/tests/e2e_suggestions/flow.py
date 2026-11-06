@@ -448,6 +448,19 @@ def verify_hidden_after(cell: Cell, card, out, *, undone: bool) -> None:  # noqa
             cell.check("undo", False, "Undo took the tap back, but the card is not offered again")
         return
     prior = cell.checks.get("consumed", {"status": "pass", "detail": ""})
+    if undone and card.kind == "hook" and not settings.kria_creative_brief_enabled:
+        # Without the creative brief nothing moves the digest when the hook's tap is undone, so the
+        # frozen set that holds the hook is served again, and the tap is refused (GAP-17; the
+        # direct repro is test_r6_scenarios.test_u1). Named, and it fails the day the card is
+        # kept out as the brief-on accounts' is.
+        if prior["status"] == "pass":
+            cell.check(
+                "consumed",
+                not back,
+                f"the hook is served again after its own Undo, and its tap is refused: {back}",
+                gap=gaps.HOOK_RESERVED_AFTER_UNDO,
+            )
+        return
     if prior["status"] == "pass" and back:
         cell.check("consumed", False, f"ring marked it, but the card is served again: {back}")
 
