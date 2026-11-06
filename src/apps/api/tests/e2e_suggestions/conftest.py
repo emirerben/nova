@@ -68,6 +68,7 @@ async def _dispose_async_engine():
 def world(monkeypatch):
     """Every v2 flag on (the rollout configuration), every model and broker poisoned, and the
     suggestion store backed by an in-memory Redis. The mute kind keeps its shipped dark constant."""
+    from app.services import suggestion_serve
     from app.services import suggestion_store as store
 
     w = h.install_world(monkeypatch)
@@ -79,6 +80,10 @@ def world(monkeypatch):
     redis = fakes.FakeRedis()
     monkeypatch.setattr(store, "_redis", lambda: redis)
     w.redis = redis
+    # The worker task binds ``enqueue_suggester`` by name when it is first imported (above, before
+    # any fixture), so the recorder the shared harness installs on ``suggestion_serve`` never
+    # reaches it: a busy thread's deferral would call the real function and wait for a broker.
+    monkeypatch.setattr(kria_suggester, "enqueue_suggester", suggestion_serve.enqueue_suggester)
     return w
 
 

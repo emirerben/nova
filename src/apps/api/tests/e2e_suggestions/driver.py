@@ -151,8 +151,12 @@ class Phone:
         world,
         preferences: list[dict[str, Any]],
         language: str = "en",  # noqa: ANN001
+        protocol: int | None = None,
     ) -> None:
         self.language = language
+        # The client protocol of the app build the creator holds: declared on every read and bound
+        # while a tap's turn runs (what a worker acting on the message reads). None = no header.
+        self.protocol = protocol
         self.seeded = seeded
         self.world = world
         self.client = fakes.CassetteClient(preferences)
@@ -174,7 +178,12 @@ class Phone:
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://phone") as client:
                 response = await client.get(
-                    f"/creation-threads/{self.seeded.thread_id}/suggestions"
+                    f"/creation-threads/{self.seeded.thread_id}/suggestions",
+                    headers=(
+                        {"X-Kria-Client-Protocol": str(self.protocol)}
+                        if self.protocol is not None
+                        else {}
+                    ),
                 )
         finally:
             app.dependency_overrides.pop(get_current_user, None)
@@ -232,13 +241,22 @@ class Phone:
         brief_before = live_brief(seeded.thread_id)
         flags_before = item_flags(seeded)
         applied_before = len(h.events(seeded.thread_id, "draft_applied"))
-        accepted, _publish = await h.submit(
-            seeded,
-            message if message is not None else card.prompt,
-            tap={"set_id": out.set_id, "chip_id": chip_id or card.id},
-            editor_state=editor_state,
-        )
-        result = await h.run(accepted.turn_id)
+        from app.services.client_protocol import bind_sending_build, unbind_sending_build
+
+        # Only a phone that declares a build binds one: a caller that already bound the build the
+        # tap is sent from (``tap_as`` in the strip tests) keeps it.
+        token = bind_sending_build(self.protocol) if self.protocol is not None else None
+        try:
+            accepted, _publish = await h.submit(
+                seeded,
+                message if message is not None else card.prompt,
+                tap={"set_id": out.set_id, "chip_id": chip_id or card.id},
+                editor_state=editor_state,
+            )
+            result = await h.run(accepted.turn_id)
+        finally:
+            if token is not None:
+                unbind_sending_build(token)
         assistant = [e for e in h.events(seeded.thread_id) if e.role == "assistant"][-1]
         chat = [e for e in h.events(seeded.thread_id) if e.event_type == "user_message"][-1]
         applied = h.events(seeded.thread_id, "draft_applied")

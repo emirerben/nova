@@ -19,6 +19,7 @@ the phone. The `Action` stays server-side; a tap pins `{set_id, chip_id}`.
 | `services/suggestions/kinds/*.py` | ONE module per kind; the explicit list is `kinds/__init__.py` |
 | `services/suggestions/pinned.py` | the ring reads a tap resolves against, the lane allow-lists, the registry rebuild, the restate base |
 | `services/suggestions/brief_asks.py` | "did the creator already say something about this lane?" for the five ported editor kinds (KRI-129) |
+| `services/suggestions/restate_judgment.py` | the one question the serve and a restating tap ask: would the commit approve this draft? (`restate_problem`, `plan_media`) |
 | `services/suggestion_serve.py` | the GET's read path: freeze, ring write, and the strip of cards the tap would refuse |
 | `services/clip_signals/` | per-clip measured signals, stored at `analysis["signals"]` next to `analysis["understanding"]` |
 | `app/cli/backfill_clip_signals.py` | read-only skeleton; `--write` is refused until a store is wired |
@@ -74,12 +75,18 @@ Code: `services/suggestions/pinned.py` (ring reads, lane allow-list, rebuild),
   fresh step on every later tap. Only the exact stored action on its exact base can run again.
   `pinned.is_consumed` counts a mark on ANY ring entry, matched by kind and anchor fingerprint, so a
   tap on an applied card from an older set is refused `consumed` too, not applied a second time.
-- **The GET stores every card it serves.** `serve_suggestion_set` builds the cards inside the live
-  read session (`_prepare_cards`, carried on `Served.cards`) and `persist_served_set` only writes
-  what it was handed: the route rolls the session back before writing, which expires the `Job` the
-  editor witnesses close over. A set needs a ring entry when it offers chips OR cards (a set of
-  v2-only kinds has `chips: []`), and a card the ring does not hold answers "no longer fits"
-  however good it was.
+- **The GET stores every card it serves (served implies stored).** `serve_suggestion_set` builds
+  the cards inside the live read session (`_prepare_cards`, carried on `Served.cards`) and
+  `persist_served_set` only writes what it was handed: the route rolls the session back before
+  writing, which expires the `Job` the editor witnesses close over. A set needs a ring entry when
+  it offers chips OR cards (a set of v2-only kinds has `chips: []`), and a card the ring does not
+  hold answers "no longer fits" however good it was. So a read whose write is skipped (the thread
+  row stayed locked), or that does not end up holding every card it serves, puts the chips alone on
+  the wire under the same set id, and the next read builds and stores the cards again.
+  `attach_cards` merges by id: a card the entry lacks is added next to the ones it holds, never in
+  place of them, because the phone may hold any card of an earlier read of the same set. That is
+  also how a card the strip left off one read (a restating card, below) is already in the ring when
+  a later read serves it again: the entry keeps every card the set was built with.
 - **The master switch reaches a frozen set.** With `KRIA_SUGGESTION_PINNED_TAPS_ENABLED` off,
   `serve_suggestion_set` drops `suggestions` and `digest` from a set frozen while it was on (chips
   and set id untouched, the freeze not edited), so turning it back on restores the cards. The
@@ -140,7 +147,11 @@ Code: `services/suggestions/pinned.py` (ring reads, lane allow-list, rebuild),
   finds the video moved) takes back the same footprint, but only when the tap wrote a requirement
   or a setting: the draft of an editor tap that wrote neither is still the head, so its card stays
   spent until Undo. Limit: a hook's creative-copy decision stays in the event log
-  (`fold_creative_copy(include_suggestions=True)`), so the hook card is still spent after Undo.
+  (`fold_creative_copy(include_suggestions=True)`), so the hook card is still spent after Undo,
+  with the creative brief or without it: the hook kind's own witness refuses it (`copy_decided`)
+  and the serve asks that witness too (step 7 below). Without the brief nothing else moves the
+  digest when the tap is undone, so the frozen set comes back as it was and only that re-proof
+  keeps the card off the wire.
 - **Undo puts the session's pointer back.** An editor-op draft is built on the saved video, so its
   commit moves `session.target_generation_id` (the video the agent last read) onto it. The draft
   keeps the value it replaced (`result["pointer_sync"]`, written behind
@@ -164,27 +175,100 @@ cards out (what cannot be proven is not offered). The questions, in the tap's or
    (`KRIA_SUGGESTION_{HOOK_COPY,DUPLICATES,FILLER_WORDS,MUTE_CLIP}_ENABLED`) is gone on the next GET,
    like the master switch.
 2. **Consent gate** (`creative_copy_gate.creative_copy_problem`, KRI-506): the same function over
-   the same events and media. An editor-ops card (and the hook, one editor op) is committed with no
-   plan, so ANY decision about an on-screen title refuses it: open (authorship, write_my_own,
-   generate, revise), stale (the footage changed after the answer), approved, creator-supplied,
-   cancelled, on the opening or the closing title. A restating card is committed with the head
-   plan, so only a plan that disagrees with the decision refuses it (a different title, or a
-   cancelled title the plan still carries); one whose plan agrees stays. Open states also hold the
-   whole set back in the loader, legacy chips included, as before.
-3. **Approval readiness** (GAP-5): a restating tap re-drafts the head plan with one more
-   requirement and is held (`requirements_not_ready`) when a requirement the card did not write is
-   still unmet by the plan. `_restate_held` asks the draft check's own functions
-   (`plan_facts_from_strategy` -> `build_receipts` -> `needs_creator_choice`) about the same plan
-   and brief. It reads only the plan and the brief; facts that need the phone montage preflight or
-   the research step stay unknown, which is an unchecked receipt, never a verdict. An account on
-   approval readiness (`KRIA_APPROVAL_READINESS_*`) is asked the same questions: the pinned restate
-   resolves `planned.readiness_manifest` through `tasks/kria_runtime._with_approval_readiness`,
-   the helper `_plan_with_live_agent` uses, so `assess_readiness` judges the draft against the real
-   renderer. Not asked at serve: the renderer's own policy question (`check_strategy_for_runtime_v2`
-   inside `assess_readiness`), so a plan the renderer refuses outright (a native render with no
-   clip attached) still serves a card whose tap answers `requirements_not_ready`.
-4. **A plan to restate** (`pinned.restate_base`): no strategy draft, or a head that is newer
+   the same events and media. Which cards it holds depends on what the tap writes. The **hook**
+   card is the one tapped card that writes the on-screen title (one `set_title` op), so ANY
+   decision about a title refuses it: open (authorship, write_my_own, generate, revise), stale (the
+   footage changed after the answer), approved, creator-supplied, cancelled, on the opening or the
+   closing title. Every other editor-ops card runs only ops on `TITLE_NEUTRAL_OPS` (`add_sfx`,
+   `set_transition`, `set_mix`, `set_caption_meta`, `remove_clip`), carries no copy and is refused
+   only under an OPEN wording discussion; a settled decision, stale included, is none of its
+   business (stale is treated as settled for a title-neutral tap: the footage moved since the
+   answer but the tap carries no copy). A restating card is committed with the head plan, so only a
+   plan that disagrees with the decision refuses it (a different title, or a cancelled title the
+   plan still carries); one whose plan agrees stays. Open states also hold the whole set back in
+   the loader, legacy chips included, as before.
+3. **Would the commit approve the draft** (`restate_judgment.restate_problem`; restating cards).
+   A restating tap re-drafts the head plan with one more requirement and the commit refuses it
+   (`requirements_not_ready`, `choice_needed`) when the draft is not ready, writing nothing. The
+   serve asks the same questions on the same inputs, in one module the planner also reads:
+   - an account OFF approval readiness: the draft check's receipts (`plan_facts_from_strategy` ->
+     `build_receipts` -> `needs_creator_choice`) for the requirements the card did not write. It
+     reads only the plan and the brief; facts that need the phone montage preflight or the
+     research step stay unknown, which is an unchecked receipt, never a verdict;
+   - an account ON approval readiness (`KRIA_APPROVAL_READINESS_*`): `assess_readiness` over the
+     brief plus the card's own typed requirement, the strategy and renderer
+     `tasks/kria_runtime._with_approval_readiness` resolves (the helper the tap runs, called, not
+     copied), and the media the tap judges. That media is `restate_judgment.plan_media`: the
+     item's media plus the length plan the head draft PINNED in its brief binding, borrowed only
+     when the pinned sources are the item's current sources (`brief_binding.media_identity`).
+     The planner (`plan_pinned_suggestion_turn`) hands the commit that same media; the bare media
+     of the item has no length plan, which made every stated length "evidence missing" and every
+     tap refused. A head that pinned no plan, or one pinned on other footage, leaves a stated
+     length unproven, so the card is not served (what cannot be proven is not offered). The other
+     inputs the commit hands `assess_readiness` (order execution and its source context, the
+     phone-plan blockers, the protected marks) are read through the same helpers;
+   - both: the choice gate (`tasks/kria_runtime._unresolved_choice_plan`) over the same strategy,
+     brief, media and thread events.
+
+   The commit's own composition stays inline in `_complete_draft_turn`; what keeps the two from
+   parting is `tests/e2e_suggestions/test_r6_restate_drift.py`, which runs both on 11 requirement
+   shapes (the fixtures' own: a stated length exact / ceiling / too long, a title the plan has or
+   lacks, a Turkish volume ask, captions off, per-clip text, an order ask, the recorded east-run
+   brief, none), on and off readiness (a head that pinned its plan and one that did not), for both
+   restating cards: a card is served IFF its tap executes, the truth being the tap with the strip
+   switched off. Limits, in the safe direction or not exercised: an unmet requirement the commit
+   would leave out on its own (`_automatic_omission_ids`) is held here although its tap would run;
+   the commit's route-disclosure rewrite of `target_duration_s` (phone montage, no stated length)
+   is not repeated; `_marks_route` is derived from the GET's protocol where the commit reads the
+   flag stamped at submit.
+4. **The kind's own evidence** (`filler_words.unoffered_reason`, `_filler_unoffered`): the card's
+   evidence as it is NOW, not as the frozen set saw it: the engine and the capability levers it
+   rides on (`SILENCE_CUT_ENABLED`, `capability_for_item`), the creator's decision on the analysis
+   (kept the original, already clean), the item's setting, the source-policy fingerprint, the
+   analysis status, retakes. It is not part of the set digest on purpose: the evidence is read
+   only while the kind's switch is on, so a digest that followed it would make pulling the switch a
+   new set (a model run and a pending screen) instead of the instant strip of the same frozen set.
+   Caveat: a filler card the analysis newly earns after the freeze appears only when something else
+   changes the digest or the 24 h freeze lapses.
+5. **The protected-region question** (`_mark_needed`, KRI-901): when the app shows the mark card,
+   the draft renders on the phone Talking writer and a live `keep_text_off` object has no current
+   mark, the commit writes nothing and asks "Mark the plate" (`mark_needed`). The serve asks
+   `protected_targets.missing_object_marks` over the same brief, the creator's marks, the clips and
+   the plan. It is a second composition of the gate (the gate itself needs a turn and a sync
+   session): seven fixtures compare its verdict with the real tap, there is no structural drift
+   guard yet.
+6. **A plan to restate** (`pinned.restate_base`): no strategy draft, or a head that is newer
    editor work, leaves the restating cards out.
+7. **The card's own proof** (`suggestion_serve._unproven`; every card that is not a restating one:
+   the editor-ops cards and the hook). The tap's last word on such a card is its kind's witness on
+   the facts as they are, else the registry's rebuild (`pinned.rebuild_action`: still switched on,
+   still available, not already in the edit, built again, proven). The serve runs that rebuild on
+   the context this GET already loaded, on the card the tap would run: the ring's stored card, or
+   on the first read of a set the card the ring write is about to store (`_offered_cards`). A card
+   its kind would no longer build is left out: a hook whose own tap already wrote the title
+   decision (Undo does not take it back), a duplicates card over a length the creator then stated,
+   any card the creator's word now rules out (KRI-129). It is what keeps a frozen set honest with
+   `KRIA_SUGGESTION_EDITOR_TRIGGERS_ENABLED` off (nothing then moves the digest when the creator
+   speaks after the serve) and after an Undo without the brief (the digest returns to its first
+   value). One card the rebuild cannot make costs that card only, never its neighbours. A card
+   with no stored or rebuilt copy, or a rebuild that raises, is left out. Pinned by
+   `tests/e2e_suggestions/test_r7_serve_proof.py` (GAP-17 closed by it).
+8. **The request budget** (`suggestion_serve._request_budget_dead`; every card). With brief binding
+   on, every pinned draft pins the creator's whole conversation plus the brief into one request of
+   at most `brief_binding.MAX_REQUEST_CHARS` (12,000), and the commit refuses the tap
+   `request_too_long` past it, editor-op taps included. `request_budget.request_over_budget` is the
+   one predicate: the thread's text now (the commit's own join, `creator_request_text_sync`), the
+   tap's own message, and `brief_binding.bound_request` over the brief that holds the typed
+   requirement the tap writes (`pinned.tap_updates`). A thread past it serves no v2 card (chips
+   unchanged); at the edge each card goes on its own length (a hook, which writes the title,
+   before a captions card). Off with brief binding off: nothing is built, nothing is withheld.
+   Pinned by `tests/e2e_suggestions/test_r8_request_budget.py` (withheld exactly when the tap is
+   refused, across the edge and with a thick brief).
+
+The ring entry holds the cards that rebuild (`_built_cards`), in their built order: one card the
+rebuild cannot make (the hook once its decision is in the log, with the set's entry rolled out of
+the ring) costs that card, and the ring write asks only that the entry hold the cards on the wire
+(`_served_ids`). Pinned by `tests/e2e_suggestions/test_r8_partial_ring.py`.
 
 `refresh_for_item` / `refresh_for_thread` (the editor-triggers refresh) do nothing without the chip
 capability: no thread lookup, no Redis debounce key, no run, for everyone or for this creator.
@@ -218,18 +302,46 @@ threads show no ready cards (the safe failure). Not exercised on a device.
 
 **The creator's request wins (KRI-129).** `captions`, `music_level`, `sfx`, `transition` and
 `title_animation` read the brief in their own `available` through `services/suggestions/brief_asks.py`
-(`spoke(ctx, DIMENSION)`): a live requirement that says anything about the dimension (a typed fact
-such as `captions` / `audio_intent: no_music` / `animation`, or the creator's `description` over the
-Turkish-aware fold, never the on-screen `literal`) withholds the card, whether it contradicts or
-restates the ask. It holds on every path (chip set, deterministic cards, an agent's pick). The brief
-is `ctx.kind_inputs["brief"]` (`suggestion_serve.BRIEF_KEY`): no key = the loader never ran (flags off) =
-unchanged; a value that is not a brief offers nothing, and so does a failed read: with a v2 flag on,
-`suggestion_serve` stores `brief_asks.UNREADABLE` under the key when the read (or the stage around
-it) raises, never leaving it absent. The helper is not in `kinds/` because the registry guard
-requires every module there to be a kind. The word lists run over the folded text, so a Turkish suffix
-that softens the stem must be listed in its folded form: "müzik" -> "müziği / müziğin / müziğe" is
-`muzig`, and the volume asks ("sesi / sesini" + kıs, azalt, düşür, artır, yükselt, kapat) are listed
-verb by verb. `tests/e2e_suggestions/test_r4_serve_turkish_fold.py` is the table.
+(`spoke(ctx, DIMENSION)`): a live requirement that says anything about the dimension withholds the
+card, whether it contradicts or restates the ask. It holds on every path (chip set, deterministic
+cards, an agent's pick). The brief is `ctx.kind_inputs["brief"]` (`suggestion_serve.BRIEF_KEY`): no
+key = the loader never ran (flags off) = unchanged; a value that is not a brief offers nothing, and
+so does a failed read: with a v2 flag on, `suggestion_serve` stores `brief_asks.UNREADABLE` under the
+key when the read (or the stage around it) raises, never leaving it absent. The helper is not in
+`kinds/` because the registry guard requires every module there to be a kind.
+
+What counts as "said something" is typed data (KRI-667: the server does not guess a meaning from the
+creator's words, because every word list needs a twin per language and misses a paraphrase):
+
+- **kind**: the brief writer files every volume, music and sound ask as an `audio` requirement, in
+  any language, so an `audio` requirement decides the music and the sound-effects cards. The one
+  exception is the footage's own sound lane: a requirement whose typed `clip_sound` facts
+  `clip_sound_toggle_ask` reads (a clip's sound turned on or off, what a mute-clip tap writes and
+  what "clip sound off except that last line" is) is about what a clip plays and withholds neither
+  card, but only while `KRIA_SUGGESTION_PINNED_TAPS_ENABLED` is on: with it off every `audio`
+  requirement speaks, exactly as on main (`test_r7_flag_off_brief_asks.py` compares both). A
+  `clip_sound` fact that reader cannot parse is not that lane, so the requirement still speaks. An `audio` requirement with no such fact withholds in any wording (GAP-15 stays closed);
+  a mis-kinded ask the writer files as `audio` withholds too, which is the safe direction.
+- **facts**: `caption*` (captions), `animation` / `text_animation` (title animation),
+  `audio_intent: no_music` and `music*` (music), `sfx` / `sound_effect*` / `licensed_sfx*` (sound
+  effects), `transition*`. A requirement the writer records for captions or a title animation
+  WITHOUT its typed fact no longer withholds the card by its wording (the same silent gap
+  DECISIONS.md already accepts for animation).
+- **description, read once over the Turkish-aware fold** (`app.text_fold`), never the on-screen
+  `literal`: only the two splits with no typed signal. Music against sound effects (both are
+  `audio`: a requirement naming sound effects is a sound-effects ask and not a music ask) and
+  transitions (no fact and no kind). Both readers are on the raw chat text allow-list
+  (`tests/test_raw_chat_text_readers.py`). `tests/e2e_suggestions/test_r5_serve_brief_asks.py` is the
+  table; `test_r6_brief_asks.py` pins the clip-sound lane.
+
+The duplicates card reads the brief through `needed_media` (a loader input, `suggestion_serve`):
+every clip a requirement names, pins, labels or places is needed and never removed, and so is every
+clip when a requirement orders, selects or labels clips in a way that cannot be resolved, or when a
+live `timing` requirement carries a `duration_s` fact (the creator stated the video's length: taking
+any clip out moves it). Typed fields only; a freeze or a moment's seconds carries the same fact and
+withholds as well, because telling them apart takes the creator's words. The card's witness
+re-checks the same set at the tap, so a length stated after the card was served refuses its tap
+(`test_r6_duplicates_length.py`).
 
 **`PROMPT_VERSION` and ids.** With every flag off, `set_id` and `input_digest` differ from
 origin/main by design (the digest hashes `PROMPT_VERSION`); the wire is otherwise identical. Noted at
@@ -277,4 +389,4 @@ The end-to-end proof (`tests/e2e_suggestions`, `tests/e2e_suggestions/README.md`
 path for every kind in English and Turkish: GET -> the real worker body with a cassette -> GET ->
 `submit_turn` -> `run_kria_turn`. A check that fails because of a defect in code the proof does not
 own carries a named `Gap`; the day it passes the run fails with "gap closed, remove the marker".
-GAP-4 was closed by the typed duplicate-send signal; GAP-5, GAP-10 and GAP-11 were closed by the serve strip and the Turkish word list above.
+GAP-4 was closed by the typed duplicate-send signal; GAP-5, GAP-10 and GAP-11 were closed by the serve strip and the Turkish word list above; GAP-17 (a hook served again after its own Undo, refused at the tap) by the card's own proof (step 7).

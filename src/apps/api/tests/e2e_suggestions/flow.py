@@ -17,6 +17,7 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from app.config import settings
 from tests.e2e_suggestions import driver as d
 from tests.e2e_suggestions import gaps
 from tests.e2e_suggestions.driver import Phone, Tap
@@ -163,7 +164,15 @@ def verify_tap(cell: Cell, phone: Phone, tap: Tap) -> None:
     shown = (
         f"receipts={[(r.get('status'), r.get('verification'), r.get('reason')) for r in receipts]}"
     )
-    cell.check("receipts", met, shown)
+    if settings.kria_creative_brief_enabled:
+        cell.check("receipts", met, shown)
+    else:
+        cell.check(
+            "receipts",
+            not receipts,
+            "the creative brief is off: the tap writes no requirement, so there is nothing to "
+            f"receipt ({shown})",
+        )
     cell.na("render_kick", "an editor-ops tap edits the draft; the phone exports the video")
 
 
@@ -208,8 +217,10 @@ def verify_restate(cell: Cell, phone: Phone, tap: Tap) -> None:
     setting, plus the normal render approval (the render itself is a separate creator tap)."""
     seeded = phone.seeded
     kind = tap.card.kind
-    version = h.briefs(seeded.thread_id)[-1]
-    req = version.requirements[-1]
+    versions = h.briefs(seeded.thread_id)
+    # With the creative brief off the tap writes no requirement at all (the setting is the change).
+    req = versions[-1].requirements[-1] if versions else {}
+    brief_on = settings.kria_creative_brief_enabled
     approvals = d.approvals_pending(seeded.thread_id)
     owned = req.get("source_turn_id") == tap.accepted.turn_id
     # One change: the plan is restated as it stands. The tap adds its requirement or setting and
@@ -217,16 +228,26 @@ def verify_restate(cell: Cell, phone: Phone, tap: Tap) -> None:
     was = ((tap.head_before or {}).get("snap") or {}).get("strategy")
     now = ((tap.head_after or {}).get("snap") or {}).get("strategy")
     cell_kind = ((tap.head_after or {}).get("snap") or {}).get("kind")
-    cell_ok = bool(cell_kind == "strategy" and was is not None and was == now)
-    d_detail = f"head kind {cell_kind}; strategy unchanged: {was == now}"
+    changed = {
+        key: (was.get(key), now.get(key))
+        for key in sorted(set(was or {}) | set(now or {}))
+        if (was or {}).get(key) != (now or {}).get(key)
+    }
+    # An account on approval readiness resolves the renderer when it restates the plan (the same
+    # block the live planner runs), so the plan's ``render_program`` may be filled in. That is the
+    # route the render takes, not part of the story; any other key moving is a second change.
+    allowed = {"render_program"} if settings.kria_approval_readiness_enabled else set()
+    cell_ok = bool(cell_kind == "strategy" and was is not None and set(changed) <= allowed)
+    d_detail = f"head kind {cell_kind}; strategy keys changed: {changed or 'none'}"
     if kind == "filler_words":
         flags = d.item_flags(seeded)
         ok = bool(
             tap.flags_before.get("speech_cleanup_enabled") is False
             and flags["speech_cleanup_enabled"] is True
             and flags["user_edited"] is True
-            and req.get("facts") == {"speech_cleanup": True}
-            and owned
+            and (
+                req.get("facts") == {"speech_cleanup": True} and owned if brief_on else not versions
+            )
             and approvals == 1
             and h.events(seeded.thread_id, "approval_requested")
         )
@@ -251,8 +272,37 @@ def verify_restate(cell: Cell, phone: Phone, tap: Tap) -> None:
         )
     cell.check("one_change", cell_ok, d_detail)
     if tap.receipts:
+        # The card's own requirement is judged met. A requirement the creator wrote earlier that
+        # nothing can verify yet (a "no text on the mug" ask) is reported honestly as partial and
+        # unchecked: that is the state of the creator's ask, not of the tap, so it must not be
+        # unmet but may be unchecked.
+        mine = [r for r in tap.receipts if r.get("requirement_id") == req.get("id")]
+        others = [r for r in tap.receipts if r.get("requirement_id") != req.get("id")]
+        # Mute is dark as shipped: nothing in the cloud verifies that a phone muted the clip, so
+        # its own receipt is honestly partial and unchecked until a device run says otherwise.
+        unverifiable = kind == "mute_clip"
+        own_met = bool(mine) and all(
+            r.get("status") == "met"
+            or (
+                unverifiable
+                and r.get("status") == "partial"
+                and r.get("verification") == "unchecked"
+            )
+            for r in mine
+        )
+        others_ok = all(
+            r.get("status") == "met"
+            or (r.get("status") == "partial" and r.get("verification") == "unchecked")
+            for r in others
+        )
+        own = [(r.get("status"), r.get("verification")) for r in mine]
+        earlier = [
+            (r.get("requirement_id"), r.get("status"), r.get("verification")) for r in others
+        ]
         cell.check(
-            "receipts", all(r.get("status") == "met" for r in tap.receipts), str(tap.receipts)
+            "receipts",
+            own_met and others_ok,
+            f"own requirement {req.get('id')}: {own}; the creator's earlier asks: {earlier}",
         )
     else:
         cell.na(
@@ -387,9 +437,10 @@ def verify_hidden_after(cell: Cell, card, out, *, undone: bool) -> None:  # noqa
     """What the GET offers after the tap and its Undo.
 
     A card Undo took back is an offer again (the tap's applied mark, its kept fingerprint and any
-    refusal of a repeat all go with it). The hook is the exception: its creative-copy decision
-    stays in the event log, so the consent gate keeps it out. A tap nothing took back never comes
-    back.
+    refusal of a repeat all go with it). The hook is the exception, with or without the creative
+    brief: its creative-copy decision stays in the event log, so the hook kind's own witness
+    refuses it from then on, and the serve re-proves every editor-ops card (``suggestion_serve``,
+    ``_unproven``) and leaves it out. A tap nothing took back never comes back.
     """
     back = [c.kind for c in out.suggestions if c.kind == card.kind]
     if undone and card.kind != "hook":
@@ -456,6 +507,8 @@ async def tap_every_card(
     refusals: dict[str, tuple[str, gaps.Gap]] | None = None,
     only: frozenset[str] | None = None,
     probe_render: RenderProbe | None = None,
+    state: str = "baseline",
+    after_tap: Callable[[Cell, Phone, Tap], None] | None = None,
 ) -> list[Cell]:
     """Serve the thread, then tap each card in rank order. ``expect`` is the served kinds.
 
@@ -463,6 +516,8 @@ async def tap_every_card(
     reason, gap text)}``. The check is a named gap that FAILS the run once the tap is accepted.
     ``probe_render`` runs the render step of a restating card on a twin thread (approving the
     staged render consumes the approval Undo needs, so the thread under test is left alone).
+    ``state`` names what the thread went through before it was served (it labels the cells);
+    ``after_tap`` adds checks that belong to that state to each applied tap.
     """
     refusals = refusals or {}
     out = await phone.serve()
@@ -484,7 +539,7 @@ async def tap_every_card(
         if not remaining:
             break
         card = remaining[0]
-        cell = rec.cell(scn.key, profile, card.kind, scn.language)
+        cell = rec.cell(scn.key, profile, card.kind, scn.language, state=state)
         cell.shipped = shipped
         cell.served, cell.rank = True, first_rank.setdefault(card.kind, card.rank)
         cell.action_type, cell.title, cell.prompt = card.action_type, card.title, card.prompt
@@ -504,6 +559,8 @@ async def tap_every_card(
                 continue
         else:
             verify_tap(cell, phone, tap)
+            if after_tap is not None:
+                after_tap(cell, phone, tap)
         verify_consumed(cell, phone, tap)
         commit_refresh = await verify_second_tap(cell, phone, tap, out, scn.language)
         others = [c.kind for c in remaining[1:]]
@@ -542,7 +599,11 @@ async def verify_render_kick(cell: Cell, twin: Phone, kind: str, monkeypatch) ->
     call = run.calls[0] if run.calls else {}
     binding = ((call.get("creator_brief_binding") or {}).get("brief") or {}).get("requirements")
     wanted = RESTATE_FACT[kind]
-    carried = any((r.get("facts") or {}) == wanted for r in binding or [])
+    # With the creative brief off there is no binding to carry the requirement: the filler card's
+    # lever is the item's own cleanup setting, which is checked below.
+    carried = any((r.get("facts") or {}) == wanted for r in binding or []) or (
+        kind == "filler_words" and not settings.kria_creative_brief_enabled
+    )
     flags = d.item_flags(twin.seeded)
     ok = bool(
         run.decision == "approved"

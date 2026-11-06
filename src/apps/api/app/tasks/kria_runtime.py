@@ -38,7 +38,7 @@ from app.kria.brief import (
     removed_target_ids,
     render_brief_request,
 )
-from app.kria.brief_binding import BriefBindingRequestTooLongError
+from app.kria.brief_binding import MAX_REQUEST_CHARS, BriefBindingRequestTooLongError
 from app.kria.brief_binding import snapshot_media as _draft_media
 from app.kria.brief_checks import (
     NARRATED_ALIGNMENT_FIELD,
@@ -68,7 +68,6 @@ from app.kria.brief_checks import (
 )
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
-from app.kria.duplicate_send import is_duplicate_answer
 from app.kria.editor_receipts import (
     bind_editor_receipts,
     receipt_lead,
@@ -98,7 +97,6 @@ from app.kria.planner import (
     turn_deadline,
 )
 from app.kria.registry import KRIA_TOOLS
-from app.kria.removed_messages import is_removed, removed_turn_ids_sync
 from app.kria.reply_language import (
     bind_reply_language,
     current_reply_language,
@@ -108,6 +106,7 @@ from app.kria.reply_language import (
     say,
     thread_reply_language,
 )
+from app.kria.request_budget import creator_request_text_sync
 from app.kria.route_disclosure import (
     UNIFIED_MONTAGE,
     Disclosure,
@@ -317,28 +316,8 @@ def _text_timing_conflict_plan(exc: TextTimingConflict) -> KriaTurnPlan:
 
 def _full_creator_request_sync(db, *, thread_id: uuid.UUID, through_sequence: int) -> str | None:  # noqa: ANN001
     """Pin every creator instruction visible to the approved source turn."""
-    rows = db.execute(
-        select(CreationThreadEvent.content, CreationThreadEvent.payload)
-        .where(
-            CreationThreadEvent.thread_id == thread_id,
-            CreationThreadEvent.role == "user",
-            CreationThreadEvent.sequence <= through_sequence,
-            CreationThreadEvent.content.is_not(None),
-        )
-        .order_by(CreationThreadEvent.sequence)
-    ).all()
-    removed = removed_turn_ids_sync(db, thread_id, (payload for _content, payload in rows))
-    messages = [
-        str(content).strip()
-        for content, payload in rows
-        # KRI-552: a re-sent copy of a message adds no instruction to the pinned request;
-        # Steer now: neither does a waiting message the creator removed.
-        if str(content).strip()
-        and not is_duplicate_answer(payload)
-        and not is_removed(payload, removed)
-    ]
-    request = "\n".join(messages)
-    return request if len(request) <= 12_000 else None
+    request = creator_request_text_sync(db, thread_id=thread_id, through_sequence=through_sequence)
+    return request if len(request) <= MAX_REQUEST_CHARS else None
 
 
 def _marks_route_sync(  # noqa: ANN001

@@ -16,6 +16,42 @@ from app.kria.brief import CreativeBrief, render_brief_request
 SUPERSEDED_REQUIREMENTS_HEADING = "Superseded requirements (historical only; do not reintroduce)."
 
 
+# The most characters an approved request may hold: the creator's chronological text, the rendered
+# brief and the superseded lines together. The draft commit refuses a tap past it, and so does the
+# serve (``request_budget``), from this one number.
+MAX_REQUEST_CHARS = 12_000
+
+
+def bound_request(
+    snapshot: CreativeBrief | None,
+    *,
+    latest_message: str = "",
+    full_creator_request: str | None = None,
+) -> str:
+    """The text an approval binding pins as the creator's request (``BriefBinding.create``)."""
+    brief_request = render_brief_request(snapshot, latest_message=latest_message)
+    if full_creator_request is not None:
+        raw = full_creator_request.strip()
+        request = (
+            f"Full creator request (chronological):\n{raw}\n\n{brief_request}"
+            if raw and brief_request
+            else raw or brief_request
+        )
+    else:
+        request = brief_request
+    if snapshot is not None:
+        omitted = [req for req in snapshot.requirements if not req.live]
+        if omitted:
+            # Chronological chat is evidence, not permission to resurrect an
+            # earlier request the creator subsequently removed (KRI-698).
+            request += (
+                f"\n\n{SUPERSEDED_REQUIREMENTS_HEADING} "
+                "The current creative brief above is authoritative:\n"
+                + "\n".join(f"- {req.id}: {req.text()}" for req in omitted)
+            )
+    return request
+
+
 class BriefBindingRequestTooLongError(ValueError):
     """An approved request cannot retain its full source safely."""
 
@@ -96,27 +132,10 @@ class BriefBinding(BaseModel):
     ) -> BriefBinding:
         snapshot = brief.model_copy(deep=True) if brief is not None else None
         state = "pinned" if snapshot is not None else "none"
-        brief_request = render_brief_request(snapshot, latest_message=latest_message)
-        if full_creator_request is not None:
-            raw = full_creator_request.strip()
-            request = (
-                f"Full creator request (chronological):\n{raw}\n\n{brief_request}"
-                if raw and brief_request
-                else raw or brief_request
-            )
-        else:
-            request = brief_request
-        if snapshot is not None:
-            omitted = [req for req in snapshot.requirements if not req.live]
-            if omitted:
-                # Chronological chat is evidence, not permission to resurrect an
-                # earlier request the creator subsequently removed (KRI-698).
-                request += (
-                    f"\n\n{SUPERSEDED_REQUIREMENTS_HEADING} "
-                    "The current creative brief above is authoritative:\n"
-                    + "\n".join(f"- {req.id}: {req.text()}" for req in omitted)
-                )
-        if len(request) > 12_000:
+        request = bound_request(
+            snapshot, latest_message=latest_message, full_creator_request=full_creator_request
+        )
+        if len(request) > MAX_REQUEST_CHARS:
             raise BriefBindingRequestTooLongError("Approved creator request exceeds the safe limit")
         media = copy.deepcopy(media_snapshot or {})
         answers = copy.deepcopy(list(choice_answers or []))

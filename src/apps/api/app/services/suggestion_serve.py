@@ -39,7 +39,7 @@ import inspect
 import json
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -65,7 +65,7 @@ from app.services.suggestion_chips import (
     load_suggestion_context,
     suggestion_digest,
 )
-from app.services.suggestions import brief_asks
+from app.services.suggestions import brief_asks, restate_judgment
 from app.services.suggestions.context import snapshot_digest
 
 log = structlog.get_logger()
@@ -210,8 +210,10 @@ def brief_headline(brief: Any) -> str | None:
 
 def needed_media(brief: Any, media_ids: Sequence[str]) -> frozenset[str]:
     """Media the creator's own request depends on: a clip a requirement names, or every clip
-    when a requirement orders, selects or labels clips in a way this cannot resolve (KRI-129).
-    Over-reporting only hides a duplicates card; it never lets one remove a requested clip."""
+    when a requirement orders, selects or labels clips in a way this cannot resolve, or states the
+    video's length (KRI-129). Over-reporting only hides a duplicates card; it never lets one remove
+    a requested clip or move a requested length. Typed data only: a requirement's kind, scope and
+    ``duration_s`` fact, never its words."""
     from app.kria.asset_holds import resolve_clip_scope  # noqa: PLC0415
 
     live = getattr(brief, "live", None)
@@ -226,6 +228,11 @@ def needed_media(brief: Any, media_ids: Sequence[str]) -> frozenset[str]:
                 return everything
             needed.add(resolved)
         elif req.kind in {"order", "select", "text_sequence"} or req.scope == "per_clip":
+            return everything
+        elif req.kind == "timing" and req.facts.get("duration_s") is not None:
+            # A stated length: taking any clip out moves it, and the tap records no receipt for
+            # the creator's own ask. (A freeze or a moment's seconds carries the fact too and
+            # withholds as well: telling them apart takes their words.)
             return everything
     return frozenset(needed)
 
@@ -595,7 +602,7 @@ async def serve_suggestion_set(
         served = _without_suppressed(served, thread)
     else:
         served.ring_has_cards = _ring_has_cards(
-            served.out.set_id, getattr(thread, "state", None), _shown_ids(served)
+            served.out.set_id, getattr(thread, "state", None), _served_ids(served)
         )
     await _prepare_cards(served)
     return served
@@ -674,72 +681,56 @@ async def _copy_gate_dead(
     return dead
 
 
-async def _restate_held(
-    db: Any, thread: Any, ctx: SuggestionContext, item: Any, kind: str
-) -> str | None:
-    """Why a restating tap would be held at approval readiness, or None when it would not.
+async def _request_budget_dead(
+    db: Any,
+    thread: Any,
+    ctx: SuggestionContext,
+    kinds: Collection[str],
+    cards: Mapping[str, Any] | None,
+) -> dict[str, str]:
+    """Cards whose tap the draft commit would refuse ``request_too_long``.
 
-    The tap re-drafts the head plan with one more requirement and holds the draft back when a
-    requirement the card did not write is still unmet ("Do not replace a creator's current draft
-    with a known partial edit"), answering ``requirements_not_ready``. This asks the draft check's
-    own functions (``plan_facts_from_strategy`` -> ``build_receipts`` -> ``needs_creator_choice``)
-    about the same plan and brief. It reads only the plan and the brief: facts that need the
-    phone's montage preflight or the research step are left unknown, which never turns into a
-    verdict (an unknown fact is an unchecked receipt), so what this holds back is what the plan
-    itself falls short of.
-
-    An account on approval readiness (KRI-721) is asked the same questions: the pinned restate
-    resolves the readiness manifest like the live planner does.
+    With brief binding on, every pinned draft pins the creator's whole conversation plus the
+    brief into one request of at most ``MAX_REQUEST_CHARS``. ``request_over_budget`` is the commit's
+    own length rule over the text this thread holds now, the tap's own message and the typed
+    requirement the tap writes; a thread past it refuses every card, editor ops included. A card
+    the commit cannot be asked about is left out (fails closed), like every other check here.
     """
     from app.kria.brief import load_latest_brief  # noqa: PLC0415
-    from app.kria.brief_checks import (  # noqa: PLC0415
-        build_receipts,
-        needs_creator_choice,
-        plan_facts_from_strategy,
-        requirements_to_check_at_draft,
+    from app.kria.request_budget import (  # noqa: PLC0415
+        creator_request_text_sync,
+        request_over_budget,
     )
-    from app.models import ContentPlan, Persona  # noqa: PLC0415
-    from app.services.choice_questions import answered_brief  # noqa: PLC0415
-    from app.services.creator_sessions import resolve_item_creator_context  # noqa: PLC0415
     from app.services.suggestions import pinned  # noqa: PLC0415
 
     creator_id = getattr(thread, "creator_id", None)
-    base = await pinned.restate_base(db, thread_id=thread.id, ctx=ctx)
-    if base.strategy is None:
-        return base.reason or "no_plan"
+    if not kinds or not settings.brief_binding_for(creator_id):
+        return {}  # no binding is built, so the length is not this commit's gate
+    thread_text = await db.run_sync(
+        lambda sync: creator_request_text_sync(sync, thread_id=thread.id, through_sequence=None)
+    )
     brief = await load_latest_brief(db, thread.id)
-    if brief is None or not brief.live():
-        return None
-    if settings.kria_choice_questions_enabled:
-        brief = answered_brief(brief, base.strategy)
-    plan = await db.get(ContentPlan, item.content_plan_id)
-    persona = await db.get(Persona, plan.persona_id) if plan is not None else None
-    if persona is None:
-        return "no_persona"
-    manifest, _media = await resolve_item_creator_context(
-        db, item, persona=persona, runs_guided_voiceover=False
-    )
-    facts = plan_facts_from_strategy(
-        base.strategy,
-        clip_ids=[str(media.media_id) for media in manifest.media],
-        manifest=manifest,
-        # The tap flips the setting before it judges the draft; mute leaves it alone.
-        speech_cleanup_enabled=True
-        if kind == "filler_words"
-        else bool(getattr(item, "speech_cleanup_enabled", False)),
-    )
-    checked = requirements_to_check_at_draft(
-        brief.live(),
-        creator_id=creator_id,
-        strategy=base.strategy,
-        item_edit_format=item.edit_format,
-        clip_paths=item.clip_gcs_paths or (),
-        client_protocol=ctx.client_protocol,
-    )
-    bound = settings.brief_binding_for(creator_id)
-    receipts = build_receipts(checked, facts, include_unchecked=bound, strict_order=bound)
-    unmet = [r.requirement_id for r in receipts if needs_creator_choice(r)]
-    return "requirements_not_ready" if unmet else None
+    dead: dict[str, str] = {}
+    for kind in sorted(kinds):
+        card = (cards or {}).get(kind)
+        if card is None:
+            continue  # ``_unproven`` / the restate check answer "no card"
+        try:
+            updates = (
+                pinned.tap_updates(card, card.action, language=ctx.language or "en")
+                if settings.creative_brief_for(creator_id)
+                else ()
+            )
+            over = request_over_budget(
+                thread_text, tap_message=card.prompt, brief=brief, updates=updates
+            )
+        except Exception:  # noqa: BLE001 - what cannot be measured is not offered
+            log.warning("suggestion_chips.error", stage="request_budget", kind=kind, exc_info=True)
+            dead[kind] = "check_failed"
+            continue
+        if over:
+            dead[kind] = "request_too_long"
+    return dead
 
 
 async def _filler_unoffered(db: Any, item: Any, ctx: SuggestionContext) -> str | None:
@@ -848,11 +839,47 @@ async def _restate_refused(
     return None
 
 
+async def _unproven(kind: str, ctx: SuggestionContext, card: Any | None) -> str | None:
+    """Why the card's own kind would no longer build and prove it now, or None when it would.
+
+    The tap's last word on an editor-ops or copy card is its kind's witness on the facts as they
+    are (``pinned.proves``, else the registry's rebuild, ``pinned.rebuild_action``). A set is
+    frozen for 24 h and, with the editor triggers off, nothing moves its digest when the creator
+    says something afterwards, so the consent gate above is not the whole question: a hook whose
+    own tap already wrote the title decision (Undo does not take that back, ``copy_decided``), a
+    duplicates card over a length the creator then stated, a card the creator's word now rules
+    out (KRI-129). The same rebuild answers here, on the context this GET already loaded: a card
+    is served only while its kind would still build it. Fails closed: no card to judge, or a
+    rebuild that raises, is a reason, never "fine".
+    """
+    from app.services.suggestions import pinned  # noqa: PLC0415
+
+    if card is None:
+        return "no_card"
+    rebuilt = await pinned.rebuild_action(
+        None,
+        suggestion=card,
+        thread=None,
+        item=None,
+        manifest=None,
+        target=None,
+        protocol=ctx.client_protocol,
+        ctx=ctx,
+    )
+    return None if rebuilt is not None else "unproven"
+
+
 async def dead_card_kinds(
-    db: Any, thread: Any, ctx: SuggestionContext, kinds: frozenset[str]
+    db: Any,
+    thread: Any,
+    ctx: SuggestionContext,
+    kinds: frozenset[str],
+    cards: Mapping[str, Any] | None = None,
 ) -> dict[str, str]:
     """``{kind: why}`` for the card kinds in ``kinds`` whose tap would be refused right now.
 
+    ``cards`` is ``{kind: Suggestion}`` as the tap would find them (``_offered_cards``): a
+    restating tap judges the card's own action, and every other card is proven again by its kind.
     Fails closed: a check that cannot be made leaves its cards out (a card the server cannot
     prove is not offered), never the other way round.
     """
@@ -870,13 +897,20 @@ async def dead_card_kinds(
         if item is None:
             return {**dead, **dict.fromkeys(left, "no_item")}
         dead.update(await _copy_gate_dead(db, thread, ctx, item, left))
+        dead.update(await _request_budget_dead(db, thread, ctx, left - dead.keys(), cards))
     except Exception:  # noqa: BLE001 - what cannot be proven is not offered
         log.warning("suggestion_chips.error", stage="dead_cards", exc_info=True)
         return {**dead, **dict.fromkeys(left - dead.keys(), "check_failed")}
+    for kind in sorted((left - dead.keys()) - RESTATING_KINDS):
+        reason = await _unproven(kind, ctx, (cards or {}).get(kind))
+        if reason is not None:
+            dead[kind] = reason
     # One restating kind failing to prove itself costs that card, not the others.
     for kind in sorted((left - dead.keys()) & RESTATING_KINDS):
         try:
-            reason = await _restate_held(db, thread, ctx, item, kind)
+            reason = await restate_judgment.restate_problem(
+                db, thread, ctx, item, card=(cards or {}).get(kind)
+            )
             if reason is None:
                 reason = await _restate_refused(db, thread, ctx, item, kind)
         except Exception:  # noqa: BLE001
@@ -892,7 +926,11 @@ async def _strip_dead_cards(db: Any, thread: Any, served: Served) -> None:
     out = served.out
     if not out.suggestions or served.ctx is None:
         return
-    dead = await dead_card_kinds(db, thread, served.ctx, frozenset(c.kind for c in out.suggestions))
+    kinds = frozenset(c.kind for c in out.suggestions)
+    # A tap judges the card's own action, which the wire never carries.
+    dead = await dead_card_kinds(
+        db, thread, served.ctx, kinds, await _offered_cards(thread, served)
+    )
     if not dead:
         return
     kept = [c for c in out.suggestions if c.kind not in dead]
@@ -1305,10 +1343,14 @@ def _ring_has_cards(
     return False
 
 
-def _shown_ids(served: Served) -> list[str]:
-    """The cards the ring must hold for this read: every one the set was built with, including
-    the ones the strip took off this read's wire (they come back without a new run)."""
-    return [c.id for c in (served.unfiltered or served.out).suggestions]
+def _served_ids(served: Served) -> list[str]:
+    """The cards the ring must hold for this read to be served: the ones on the wire.
+
+    Not the ones the strip took off: a card the strip withheld (its tap would be refused) is
+    stored when it builds, so it comes back without a new run, but a card the server could not
+    rebuild must not keep the others from being served (``_built_set``).
+    """
+    return [c.id for c in served.out.suggestions]
 
 
 def _without_suppressed(served: Served, thread: Any) -> Served:
@@ -1321,7 +1363,7 @@ def _without_suppressed(served: Served, thread: Any) -> Served:
     suppressed = suppressed_set(state)
     served.unfiltered = served.unfiltered or served.out
     served.needs_fold = fold_suppressed(state or {}) is not None if suppressed else False
-    served.ring_has_cards = _ring_has_cards(served.out.set_id, state, _shown_ids(served))
+    served.ring_has_cards = _ring_has_cards(served.out.set_id, state, _served_ids(served))
     out = served.out
     if not suppressed:
         return served
@@ -1410,12 +1452,24 @@ def _folded(state: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
 async def _server_cards(served: Served) -> list[dict[str, Any]] | None:
     """The v2 cards of the set that was served, actions included, for the ring entry.
 
-    Rebuilt from the same context, plan and cached picks the wire cards came from. If the rebuilt
-    ids differ from the served ids (the picks expired from Redis in between) nothing is stored:
-    a tap on such a card answers "no longer fits" instead of running a different change.
+    Rebuilt from the same context, plan and cached picks the wire cards came from. A card whose id
+    is not among the rebuilt ones (the picks expired from Redis in between) is not stored: a tap on
+    it answers "no longer fits" instead of running a different change.
     """
-    from app.services.suggestions.pinned import ring_suggestions  # noqa: PLC0415
+    from app.services.suggestions.pinned import ring_cards  # noqa: PLC0415
 
+    shown = served.unfiltered or served.out
+    if not shown.suggestions or served.ctx is None or served.plan is None:
+        return None
+    built = await _built_cards(served)
+    if built is None:
+        log.info("suggestion_chips.cards_not_stored", set_id=shown.set_id)
+        return None
+    return ring_cards(built)
+
+
+async def _assembled(served: Served) -> Any | None:
+    """The server-side set (actions included) the context, plan and cached picks build NOW."""
     shown = served.unfiltered or served.out
     if not shown.suggestions or served.ctx is None or served.plan is None:
         return None
@@ -1428,10 +1482,55 @@ async def _server_cards(served: Served) -> list[dict[str, Any]] | None:
     except Exception:  # noqa: BLE001 - no cache: the deterministic order is the fallback
         picks = None
     built, _drops = assemble_suggestions(served.ctx, served.plan, picks)
-    if built is None or [s.id for s in built.suggestions] != [s.id for s in shown.suggestions]:
-        log.info("suggestion_chips.cards_not_stored", set_id=shown.set_id)
+    return built
+
+
+async def _built_cards(served: Served) -> list[Any] | None:
+    """The cards ``_assembled`` rebuilds that were served, else None when none of them is.
+
+    The ring write reads it. A card whose id the rebuild no longer produces (the picks expired
+    from Redis in between, its kind would not build it now) is left out: a tap on it answers "no
+    longer fits" instead of running a different change. The cards that do rebuild are stored, in
+    the order they were built, so one that cannot be rebuilt costs that card and not its
+    neighbours.
+    """
+    shown = served.unfiltered or served.out
+    built = await _assembled(served)
+    if built is None:
         return None
-    return ring_suggestions(built)
+    wanted = {s.id for s in shown.suggestions}
+    kept = [s for s in built.suggestions if s.id in wanted]
+    return kept or None
+
+
+async def _offered_cards(thread: Any, served: Served) -> dict[str, Any]:
+    """``{kind: Suggestion}`` of the cards this read serves, as the tap would find them.
+
+    The tap runs the card the ring entry stores (``pinned.stored_card``), so that is the one the
+    strip judges. A set the ring does not hold yet (its first read) is judged on the card the ring
+    write is about to store: the same build, found by id. A card neither has is left out of the
+    map, which the strip reads as "cannot be proven". One card the rebuild no longer produces
+    (the hook, once its decision is in the log) costs that card only, never its neighbours.
+    """
+    from app.services.suggestions import pinned  # noqa: PLC0415
+
+    out = served.out
+    state = getattr(thread, "state", None)
+    found: dict[str, Any] = {}
+    unstored = []
+    for card in out.suggestions:
+        stored = pinned.stored_card(state, out.set_id, card.id)
+        if stored is not None:
+            found[card.kind] = stored.suggestion
+        else:
+            unstored.append(card)
+    if unstored:
+        built = await _assembled(served)
+        by_id = {s.id: s for s in built.suggestions} if built is not None else {}
+        for card in unstored:
+            if card.id in by_id:
+                found[card.kind] = by_id[card.id]
+    return found
 
 
 async def _prepare_cards(served: Served) -> None:
@@ -1480,7 +1579,7 @@ async def persist_served_set(
     shown = served.unfiltered or served.out
     if shown.suggestions and shown.status == "ok" and not served.ring_has_cards:
         cards = served.cards if served.cards_built else await _server_cards(served)
-        if not await _store_cards(db, thread_id, shown.set_id, cards or [], _shown_ids(served)):
+        if not await _store_cards(db, thread_id, shown.set_id, cards or [], _served_ids(served)):
             # The cards are an enhancement of a set that serves without them. A card the ring does
             # not hold answers "no longer fits" however good it was, so the phone gets the chips
             # now (same set id) and the next read builds and stores the cards again.
