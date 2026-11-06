@@ -294,6 +294,12 @@ class TextStyleRow:
     canvas_height: int = 1920
     # KRI-1029: the row's saved ``bend`` (KRI-646); None = drawn straight.
     bend: float | None = None
+    # The obstacle kinds the phone text-style pass moved this row off ("face"), from the typed
+    # ``source_params["moved_off"]``; () = not moved. Lets a position receipt say why it missed.
+    moved_off: tuple[str, ...] = ()
+    # The obstacle kinds the row still covers because no clear spot existed
+    # (``source_params["covers"]``); () = covers nothing.
+    covers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -2153,6 +2159,8 @@ def _text_style_rows(
     out = []
     for row in live:
         canvas = canvas_for_orientation(orientation) if orientation else row_canvas(row)
+        moved = (row.get("source_params") or {}).get("moved_off")
+        covers = (row.get("source_params") or {}).get("covers")
         color = row.get("color")
         font = row.get("font_family")
         out.append(
@@ -2180,6 +2188,12 @@ def _text_style_rows(
                 canvas_width=canvas.width,
                 canvas_height=canvas.height,
                 bend=_finite_number(row.get("bend")) or None,
+                moved_off=tuple(k for k in moved if isinstance(k, str))
+                if isinstance(moved, (list, tuple))
+                else (),
+                covers=tuple(k for k in covers if isinstance(k, str))
+                if isinstance(covers, (list, tuple))
+                else (),
             )
         )
     return tuple(out)
@@ -8914,7 +8928,16 @@ def check_text_look(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
                 anchors.append(row)
             haves = [_row_at(row, x, y) for row in anchors]
             label = ("position", "konum")
-            fails = [h is False for h in haves]
+            # A face-driven move is a miss even inside _row_at's tolerance.
+            fails = [
+                h is False or (h is not None and "face" in row.moved_off)
+                for h, row in zip(haves, rows, strict=False)
+            ]
+            face_moved = [
+                (row, anchor)
+                for row, anchor, miss in zip(rows, anchors, fails, strict=False)
+                if miss and "face" in row.moved_off
+            ]
         elif key in ("font_family", "text_color"):
             ask = derive_style_ask(
                 BriefRequirement(
@@ -8934,7 +8957,27 @@ def check_text_look(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
             undecided = True
             continue
         judged += 1
-        if any(fails):
+        if key == "position" and any("face" in row.covers for row in rows):
+            misses.append(
+                say(
+                    en="Your text covers your face: I found no spot clear of it",
+                    tr="Yazın yüzünün üstünde kalıyor: yüzünü açıkta bırakan bir yer bulamadım",
+                )
+            )
+        elif key == "position" and any(fails) and face_moved:
+            row, anchor = face_moved[0]
+            above = row.y_frac is not None and row.y_frac < y
+            misses.append(
+                say(
+                    en="I moved your text just "
+                    + ("above" if above else "below")
+                    + " your face so it doesn't cover it",
+                    tr="Yazını yüzünü kapatmasın diye yüzünün hemen "
+                    + ("üstüne" if above else "altına")
+                    + " taşıdım",
+                )
+            )
+        elif any(fails):
             misses.append(
                 say(
                     en=f"{sum(fails)} of {len(rows)} don't have the requested {label[0]}",
