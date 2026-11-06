@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.23.0] - 2026-11-06
+
+### Changed
+- fix(receipts): Kria's review matches the video for unheard recordings, whole-video text and kept clips (Qendresa says-done C) (#2129) <!-- release-pr: 2129 -->
+
 ## [0.88.22.0] - 2026-11-06
 
 ### Changed
