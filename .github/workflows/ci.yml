@@ -412,8 +412,9 @@ jobs:
 
   # KRI-559 executes only incident-corpus journeys selected by ci-changes.
   # An affected source without a mapped fixture fails here, on a cheap Ubuntu
-  # runner (KRI-604): the macOS `journey` job needs this job, so an unmapped
-  # selection never queues for a macOS runner just to fail in its first step.
+  # runner (KRI-604). The macOS journey-native job checks the selector's
+  # journey_mapped output (the same validation) instead of waiting for this
+  # job, so an unmapped selection still never queues for a macOS runner.
   # The `test-api` gate still goes red because a skipped `journey` is not the
   # `success` it requires for a selected suite.
   journey-mapping:
@@ -1148,11 +1149,15 @@ jobs:
     # Macs compile while the Linux journeys run (~11 min, 2026-10-27..30) and
     # block only where the fixture bundle is consumed (wait-for-jobs.py). The
     # `journey` aggregate still requires both portable jobs to pass.
-    needs: [changes, journey-mapping]
+    # It also starts without waiting for the journey-mapping job: the selector
+    # runs the same mapping check (journey_mapped), so an unmapped selection
+    # still never allocates a Mac (KRI-604), and the `journey` gate still
+    # requires journey-mapping. On 2026-11-04..06 that extra Linux hop delayed
+    # the Mac job's place in the 5-Mac queue by a mean 6.4 min (p90 24.4).
+    needs: [changes]
     if: >-
       !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.native_validation == 'true' &&
-      ((needs.changes.outputs.journey == 'true' && needs.journey-mapping.result == 'success') ||
-       (needs.changes.outputs.journey == 'false' && needs.journey-mapping.result == 'skipped'))
+      needs.changes.outputs.journey_mapped == 'true'
     permissions:
       contents: read
       actions: read

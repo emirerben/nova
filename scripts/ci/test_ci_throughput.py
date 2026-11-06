@@ -187,6 +187,32 @@ class ThroughputTests(unittest.TestCase):
         self.assertNotIn("actions/cache/save", job)
         self.assertNotIn("cache-inputs.py save", job)
 
+    def test_mac_queues_after_selection_but_never_for_an_unmapped_journey(self):
+        # Failure modes: an unmapped selection allocates a Mac (KRI-604); an
+        # iOS-only PR (no journey) loses its Mac; the output never reaches the
+        # job, which then silently skips; the Mac waits on the mapping job again.
+        self.assertTrue(ci.journey_mapped(False, "not_applicable", ""))
+        self.assertTrue(ci.journey_mapped(True, "covered", "kri-524-creation"))
+        self.assertFalse(ci.journey_mapped(True, "gap", ""))
+        self.assertFalse(ci.journey_mapped(True, "covered", ""))
+        self.assertFalse(
+            ci.journey_mapped(True, "covered", "kri-524-creation,kri-524-creation")
+        )
+        self.assertFalse(ci.journey_mapped(True, "covered", "not-a-journey"))
+        everything = ",".join(journey["id"] for journey in ci.JOURNEYS)
+        self.assertTrue(ci.journey_mapped(True, "covered", everything))
+        root = Path(__file__).resolve().parents[2] / ".github/workflows"
+        changes = (root / "ci-changes.yml").read_text()
+        self.assertIn("value: ${{ jobs.select.outputs.journey_mapped }}", changes)
+        self.assertIn(
+            "journey_mapped: ${{ steps.select.outputs.journey_mapped }}", changes
+        )
+        job = (root / "ci.yml").read_text().split("\n  journey-native:\n", 1)[1]
+        header = job.split("\n    steps:\n", 1)[0]
+        self.assertIn("\n    needs: [changes]\n", header)
+        self.assertIn("needs.changes.outputs.journey_mapped == 'true'", header)
+        self.assertNotIn("journey-mapping.result", header)
+
     def test_selector_starts_only_the_legs_with_selected_journeys(self):
         self.assertEqual(ci.native_legs([]), ["unit"])
         self.assertEqual(ci.native_legs(["kri-524-creation"]), ["unit", "creation"])
