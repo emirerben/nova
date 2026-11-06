@@ -820,11 +820,13 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 await cancel(recordID: record.id)   // also releases the ledger entry
                 return .cancelledUpload
             }
-            // The bytes already reached storage. Let the attach that is in flight land, then treat
-            // it as attached — cancelling now would strand a finished blob.
-            await attachmentTasks[projectID]?.task.value
+            // The bytes already reached storage. Let the attach chain land, then treat it as attached —
+            // cancelling now would strand a finished blob, or report `.cancelledUpload` for a clip whose
+            // attach is still queued, posting or backing off and then lands in Footage (review of 2a5fc19).
+            await awaitAttachChain(projectID: projectID, until: entry.recordID)
             if records.contains(where: { $0.id == entry.recordID }) {
-                await cancel(recordID: entry.recordID)   // attach failed; there is nothing to detach
+                // No attach for it is queued or running: it failed, so there is nothing to detach.
+                await cancel(recordID: entry.recordID)
                 return .cancelledUpload
             }
         }
@@ -853,17 +855,8 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 await cancel(recordID: record.id)
                 return .cancelledUpload
             }
-            // The bytes already reached storage. Let the attach chain land, then treat it as attached. Not only the links
-            // queued now: this clip's own attach can join while this waits (its upload's completion, a Retry), pass its
-            // first check when the link before it lands, and still be in its project read when this resumes. Cancelling
-            // it then returned `.cancelledUpload` while the attach carried on into Footage (review of 100b8b5). So wait
-            // until no newer link is queued. Each link awaits the one before it, so the newest covers them all; one that
-            // finished but is not unlinked yet is not awaited twice.
-            var awaited: UUID?
-            while records.contains(where: { $0.id == recordID }), let link = attachmentTasks[projectID], link.token != awaited {
-                awaited = link.token
-                await link.task.value
-            }
+            // The bytes already reached storage. Let the attach chain land (see `awaitAttachChain`), then treat it as attached.
+            await awaitAttachChain(projectID: projectID, until: recordID)
             if records.contains(where: { $0.id == recordID }) {
                 // No attach for it is queued or running: it failed or never started, so there is nothing to detach.
                 // `cancel` marks the record before its first wait, so a completion or Retry arriving now can't attach it.
@@ -880,6 +873,22 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             return .refused("Couldn’t remove it. \(error.localizedDescription)")
         }
         return await detach(mediaID: mediaID, role: .clip, projectID: projectID, itemID: nil, recordID: recordID)
+    }
+
+    /// For `deselect` and `withdraw` when the clip's bytes already reached storage: waits on the project's attach chain
+    /// until the record has left `records` or no newer link is queued. Not only the links queued now: the clip's own
+    /// attach can join while this waits (its upload's completion, a Retry), pass its first check when the link before it
+    /// lands, and still be reading the project, posting, or backing off a busy server when this resumes. Cancelling it
+    /// then returned `.cancelledUpload` while the attach carried on into Footage (reviews of 100b8b5 and 2a5fc19). Each
+    /// link awaits the one before it, so the newest covers them all; one that finished but is not unlinked yet is not
+    /// awaited twice. Afterwards a record still listed has no attach queued or running, so cancelling it is truthful:
+    /// `cancel` marks it before its first wait, which stops a completion or Retry arriving later.
+    private func awaitAttachChain(projectID: UUID, until recordID: UUID) async {
+        var awaited: UUID?
+        while records.contains(where: { $0.id == recordID }), let link = attachmentTasks[projectID], link.token != awaited {
+            awaited = link.token
+            await link.task.value
+        }
     }
 
     /// Detaches an attached clip (`remove_media`, which also deletes the blob server-side) or visual.
@@ -1629,24 +1638,32 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 let current = try await retryingTransient { try await api.project(threadID: record.projectID) }
                 guard isStillAttaching(record.id) else { return }
                 // KRI-374: only a song carries a server role; footage and voiceover attach exactly as before.
+                // Each post checks the record first, the retries after a busy server's backoff (429/503) included: the
+                // backoff can outlast a cancel, and a retry that went ahead put the clip in Footage (review of 2a5fc19).
                 let attachedThread: CreationThread
                 if record.role == .song {
-                    attachedThread = try await retryingTransient { try await api.attachProjectMedia(
-                        threadID: record.projectID, mediaID: mediaID, gcsPath: gcsPath, filename: record.filename,
-                        contentType: contentType, expectedRevision: current.revision,
-                        clientEventID: "ios-attach-\(record.id.uuidString)", role: .song
-                    ) }
+                    attachedThread = try await retryingTransient { () async throws -> CreationThread in
+                        guard isStillAttaching(record.id) else { throw CancellationError() }
+                        return try await api.attachProjectMedia(
+                            threadID: record.projectID, mediaID: mediaID, gcsPath: gcsPath, filename: record.filename,
+                            contentType: contentType, expectedRevision: current.revision,
+                            clientEventID: "ios-attach-\(record.id.uuidString)", role: .song
+                        )
+                    }
                 } else {
-                    attachedThread = try await retryingTransient { try await api.attachProjectMedia(
-                        threadID: record.projectID,
-                        mediaID: mediaID,
-                        gcsPath: gcsPath,
-                        filename: record.filename,
-                        contentType: contentType,
-                        expectedRevision: current.revision,
-                        clientEventID: "ios-attach-\(record.id.uuidString)",
-                        capture: capture
-                    ) }
+                    attachedThread = try await retryingTransient { () async throws -> CreationThread in
+                        guard isStillAttaching(record.id) else { throw CancellationError() }
+                        return try await api.attachProjectMedia(
+                            threadID: record.projectID,
+                            mediaID: mediaID,
+                            gcsPath: gcsPath,
+                            filename: record.filename,
+                            contentType: contentType,
+                            expectedRevision: current.revision,
+                            clientEventID: "ios-attach-\(record.id.uuidString)",
+                            capture: capture
+                        )
+                    }
                 }
                 // Publish the authoritative media_count before removing the
                 // pending record so clip capacity never briefly reopens.
@@ -1671,6 +1688,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 remove(record.id, deleteLocalFile: true)
                 return
             } catch {
+                // Cancelled while this attempt waited (the check above threw, or the record went during the call): whoever
+                // took it out has cleaned it up, so it is neither tried again nor reported as a failed upload.
+                guard isStillAttaching(record.id) else { return }
                 lastAttachmentError = error
             }
         }
