@@ -119,7 +119,7 @@ async def decide(seeded, decision: str):  # noqa: ANN001, ANN201
 
 def lapse(seeded) -> None:  # noqa: ANN001
     """The approval's time ran out (what a day of nobody deciding does)."""
-    from datetime import UTC, datetime, timedelta
+    from datetime import UTC, datetime
 
     with sync_session() as db:
         approval = db.execute(
@@ -128,7 +128,9 @@ def lapse(seeded) -> None:  # noqa: ANN001
                 CreatorAgentApproval.status == "pending",
             )
         ).scalar_one()
-        approval.expires_at = datetime.now(UTC) - timedelta(minutes=5)
+        # The sweep takes the 25 oldest overdue approvals: the oldest possible date keeps this one
+        # in the batch however many overdue rows other tests in the same database left behind.
+        approval.expires_at = datetime(1970, 1, 2, tzinfo=UTC)
         db.commit()
 
 
