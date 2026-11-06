@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.37.0] - 2026-11-06
+
+### Changed
+- fix(kria): the planner names unknown looks on the card; the quote rule for timing, cadence and repeats ships dark (KRI-1097 wave 2, planner) (#2049) <!-- release-pr: 2049 -->
+
 ## [0.88.36.0] - 2026-11-06
 
 ### Changed
