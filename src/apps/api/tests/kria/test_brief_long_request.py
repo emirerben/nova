@@ -294,7 +294,7 @@ def test_brief_extractor_prompt_version_is_bumped() -> None:
 
 
 def test_main_creator_prompt_version_is_bumped() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-05-v131"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-06-v135"
 
 
 # ------------------------------------------------------------------ f. follow-up path
