@@ -12516,7 +12516,7 @@ def _phone_talking_caption_text(
     from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
     from app.pipeline.caption_spelling import (  # noqa: PLC0415
         creator_request_names,
-        creator_typed_names,
+        creator_typed_words,
         extract_spelling_asks,
     )
     from app.pipeline.captions import resplit_cues_into_sentences  # noqa: PLC0415
@@ -12538,15 +12538,15 @@ def _phone_talking_caption_text(
     # ("correct spellings: Oblea de la Casa, dulce de leche, ..."), applied last
     # so caption correction can never undo them.
     # Green 4/5: plus the names the creator typed ("Kervan x Lumo Pamukkale show" -> "Curvan"),
-    # which never respell a word the creator typed themselves ("Do not change Curvan to Kervan"
-    # types both) or a spelling above.
+    # which never respell a word the creator typed themselves, in any case ("Do not change Curvan
+    # to Kervan" types both) or a spelling above; a name typed in a "don't" clause is none.
     request = _creator_request_text(all_candidates)
     names = creator_request_names(request) if settings.caption_request_names_enabled else ()
     cues = _apply_creator_spellings(
         cues,
         _phone_caption_spellings(snapshot, extract_spelling_asks(request)),
         request_names=names,
-        typed=creator_typed_names(request) if names else (),
+        typed=creator_typed_words(request) if names else (),
     )
     # KRI-849: "if you can't tell what he says, ask me": leave the unclear word out.
     cues, unclear_words_receipt = _apply_unclear_words(

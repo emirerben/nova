@@ -33,10 +33,10 @@ is read. Ways the review fix could fail (written before the fix):
     typed word (an explicit "write "Kervan"" must still win).
 13. A typed-name target respells a word that already reads as a model-owned spelling.
 
-Second review (Emir, on b101777): two inputs still respell "Curvan" into "Kervan". (a) "Do not change
-curvan to Kervan." types the old name in lowercase, and only capitalised words counted as typed.
-(b) "Do not use Kervan in the captions." excludes the name, yet it still became a target. Ways this
-fix could fail (written before the fix):
+Second review (Emir, on b101777): two inputs still respell "Curvan" into "Kervan". (a) "Do not
+change curvan to Kervan." types the old name in lowercase, and only capitalised words counted as
+typed. (b) "Do not use Kervan in the captions." excludes the name, yet it still became a target.
+Ways this fix could fail (written before the fix):
 14. A word the creator typed in lowercase is not a creator spelling, so a name target respells it.
 15. A name the creator typed only in a "don't" clause still becomes a target.
 16. A name excluded in one sentence is still taken from another sentence that types it.
@@ -211,11 +211,12 @@ def test_typed_names_never_respell_a_creator_spelling():
     from app.pipeline.caption_spelling import (
         apply_spelling_to_cues,
         creator_request_names,
-        creator_typed_names,
+        creator_typed_words,
     )
 
-    request = "Yorumla episode 9: Kervan x Lumo Pamukkale show. Do not change Curvan to Kervan."
-    names, typed = creator_request_names(request), creator_typed_names(request)
+    # No "don't" clause here: a name typed in one is no target at all (15), see below.
+    request = "Yorumla episode 9: Kervan x Lumo Pamukkale show. Curvan is the old name."
+    names, typed = creator_request_names(request), creator_typed_words(request)
     words = ["Curvan'ın", "Curvanın", "Curvan,", "Kervon", "too."]
     cues = [
         {

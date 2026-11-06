@@ -110,33 +110,55 @@ def _request_lines(text: str | None) -> list[str]:
     ]
 
 
+def _dont_clauses(line: str) -> list[tuple[int, int]]:
+    """The spans of ``line``'s clauses that say "don't", by the clause rule the quoted asks
+    already use (``_CLAUSE_SPLIT`` + ``_NEGATION``, KRI-631); the iPhone's "’" reads as "'"."""
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for cut in [*_CLAUSE_SPLIT.finditer(line), None]:
+        end = cut.start() if cut else len(line)
+        if _NEGATION.search(_fold(line[start:end]).replace("’", "'")):
+            spans.append((start, end))
+        start = cut.end() if cut else end
+    return spans
+
+
 def creator_request_names(text: str | None) -> tuple[str, ...]:
     """Names the creator typed (Green 4/5): capitalised words that do not start a sentence, at
     least ``_MIN_TARGET_LEN`` letters ("Kervan", "Pamukkale"; never "Make" at a sentence start,
-    never "Lumo": too short for a safe match). The request header line is skipped. In order,
+    never "Lumo": too short for a safe match). A name the creator types in any "don't" clause
+    ("Do not use Kervan in the captions.") is never one, wherever else they type it: the same
+    clause rule drops a quoted ask (KRI-631). The request header line is skipped. In order,
     unique, at most ``MAX_ASKS``."""
     names: list[str] = []
     seen: set[str] = set()
+    excluded: set[str] = set()
     for line in _request_lines(text):
+        dont = _dont_clauses(line)
         for found in _NAME_TOKEN.finditer(line):
             name = found.group(1)
+            if any(a <= found.start() < b for a, b in dont):
+                excluded.add(_fold(name))
+                continue
             if len(name) < _MIN_TARGET_LEN or _SENTENCE_END.search(line[: found.start()]):
                 continue
             if _fold(name) not in seen:
                 seen.add(_fold(name))
                 names.append(name)
-    return tuple(names[:MAX_ASKS])
+    return tuple(name for name in names if _fold(name) not in excluded)[:MAX_ASKS]
 
 
-def creator_typed_names(text: str | None) -> tuple[str, ...]:
-    """Every capitalised word the creator typed in the request, wherever it sits (a sentence
-    start too: "Curvan'ı ..."). A caption word that reads as one is already a creator spelling,
-    so a request-name target never respells it into another name ("Do not change Curvan to
-    Kervan" types both). No wording is read. The header line is skipped; in order, unique."""
+def creator_typed_words(text: str | None) -> tuple[str, ...]:
+    """Every word the creator typed in the request, in any case and wherever it sits ("Curvan'ı
+    ...", "do not change curvan ..."), its case ending left off. A caption word that reads as
+    one is already a creator spelling, so a request-name target never respells it into another
+    name ("Do not change Curvan to Kervan" types both). No wording is read. The header line is
+    skipped; in order, unique."""
     typed: dict[str, str] = {}
     for line in _request_lines(text):
-        for found in _NAME_TOKEN.finditer(line):
-            typed.setdefault(_fold(found.group(1)), found.group(1))
+        for found in _TOKEN.finditer(line):
+            stem = _split_ending(found.group(0))[0]
+            typed.setdefault(_fold(stem), stem)
     return tuple(typed.values())
 
 
@@ -677,7 +699,7 @@ def apply_spelling_to_cues(
 
     ``request_names`` (Green 4/5, ``creator_request_names``) apply after ``targets`` and never
     respell a word that is already a creator spelling: one the creator typed (``typed``,
-    ``creator_typed_names``: "Curvan" in "Do not change Curvan to Kervan") or a one-word
+    ``creator_typed_words``: "Curvan" in "Curvan is the old name", any case) or a one-word
     target. ``targets`` (quoted asks, brief-listed spellings) respell exactly as before.
     """
     cues = list(cues)
