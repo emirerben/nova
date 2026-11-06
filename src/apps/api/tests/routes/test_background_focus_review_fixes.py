@@ -43,7 +43,7 @@ def _ctx():
 def _never_saved_aimed_job(monkeypatch):
     from app.services import phone_rollout
 
-    set_client_protocol(39)
+    set_client_protocol(42)
     with monkeypatch.context() as early:
         early.setattr(
             phone_rollout, "background_focus_unavailable_reason", lambda **_k: None, raising=False
@@ -64,7 +64,7 @@ def test_rollback_echo_on_never_saved_variant_is_not_a_set(monkeypatch) -> None:
 
     job = _never_saved_aimed_job(monkeypatch)
     _open(monkeypatch, flag=False)
-    set_client_protocol(39)
+    set_client_protocol(42)
     shown = project_phone_subtitled_editor_sections(job.assembly_plan, _variant(job))[
         "speaker_background"
     ]
@@ -79,7 +79,7 @@ def test_rollback_echo_on_never_saved_variant_is_not_a_set(monkeypatch) -> None:
 def test_a_new_window_of_the_same_media_inheriting_the_aim_is_not_a_set(monkeypatch) -> None:
     job = focus_job(monkeypatch)
     _open(monkeypatch, flag=False)
-    set_client_protocol(39)
+    set_client_protocol(42)
     # Windows are shifted by index: the first stored window is dropped, a new one of the same
     # media carrying the same aim is added in front.
     _resave(
@@ -99,7 +99,7 @@ def test_a_new_window_of_the_same_media_inheriting_the_aim_is_not_a_set(monkeypa
 def test_deleting_a_window_is_not_a_set(monkeypatch) -> None:
     job = focus_job(monkeypatch)
     _open(monkeypatch, flag=False)
-    set_client_protocol(39)
+    set_client_protocol(42)
     # The remaining window moves to index 0: compared by media, not by index.
     _resave(
         job,
@@ -111,7 +111,7 @@ def test_deleting_a_window_is_not_a_set(monkeypatch) -> None:
 def test_a_genuinely_new_aim_with_the_gate_closed_is_422(monkeypatch) -> None:
     job = background_job(monkeypatch, background=_background(PHOTO), pinned=POOL)
     _open(monkeypatch, flag=False)
-    set_client_protocol(39)
+    set_client_protocol(42)
     with pytest.raises(HTTPException) as dark:
         save(job, speaker_background=_document(PHOTO) | {"focus": LEFT})
     assert dark.value.status_code == 422
@@ -121,7 +121,7 @@ def test_a_genuinely_new_aim_with_the_gate_closed_is_422(monkeypatch) -> None:
 def test_a_different_aim_on_a_stored_media_with_the_gate_closed_is_422(monkeypatch) -> None:
     job = focus_job(monkeypatch)
     _open(monkeypatch, flag=False)
-    set_client_protocol(39)
+    set_client_protocol(42)
     with pytest.raises(HTTPException) as dark:
         _resave(job, speaker_background=_aimed(focus={"x": 0.5, "y": 0.5, "zoom": 1.1}))
     assert dark.value.status_code == 422
@@ -130,7 +130,7 @@ def test_a_different_aim_on_a_stored_media_with_the_gate_closed_is_422(monkeypat
 def test_build_38_setting_one_is_426(monkeypatch) -> None:
     job = background_job(monkeypatch, background=_background(PHOTO), pinned=POOL)
     _open(monkeypatch)
-    set_client_protocol(38)
+    set_client_protocol(41)
     with pytest.raises(HTTPException) as refused:
         save(job, speaker_background=_document(PHOTO) | {"focus": LEFT})
     assert refused.value.status_code == 426
@@ -166,7 +166,7 @@ def test_a_recording_pinned_in_this_request_is_stored_and_compiled_with_its_meas
 ) -> None:
     job = background_job(monkeypatch, background=_background(PHOTO), pinned=POOL)
     _open(monkeypatch)
-    set_client_protocol(39)
+    set_client_protocol(42)
     job._kria_new_background_columns = {SECOND.media_id: _column()}
     save(job, speaker_background=_two_window_save())
     focus = _layer_focus(job)
@@ -179,7 +179,7 @@ def test_a_recording_pinned_in_this_request_is_stored_and_compiled_with_its_meas
 def test_a_creators_own_focus_beats_the_measured_one(monkeypatch) -> None:
     job = background_job(monkeypatch, background=_background(PHOTO), pinned=POOL)
     _open(monkeypatch)
-    set_client_protocol(39)
+    set_client_protocol(42)
     job._kria_new_background_columns = {SECOND.media_id: _column()}
     save(job, speaker_background=_two_window_save(focus=RIGHT))
     assert _layer_focus(job)[1][1] == RIGHT
@@ -188,7 +188,7 @@ def test_a_creators_own_focus_beats_the_measured_one(monkeypatch) -> None:
 def test_an_already_pinned_recording_saved_without_a_focus_stays_centred(monkeypatch) -> None:
     job = background_job(monkeypatch, background=_background(PHOTO), pinned=POOL)
     _open(monkeypatch)
-    set_client_protocol(39)
+    set_client_protocol(42)
     save(job, speaker_background=_two_window_save())  # nothing was pinned in this request
     assert _layer_focus(job) == (None, [None, None])
 
@@ -219,7 +219,7 @@ async def test_pinning_records_the_measured_focus_only_for_what_it_newly_pinned(
     monkeypatch.setattr(phone_visuals, "bind_phone_visual_assets", bind)
     _open_gate(monkeypatch)
     _open(monkeypatch)
-    set_client_protocol(39)
+    set_client_protocol(42)
     row = SimpleNamespace(
         id=asset,
         status="ready",

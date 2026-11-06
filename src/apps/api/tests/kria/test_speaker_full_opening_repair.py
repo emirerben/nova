@@ -112,7 +112,7 @@ def test_unused_fields_are_omitted_from_every_dump():
 
 def test_the_manifest_advertises_the_opening_only_for_a_bound_new_build(monkeypatch, build):
     _open_opening(monkeypatch, enabled=False)
-    build(38)
+    build(41)
     closed_flag = _manifest()
     assert capabilities.CAPABILITY_SPEAKER_FULL_OPENING not in closed_flag.capabilities
     monkeypatch.setattr(settings, "speaker_full_opening_enabled", True)
@@ -133,7 +133,7 @@ def test_no_opening_without_the_windows_capability(monkeypatch, build):
 
     _open_gate(monkeypatch)
     monkeypatch.setattr(settings, "speaker_full_opening_enabled", True)
-    build(38)
+    build(41)
     assert not capabilities.speaker_full_opening_open(_manifest())
 
 
@@ -147,7 +147,7 @@ def test_the_repair_keeps_the_opening_while_open_for_both_fills(monkeypatch, bui
         "phone_render_verified_features",
         [*settings.phone_render_verified_features, "speakerBackgroundColor"],
     )
-    build(38)
+    build(41)
     manifest = _manifest()
     asked = {"full_screen_opening": True, "full_screen_opening_s": 6.5}
     media, notices = _repair(
@@ -167,7 +167,7 @@ def test_the_repair_keeps_the_opening_while_open_for_both_fills(monkeypatch, bui
 
 def test_flag_off_drops_it_silently_and_changes_nothing_else(monkeypatch, build):
     _open_opening(monkeypatch, enabled=False)
-    build(38)
+    build(41)
     manifest = _manifest()
     kept, notices = _repair(
         manifest,
@@ -197,7 +197,7 @@ def test_an_old_build_drops_it_with_a_notice(monkeypatch, build):
         "Couldn't start you full screen before the background: "
     )
     assert "app" in notices[0]
-    build(38)
+    build(41)
     monkeypatch.setattr(
         settings,
         "phone_render_verified_features",
@@ -212,7 +212,7 @@ def test_an_old_build_drops_it_with_a_notice(monkeypatch, build):
 
 def test_no_background_means_no_opening(monkeypatch, build):
     _open_opening(monkeypatch)
-    build(38)
+    build(41)
     manifest = _manifest()
     gone, notices = _repair(
         manifest,

@@ -94,7 +94,7 @@ def _open(
         features.append("speakerFrameWindows")
     monkeypatch.setattr(settings, "phone_render_verified_features", features)
     if opening:
-        set_client_protocol(38)
+        set_client_protocol(41)
 
 
 def _opening(start_s=0.0, end_s=4.0) -> SubtitledFullScreenWindow:
@@ -310,11 +310,11 @@ def _bg_all() -> SubtitledBackground:
 @pytest.mark.parametrize(
     ("kwargs", "protocol", "reason"),
     [
-        ({"flag": False}, 38, "full_opening_disabled"),
-        ({"token": False}, 38, "full_opening_token_not_verified"),
-        ({}, 37, "client_protocol_below_min"),
-        ({"windows": False}, 38, "windows_token_not_verified"),
-        ({"enabled": False}, 38, "disabled"),
+        ({"flag": False}, 41, "full_opening_disabled"),
+        ({"token": False}, 41, "full_opening_token_not_verified"),
+        ({}, 40, "client_protocol_below_min"),
+        ({"windows": False}, 41, "windows_token_not_verified"),
+        ({"enabled": False}, 41, "disabled"),
     ],
 )
 def test_a_closed_gate_drops_only_the_windows_and_traces_it(

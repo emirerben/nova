@@ -628,6 +628,24 @@ def caption_shape_planned_for(client_protocol: int | None) -> bool:
     )
 
 
+def talking_card_layout_planned_for(client_protocol: int | None) -> bool:
+    """May a phone Talking render lay cards out in her size and place (Qendresa item 15)?
+
+    Read like `caption_shape_planned_for`: ``client_protocol`` is the approving app build.
+    True iff the kill switch is on, ``cardLayout`` is in ``phone_render_verified_features``
+    and that build declares at least ``CARD_LAYOUT_PROTOCOL``. Any gate off: cards are
+    exactly today's.
+    """
+    from app.services.client_protocol import CARD_LAYOUT_PROTOCOL  # noqa: PLC0415
+
+    return bool(
+        settings.talking_card_layout_enabled
+        and "cardLayout" in set(settings.phone_render_verified_features)
+        and client_protocol is not None
+        and client_protocol >= CARD_LAYOUT_PROTOCOL
+    )
+
+
 def clip_speed_planned_for() -> bool:
     """May a phone montage plan retime a cut for the creator's speed ask (KRI-689)?
 
@@ -1041,7 +1059,7 @@ def speaker_background_color_unavailable_reason(
 def speaker_full_opening_client_supported(*, require_client: bool | None = None) -> bool:
     """Does the requesting app build decode ``speaker_background.full_screen_windows``?
 
-    At least ``speaker_full_opening_min_client_protocol`` (38) knows the key; an older build
+    At least ``speaker_full_opening_min_client_protocol`` (41) knows the key; an older build
     refuses the whole layer (strict decoder). Same ``require_client`` contract as
     `speaker_background_client_supported` (Qendresa item 16).
     """
@@ -1130,7 +1148,7 @@ def speaker_full_opening_planned_for(client_protocol: int | None) -> bool:
 def background_focus_client_supported(*, require_client: bool | None = None) -> bool:
     """Does the requesting app build decode ``speaker_background.focus`` / ``windows[i].focus``?
 
-    At least ``background_focus_min_client_protocol`` (39) knows the key; an older build refuses
+    At least ``background_focus_min_client_protocol`` (42) knows the key; an older build refuses
     the whole layer (strict decoder). Same ``require_client`` contract as
     `speaker_background_client_supported` (Qendresa item 18).
     """

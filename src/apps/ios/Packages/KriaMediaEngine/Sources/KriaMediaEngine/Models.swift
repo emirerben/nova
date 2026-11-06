@@ -234,9 +234,9 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if speakerBackground != nil { result.insert(.speakerBackground) }
         if speakerBackground?.mediaKind == .color { result.insert(.speakerBackgroundColor) }
         if speakerBackground?.windows != nil || speakerBackground?.speakerFrame != nil { result.insert(.speakerBackgroundWindows) }
-        // Qendresa item 16 (protocol 38): a full-screen opening/ending is a layer property an older build would silently ignore.
+        // Qendresa item 16 (protocol 41): a full-screen opening/ending is a layer property an older build would silently ignore.
         if speakerBackground?.fullScreenWindows != nil { result.insert(.speakerFrameWindows) }
-        // Qendresa item 18 (protocol 39): an aimed background (fill or any window) is a layer property an older build would silently ignore.
+        // Qendresa item 18 (protocol 42): an aimed background (fill or any window) is a layer property an older build would silently ignore.
         if speakerBackground?.focus != nil || speakerBackground?.windows?.contains(where: { $0.focus != nil }) == true { result.insert(.backgroundFocus) }
         if textLayers.contains(where: { ($0.bend ?? 0) != 0 }) { result.insert(.textBend) }
         if textLayers.contains(where: { $0.karaoke?.singleWord == true }) { result.insert(.singleWordText) }

@@ -1,7 +1,7 @@
 """Qendresa item 18: the `backgroundFocus` rollout gate family (mirror of item 16's).
 
 Flag `BACKGROUND_FOCUS_ENABLED` AND the base speaker-background gate (NOT the windows gate: a
-single full-video background may be aimed too) AND `backgroundFocus` verified AND client >= 39.
+single full-video background may be aimed too) AND `backgroundFocus` verified AND client >= 42.
 Failure modes: docs/reviews/background-focus-failure-modes.md.
 """
 
@@ -41,16 +41,16 @@ def _clean_context():
 @pytest.mark.parametrize(
     ("enabled", "flag", "features", "protocol", "supported", "reason"),
     [
-        (True, True, _ALL, 39, True, None),
-        (True, True, _ALL, 40, True, None),
+        (True, True, _ALL, 42, True, None),
+        (True, True, _ALL, 43, True, None),
         # a single full-video background needs no windows token
-        (True, True, ["speakerBackground", "backgroundFocus"], 39, True, None),
-        (False, True, _ALL, 39, False, "disabled"),
-        (True, True, ["backgroundFocus"], 39, False, "token_not_verified"),
+        (True, True, ["speakerBackground", "backgroundFocus"], 42, True, None),
+        (False, True, _ALL, 42, False, "disabled"),
+        (True, True, ["backgroundFocus"], 42, False, "token_not_verified"),
         (True, True, _ALL, 31, False, "client_protocol_below_min"),
-        (True, False, _ALL, 39, False, "focus_disabled"),
-        (True, True, ["speakerBackground"], 39, False, "focus_token_not_verified"),
-        (True, True, _ALL, 38, False, "client_protocol_below_min"),
+        (True, False, _ALL, 42, False, "focus_disabled"),
+        (True, True, ["speakerBackground"], 42, False, "focus_token_not_verified"),
+        (True, True, _ALL, 41, False, "client_protocol_below_min"),
         (True, True, _ALL, None, False, "client_protocol_below_min"),
     ],
 )
@@ -71,12 +71,12 @@ def test_client_half_only_applies_inside_a_request(monkeypatch):
     assert background_focus_client_supported(require_client=False) is True
     assert background_focus_supported(require_client=False) is True
     assert background_focus_unavailable_reason(require_client=False) is None
-    set_client_protocol(38)
+    set_client_protocol(41)
     assert background_focus_client_supported(require_client=True) is False
     assert background_focus_client_supported() is False
     assert background_focus_client_supported(require_client=False) is True
     assert background_focus_unavailable_reason() == "client_protocol_below_min"
-    set_client_protocol(39)
+    set_client_protocol(42)
     assert background_focus_client_supported() is True
     assert background_focus_supported() is True
 
@@ -85,7 +85,7 @@ def test_a_worker_acting_for_a_sending_build_does_not_apply_the_request_gate(mon
     monkeypatch.setattr(settings, "speaker_background_enabled", True)
     monkeypatch.setattr(settings, "background_focus_enabled", True)
     monkeypatch.setattr(settings, "phone_render_verified_features", _ALL)
-    for protocol, planned in ((38, False), (39, True)):
+    for protocol, planned in ((41, False), (42, True)):
         token = bind_sending_build(protocol)
         try:
             # bound protocol, but not an HTTP request: the 426 half stays out of workers
@@ -97,7 +97,7 @@ def test_a_worker_acting_for_a_sending_build_does_not_apply_the_request_gate(mon
 
 @pytest.mark.parametrize(
     ("protocol", "planned", "reason"),
-    [(38, False, "app_too_old"), (39, True, None), (40, True, None), (None, False, "app_too_old")],
+    [(41, False, "app_too_old"), (42, True, None), (43, True, None), (None, False, "app_too_old")],
 )
 def test_planned_for_the_approving_build(monkeypatch, protocol, planned, reason):
     monkeypatch.setattr(settings, "speaker_background_enabled", True)
@@ -111,15 +111,15 @@ def test_planned_reasons_for_a_closed_lane(monkeypatch):
     monkeypatch.setattr(settings, "speaker_background_enabled", True)
     monkeypatch.setattr(settings, "phone_render_verified_features", _ALL)
     monkeypatch.setattr(settings, "background_focus_enabled", False)
-    assert background_focus_planned_reason(39) == "disabled"
+    assert background_focus_planned_reason(42) == "disabled"
     monkeypatch.setattr(settings, "background_focus_enabled", True)
     monkeypatch.setattr(settings, "phone_render_verified_features", ["speakerBackground"])
-    assert background_focus_planned_reason(39) == "unavailable"
+    assert background_focus_planned_reason(42) == "unavailable"
     monkeypatch.setattr(settings, "phone_render_verified_features", ["backgroundFocus"])
-    assert background_focus_planned_reason(39) == "unavailable"
+    assert background_focus_planned_reason(42) == "unavailable"
     monkeypatch.setattr(settings, "speaker_background_enabled", False)
     monkeypatch.setattr(settings, "phone_render_verified_features", _ALL)
-    assert background_focus_planned_reason(39) == "unavailable"
+    assert background_focus_planned_reason(42) == "unavailable"
 
 
 def test_dark_by_default():
@@ -127,8 +127,8 @@ def test_dark_by_default():
     from app.services.client_protocol import BACKGROUND_FOCUS_PROTOCOL
 
     assert Settings.model_fields["background_focus_enabled"].default is False
-    assert Settings.model_fields["background_focus_min_client_protocol"].default == 39
-    assert BACKGROUND_FOCUS_PROTOCOL == 39
+    assert Settings.model_fields["background_focus_min_client_protocol"].default == 42
+    assert BACKGROUND_FOCUS_PROTOCOL == 42
     assert "backgroundFocus" not in Settings.model_fields[
         "phone_render_verified_features"
     ].get_default(call_default_factory=True)

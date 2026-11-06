@@ -3,7 +3,7 @@
 Failure modes F1, F12-F15 (server half) of docs/reviews/background-focus-failure-modes.md:
 the editor document shows the focus on the fill and on every window, a Save sets and keeps it, a
 Save that does not touch the background keeps every focus the recipe already holds (the measured
-ones too -- the measure lives only in the recipe), a build below protocol 39 is never silently
+ones too -- the measure lives only in the recipe), a build below protocol 42 is never silently
 stripped (426) and never asked to update for a focus it merely echoes, a closed gate refuses a SET
 only, a colour fill takes no focus, and the capability follows the gate.
 """
@@ -99,7 +99,7 @@ def focus_job(monkeypatch):
     """A phone Talking variant whose pinned recipe already holds a fill and two windows, aimed."""
     job = background_job(monkeypatch, background=_background(PHOTO), pinned=POOL)
     _open(monkeypatch)
-    set_client_protocol(39)
+    set_client_protocol(42)
     save(job, speaker_background=_aimed())
     clear_request_context()
     return job
@@ -145,7 +145,7 @@ def test_save_sets_a_focus_on_the_fill_and_every_window_and_it_survives_the_roun
 def test_a_variant_without_a_focus_shows_no_key_anywhere(monkeypatch) -> None:
     job = background_job(monkeypatch, background=_background(PHOTO), pinned=POOL)
     _open(monkeypatch)
-    set_client_protocol(39)
+    set_client_protocol(42)
     save(job, speaker_background=_document(PHOTO))
     assert "focus" not in json.dumps(_variant(job), default=str)
     assert "focus" not in json.dumps(_recipe(job).model_dump(mode="json")["speaker_background"])
@@ -155,7 +155,7 @@ def test_a_variant_without_a_focus_shows_no_key_anywhere(monkeypatch) -> None:
 
 def test_the_save_can_change_and_clear_a_focus(monkeypatch) -> None:
     job = focus_job(monkeypatch)
-    set_client_protocol(39)
+    set_client_protocol(42)
     moved = {"x": 0.5, "y": 0.5, "zoom": 1.25}
     _resave(
         job,
@@ -179,7 +179,7 @@ def test_the_save_can_change_and_clear_a_focus(monkeypatch) -> None:
 
 def test_a_save_that_leaves_the_background_alone_keeps_every_focus(monkeypatch) -> None:
     job = focus_job(monkeypatch)
-    set_client_protocol(39)
+    set_client_protocol(42)
     _resave(job, sound_effects=[])
     assert _layer_focus(job) == (FILL_FOCUS, [LEFT, RIGHT])
     assert _variant(job)["speaker_background"]["focus"] == FILL_FOCUS
@@ -191,7 +191,7 @@ def test_a_measured_focus_that_only_the_recipe_holds_survives_an_untouched_save(
     """The first render writes the measured focus into the recipe; the persisted lanes (from an
     earlier Save or the worker) never held it. A Save of another lane must not lose it."""
     job = focus_job(monkeypatch)
-    set_client_protocol(39)
+    set_client_protocol(42)
     _resave(job, sound_effects=[])  # persists the lanes
     lanes = _variant(job)[PHONE_SUBTITLED_EDITOR_LANES_FIELD]["lanes"]
     assert "focus" in json.dumps(lanes["background"])
@@ -208,7 +208,7 @@ def test_a_measured_focus_that_only_the_recipe_holds_survives_an_untouched_save(
 def test_a_never_saved_recipe_focus_survives_the_first_untouched_save(monkeypatch) -> None:
     from app.services import phone_rollout
 
-    set_client_protocol(39)
+    set_client_protocol(42)
     # The first render wrote a focus into the recipe that no editor Save ever held.
     with monkeypatch.context() as early:
         early.setattr(
@@ -236,14 +236,14 @@ def test_save_from_build_38_on_a_variant_carrying_a_focus_is_426_and_commits_not
     job = focus_job(monkeypatch)
     before = device_status(job, "subtitled").request.identity.recipe_revision
     snapshot = json.dumps(_variant(job), sort_keys=True, default=str)
-    set_client_protocol(38)
+    set_client_protocol(41)
     with pytest.raises(HTTPException) as refused:
         _resave(job, sound_effects=[])
     assert refused.value.status_code == 426
     assert refused.value.detail == {
         "code": "client_update_required",
         "feature": "background_focus",
-        "minimum_client_protocol": 39,
+        "minimum_client_protocol": 42,
     }
     assert device_status(job, "subtitled").request.identity.recipe_revision == before
     assert json.dumps(_variant(job), sort_keys=True, default=str) == snapshot
@@ -252,7 +252,7 @@ def test_save_from_build_38_on_a_variant_carrying_a_focus_is_426_and_commits_not
 def test_an_echo_of_the_stored_focus_is_not_a_set_and_a_set_from_38_is_426(monkeypatch) -> None:
     job = focus_job(monkeypatch)
     request = gj.EditorCommitRequest(base_generation="x", speaker_background=_aimed())
-    set_client_protocol(38)
+    set_client_protocol(41)
     # Unchanged: the section validator does not refuse the echo (the carrying-variant 426 above
     # is what protects the old build).
     assert gj._validate_speaker_background_section(job, _variant(job), request) == (False, None)
@@ -265,13 +265,13 @@ def test_an_echo_of_the_stored_focus_is_not_a_set_and_a_set_from_38_is_426(monke
         )
     assert refused.value.status_code == 426
     assert refused.value.detail["feature"] == "background_focus"
-    assert refused.value.detail["minimum_client_protocol"] == 39
+    assert refused.value.detail["minimum_client_protocol"] == 42
 
 
 def test_a_build_below_39_setting_one_on_a_plain_variant_is_426(monkeypatch) -> None:
     job = background_job(monkeypatch, background=_background(PHOTO), pinned=POOL)
     _open(monkeypatch)
-    set_client_protocol(38)
+    set_client_protocol(41)
     with pytest.raises(HTTPException) as refused:
         save(job, speaker_background=_document(PHOTO) | {"focus": LEFT})
     assert refused.value.status_code == 426
@@ -282,7 +282,7 @@ def test_a_build_below_39_setting_one_on_a_plain_variant_is_426(monkeypatch) -> 
 def test_an_old_build_saving_a_variant_without_a_focus_is_not_asked_to_update(monkeypatch) -> None:
     job = background_job(monkeypatch, background=_background(PHOTO), pinned=POOL)
     _open(monkeypatch)
-    set_client_protocol(38)
+    set_client_protocol(41)
     save(job, sound_effects=[])
     assert _recipe(job).speaker_background is not None
 
@@ -297,7 +297,7 @@ def test_an_old_build_saving_a_variant_without_a_focus_is_not_asked_to_update(mo
 def test_setting_one_with_a_closed_gate_is_422(monkeypatch, kwargs, reason) -> None:
     job = background_job(monkeypatch, background=_background(PHOTO), pinned=POOL)
     _open(monkeypatch, **kwargs)
-    set_client_protocol(39)
+    set_client_protocol(42)
     with pytest.raises(HTTPException) as dark:
         save(job, speaker_background=_document(PHOTO) | {"focus": LEFT})
     assert dark.value.status_code == 422
@@ -310,7 +310,7 @@ def test_setting_one_with_a_closed_gate_is_422(monkeypatch, kwargs, reason) -> N
 def test_clearing_works_with_the_gate_closed(monkeypatch) -> None:
     job = focus_job(monkeypatch)
     _open(monkeypatch, flag=False)
-    set_client_protocol(39)
+    set_client_protocol(42)
     _resave(
         job,
         speaker_background=_document(PHOTO)
@@ -324,7 +324,7 @@ def test_echoing_unchanged_focuses_is_not_a_set_so_a_closed_gate_does_not_refuse
 ) -> None:
     job = focus_job(monkeypatch)
     _open(monkeypatch, flag=False)
-    set_client_protocol(39)
+    set_client_protocol(42)
     _resave(job, speaker_background=_aimed() | {"media_id": SECOND.media_id})
     assert _recipe(job).speaker_background.asset_id.endswith(SECOND.media_id)
     # The kill switch is closed, so the compile (not the Save) leaves the focus out.
@@ -335,7 +335,7 @@ def test_a_colour_fill_with_a_focus_is_422_invalid(monkeypatch) -> None:
     job = background_job(monkeypatch, background=_background(PHOTO), pinned=POOL)
     _open_colour(monkeypatch)
     _open(monkeypatch)
-    set_client_protocol(39)
+    set_client_protocol(42)
     before = device_status(job, "subtitled").request.identity.recipe_revision
     with pytest.raises(HTTPException) as bad:
         save(job, speaker_background={"kind": "color", "color": "#112233", "focus": LEFT})
@@ -393,11 +393,11 @@ def test_the_refusal_codes_have_creator_words() -> None:
 @pytest.mark.parametrize(
     ("kwargs", "protocol", "expected"),
     [
-        ({}, 39, True),
-        ({}, 38, False),
+        ({}, 42, True),
+        ({}, 41, False),
         ({}, None, False),
-        ({"flag": False}, 39, False),
-        ({"token": False}, 39, False),
+        ({"flag": False}, 42, False),
+        ({"token": False}, 42, False),
     ],
 )
 def test_the_capability_key_follows_the_gate(monkeypatch, kwargs, protocol, expected) -> None:
@@ -416,7 +416,7 @@ def test_the_capability_key_follows_the_gate(monkeypatch, kwargs, protocol, expe
 def test_a_cloud_variant_never_advertises_it(monkeypatch) -> None:
     job = background_job(monkeypatch, pinned=POOL)
     _open(monkeypatch)
-    set_client_protocol(39)
+    set_client_protocol(42)
     assert not gj._background_focus_capability(job, _capability_variant("cloud"))
 
 
@@ -424,7 +424,7 @@ def test_flag_off_leaves_the_capability_map_and_the_variant_dump_byte_identical(
     monkeypatch,
 ) -> None:
     job = background_job(monkeypatch, background=_background(PHOTO), pinned=POOL)
-    set_client_protocol(39)
+    set_client_protocol(42)
     monkeypatch.setattr(settings, "background_focus_enabled", False)
     off = json.dumps(gj._editor_capabilities(job, _variant(job)), sort_keys=True)
     assert "background_focus" not in off

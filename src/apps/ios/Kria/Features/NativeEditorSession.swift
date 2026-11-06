@@ -5613,7 +5613,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     // MARK: Aim the background (Qendresa item 18)
 
     /// The Aim and Zoom controls exist only while the server advertises `background_focus` (gate open, this build speaks
-    /// protocol 39) and the background itself is editable. A variant that carries an aim without the capability is
+    /// protocol 42) and the background itself is editable. A variant that carries an aim without the capability is
     /// read-only here, never silently edited.
     var canEditSpeakerBackgroundFocus: Bool {
         canEditSpeakerBackground && document.capabilities["background_focus"]?.editable == true
@@ -5661,7 +5661,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     // MARK: Full-screen opening (Qendresa item 16)
 
     /// The opening row exists only while the server advertises `speaker_full_opening` (gate open, this build speaks
-    /// protocol 38) and the background itself is editable. A variant that carries an opening without the capability
+    /// protocol 41) and the background itself is editable. A variant that carries an opening without the capability
     /// is read-only here, never silently edited.
     var canEditSpeakerFullOpening: Bool {
         canEditSpeakerBackground && document.capabilities["speaker_full_opening"]?.editable == true

@@ -874,6 +874,16 @@ class Settings(BaseSettings):
     # otherwise captions are byte-identical to before and the receipt says what was not drawn.
     # Apply: `fly secrets set PHONE_CAPTION_SHAPE_ENABLED=true` (api + worker) + restart.
     phone_caption_shape_enabled: bool = False
+    # Qendresa item 15: the card layout on phone Talking edits. Screenshot / recording cards
+    # take her size and place (up to full width, in the band above her face or below her
+    # caption row, never on her face or captions), up to 14 cards, a named screenshot may open
+    # the video, recordings start at their best moment. Default FALSE. Applied only when
+    # `cardLayout` is in PHONE_RENDER_VERIFIED_FEATURES AND the approving app build declares >=
+    # `client_protocol.CARD_LAYOUT_PROTOCOL` (its editor keeps a `caption_clear` card below
+    # y 0.62); portrait pip layout without a speaker background only. Otherwise cards are
+    # byte-identical to before.
+    # Apply: `fly secrets set TALKING_CARD_LAYOUT_ENABLED=true` (api + worker) + restart.
+    talking_card_layout_enabled: bool = False
     # KRI-1007: caption entrance/exit/loop/speed (`animation_phases` on a caption row, or
     # the all-captions default `caption_meta.animation_phases`). Drawn on device from the
     # recipe's existing `animationPhases`. Default TRUE; the editor capability
@@ -973,7 +983,7 @@ class Settings(BaseSettings):
     # `...=false` + restart. Design: docs/reviews/speaker-background-windows-failure-modes.md
     # (S70-S82).
     speaker_full_opening_enabled: bool = False
-    speaker_full_opening_min_client_protocol: int = 38
+    speaker_full_opening_min_client_protocol: int = 41
     # Qendresa item 18: aim each speaker-background screen recording at its readable text. A
     # landscape recording (a README or terminal) is cover-cropped to the 9:16 canvas, which cuts
     # most of the page away; with the flag on the worker measures where the text column sits
@@ -986,7 +996,7 @@ class Settings(BaseSettings):
     # rollback = `...=false` + restart (recipes already pinned with a focus keep it and still
     # need a build >= the minimum). Design: docs/reviews/background-focus-failure-modes.md.
     background_focus_enabled: bool = False
-    background_focus_min_client_protocol: int = 39
+    background_focus_min_client_protocol: int = 42
     # KRI-1192: the app bundles Noto Sans KR / Noto Sans Arabic (the script-fallback faces that
     # draw Hangul and Arabic captions) from protocol 35. A phone recipe naming one requires
     # `scriptFonts` (verified in PHONE_RENDER_VERIFIED_FEATURES after the device check) and an

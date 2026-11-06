@@ -31,7 +31,7 @@ def _variant(job):
     return next(v for v in plan["variants"] if v.get("variant_id") == "subtitled")
 
 
-def _run(monkeypatch, background, *, enabled=True, protocol=38, token=True):
+def _run(monkeypatch, background, *, enabled=True, protocol=41, token=True):
     monkeypatch.setattr(settings, "background_follows_talk_enabled", True)
     monkeypatch.setattr(settings, "speaker_full_opening_enabled", enabled)
     job = _green3_job(monkeypatch, background)

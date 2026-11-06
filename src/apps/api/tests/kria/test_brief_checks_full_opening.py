@@ -431,7 +431,7 @@ def test_the_draft_facts_read_the_asked_opening_off_the_strategy(prod_profile, m
 # ---- review fixes: flag-off wording, old builds, no background
 
 
-def _gate(monkeypatch, *, open_from: int | None = 38, reason: str = "app_too_old"):
+def _gate(monkeypatch, *, open_from: int | None = 41, reason: str = "app_too_old"):
     """The planner's gate: closed with ``reason`` below build ``open_from`` (None = always open)."""
     from app.services import phone_rollout
 
@@ -459,7 +459,7 @@ def test_the_flag_off_corner_answer_is_neutral_and_partial(monkeypatch):
     assert "sağ alt" in tr.reason and "screen" not in tr.reason
 
 
-@pytest.mark.parametrize("build", [35, 38])
+@pytest.mark.parametrize("build", [35, 41])
 def test_a_draft_on_an_old_build_names_the_app_not_the_model(monkeypatch, build):
     _gate(monkeypatch)
     fact = _planned(client_protocol=build)  # the strategy never carried the ask
@@ -477,11 +477,11 @@ def test_a_draft_on_an_old_build_names_the_app_not_the_model(monkeypatch, build)
 )
 def test_a_draft_with_the_gate_closed_says_not_available_yet(monkeypatch, reason, word):
     _gate(monkeypatch, reason=reason)
-    receipt = _receipt(OPENING_FACT, _draft(_planned(client_protocol=38 - 10)))
+    receipt = _receipt(OPENING_FACT, _draft(_planned(client_protocol=41 - 10)))
     assert receipt.status == "not_possible" and word in receipt.reason.lower()
 
 
-@pytest.mark.parametrize("build", [35, 38])
+@pytest.mark.parametrize("build", [35, 41])
 def test_a_finished_video_on_an_old_build_says_update_the_app(monkeypatch, build):
     from app.services.client_protocol import bind_sending_build, unbind_sending_build
 
@@ -499,7 +499,7 @@ def test_the_closed_code_is_none_when_the_gate_is_open(monkeypatch):
     from app.kria.brief_checks import _opening_closed_code
 
     _gate(monkeypatch)
-    assert _opening_closed_code(38) is None
+    assert _opening_closed_code(41) is None
     assert _opening_closed_code(35) == "app_too_old"
 
 

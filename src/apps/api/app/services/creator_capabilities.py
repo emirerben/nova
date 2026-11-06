@@ -146,7 +146,7 @@ CAPABILITY_SPEAKER_BACKGROUND_WINDOWS = "speaker_background_windows"
 CAPABILITY_SPEAKER_FULL_OPENING = "speaker_full_opening"
 # Qendresa item 18: name a side / a zoom for the recordings behind the speaker. Present ONLY while
 # the speaker background is advertised AND `background_focus_planned_for` holds for the app build
-# that sent the message (flag on, `backgroundFocus` verified, build >= 39), so a closed gate leaves
+# that sent the message (flag on, `backgroundFocus` verified, build >= 42), so a closed gate leaves
 # the dict, both hashes and the prompt identical. One full-video recording can be aimed too, so
 # this does NOT need the windows capability.
 CAPABILITY_BACKGROUND_FOCUS = "background_focus"
@@ -1817,7 +1817,7 @@ def speaker_background_windows_open(manifest: ResolvedCreatorManifest) -> bool:
 
 
 def speaker_full_opening_open(manifest: ResolvedCreatorManifest) -> bool:
-    """True when the manifest advertises the full-screen opening (windows open, build >= 38)."""
+    """True when the manifest advertises the full-screen opening (windows open, build >= 41)."""
 
     capability = manifest.capabilities.get(CAPABILITY_SPEAKER_FULL_OPENING)
     return (
@@ -1828,7 +1828,7 @@ def speaker_full_opening_open(manifest: ResolvedCreatorManifest) -> bool:
 
 
 def background_focus_open(manifest: ResolvedCreatorManifest) -> bool:
-    """True when the manifest advertises aiming the recordings (background open, build >= 39)."""
+    """True when the manifest advertises aiming the recordings (background open, build >= 42)."""
 
     capability = manifest.capabilities.get(CAPABILITY_BACKGROUND_FOCUS)
     return capability is not None and capability.available and speaker_background_open(manifest)

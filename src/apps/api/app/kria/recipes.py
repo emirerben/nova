@@ -281,7 +281,7 @@ MediaCapability = Literal[
     "speakerBackgroundColor",
     # Qendresa item 16: `speaker_background.full_screen_windows` -- the speaker's own take drawn
     # full-frame and untouched for the opening span(s) (no mask, no background, no corner).
-    # Derived from the layer; gated by its own verified token and protocol 38.
+    # Derived from the layer; gated by its own verified token and protocol 41.
     "speakerFrameWindows",
     # Qendresa item 18: `speaker_background.focus` / `.windows[].focus` -- a background picture
     # aimed at its readable text ({x, y, zoom}). Derived from the layer; own verified token.

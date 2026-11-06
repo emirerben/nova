@@ -35,7 +35,7 @@ def _run(
     background,
     *,
     enabled=True,
-    protocol=39,
+    protocol=42,
     token=True,
     column: TextColumn | None = COLUMN,
 ):
@@ -115,14 +115,14 @@ def test_the_request_carries_focus_only_while_the_flag_is_on(monkeypatch):
 
 
 def test_an_old_build_gets_no_focus_anywhere(monkeypatch):
-    job = _run(monkeypatch, {**ASKED, "focus": "left"}, protocol=38)
+    job = _run(monkeypatch, {**ASKED, "focus": "left"}, protocol=41)
     assert all(f is None for f in _foci(job))
     assert "focus" not in _dump(job)
     assert "backgroundFocus" not in _recipe(job).required_capabilities
 
 
 def test_a_dropped_aim_is_traced_and_the_lane_receipt_does_not_claim_it(monkeypatch):
-    """Stamped 38 (focus gate closed for the approving build) with a creator-named side: the
+    """Stamped 41 (focus gate closed for the approving build) with a creator-named side: the
     compile drops the aim, says so in the trace once, and the receipt names no focus."""
     from app.pipeline import phone_subtitled_lanes as lanes_mod
 
@@ -133,7 +133,7 @@ def test_a_dropped_aim_is_traced_and_the_lane_receipt_does_not_claim_it(monkeypa
         "_trace_background_fallback",
         lambda event, detail: (events.append((event, detail)), real(event, detail))[1],
     )
-    job = _run(monkeypatch, {**ASKED, "focus": "left", "focus_zoom": 2.0}, protocol=38)
+    job = _run(monkeypatch, {**ASKED, "focus": "left", "focus_zoom": 2.0}, protocol=41)
     assert all(f is None for f in _foci(job))
     receipt = _variant(job)["phone_lane_receipt"]["background"]
     assert "focus" not in receipt and "focus_zoom" not in receipt

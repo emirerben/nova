@@ -37,7 +37,7 @@ the plain word count is recorded too.
   `VisualMediaPlacement`: base = cover, drawn scale = `max(cover * zoom, contain)` (never smaller
   than the whole picture), `x`/`y` align the picture (0 = left/top edge, 0.5 = centre, 1 =
   right/bottom). `zoom` 0.2-4 on the wire; below cover the picture no longer fills the frame and
-  the uncovered part is black, her look. Capability `backgroundFocus`, client protocol 39, flag
+  the uncovered part is black, her look. Capability `backgroundFocus`, client protocol 42, flag
   `BACKGROUND_FOCUS_ENABLED` (default off).
 - **Automatic choice, free**: the worker already downloads every Visual before a phone render
   (`phone_visuals.bind_phone_visual_assets`, to hash and probe it). While the file is on disk it
@@ -56,10 +56,10 @@ the plain word count is recorded too.
 
 ## Ways it could fail
 
-- **F1 Old build draws a recipe it can't read.** A build below 39 or without the verified
+- **F1 Old build draws a recipe it can't read.** A build below 42 or without the verified
   `backgroundFocus` token gets a `focus` key and rejects the whole recipe (strict decoders).
   Guard: the compile never writes focus unless the gate is open; old builds get today's centre
-  crop and a fallback trace; the Save answers 426 below 39 only for a document that carries focus.
+  crop and a fallback trace; the Save answers 426 below 42 only for a document that carries focus.
 - **F2 Switch off is not byte-identical.** Measuring at bind time adds a key to stored job
   state, or the compile writes focus, or a prompt mentions it. Guard: nothing measured, stored,
   taught or written with the flag off; frozen recipe/prompt guard tests.

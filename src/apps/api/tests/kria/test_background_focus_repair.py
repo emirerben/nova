@@ -119,12 +119,12 @@ def test_capability_is_advertised_per_protocol(monkeypatch, build):
     _open_focus(monkeypatch)
     before = _manifest()
     assert capabilities.CAPABILITY_BACKGROUND_FOCUS == "background_focus"
-    build(38)
+    build(41)
     old = _manifest()
     assert not capabilities.background_focus_open(old)
     assert capabilities.CAPABILITY_BACKGROUND_FOCUS not in old.capabilities
     assert old.manifest_hash == before.manifest_hash
-    build(39)
+    build(42)
     new = _manifest()
     assert capabilities.background_focus_open(new)
     assert new.manifest_hash != old.manifest_hash
@@ -140,12 +140,12 @@ def test_capability_needs_no_windows(monkeypatch, build):
         "phone_render_verified_features",
         [*settings.phone_render_verified_features, "backgroundFocus"],
     )
-    build(39)
+    build(42)
     assert capabilities.background_focus_open(_manifest())
 
 
 def test_flag_off_or_token_missing_advertises_nothing(monkeypatch, build):
-    build(39)
+    build(42)
     _open_focus(monkeypatch, enabled=False)
     assert capabilities.CAPABILITY_BACKGROUND_FOCUS not in _manifest().capabilities
     _open_focus(monkeypatch, token=False)
@@ -157,7 +157,7 @@ def test_flag_off_or_token_missing_advertises_nothing(monkeypatch, build):
 
 def test_the_repair_keeps_focus_in_the_media_branch(monkeypatch, build):
     _open_focus(monkeypatch)
-    build(39)
+    build(42)
     manifest = _manifest()
     asked = {"focus": "left", "focus_zoom": 1.6}
     kept, notices = _repair(manifest, _strategy(background_media={"media_id": POOL_PHOTO, **asked}))
@@ -172,7 +172,7 @@ def test_the_repair_keeps_focus_in_the_media_branch(monkeypatch, build):
 
 def test_the_repair_keeps_focus_on_a_colour_fill_with_windows_only(monkeypatch, build):
     _open_focus(monkeypatch, colour=True)
-    build(39)
+    build(42)
     manifest = _manifest()
     with_windows, notices = _repair(
         manifest,
@@ -198,7 +198,7 @@ def test_the_repair_keeps_focus_on_a_colour_fill_with_windows_only(monkeypatch, 
 
 def test_flag_off_drops_it_silently_and_changes_nothing_else(monkeypatch, build):
     _open_focus(monkeypatch, enabled=False)
-    build(39)
+    build(42)
     manifest = _manifest()
     kept, notices = _repair(
         manifest, _strategy(background_media={"media_id": POOL_PHOTO, "focus": "left"})
@@ -209,7 +209,7 @@ def test_flag_off_drops_it_silently_and_changes_nothing_else(monkeypatch, build)
 
 def test_an_old_build_drops_it_with_a_notice(monkeypatch, build):
     _open_focus(monkeypatch)
-    build(38)
+    build(41)
     manifest = _manifest()
     kept, notices = _repair(
         manifest,
@@ -218,7 +218,7 @@ def test_an_old_build_drops_it_with_a_notice(monkeypatch, build):
     assert kept.background_media.focus is None and kept.background_media.focus_zoom is None
     assert notices == [capabilities.BACKGROUND_FOCUS_NOTICES["app_too_old"]]
     assert "latest Kria app" in notices[0]
-    build(39)
+    build(42)
     monkeypatch.setattr(
         settings,
         "phone_render_verified_features",
@@ -233,7 +233,7 @@ def test_an_old_build_drops_it_with_a_notice(monkeypatch, build):
 
 def test_nothing_asked_means_no_notice(monkeypatch, build):
     _open_focus(monkeypatch)
-    build(38)
+    build(41)
     _kept, notices = _repair(_manifest(), _strategy(background_media={"media_id": POOL_PHOTO}))
     assert notices == []
 

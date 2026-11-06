@@ -43,13 +43,17 @@ TILT_ZOOM_PROTOCOL = 33
 # the dimmed not-yet-spoken word), so its preview and editor export match the rendered captions.
 CAPTION_SHAPE_PROTOCOL = 36
 
+# Qendresa item 15: the first build whose editor keeps a card marked `caption_clear` below y 0.62
+# (older editors pull every card centre up to 0.62, onto the Q1 captions).
+CARD_LAYOUT_PROTOCOL = 40
+
 # Qendresa item 16: the first build that decodes `speaker_background.full_screen_windows` (the
 # `speakerFrameWindows` capability: the speaker full screen in their own take, then the corner).
-SPEAKER_FULL_OPENING_PROTOCOL = 38
+SPEAKER_FULL_OPENING_PROTOCOL = 41
 
 # Qendresa item 18: the first build that decodes `speaker_background.focus` /
 # `windows[i].focus` (the `backgroundFocus` capability: the picture aimed at its text column).
-BACKGROUND_FOCUS_PROTOCOL = 39
+BACKGROUND_FOCUS_PROTOCOL = 42
 
 
 def caption_style_scope_supported() -> bool:

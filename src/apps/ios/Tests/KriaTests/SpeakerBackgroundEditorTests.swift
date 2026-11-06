@@ -936,7 +936,7 @@ import KriaMediaEngine
     }
 
     func testTheProtocolDeclaresTheOpeningBuild() {
-        XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, 38, "38 = decodes, draws and round-trips speaker_background.full_screen_windows")
+        XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, 41, "41 = decodes, draws and round-trips speaker_background.full_screen_windows")
     }
 
     // MARK: - Qendresa item 18: aim the background (rows F1, F11, F12, F15 in `docs/reviews/background-focus-failure-modes.md`)
@@ -1113,6 +1113,6 @@ import KriaMediaEngine
     }
 
     func testTheProtocolDeclaresTheFocusBuild() {
-        XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, 39, "39 = decodes, draws and round-trips speaker_background focus")
+        XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, 42, "42 = decodes, draws and round-trips speaker_background focus")
     }
 }

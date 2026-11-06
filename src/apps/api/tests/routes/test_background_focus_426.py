@@ -32,13 +32,13 @@ def _detail(uses_focus: bool, protocol: int):
 
 
 def test_pinned_focus_recipe_is_426_below_39_and_fine_from_39():
-    assert _detail(True, 38) == {
+    assert _detail(True, 41) == {
         "code": "client_update_required",
         "feature": "background_focus",
-        "minimum_client_protocol": 39,
+        "minimum_client_protocol": 42,
     }
-    assert _detail(True, 39) is None
+    assert _detail(True, 42) is None
 
 
 def test_a_recipe_without_a_focus_is_not_asked_to_update():
-    assert _detail(False, 38) is None
+    assert _detail(False, 41) is None

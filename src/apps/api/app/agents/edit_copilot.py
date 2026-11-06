@@ -107,7 +107,7 @@ log = structlog.get_logger()
 # zooms the photo / video behind the speaker (the recordings are already aimed at their text when
 # the server measured it); the BACKGROUND block prints each aimed window as `aim=left zoom=0.8x`.
 # Taught in speaker_background_focus.txt only where the snapshot offers the `background_focus`
-# family (flag + verified token + protocol 39), so every other prompt is byte-identical.
+# family (flag + verified token + protocol 42), so every other prompt is byte-identical.
 EDIT_COPILOT_PROMPT_VERSION = "2026-11-05-v116"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the

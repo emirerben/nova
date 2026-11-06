@@ -11526,7 +11526,7 @@ def _speaker_background_color_capability(job: Job, variant: dict) -> bool:
 def _speaker_full_opening_capability(job: Job, variant: dict) -> bool:
     """Qendresa item 16: may the app author ``full_screen_windows``
     (``editor_capabilities.speaker_full_opening``)? The base capability AND the full-opening
-    gate (flag, windows gate, ``speakerFrameWindows`` verified, protocol >= 38)."""
+    gate (flag, windows gate, ``speakerFrameWindows`` verified, protocol >= 41)."""
     from app.services.phone_rollout import speaker_full_opening_supported  # noqa: PLC0415
 
     return bool(
@@ -11537,7 +11537,7 @@ def _speaker_full_opening_capability(job: Job, variant: dict) -> bool:
 
 def _background_focus_capability(job: Job, variant: dict) -> bool:
     """Qendresa item 18: may the app aim a background (``editor_capabilities.background_focus``)?
-    The base capability AND the focus gate (flag, ``backgroundFocus`` verified, protocol >= 39)."""
+    The base capability AND the focus gate (flag, ``backgroundFocus`` verified, protocol >= 42)."""
     from app.services.phone_rollout import background_focus_supported  # noqa: PLC0415
 
     return bool(

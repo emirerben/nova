@@ -58,7 +58,7 @@ def _ready(job):
 
 def _aimed_job(monkeypatch):
     job = _ready(focus_job(monkeypatch))
-    set_client_protocol(39)
+    set_client_protocol(42)
     return job
 
 
@@ -69,7 +69,7 @@ def _plain_job(monkeypatch, *, background=True):
         )
     )
     _open(monkeypatch)
-    set_client_protocol(39)
+    set_client_protocol(42)
     return job
 
 

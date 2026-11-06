@@ -29,14 +29,14 @@ feeds each name's words exactly as whisper wrote them in words.json (what the pl
 to copy from the take's own transcript).
 
 Qendresa item 18: ``--focus on`` turns on ``BACKGROUND_FOCUS_ENABLED`` with ``backgroundFocus``
-verified for an app build at ``--client-protocol`` (default 39 with ``--focus on``): each
+verified for an app build at ``--client-protocol`` (default 42 with ``--focus on``): each
 recording's text column is measured from its file the way ``bind_phone_visual_assets`` does
 (free, ``app.services.background_text_focus``) and the compile aims every window at it.
 ``--focus off`` (default) is today's centre crop. The recordings' real size is probed.
 
 Qendresa item 16: ``--opening on`` asks to start full screen (``background_media
 .full_screen_opening``) with ``SPEAKER_FULL_OPENING_ENABLED`` and ``speakerFrameWindows``
-verified, for the app build ``--client-protocol`` (default 38); ``off`` is today's corner from
+verified, for the app build ``--client-protocol`` (default 41); ``off`` is today's corner from
 0 s. ``--title`` adds the Talking hook title row (`talking_title_element`), moved off the face
 by the real `place_talking_title`; the face boxes come from OUT_DIR/face_boxes.json
 (``[[x, y, w, h], ...]`` normalised, top-left origin, e.g. Apple Vision on the take) when
@@ -241,7 +241,7 @@ def main() -> None:
     parser.add_argument("--client-protocol", type=int, default=None)
     args = parser.parse_args()
     if args.client_protocol is None:
-        args.client_protocol = 39 if args.focus == "on" else 38
+        args.client_protocol = 42 if args.focus == "on" else 41
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
 

@@ -935,7 +935,7 @@ def background_focus_open(job: Any, variant: dict[str, Any]) -> bool:
     """May chat aim and zoom the recordings behind the speaker (Qendresa item 18)?
 
     The base lane is open AND the focus gate holds (flag, ``backgroundFocus`` verified, client
-    protocol >= 39 -- `background_focus_supported`, same worker-side client rule). False adds
+    protocol >= 42 -- `background_focus_supported`, same worker-side client rule). False adds
     nothing to the snapshot or the prompt, so a closed gate is byte-identical to before.
     """
     if not background_state(job, variant)[0]:
