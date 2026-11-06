@@ -232,6 +232,9 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         reason="Removing only the full-screen opening is editor-only; chat keeps it through every "
         "background op and clears it with remove_background.",
     ),
+    # Qendresa item 18: aim a screen-recording background at its text (left / centre / right and a
+    # zoom). Chat reaches it with `set_background_focus`; the getter is a read-only query.
+    "background_focus": _g("agent_ops", "setSpeakerBackgroundFocus", ("set_background_focus",)),
     # Moving / resizing the framed speaker by hand on the preview writes free geometry. The
     # agent picks only the named corners (set_speaker_frame / clear_speaker_frame above):
     # presets, never raw numbers from the model (KRI-1162 S37). Rows:
@@ -307,7 +310,7 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "soundEffectPreviewURL visualLayerSelections visualRaw footageCrop footagePlaybackRate "
         "textElement textAnchor captionPosition captionStyleSize clipTilt tiltBlockedReason "
         "tiltBackdropIsMissing "
-        "canRotateVisual",
+        "canRotateVisual speakerBackgroundFocus",
         reason="Read-only queries the UI uses to decide what to offer.",
     ),
 }

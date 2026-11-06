@@ -3266,6 +3266,7 @@
                 "speakerBackgroundWindows",
                 "speakerBackgroundColor",
                 "speakerFrameWindows",
+                "backgroundFocus",
                 "clipTilt",
                 "clipBackdropMedia",
                 "scriptFonts",
@@ -3398,6 +3399,7 @@
                 "speakerBackgroundWindows",
                 "speakerBackgroundColor",
                 "speakerFrameWindows",
+                "backgroundFocus",
                 "clipTilt",
                 "clipBackdropMedia",
                 "scriptFonts",
@@ -3577,6 +3579,37 @@
           }
         },
         "title": "EditorCaptionLinePlacement",
+        "type": "object"
+      },
+      "EditorCommitBackgroundFocus": {
+        "additionalProperties": false,
+        "description": "Where a background picture is aimed (Qendresa item 18): the document's complete\n``{x, y, zoom}`` (0 = left/top edge, 1 = right/bottom edge; zoom a multiple of the cover\nscale). The same bounds as the recipe's `SpeakerBackgroundFocus`.",
+        "properties": {
+          "x": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Y",
+            "type": "number"
+          },
+          "zoom": {
+            "maximum": 4.0,
+            "minimum": 0.2,
+            "title": "Zoom",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "zoom"
+        ],
+        "title": "EditorCommitBackgroundFocus",
         "type": "object"
       },
       "EditorCommitBackgroundMusic": {
@@ -4194,6 +4227,11 @@
             "title": "Color",
             "type": "string"
           },
+          "focus": {
+            "$ref": "#/components/schemas/EditorCommitBackgroundFocus",
+            "default": null,
+            "nullable": true
+          },
           "full_screen_windows": {
             "default": null,
             "items": {
@@ -4260,6 +4298,11 @@
             "minimum": 0.0,
             "title": "End S",
             "type": "number"
+          },
+          "focus": {
+            "$ref": "#/components/schemas/EditorCommitBackgroundFocus",
+            "default": null,
+            "nullable": true
           },
           "kind": {
             "enum": [
@@ -11260,6 +11303,37 @@
         "title": "SourceCrop",
         "type": "object"
       },
+      "SpeakerBackgroundFocus": {
+        "additionalProperties": false,
+        "description": "Qendresa item 18: where a background picture is aimed. ``x`` / ``y`` align the drawn\npicture in the frame (0 left/top, 0.5 centre, 1 right/bottom); ``zoom`` multiplies the cover\nscale (never drawn smaller than the whole picture).",
+        "properties": {
+          "x": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Y",
+            "type": "number"
+          },
+          "zoom": {
+            "maximum": 4.0,
+            "minimum": 0.2,
+            "title": "Zoom",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "zoom"
+        ],
+        "title": "SpeakerBackgroundFocus",
+        "type": "object"
+      },
       "SpeakerBackgroundLayer": {
         "additionalProperties": false,
         "properties": {
@@ -11278,6 +11352,11 @@
             "pattern": "^#[0-9A-F]{6}$",
             "title": "Color",
             "type": "string"
+          },
+          "focus": {
+            "$ref": "#/components/schemas/SpeakerBackgroundFocus",
+            "default": null,
+            "nullable": true
           },
           "full_screen_windows": {
             "default": null,
@@ -11358,6 +11437,11 @@
             "minimum": 0.0,
             "title": "End",
             "type": "number"
+          },
+          "focus": {
+            "$ref": "#/components/schemas/SpeakerBackgroundFocus",
+            "default": null,
+            "nullable": true
           },
           "media_kind": {
             "enum": [
