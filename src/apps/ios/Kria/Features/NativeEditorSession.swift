@@ -1097,7 +1097,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         let generation = payload?["base_generation"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 }
             ?? document.revision.baseGeneration.nilIfEmpty ?? cleanDocument.revision.baseGeneration.nilIfEmpty
         guard let generation else { return nil }
-        var lanes = commitRequest(sections: sections, baseGeneration: generation)
+        var lanes = commitRequest(sections: sections, submittedSections: changedSections, baseGeneration: generation)
         // Save-only: the server rejects these on a turn's editor state.
         lanes.guidedRevisionNumber = nil; lanes.guidedRevision = nil
         lanes.acceptedSuggestionIDs = nil; lanes.copilotReceiptIDs = []; lanes.retryGuidedRevision = false
@@ -7034,7 +7034,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func save() async {
-        await saveOnce()
+        await save(retrying: [])
+    }
+
+    private func save(retrying retrySections: Set<EditorSection>) async {
+        await saveOnce(retrying: retrySections)
         if saveHitNewerVersion {
             // KRI-935: a newer version was saved elsewhere. Load it with the creator's
             // edits on top and send them once more, without asking them to reload.
@@ -7042,6 +7046,13 @@ struct NativeEditorTemporaryVideo: Sendable {
             let reload = await reloadLatestKeepingLocalEdits()
             switch reload {
             case .reloaded:
+                if !retrySections.isEmpty {
+                    // Consent covered the previous generation's render. A retry
+                    // is not a local lane edit and cannot overwrite a newer save.
+                    // Keep genuine edits (including edits made in flight) unsaved.
+                    saveState = .renderRetryNeeded("A newer saved edit was loaded. Your local changes are preserved. Review the edit before retrying its render.")
+                    return
+                }
                 // The newest version may already contain everything the creator changed.
                 guard hasUnsavedChanges else { saveState = .saved; return }
                 await saveOnce()
@@ -7065,16 +7076,16 @@ struct NativeEditorTemporaryVideo: Sendable {
         if hasUnsavedChanges { await saveOnce() }
     }
 
-    private func saveOnce() async {
+    private func saveOnce(retrying retrySections: Set<EditorSection> = []) async {
         defer { userSongRetry = nil }
-        guard !isSaving, hasUnsavedChanges else { return }
+        guard !isSaving, hasUnsavedChanges || !retrySections.isEmpty else { return }
         guard let api, let itemID, let variantKey else { saveState = .failed("Load the project before saving edits."); return }
         isSaving = true; saveState = .saving
         defer { isSaving = false }
         let submittedDocument = document
         // KRI-576: the song window this save asks the server to project the lyric rows against.
         let submittedSongStartS = trueSongWindowStartS
-        let submittedSections = changedSections
+        let submittedSections = changedSections.union(retrySections)
         let submittedUndoCount = undoStack.count
         let saveItemID = itemID
         let saveJobID = jobID
@@ -7083,7 +7094,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         let saveDocumentGeneration = document.revision.baseGeneration
         let snapshot = document.encodeSnapshot()
         let payload = Self.object(snapshot["editor_payload"]); let sections = Self.object(payload?["sections"])
-        let request = commitRequest(sections: sections, baseGeneration: payload?["base_generation"]?.stringValue ?? document.revision.baseGeneration)
+        let request = commitRequest(sections: sections, submittedSections: submittedSections, baseGeneration: payload?["base_generation"]?.stringValue ?? document.revision.baseGeneration)
         do {
             let response = try await api.editorCommit(itemID: itemID, variantID: variantKey, request: request)
             // A committed save proves the connection works: drop the offline hint. Any pending
@@ -8066,8 +8077,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
     }
 
-    private var carriesGuidedLabelsWithTimeline: Bool {
-        changedSections.contains(.timeline) && canEditSection(.text)
+    private func carriesGuidedLabelsWithTimeline(_ sections: Set<EditorSection>) -> Bool {
+        sections.contains(.timeline) && canEditSection(.text)
             && GuidedLabelRebase.hasLabels(document.textElements, includeFreeText: isGuidedStory)
     }
 
@@ -8107,13 +8118,13 @@ struct NativeEditorTemporaryVideo: Sendable {
         return result
     }
 
-    private func commitRequest(sections: [String: JSONValue]?, baseGeneration: String) -> EditorCommitRequest {
+    private func commitRequest(sections: [String: JSONValue]?, submittedSections: Set<EditorSection>, baseGeneration: String) -> EditorCommitRequest {
         let value = sections ?? [:]
         func array(_ key: String, _ section: EditorSection) -> [JSONValue]? {
-            changedSections.contains(section) ? Self.array(value[key]) : nil
+            submittedSections.contains(section) ? Self.array(value[key]) : nil
         }
         func object(_ key: String, _ section: EditorSection) -> [String: JSONValue]? {
-            changedSections.contains(section) ? Self.object(value[key]) ?? [:] : nil
+            submittedSections.contains(section) ? Self.object(value[key]) ?? [:] : nil
         }
         let musicObject = Self.object(value["music_window"])
         let backgroundObject = Self.object(value["background_music"])
@@ -8132,30 +8143,30 @@ struct NativeEditorTemporaryVideo: Sendable {
             // A guided timeline commit always carries the rebased label lane, like the server's
             // copilot path: the server then treats text as authored and skips its own
             // (right-biased, label-unaware) projection.
-            textElements: changedSections.contains(.text) || carriesGuidedLabelsWithTimeline
+            textElements: submittedSections.contains(.text) || carriesGuidedLabelsWithTimeline(submittedSections)
                 ? Self.array(value["text_elements"]) : nil,
             captionCues: array("caption_cues", .captions),
             captionMeta: captionMeta,
-            mix: changedSections.contains(.mix) ? commitMix(Self.object(value["mix"]) ?? Self.object(value["audio_mix"]) ?? [:]) : nil,
-            musicTrackID: changedSections.contains(.music) ? value["music_track_id"]?.stringValue : nil,
-            removeMusic: changedSections.contains(.music) && document.music == nil,
-            musicWindow: changedSections.contains(.music) && document.music != nil
+            mix: submittedSections.contains(.mix) ? commitMix(Self.object(value["mix"]) ?? Self.object(value["audio_mix"]) ?? [:]) : nil,
+            musicTrackID: submittedSections.contains(.music) ? value["music_track_id"]?.stringValue : nil,
+            removeMusic: submittedSections.contains(.music) && document.music == nil,
+            musicWindow: submittedSections.contains(.music) && document.music != nil
                 ? EditorCommitMusicWindow(startS: Self.number(musicObject?["start_s"]) ?? document.music?.startS ?? 0, alignment: EditorMusicAlignment(rawValue: musicObject?["alignment"]?.stringValue ?? document.music?.alignment ?? "preserve_cuts") ?? .preserveCuts) : nil,
-            backgroundMusic: changedSections.contains(.backgroundMusic) ? (backgroundObject.map { EditorCommitBackgroundMusic(trackID: $0["track_id"]?.stringValue, enabled: Self.bool($0["enabled"]) ?? true, startS: Self.number($0["start_s"]), endS: Self.number($0["end_s"]), gainDB: Self.number($0["gain_db"]), muted: Self.bool($0["muted"]) ?? false) } ?? EditorCommitBackgroundMusic(enabled: false)) : nil,
-            userSong: changedSections.contains(.userSong) ? commitUserSong() : nil,
-            lyrics: changedSections.contains(.lyrics) ? (lyricsObject.map { EditorCommitLyrics(enabled: Self.bool($0["enabled"]), lineOverrides: Self.object($0["line_overrides"])) } ?? EditorCommitLyrics(enabled: false)) : nil,
-            orientation: changedSections.contains(.orientation) ? value["orientation"]?.stringValue : nil,
-            landscapeFit: changedSections.contains(.landscapeFit) ? value["landscape_fit"]?.stringValue : nil,
+            backgroundMusic: submittedSections.contains(.backgroundMusic) ? (backgroundObject.map { EditorCommitBackgroundMusic(trackID: $0["track_id"]?.stringValue, enabled: Self.bool($0["enabled"]) ?? true, startS: Self.number($0["start_s"]), endS: Self.number($0["end_s"]), gainDB: Self.number($0["gain_db"]), muted: Self.bool($0["muted"]) ?? false) } ?? EditorCommitBackgroundMusic(enabled: false)) : nil,
+            userSong: submittedSections.contains(.userSong) ? commitUserSong() : nil,
+            lyrics: submittedSections.contains(.lyrics) ? (lyricsObject.map { EditorCommitLyrics(enabled: Self.bool($0["enabled"]), lineOverrides: Self.object($0["line_overrides"])) } ?? EditorCommitLyrics(enabled: false)) : nil,
+            orientation: submittedSections.contains(.orientation) ? value["orientation"]?.stringValue : nil,
+            landscapeFit: submittedSections.contains(.landscapeFit) ? value["landscape_fit"]?.stringValue : nil,
             soundEffects: array("sound_effects", .soundEffects),
             mediaOverlays: array("media_overlays", .mediaOverlays),
             visualBlocks: array("visual_blocks", .visualBlocks),
             motionScenes: array("motion_scenes", .motionScenes),
-            motionRuntimeHash: changedSections.contains(.motionScenes) ? document.motionRuntimeHash : nil,
+            motionRuntimeHash: submittedSections.contains(.motionScenes) ? document.motionRuntimeHash : nil,
             cameraEffects: array("camera_effects", .cameraEffects),
             drawings: array("drawings", .drawings),
-            carouselMoment: changedSections.contains(.carouselMoment) ? (carouselObject.map(EditorCarouselMomentPatch.replace) ?? .remove) : .omitted,
-            speakerBackground: changedSections.contains(.speakerBackground) ? (speakerBackgroundObject.map(EditorSpeakerBackgroundPatch.replace) ?? .remove) : .omitted,
-            title: changedSections.contains(.title) ? value["title"]?.stringValue : nil,
+            carouselMoment: submittedSections.contains(.carouselMoment) ? (carouselObject.map(EditorCarouselMomentPatch.replace) ?? .remove) : .omitted,
+            speakerBackground: submittedSections.contains(.speakerBackground) ? (speakerBackgroundObject.map(EditorSpeakerBackgroundPatch.replace) ?? .remove) : .omitted,
+            title: submittedSections.contains(.title) ? value["title"]?.stringValue : nil,
             guidedRevisionNumber: guidedRevisionNumber,
             editorStateVersion: 2,
             deletions: document.deletions.isEmpty ? nil : document.deletions,
@@ -9235,11 +9246,9 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     func retryRender() async {
         guard !isSaving, !pendingRenderRetrySections.isEmpty else { return }
-        explicitlyDirtySections.formUnion(pendingRenderRetrySections)
         // Re-send an acknowledged volume / start so the render restarts; never a removal.
         if pendingRenderRetrySections.contains(.userSong), let saved = acknowledgedUserSong, !saved.removed { userSongRetry = saved }
-        refreshDirtyState()
-        await save()
+        await save(retrying: pendingRenderRetrySections)
     }
 
     /// The renderer may quantize requested durations to a 0.5-second or beat

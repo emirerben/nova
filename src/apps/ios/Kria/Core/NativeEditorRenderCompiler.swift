@@ -230,7 +230,7 @@ enum NativeEditorRenderError: Error, Equatable {
                 // surrounding microsecond geometry checks without admitting a
                 // genuinely longer source window.
                 let sourceWindowToleranceS = 0.000_001
-                if NativeLegacySourceWindow.preservesAuthoredClock(authoredSlot), source.asset.duration != nil {
+                if source.asset.duration != nil {
                     // A stale catalog hint may have shortened EditorClip.trimOut.
                     // The bound original, not that projection, owns source fit.
                     requestedRate = authoredRate

@@ -124,7 +124,10 @@ import KriaMediaEngine
             let recipe = try compiler.compile(document: document, clips: clips, items: [], sources: [0: source]).recipe
             let rendered = try XCTUnwrap(recipe.tracks.first(where: { $0.kind == .video })?.clips)
             XCTAssertEqual(rendered[0].duration, 3, accuracy: 0.0001)
-            XCTAssertEqual(rendered[0].sourceDuration, min(3, 3 * rate), accuracy: 0.0001)
+            // No explicit source endpoint: duration × authored rate owns the span.
+            // The measured six-second original supplies all of the 2× window.
+            XCTAssertEqual(rendered[0].sourceDuration, 3 * rate, accuracy: 0.0001)
+            XCTAssertNil(rendered[0].holdDuration)
             XCTAssertEqual(rendered[1].timelineStart, 3)
             XCTAssertEqual(rendered[1].duration, 3)
             XCTAssertNoThrow(try recipe.validate())

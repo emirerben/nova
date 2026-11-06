@@ -119,3 +119,46 @@ The 238-pass source binding is native application tree
 `a8ae4da503f219d9e6d1573556d68dcd7eb64af5`. Only the evidence document and
 backend test assertions/formatting changed after that native run. The new backend
 assertions were included in the final 38-pass offline execution.
+
+## Retry-generation and strict-fit correction — 2026-11-06
+
+A second review found that retry intent was marked as a dirty timeline. On a 409,
+the normal Save rebase could therefore copy unchanged G1 lanes over G2 and resend.
+It also found that original-bound strict fits were still gated on fractional-frame
+clock selection: 1.9s with hint 1.888s and original 2.0s slowed to 0.993684x.
+
+New tests preceded implementation: `/tmp/cunda-conflict-red.{log,xcresult}` executed
+25 tests with 14 failed assertions. They reproduced the stale second commit, lost
+G2 trim/reorder, retry-only dirty state, and the millisecond-aligned slowdown.
+
+Retry now passes explicit submission sections without changing genuine dirty
+sections. A retry 409 reloads the newer generation, overlays only actual local
+work, and stops with an explicit review/retry state; it never auto-resubmits.
+Concurrent local work remains unsaved, duplicate taps stay single-flight, and an
+ordinary Save still has its existing genuine-edit conflict/rebase behavior.
+Editor-state export continues to send only genuine dirty sections. Original-bound
+strict-fit rate/span correction is independent of clock precision; explicit source
+endpoints, native moving-span markers and freezes retain their separate semantics.
+
+The first compile attempt caught an editor-state export caller missing the new
+explicit-section argument; it was corrected before execution. The expanded run
+`/tmp/cunda-conflict-green2.{log,xcresult}` then ran 383 tests: all 252 session tests,
+all recovery/preview/interaction tests passed, with one compiler expectation failure.
+That fixture expected a 3s moving span plus hold for a 3s slot at 2x despite a 6s
+original. Its corrected expectation uses duration × rate (6s) with no hold; an added
+backend parity case verifies the same contract. The focused backend serialization
+and strict-fit controls passed 3 tests offline. No backend production code changed.
+
+The preceding 232/238 native and 618 backend results remain historical evidence;
+final verification must bind this correction and current-main integration to their
+new source trees. Local preship/body and exact-head logs record that final run.
+
+Parent supplied a separate read-only physical-phone observation: installed build
+0.1.0 (1902) still displayed the failure card and the already-white no-op. No refresh
+or project action occurred. This confirms failure display only, not private draft
+validity or recovery. This worker did not access the phone.
+
+The corrected compiler suite then passed all 73 tests in
+`/tmp/cunda-conflict-compiler-green.{log,xcresult}`. This closes the sole assertion
+failure from the 383-test run; final integrated-head verification remains a separate
+run after local main integration.

@@ -79,3 +79,27 @@ def test_backend_save_serialization_matches_native_reopen_fixture(monkeypatch):
     row = wire["editor_payload"]["sections"]["timeline_slots"][-1]
     assert "source_end_s" in row and row["source_end_s"] is None
     assert row["duration_s"] == 58 / 30
+
+
+@pytest.mark.parametrize("duration,hint,original,rate", [(1.9, 1.888, 2.0, 1), (3, 3, 6, 2)])
+def test_millisecond_aligned_strict_fit_uses_original_bound_not_saved_hint(
+    duration, hint, original, rate
+):
+    from app.pipeline.phone_authored_timeline import compile_phone_authored_timeline
+    from tests.pipeline.test_editor_frame_padding import legacy_window
+
+    job, variant, previous = legacy_window(duration=duration, span=original / rate, rate=rate)
+    row = variant["user_timeline"]["slots"][0]
+    row.update(source_duration_s=hint, source_end_s=None)
+    variant[EDITOR_SOURCES_FIELD]["sources"][0]["duration_s"] = hint
+    recipe = compile_phone_authored_timeline(job, variant, previous)
+    clip = recipe.tracks[0].clips[0]
+    assert clip.source_start == 0
+    assert clip.source_duration == pytest.approx(duration * rate)
+    assert clip.rate == rate
+    assert clip.hold_duration is None
+    prep = {}
+    prepare_saved_render_windows(job, "original_text", prep)
+    assert "render_recovery" not in prep
+    assert row["duration_s"] == duration
+    assert row["source_end_s"] is None

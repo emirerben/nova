@@ -208,6 +208,88 @@ final class SavedEditorRecoveryTests: XCTestCase {
         XCTAssertTrue(session.hasUnsavedChanges)
     }
 
+    private func conflictingRetryFixture(suspend: Bool = false) async throws -> (NativeEditorSession, EditorCommitSpy, [String: JSONValue]) {
+        var v = variant()
+        var rows = try XCTUnwrap(v["user_timeline"]?.objectValue?["slots"]?.arrayValue)
+        var second = try XCTUnwrap(rows[0].objectValue)
+        second["slot_id"] = .string("second-clip"); second["in_s"] = .number(1)
+        rows.append(.object(second)); v["user_timeline"] = .object(["slots": .array(rows)])
+        let saved = snapshot(variant: v)
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        v["editor_draft"] = try JSONDecoder().decode(JSONValue.self, from: encoder.encode(saved))
+        let t = try thread(variant: v, noOp: true)
+        let fake = EditorCommitSpy(draftSnapshot: saved, draftError: .unsupported,
+                                   authoritativeVariant: v, suspendNextCommit: suspend)
+        let session = NativeEditorSession(project: t.summary)
+        await session.load(project: t.summary, api: fake)
+        var newer = v
+        var trimmed = try XCTUnwrap(rows[0].objectValue)
+        trimmed["in_s"] = .number(1.25); trimmed["duration_s"] = .number(0.75)
+        newer["user_timeline"] = .object(["slots": .array([rows[1], .object(trimmed)])])
+        newer["render_generation_id"] = .string("newer-generation")
+        newer.removeValue(forKey: "editor_draft")
+        fake.authoritativeVariant = newer
+        fake.commitErrorQueue = [.conflict]
+        return (session, fake, newer)
+    }
+
+    func testUnchangedRetryConflictNeverReplaysOldTimelineOverNewerTrimAndOrder() async throws {
+        let (session, fake, _) = try await conflictingRetryFixture()
+        await session.retryRender()
+        XCTAssertEqual(fake.commitCount, 1, "retry consent for G1 must not overwrite G2")
+        XCTAssertEqual(fake.lastRequest?.baseGeneration, "saved-generation")
+        XCTAssertEqual(session.document.revision.baseGeneration, "newer-generation")
+        XCTAssertEqual(session.document.clips.map(\.id), ["second-clip", "saved-clip"])
+        XCTAssertEqual(session.document.clips.last?.inS, 1.25)
+        XCTAssertEqual(session.document.clips.last?.durationS, 0.75)
+        XCTAssertFalse(session.hasUnsavedChanges, "retry intent is not a local timeline edit")
+        guard case .renderRetryNeeded = session.saveState else { return XCTFail("newer edit requires explicit review/retry") }
+        await session.retryRender()
+        XCTAssertEqual(fake.commitCount, 2, "only a new explicit retry may submit G2")
+        XCTAssertEqual(fake.lastRequest?.baseGeneration, "newer-generation")
+        XCTAssertEqual(fake.lastRequest?.timelineSlots?.first?.objectValue?["slot_id"], .string("second-clip"))
+    }
+
+    func testRetryConflictKeepsConcurrentLocalEditsWithoutAutomaticallySubmittingThem() async throws {
+        let (session, fake, _) = try await conflictingRetryFixture(suspend: true)
+        let retry = Task { await session.retryRender() }
+        for _ in 0..<200 {
+            if fake.commitIsSuspended { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertTrue(fake.commitIsSuspended)
+        session.transactDocument(section: .timeline) { $0.clips[0].durationS = 1.5 }
+        session.updateTextContent(id: "saved-title", content: "Concurrent local work")
+        await session.retryRender()
+        XCTAssertEqual(fake.commitCount, 1)
+        fake.resumeCommit(); await retry.value
+        XCTAssertEqual(fake.commitCount, 1)
+        XCTAssertEqual(session.document.revision.baseGeneration, "newer-generation")
+        XCTAssertEqual(session.document.clips.first?.durationS, 1.5)
+        XCTAssertEqual(session.document.textElements.first?.text, "Concurrent local work")
+        XCTAssertTrue(session.hasUnsavedChanges)
+    }
+
+    func testRetryConflictPreservesDirtyTextWithoutReplayingCleanTimeline() async throws {
+        let (session, fake, _) = try await conflictingRetryFixture()
+        session.updateTextContent(id: "saved-title", content: "My unsaved title")
+        await session.retryRender()
+        XCTAssertEqual(fake.commitCount, 1)
+        XCTAssertEqual(session.document.clips.map(\.id), ["second-clip", "saved-clip"])
+        XCTAssertEqual(session.document.clips.last?.inS, 1.25)
+        XCTAssertEqual(session.document.textElements.first?.text, "My unsaved title")
+        XCTAssertTrue(session.hasUnsavedChanges)
+    }
+
+    func testGenuineTimelineSaveRetainsExistingConflictRebaseContract() async throws {
+        let (session, fake, _) = try await conflictingRetryFixture()
+        session.transactDocument(section: .timeline) { $0.clips[0].durationS = 1.5 }
+        await session.save()
+        XCTAssertEqual(fake.commitCount, 2)
+        XCTAssertEqual(fake.lastRequest?.baseGeneration, "newer-generation")
+        XCTAssertEqual(fake.lastRequest?.timelineSlots?.first?.objectValue?["duration_s"], .number(1.5))
+    }
+
     func testFailedProjectLoadsSavedLanesWithoutRenderAndReconcilesOwnDirtyEdits() async throws {
         let t = try thread()
         let fake = EditorCommitSpy(draftSnapshot: snapshot(), draftError: .unsupported, authoritativeVariant: variant())

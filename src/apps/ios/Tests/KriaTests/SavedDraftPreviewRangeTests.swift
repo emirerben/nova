@@ -129,6 +129,20 @@ import KriaMediaEngine
         }
     }
 
+    func testMillisecondAlignedStrictFitUsesOriginalInsteadOfSavedHint() async throws {
+        let fixture = try await makeFixture(video: true, duration: 1.9, legacyTail: true,
+                                            endpoint: .null, hint: .number(1.888), originalDuration: 2)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let before = fixture.session.document
+        let clip = try XCTUnwrap(compile(fixture).recipe.tracks.first?.clips.last)
+        XCTAssertEqual(clip.rate, 1, accuracy: 0.000_001)
+        XCTAssertEqual(clip.sourceDuration, 1.9, accuracy: 0.000_001)
+        XCTAssertEqual(clip.sourceStart, 0)
+        XCTAssertEqual(clip.timelineStart, 5)
+        XCTAssertNil(clip.holdDuration)
+        XCTAssertEqual(fixture.session.document, before)
+    }
+
     func testMissingOriginalMeasurementCannotAuthorizeTailPadding() async throws {
         let fixture = try await makeFixture(video: true, duration: 58.0 / 30, legacyTail: true, endpoint: .null)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
