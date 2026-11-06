@@ -5151,14 +5151,18 @@ def _run_phone_guided_job(
     # promise refuses steps down to the next; the last one is the plan as it was.
     from app.services.phone_clip_sound_toggle import (  # noqa: PLC0415
         conflict_reasons,
+        mute_relaxed_contract,
         plan_toggle_lane,
         sound_contract_conflict,
+        stage_contract_revision,
         toggle_record,
     )
     from app.services.phone_rollout import phone_clip_sound_windows_supported  # noqa: PLC0415
 
     toggle_receipt: dict | None = None
     toggle_changed = False
+    # (approved contract, its relaxed revision) when a whole-video mute cleared a camera pin.
+    relaxed_pin: tuple[Any, Any] | None = None
     toggle_lane = plan_toggle_lane(
         snapshot,
         raw_plan=raw_plan,
@@ -5202,15 +5206,36 @@ def _run_phone_guided_job(
                 )
                 continue
             if sound_contract_conflict(contract, candidate_compiled.recipe, bindings):
-                conflicted = conflict_reasons(toggle_lane)
-                continue
+                # Qendresa case 4: a whole-video mute outranks a camera-audio pin the approval
+                # took from the planner's audio strategy; anything else steps down as before.
+                relaxed = mute_relaxed_contract(
+                    contract, toggle_lane, snapshot, variant_id="guided_story"
+                )
+                if relaxed is None or sound_contract_conflict(
+                    relaxed, candidate_compiled.recipe, bindings
+                ):
+                    conflicted = conflict_reasons(toggle_lane)
+                    continue
+                relaxed_pin = (contract, relaxed)
+                contract = relaxed
             raw_plan, plan, compiled = candidate.raw_plan, candidate_plan, candidate_compiled
             recipe, repair_notes = compiled.recipe, list(compiled.notes)
             toggle_changed = True
             toggle_receipt = toggle_record(toggle_lane, candidate, recipe, bindings)
             break
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(timed_cards))
-    repair_notes = _phone_repair_notes(snapshot, contract, recipe.duration, repair_notes)
+    repair_notes = _phone_repair_notes(
+        (
+            stage_contract_revision(
+                snapshot, *relaxed_pin, creator_strategy or {}, variant_id="guided_story"
+            )
+            if relaxed_pin is not None
+            else snapshot
+        ),
+        contract,
+        recipe.duration,
+        repair_notes,
+    )
     # The editor's Save recompiles from this private plan, so it must hold the moments' sound
     # and (KRI-1027) their vertical framing.
     repaired_plan_payload = (
@@ -5330,6 +5355,11 @@ def _run_phone_guided_job(
             # Private receipts the editor recompiles from; each row keeps
             # gcs_path so pool deletion still sees the photo as referenced.
             current[PHONE_VISUALS_FIELD] = visual_rows
+        if relaxed_pin is not None:
+            # The pin verifies this variant against the relaxed revision (KRI-736 shape).
+            current = stage_contract_revision(
+                current, *relaxed_pin, creator_strategy or {}, variant_id="guided_story"
+            )
         job.assembly_plan = current
         narration_binding = None
         if plan.narration is not None and plan.narration.speech_cleanup is not None:
