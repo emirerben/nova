@@ -799,12 +799,22 @@ enum NativeEditorUITestFixtures {
                      ])
     }()
 
-    static var splitSpeaker: EditorDraft {
+    static var splitSpeaker: EditorDraft { makeSplitSpeaker(restoringSavedState: true) }
+
+    static func makeSplitSpeaker(restoringSavedState: Bool) -> EditorDraft {
         var value = speakerBackground
+        var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
+        for key in ["split_screen", "speaker_background", "speaker_background_windows"] {
+            caps[key] = .object(["editable": .bool(true)])
+        }
+        value.serverSnapshot["editor_capabilities"] = .object(caps)
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background-reset") {
             UserDefaults.standard.removeObject(forKey: savedSplitSpeakerTimelineKey)
         }
         var document = EditorDocument(snapshot: value.serverSnapshot)
+        if !restoringSavedState || UserDefaults.standard.data(forKey: savedSpeakerBackgroundKey) == nil {
+            document.speakerBackground = EditorSpeakerBackground(json: seededSpeakerFrame)
+        }
         guard var top = document.clips.first else { return value }
         top.id = "split-speaker-top"
         top.durationS = 4
@@ -819,7 +829,7 @@ enum NativeEditorUITestFixtures {
         document.textElements = []
         document.captionMeta["enabled"] = .bool(false)
         document.capabilities["split_screen"] = EditorCapability(editable: true)
-        if let data = UserDefaults.standard.data(forKey: savedSplitSpeakerTimelineKey),
+        if restoringSavedState, let data = UserDefaults.standard.data(forKey: savedSplitSpeakerTimelineKey),
            let saved = try? JSONDecoder().decode([String: JSONValue].self, from: data) {
             var snapshot = document.encodeSnapshot()
             var payload = snapshot["editor_payload"]?.objectValue ?? [:]

@@ -35,7 +35,7 @@ final class SpeakerFrameDirectManipulationUITests: XCTestCase {
         let custom = geometry(bottom)
         XCTAssertNotEqual(custom, original)
         XCTAssertEqual(geometry(top), peer)
-        saveAndWait(app)
+        saveAndWait(app, speakers: [top, bottom])
         app.terminate()
 
         let reopened = launchSplit(reset: false)
@@ -46,7 +46,8 @@ final class SpeakerFrameDirectManipulationUITests: XCTestCase {
         XCTAssertFalse(reopened.buttons["native-editor-save"].isEnabled)
         savedBottom.tap()
         reopened.buttons["native-editor-speaker-spot-full"].tap()
-        saveAndWait(reopened)
+        XCTAssertFalse(savedBottom.exists, "Full panel mode removes only the scoped preview object")
+        saveAndWait(reopened, speakers: [savedTop])
         reopened.terminate()
 
         let full = launchSplit(reset: false)
@@ -186,11 +187,14 @@ final class SpeakerFrameDirectManipulationUITests: XCTestCase {
         start.press(forDuration: 0.15, thenDragTo: start.withOffset(offset))
     }
 
-    private func saveAndWait(_ app: XCUIApplication) {
+    private func saveAndWait(_ app: XCUIApplication, speakers: [XCUIElement]? = nil) {
         // Save sits in the editor header, which an open tool panel replaces: close the speaker's panel first.
         let done = app.buttons["native-editor-you-done"]
         if done.exists { done.tap() }
-        XCTAssertFalse(isSelected(app), "Done deselects the speaker")
+        for element in speakers ?? [speaker(app)] {
+            XCTAssertTrue(element.exists, "The remaining framed speaker stays visible")
+            XCTAssertFalse((element.value as? String ?? "").hasSuffix("selected"), "Done deselects every visible speaker")
+        }
         let save = app.buttons["native-editor-save"]
         XCTAssertTrue(save.waitForExistence(timeout: 5))
         XCTAssertTrue(save.isEnabled, "there is something to save")

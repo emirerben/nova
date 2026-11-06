@@ -4,7 +4,7 @@ import XCTest
 final class NativeSplitScreenRowsTests: XCTestCase {
     @MainActor
     func testRepeatedSpeakerFixtureRetainsMembershipThroughSessionHydration() {
-        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.splitSpeaker)
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.makeSplitSpeaker(restoringSavedState: false))
         XCTAssertTrue(session.document.splitScreenIsValid)
         XCTAssertEqual(session.document.clips.map(\.id), ["split-speaker-top", "split-speaker-bottom"])
         XCTAssertEqual(session.document.clips.map(\.splitPanelIndex), [0, 1])

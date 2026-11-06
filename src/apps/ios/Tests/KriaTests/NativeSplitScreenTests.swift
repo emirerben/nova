@@ -925,6 +925,41 @@ extension NativeSplitScreenTests {
 
 extension NativeSplitScreenTests {
     @MainActor
+    private func loadedSpeakerSession(_ document: EditorDocument) -> NativeEditorSession {
+        var snapshot = document.encodeSnapshot()
+        snapshot["render_destination"] = .string("device")
+        snapshot["editor_capabilities"] = .object([
+            "timeline": .object(["editable": .bool(true)]),
+            "split_screen": .object(["editable": .bool(true)]),
+            "speaker_background": .object(["editable": .bool(true)]),
+            "speaker_background_windows": .object(["editable": .bool(true)])
+        ])
+        return NativeEditorSession(draft: EditorDraft(projectID: UUID(), clips: [], text: [],
+            captions: .init(enabled: false, style: "sentence"), music: nil, revision: 0,
+            serverSnapshot: snapshot))
+    }
+
+    private func assertPersistedSpeakerRowsEqual(_ reopened: EditorDocument, _ original: EditorDocument,
+                                                 file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(reopened.encodeSnapshot()["editor_payload"]?.objectValue?["sections"]?.objectValue?["timeline_slots"],
+                       original.encodeSnapshot()["editor_payload"]?.objectValue?["sections"]?.objectValue?["timeline_slots"], file: file, line: line)
+        XCTAssertEqual(reopened.clips.map(\.id), original.clips.map(\.id), file: file, line: line)
+        XCTAssertEqual(reopened.clips.map(\.parentSegmentID), original.clips.map(\.parentSegmentID), file: file, line: line)
+        XCTAssertEqual(reopened.clips.map(\.clipIndex), original.clips.map(\.clipIndex), file: file, line: line)
+        XCTAssertEqual(reopened.clips.map(\.inS), original.clips.map(\.inS), file: file, line: line)
+        XCTAssertEqual(reopened.clips.map(\.durationS), original.clips.map(\.durationS), file: file, line: line)
+        XCTAssertEqual(reopened.clips.map(\.durationBeats), original.clips.map(\.durationBeats), file: file, line: line)
+        XCTAssertEqual(reopened.clips.map(\.removed), original.clips.map(\.removed), file: file, line: line)
+        XCTAssertEqual(reopened.clips.map(\.transitionAfter), original.clips.map(\.transitionAfter), file: file, line: line)
+        XCTAssertEqual(reopened.clips.map(\.transitionDurationS), original.clips.map(\.transitionDurationS), file: file, line: line)
+        XCTAssertEqual(reopened.clips.map(\.lookPreset), original.clips.map(\.lookPreset), file: file, line: line)
+        XCTAssertEqual(reopened.clips.map(\.lookAdjustments), original.clips.map(\.lookAdjustments), file: file, line: line)
+        for key in ["source_crop", "media_transform", "speaker_frame_override", "split_section_id", "split_panel_index", "split_offset_s"] {
+            XCTAssertEqual(reopened.clips.map { $0.raw[key] }, original.clips.map { $0.raw[key] }, file: file, line: line)
+        }
+    }
+
+    @MainActor
     private func speakerOccurrenceSession() -> (NativeEditorSession, EditorSelection, EditorSelection) {
         let first = UUID().uuidString, second = UUID().uuidString
         var slots = [first, second].enumerated().map { index, id -> EditorTimelineSlot in
@@ -939,7 +974,7 @@ extension NativeSplitScreenTests {
             "speaker_background": .init(editable: true), "speaker_background_windows": .init(editable: true)])
         document.splitScreenSections = [.init(id: "s", durationS: 8, panelCount: 2)]
         document.speakerBackground = .init(color: "#223344", speakerFrame: .preset("small_bottom_right"))
-        return (mutationSession(document), .init(kind: .speaker, id: first), .init(kind: .speaker, id: second))
+        return (loadedSpeakerSession(document), .init(kind: .speaker, id: first), .init(kind: .speaker, id: second))
     }
 
     @MainActor
@@ -991,7 +1026,7 @@ extension NativeSplitScreenTests {
         XCTAssertNil(session.speakerFrame(for: top))
         XCTAssertEqual(session.speakerFrame(for: bottom), local)
         XCTAssertEqual(session.previewSpeakerItems.map(\.selection), [bottom])
-        let reopened = mutationSession(EditorDocument(snapshot: session.document.encodeSnapshot()))
+        let reopened = loadedSpeakerSession(EditorDocument(snapshot: session.document.encodeSnapshot()))
         XCTAssertEqual(reopened.speakerFrame(for: bottom), local)
         XCTAssertNil(reopened.speakerFrame(for: top))
         reopened.select(top, seekToStart: false)
@@ -1025,7 +1060,7 @@ extension NativeSplitScreenTests {
         session.select(.init(kind: .clip, id: tail), seekToStart: false)
         session.replaceSelectedClipSource(clipIndex: 0)
         XCTAssertEqual(session.document.clips.first { $0.id == tail }?.raw["speaker_frame_override"], beforeReplacement)
-        XCTAssertEqual(EditorDocument(snapshot: session.document.encodeSnapshot()).clips, session.document.clips)
+        assertPersistedSpeakerRowsEqual(EditorDocument(snapshot: session.document.encodeSnapshot()), session.document)
     }
 }
 
@@ -1060,7 +1095,7 @@ extension NativeSplitScreenTests {
         XCTAssertTrue(session.isDirty(.speakerBackground))
         XCTAssertTrue(session.previewSpeakerItems.isEmpty)
         let reopened = EditorDocument(snapshot: session.document.encodeSnapshot())
-        XCTAssertEqual(reopened.clips, session.document.clips)
+        assertPersistedSpeakerRowsEqual(reopened, session.document)
         XCTAssertNil(reopened.speakerBackground)
         session.undo()
         XCTAssertEqual(session.document, before)

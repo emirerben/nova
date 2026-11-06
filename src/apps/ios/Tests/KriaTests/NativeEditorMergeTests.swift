@@ -318,10 +318,16 @@ extension NativeEditorMergeTests {
                 raw: ["speaker_subject": .bool(true), "speaker_frame_override": .object(["mode": .string("inherit")])])
         }
         for index in slots.indices { slots[index].setSplitMembership(sectionID: "s", panelIndex: index, offset: 0) }
-        var value = EditorDocument(clips: slots, title: "Before")
+        var value = EditorDocument(clips: slots, title: "Before", orientation: "portrait")
         value.splitScreenSections = [.init(id: "s", durationS: 4, panelCount: 2)]
         value.speakerBackground = .init(color: "#223344", speakerFrame: .preset("small_bottom_right"))
-        return EditorDocument(snapshot: value.encodeSnapshot())
+        let decoded = EditorDocument(snapshot: value.encodeSnapshot())
+        XCTAssertNotNil(decoded.speakerBackground)
+        XCTAssertFalse(decoded.unreadableSpeakerBackground)
+        XCTAssertTrue(decoded.splitScreenIsValid)
+        XCTAssertNotNil(decoded.mergeValidationSnapshot())
+        XCTAssertEqual(decoded.orientation, "portrait")
+        return decoded
     }
 
     func testSplitLayoutOnlyEditMergesWithRemoteTitleAndKeepsRemoteMetadata() throws {
