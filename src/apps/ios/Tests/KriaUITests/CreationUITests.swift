@@ -19,6 +19,7 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
         app.buttons["Open editor"].tap()
         XCTAssertTrue(app.buttons["native-editor-conversation"].waitForExistence(timeout: 15))
+        guard waitForEditorIdle(control: app.buttons["native-editor-conversation"]) else { app.terminate(); return }
         sendFromEditorConversation("Review the title while I keep editing", app: app)
         let activity = app.buttons["native-editor-conversation"]
         waitForEditorActivity("Sending your message…", control: activity)
@@ -38,6 +39,7 @@ final class CreationUITests: XCTestCase {
         let app = launchEditorAIActivityFixture(reduceMotion: reduceMotion, opaque: opaque, completingFollowup: true)
         defer { app.terminate() }
         let control = app.buttons["native-editor-conversation"]
+        guard waitForEditorIdle(control: control) else { return }
         XCTAssertTrue((control.value as? String ?? "").isEmpty)
         attach(app, "KRI-1230 \(variant) idle")
         sendFromEditorConversation("Review the title while I keep editing", app: app)
@@ -57,6 +59,7 @@ final class CreationUITests: XCTestCase {
     func testEditorAIActivityUsesTheLiveRequestAcrossRepeatedPromptsAndBackgrounding() {
         let app = launchEditorAIActivityFixture(reduceMotion: true)
         let control = app.buttons["native-editor-conversation"]
+        guard waitForEditorIdle(control: control) else { app.terminate(); return }
         for index in 1...2 {
             sendFromEditorConversation("Make the title clearer \(index)", app: app)
             waitForEditorActivity("Sending your message…", control: control)
@@ -81,14 +84,14 @@ final class CreationUITests: XCTestCase {
     func testEditorAIActivityStopsOnRejectedPromptAndKeepsTheDraft() {
         let app = launchEditorAIActivityFixture(reduceMotion: true, rejects: true)
         let message = "Keep this rejected editor instruction"
+        guard waitForEditorIdle(control: app.buttons["native-editor-conversation"]) else { app.terminate(); return }
         sendFromEditorConversation(message, app: app)
         let control = app.buttons["native-editor-conversation"]
         waitForEditorActivity("Sending your message…", control: control)
         let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", ""), object: control)
         XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 40), .completed)
         control.tap()
-        let composer = app.textFields.matching(NSPredicate(format: "label == %@", "Message Kria")).firstMatch
-        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        guard let composer = editorConversationComposer(in: app) else { return }
         XCTAssertEqual(composer.value as? String, message)
         app.terminate()
     }
@@ -96,6 +99,7 @@ final class CreationUITests: XCTestCase {
     func testEditorAIHaloWorkingAndOpaqueAccessibilitySurfaces() {
         for opaque in [false, true] {
             let app = launchEditorAIActivityFixture(reduceMotion: false, opaque: opaque, holdsTurn: true)
+            guard waitForEditorIdle(control: app.buttons["native-editor-conversation"]) else { app.terminate(); return }
             sendFromEditorConversation("Review the title while I keep editing", app: app)
             let control = app.buttons["native-editor-conversation"]
             waitForEditorActivity("Kria is working…", control: control)
@@ -135,15 +139,42 @@ final class CreationUITests: XCTestCase {
         app.buttons["native-editor-conversation"].tap()
         let sheet = app.descendants(matching: .any)["native-editor-project-conversation"].firstMatch
         XCTAssertTrue(sheet.waitForExistence(timeout: 5))
-        let composer = sheet.textFields["Message Kria"]
-        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        guard let composer = editorConversationComposer(in: app) else { return }
         composer.tap()
         composer.typeText(text)
-        sheet.buttons["chat-send-message"].tap()
+        let sends = app.buttons.matching(NSPredicate(format: "label == %@", "Send message"))
+        guard let send = sends.allElementsBoundByIndex.first(where: { $0.isHittable }) else {
+            XCTFail("The editor conversation must show a reachable Send message button")
+            return
+        }
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: send)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed)
+        send.tap()
         // The creator dismisses the sheet themselves while the POST is still in flight.
-        let handle = sheet.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
+        let grabber = app.buttons["Sheet Grabber"]
+        XCTAssertTrue(grabber.waitForExistence(timeout: 5))
+        let handle = grabber.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         handle.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)))
         XCTAssertTrue(sheet.waitForNonExistence(timeout: 5))
+    }
+
+    private func editorConversationComposer(in app: XCUIApplication) -> XCUIElement? {
+        let fields = app.textFields.matching(NSPredicate(format: "label == %@", "Message Kria"))
+        XCTAssertTrue(fields.firstMatch.waitForExistence(timeout: 5))
+        guard let composer = fields.allElementsBoundByIndex.first(where: { $0.isHittable }) else {
+            XCTFail("The editor conversation must show a reachable Message Kria composer")
+            return nil
+        }
+        return composer
+    }
+
+    private func waitForEditorIdle(control: XCUIElement) -> Bool {
+        let idle = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND (value == nil OR value == %@)", ""), object: control)
+        let result = XCTWaiter.wait(for: [idle], timeout: 45)
+        XCTAssertEqual(result, .completed,
+                       "Initial preview preparation must actually finish before this fixture is idle")
+        return result == .completed
     }
 
     private func waitForEditorActivity(_ title: String, control: XCUIElement) {
