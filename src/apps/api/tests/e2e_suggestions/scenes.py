@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -258,7 +258,9 @@ def lapse_approval(seeded: h.Seeded) -> None:
                 CreatorAgentApproval.status == "pending",
             )
         ).scalar_one()
-        approval.expires_at = datetime.now(UTC) - timedelta(minutes=5)
+        # The sweep takes the 25 OLDEST overdue approvals: the oldest possible date keeps this one
+        # in the batch however many overdue rows other tests in the same database left behind.
+        approval.expires_at = datetime(1970, 1, 2, tzinfo=UTC)
         db.commit()
 
 
