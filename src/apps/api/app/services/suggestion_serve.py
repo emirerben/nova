@@ -65,7 +65,7 @@ from app.services.suggestion_chips import (
     load_suggestion_context,
     suggestion_digest,
 )
-from app.services.suggestions import brief_asks
+from app.services.suggestions import brief_asks, restate_judgment
 from app.services.suggestions.context import snapshot_digest
 
 log = structlog.get_logger()
@@ -674,74 +674,6 @@ async def _copy_gate_dead(
     return dead
 
 
-async def _restate_held(
-    db: Any, thread: Any, ctx: SuggestionContext, item: Any, kind: str
-) -> str | None:
-    """Why a restating tap would be held at approval readiness, or None when it would not.
-
-    The tap re-drafts the head plan with one more requirement and holds the draft back when a
-    requirement the card did not write is still unmet ("Do not replace a creator's current draft
-    with a known partial edit"), answering ``requirements_not_ready``. This asks the draft check's
-    own functions (``plan_facts_from_strategy`` -> ``build_receipts`` -> ``needs_creator_choice``)
-    about the same plan and brief. It reads only the plan and the brief: facts that need the
-    phone's montage preflight or the research step are left unknown, which never turns into a
-    verdict (an unknown fact is an unchecked receipt), so what this holds back is what the plan
-    itself falls short of.
-
-    An account on approval readiness (KRI-721) is asked the same questions: the pinned restate
-    resolves the readiness manifest like the live planner does.
-    """
-    from app.kria.brief import load_latest_brief  # noqa: PLC0415
-    from app.kria.brief_checks import (  # noqa: PLC0415
-        build_receipts,
-        needs_creator_choice,
-        plan_facts_from_strategy,
-        requirements_to_check_at_draft,
-    )
-    from app.models import ContentPlan, Persona  # noqa: PLC0415
-    from app.services.choice_questions import answered_brief  # noqa: PLC0415
-    from app.services.creator_sessions import resolve_item_creator_context  # noqa: PLC0415
-    from app.services.suggestions import pinned  # noqa: PLC0415
-
-    creator_id = getattr(thread, "creator_id", None)
-    base = await pinned.restate_base(db, thread_id=thread.id, ctx=ctx)
-    if base.strategy is None:
-        return base.reason or "no_plan"
-    brief = await load_latest_brief(db, thread.id)
-    if brief is None or not brief.live():
-        return None
-    if settings.kria_choice_questions_enabled:
-        brief = answered_brief(brief, base.strategy)
-    plan = await db.get(ContentPlan, item.content_plan_id)
-    persona = await db.get(Persona, plan.persona_id) if plan is not None else None
-    if persona is None:
-        return "no_persona"
-    manifest, _media = await resolve_item_creator_context(
-        db, item, persona=persona, runs_guided_voiceover=False
-    )
-    facts = plan_facts_from_strategy(
-        base.strategy,
-        clip_ids=[str(media.media_id) for media in manifest.media],
-        manifest=manifest,
-        # The tap flips the setting before it judges the draft; mute leaves it alone.
-        speech_cleanup_enabled=True
-        if kind == "filler_words"
-        else bool(getattr(item, "speech_cleanup_enabled", False)),
-    )
-    checked = requirements_to_check_at_draft(
-        brief.live(),
-        creator_id=creator_id,
-        strategy=base.strategy,
-        item_edit_format=item.edit_format,
-        clip_paths=item.clip_gcs_paths or (),
-        client_protocol=ctx.client_protocol,
-    )
-    bound = settings.brief_binding_for(creator_id)
-    receipts = build_receipts(checked, facts, include_unchecked=bound, strict_order=bound)
-    unmet = [r.requirement_id for r in receipts if needs_creator_choice(r)]
-    return "requirements_not_ready" if unmet else None
-
-
 async def _filler_unoffered(db: Any, item: Any, ctx: SuggestionContext) -> str | None:
     """Why the filler card's evidence no longer supports it, or None when it still does.
 
@@ -849,10 +781,15 @@ async def _restate_refused(
 
 
 async def dead_card_kinds(
-    db: Any, thread: Any, ctx: SuggestionContext, kinds: frozenset[str]
+    db: Any,
+    thread: Any,
+    ctx: SuggestionContext,
+    kinds: frozenset[str],
+    cards: Mapping[str, Any] | None = None,
 ) -> dict[str, str]:
     """``{kind: why}`` for the card kinds in ``kinds`` whose tap would be refused right now.
 
+    ``cards`` is ``{kind: Suggestion}`` of the set (a restating tap judges the card's own action).
     Fails closed: a check that cannot be made leaves its cards out (a card the server cannot
     prove is not offered), never the other way round.
     """
@@ -876,7 +813,9 @@ async def dead_card_kinds(
     # One restating kind failing to prove itself costs that card, not the others.
     for kind in sorted((left - dead.keys()) & RESTATING_KINDS):
         try:
-            reason = await _restate_held(db, thread, ctx, item, kind)
+            reason = await restate_judgment.restate_problem(
+                db, thread, ctx, item, card=(cards or {}).get(kind)
+            )
             if reason is None:
                 reason = await _restate_refused(db, thread, ctx, item, kind)
         except Exception:  # noqa: BLE001
@@ -892,7 +831,16 @@ async def _strip_dead_cards(db: Any, thread: Any, served: Served) -> None:
     out = served.out
     if not out.suggestions or served.ctx is None:
         return
-    dead = await dead_card_kinds(db, thread, served.ctx, frozenset(c.kind for c in out.suggestions))
+    kinds = frozenset(c.kind for c in out.suggestions)
+    # A restating tap judges the card's own action, which the wire never carries.
+    built = await _built_set(served) if kinds & RESTATING_KINDS else None
+    dead = await dead_card_kinds(
+        db,
+        thread,
+        served.ctx,
+        kinds,
+        {s.kind: s for s in built.suggestions} if built is not None else None,
+    )
     if not dead:
         return
     kept = [c for c in out.suggestions if c.kind not in dead]
@@ -1419,6 +1367,23 @@ async def _server_cards(served: Served) -> list[dict[str, Any]] | None:
     shown = served.unfiltered or served.out
     if not shown.suggestions or served.ctx is None or served.plan is None:
         return None
+    built = await _built_set(served)
+    if built is None:
+        log.info("suggestion_chips.cards_not_stored", set_id=shown.set_id)
+        return None
+    return ring_suggestions(built)
+
+
+async def _built_set(served: Served) -> Any | None:
+    """The server-side set (actions included) behind the cards this read serves, or None.
+
+    Rebuilt from the same context, plan and cached picks as the wire cards. None when its ids
+    differ from the ones served. The strip and the ring write both read it, so a card is judged
+    on the very build the ring would store.
+    """
+    shown = served.unfiltered or served.out
+    if not shown.suggestions or served.ctx is None or served.plan is None:
+        return None
     picks = None
     try:
         result = await asyncio.to_thread(
@@ -1428,10 +1393,9 @@ async def _server_cards(served: Served) -> list[dict[str, Any]] | None:
     except Exception:  # noqa: BLE001 - no cache: the deterministic order is the fallback
         picks = None
     built, _drops = assemble_suggestions(served.ctx, served.plan, picks)
-    if built is None or [s.id for s in built.suggestions] != [s.id for s in shown.suggestions]:
-        log.info("suggestion_chips.cards_not_stored", set_id=shown.set_id)
+    if built is not None and [s.id for s in built.suggestions] != [s.id for s in shown.suggestions]:
         return None
-    return ring_suggestions(built)
+    return built
 
 
 async def _prepare_cards(served: Served) -> None:

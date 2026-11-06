@@ -6550,7 +6550,7 @@ async def plan_pinned_suggestion_turn(
     editor state inside its row lock (``suggestion_pin``).
     """
     from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
-    from app.services.suggestions import pinned  # noqa: PLC0415
+    from app.services.suggestions import pinned, restate_judgment  # noqa: PLC0415
     from app.services.suggestions.models import (  # noqa: PLC0415
         BriefUpdateAction,
         CopyDecisionAction,
@@ -6693,6 +6693,7 @@ async def plan_pinned_suggestion_turn(
     parsed: list[dict] | None = None
     typed_updates: tuple[Any, ...] = ()
     restated_head_hash: str | None = None
+    restated_pinned_media: dict[str, Any] | None = None
     if ops is not None:
         parsed = pinned.parse_ops(ops, target.snapshot)
         if parsed is None:
@@ -6714,6 +6715,7 @@ async def plan_pinned_suggestion_turn(
             return _no_longer_fits(restate_base.reason or pinned.NO_STRATEGY)
         plan_out = _restated_strategy_plan(restate_base.strategy, suggestion.prompt)
         restated_head_hash = restate_base.head_hash
+        restated_pinned_media = restate_base.media
         typed_updates = pinned.restate_updates(suggestion, action)
         route = "replan"
     if settings.creative_brief_for(creator_id):
@@ -6761,7 +6763,13 @@ async def plan_pinned_suggestion_turn(
             suggestion_id=suggestion_id,
         )
     if restate:
-        extra["media_snapshot"] = snapshot_media(item)
+        # An account on approval readiness is judged on the length plan the head draft pinned
+        # (the serve asks the same, ``restate_judgment``); every other account on the bare media.
+        extra["media_snapshot"] = (
+            restate_judgment.plan_media(snapshot_media(item), restated_pinned_media)
+            if settings.approval_readiness_for(creator_id)
+            else snapshot_media(item)
+        )
         pin_state["head_hash"] = restated_head_hash
         # A native-editor Save moves the saved video without writing a draft, so the head hash
         # cannot tell. The commit compares this with the video it finds under the row lock.
