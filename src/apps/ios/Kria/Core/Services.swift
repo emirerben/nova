@@ -1275,7 +1275,9 @@ enum KriaClientProtocolContract {
     /// 36 (Qendresa item 12): the editor reads `caption_meta.shape` (`caption_shape`) and draws the creator's typed
     /// caption box / dimmed-word look exactly like the cloud recipe. The server renders a shaped caption only for this
     /// protocol (`CAPTION_SHAPE_PROTOCOL`).
-    static let version = 36
+    /// 40 (Qendresa item 15): the editor keeps a picture card marked `caption_clear` in the top or bottom band instead of
+    /// clamping its centre above y 0.62, matching the cloud recipe. The server places such cards only for this protocol.
+    static let version = 40
     static let header = "X-Kria-Client-Protocol"
 }
 

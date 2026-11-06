@@ -608,6 +608,24 @@ def caption_shape_planned_for(client_protocol: int | None) -> bool:
     )
 
 
+def talking_card_layout_planned_for(client_protocol: int | None) -> bool:
+    """May a phone Talking render lay cards out in her size and place (Qendresa item 15)?
+
+    Read like `caption_shape_planned_for`: ``client_protocol`` is the approving app build.
+    True iff the kill switch is on, ``cardLayout`` is in ``phone_render_verified_features``
+    and that build declares at least ``CARD_LAYOUT_PROTOCOL``. Any gate off: cards are
+    exactly today's.
+    """
+    from app.services.client_protocol import CARD_LAYOUT_PROTOCOL  # noqa: PLC0415
+
+    return bool(
+        settings.talking_card_layout_enabled
+        and "cardLayout" in set(settings.phone_render_verified_features)
+        and client_protocol is not None
+        and client_protocol >= CARD_LAYOUT_PROTOCOL
+    )
+
+
 def clip_speed_planned_for() -> bool:
     """May a phone montage plan retime a cut for the creator's speed ask (KRI-689)?
 
