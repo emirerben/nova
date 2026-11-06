@@ -8369,6 +8369,13 @@ struct NativeEditorTemporaryVideo: Sendable {
             return false
         }
         let selected = selection
+        let retentionSequence = sourcePreviewSequence
+        if jobID == context.destinationJob, variantKey == context.destinationVariant, itemID == context.destinationItem {
+            retainAdmittedPreview()
+        }
+        defer {
+            if sourcePreviewSequence == retentionSequence { retirePreviousPreview() }
+        }
         if context.originalJob != context.destinationJob { discardPlaybackForNewJob() }
         document = rebased
         cleanDocument = context.clean

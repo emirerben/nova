@@ -2997,13 +2997,19 @@ final class NativeEditorSessionTests: XCTestCase {
         try await exerciseLegacyRefreshAfterSave(overlappingTrim: false)
     }
 
-    private func exerciseLegacyRefreshAfterSave(overlappingTrim: Bool) async throws {
+    func testDeferredSameTargetConflictRetainsItsAdmittedPreviewWhenResolved() async throws {
+        try await exerciseLegacyRefreshAfterSave(overlappingTrim: true, retainsPreview: true)
+    }
+
+    private func exerciseLegacyRefreshAfterSave(overlappingTrim: Bool, retainsPreview: Bool = false) async throws {
         let jobID = UUID()
+        var initialVariant = Self.variant(duration: 2, generation: "g1")
+        if retainsPreview { initialVariant["resolved_archetype"] = .string("montage") }
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
             draftID: "unused", itemID: "item", variantKey: "initial", draftRevision: 0,
             snapshotHash: "", etag: "", baseJobID: nil, baseGenerationID: nil,
             snapshot: [:], canUndo: false, createdAt: .now), draftError: .conflict,
-            authoritativeVariant: Self.variant(duration: 2, generation: "g1"),
+            authoritativeVariant: initialVariant,
             commitResponse: EditorCommitResponse(ok: false, generation: "g2",
                 sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false),
                 revisionNumber: nil, revisionHash: nil, expectedDuration: nil))
@@ -3018,6 +3024,7 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.hasUnsavedChanges)
         func renderedVariant(duration: Double, generation: String, textEnd: Double = 1) -> [String: JSONValue] {
             var value = Self.variant(duration: duration, generation: generation)
+            if retainsPreview { value["resolved_archetype"] = .string("montage") }
             value["text_elements"] = .array([.object([
                 "id": .string("remote-text"), "text": .string("Original"),
                 "start_s": .number(0), "end_s": .number(textEnd),
@@ -3047,7 +3054,27 @@ final class NativeEditorSessionTests: XCTestCase {
             XCTAssertTrue(session.hasUnsavedChanges)
             XCTAssertTrue(session.canUndo)
             XCTAssertEqual(fake.commitCount, 1, "a background conflict does not save")
+            if retainsPreview {
+                let footage = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+                await session.prepareFixtureSourcePreview(url: footage)
+                XCTAssertEqual(session.sourcePreviewState, .ready)
+                session.beginPreviewPresentation()
+                let player = try XCTUnwrap(session.player)
+                for _ in 0..<100 where player.currentItem?.status != .readyToPlay {
+                    try await Task.sleep(for: .milliseconds(20))
+                }
+                XCTAssertEqual(player.currentItem?.status, .readyToPlay)
+                let ticket = try XCTUnwrap(session.admissiblePreviewDisplayTicket)
+                session.previewFrameWasShown(player: player, ticket: ticket)
+                XCTAssertFalse(session.isPreparingCurrentPreview)
+                XCTAssertNil(session.previousPreviewPresentation, "The conflict choice itself is not preview work")
+            }
             session.resolveMergeConflicts(keepingLocal: true)
+            if retainsPreview {
+                XCTAssertEqual(session.previousPreviewPresentation?.status, .updating,
+                               "Resolving a deferred same-target conflict keeps its admitted picture during preparation")
+                session.endPreviewPresentation()
+            }
         } else {
             XCTAssertNil(session.mergeConflictMessage, "remote timing and local wording merge automatically")
             XCTAssertEqual(session.document.textElements.first?.text, "My local edit")
