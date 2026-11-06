@@ -533,6 +533,13 @@ def gate_journey(needs, event):
         or outputs["journey_needs_native"] != "false"
     ):
         raise ValueError("Inconsistent unselected journey")
+    # journey-native queues on this output instead of the journey-mapping job;
+    # a mapped (or unselected) journey is the only state that may emit "true".
+    mapped = journey_mapped(
+        journey, outputs.get("journey_coverage"), outputs.get("journey_ids")
+    )
+    if outputs.get("journey_mapped") != str(mapped).lower():
+        raise ValueError("Missing or inconsistent journey_mapped")
     native = native_validation(
         event,
         {"ios"} if outputs["ios"] == "true" else set(),

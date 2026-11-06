@@ -288,6 +288,7 @@ class ThroughputTests(unittest.TestCase):
                     if journey == "true"
                     else "not_applicable",
                     "journey_ids": "kri-524-creation" if journey == "true" else "",
+                    "journey_mapped": "true",
                 },
             },
             "journey-mapping": {
@@ -371,6 +372,7 @@ class ThroughputTests(unittest.TestCase):
             "journey_needs_native",
             "journey_coverage",
             "journey_ids",
+            "journey_mapped",
         ):
             needs = self.needs()
             del needs["changes"]["outputs"][field]
@@ -380,6 +382,12 @@ class ThroughputTests(unittest.TestCase):
             needs = self.needs()
             needs["changes"]["outputs"]["journey_ids"] = ids
             with self.assertRaises(ValueError):
+                ci.gate_journey(needs, "pull_request")
+        # A Mac may queue only for a mapped or unselected journey.
+        for journey in ("true", "false"):
+            needs = self.needs(journey=journey)
+            needs["changes"]["outputs"]["journey_mapped"] = "false"
+            with self.subTest(journey=journey), self.assertRaises(ValueError):
                 ci.gate_journey(needs, "pull_request")
 
 
