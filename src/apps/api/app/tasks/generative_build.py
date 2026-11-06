@@ -7423,6 +7423,11 @@ def _run_phone_unified_montage_job(
     # layout, the fast montage the route always made is composed instead and the note says why.
     plan = _composed_plan(plan, assignments, all_candidates, compose)
     record = plan.record()
+    from app.kria.brief_checks import FINAL_SOURCE_CUTS, montage_final_source_cuts  # noqa: PLC0415
+
+    # Review of #2129: the plan's FINAL cuts (after freezes, speeds and slides), so keep-whole
+    # is judged on what plays.
+    record[FINAL_SOURCE_CUTS] = montage_final_source_cuts(plan)
     from app.pipeline.story_direction import fallback_note, says_fallback  # noqa: PLC0415
 
     if (requested := (strategy or {}).get("direction")) and says_fallback(

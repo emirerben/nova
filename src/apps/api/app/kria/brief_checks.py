@@ -789,6 +789,10 @@ class PlanFacts:
     # Qendresa case 2: those cuts as (media id, source start_s, source end_s), so a keep-whole
     # ask can tell how much of a clip plays. None = unknown.
     cut_source_spans: tuple[tuple[str, float, float], ...] | None = None
+    # True only when `cut_source_spans` are the cuts that really play (the plan's final cuts or
+    # the finished timeline); early windows (length plan, `best_parts`) are never judged for
+    # keep-whole.
+    cut_spans_final: bool = False
     # KRI-624: the plan lays a creator's song under the clips (their own sound is not alone).
     song_bed: bool = False
     # Every clip the creator added to this edit (footage and Visuals), whether or not the
@@ -1771,6 +1775,8 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
     total length and how the order was decided), never what a model claimed.
     """
     record = record or {}
+    # Review of #2129: the plan's final cuts, when the record carries them and all parse.
+    final_spans = _window_spans(record.get(FINAL_SOURCE_CUTS))
     labels = [row for row in record.get("labels") or [] if isinstance(row, Mapping)]
     per_clip = {str(row["media_id"]): str(row["text"]) for row in labels if row.get("text")}
     inferred = {
@@ -1885,7 +1891,8 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         named_lines=_named_line_facts(record.get("named_lines")),
         cut_lengths_s=_window_lengths(record.get("best_parts")),
         cut_clip_ids=_window_media_ids(record.get("best_parts")),
-        cut_source_spans=_window_spans(record.get("best_parts")),
+        cut_source_spans=final_spans or _window_spans(record.get("best_parts")),
+        cut_spans_final=bool(final_spans),
         source_durations_s=_source_durations(record.get("clip_durations_s")),
         song_bed=bool(record.get("user_song")),
         # A record without the key was written by a planner that could not retime (KRI-689's
@@ -2085,6 +2092,29 @@ def _window_spans(rows: object) -> tuple[tuple[str, float, float], ...] | None:
     return tuple(spans) or None
 
 
+FINAL_SOURCE_CUTS = "final_source_cuts"
+
+
+def montage_final_source_cuts(plan: Any) -> list[dict[str, Any]]:
+    """The plan's FINAL cuts as record rows, in screen order (after freezes, speeds, slides).
+
+    ``plan.cuts`` is what plays whatever the layout (a story plan keeps the fast plan's cuts it
+    was built from); an object without it falls back to its snapshot's fast cuts.
+    """
+    rows: list[dict[str, Any]] = []
+    cuts = getattr(plan, "cuts", None)
+    if cuts is None:
+        cuts = getattr(getattr(plan, "snapshot", None), "fast_cuts", None)
+    for cut in cuts or []:
+        media_id = getattr(cut, "media_id", None)
+        start = _finite_number(getattr(cut, "source_start_s", None))
+        end = _finite_number(getattr(cut, "source_end_s", None))
+        if not isinstance(media_id, str) or start is None or end is None or end <= start:
+            continue
+        rows.append({"media_id": media_id, "source_start_s": start, "source_end_s": end})
+    return rows
+
+
 def _window_media_ids(rows: object) -> tuple[str, ...] | None:
     ids = [
         row["media_id"] if isinstance(row, Mapping) and isinstance(row.get("media_id"), str) else ""
@@ -2131,6 +2161,7 @@ def with_planned_cuts(facts: PlanFacts, media_snapshot: Mapping[str, Any] | None
         cut_lengths_s=lengths,
         cut_clip_ids=_window_media_ids(windows),
         cut_source_spans=_window_spans(windows),
+        cut_spans_final=False,
         source_durations_s=_source_durations(
             {
                 row.get("media_id"): row.get("duration_s")
@@ -3464,6 +3495,9 @@ def plan_facts_from_rendered_montage(
         # Qendresa case 2: the finished timeline's windows when every cut says where it is from.
         cut_source_spans=(
             rendered_spans if cuts and len(rendered_spans) == len(cuts) else plan.cut_source_spans
+        ),
+        cut_spans_final=(
+            True if cuts and len(rendered_spans) == len(cuts) else plan.cut_spans_final
         ),
         source_durations_s=plan.source_durations_s,
         asset_holds=_rendered_holds(plan.asset_holds, variant),
@@ -6991,12 +7025,13 @@ _WHOLE_TAKE_TOLERANCE_S = 0.1
 
 
 def _one_clip_take_receipt(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
-    """Qendresa case 2: "keep the whole clip" judged on the windows a one-clip plan plays.
+    """Qendresa case 2: "keep the whole clip" judged on the FINAL cuts of a one-clip plan.
 
-    The approval-time draft (`with_planned_cuts`), the worker's plan record and the finished
-    timeline all carry the windows, so the creator hears before approval that her clip is cut,
-    and how much of it is kept; a plan that plays the whole clip is met. None when this is not
-    a one-footage-clip plan with known windows (a Talking edit keeps its own checks below).
+    Only cuts that really play are judged (review of #2129): the plan's final cuts or the
+    finished timeline. The early windows (the approval-time length plan, `best_parts`) are
+    changed afterwards by freezes, speeds and slides, so they say neither "whole" nor "cut"
+    (neutral). None when this is not a one-footage-clip plan with known windows (a Talking
+    edit keeps its own checks below).
     """
     if facts.edit_format == "subtitled" or not facts.cut_source_spans:
         return None
@@ -7007,10 +7042,24 @@ def _one_clip_take_receipt(req: BriefRequirement, facts: PlanFacts) -> Requireme
     own = [(start, end) for clip, start, end in facts.cut_source_spans if clip == media_id]
     if not own:
         return None
+    if not facts.cut_spans_final:
+        return _receipt(req, "partial", _CANT_CHECK_TAKE)
     kept = _covered_s(own, length)
     if kept >= length - _WHOLE_TAKE_TOLERANCE_S:
         return _receipt(req, "met", None)
     shown, total = _seconds_words(kept), _seconds_words(length)
+    if facts.rendered_montage:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"The finished video plays {shown} s of your {total} s clip, so it's cut.",
+                tr=(
+                    f"Bitmiş video {total} sn'lik klibinin yalnızca {shown} sn'sini "
+                    "oynatıyor, yani klip kesiliyor."
+                ),
+            ),
+        )
     return _receipt(
         req,
         "partial",
@@ -12487,6 +12536,9 @@ def judged_at_render(req: BriefRequirement) -> bool:
         # Qendresa case 9: how long a whole-video line stays is read off the finished text
         # lane; the plan record never knows how long a title is held.
         or _asks_whole_video_text(req)
+        # Review of #2129: keep-whole is judged again on the finished montage's cuts; a stored
+        # plan receipt can be stale (a freeze or speed changes the cuts).
+        or _wants_whole_take(req)
     )
 
 
@@ -14553,6 +14605,8 @@ __all__ = [
     "is_no_title_reason",
     "is_spoken_text_cue",
     "judged_at_render",
+    "FINAL_SOURCE_CUTS",
+    "montage_final_source_cuts",
     "text_words_met",
     "narrated_alignment_recovery",
     "needs_creator_choice",
