@@ -97,7 +97,7 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v135 too.
 # v136 (Qendresa item 18, was v126 / v132 / v134): its paragraph renders only with
 # BACKGROUND_FOCUS_ENABLED and the `background_focus` capability, so the pins cover v136 too.
-# v137 (Qendresa says-done cases 6-8) rewords the brief section's caption-count and cleanup
+# #2131 (Qendresa says-done cases 6-8) rewords the brief section's caption-count and cleanup
 # sentences: the two brief-on hashes re-pinned (v136's: b4ebb285… / bbccdc91…); brief-off
 # unchanged.
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
@@ -186,8 +186,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
     assert '"user_song":{"duration_s":187.4,"has_lyrics":true}' in song_prompt
 
 
-def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-06-v137"
+def test_prompt_version_is_wired_into_the_spec() -> None:
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

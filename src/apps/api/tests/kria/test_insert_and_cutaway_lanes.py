@@ -81,7 +81,7 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # `caption_box`): the brief section's cleanup sentence teaches `pauses: "tight"`. v120 alone
 # was d690f1ff / ca93a669 / 2e66923b / f56fcd47; v119's values were e632c312 / cd66c5b5 /
 # 09c8a8cc / e86242d5.
-# Re-pinned for says-done group E (creator v137): the brief section's caption-count and cleanup
+# Re-pinned for says-done group E (#2131): the brief section's caption-count and cleanup
 # sentences carry her Q1/Q2 sentences as examples; v136's values were 39455ee1 / 06797395 /
 # 4b280598 / 83b280d6.
 MAIN_PROMPT_SHA = {

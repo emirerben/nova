@@ -390,12 +390,6 @@ def test_a_closed_gate_prompt_is_byte_identical_to_one_with_no_background_suppor
     assert "PHOTO OR VIDEO BEHIND THE SPEAKER" not in closed
 
 
-def test_the_prompt_version_is_bumped_for_the_new_field():
-    from app.agents.main_creator import MAIN_CREATOR_PROMPT_VERSION
-
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-06-v137"
-
-
 # ----------------------------------------------------------- KRI-1162: several backgrounds
 
 
@@ -1022,9 +1016,9 @@ def test_flag_off_the_brief_sections_are_the_bytes_they_were_before_the_opening(
     # Frozen from the tree before item 16 (the shared brief section and its extractor narrowing):
     # main 653beb1de (item 12's caption facts + Qendresa 13's `pauses: "tight"`); item 17's #2110
     # leaves these bytes unchanged. Re-freeze deliberately when the shared brief section changes
-    # underneath item 16. Re-frozen for the says-done group E rewording (creator v137, extractor
-    # v69: caption count / one captions requirement / "all my pauses" / unnamed mistakes); the
-    # flag-off section was 14ad8c6e… before it.
+    # underneath item 16. Re-frozen for the says-done group E rewording (#2131: caption count /
+    # one captions requirement / "all my pauses" / unnamed mistakes / one-moment holds / typed
+    # ending); the flag-off section was 14ad8c6e… before it.
     assert brief_prompt_section() is _BRIEF_PROMPT_SECTION
     assert digest(brief_prompt_section()) == (
         "001bd937bb08cea812fa52d0379a1af9ea6a81108011c563c60a543d4fdfe206"

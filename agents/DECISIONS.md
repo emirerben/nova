@@ -3666,3 +3666,28 @@ watermark as hard obstacles, then raised.
 - `TITLE_HOLD_NOT_LENGTH_ENABLED`: `freeze_ask.times_one_moment` is true for a `title`-scoped requirement, so no length reader takes its seconds as the total.
 **Not done:** a hold filed as `timing/global {duration_s: 3}` has the typed shape of "make it 3 seconds" and stays a length ask (brief writer's to file on the title row; kit `title_hold_scope_global` / `ending_hold` stay red). Multi-clip "keep the whole clip" and a whole-video line drawn by another proposal path are unchanged. The receipt halves of cases 2 and 9 are group C's (`brief_checks`). The kit's `test_q3_whole_video_text_receipt` setup assert (`covered < total`) fails once case 9 renders the line for the whole video, by design.
 **Guards:** `tests/kria/test_says_done_b_keep_whole_take.py`, `tests/tasks/test_says_done_b_mute_wins.py`, `tests/pipeline/test_says_done_b_whole_video_text.py`, `tests/services/test_says_done_b_title_hold_length.py`; failure modes `docs/reviews/qendresa-says-done-b-failure-modes.md`.
+
+## [2026-11-06] Main Creator and brief-extractor prompt versions are fingerprints of their source files
+
+**Decision:** `MAIN_CREATOR_PROMPT_VERSION` / `BRIEF_EXTRACTOR_PROMPT_VERSION` are computed at import
+from the files their prompt text comes from (`app/agents/_prompt_fingerprint.py`, `mc-<12 hex>` /
+`be-<12 hex>`). Nobody bumps, renumbers or pins them, and the history comments above them are frozen
+in `docs/pipelines/prompt-version-history.md`.
+
+**Why:** every prompt PR edited the same version line, appended to the same history comment and
+re-pinned the same number in up to 9 test files, so each merge conflicted with every other open
+prompt PR. In the 2026-11-05 batch (23 PRs), 31 of 64 conflicting merge commits touched only those
+files, and the renumber chain (v120 to v136) forced extra pushes, CI runs and re-approvals
+(`docs/reviews/pr-merge-speed-2026-11-05/`). The version labels traces, stored agent runs and eval
+proofs, and it is one input of the turn-checkpoint identity digest (`services/turn_checkpoint.py`):
+a new value only makes a continued turn re-call the model, which `FLY_IMAGE_REF` already does on
+every deploy. Nothing orders these two versions.
+
+**Guard:** `tests/agents/test_prompt_fingerprint.py` checks that every `load_prompt` / `load_skill`
+the two agents call is a listed source, that every source ships in the prod image, and that the
+fingerprint is order/line-ending stable and moves on any byte change. It also checks that the
+file behind every `{{TOKEN}}` vocabulary a source renders (`prompt_vocab.PROMPT_VOCABULARY_SOURCES`,
+e.g. `_schemas/text_animation_phases.py`) is listed (Emir's #2133 review). Remaining gaps: text
+built at render time from capability manifests and other runtime inputs, and a constant imported
+from an unlisted module; list such a module in `*_PROMPT_SOURCES` when it starts feeding prompt
+text.

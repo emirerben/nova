@@ -42,7 +42,6 @@ from app.agents._schemas.creator_agent import (  # noqa: E402
     ResolvedCreatorManifest,
 )
 from app.agents.main_creator import (  # noqa: E402
-    MAIN_CREATOR_PROMPT_VERSION,
     MainCreatorAgent,
     MainCreatorInput,
 )
@@ -355,12 +354,11 @@ def test_flag_off_main_creator_prompt_bytes_are_unchanged(monkeypatch) -> None:
 
 
 def test_flag_on_main_creator_prompt_teaches_the_middle_look(monkeypatch) -> None:
-    """The model must be told about ``middle_center`` and ``"look": "tiktok"``; version bumped."""
+    """The model must be told about ``middle_center`` and ``"look": "tiktok"``."""
     _flag(monkeypatch, True)
     prompt = MainCreatorAgent(None).render_prompt(_prompt_input())  # type: ignore[arg-type]
     assert "middle_center" in prompt
     assert '"look": "tiktok"' in prompt
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-06-v137"  # 16 v133, 20 v135, 18 v136
 
 
 # 10 --------------------------------------------------------------------------------------
