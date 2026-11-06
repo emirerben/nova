@@ -351,7 +351,7 @@ def test_flag_on_main_creator_prompt_teaches_the_middle_look(monkeypatch) -> Non
     prompt = MainCreatorAgent(None).render_prompt(_prompt_input())  # type: ignore[arg-type]
     assert "middle_center" in prompt
     assert '"look": "tiktok"' in prompt
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-05-v128"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-05-v131"
 
 
 # 10 --------------------------------------------------------------------------------------
