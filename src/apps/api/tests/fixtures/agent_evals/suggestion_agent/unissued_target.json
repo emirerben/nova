@@ -1,0 +1,24 @@
+{
+ "id": "unissued_target",
+ "description": "A handle the server never issued (a clip that does not exist).",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "sfx",
+    "target_ids": [
+     "c9"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 1
+   }
+  ]
+ },
+ "expect": {
+  "fallback_reason": "schema_error"
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

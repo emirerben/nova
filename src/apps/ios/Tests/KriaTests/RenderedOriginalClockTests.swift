@@ -13,8 +13,25 @@ import KriaMediaEngine
         try await verifyWindow(video: true)
     }
 
-    func testProxyRoundedVideoOverrunIsStillRejected() async throws {
-        let fixture = try await makeFixture(video: true, duration: 1.933333)
+    func testProxyRoundedVideoUsesOnlyBoundedFinalFrameHold() async throws {
+        let duration = 1.933333
+        let fixture = try await makeFixture(video: true, duration: duration)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let before = fixture.session.document
+        let program = try compile(fixture)
+        let clip = try XCTUnwrap(program.recipe.tracks.first?.clips.last)
+        XCTAssertEqual(clip.sourceStart, 0, accuracy: 1e-9)
+        XCTAssertEqual(clip.sourceDuration, 1.92, accuracy: 1e-9)
+        XCTAssertEqual(clip.rate, 1, accuracy: 1e-9)
+        XCTAssertEqual(clip.duration, duration, accuracy: 1e-9)
+        XCTAssertEqual(try XCTUnwrap(clip.holdDuration), duration - 1.92, accuracy: 1e-9)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(clip.holdDuration), 1.0 / 60.0 + 1e-6)
+        XCTAssertEqual(TimelineMath.totalDuration(of: program.recipe), 5 + duration, accuracy: 1e-9)
+        XCTAssertEqual(fixture.session.document, before)
+    }
+
+    func testGenuineVideoOverrunIsStillRejected() async throws {
+        let fixture = try await makeFixture(video: true, duration: 59.0 / 30.0)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         XCTAssertThrowsError(try compile(fixture)) { error in
             guard case RecipeError.invalidTimeline = error else {

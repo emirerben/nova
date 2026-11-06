@@ -236,6 +236,13 @@ class TurnAccepted(BaseModel):
     recoverable_held_turn_id: str | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    # A tapped suggestion card this turn is known to refuse: "refused" when the thread was never
+    # offered the card (known at submit) or when a replay finds the turn already refused it.
+    # Every refusal the worker makes later carries the same record on its assistant event
+    # (`payload.suggestion_pin`). Omitted otherwise, so an old build sees the ack it always did.
+    suggestion_outcome: Literal["refused"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class TurnCancelBody(_StrictBody):

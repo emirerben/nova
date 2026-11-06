@@ -5459,6 +5459,54 @@ final class NativeEditorSessionTests: XCTestCase {
     /// Deterministic concurrent Resume: a second tap while the creator's /retry is still in flight is the same
     /// intent. It must not fence the in-flight retry, release its marker or mint a second /retry. The gate is
     /// always opened and both taps always awaited, so a regression fails the assertions instead of hanging.
+    func testDeviceRetryCompletionCannotMutateSameTargetReset() async throws {
+        let threadID = UUID(), jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 4, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
+        fake.phoneDestination = true
+        fake.phoneRenderingCapabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.map(\.rawValue))
+        let request = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let intents = output.appendingPathComponent("intents")
+        let storageKey = DeviceRenderIntentKey(owner: "isolated-test-owner", projectID: threadID, jobID: jobID, variantID: "variant")
+        let status = SessionTestStatus(DeviceRenderStatusResponse(phase: "needs_attention", request: request, reasonCode: DeviceRenderSessions.pausedReason, baseGeneration: "generation-1"))
+        let mints = SessionTestCounter(), exports = SessionTestCounter(), gate = SessionTestHeldGate()
+        let renderSessions = DeviceRenderSessions(fetch: { _, _ in await status.response }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: output, exporter: SessionTestCountingExport(exports), sources: SessionTestSources(), publisher: SessionTestPublisher())
+        }, intentStore: DeviceRenderIntentStore(root: intents), retryFailure: { _, identity, _ in
+            await mints.increment()
+            await gate.hold()
+            await status.set(DeviceRenderStatusResponse(phase: "awaiting_device", request: request, baseGeneration: "generation-1"))
+            let raw = try JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(identity))
+            let data = try JSONSerialization.data(withJSONObject: ["identity": raw, "phase": "awaiting_device"])
+            return try JSONDecoder().decode(DeviceRenderRetryAck.self, from: data)
+        })
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 4))
+        session.useDeviceRendering(renderSessions)
+        await session.load(api: fake, threadID: threadID)
+        session.selectClip(session.draft.clips[0].id)
+        session.trimSelected(edge: .trailing, to: 1.5)
+        await session.save()
+        let key = DeviceRenderKey(projectID: threadID, jobID: jobID, variantID: "variant")
+        XCTAssertTrue(renderSessions.isPausedByCreator(key))
+        XCTAssertEqual(renderSessions.presentations[key]?.requiresServerRetry, true)
+
+        let firstTap = Task { await session.retryDeviceRender() }
+        let firstInFlight = await gate.waitHeld(timeout: .seconds(5))
+        XCTAssertTrue(firstInFlight, "setup: the first tap's /retry reached the server call")
+        await session.load(api: fake, threadID: threadID)
+        session.transactDocument(section: .timeline) { $0.clips[0].durationS = 1.25 }
+        let before = session.document
+        let state = session.saveState
+        await gate.open(); await firstTap.value
+        XCTAssertEqual(session.document, before)
+        XCTAssertEqual(session.saveState, state)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertFalse(session.isSaving)
+        let requests = await mints.value
+        XCTAssertEqual(requests, 1)
+    }
+
     func testSecondResumeWhileTheCreatorRetryIsInFlightCoalescesIntoIt() async throws {
         let threadID = UUID(), jobID = UUID()
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 4, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
@@ -5970,6 +6018,26 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(calls, 4, "Retry's build, then one rebuild on g2")
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(fake.sourcePoolCallCount, calls, "no reload loop")
+    }
+
+    func testPreviewConflictReloadCancellationDoesNotLeavePreparationRunning() async throws {
+        let threadID = UUID(), jobID = UUID()
+        let variant = Self.variant(duration: 2, generation: "g1")
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
+                snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "g1",
+                snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: variant)
+        fake.editorVariantScript = [.success(variant)]
+        fake.editorVariantThrow = CancellationError()
+        fake.sourcePoolError = .conflict
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: threadID)
+        let stopped = await waitUntil(timeout: .seconds(5)) {
+            if case .failed = session.sourcePreviewState { true } else { false }
+        }
+        XCTAssertTrue(stopped, "same-editor reconciliation cancellation is a preview failure, not navigation")
+        XCTAssertFalse(session.isSaving)
+        XCTAssertEqual(fake.commitCount, 0)
     }
 
     func testSaveRequestFailurePreservesLocalEdits() async {
@@ -6880,6 +6948,7 @@ final class EditorCommitSpy: KriaAPIClient {
     let openReceipt: OpenInEditorResponse?
     var authoritativeVariant: [String: JSONValue]?
     var editorVariantError: APIError?
+    var editorVariantThrow: Error?
     var commitResponse: EditorCommitResponse?
     let commitError: APIError?
     /// Any other error `editorCommit` should throw (e.g. a typed 422 `EditorSaveError`).
@@ -6893,6 +6962,10 @@ final class EditorCommitSpy: KriaAPIClient {
     private var commitContinuation: CheckedContinuation<Void, Never>?
     private var commitResumeRequested = false
     private var suspendNextCommit: Bool
+    var suspendNextCapabilities = false
+    private(set) var capabilitiesIsSuspended = false
+    private var capabilitiesContinuation: CheckedContinuation<Void, Never>?
+    func resumeCapabilities() { capabilitiesContinuation?.resume(); capabilitiesContinuation = nil }
     var suspendNextEditorVariant = false
     private(set) var editorVariantIsSuspended = false
     private var editorVariantContinuation: CheckedContinuation<Void, Never>?
@@ -6954,6 +7027,12 @@ final class EditorCommitSpy: KriaAPIClient {
     func projects() async throws -> [ProjectSummary] { throw APIError.unsupported }
     func creationCapabilities() async throws -> CreationCapabilities {
         capabilitiesCallCount += 1
+        if suspendNextCapabilities {
+            suspendNextCapabilities = false
+            capabilitiesIsSuspended = true
+            await withCheckedContinuation { capabilitiesContinuation = $0 }
+            capabilitiesIsSuspended = false
+        }
         if let capabilitiesError { throw capabilitiesError }
         return CreationCapabilities(formats: [], phoneRendering: phoneRenderingCapabilities, creationMode: creationMode)
     }
@@ -7001,6 +7080,7 @@ final class EditorCommitSpy: KriaAPIClient {
         }
         if !editorVariantScript.isEmpty { return try editorVariantScript.removeFirst().get() }
         if let editorVariantError { throw editorVariantError }
+        if let editorVariantThrow { throw editorVariantThrow }
         return authoritativeVariant ?? ["editor_revision_number": phoneDestination ? .number(7) : .null, "render_destination": .string(phoneDestination ? "device" : "cloud"), "variant_id": .string(variantID), "render_generation_id": .string("generation-1"), "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false)]), "user_timeline": .object(["slots": .array([.object(["slot_id": .string("slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "source_duration_s": .number(2), "removed": .bool(false)])])])]
     }
     func resumeEditorVariant() {

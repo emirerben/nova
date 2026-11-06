@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -91,6 +92,43 @@ class JourneyGateTests(unittest.TestCase):
             for selector in journey.get("xctests", []):
                 with self.subTest(journey=journey["id"], selector=selector):
                     self.assertRegex(selector, r"^\w+/\w+/test\w+$")
+
+    def test_manifest_named_unit_tests_exist_in_native_sources(self):
+        # A syntactically valid selector can survive a test rename and fail only
+        # after the expensive hosted native run. Check its declaration locally.
+        declared = set()
+        root = SCRIPT.parents[2] / "src/apps/ios/Tests"
+        for path in root.rglob("*.swift"):
+            source = path.read_text()
+            owners = list(
+                re.finditer(
+                    r"(?m)^(?:@\w+\s+)*(?:(?:final|private|public|internal)\s+)*(?:class|extension)\s+(\w+)",
+                    source,
+                )
+            )
+            for index, owner in enumerate(owners):
+                end = (
+                    owners[index + 1].start()
+                    if index + 1 < len(owners)
+                    else len(source)
+                )
+                for method in re.findall(
+                    r"\bfunc\s+(test\w+)\s*\(", source[owner.end() : end]
+                ):
+                    declared.add(
+                        f"{path.relative_to(root).parts[0]}/{owner[1]}/{method}"
+                    )
+        journeys = gate.load(SCRIPT.with_name("journey-manifest.json"))["journeys"]
+        required = {
+            test
+            for row in journeys
+            for test in row.get("xctests", [])
+            if test.startswith("KriaTests/")
+        }
+        self.assertFalse(
+            required - declared,
+            f"Stale native journey selectors: {sorted(required - declared)}",
+        )
 
     def test_omitted_stage_cannot_claim_full_verification(self):
         evidence = self.native_evidence()
@@ -230,9 +268,7 @@ class FixtureBundleTests(unittest.TestCase):
         self.assertEqual(record["head_sha"], self.head)
         self.assertEqual(record["run_id"], self.run_id)
         self.assertEqual(record["run_attempt"], self.attempt)
-        self.assertEqual(
-            record["journeys"], sorted(self.no_fixture.split(","))
-        )
+        self.assertEqual(record["journeys"], sorted(self.no_fixture.split(",")))
         self.assertEqual(record["fixtures"], "none required")
 
     def test_unknown_or_empty_selection_is_rejected(self):
@@ -308,9 +344,16 @@ class FixtureBundleTests(unittest.TestCase):
             str(SCRIPT),
         ]
         common = [
-            "--root", str(self.root), "--head", self.head,
-            "--run", self.run_id, "--attempt", self.attempt,
-            "--journeys", self.no_fixture,
+            "--root",
+            str(self.root),
+            "--head",
+            self.head,
+            "--run",
+            self.run_id,
+            "--attempt",
+            self.attempt,
+            "--journeys",
+            self.no_fixture,
         ]
         for command in ("seal-bundle", "verify-bundle"):
             done = subprocess.run(
@@ -322,9 +365,7 @@ class FixtureBundleTests(unittest.TestCase):
         workflow = (SCRIPT.parents[2] / ".github/workflows/ci.yml").read_text()
         declared = {
             row["id"]: row["fixture_dir"]
-            for row in gate.load(SCRIPT.with_name("journey-manifest.json"))[
-                "journeys"
-            ]
+            for row in gate.load(SCRIPT.with_name("journey-manifest.json"))["journeys"]
             if "fixture_dir" in row
         }
         self.assertTrue(declared)

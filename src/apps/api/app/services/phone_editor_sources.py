@@ -113,6 +113,41 @@ def editor_visual_bindings(variant: dict) -> tuple[PhoneVisualBinding, ...]:
     return _bindings(variant, "visual_binding", PhoneVisualBinding)
 
 
+def immutable_video_source_duration(job: Any, variant: dict, clip_index: int) -> float | None:
+    """Resolve the original video bound, never a saved/proxy duration hint."""
+    from app.pipeline.editor_render_window import RenderWindowUnavailable
+    from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD
+
+    sources = (phone_editor_source_revision(job, variant) or {}).get("sources") or []
+    if type(clip_index) is not int or not 0 <= clip_index < len(sources):
+        raise RenderWindowUnavailable("Source footage is unavailable; reconnect the original clip.")
+    source = sources[clip_index]
+    assembly = job.assembly_plan or {}
+    bindings = tuple(
+        PhoneSourceBinding.model_validate(row) for row in assembly.get(PHONE_SOURCES_FIELD) or []
+    ) + editor_source_bindings(variant)
+    visuals = tuple(
+        PhoneVisualBinding.model_validate(row) for row in assembly.get(PHONE_VISUALS_FIELD) or []
+    ) + editor_visual_bindings(variant)
+    matches = [
+        binding.original.duration_s
+        for binding in bindings
+        if binding.media_id == source["media_id"]
+        and binding.proxy_path == source["gcs_path"]
+        and binding.generation == source["generation"]
+    ] + [
+        visual.duration_s
+        for visual in visuals
+        if visual.kind == "video"
+        and visual.media_id == source["media_id"]
+        and visual.gcs_path == source["gcs_path"]
+        and visual.generation == source["generation"]
+    ]
+    if len(matches) != 1:
+        raise RenderWindowUnavailable("Source footage is unavailable; reconnect the original clip.")
+    return matches[0]
+
+
 def authored_phone_sources_available(job: Any, variant: dict) -> bool:
     """Source admission for saved empty/authored device edits, never cloud fallback."""
     from app.config import settings

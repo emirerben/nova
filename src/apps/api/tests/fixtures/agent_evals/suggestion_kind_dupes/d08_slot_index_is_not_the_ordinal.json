@@ -1,0 +1,77 @@
+{
+  "name": "d08_slot_index_is_not_the_ordinal",
+  "description": "A removed slot sits first and the slots are in a different order than the clips: the op must address the FULL slot list.",
+  "language": "en",
+  "clips": [
+    {
+      "media_id": "m1",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "dec1ede0758d8515",
+        "9e3408b2456f8785",
+        "9b9def52dd9b3d51"
+      ],
+      "sharpness": 60,
+      "mean_luma": 120.0
+    },
+    {
+      "media_id": "m2",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "e9daf9c495f635b9",
+        "2f15a0a0d2b70b80",
+        "50f24a15eb3bb540"
+      ],
+      "sharpness": 100.0,
+      "mean_luma": 120.0
+    },
+    {
+      "media_id": "m3",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "dec1ede0758d8516",
+        "9e3408b2456f8786",
+        "9b9def52dd9b3d52"
+      ],
+      "sharpness": 140,
+      "mean_luma": 120.0
+    },
+    {
+      "media_id": "m4",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "64300800c7681e43",
+        "2efd92ee3cdd95b5",
+        "88adf9b95ce4c4f7"
+      ],
+      "sharpness": 100.0,
+      "mean_luma": 120.0
+    }
+  ],
+  "slots": [
+    {
+      "media_id": "m4",
+      "removed": true
+    },
+    "m2",
+    "m3",
+    "m4",
+    "m1"
+  ],
+  "needed": [],
+  "expect": {
+    "offered": true,
+    "ops": [
+      4
+    ],
+    "keep": "m3",
+    "reason": "sharper",
+    "touches": [
+      "m1"
+    ]
+  }
+}

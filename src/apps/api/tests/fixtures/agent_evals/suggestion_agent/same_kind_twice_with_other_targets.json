@@ -1,0 +1,49 @@
+{
+ "id": "same_kind_twice_with_other_targets",
+ "description": "One card per kind: the second sfx pick (other targets) is dropped, never a second card.",
+ "context": "rd_music_loud",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "sfx",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 1
+   },
+   {
+    "kind": "music",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 2
+   },
+   {
+    "kind": "sfx",
+    "target_ids": [
+     "c2"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 3
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "cards": [
+   "sfx",
+   "music"
+  ],
+  "drops": {
+   "duplicate_kind": 1
+  }
+ },
+ "tags": [
+  "adversarial"
+ ]
+}
