@@ -127,6 +127,10 @@ class ReactionBeat(BaseModel):
     sound: str | None = Field(default=None, max_length=80)
     # Seconds held on screen; None lets the server pick its own default.
     hold_s: float | None = Field(default=None, ge=0.5, le=8.0)
+    # "title": the visual is shown with the opening title, right above it, not
+    # on a spoken word; the trigger names the visual and is never listened for.
+    # Omitted from the wire shape at its default, like the fields above.
+    anchor: Literal["word", "title"] = "word"
 
     @model_validator(mode="before")
     @classmethod
@@ -154,6 +158,8 @@ class ReactionBeat(BaseModel):
             data.pop("display_mode", None)
         if self.following_clip_id is None:
             data.pop("following_clip_id", None)
+        if self.anchor == "word":
+            data.pop("anchor", None)
         return data
 
 

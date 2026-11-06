@@ -454,6 +454,10 @@ class Settings(BaseSettings):
     # PHONE_SUBTITLED_TITLE_ENABLED=false --app nova-video` + `fly machine
     # restart <id>` (api + worker).
     phone_subtitled_title_enabled: bool = True
+    # Qendresa item 20 (server-only): a multi-line opening title (" / " breaks) on a
+    # phone Talking edit becomes one styled row per line, stacked off her face, with an
+    # optional logo above it. Off = byte-identical single title row.
+    title_look_enabled: bool = False
     # KRI-514 (closing text on phone Talking edits): a confirmed `closing_title`
     # ("end on the toast photo with a 'MY PICK' badge") on a phone-rendered
     # `subtitled` edit renders as an editable text row instead of the planner
