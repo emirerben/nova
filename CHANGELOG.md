@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.14.0] - 2026-11-06
+
+### Changed
+- Qendresa item 18: zoom background recordings onto their readable text (builds on item 16 #2111 — merge that first) (#2108) <!-- release-pr: 2108 -->
+
 ## [0.88.13.0] - 2026-11-06
 
 ### Changed
