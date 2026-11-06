@@ -253,6 +253,22 @@ cards out (what cannot be proven is not offered). The questions, in the tap's or
    value). One card the rebuild cannot make costs that card only, never its neighbours. A card
    with no stored or rebuilt copy, or a rebuild that raises, is left out. Pinned by
    `tests/e2e_suggestions/test_r7_serve_proof.py` (GAP-17 closed by it).
+8. **The request budget** (`suggestion_serve._request_budget_dead`; every card). With brief binding
+   on, every pinned draft pins the creator's whole conversation plus the brief into one request of
+   at most `brief_binding.MAX_REQUEST_CHARS` (12,000), and the commit refuses the tap
+   `request_too_long` past it, editor-op taps included. `request_budget.request_over_budget` is the
+   one predicate: the thread's text now (the commit's own join, `creator_request_text_sync`), the
+   tap's own message, and `brief_binding.bound_request` over the brief that holds the typed
+   requirement the tap writes (`pinned.tap_updates`). A thread past it serves no v2 card (chips
+   unchanged); at the edge each card goes on its own length (a hook, which writes the title,
+   before a captions card). Off with brief binding off: nothing is built, nothing is withheld.
+   Pinned by `tests/e2e_suggestions/test_r8_request_budget.py` (withheld exactly when the tap is
+   refused, across the edge and with a thick brief).
+
+The ring entry holds the cards that rebuild (`_built_cards`), in their built order: one card the
+rebuild cannot make (the hook once its decision is in the log, with the set's entry rolled out of
+the ring) costs that card, and the ring write asks only that the entry hold the cards on the wire
+(`_served_ids`). Pinned by `tests/e2e_suggestions/test_r8_partial_ring.py`.
 
 `refresh_for_item` / `refresh_for_thread` (the editor-triggers refresh) do nothing without the chip
 capability: no thread lookup, no Redis debounce key, no run, for everyone or for this creator.
