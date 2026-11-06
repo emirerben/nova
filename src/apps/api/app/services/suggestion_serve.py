@@ -590,7 +590,9 @@ async def serve_suggestion_set(
     if editor_triggers_on():
         served = _without_suppressed(served, thread)
     else:
-        served.ring_has_cards = _ring_has_cards(served.out.set_id, getattr(thread, "state", None))
+        served.ring_has_cards = _ring_has_cards(
+            served.out.set_id, getattr(thread, "state", None), _shown_ids(served)
+        )
     await _prepare_cards(served)
     return served
 
@@ -1134,23 +1136,55 @@ def apply_dismiss(
     return _with_suppressed(updated, [fp]) or updated, "dismissed"
 
 
+def _card_ids_of(entry: Mapping[str, Any]) -> set[str]:
+    return {
+        str(raw.get("id"))
+        for raw in entry.get("suggestions") or []
+        if isinstance(raw, Mapping) and raw.get("id")
+    }
+
+
 def attach_cards(
     state: Mapping[str, Any], set_id: str, cards: list[dict[str, Any]]
 ) -> dict[str, Any] | None:
-    """Put the v2 cards on the entry of ``set_id``; None when it is gone or already has them."""
+    """Put the v2 cards on the entry of ``set_id``; None when it is gone or holds them already.
+
+    A card the entry lacks is added next to the ones it holds, never in place of them: the phone
+    may hold any card of an earlier read of this set, and a served card the entry cannot resolve is
+    a dead tap. A card is named by its id, which follows its kind, targets and base.
+    """
     ring = _entries(state)
     for index in range(len(ring) - 1, -1, -1):
         if ring[index].get("set_id") != set_id:
             continue
-        if ring[index].get("suggestions"):
+        held_ids = _card_ids_of(ring[index])
+        fresh = [c for c in cards if str(c.get("id")) not in held_ids]
+        if not fresh:
             return None
-        entry = {**ring[index], "suggestions": cards}
+        held = [c for c in ring[index].get("suggestions") or [] if isinstance(c, Mapping)]
+        entry = {**ring[index], "suggestions": [*held, *fresh]}
         return {**state, RING_KEY: [*ring[:index], entry, *ring[index + 1 :]]}
     return None
 
 
-def _ring_has_cards(set_id: str, state: Mapping[str, Any] | None) -> bool:
-    return any(e.get("set_id") == set_id and e.get("suggestions") for e in _entries(state))
+def _ring_has_cards(
+    set_id: str, state: Mapping[str, Any] | None, card_ids: Sequence[str] = ()
+) -> bool:
+    """Does the ring entry of ``set_id`` hold every card in ``card_ids`` (any card, when none)?"""
+    wanted = {str(i) for i in card_ids}
+    for entry in _entries(state):
+        if entry.get("set_id") != set_id:
+            continue
+        held = _card_ids_of(entry)
+        if (wanted <= held) if wanted else bool(held):
+            return True
+    return False
+
+
+def _shown_ids(served: Served) -> list[str]:
+    """The cards the ring must hold for this read: every one the set was built with, including
+    the ones the strip took off this read's wire (they come back without a new run)."""
+    return [c.id for c in (served.unfiltered or served.out).suggestions]
 
 
 def _without_suppressed(served: Served, thread: Any) -> Served:
@@ -1163,7 +1197,7 @@ def _without_suppressed(served: Served, thread: Any) -> Served:
     suppressed = suppressed_set(state)
     served.unfiltered = served.unfiltered or served.out
     served.needs_fold = fold_suppressed(state or {}) is not None if suppressed else False
-    served.ring_has_cards = _ring_has_cards(served.out.set_id, state)
+    served.ring_has_cards = _ring_has_cards(served.out.set_id, state, _shown_ids(served))
     out = served.out
     if not suppressed:
         return served
@@ -1322,8 +1356,28 @@ async def persist_served_set(
     shown = served.unfiltered or served.out
     if shown.suggestions and shown.status == "ok" and not served.ring_has_cards:
         cards = served.cards if served.cards_built else await _server_cards(served)
-        if cards:
-            await _mutate_state(
-                db, thread_id, lambda state: _outcome(attach_cards(state, shown.set_id, cards))
-            )
+        if not await _store_cards(db, thread_id, shown.set_id, cards or [], _shown_ids(served)):
+            # The cards are an enhancement of a set that serves without them. A card the ring does
+            # not hold answers "no longer fits" however good it was, so the phone gets the chips
+            # now (same set id) and the next read builds and stores the cards again.
+            log.info("suggestion_chips.cards_not_stored", set_id=shown.set_id)
+            served.out = _legacy_only(served.out)
     return wrote
+
+
+async def _store_cards(
+    db: Any, thread_id: Any, set_id: str, cards: list[dict[str, Any]], card_ids: Sequence[str]
+) -> bool:
+    """Write ``cards`` on the entry of ``set_id``; True only when, once written, the entry holds
+    every one of ``card_ids``. A skipped write (the row stayed locked), a missing entry or cards
+    that were not built all answer False."""
+    held = False
+
+    def attach(state: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+        nonlocal held
+        new = attach_cards(state, set_id, cards)
+        held = _ring_has_cards(set_id, new if new is not None else state, card_ids)
+        return _outcome(new)
+
+    outcome = await _mutate_state(db, thread_id, attach)
+    return outcome != "busy" and held
