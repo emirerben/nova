@@ -632,8 +632,10 @@ def _pinned_undo_entry(
     setting_undo: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """The tap's own footprint, kept on the draft's execution so Undo can take it all back
-    (``kria/drafts.undo_draft``): the requirements this turn wrote and the setting it flipped.
-    Empty for any turn that is not a pinned tap, so every other execution is what it was."""
+    (``kria/drafts.undo_draft``): the requirements this turn wrote, the setting it flipped, and
+    the card's identity, so its applied mark can be cleared even when the tap wrote neither (no
+    creative brief). Empty for any turn that is not a pinned tap, so every other execution is
+    what it was."""
     if planned.suggestion_pin is None:
         return {}
     written = [
@@ -641,8 +643,6 @@ def _pinned_undo_entry(
         for req in (brief.live() if brief is not None else [])
         if req.source_turn_id == str(turn_id)
     ]
-    if not written and setting_undo is None:
-        return {}
     return {
         "pinned_undo": {
             "turn_id": str(turn_id),
@@ -701,7 +701,7 @@ def _mark_pinned_card_applied(
     thread: CreationThread,
     pin: dict[str, Any],
     turn_id: uuid.UUID,
-) -> None:
+) -> dict[str, Any]:
     """Record that the tapped card ran, in the transaction that commits its draft.
 
     ``thread.state`` was loaded before the thread row lock and can predate a newer set the
@@ -716,6 +716,7 @@ def _mark_pinned_card_applied(
     marked = _pinned.mark_consumed(current, str(pin["set_id"]), str(pin["id"]), turn_id)
     if marked is not None:
         thread.state = marked
+    return _pinned.applied_footprint(current, str(pin["set_id"]), str(pin["id"]))
 
 
 def _complete_response_turn(
@@ -3603,8 +3604,9 @@ def _complete_draft_turn(
         )
         db.add(draft)
         db.flush()
+        applied_marks: dict[str, Any] = {}
         if planned.suggestion_pin is not None:
-            _mark_pinned_card_applied(db, thread, planned.suggestion_pin, turn.id)
+            applied_marks = _mark_pinned_card_applied(db, thread, planned.suggestion_pin, turn.id)
         draft_execution.target_draft_id = draft.id
         draft_execution.target_draft_revision = draft.draft_revision
         draft_execution.result = {
@@ -3613,6 +3615,11 @@ def _complete_draft_turn(
             "draft_revision": draft.draft_revision,
             **applied_intent_repair_receipt(planned.intent_repair),
         }
+        if applied_marks and "pinned_undo" in draft_execution.result:
+            draft_execution.result["pinned_undo"] = {
+                **draft_execution.result["pinned_undo"],
+                **applied_marks,
+            }
 
         from app.kria.editor_repair import applied_repair_receipt
 

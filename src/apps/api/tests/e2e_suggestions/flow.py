@@ -383,9 +383,20 @@ def _facts(rows: list[dict[str, Any]]) -> list[str]:
     return [f"{r['id']}:{r['kind']}:{json.dumps(r['facts'], sort_keys=True)}" for r in rows]
 
 
-def verify_hidden_after(cell: Cell, card, out) -> None:  # noqa: ANN001
-    """A handled card never comes back, even after Undo (the thread remembers it was offered)."""
+def verify_hidden_after(cell: Cell, card, out, *, undone: bool) -> None:  # noqa: ANN001
+    """What the GET offers after the tap and its Undo.
+
+    A card Undo took back is an offer again (the tap's applied mark, its kept fingerprint and any
+    refusal of a repeat all go with it). The hook is the exception: its creative-copy decision
+    stays in the event log, so the consent gate keeps it out. A tap nothing took back never comes
+    back.
+    """
     back = [c.kind for c in out.suggestions if c.kind == card.kind]
+    if undone and card.kind != "hook":
+        prior = cell.checks.get("undo", {"status": "pass", "detail": ""})
+        if prior["status"] == "pass" and not back:
+            cell.check("undo", False, "Undo took the tap back, but the card is not offered again")
+        return
     prior = cell.checks.get("consumed", {"status": "pass", "detail": ""})
     if prior["status"] == "pass" and back:
         cell.check("consumed", False, f"ring marked it, but the card is served again: {back}")
@@ -497,14 +508,14 @@ async def tap_every_card(
         commit_refresh = await verify_second_tap(cell, phone, tap, out, scn.language)
         others = [c.kind for c in remaining[1:]]
         await verify_refreshed(cell, phone, tap, out, others, commit_refresh=commit_refresh)
-        await verify_undo(cell, phone, tap)
+        undone = await verify_undo(cell, phone, tap)
         if card.kind in RESTATE and tap.planned:
             if probe_render is not None:
                 await probe_render(cell, card.kind)
             else:
                 cell.na("render_kick", "not probed in this run")
         out = await phone.serve()
-        verify_hidden_after(cell, card, out)
+        verify_hidden_after(cell, card, out, undone=undone)
     return cells
 
 

@@ -249,6 +249,10 @@ def unmark_consumed(
     Undo takes the tap's change back, so the card is an offer again instead of a spent one (a
     rebuild of a spent card is refused: it would derive a NEW change from the edit as it is now).
     Only the mark of that very tap is cleared: a card a later tap applied again keeps its own.
+
+    A ``refused`` mark for the same card on the same entry goes with it. While the card was spent
+    the only taps it could be refused for were repeats of the one being taken back (``consumed``),
+    and a refused mark keeps a card out of every set the entry mints.
     """
     ring = state.get(RING_KEY) if isinstance(state, Mapping) else None
     index = _entry_index(ring, set_id) if isinstance(ring, list) else None
@@ -258,11 +262,55 @@ def unmark_consumed(
     consumed = entry.get(CONSUMED_FIELD)
     if not isinstance(consumed, Mapping) or consumed.get(suggestion_id) != str(turn_id):
         return None
-    rest = {key: value for key, value in consumed.items() if key != suggestion_id}
-    cleared = {key: value for key, value in entry.items() if key != CONSUMED_FIELD}
-    if rest:
-        cleared[CONSUMED_FIELD] = rest
+    cleared = {
+        key: value for key, value in entry.items() if key not in {CONSUMED_FIELD, REFUSED_FIELD}
+    }
+    for field in (CONSUMED_FIELD, REFUSED_FIELD):
+        marks = entry.get(field)
+        rest = (
+            {key: value for key, value in marks.items() if key != suggestion_id}
+            if isinstance(marks, Mapping)
+            else {}
+        )
+        if rest:
+            cleared[field] = rest
     return {**state, RING_KEY: [*ring[:index], cleared, *ring[index + 1 :]]}
+
+
+def applied_footprint(state: Mapping[str, Any] | None, set_id: str, suggestion_id: str) -> dict:
+    """What marking the card applied does to the list that outlives the ring, for Undo.
+
+    ``print`` is the card's fingerprint; ``hidden_before`` says it was already in the kept list
+    (the creator dismissed it, the phone still held the card). A GET that finds the applied mark
+    folds the print into that list for good, so taking the tap back must remove it again, but
+    only when the tap is what added it: a card the creator dismissed stays dismissed.
+    """
+    from app.services.suggestion_serve import SUPPRESSED_KEY, fingerprint  # noqa: PLC0415
+
+    entry = _entry(state, set_id)
+    raw = next(
+        (
+            card
+            for card in (entry.get("suggestions") if entry is not None else None) or []
+            if isinstance(card, Mapping) and card.get("id") == suggestion_id
+        ),
+        None,
+    )
+    if raw is None:
+        return {}
+    print_ = fingerprint(raw.get("kind"), raw.get("anchor"))
+    kept = state.get(SUPPRESSED_KEY) if isinstance(state, Mapping) else None
+    return {"print": print_, "hidden_before": isinstance(kept, list) and print_ in kept}
+
+
+def without_kept_print(state: Mapping[str, Any] | None, print_: str) -> dict[str, Any] | None:
+    """``state`` with ``print_`` removed from the kept list; None when it is not there."""
+    from app.services.suggestion_serve import SUPPRESSED_KEY  # noqa: PLC0415
+
+    kept = state.get(SUPPRESSED_KEY) if isinstance(state, Mapping) else None
+    if not isinstance(state, Mapping) or not isinstance(kept, list) or print_ not in kept:
+        return None
+    return {**state, SUPPRESSED_KEY: [fp for fp in kept if fp != print_]}
 
 
 def stamp_pin(
@@ -869,4 +917,6 @@ __all__ = [
     "stamp_pin",
     "stored_card",
     "unmark_consumed",
+    "applied_footprint",
+    "without_kept_print",
 ]

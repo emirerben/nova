@@ -683,6 +683,19 @@ def _footprint_record(execution: CreatorAgentExecution | None) -> dict[str, Any]
     return dict(record) if isinstance(record, dict) else None
 
 
+def _stages_a_change(record: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The footprint of a tap that wrote a requirement or flipped a setting, else None.
+
+    A staged approval that ends without a render takes back what its tap wrote besides the draft.
+    A tap that wrote nothing else (an editor op with no creative brief) has only the card's
+    identity on record, which is for Undo alone: the draft it wrote is still the head after the
+    approval ends, so its card stays spent.
+    """
+    if record is None or not (record.get("requirement_ids") or record.get("setting")):
+        return None
+    return record
+
+
 def _withdraw_footprint(
     db: Any, *, item: PlanItem | None, thread: CreationThread, record: dict[str, Any]
 ) -> None:
@@ -711,6 +724,13 @@ def _withdraw_footprint(
     )
     if cleared is not None:
         thread.state = cleared
+    print_ = record.get("print")
+    if print_ and not record.get("hidden_before"):
+        # A GET that found the tap's applied mark folded its print into the list that outlives
+        # the ring; the card is an offer again, so that memory of it goes too.
+        unfolded = pinned.without_kept_print(thread.state, str(print_))
+        if unfolded is not None:
+            thread.state = unfolded
     setting = record.get("setting")
     if isinstance(setting, dict) and item is not None:
         from app.services.suggestions.kinds.filler_words import (  # noqa: PLC0415
@@ -795,7 +815,7 @@ async def staged_tap_footprint(
     source_id = getattr(draft, "source_execution_id", None)
     if source_id is None:
         return None
-    return _footprint_record(await db.get(CreatorAgentExecution, source_id))
+    return _stages_a_change(_footprint_record(await db.get(CreatorAgentExecution, source_id)))
 
 
 def staged_tap_footprint_sync(db: Any, approval: CreatorAgentApproval) -> dict[str, Any] | None:
@@ -807,7 +827,7 @@ def staged_tap_footprint_sync(db: Any, approval: CreatorAgentApproval) -> dict[s
     source_id = getattr(draft, "source_execution_id", None)
     if source_id is None:
         return None
-    return _footprint_record(db.get(CreatorAgentExecution, source_id))
+    return _stages_a_change(_footprint_record(db.get(CreatorAgentExecution, source_id)))
 
 
 async def withdraw_staged_tap(
