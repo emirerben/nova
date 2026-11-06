@@ -292,3 +292,39 @@ def test_a_falsy_closing_fact_is_not_an_ending(facts: dict) -> None:
     _r, spans, total, _plan = _ending_render({**REVIEW_BASE}, [req], req)
     assert len(spans) == 1 and spans[0][0].startswith("guided-pinned"), spans
     assert spans[0][1] <= 0.05 and spans[0][2] >= total - 0.05, spans
+
+
+@pytest.mark.parametrize(
+    "strategy",
+    [
+        pytest.param({**REVIEW_BASE, "closing_title": "FOLLOW ME"}, id="fallback"),
+        pytest.param(
+            {**REVIEW_BASE, "opening_title": "FOLLOW ME", "closing_title": "FOLLOW ME"},
+            id="opening_title",
+        ),
+    ],
+)
+def test_the_same_words_as_a_whole_video_line_and_an_ending_keep_both(strategy) -> None:
+    whole = BriefRequirement(
+        id="r1",
+        kind="text",
+        scope="global",
+        literal="FOLLOW ME",
+        description="FOLLOW ME for the whole video",
+        facts={},
+    )
+    ending = BriefRequirement(
+        id="r2",
+        kind="text",
+        scope="global",
+        literal="FOLLOW ME",
+        description="End with FOLLOW ME",
+        facts={"closing": "FOLLOW ME"},
+    )
+    for judged in (whole, ending):
+        receipt, spans, total, _plan = _ending_render(strategy, [whole, ending], judged)
+        pinned = [s for s in spans if s[0].startswith("guided-pinned")]
+        assert len(pinned) == 1, spans
+        assert pinned[0][1] <= 0.05 and pinned[0][2] >= total - 0.05, spans
+        assert any(start >= total - 2.5 for _i, start, _e in spans), spans
+        assert receipt.status == "met", (judged.id, receipt.status, receipt.reason)

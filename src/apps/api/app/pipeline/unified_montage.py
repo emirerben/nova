@@ -275,10 +275,9 @@ class BriefView:
     title_literal: str | None = None
     global_literal: str | None = None
     # Qendresa case 9: every live ``text/global`` literal (the brief's whole-video / pinned
-    # text) with its typed ``facts.position`` (raw; normalized where it is used).
-    global_literals: tuple[tuple[str, object], ...] = ()
-    # The ``text/global`` literals typed as an ending (``facts.closing``): drawn at the end only.
-    closing_literals: tuple[str, ...] = ()
+    # text) as ``(text, facts.position, ending)``: position raw (normalized where it is used),
+    # ``ending`` = THAT requirement carries a typed ``facts.closing`` (drawn at the end only).
+    global_literals: tuple[tuple[str, object, bool], ...] = ()
     # Any live title-scope text ask (worded or not): that title is the creator's own.
     title_asked: bool = False
     facts: Mapping[str, Any] = field(default_factory=dict)
@@ -337,8 +336,7 @@ def brief_view(brief: Any) -> BriefView:
     clip_literals: dict[str, str] = {}
     title_literal: str | None = None
     global_literal: str | None = None
-    global_literals: list[tuple[str, object]] = []
-    closing_literals: list[str] = []
+    global_literals: list[tuple[str, object, bool]] = []
     title_asked = False
     facts: dict[str, Any] = {}
     target: float | None = None
@@ -375,9 +373,13 @@ def brief_view(brief: Any) -> BriefView:
                 facts[str(key)] = value
         if req.kind == "text":
             if req.scope == "global" and req.literal:
-                global_literals.append((_nfc(req.literal), (req.facts or {}).get("position")))
-            if req.literal and _closing_fact((req.facts or {}).get("closing")):
-                closing_literals.append(_nfc(req.literal))
+                global_literals.append(
+                    (
+                        _nfc(req.literal),
+                        (req.facts or {}).get("position"),
+                        bool(_closing_fact((req.facts or {}).get("closing"))),
+                    )
+                )
             title_asked = title_asked or req.scope == "title"
             if text_shape(req) == CURVED:
                 curved_title = curved_title or req.scope == "title"
@@ -450,7 +452,6 @@ def brief_view(brief: Any) -> BriefView:
         title_literal=title_literal,
         global_literal=global_literal,
         global_literals=tuple(global_literals),
-        closing_literals=tuple(closing_literals),
         title_asked=title_asked or bool(title_literal),
         facts=facts,
         target_duration_s=target,
@@ -4091,20 +4092,11 @@ _POSITION_CORNERS: dict[str, str] = {
     "bottom": "bottom_center",
     "bottom_right": "bottom_right",
 }
-_NO_LITERAL = object()
 
 
 def _whole_video_pin_on() -> bool:
     # A function so ``_title``, which imports ``settings`` locally, reads the module's switch.
     return bool(settings.whole_video_text_pin_enabled)
-
-
-def _is_ending(text: str | None, view: BriefView) -> bool:
-    """Are these the words of a literal the brief typed as an ending (``facts.closing``)?"""
-    if not text:
-        return False
-    key = fold_text(_nfc(text))
-    return any(fold_text(ending) == key for ending in view.closing_literals)
 
 
 def _whole_video_title_pin(
@@ -4127,6 +4119,8 @@ def _whole_video_title_pin(
     Corner: the literal's typed ``position`` when it names one (the middle only where item 21
     draws middle pins), else ``top_center``.
     An ending ("end with THANK YOU", ``facts.closing``) is never pinned: it is drawn at the end.
+    The ending flag is per requirement: the same words asked once for the whole video and once
+    as an ending still pin for the whole video.
     A pin of the same words already in ``pins`` is never doubled: a whole-video one is reused
     (the title is dropped, the pin stays where she put it); a timed one is a deliberate ask,
     so the title is left as it was.
@@ -4143,14 +4137,15 @@ def _whole_video_title_pin(
     if view.title_asked:
         # She asked for a title too: the planner's title stays hers to judge.
         return title, title_source, pins
-    if _is_ending(title, view):
-        return title, title_source, pins
     key = fold_text(_nfc(title))
-    position = next(
-        (spot for text, spot in view.global_literals if fold_text(text) == key), _NO_LITERAL
-    )
-    if position is _NO_LITERAL:
+    matches = [
+        (spot, ending) for text, spot, ending in view.global_literals if fold_text(text) == key
+    ]
+    wanted = [spot for spot, ending in matches if not ending]
+    if not wanted:
+        # No such literal, or only an ending has these words.
         return title, title_source, pins
+    position = wanted[0]
     same_words = [pin for pin in pins if fold_text(_nfc(pin.text)) == key]
     if any(pin.is_whole_video for pin in same_words):
         return None, "none", pins
@@ -4598,9 +4593,7 @@ def _title(
     labelled = {fold_text(text) for text in creator_label_texts}
     if _whole_video_pin_on() and view.global_literals:
         # An ending ("end with X") is not the opening title.
-        fallback = next(
-            (text for text, _spot in view.global_literals if not _is_ending(text, view)), None
-        )
+        fallback = next((text for text, _spot, ending in view.global_literals if not ending), None)
     else:
         fallback = view.global_literal
     if titles(fallback) and fold_text(_nfc(fallback)) not in labelled:
