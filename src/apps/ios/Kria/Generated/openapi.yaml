@@ -1,6 +1,121 @@
 {
   "components": {
     "schemas": {
+      "AIRequestBody": {
+        "additionalProperties": false,
+        "properties": {
+          "client_request_id": {
+            "format": "uuid",
+            "title": "Client Request Id",
+            "type": "string"
+          },
+          "delivery_version": {
+            "default": null,
+            "enum": [
+              1
+            ],
+            "nullable": true,
+            "title": "Delivery Version",
+            "type": "integer"
+          },
+          "input": {
+            "additionalProperties": true,
+            "title": "Input",
+            "type": "object"
+          },
+          "kind": {
+            "enum": [
+              "propose",
+              "chat_edit"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_request_id",
+          "project_id",
+          "kind",
+          "input"
+        ],
+        "title": "AIRequestBody",
+        "type": "object"
+      },
+      "AIRequestReceipt": {
+        "properties": {
+          "client_request_id": {
+            "format": "uuid",
+            "title": "Client Request Id",
+            "type": "string"
+          },
+          "delivery_version": {
+            "default": 0,
+            "title": "Delivery Version",
+            "type": "integer"
+          },
+          "input": {
+            "additionalProperties": true,
+            "title": "Input",
+            "type": "object"
+          },
+          "input_digest": {
+            "title": "Input Digest",
+            "type": "string"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "propose",
+              "chat_edit"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "result": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Result",
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "unknown",
+              "rejected"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_request_id",
+          "item_id",
+          "project_id",
+          "kind",
+          "input_digest",
+          "input",
+          "status"
+        ],
+        "title": "AIRequestReceipt",
+        "type": "object"
+      },
       "ActionBody": {
         "additionalProperties": false,
         "properties": {
@@ -557,6 +672,75 @@
           }
         },
         "title": "AudioPolicy",
+        "type": "object"
+      },
+      "BackgroundMusicOut": {
+        "properties": {
+          "artist": {
+            "default": null,
+            "nullable": true,
+            "title": "Artist",
+            "type": "string"
+          },
+          "duration_s": {
+            "title": "Duration S",
+            "type": "number"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "end_s": {
+            "title": "End S",
+            "type": "number"
+          },
+          "gain_db": {
+            "title": "Gain Db",
+            "type": "number"
+          },
+          "muted": {
+            "title": "Muted",
+            "type": "boolean"
+          },
+          "preview_url": {
+            "title": "Preview Url",
+            "type": "string"
+          },
+          "src_gcs_path": {
+            "title": "Src Gcs Path",
+            "type": "string"
+          },
+          "start_s": {
+            "title": "Start S",
+            "type": "number"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "track_duration_s": {
+            "title": "Track Duration S",
+            "type": "number"
+          },
+          "track_id": {
+            "title": "Track Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "track_id",
+          "title",
+          "preview_url",
+          "src_gcs_path",
+          "start_s",
+          "end_s",
+          "duration_s",
+          "track_duration_s",
+          "gain_db",
+          "muted"
+        ],
+        "title": "BackgroundMusicOut",
         "type": "object"
       },
       "BlurPreviousBackground": {
@@ -3466,6 +3650,34 @@
         "title": "EditRecipeV2",
         "type": "object"
       },
+      "EditorCapabilitiesOut": {
+        "additionalProperties": true,
+        "description": "Typed additions plus forward-compatible existing editor capability fields.",
+        "properties": {
+          "copilot_snapshot_max_bytes": {
+            "default": null,
+            "nullable": true,
+            "title": "Copilot Snapshot Max Bytes",
+            "type": "integer"
+          },
+          "copilot_snapshot_wire_version": {
+            "default": null,
+            "enum": [
+              1
+            ],
+            "nullable": true,
+            "title": "Copilot Snapshot Wire Version",
+            "type": "integer"
+          },
+          "music_window": {
+            "$ref": "#/components/schemas/MusicWindowCapabilityOut",
+            "default": null,
+            "nullable": true
+          }
+        },
+        "title": "EditorCapabilitiesOut",
+        "type": "object"
+      },
       "EditorCaptionAppearance": {
         "additionalProperties": false,
         "description": "Explicit native-editor appearance; missing values retain legacy renders.",
@@ -5325,6 +5537,499 @@
         "title": "GenerativeUploadUrlResponse",
         "type": "object"
       },
+      "GenerativeVariant": {
+        "additionalProperties": true,
+        "description": "Per-variant state as surfaced on the status response.\n\nAll fields are optional so the model is forward-compatible: older jobs (rendered\nbefore PR2 instrumentation) may lack timestamps and error_class.",
+        "properties": {
+          "background_music": {
+            "$ref": "#/components/schemas/BackgroundMusicOut",
+            "default": null,
+            "nullable": true
+          },
+          "base_poster_path": {
+            "default": null,
+            "nullable": true,
+            "title": "Base Poster Path",
+            "type": "string"
+          },
+          "base_poster_url": {
+            "default": null,
+            "nullable": true,
+            "title": "Base Poster Url",
+            "type": "string"
+          },
+          "base_video_path": {
+            "default": null,
+            "nullable": true,
+            "title": "Base Video Path",
+            "type": "string"
+          },
+          "base_video_url": {
+            "default": null,
+            "nullable": true,
+            "title": "Base Video Url",
+            "type": "string"
+          },
+          "caption_cues": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "nullable": true,
+            "title": "Caption Cues",
+            "type": "array"
+          },
+          "caption_editor_style": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Caption Editor Style",
+            "type": "object"
+          },
+          "caption_highlight_color": {
+            "default": null,
+            "nullable": true,
+            "title": "Caption Highlight Color",
+            "type": "string"
+          },
+          "caption_margin_v": {
+            "default": null,
+            "nullable": true,
+            "title": "Caption Margin V",
+            "type": "integer"
+          },
+          "caption_shadow_enabled": {
+            "default": null,
+            "nullable": true,
+            "title": "Caption Shadow Enabled",
+            "type": "boolean"
+          },
+          "caption_size_px": {
+            "default": null,
+            "nullable": true,
+            "title": "Caption Size Px",
+            "type": "integer"
+          },
+          "caption_stroke_width": {
+            "default": null,
+            "nullable": true,
+            "title": "Caption Stroke Width",
+            "type": "integer"
+          },
+          "caption_text_color": {
+            "default": null,
+            "nullable": true,
+            "title": "Caption Text Color",
+            "type": "string"
+          },
+          "captions_enabled": {
+            "default": null,
+            "nullable": true,
+            "title": "Captions Enabled",
+            "type": "boolean"
+          },
+          "duration_s": {
+            "default": null,
+            "nullable": true,
+            "title": "Duration S",
+            "type": "number"
+          },
+          "editor_capabilities": {
+            "$ref": "#/components/schemas/EditorCapabilitiesOut",
+            "default": null,
+            "nullable": true
+          },
+          "error_class": {
+            "default": null,
+            "nullable": true,
+            "title": "Error Class",
+            "type": "string"
+          },
+          "intro_cluster_accent_font": {
+            "default": null,
+            "nullable": true,
+            "title": "Intro Cluster Accent Font",
+            "type": "string"
+          },
+          "intro_cluster_accent_size_px": {
+            "default": null,
+            "nullable": true,
+            "title": "Intro Cluster Accent Size Px",
+            "type": "integer"
+          },
+          "intro_cluster_body_font": {
+            "default": null,
+            "nullable": true,
+            "title": "Intro Cluster Body Font",
+            "type": "string"
+          },
+          "intro_cluster_body_size_px": {
+            "default": null,
+            "nullable": true,
+            "title": "Intro Cluster Body Size Px",
+            "type": "integer"
+          },
+          "intro_cluster_hero_font": {
+            "default": null,
+            "nullable": true,
+            "title": "Intro Cluster Hero Font",
+            "type": "string"
+          },
+          "intro_cluster_hero_size_px": {
+            "default": null,
+            "nullable": true,
+            "title": "Intro Cluster Hero Size Px",
+            "type": "integer"
+          },
+          "intro_effect": {
+            "default": null,
+            "nullable": true,
+            "title": "Intro Effect",
+            "type": "string"
+          },
+          "intro_font_family": {
+            "default": null,
+            "nullable": true,
+            "title": "Intro Font Family",
+            "type": "string"
+          },
+          "intro_highlight_word": {
+            "default": null,
+            "nullable": true,
+            "title": "Intro Highlight Word",
+            "type": "string"
+          },
+          "intro_layout": {
+            "default": null,
+            "nullable": true,
+            "title": "Intro Layout",
+            "type": "string"
+          },
+          "intro_mode": {
+            "default": null,
+            "nullable": true,
+            "title": "Intro Mode",
+            "type": "string"
+          },
+          "intro_size_source": {
+            "default": null,
+            "nullable": true,
+            "title": "Intro Size Source",
+            "type": "string"
+          },
+          "intro_text": {
+            "default": null,
+            "nullable": true,
+            "title": "Intro Text",
+            "type": "string"
+          },
+          "intro_text_color": {
+            "default": null,
+            "nullable": true,
+            "title": "Intro Text Color",
+            "type": "string"
+          },
+          "intro_text_size_px": {
+            "default": null,
+            "nullable": true,
+            "title": "Intro Text Size Px",
+            "type": "integer"
+          },
+          "media_digest": {
+            "default": null,
+            "nullable": true,
+            "title": "Media Digest",
+            "type": "string"
+          },
+          "mix": {
+            "default": null,
+            "nullable": true,
+            "title": "Mix",
+            "type": "number"
+          },
+          "music_playback_mode": {
+            "default": null,
+            "enum": [
+              "embedded",
+              "reference_only"
+            ],
+            "nullable": true,
+            "title": "Music Playback Mode",
+            "type": "string"
+          },
+          "music_preview_start_s": {
+            "default": null,
+            "nullable": true,
+            "title": "Music Preview Start S",
+            "type": "number"
+          },
+          "music_preview_url": {
+            "default": null,
+            "nullable": true,
+            "title": "Music Preview Url",
+            "type": "string"
+          },
+          "music_track_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Music Track Id",
+            "type": "string"
+          },
+          "ok": {
+            "default": null,
+            "nullable": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "output_url": {
+            "default": null,
+            "nullable": true,
+            "title": "Output Url",
+            "type": "string"
+          },
+          "pending_sfx_suggestions": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "nullable": true,
+            "title": "Pending Sfx Suggestions",
+            "type": "array"
+          },
+          "poster_path": {
+            "default": null,
+            "nullable": true,
+            "title": "Poster Path",
+            "type": "string"
+          },
+          "poster_url": {
+            "default": null,
+            "nullable": true,
+            "title": "Poster Url",
+            "type": "string"
+          },
+          "pre_overlay_poster_path": {
+            "default": null,
+            "nullable": true,
+            "title": "Pre Overlay Poster Path",
+            "type": "string"
+          },
+          "pre_overlay_poster_url": {
+            "default": null,
+            "nullable": true,
+            "title": "Pre Overlay Poster Url",
+            "type": "string"
+          },
+          "proposal_version": {
+            "default": null,
+            "nullable": true,
+            "title": "Proposal Version",
+            "type": "integer"
+          },
+          "rank": {
+            "default": null,
+            "nullable": true,
+            "title": "Rank",
+            "type": "integer"
+          },
+          "render_finished_at": {
+            "default": null,
+            "nullable": true,
+            "title": "Render Finished At",
+            "type": "string"
+          },
+          "render_receipt": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Render Receipt",
+            "type": "object"
+          },
+          "render_started_at": {
+            "default": null,
+            "nullable": true,
+            "title": "Render Started At",
+            "type": "string"
+          },
+          "render_status": {
+            "default": null,
+            "nullable": true,
+            "title": "Render Status",
+            "type": "string"
+          },
+          "resolved_archetype": {
+            "default": null,
+            "nullable": true,
+            "title": "Resolved Archetype",
+            "type": "string"
+          },
+          "saved_user_song": {
+            "$ref": "#/components/schemas/SavedUserSong",
+            "default": null,
+            "nullable": true
+          },
+          "sequence_synced": {
+            "default": null,
+            "nullable": true,
+            "title": "Sequence Synced",
+            "type": "boolean"
+          },
+          "silence_cut": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Silence Cut",
+            "type": "object"
+          },
+          "silence_cut_outcome": {
+            "default": null,
+            "nullable": true,
+            "title": "Silence Cut Outcome",
+            "type": "string"
+          },
+          "song_reference": {
+            "$ref": "#/components/schemas/GuidedStorySongReference",
+            "default": null,
+            "nullable": true
+          },
+          "source_audio_bed_gain": {
+            "default": null,
+            "nullable": true,
+            "title": "Source Audio Bed Gain",
+            "type": "number"
+          },
+          "source_audio_media_ids": {
+            "default": null,
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "title": "Source Audio Media Ids",
+            "type": "array"
+          },
+          "source_audio_preserved": {
+            "default": null,
+            "nullable": true,
+            "title": "Source Audio Preserved",
+            "type": "boolean"
+          },
+          "speech_cleanup_failure_reason": {
+            "default": null,
+            "nullable": true,
+            "title": "Speech Cleanup Failure Reason",
+            "type": "string"
+          },
+          "speech_cut_candidates": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "nullable": true,
+            "title": "Speech Cut Candidates",
+            "type": "array"
+          },
+          "speech_cut_in_flight": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Speech Cut In Flight",
+            "type": "object"
+          },
+          "speech_cut_last_error": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Speech Cut Last Error",
+            "type": "object"
+          },
+          "speech_cut_last_receipt": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Speech Cut Last Receipt",
+            "type": "object"
+          },
+          "speech_cut_revision": {
+            "default": null,
+            "nullable": true,
+            "title": "Speech Cut Revision",
+            "type": "string"
+          },
+          "speech_map": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Speech Map",
+            "type": "object"
+          },
+          "story_timeline": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "nullable": true,
+            "title": "Story Timeline",
+            "type": "array"
+          },
+          "style_set_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Style Set Id",
+            "type": "string"
+          },
+          "text_mode": {
+            "default": null,
+            "nullable": true,
+            "title": "Text Mode",
+            "type": "string"
+          },
+          "track_title": {
+            "default": null,
+            "nullable": true,
+            "title": "Track Title",
+            "type": "string"
+          },
+          "unplaced_shots": {
+            "default": null,
+            "items": {
+              "$ref": "#/components/schemas/UnplacedShot"
+            },
+            "nullable": true,
+            "title": "Unplaced Shots",
+            "type": "array"
+          },
+          "user_song": {
+            "$ref": "#/components/schemas/UserSongOut",
+            "default": null,
+            "nullable": true
+          },
+          "variant_id": {
+            "title": "Variant Id",
+            "type": "string"
+          },
+          "video_path": {
+            "default": null,
+            "nullable": true,
+            "title": "Video Path",
+            "type": "string"
+          },
+          "voiceover_bed_level": {
+            "default": null,
+            "nullable": true,
+            "title": "Voiceover Bed Level",
+            "type": "number"
+          }
+        },
+        "required": [
+          "variant_id"
+        ],
+        "title": "GenerativeVariant",
+        "type": "object"
+      },
       "GiantTitleTransition": {
         "additionalProperties": false,
         "properties": {
@@ -5479,6 +6184,97 @@
           "kind"
         ],
         "title": "GuidedEditorSource",
+        "type": "object"
+      },
+      "GuidedEditorUserSong": {
+        "additionalProperties": false,
+        "description": "Editor choices for the creator's own song (KRI-428).\n\nVolume, a moved start point and removal live on the revision (not the\napproved plan), so a later Save replays them. ``window_start_s=None`` keeps\nthe plan's start; ``removed`` drops the song and brings back camera audio.",
+        "properties": {
+          "removed": {
+            "default": false,
+            "title": "Removed",
+            "type": "boolean"
+          },
+          "volume": {
+            "default": 1.0,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Volume",
+            "type": "number"
+          },
+          "window_end_s": {
+            "default": null,
+            "exclusiveMinimum": true,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Window End S",
+            "type": "number"
+          },
+          "window_start_s": {
+            "default": null,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Window Start S",
+            "type": "number"
+          }
+        },
+        "title": "GuidedEditorUserSong",
+        "type": "object"
+      },
+      "GuidedStorySongReference": {
+        "additionalProperties": false,
+        "properties": {
+          "artist": {
+            "default": null,
+            "nullable": true,
+            "title": "Artist",
+            "type": "string"
+          },
+          "delivery": {
+            "default": "external_platform",
+            "enum": [
+              "external_platform"
+            ],
+            "title": "Delivery",
+            "type": "string"
+          },
+          "end_s": {
+            "exclusiveMinimum": true,
+            "minimum": 0,
+            "title": "End S",
+            "type": "number"
+          },
+          "schema_version": {
+            "default": 1,
+            "enum": [
+              1
+            ],
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "start_s": {
+            "minimum": 0,
+            "title": "Start S",
+            "type": "number"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "track_id": {
+            "minLength": 1,
+            "title": "Track Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "track_id",
+          "title",
+          "start_s",
+          "end_s"
+        ],
+        "title": "GuidedStorySongReference",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -7748,6 +8544,138 @@
         "title": "MotionSceneProgram",
         "type": "object"
       },
+      "MusicWindowCapabilityOut": {
+        "properties": {
+          "beat_timestamps_s": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Beat Timestamps S",
+            "type": "array"
+          },
+          "editable": {
+            "title": "Editable",
+            "type": "boolean"
+          },
+          "preserve_available": {
+            "title": "Preserve Available",
+            "type": "boolean"
+          },
+          "preserve_reason": {
+            "default": null,
+            "enum": [
+              "linear_timeline_unavailable"
+            ],
+            "nullable": true,
+            "title": "Preserve Reason",
+            "type": "string"
+          },
+          "reason": {
+            "default": null,
+            "enum": [
+              "track_unavailable",
+              "video_duration_unknown",
+              "track_duration_unknown",
+              "song_shorter_than_video",
+              "timing_metadata_unavailable"
+            ],
+            "nullable": true,
+            "title": "Reason",
+            "type": "string"
+          },
+          "recommended_start_s": {
+            "title": "Recommended Start S",
+            "type": "number"
+          },
+          "track_duration_s": {
+            "title": "Track Duration S",
+            "type": "number"
+          },
+          "video_duration_s": {
+            "title": "Video Duration S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "editable",
+          "preserve_available",
+          "video_duration_s",
+          "track_duration_s",
+          "recommended_start_s",
+          "beat_timestamps_s"
+        ],
+        "title": "MusicWindowCapabilityOut",
+        "type": "object"
+      },
+      "NativeEditorAssetOut": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "sound_effect",
+              "media_overlay",
+              "motion_scene",
+              "visual_block"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "media_id": {
+            "title": "Media Id",
+            "type": "string"
+          },
+          "preserve_alpha": {
+            "default": false,
+            "title": "Preserve Alpha",
+            "type": "boolean"
+          },
+          "source_url": {
+            "title": "Source Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "media_id",
+          "source_url"
+        ],
+        "title": "NativeEditorAssetOut",
+        "type": "object"
+      },
+      "NativeTimelineSourceOut": {
+        "description": "An authorized original source; analysis proxies are never playback inputs.",
+        "properties": {
+          "local_required": {
+            "default": false,
+            "title": "Local Required",
+            "type": "boolean"
+          },
+          "media_id": {
+            "title": "Media Id",
+            "type": "string"
+          },
+          "original": {
+            "$ref": "#/components/schemas/OriginalMediaDescriptor",
+            "default": null,
+            "nullable": true
+          },
+          "source_url": {
+            "default": null,
+            "nullable": true,
+            "title": "Source Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "media_id"
+        ],
+        "title": "NativeTimelineSourceOut",
+        "type": "object"
+      },
       "NormalizedSourceCrop": {
         "additionalProperties": false,
         "description": "A source rectangle in normalized, top-left-origin coordinates.\n\nMirrors ``KriaMediaEngine.NormalizedSourceRect`` (same bounds and 1e-6\nslack) so a crop that validates here validates on the device.",
@@ -9976,6 +10904,43 @@
         "title": "SavedCollectionStoriesOut",
         "type": "object"
       },
+      "SavedUserSong": {
+        "additionalProperties": false,
+        "properties": {
+          "generation": {
+            "minLength": 1,
+            "title": "Generation",
+            "type": "string"
+          },
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "revision_number": {
+            "minimum": 1,
+            "title": "Revision Number",
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/GuidedEditorUserSong"
+          },
+          "variant_id": {
+            "minLength": 1,
+            "title": "Variant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "variant_id",
+          "generation",
+          "revision_number",
+          "state"
+        ],
+        "title": "SavedUserSong",
+        "type": "object"
+      },
       "SemanticSearchBody": {
         "additionalProperties": false,
         "properties": {
@@ -10394,6 +11359,13 @@
       },
       "SlidePostGenerateBody": {
         "properties": {
+          "client_request_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Client Request Id",
+            "type": "string"
+          },
           "expected_version": {
             "minimum": 1,
             "title": "Expected Version",
@@ -10406,6 +11378,86 @@
         "title": "SlidePostGenerateBody",
         "type": "object"
       },
+      "SlidePostGenerationReceiptOut": {
+        "properties": {
+          "client_request_id": {
+            "format": "uuid",
+            "title": "Client Request Id",
+            "type": "string"
+          },
+          "dispatch_state": {
+            "enum": [
+              "unconfirmed",
+              "published",
+              "publish_failed"
+            ],
+            "title": "Dispatch State",
+            "type": "string"
+          },
+          "draft_version": {
+            "title": "Draft Version",
+            "type": "integer"
+          },
+          "is_current_target": {
+            "title": "Is Current Target",
+            "type": "boolean"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "job_status": {
+            "nullable": true,
+            "title": "Job Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_request_id",
+          "item_id",
+          "draft_version",
+          "job_id",
+          "dispatch_state",
+          "job_status",
+          "is_current_target"
+        ],
+        "title": "SlidePostGenerationReceiptOut",
+        "type": "object"
+      },
+      "SlidePostGenerationRequestBody": {
+        "additionalProperties": false,
+        "properties": {
+          "client_request_id": {
+            "format": "uuid",
+            "title": "Client Request Id",
+            "type": "string"
+          },
+          "expected_current_job_id": {
+            "format": "uuid",
+            "nullable": true,
+            "title": "Expected Current Job Id",
+            "type": "string"
+          },
+          "expected_version": {
+            "minimum": 1,
+            "title": "Expected Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version",
+          "client_request_id",
+          "expected_current_job_id"
+        ],
+        "title": "SlidePostGenerationRequestBody",
+        "type": "object"
+      },
       "SlidePostMutationResponse": {
         "description": "Fields the native client reads from richer PlanItem mutation responses.",
         "properties": {
@@ -10414,6 +11466,11 @@
             "nullable": true,
             "title": "Current Job Id",
             "type": "string"
+          },
+          "generation_receipt": {
+            "$ref": "#/components/schemas/SlidePostGenerationReceiptOut",
+            "default": null,
+            "nullable": true
           },
           "id": {
             "title": "Id",
@@ -10508,6 +11565,29 @@
       },
       "SlidePostState": {
         "properties": {
+          "ai_project_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Ai Project Id",
+            "type": "string"
+          },
+          "ai_request_delivery_version": {
+            "enum": [
+              0,
+              1
+            ],
+            "title": "Ai Request Delivery Version",
+            "type": "integer"
+          },
+          "ai_request_recovery_version": {
+            "enum": [
+              0,
+              1
+            ],
+            "title": "Ai Request Recovery Version",
+            "type": "integer"
+          },
           "assets": {
             "items": {
               "$ref": "#/components/schemas/SlidePostStateAsset"
@@ -10525,6 +11605,14 @@
             "$ref": "#/components/schemas/SlidePostDraft",
             "default": null,
             "nullable": true
+          },
+          "generation_idempotency_version": {
+            "enum": [
+              0,
+              1
+            ],
+            "title": "Generation Idempotency Version",
+            "type": "integer"
           },
           "item_id": {
             "title": "Item Id",
@@ -13319,6 +14407,226 @@
         "title": "TimelineClip",
         "type": "object"
       },
+      "TimelineClipOut": {
+        "description": "One entry of the job's full clip pool (including clips not currently used).",
+        "properties": {
+          "clip_index": {
+            "title": "Clip Index",
+            "type": "integer"
+          },
+          "context": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": null,
+            "nullable": true,
+            "title": "Context",
+            "type": "object"
+          },
+          "duration_s": {
+            "default": null,
+            "nullable": true,
+            "title": "Duration S",
+            "type": "number"
+          },
+          "generation": {
+            "default": null,
+            "nullable": true,
+            "title": "Generation",
+            "type": "string"
+          },
+          "kind": {
+            "default": null,
+            "enum": [
+              "image",
+              "video"
+            ],
+            "nullable": true,
+            "title": "Kind",
+            "type": "string"
+          },
+          "layout": {
+            "default": null,
+            "enum": [
+              "fullscreen",
+              "supporting_card"
+            ],
+            "nullable": true,
+            "title": "Layout",
+            "type": "string"
+          },
+          "media_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Media Id",
+            "type": "string"
+          },
+          "native_source": {
+            "$ref": "#/components/schemas/NativeTimelineSourceOut",
+            "default": null,
+            "nullable": true
+          },
+          "signed_url": {
+            "default": null,
+            "nullable": true,
+            "title": "Signed Url",
+            "type": "string"
+          },
+          "used": {
+            "default": false,
+            "title": "Used",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "clip_index"
+        ],
+        "title": "TimelineClipOut",
+        "type": "object"
+      },
+      "TimelineResponse": {
+        "properties": {
+          "base_generation": {
+            "default": null,
+            "nullable": true,
+            "title": "Base Generation",
+            "type": "string"
+          },
+          "beat_grid": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Beat Grid",
+            "type": "array"
+          },
+          "clips": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineClipOut"
+            },
+            "title": "Clips",
+            "type": "array"
+          },
+          "draft": {
+            "$ref": "#/components/schemas/DraftSnapshotOut",
+            "default": null,
+            "nullable": true
+          },
+          "edit_wide_look_presets": {
+            "items": {
+              "enum": [
+                "none",
+                "stadium_diffusion",
+                "olive_film",
+                "smoky_split_tone",
+                "golden_hour",
+                "faded_analog"
+              ],
+              "type": "string"
+            },
+            "title": "Edit Wide Look Presets",
+            "type": "array"
+          },
+          "editable": {
+            "title": "Editable",
+            "type": "boolean"
+          },
+          "editor_state": {
+            "default": "renderable",
+            "enum": [
+              "renderable",
+              "empty"
+            ],
+            "title": "Editor State",
+            "type": "string"
+          },
+          "has_user_edits": {
+            "title": "Has User Edits",
+            "type": "boolean"
+          },
+          "look_presets": {
+            "items": {
+              "enum": [
+                "none",
+                "stadium_diffusion",
+                "olive_film",
+                "smoky_split_tone",
+                "golden_hour",
+                "faded_analog"
+              ],
+              "type": "string"
+            },
+            "title": "Look Presets",
+            "type": "array"
+          },
+          "native_assets": {
+            "items": {
+              "$ref": "#/components/schemas/NativeEditorAssetOut"
+            },
+            "title": "Native Assets",
+            "type": "array"
+          },
+          "reason": {
+            "default": null,
+            "nullable": true,
+            "title": "Reason",
+            "type": "string"
+          },
+          "revision_hash": {
+            "default": null,
+            "nullable": true,
+            "title": "Revision Hash",
+            "type": "string"
+          },
+          "revision_number": {
+            "default": null,
+            "nullable": true,
+            "title": "Revision Number",
+            "type": "integer"
+          },
+          "saved_user_song": {
+            "$ref": "#/components/schemas/SavedUserSong",
+            "default": null,
+            "nullable": true
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineSlotOut"
+            },
+            "title": "Slots",
+            "type": "array"
+          },
+          "source_pool": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Source Pool",
+            "type": "array"
+          },
+          "tombstones": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Tombstones",
+            "type": "array"
+          },
+          "total_duration_s": {
+            "title": "Total Duration S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "editable",
+          "beat_grid",
+          "total_duration_s",
+          "has_user_edits",
+          "slots",
+          "clips"
+        ],
+        "title": "TimelineResponse",
+        "type": "object"
+      },
       "TimelineSlotEdit": {
         "description": "One slot as posted by the timeline editor.\n\n`slot_id=None` marks a NEW slot (the server assigns a uuid4). `clip_index`\nindexes into `job.all_candidates[\"clip_paths\"]` \u2014 clients never send paths.\nBeat slots size in `duration_beats` (walked against the real grid); slots\nwith `duration_beats=None` (no-grid variants, footage-trimmed slots, or the\nexact terminal tail after a grid's final usable beat) send their exact\nwindow in `duration_s`.",
         "properties": {
@@ -13457,6 +14765,115 @@
           "in_s"
         ],
         "title": "TimelineSlotEdit",
+        "type": "object"
+      },
+      "TimelineSlotOut": {
+        "additionalProperties": true,
+        "description": "One effective-timeline slot on the GET response (user slot if edited,\nelse AI slot). All fields optional + extra-allowed so a worker-side schema\naddition never 500s the read path.",
+        "properties": {
+          "clip_index": {
+            "default": null,
+            "nullable": true,
+            "title": "Clip Index",
+            "type": "integer"
+          },
+          "duration_beats": {
+            "default": null,
+            "nullable": true,
+            "title": "Duration Beats",
+            "type": "integer"
+          },
+          "duration_s": {
+            "default": null,
+            "nullable": true,
+            "title": "Duration S",
+            "type": "number"
+          },
+          "in_s": {
+            "default": null,
+            "nullable": true,
+            "title": "In S",
+            "type": "number"
+          },
+          "layout": {
+            "default": null,
+            "enum": [
+              "fullscreen",
+              "supporting_card"
+            ],
+            "nullable": true,
+            "title": "Layout",
+            "type": "string"
+          },
+          "look_adjustments": {
+            "$ref": "#/components/schemas/LookAdjustments",
+            "default": null,
+            "nullable": true
+          },
+          "look_preset": {
+            "default": "none",
+            "enum": [
+              "none",
+              "stadium_diffusion",
+              "olive_film",
+              "smoky_split_tone",
+              "golden_hour",
+              "faded_analog"
+            ],
+            "title": "Look Preset",
+            "type": "string"
+          },
+          "moment_description": {
+            "default": null,
+            "nullable": true,
+            "title": "Moment Description",
+            "type": "string"
+          },
+          "moment_energy": {
+            "default": null,
+            "nullable": true,
+            "title": "Moment Energy",
+            "type": "number"
+          },
+          "order": {
+            "default": null,
+            "nullable": true,
+            "title": "Order",
+            "type": "integer"
+          },
+          "removed": {
+            "default": false,
+            "title": "Removed",
+            "type": "boolean"
+          },
+          "slot_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Slot Id",
+            "type": "string"
+          },
+          "source_audio_volume": {
+            "default": null,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Source Audio Volume",
+            "type": "number"
+          },
+          "source_duration_s": {
+            "default": null,
+            "nullable": true,
+            "title": "Source Duration S",
+            "type": "number"
+          },
+          "source_gcs_path": {
+            "default": null,
+            "nullable": true,
+            "title": "Source Gcs Path",
+            "type": "string"
+          }
+        },
+        "title": "TimelineSlotOut",
         "type": "object"
       },
       "TimelineTrack": {
@@ -13633,6 +15050,40 @@
         "title": "TurnCancelled",
         "type": "object"
       },
+      "UnplacedShot": {
+        "description": "An assigned shot clip that could not be placed in this variant.\n\nshot_index is the 1-based ordinal of the clip in narrative_order (the only\nshot pointer recoverable at render time \u2014 shot_id is stripped before the job).\nreason is one of:\n  \"unusable_footage\"  \u2014 clip absent from clip_metas (analysis failed / missing)\n  \"song_too_short\"    \u2014 analyzed but unplaceable because the song window had\n                        fewer beats than assigned shots even at n=1",
+        "properties": {
+          "clip_id": {
+            "title": "Clip Id",
+            "type": "string"
+          },
+          "gcs_path": {
+            "default": null,
+            "nullable": true,
+            "title": "Gcs Path",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "unusable_footage",
+              "song_too_short"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "shot_index": {
+            "title": "Shot Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "clip_id",
+          "shot_index",
+          "reason"
+        ],
+        "title": "UnplacedShot",
+        "type": "object"
+      },
       "UpdateSummary": {
         "properties": {
           "changed_sections": {
@@ -13787,6 +15238,57 @@
           "upload_headers"
         ],
         "title": "UploadTarget",
+        "type": "object"
+      },
+      "UserSongOut": {
+        "description": "Wire shape of ``variants[].user_song``.",
+        "properties": {
+          "duration_s": {
+            "title": "Duration S",
+            "type": "number"
+          },
+          "mode": {
+            "enum": [
+              "background",
+              "lipsync"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "takes": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Takes",
+            "type": "object"
+          },
+          "title": {
+            "default": null,
+            "nullable": true,
+            "title": "Title",
+            "type": "string"
+          },
+          "volume": {
+            "default": 1.0,
+            "title": "Volume",
+            "type": "number"
+          },
+          "window_end_s": {
+            "title": "Window End S",
+            "type": "number"
+          },
+          "window_start_s": {
+            "title": "Window Start S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "mode",
+          "duration_s",
+          "window_start_s",
+          "window_end_s"
+        ],
+        "title": "UserSongOut",
         "type": "object"
       },
       "ValidationError": {
@@ -16102,6 +17604,57 @@
           "required": true,
           "schema": {
             "format": "uuid",
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/generative-jobs/{job_id}/variants/{variant_id}/timeline": {
+      "get": {
+        "operationId": "getGenerativeVariantTimeline",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelineResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "job_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "variant_id",
+          "required": true,
+          "schema": {
+            "maxLength": 160,
             "type": "string"
           }
         }
@@ -18804,6 +20357,200 @@
         ]
       }
     },
+    "/plan-items/{item_id}/slide-post/ai-requests": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "item_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "submitSlidePostAI",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AIRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIRequestReceipt"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
+          "422": {
+            "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/plan-items/{item_id}/slide-post/ai-requests/{request_id}": {
+      "get": {
+        "operationId": "getSlidePostAIReceipt",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIRequestReceipt"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "item_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "request_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/plan-items/{item_id}/slide-post/ai-requests/{request_id}/cancel": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "item_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "request_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "cancelPendingSlidePostAI",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIRequestReceipt"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
+          "422": {
+            "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
     "/plan-items/{item_id}/slide-post/chat-edit": {
       "parameters": [
         {
@@ -18947,6 +20694,129 @@
           }
         ]
       }
+    },
+    "/plan-items/{item_id}/slide-post/generation-requests": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "item_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "requestSlidePostGeneration",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SlidePostGenerationRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlidePostMutationResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
+          "422": {
+            "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/plan-items/{item_id}/slide-post/generation-requests/{client_request_id}": {
+      "get": {
+        "operationId": "getSlidePostGenerationReceipt",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlidePostGenerationReceiptOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "item_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "client_request_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ]
     },
     "/plan-items/{item_id}/slide-post/propose": {
       "parameters": [

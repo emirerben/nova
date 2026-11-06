@@ -169,9 +169,31 @@ struct NativeEditorTemporaryVideo: Sendable {
         return player?.currentItem === sourcePreview.preview.playerItem
     }
     @Published var isPlaying = false
-    @Published var isSaving = false
+    @Published var isSaving = false {
+        didSet { if oldValue && !isSaving { drainPendingLatestJob() } }
+    }
     @Published var hasUnsavedChanges = false
     @Published var saveState: NativeEditorSaveState = .idle
+    @Published private(set) var mergeConflictMessage: String?
+    @Published private(set) var canKeepLocalMergeConflicts = true
+    private struct PendingMerge {
+        let base: EditorDocument
+        let clean: EditorDocument
+        let remote: EditorDocument
+        let baseSong: JSONValue?
+        let variant: [String: JSONValue]?
+        let forcePreview: Bool
+        let thread: UUID?
+        let originalJob: UUID?
+        let originalVariant: String?
+        let destinationJob: UUID?
+        let destinationVariant: String?
+        let destinationItem: String?
+        let stagedRevision: Int?
+        let remoteETag: String?
+        let legacySnapshot: [String: JSONValue]?
+    }
+    private var pendingMerge: PendingMerge?
     @Published private(set) var refreshSync: NativeEditorRefreshSync = .idle
     /// Waits between background refresh retries; the last one repeats. Internal so tests can shorten it.
     var refreshRetryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(9), .seconds(27), .seconds(60)]
@@ -182,6 +204,42 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Polls for a new job that the thread points at but that is not ready to edit yet.
     private var newVersionWatchTask: Task<Void, Never>?
     private var newVersionWatchTarget: UUID?
+    private var latestJobGate = NativeEditorLatestGate()
+    private var latestJobDrainTask: Task<Void, Never>?
+    private var latestJobTransport: Task<Void, Never>?
+    private var observersVisible = true
+    private var pendingLoadObservation: (@MainActor () async -> Void)?
+    struct ObservationScope: Hashable {
+        let owner: String?
+        let environment: String?
+        let target: String
+    }
+    private func observationScope(api: (any KriaAPIClient)?, target: String) -> ObservationScope {
+        ObservationScope(owner: api?.mediaLibraryOwner, environment: (api as? KriaAPI)?.baseURL.absoluteString, target: target)
+    }
+    private var loadObservationScope: ObservationScope?
+    private var loadObservationCooldowns: [ObservationScope: NativeEditorReadCooldown] = [:]
+    private var loadObservationCooldown: NativeEditorReadCooldown {
+        get { loadObservationScope.flatMap { loadObservationCooldowns[$0] } ?? NativeEditorReadCooldown() }
+        set { if let scope = loadObservationScope { loadObservationCooldowns[scope] = newValue } }
+    }
+    private var previewObservationCooldowns: [ObservationScope: NativeEditorReadCooldown] = [:]
+    private var previewObservationTerminal = false
+    private var previewSlowGeneration: String?
+    private var previewTransport: Task<[String: JSONValue], Error>?
+    private var loadTransport: Task<Void, Never>?
+    var loadReadNow: () -> ContinuousClock.Instant = { ContinuousClock.now }
+    var loadReadSleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    var previewReadNow: () -> ContinuousClock.Instant = { ContinuousClock.now }
+    var previewReadSleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    private var watchedLatestProject: ProjectSummary?
+    private static let latestJobSlowRecheck: Duration = .seconds(300)
+    var latestJobRetryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(9)]
+    var latestJobReadNow: () -> ContinuousClock.Instant = { ContinuousClock.now }
+    var latestJobReadSleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    private var latestJobCooldowns: [ObservationScope: NativeEditorReadCooldown] = [:]
+    private var newVersionWatchAttempts = 0
+    @Published private(set) var latestJobRefreshMessage: String?
     /// Shown on the opening screen while a first open waits for its video or for a connection.
     @Published private(set) var loadWaitingMessage: String?
     private var loadRetryTask: Task<Void, Never>?
@@ -371,6 +429,17 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Song edits the server has acknowledged since the current variant loaded (KRI-428). They are
     /// folded out of `document.userSong` on Save so a retry or a rebase never sends them again.
     private var acknowledgedUserSong: EditorUserSongState?
+    private struct SavedSongProjectionLag {
+        let thread: UUID?
+        let job: UUID?
+        let item: String?
+        let variant: String?
+        let generation: String
+        let revision: Int?
+        let previousProjection: JSONValue?
+        let acknowledged: EditorUserSongState
+    }
+    private var savedSongProjectionLag: SavedSongProjectionLag?
     /// KRI-432: the built composition plays the song at unity gain and the PLAYER carries the level, so a
     /// volume change is `AVPlayer.volume` (instant, no rebuild, no black frame). Re-assigning the item's
     /// audio mix is not an option: on iPhone any live `audioMix` swap silences the preview (KRI-241).
@@ -422,9 +491,53 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// The server's song (`user_song`) exactly as the loaded variant lists it.
     private var baseUserSong: NativeUserSong? { NativeUserSong(variant: previewVariant) }
     /// The song as last SAVED: the variant plus every edit the server has acknowledged since that
-    /// variant loaded (a refresh of the variant resets the acknowledged edits, see `configureCapabilities`).
+    /// variant loaded. A refresh clears them unless an exact durable Save proves its render plan still lags.
     /// The unsaved edits in `document.userSong` are relative to this. Nil once a removal was saved.
     private var savedUserSong: NativeUserSong? { baseUserSong?.applying(acknowledgedUserSong) }
+    private static func serverSavedSongOverlay(for variant: [String: JSONValue], job: UUID?, variantKey: String?) -> EditorUserSongState? {
+        guard let marker = variant["saved_user_song"]?.objectValue,
+              let job, let variantKey, marker["job_id"]?.stringValue.flatMap(UUID.init(uuidString:)) == job,
+              marker["variant_id"] == .string(variantKey), variant["variant_id"] == .string(variantKey),
+              let generation = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue,
+              !generation.isEmpty, marker["generation"] == .string(generation),
+              case let .number(revision)? = marker["revision_number"], revision.isFinite,
+              revision >= 1, revision.rounded() == revision,
+              variant["editor_revision_number"] == .number(revision),
+              let state = marker["state"]?.objectValue, case let .bool(removed)? = state["removed"] else { return nil }
+        for key in ["volume", "window_start_s", "window_end_s"] {
+            guard let value = state[key], value != .null else { continue }
+            guard case let .number(number) = value, number.isFinite, number >= 0,
+                  key != "volume" || number <= 1,
+                  key != "window_end_s" || number > 0 else { return nil }
+        }
+        return EditorUserSongState(volume: state["volume"]?.numberValue,
+            windowStartS: state["window_start_s"]?.numberValue,
+            windowEndS: state["window_end_s"]?.numberValue, removed: removed)
+    }
+    private func savedSongOverlay(for variant: [String: JSONValue], thread: UUID?, job: UUID?,
+                                  item: String?, variantKey: String?, generation: String) -> EditorUserSongState? {
+        guard let proof = savedSongProjectionLag, !generation.isEmpty,
+              proof.thread == thread, proof.job == job, proof.item == item, proof.variant == variantKey,
+              proof.generation == generation, proof.previousProjection == variant["user_song"] else { return nil }
+        let revision: Int?
+        if let value = variant["editor_revision_number"] {
+            guard case let .number(number) = value, number.isFinite, number >= 1,
+                  number <= Double(Int32.max), number.rounded() == number else { return nil }
+            revision = Int(number)
+        } else { revision = nil }
+        guard proof.revision == revision else { return nil }
+        return proof.acknowledged
+    }
+    private static func mergeSongAuthority(variant: [String: JSONValue], effective: NativeUserSong?, job: UUID?, generation: String) -> JSONValue? {
+        guard var raw = variant["user_song"]?.objectValue, let effective else { return nil }
+        raw["volume"] = .number(effective.volume)
+        raw["window_start_s"] = .number(effective.windowStartS)
+        raw["window_end_s"] = .number(effective.windowEndS)
+        // The public song projection has no asset pin. A different generation
+        // cannot prove that equal title/window metadata still names this song.
+        let fence = job.flatMap { id in generation.isEmpty ? nil : "\(id.uuidString):\(generation)" } ?? UUID().uuidString
+        return .object(["source_fence": .string(fence), "song": .object(raw)])
+    }
     /// The latest start: it must leave `NativeUserSong.minPlayableS` of song. The video no longer bounds it;
     /// a song that runs out before the video does simply stops.
     private func maxUserSongStart(for song: NativeUserSong) -> Double? { NativeUserSong.maxStart(for: song) }
@@ -1016,6 +1129,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// still the newest step. A count can't: it saturates at `historyLimit`.
     private(set) var undoHistoryVersion = 0
     private var redoStack: [EditorDocument] = []
+    private var saveHistory: EditorSaveHistory<EditorDocument>?
     private var cleanDocument: EditorDocument
     private var api: (any KriaAPIClient)?
     private weak var mediaUploads: BackgroundUploadCoordinator?
@@ -1191,6 +1305,9 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
     private func beginEditorLoad() -> UInt64 {
         editorLoadEpoch &+= 1
+        resetLatestJobDrain()
+        pendingLoadObservation = nil
+        saveHistory = nil
         resetBackgroundRefresh()
         previewRefreshTask?.cancel(); previewRefreshTask = nil; pendingPreviewGeneration = nil
         sourcePreviewTask?.cancel(); sourcePreviewQuietRetryTask?.cancel()
@@ -1738,6 +1855,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         if let itemFailureObserver { NotificationCenter.default.removeObserver(itemFailureObserver) }
         finishedRenderRecoveryTask?.cancel()
         sourcePreviewQuietRetryTask?.cancel()
+        latestJobDrainTask?.cancel()
     }
 
     var canUndo: Bool { !undoStack.isEmpty }
@@ -1786,7 +1904,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         transactionBaseline = nil
     }
 
-    private func appendUndo(_ value: EditorDocument) {
+    private func appendUndo(_ value: EditorDocument, isRedo: Bool = false) {
+        saveHistory?.appendUndo(value, isRedo: isRedo)
         undoStack.append(value)
         if undoStack.count > historyLimit {
             undoStack.removeFirst(undoStack.count - historyLimit)
@@ -1978,21 +2097,25 @@ struct NativeEditorTemporaryVideo: Sendable {
         guard editorLoadEpoch == epoch else { return }
         conversationRuntimeVersion = 2
         resetBackgroundRefresh()
+        loadObservationScope = observationScope(api: api, target: "draft:\(threadID)")
         self.api = api; self.threadID = threadID; isSaving = true; saveState = .saving; loadState = .loading
+        pendingLoadObservation = { [weak self] in
+            await self?.load(api: api, threadID: threadID, variantID: variantID, allowPlaybackFallback: allowPlaybackFallback)
+        }
         defer { if editorLoadEpoch == epoch { isSaving = false } }
         do {
-            let snapshot = try await api.draft(threadID: threadID)
+            let snapshot = try await readLoadObservation(epoch: epoch, target: "draft:\(threadID)") { try await api.draft(threadID: threadID) }
             guard editorLoadEpoch == epoch else { return }
             let jobID = snapshot.baseJobID.flatMap(UUID.init)
             self.jobID = jobID
             let authoritativeVariant: [String: JSONValue]?
             let requestedVariantKey = variantID ?? snapshot.variantKey
-            if let jobID { authoritativeVariant = try await api.editorVariant(jobID: jobID, variantID: requestedVariantKey) }
+            if let jobID { authoritativeVariant = try await readLoadObservation(epoch: epoch, target: "variant:\(jobID):\(requestedVariantKey)") { try await api.editorVariant(jobID: jobID, variantID: requestedVariantKey) } }
             else { authoritativeVariant = nil }
             guard editorLoadEpoch == epoch else { return }
             let loadedDraft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: authoritativeVariant)
             draft = loadedDraft
-            configureCapabilities(from: authoritativeVariant)
+            configureCapabilities(from: authoritativeVariant, songVariantKey: requestedVariantKey)
             await applyCloudReadOnlyIfNeeded(api: api, variant: authoritativeVariant)
             guard editorLoadEpoch == epoch else { return }
             cleanDocument = document; undoStack.removeAll(); redoStack.removeAll(); changedSections.removeAll(); explicitlyDirtySections.removeAll(); pendingRenderRetrySections.removeAll(); hasUnsavedChanges = false; saveState = .idle
@@ -2210,11 +2333,10 @@ struct NativeEditorTemporaryVideo: Sendable {
                 // (the newest edit, which the creator asked for); one Undo restores
                 // the creator's own version (KRI-935).
                 if let staged, variantUnchanged(variant) {
-                    appendUndo(document); redoStack.removeAll()
-                    var merged = document
-                    for section in staged.sections { copy(section, from: staged.document, into: &merged) }
-                    document = Self.honoringDeletions(Set(merged.deletions), in: merged)
-                    changedSections.formUnion(staged.sections)
+                    var remote = nextDocument
+                    for section in staged.sections { copy(section, from: staged.document, into: &remote) }
+                    guard rebaseLocalEdits(onto: nextDocument, variant: variant, forcePreviewRebuild: false, remoteEdits: remote,
+                        destination: (nextJobID, nextVariantKey, snapshot.itemID), stagedRevision: snapshot.draftRevision) else { return }
                     appliedChatDraftRevision = snapshot.draftRevision
                     chatStagedDocument = nil
                     refreshDirtyState(); refreshDuration()
@@ -2230,17 +2352,14 @@ struct NativeEditorTemporaryVideo: Sendable {
                 Self.stagingLog.debug("sync rebase: newer version under local edits rev=\(snapshot.draftRevision, privacy: .public)")
                 if !sameTarget { appliedChatDraftRevision = nil }
                 if conversationRuntimeVersion == 1 { legacyPromptSnapshot = nextDraft.serverSnapshot }
-                jobID = nextJobID; variantKey = nextVariantKey; itemID = snapshot.itemID
-                rebaseLocalEdits(onto: nextDocument, variant: variant, forcePreviewRebuild: !sameTarget)
+                var remote = nextDocument
                 if let staged {
-                    appendUndo(document); redoStack.removeAll()
-                    var merged = document
-                    for section in staged.sections { copy(section, from: staged.document, into: &merged) }
-                    document = Self.honoringDeletions(Set(merged.deletions), in: merged)
-                    changedSections.formUnion(staged.sections)
-                    appliedChatDraftRevision = snapshot.draftRevision
-                    refreshDirtyState(); refreshDuration()
+                    for section in staged.sections { copy(section, from: staged.document, into: &remote) }
                 }
+                guard rebaseLocalEdits(onto: nextDocument, variant: variant, forcePreviewRebuild: !sameTarget,
+                    remoteEdits: remote, destination: (nextJobID, nextVariantKey, snapshot.itemID),
+                    stagedRevision: staged == nil ? nil : snapshot.draftRevision) else { return }
+                if staged != nil { appliedChatDraftRevision = snapshot.draftRevision }
                 return
             }
             let selected = selection
@@ -2425,9 +2544,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// newest chat draft in place instead. A different job, a different variant or a newer
     /// render returns false, and the caller keeps the full reload (which swaps the video).
     ///
-    /// KRI-535: the creator's own unsaved edits are never dropped by this path. A newer render of
-    /// the same job raises `newerJobPrompt` ("Switch" discards, "Keep editing" stays), and a
-    /// transient failure to read the variant keeps the session as it is.
+    /// A newer render merges against the clean baseline. Only overlapping authored
+    /// changes need a choice; a transient read failure keeps the working session.
     func reconcileOnOpen(project: ProjectSummary, api: any KriaAPIClient) async -> Bool {
         guard loadState == .loaded, !isSaving, project.runtimeVersion == 2, conversationRuntimeVersion == 2,
               let jobID, let variantKey,
@@ -2470,9 +2588,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             return true
         }
         guard hasOwnEdits, !isSaving else { return false }
-        // A newer render exists and reloading would discard the creator's work: ask first.
-        // `loadedServerRevision` stays put, so the next open asks again until they decide.
-        newerJobPrompt = project
+        _ = await reloadLatestKeepingLocalEdits()
         return true
     }
 
@@ -2549,38 +2665,265 @@ struct NativeEditorTemporaryVideo: Sendable {
         return target != jobID
     }
 
-    /// The thread's active job changed (a re-plan rendered a new video). Edits
-    /// staged from chat belong to the old job and are obsolete, so they are
-    /// dropped and the new job loads automatically. The creator's own unsaved
-    /// edits are never discarded silently: they raise `newerJobPrompt` instead.
+    /// Coalesce active-job notifications until Save settles. A fresh authoritative
+    /// read then follows a clean job or merges the creator's unsaved changes;
+    /// only overlapping changes or an unavailable editable base need a choice.
     func adoptLatestJob(_ project: ProjectSummary, api: any KriaAPIClient) async {
-        guard isBehindActiveJob(project), !isSaving, let target = project.activeJobID else { return }
+        guard project.id == threadID, isBehindActiveJob(project) else { return }
+        _ = latestJobGate.enqueue(threadID: project.id)
+        drainPendingLatestJob()
+    }
+
+    /// Visibility pauses observers only; Save, local edits, and conflict choices keep their owners.
+    func setObserversVisible(_ visible: Bool) {
+        guard observersVisible != visible else { return }
+        observersVisible = visible
+        if !visible {
+            latestJobDrainTask?.cancel(); latestJobDrainTask = nil
+            newVersionWatchTask?.cancel(); newVersionWatchTask = nil
+            loadRetryTask?.cancel(); loadRetryTask = nil
+            previewRefreshTask?.cancel(); previewRefreshTask = nil
+            if let project = watchedLatestProject, project.id == threadID { _ = latestJobGate.enqueue(threadID: project.id) }
+            return
+        }
+        drainPendingLatestJob()
+        if let retry = pendingLoadObservation { scheduleLoadObservation(retry, delay: .zero) }
+        if !previewObservationTerminal, let generation = pendingPreviewGeneration { startPreviewRefresh(generation: generation) }
+    }
+
+    private func resetLatestJobDrain() {
+        savedSongProjectionLag = nil
+        watchedLatestProject = nil
+        latestJobGate.reset()
+        latestJobDrainTask?.cancel()
+        latestJobDrainTask = nil
+        pendingMerge = nil
+        mergeConflictMessage = nil
+        canKeepLocalMergeConflicts = true
+        latestJobRefreshMessage = nil
+    }
+
+    private func drainPendingLatestJob() {
+        guard observersVisible, !isSaving, activeSaveAttemptID == nil, let ticket = latestJobGate.pending,
+              ticket.threadID == threadID, let api else { return }
+        latestJobDrainTask?.cancel()
+        let expectedJob = jobID
+        let owner = api.mediaLibraryOwner
+        let scope = observationScope(api: api, target: "latest:\(ticket.threadID)")
+        let window = NativeEditorReadWindow(started: latestJobReadNow())
+        let retryDelays = latestJobRetryDelays
+        latestJobDrainTask = Task { [weak self] in
+            guard let self else { return }
+            // Notifications may be coalesced or reordered while Save is running.
+            // Resolve the active target now rather than adopting the saved event.
+            for attempt in 0...retryDelays.count {
+                guard !Task.isCancelled, self.observersVisible, self.latestJobGate.matches(ticket), self.threadID == ticket.threadID,
+                      self.jobID == expectedJob, api.mediaLibraryOwner == owner, !self.isSaving, self.activeSaveAttemptID == nil else { return }
+                do {
+                    guard try await self.allowLatestJobRead(ticket, window: window), api.mediaLibraryOwner == owner else { return }
+                    let latest = try await self.readLatestJob(ticket, window: window) { try await api.project(threadID: ticket.threadID) }
+                    guard !Task.isCancelled, self.observersVisible, self.latestJobGate.matches(ticket), self.threadID == ticket.threadID,
+                          self.jobID == expectedJob, api.mediaLibraryOwner == owner, !self.isSaving, self.activeSaveAttemptID == nil else { return }
+                    self.latestJobCooldowns[scope]?.prune(now: self.latestJobReadNow())
+                    self.latestJobRefreshMessage = nil
+                    if let currentJob = latest.job, currentJob.id == latest.activeJobID,
+                       ["cancelled", "superseded", "failed", "no_labeled_tracks"].contains(currentJob.status.lowercased()) || currentJob.status.lowercased().hasSuffix("_failed") {
+                        self.newVersionWatchTask?.cancel(); self.newVersionWatchTask = nil; self.watchedLatestProject = nil
+                        if self.refreshSync == .newVersionRendering { self.refreshSync = .idle }
+                        self.latestJobGate.finish(ticket)
+                        return
+                    }
+                    try await self.adoptResolvedLatestJob(latest.summary, api: api, ticket: ticket, window: window)
+                    return
+                } catch {
+                    guard !Task.isCancelled, self.observersVisible, self.latestJobGate.matches(ticket), self.threadID == ticket.threadID,
+                          self.jobID == expectedJob, api.mediaLibraryOwner == owner, !self.isSaving, self.activeSaveAttemptID == nil else { return }
+                    if error is CancellationError { return }
+                    guard case .transient = Self.refreshFailure(error) else {
+                        self.latestJobRefreshMessage = "The latest version could not be checked. Your edits are still here."
+                        return
+                    }
+                    guard attempt < retryDelays.count,
+                          retryDelays[attempt] <= window.remaining(now: self.latestJobReadNow()) else {
+                        self.scheduleLatestJobRecheck(ticket)
+                        return
+                    }
+                    do { try await self.latestJobReadSleep(retryDelays[attempt]) } catch { return }
+                }
+            }
+        }
+    }
+
+    /// Ticket cancellation releases UI ownership, not transport ownership. A replacement
+    /// waits for a cancellation-ignoring GET and its Retry-After before issuing another.
+    private func readLatestJob<Value: Sendable>(_ ticket: NativeEditorLatestGate.Ticket, window: NativeEditorReadWindow,
+                                      read: @escaping @MainActor () async throws -> Value) async throws -> Value {
+        let scope = observationScope(api: api, target: "latest:\(ticket.threadID)")
+        while let active = latestJobTransport {
+            await active.value
+            try Task.checkCancellation()
+        }
+        guard observationScope(api: api, target: scope.target) == scope,
+              try await allowLatestJobRead(ticket, window: window), latestJobGate.matches(ticket),
+              observationScope(api: api, target: scope.target) == scope else { throw CancellationError() }
+        // A waiter may have acquired the transport while this one waited on pacing.
+        if latestJobTransport != nil { return try await readLatestJob(ticket, window: window, read: read) }
+        let owner = api?.mediaLibraryOwner
+        let task = Task<Value, Error> { [weak self] in
+            defer { self?.latestJobTransport = nil }
+            do { return try await read() }
+            catch {
+                if let self, self.api?.mediaLibraryOwner == owner,
+                   case let APIError.requestFailed(status, detail) = error,
+                   status == 408 || status == 429 || status >= 500, let hint = detail.retryAfter {
+                    self.latestJobCooldowns[scope, default: NativeEditorReadCooldown()].record(seconds: hint, now: self.latestJobReadNow())
+                }
+                throw error
+            }
+        }
+        latestJobTransport = Task { _ = try? await task.value }
+        return try await task.value
+    }
+
+    /// A finite fast burst hands off to one cancellable, read-only wake. Server
+    /// deadlines survive bursts; a later notification replaces this ticket's wake.
+    private func scheduleLatestJobRecheck(_ ticket: NativeEditorLatestGate.Ticket) {
+        guard latestJobGate.matches(ticket), let api else { return }
+        let scope = observationScope(api: api, target: "latest:\(ticket.threadID)")
+        let cooldown = latestJobCooldowns[scope] ?? NativeEditorReadCooldown()
+        guard !cooldown.isPaused else {
+            latestJobRefreshMessage = "The server supplied an unsupported retry interval. Your edits are still here."
+            return
+        }
+        let delay = max(Self.latestJobSlowRecheck, cooldown.delay(now: latestJobReadNow()))
+        let identity = editorOperationIdentity, owner = api.mediaLibraryOwner, sleep = latestJobReadSleep
+        latestJobRefreshMessage = "The latest version will be checked again automatically. Your edits are still here."
+        latestJobDrainTask = Task { [weak self] in
+            do { try await sleep(delay) } catch { return }
+            guard !Task.isCancelled, let self, self.observersVisible, self.editorOperationIdentity == identity,
+                  self.latestJobGate.matches(ticket), api.mediaLibraryOwner == owner,
+                  self.observationScope(api: self.api, target: scope.target) == scope else { return }
+            self.latestJobDrainTask = nil
+            self.drainPendingLatestJob()
+        }
+    }
+
+    private func allowLatestJobRead(_ ticket: NativeEditorLatestGate.Ticket, window: NativeEditorReadWindow) async throws -> Bool {
+        let owner = api?.mediaLibraryOwner
+        let scope = observationScope(api: api, target: "latest:\(ticket.threadID)")
+        while true {
+            guard !Task.isCancelled, observersVisible, latestJobGate.matches(ticket), ticket.threadID == threadID,
+                  api?.mediaLibraryOwner == owner, observationScope(api: api, target: scope.target) == scope, !isSaving, activeSaveAttemptID == nil else { return false }
+            let cooldown = latestJobCooldowns[scope] ?? NativeEditorReadCooldown()
+            switch window.action(cooldown: cooldown, now: latestJobReadNow()) {
+            case .paused:
+                scheduleLatestJobRecheck(ticket)
+                return false
+            case .ready:
+                return true
+            case .wait(let delay):
+                latestJobRefreshMessage = "Waiting for the server's retry window. The latest version will be checked automatically."
+                try await latestJobReadSleep(delay)
+            }
+            // Another in-flight response may have extended the deadline while asleep.
+        }
+    }
+
+    private func adoptResolvedLatestJob(_ project: ProjectSummary, api: any KriaAPIClient, ticket: NativeEditorLatestGate.Ticket, window: NativeEditorReadWindow) async throws {
+        guard latestJobGate.matches(ticket), project.id == threadID, !isSaving, activeSaveAttemptID == nil else { return }
+        guard isBehindActiveJob(project), let target = project.activeJobID else {
+            latestJobGate.finish(ticket)
+            return
+        }
+        let expectedJob = jobID
+        let owner = api.mediaLibraryOwner
         // A re-plan points the thread at its new job before that job has a video. Loading it then
         // threw away the working video for "The editor couldn't open", and the prompt claimed a new
         // version was ready while it was still rendering. Keep editing the current video until then.
         let identity = editorOperationIdentity
-        let readiness = await Self.readiness(ofJob: target, preferredVariantID: project.outputVariantID, api: api)
-        guard editorOperationIdentity == identity else { return }
-        switch readiness {
+        guard try await allowLatestJobRead(ticket, window: window), api.mediaLibraryOwner == owner else { return }
+        let variants = try await readLatestJob(ticket, window: window) { try await api.editorVariants(jobID: target) }
+        guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, editorOperationIdentity == identity, latestJobGate.matches(ticket),
+              !isSaving, activeSaveAttemptID == nil else { return }
+        switch Self.readiness(variants: variants, preferredVariantID: project.outputVariantID) {
         case .ready:
             break
         case .rendering:
+            guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob, threadID == ticket.threadID else { return }
             refreshSync = .newVersionRendering
             watchNewVersion(project, api: api)
+            latestJobGate.finish(ticket)
             return
         case .failed:
+            guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob, threadID == ticket.threadID else { return }
             // The new render failed; the chat says so. The current video stays as it is.
-            newVersionWatchTask?.cancel(); newVersionWatchTask = nil
+            newVersionWatchTask?.cancel(); newVersionWatchTask = nil; watchedLatestProject = nil
             if refreshSync == .newVersionRendering { refreshSync = .idle }
+            latestJobGate.finish(ticket)
             return
         }
-        guard isBehindActiveJob(project), !isSaving else { return }
+        guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob,
+              threadID == ticket.threadID, isBehindActiveJob(project), !isSaving, activeSaveAttemptID == nil else { return }
         newVersionWatchTask?.cancel(); newVersionWatchTask = nil
+        newVersionWatchAttempts = 0
+        watchedLatestProject = nil
         if refreshSync == .newVersionRendering { refreshSync = .idle }
         if hasUnsavedChanges, !hasOnlyChatStagedChanges {
-            newerJobPrompt = project
+            if project.runtimeVersion == 1 {
+                // Legacy conversations have no runtime-v2 draft endpoint. Their
+                // selected variant is the authoritative editable snapshot.
+                guard let item = project.activePlanItemID, let variantID = project.outputVariantID else {
+                    newerJobPrompt = project
+                    latestJobGate.finish(ticket)
+                    return
+                }
+                guard try await allowLatestJobRead(ticket, window: window), api.mediaLibraryOwner == owner else { return }
+                let variant = try await readLatestJob(ticket, window: window) { try await api.editorVariant(jobID: target, variantID: variantID) }
+                guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob,
+                      threadID == ticket.threadID, !isSaving, activeSaveAttemptID == nil else { return }
+                let generation = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue
+                let snapshot = DraftSnapshot(draftID: "latest-\(target.uuidString)", itemID: item, variantKey: variantID,
+                    draftRevision: 0, snapshotHash: "", etag: "", baseJobID: target.uuidString,
+                    baseGenerationID: generation, snapshot: [:], canUndo: false, createdAt: .now)
+                let draft = snapshot.editorDraft(projectID: ticket.threadID, authoritativeVariant: variant)
+                var clean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(draft))
+                clean.revision.baseGeneration = generation ?? ""
+                latestJobGate.finish(ticket)
+                newerJobPrompt = nil
+                _ = rebaseLocalEdits(onto: clean, variant: variant, forcePreviewRebuild: true,
+                    destination: (target, variantID, item), remoteETag: "", legacySnapshot: draft.serverSnapshot)
+                return
+            }
+            guard try await allowLatestJobRead(ticket, window: window), api.mediaLibraryOwner == owner else { return }
+            let snapshot = try await readLatestJob(ticket, window: window) { try await api.draft(threadID: ticket.threadID) }
+            guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob,
+                  threadID == ticket.threadID, !isSaving, activeSaveAttemptID == nil else { return }
+            guard snapshot.baseJobID.flatMap(UUID.init) == target,
+                  project.activePlanItemID.map({ $0 == snapshot.itemID }) ?? true,
+                  project.outputVariantID.map({ $0 == snapshot.variantKey }) ?? true else {
+                // There is no authoritative editable base for this target yet.
+                // Keep the existing explicit switch choice instead of guessing.
+                newerJobPrompt = project
+                latestJobGate.finish(ticket)
+                return
+            }
+            guard try await allowLatestJobRead(ticket, window: window), api.mediaLibraryOwner == owner else { return }
+            let variant = try await readLatestJob(ticket, window: window) { try await api.editorVariant(jobID: target, variantID: snapshot.variantKey) }
+            guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob,
+                  threadID == ticket.threadID, !isSaving, activeSaveAttemptID == nil else { return }
+            let latestDraft = snapshot.editorDraft(projectID: ticket.threadID, authoritativeVariant: variant)
+            let latestClean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(latestDraft))
+            latestJobGate.finish(ticket)
+            newerJobPrompt = nil
+            if rebaseLocalEdits(onto: latestClean, variant: variant, forcePreviewRebuild: true,
+                destination: (target, snapshot.variantKey, snapshot.itemID), remoteETag: snapshot.etag,
+                legacySnapshot: conversationRuntimeVersion == 1 ? latestDraft.serverSnapshot : nil) { latestJobRefreshMessage = nil }
             return
         }
+        latestJobGate.finish(ticket)
+        // Loading resets the drain lifetime. Do not cancel this task from its
+        // own load entrypoint after the target has already been fenced.
+        latestJobDrainTask = nil
         await switchToLatestJob(project, api: api)
     }
 
@@ -2590,42 +2933,45 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// hiccup) counts as still rendering: the watch asks again, and nothing is discarded meanwhile.
     static func readiness(ofJob jobID: UUID, preferredVariantID: String?, api: any KriaAPIClient) async -> JobReadiness {
         guard let variants = try? await api.editorVariants(jobID: jobID) else { return .rendering }
+        return readiness(variants: variants, preferredVariantID: preferredVariantID)
+    }
+
+    private static func readiness(variants: [[String: JSONValue]], preferredVariantID: String?) -> JobReadiness {
         let identified = variants.filter { $0["variant_id"]?.stringValue != nil }
         let candidates = preferredVariantID.flatMap { id in
             let matching = identified.filter { $0["variant_id"]?.stringValue == id }
             return matching.isEmpty ? nil : matching
         } ?? identified
         if candidates.contains(where: { $0["render_status"]?.stringValue == "ready" }) { return .ready }
-        if !candidates.isEmpty, candidates.allSatisfy({ $0["render_status"]?.stringValue == "failed" }) { return .failed }
+        let terminal = Set(["failed", "cancelled", "superseded", "needs_attention"])
+        if !candidates.isEmpty, candidates.allSatisfy({ terminal.contains($0["render_status"]?.stringValue ?? "") }) { return .failed }
         return .rendering
     }
 
     /// Ask again until the new job is ready, then run the normal adopt decision once.
     private func watchNewVersion(_ project: ProjectSummary, api: any KriaAPIClient) {
         guard let target = project.activeJobID else { return }
+        watchedLatestProject = project
+        guard observersVisible else { return }
         if newVersionWatchTask != nil, newVersionWatchTarget == target { return }
         newVersionWatchTask?.cancel()
+        if newVersionWatchTarget != target { newVersionWatchAttempts = 0 }
         newVersionWatchTarget = target
         let identity = editorOperationIdentity
         let delays = newVersionPollDelays
+        guard !delays.isEmpty else { return }
+        let exhausted = newVersionWatchAttempts >= 64
+        let delay = exhausted ? Self.latestJobSlowRecheck : delays[min(newVersionWatchAttempts, delays.count - 1)]
+        newVersionWatchAttempts = min(newVersionWatchAttempts + 1, 64)
+        if exhausted { latestJobRefreshMessage = "The latest version is still rendering. It will be checked again automatically." }
+        let owner = api.mediaLibraryOwner, sleep = latestJobReadSleep
         newVersionWatchTask = Task { [weak self] in
-            var attempt = 0
-            // About 15 minutes at the default cadence, longer than any render the server allows.
-            while attempt < 64, !delays.isEmpty {
-                try? await Task.sleep(for: delays[min(attempt, delays.count - 1)])
-                attempt += 1
-                guard !Task.isCancelled, let self, self.editorOperationIdentity == identity, self.isBehindActiveJob(project) else { return }
-                let readiness = await Self.readiness(ofJob: target, preferredVariantID: project.outputVariantID, api: api)
-                guard !Task.isCancelled, self.editorOperationIdentity == identity else { return }
-                if readiness != .rendering {
-                    self.newVersionWatchTask = nil
-                    await self.adoptLatestJob(project, api: api)
-                    return
-                }
-            }
-            guard !Task.isCancelled, let self, self.editorOperationIdentity == identity else { return }
+            do { try await sleep(delay) } catch { return }
+            guard !Task.isCancelled, let self, self.observersVisible, self.editorOperationIdentity == identity,
+                  api.mediaLibraryOwner == owner, self.isBehindActiveJob(project) else { return }
             self.newVersionWatchTask = nil
-            if self.refreshSync == .newVersionRendering { self.refreshSync = .idle }
+            // Every GET, including readiness, goes through the same paced drain.
+            await self.adoptLatestJob(project, api: api)
         }
     }
 
@@ -2640,9 +2986,9 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     /// Ask the server which job the thread points at now, then run the adopt decision.
     func adoptActiveJobFromThread(api: any KriaAPIClient, threadID: UUID) async {
-        let identity = editorOperationIdentity
-        guard let thread = try? await api.project(threadID: threadID), editorOperationIdentity == identity else { return }
-        await adoptLatestJob(thread.summary, api: api)
+        guard self.threadID == threadID else { return }
+        _ = latestJobGate.enqueue(threadID: threadID)
+        drainPendingLatestJob()
     }
 
     func keepEditingCurrentJob() { newerJobPrompt = nil }
@@ -2698,6 +3044,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         let epoch = loadEpoch ?? beginEditorLoad()
         guard editorLoadEpoch == epoch else { return }
         self.api = api
+        loadObservationScope = observationScope(api: api, target: "job:\(editorJobID)")
         self.threadID = threadID
         resetBackgroundRefresh()
         if let previous = jobID, previous != editorJobID { discardPlaybackForNewJob() }
@@ -2712,38 +3059,49 @@ struct NativeEditorTemporaryVideo: Sendable {
         // resolved variant only once that is known.
         let capabilitiesTask = Task { try? await api.creationCapabilities() }
         let draftTask: Task<DraftSnapshot?, Never>? = if conversationRuntimeVersion == 2, let threadID {
-            Task { try? await api.draft(threadID: threadID) }
+            Task { [weak self] in
+                guard let self else { return nil }
+                return try? await self.readLoadObservation(epoch: epoch, target: "draft:\(threadID)") { try await api.draft(threadID: threadID) }
+            }
         } else {
             nil
         }
         defer { capabilitiesTask.cancel(); draftTask?.cancel() }
+        var acknowledgedOpen: OpenInEditorResponse?
         do {
             let receipt: OpenInEditorResponse? = if planItemID == nil {
                 try await api.openJobInEditor(jobID: editorJobID)
             } else {
                 nil
             }
+            acknowledgedOpen = receipt
             guard editorLoadEpoch == epoch else { return }
             self.threadID = threadID ?? receipt?.creationThreadID
             guard let resolvedPlanItemID = planItemID ?? receipt?.planItemID else {
                 throw APIError.invalidResponse
+            }
+            let retryVariant = preferredVariantID ?? receipt?.variantID
+            let retryThread = threadID ?? receipt?.creationThreadID
+            pendingLoadObservation = { [weak self] in
+                await self?.load(editorJobID: editorJobID, planItemID: resolvedPlanItemID,
+                    preferredVariantID: retryVariant, threadID: retryThread, api: api)
             }
             let resolved: (variantID: String, variant: [String: JSONValue])
             if let requestedVariantID = preferredVariantID ?? receipt?.variantID {
                 do {
                     resolved = (
                         requestedVariantID,
-                        try await api.editorVariant(jobID: editorJobID, variantID: requestedVariantID)
+                        try await readLoadObservation(epoch: epoch, target: "variant:\(editorJobID):\(requestedVariantID)") { try await api.editorVariant(jobID: editorJobID, variantID: requestedVariantID) }
                     )
                 } catch where receipt != nil && requestedVariantID != receipt?.variantID {
                     guard editorLoadEpoch == epoch else { return }
                     resolved = (
                         receipt!.variantID,
-                        try await api.editorVariant(jobID: editorJobID, variantID: receipt!.variantID)
+                        try await readLoadObservation(epoch: epoch, target: "variant:\(editorJobID):\(receipt!.variantID)") { try await api.editorVariant(jobID: editorJobID, variantID: receipt!.variantID) }
                     )
                 }
             } else {
-                let variants = try await api.editorVariants(jobID: editorJobID)
+                let variants = try await readLoadObservation(epoch: epoch, target: "variants:\(editorJobID)") { try await api.editorVariants(jobID: editorJobID) }
                 guard editorLoadEpoch == epoch else { return }
                 guard let variant = variants.first(where: {
                     $0["render_status"]?.stringValue == "ready" && $0["variant_id"]?.stringValue != nil
@@ -2751,7 +3109,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                       let variantID = variant["variant_id"]?.stringValue else {
                     throw APIError.invalidResponse
                 }
-                resolved = (variantID, try await api.editorVariant(jobID: editorJobID, variantID: variantID))
+                resolved = (variantID, try await readLoadObservation(epoch: epoch, target: "variant:\(editorJobID):\(variantID)") { try await api.editorVariant(jobID: editorJobID, variantID: variantID) })
             }
             guard editorLoadEpoch == epoch else { return }
             let variant = resolved.variant
@@ -2774,7 +3132,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             let loadedDraft = snapshot.editorDraft(projectID: projectID, authoritativeVariant: variant)
             draft = loadedDraft
             legacyPromptSnapshot = loadedDraft.serverSnapshot
-            configureCapabilities(from: variant)
+            configureCapabilities(from: variant, songVariantKey: resolved.variantID)
             await applyCloudReadOnlyIfNeeded(api: api, variant: variant, capabilities: capabilitiesTask)
             guard editorLoadEpoch == epoch else { return }
             cleanDocument = document
@@ -2834,16 +3192,54 @@ struct NativeEditorTemporaryVideo: Sendable {
             NativePreviewDiagnostics.failure("editor-load-failed", error: error)
             NativePreviewDiagnostics.record("editor-load-context", fields: ["job": jobID?.uuidString ?? "none"])
             #endif
+            let retryItem = planItemID ?? acknowledgedOpen?.planItemID
+            let retryVariant = preferredVariantID ?? acknowledgedOpen?.variantID
+            let retryThread = threadID ?? acknowledgedOpen?.creationThreadID
+            if retryItem == nil {
+                if error as? APIError == .editorNotReady {
+                    if scheduleLoadRetry(after: error, { [weak self] in
+                        await self?.observeGalleryReadiness(jobID: editorJobID, api: api)
+                    }) { return }
+                }
+                // No receipt proves promotion. Do not replay an uncertain metadata POST.
+                loadSucceeded()
+                saveState = .loadFailed("The editor could not confirm opening this video. Your Gallery video is still available.")
+                loadState = .failed("The editor could not confirm opening this video. Your Gallery video is still available.")
+                return
+            }
             if scheduleLoadRetry(after: error, { [weak self] in
-                await self?.load(editorJobID: editorJobID, planItemID: planItemID, preferredVariantID: preferredVariantID,
-                                 threadID: threadID, api: api)
+                await self?.load(editorJobID: editorJobID, planItemID: retryItem, preferredVariantID: retryVariant,
+                                 threadID: retryThread, api: api)
             }) { return }
             saveState = .loadFailed(error.localizedDescription)
             loadState = .failed(error.localizedDescription)
         }
     }
 
+    /// A definitive not-ready rejection did not promote anything. Observe the
+    /// original job with GETs, then finish its already-authorized open once ready.
+    private func observeGalleryReadiness(jobID: UUID, api: any KriaAPIClient) async {
+        let epoch = editorLoadEpoch
+        do {
+            let variants = try await readLoadObservation(epoch: epoch, target: "variants:\(jobID)") { try await api.editorVariants(jobID: jobID) }
+            guard editorLoadEpoch == epoch, observersVisible else { return }
+            switch Self.readiness(variants: variants, preferredVariantID: nil) {
+            case .rendering: throw APIError.editorNotReady
+            case .failed: throw APIError.contentPlanUnavailable
+            case .ready:
+                await load(editorJobID: jobID, planItemID: nil, preferredVariantID: nil, threadID: nil, api: api)
+            }
+        } catch {
+            guard editorLoadEpoch == epoch else { return }
+            if scheduleLoadRetry(after: error, { [weak self] in await self?.observeGalleryReadiness(jobID: jobID, api: api) }) { return }
+            saveState = .loadFailed(error.localizedDescription)
+            loadState = .failed(error.localizedDescription)
+        }
+    }
+
     private func loadSucceeded() {
+        pendingLoadObservation = nil
+        loadObservationCooldown.prune(now: loadReadNow())
         loadRetryAttempt = 0
         loadWaitingMessage = nil
     }
@@ -2856,6 +3252,10 @@ struct NativeEditorTemporaryVideo: Sendable {
         let limit: Int
         let message: String
         let apiError = error as? APIError
+        if !observersVisible, error is CancellationError {
+            scheduleLoadObservation(retry, delay: .zero)
+            return true
+        }
         if apiError == .editorNotReady {
             delays = loadRenderingDelays
             limit = 80
@@ -2875,25 +3275,68 @@ struct NativeEditorTemporaryVideo: Sendable {
                 return false
             }
         }
-        guard loadRetryAttempt < limit, !delays.isEmpty else {
-            loadSucceeded()
-            return false
-        }
-        let delay = delays[min(loadRetryAttempt, delays.count - 1)]
-        loadRetryAttempt += 1
-        loadWaitingMessage = message
+        guard !delays.isEmpty else { loadSucceeded(); return false }
+        let mayRecoverSlowly: Bool = if apiError == .editorNotReady { true } else { if case .transient = Self.refreshFailure(error) { true } else { false } }
+        guard loadRetryAttempt < limit || mayRecoverSlowly else { loadSucceeded(); return false }
+        guard !loadObservationCooldown.isPaused else { loadSucceeded(); return false }
+        let exhausted = loadRetryAttempt >= limit
+        let delay = exhausted ? Self.latestJobSlowRecheck : delays[min(loadRetryAttempt, delays.count - 1)]
+        loadRetryAttempt = min(loadRetryAttempt + 1, limit)
+        loadWaitingMessage = exhausted ? "The editor will check again automatically. Your saved edit is safe." : message
         saveState = .idle
         loadState = .loading
-        loadRetryTask?.cancel()
-        let epoch = editorLoadEpoch
+        scheduleLoadObservation(retry, delay: delay)
+        return true
+    }
+
+    private func scheduleLoadObservation(_ retry: @escaping @MainActor () async -> Void, delay: Duration) {
+        pendingLoadObservation = retry
+        loadRetryTask?.cancel(); loadRetryTask = nil
+        guard observersVisible, !loadObservationCooldown.isPaused else { return }
+        let epoch = editorLoadEpoch, owner = api?.mediaLibraryOwner, sleep = loadReadSleep
+        let scope = loadObservationScope
+        let pause = max(delay, loadObservationCooldown.delay(now: loadReadNow()))
         loadRetryTask = Task { [weak self] in
-            try? await Task.sleep(for: delay)
-            guard !Task.isCancelled, let self, self.editorLoadEpoch == epoch else { return }
-            // Cleared first: the load cancels any pending retry, and this task must not cancel itself.
+            do { try await sleep(pause) } catch { return }
+            guard !Task.isCancelled, let self, self.observersVisible, self.editorLoadEpoch == epoch,
+                  self.api?.mediaLibraryOwner == owner,
+                  scope.map({ self.observationScope(api: self.api, target: $0.target) == $0 }) ?? false else { return }
             self.loadRetryTask = nil
             await retry()
         }
-        return true
+    }
+
+    private func readLoadObservation<Value: Sendable>(epoch: UInt64, target: String,
+        read: @escaping @MainActor () async throws -> Value) async throws -> Value {
+        let owner = api?.mediaLibraryOwner
+        let scope = observationScope(api: api, target: target)
+        guard editorLoadEpoch == epoch else { throw CancellationError() }
+        loadObservationScope = scope
+        while let active = loadTransport { await active.value; try Task.checkCancellation() }
+        while (loadObservationCooldowns[scope] ?? NativeEditorReadCooldown()).delay(now: loadReadNow()) > .zero {
+            try await loadReadSleep((loadObservationCooldowns[scope] ?? NativeEditorReadCooldown()).delay(now: loadReadNow()))
+            try Task.checkCancellation()
+        }
+        guard observersVisible, editorLoadEpoch == epoch, api?.mediaLibraryOwner == owner,
+              observationScope(api: api, target: target) == scope,
+              !(loadObservationCooldowns[scope]?.isPaused ?? false) else { throw CancellationError() }
+        if loadTransport != nil { return try await readLoadObservation(epoch: epoch, target: target, read: read) }
+        let transport = Task<Value, Error> { [weak self] in
+            defer { self?.loadTransport = nil }
+            do { return try await read() }
+            catch {
+                if let self, self.api?.mediaLibraryOwner == owner,
+                   case let APIError.requestFailed(_, detail) = error, let hint = detail.retryAfter {
+                    self.loadObservationCooldowns[scope, default: NativeEditorReadCooldown()].record(seconds: hint, now: self.loadReadNow())
+                }
+                throw error
+            }
+        }
+        loadTransport = Task { _ = try? await transport.value }
+        let value = try await transport.value
+        try Task.checkCancellation()
+        guard observersVisible, editorLoadEpoch == epoch, api?.mediaLibraryOwner == owner else { throw CancellationError() }
+        return value
     }
 
     #if DEBUG
@@ -4304,6 +4747,7 @@ struct NativeEditorTemporaryVideo: Sendable {
 
         if next == active.baseline {
             if active.recordedUndo {
+                saveHistory?.cancelLastCheckpoint(matching: active.baseline)
                 undoStack.removeLast()
                 redoStack = active.redoBaseline
                 active.recordedUndo = false
@@ -7232,12 +7676,13 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     func undo() {
         guard let previous = undoStack.popLast() else { return }
+        saveHistory?.recordUndo(to: previous, from: document)
         appendRedo(document); document = previous; refreshDirtyState(); refreshDuration()
     }
 
     func redo() {
         guard let next = redoStack.popLast() else { return }
-        appendUndo(document); document = next; refreshDirtyState(); refreshDuration()
+        appendUndo(document, isRedo: true); document = next; refreshDirtyState(); refreshDuration()
     }
 
     func save() async {
@@ -7252,6 +7697,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         defer {
             if activeSaveAttemptID == attemptID {
                 activeSaveAttemptID = nil
+                defer { if editorOperationIdentity == identity { drainPendingLatestJob() } }
                 // Every exit still owned by this editor must be terminal. A
                 // load/reset owns its own state, even for identical target IDs.
                 if editorOperationIdentity == identity, !isSaving, saveState == .saving {
@@ -7268,6 +7714,8 @@ struct NativeEditorTemporaryVideo: Sendable {
             let reload = await reloadLatestKeepingLocalEdits(saveAttemptID: attemptID)
             guard activeSaveAttemptID == attemptID, editorOperationIdentity == identity else { return }
             switch reload {
+            case .needsResolution:
+                return
             case .reloaded:
                 if !retrySections.isEmpty {
                     // Consent covered the previous generation's render. A retry
@@ -7300,17 +7748,28 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func saveOnce(retrying retrySections: Set<EditorSection> = []) async {
+        guard pendingMerge == nil else {
+            saveState = .failed("Resolve the conflicting changes before saving.")
+            return
+        }
         guard !isSaving, hasUnsavedChanges || !retrySections.isEmpty else { return }
         let saveEditorEpoch = editorLoadEpoch
         defer { if editorLoadEpoch == saveEditorEpoch { userSongRetry = nil } }
         guard let api, let itemID, let variantKey else { saveState = .failed("Load the project before saving edits."); return }
         isSaving = true; saveState = .saving
-        defer { if editorLoadEpoch == saveEditorEpoch { isSaving = false } }
         let submittedDocument = document
+        let journal = EditorSaveHistory(submitted: submittedDocument, limit: historyLimit)
+        let saveHistoryID = journal.id
+        saveHistory = journal
+        defer {
+            if editorLoadEpoch == saveEditorEpoch, saveHistory?.id == saveHistoryID {
+                saveHistory = nil
+                isSaving = false
+            }
+        }
         // KRI-576: the song window this save asks the server to project the lyric rows against.
         let submittedSongStartS = trueSongWindowStartS
         let submittedSections = changedSections.union(retrySections)
-        let submittedUndoCount = undoStack.count
         let saveItemID = itemID
         let saveJobID = jobID
         let saveVariantKey = variantKey
@@ -7321,13 +7780,16 @@ struct NativeEditorTemporaryVideo: Sendable {
         let request = commitRequest(sections: sections, submittedSections: submittedSections, baseGeneration: payload?["base_generation"]?.stringValue ?? document.revision.baseGeneration)
         do {
             let response = try await api.editorCommit(itemID: itemID, variantID: variantKey, request: request)
-            guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            guard saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             // A committed save proves the connection works: drop the offline hint. Any pending
             // retry stays scheduled so the catch-up read still runs.
             refreshFailureStreak = 0
             if refreshSync == .reconnecting { refreshSync = .idle }
+
             let acknowledged = acknowledgedSections(response.sections, submittedSections: submittedSections)
-            let postSubmitUndo = Array(undoStack.dropFirst(submittedUndoCount))
+            guard let journal = saveHistory, journal.id == saveHistoryID else { return }
+            let postSubmitUndo = journal.undoCheckpoints(current: document)
+            let postSubmitRedo = journal.redoCheckpoints
             let hasPostSubmitEdits = document != submittedDocument
             // A durable commit fences the previous render even when this
             // response saves an empty draft and does not start a new poll.
@@ -7354,24 +7816,24 @@ struct NativeEditorTemporaryVideo: Sendable {
                     document = acknowledgedEmpty
                     cleanDocument = acknowledgedEmpty
                     changedSections.removeAll(); explicitlyDirtySections.removeAll()
-                    undoStack.removeAll(); redoStack.removeAll()
                 } else {
                     // The empty commit is durable, but a later local edit was
                     // staged while it was in flight. Move both bases to the
                     // new generation and retain that edit and its undo entry.
                     document.revision.baseGeneration = response.generation
                     cleanDocument = acknowledgedEmpty
-                    let acknowledgedRevision = document.revision
-                    undoStack = postSubmitUndo.map { value in
-                        var rebased = value
-                        rebased.revision = acknowledgedRevision
-                        return rebased
-                    }
-                    redoStack.removeAll()
                     if !document.clips.isEmpty { document.editorState = "renderable" }
-                    consumeSubmittedDeletions(from: submittedDocument)
                     explicitlyDirtySections.subtract(acknowledged)
                 }
+                let acknowledgedRevision = document.revision
+                let rebaseHistory: (EditorDocument) -> EditorDocument = { value in
+                    var rebased = value
+                    rebased.revision = acknowledgedRevision
+                    return rebased
+                }
+                undoStack = postSubmitUndo.map(rebaseHistory)
+                redoStack = postSubmitRedo.map(rebaseHistory)
+                consumeSubmittedDeletions(from: submittedDocument)
                 pendingRenderRetrySections.removeAll()
                 rebaseActiveGestureHistoryAfterDurableSave()
                 refreshDirtyState()
@@ -7399,19 +7861,26 @@ struct NativeEditorTemporaryVideo: Sendable {
                 }
             }
             acknowledge(acknowledged, generation: response.generation, submittedDocument: savedSubmission)
-            if hasPostSubmitEdits {
-                let acknowledgedRevision = document.revision
-                let rebaseSong = userSongRebase
-                undoStack = postSubmitUndo.map { value in
-                    var rebased = value
-                    rebased.revision = acknowledgedRevision
-                    if acknowledged.contains(.userSong) { rebased.userSong = rebaseSong(rebased.userSong) }
-                    return rebased
-                }
-                redoStack.removeAll()
+            // A durable intent can outlive failed recipe compilation. Its old
+            // song projection is not evidence that this exact Save was undone.
+            if response.ok, response.renderStarted == false, let song = acknowledgedUserSong, !response.generation.isEmpty {
+                savedSongProjectionLag = SavedSongProjectionLag(thread: saveThreadID, job: saveJobID,
+                    item: saveItemID, variant: saveVariantKey, generation: response.generation,
+                    revision: response.revisionNumber,
+                    previousProjection: previewVariant["user_song"], acknowledged: song)
             } else {
-                undoStack.removeAll(); redoStack.removeAll()
+                savedSongProjectionLag = nil
             }
+            let acknowledgedRevision = document.revision
+            let rebaseSong = userSongRebase
+            let rebaseHistory: (EditorDocument) -> EditorDocument = { value in
+                var rebased = value
+                rebased.revision = acknowledgedRevision
+                if acknowledged.contains(.userSong) { rebased.userSong = rebaseSong(rebased.userSong) }
+                return rebased
+            }
+            undoStack = postSubmitUndo.map(rebaseHistory)
+            redoStack = postSubmitRedo.map(rebaseHistory)
             userSongRebase = { $0 }
             // A successful response has durably applied the exact deletion
             // intent sent with this commit. Remove only those IDs: a later
@@ -7429,12 +7898,14 @@ struct NativeEditorTemporaryVideo: Sendable {
             // unavailable or still stale. The read runs beside the device
             // render's own start-up reads: neither needs the other, and both
             // were queued one behind the other before.
+            let committedSaveAttemptID = activeSaveAttemptID
             let committedRead: Task<Void, Never>? = if response.draft == nil, let saveJobID,
                response.generation == document.revision.baseGeneration {
                 Task { @MainActor [weak self] in
                     do {
                         let committedVariant = try await api.editorVariant(jobID: saveJobID, variantID: saveVariantKey)
-                        guard let self, self.saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
+                        guard !Task.isCancelled, let self, self.activeSaveAttemptID == committedSaveAttemptID,
+                              self.saveHistory?.id == saveHistoryID, self.saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
                         _ = self.reconcileAuthoritativeText(
                             from: committedVariant,
                             generation: response.generation,
@@ -7451,10 +7922,12 @@ struct NativeEditorTemporaryVideo: Sendable {
                     }
                 }
             } else { nil }
-            guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else {
+            defer { committedRead?.cancel() }
+            guard !Task.isCancelled, activeSaveAttemptID == committedSaveAttemptID, saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else {
                 committedRead?.cancel()
                 return
             }
+
             if response.renderStarted ?? response.ok {
                 // The commit is durable even while its render is pending. Keep
                 // the acknowledged sections retryable until a matching ready
@@ -7463,26 +7936,27 @@ struct NativeEditorTemporaryVideo: Sendable {
                 saveState = .previewPending
                 pendingDeviceRenderGeneration = response.generation
                 await refreshDeviceRender()
+                guard !Task.isCancelled, activeSaveAttemptID == committedSaveAttemptID, saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
                 await withTaskCancellationHandler { await committedRead?.value } onCancel: { committedRead?.cancel() }
-                guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
+                guard !Task.isCancelled, activeSaveAttemptID == committedSaveAttemptID, saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
                 pendingDeviceRenderIdentity = deviceRenderKey.flatMap { deviceRenders?.request(for: $0)?.identity }
                 pendingDeviceRenderGeneration = response.generation
                 previewSupersededGeneration = saveDocumentGeneration
                 startPreviewRefresh(generation: response.generation)
             } else {
                 await withTaskCancellationHandler { await committedRead?.value } onCancel: { committedRead?.cancel() }
-                guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
+                guard !Task.isCancelled, activeSaveAttemptID == committedSaveAttemptID, saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
                 pendingRenderRetrySections = acknowledged
                 saveState = .renderRetryNeeded(response.renderRecovery ?? "Your edit is saved. Its preview render did not start, so you can retry it safely.")
             }
         } catch APIError.conflict {
-            guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            guard saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             // `save()` loads the newer version and sends this edit again.
             saveHitNewerVersion = true
         } catch EditorSaveError.userSongUnavailable where submittedDocument.userSong?.removed == true {
             // The song is already gone on the server (an earlier removal reached it): that is what the
             // creator asked for. Fold the removal in locally and carry on with whatever else is pending.
-            guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            guard saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             foldAcknowledgedUserSong(submittedDocument.userSong)
             let rebaseSong = userSongRebase
             undoStack = undoStack.map { var value = $0; value.userSong = rebaseSong(value.userSong); return value }
@@ -7493,7 +7967,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             songRemovalAlreadyApplied = true
             saveState = hasUnsavedChanges ? .idle : .saved
         } catch {
-            guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            guard saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             saveState = .failed(error.localizedDescription)
         }
     }
@@ -7524,11 +7998,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// reloading forever; Retry clears it.
     private var previewConflictReloadGeneration: String?
 
-    private enum LatestReload { case reloaded, alreadyTried, superseded, failed(Error) }
+    private enum LatestReload { case reloaded, needsResolution, alreadyTried, superseded, failed(Error) }
 
-    /// KRI-935: load the newest renderer-owned version of this edit without asking the
-    /// creator. It becomes the clean base and their unsaved lanes are replayed on top
-    /// (`rebaseLocalEdits`). `fencingPreviewConflict` allows one reload per server
+    /// Load the newest renderer-owned version and three-way merge it with the clean
+    /// baseline and current edits. Independent changes merge automatically; overlapping
+    /// edits retain both versions for a choice. `fencingPreviewConflict` allows one reload per server
     /// generation and always rebuilds the preview, even when the generation is unchanged.
     private func reloadLatestKeepingLocalEdits(fencingPreviewConflict: Bool = false, saveAttemptID: UUID? = nil) async -> LatestReload {
         guard !isSaving, activeSaveAttemptID == saveAttemptID,
@@ -7570,42 +8044,90 @@ struct NativeEditorTemporaryVideo: Sendable {
             if conversationRuntimeVersion == 1 { legacyPromptSnapshot = latestDraft.serverSnapshot }
             var latestClean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(latestDraft))
             latestClean.revision.baseGeneration = generation
-            rebaseLocalEdits(onto: latestClean, variant: variant, forcePreviewRebuild: fencingPreviewConflict)
-            return .reloaded
+            return rebaseLocalEdits(onto: latestClean, variant: variant, forcePreviewRebuild: fencingPreviewConflict)
+                ? .reloaded : .needsResolution
         } catch {
             guard editorOperationIdentity == identity else { return .superseded }
             return .failed(error)
         }
     }
 
-    /// Make `latestClean` the clean baseline and replay only the locally dirty
-    /// sections on top, as one undoable change. Nothing the creator changed is lost.
-    private func rebaseLocalEdits(onto latestClean: EditorDocument, variant: [String: JSONValue]?, forcePreviewRebuild: Bool) {
-        let localDocument = document
-        let localSections = changedSections
-        let localExplicitSections = explicitlyDirtySections
+    /// Retain both sides until every overlapping authored change is resolved.
+    @discardableResult
+    private func rebaseLocalEdits(onto latestClean: EditorDocument, variant: [String: JSONValue]?, forcePreviewRebuild: Bool,
+                                 remoteEdits: EditorDocument? = nil,
+                                 destination: (job: UUID?, variant: String?, item: String?)? = nil,
+                                 stagedRevision: Int? = nil, remoteETag: String? = nil,
+                                 legacySnapshot: [String: JSONValue]? = nil) -> Bool {
+        let context = PendingMerge(base: cleanDocument, clean: latestClean, remote: remoteEdits ?? latestClean,
+            baseSong: Self.mergeSongAuthority(variant: previewVariant, effective: savedUserSong, job: jobID, generation: cleanDocument.revision.baseGeneration), variant: variant, forcePreview: forcePreviewRebuild,
+            thread: threadID, originalJob: jobID, originalVariant: variantKey,
+            destinationJob: destination?.job ?? jobID, destinationVariant: destination?.variant ?? variantKey,
+            destinationItem: destination?.item ?? itemID, stagedRevision: stagedRevision,
+            remoteETag: remoteETag, legacySnapshot: legacySnapshot)
+        pendingMerge = context
+        return applyMerge(context, preference: nil)
+    }
+
+    func resolveMergeConflicts(keepingLocal: Bool) {
+        guard let context = pendingMerge, !isSaving else { return }
+        guard !keepingLocal || canKeepLocalMergeConflicts else { return }
+        _ = applyMerge(context, preference: keepingLocal ? .local : .remote)
+    }
+
+    private func applyMerge(_ context: PendingMerge, preference: AuthoredJSONMerge.Preference?) -> Bool {
+        guard threadID == context.thread, jobID == context.originalJob, variantKey == context.originalVariant else { return false }
+        let remoteSong = context.variant.map { variant in
+            let overlay = Self.serverSavedSongOverlay(for: variant, job: context.destinationJob, variantKey: context.destinationVariant)
+                ?? savedSongOverlay(for: variant, thread: context.thread, job: context.destinationJob,
+                item: context.destinationItem, variantKey: context.destinationVariant,
+                generation: context.clean.revision.baseGeneration)
+            return Self.mergeSongAuthority(variant: variant, effective: NativeUserSong(variant: variant)?.applying(overlay),
+                job: context.destinationJob, generation: context.clean.revision.baseGeneration)
+        } ?? context.baseSong
+        let result = NativeEditorMerge.documents(base: context.base, local: document, remote: context.remote,
+            baseSong: context.baseSong, remoteSong: remoteSong,
+            preference: preference)
+        let rebased: EditorDocument
+        switch result {
+        case .resolved(let value): rebased = value
+        case .conflicts(let conflicts):
+            let connected = conflicts.contains(where: { $0.path.first == "dependent" })
+            canKeepLocalMergeConflicts = context.baseSong == remoteSong || (document.userSong?.isEmpty != false && !connected)
+            mergeConflictMessage = !canKeepLocalMergeConflicts
+                ? "The latest version may use a different song. Use the latest conflicting changes, then edit the song. Your current edits remain here until you choose."
+                : connected
+                ? "Timing or deletion changes affect connected content. Choose which version of that connected content to keep; unrelated changes are preserved."
+                : "Your edits and the latest version changed the same content. Choose which conflicting changes to keep; other changes are preserved."
+            return false
+        case .unsupported(let message):
+            canKeepLocalMergeConflicts = false
+            mergeConflictMessage = message
+            return false
+        }
         let selected = selection
-        var rebased = latestClean
-        for section in localSections {
-            copy(section, from: localDocument, into: &rebased)
-        }
-        // Deletion intents travel with the replayed lanes, so Save still sends them.
-        for deletion in localDocument.deletions where !rebased.deletions.contains(deletion) {
-            rebased.deletions.append(deletion)
-        }
+        if context.originalJob != context.destinationJob { discardPlaybackForNewJob() }
         document = rebased
-        cleanDocument = latestClean
-        changedSections = localSections
-        explicitlyDirtySections = localExplicitSections.intersection(localSections)
+        cleanDocument = context.clean
+        jobID = context.destinationJob; variantKey = context.destinationVariant; itemID = context.destinationItem
+        if let value = context.remoteETag { etag = value }
+        if let value = context.legacySnapshot { legacyPromptSnapshot = value }
+        pendingMerge = nil
+        mergeConflictMessage = nil
+        canKeepLocalMergeConflicts = true
+        if let revision = context.stagedRevision { appliedChatDraftRevision = revision }
+        chatStagedDocument = nil; chatStagedSections = []
         redoStack.removeAll()
-        configureCapabilities(from: variant)
-        refreshRebasedSourcePreview(force: forcePreviewRebuild)
+        configureCapabilities(from: context.variant)
+        refreshRebasedSourcePreview(force: context.forcePreview)
         refreshDirtyState()
-        undoStack = hasUnsavedChanges ? [latestClean] : []
+        explicitlyDirtySections.formIntersection(changedSections)
+        undoStack = hasUnsavedChanges ? [context.clean] : []
         if let selected, selectionExists(selected) { selection = selected } else { selection = nil }
         durationSourcesInvalidated = hasUnsavedChanges && (changedSections.contains(.timeline) || changedSections.contains(.carouselMoment))
-        setAuthoritativeDuration(Self.number(variant?["duration_s"]))
+        setAuthoritativeDuration(Self.number(context.variant?["duration_s"]))
         refreshDuration()
+        return true
     }
 
     private func transact(section: EditorSection, _ body: (inout EditorDraft) -> Void) {
@@ -7980,6 +8502,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
         guard next != active.baseline else {
             if active.recordedUndo {
+                saveHistory?.cancelLastCheckpoint(matching: active.baseline)
                 undoStack.removeLast()
                 redoStack = active.redoBaseline
                 active.recordedUndo = false
@@ -8509,6 +9032,11 @@ struct NativeEditorTemporaryVideo: Sendable {
             rebased.deletions.removeAll { submittedDocument.deletions.contains($0) }
             return rebased
         }
+        redoStack = redoStack.map { snapshot in
+            var rebased = snapshot
+            rebased.deletions.removeAll { submittedDocument.deletions.contains($0) }
+            return rebased
+        }
     }
 
     private func copy(_ section: EditorSection, from submitted: EditorDocument, into baseline: inout EditorDocument) {
@@ -8677,6 +9205,8 @@ struct NativeEditorTemporaryVideo: Sendable {
             let result = await self.reloadLatestKeepingLocalEdits(fencingPreviewConflict: true)
             guard self.editorOperationIdentity == identity else { return }
             switch result {
+            case .needsResolution:
+                return
             case .reloaded:
                 return
             case .superseded:
@@ -9131,10 +9661,14 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
     }
 
-    private func configureCapabilities(from variant: [String: JSONValue]?) {
+    private func configureCapabilities(from variant: [String: JSONValue]?, songVariantKey: String? = nil) {
+        let serverOverlay = variant.flatMap { Self.serverSavedSongOverlay(for: $0, job: jobID, variantKey: songVariantKey ?? variantKey) }
+        let overlay = serverOverlay ?? variant.flatMap { savedSongOverlay(for: $0, thread: threadID, job: jobID,
+            item: itemID, variantKey: variantKey,
+            generation: $0["render_generation_id"]?.stringValue ?? $0["render_finished_at"]?.stringValue ?? "") }
         previewVariant = variant ?? [:]
-        // The variant is the server's word on the song: what it lists already includes saved edits.
-        acknowledgedUserSong = nil
+        acknowledgedUserSong = overlay
+        if serverOverlay != nil || overlay == nil { savedSongProjectionLag = nil }
         // KRI-576: its lyric rows were projected for that same window.
         songCaptionWindowStartS = NativeUserSong(variant: previewVariant)?.windowStartS
         songCaptionLipsyncCarryS = 0
@@ -9215,9 +9749,38 @@ struct NativeEditorTemporaryVideo: Sendable {
     var previewPollInterval: Duration = .seconds(1)
     var previewPollBudget = 300
 
+    private func readSavedPreview(api: any KriaAPIClient, job: UUID, variant: String,
+                                  identity: EditorOperationIdentity, generation: String) async throws -> [String: JSONValue] {
+        let owner = api.mediaLibraryOwner
+        let scope = observationScope(api: api, target: "variant:\(job):\(variant)")
+        while let active = previewTransport { _ = try? await active.value; try Task.checkCancellation() }
+        while (previewObservationCooldowns[scope] ?? NativeEditorReadCooldown()).delay(now: previewReadNow()) > .zero {
+            try await previewReadSleep((previewObservationCooldowns[scope] ?? NativeEditorReadCooldown()).delay(now: previewReadNow()))
+            try Task.checkCancellation()
+        }
+        guard observersVisible, editorOperationIdentity == identity, pendingPreviewGeneration == generation,
+              api.mediaLibraryOwner == owner, observationScope(api: self.api, target: scope.target) == scope, !(previewObservationCooldowns[scope]?.isPaused ?? false) else { throw CancellationError() }
+        if previewTransport != nil { return try await readSavedPreview(api: api, job: job, variant: variant, identity: identity, generation: generation) }
+        let task = Task<[String: JSONValue], Error> { [weak self] in
+            defer { self?.previewTransport = nil }
+            do { return try await api.editorVariant(jobID: job, variantID: variant) }
+            catch {
+                if let self, api.mediaLibraryOwner == owner,
+                   case let APIError.requestFailed(_, detail) = error, let hint = detail.retryAfter {
+                    self.previewObservationCooldowns[scope, default: NativeEditorReadCooldown()].record(seconds: hint, now: self.previewReadNow())
+                }
+                throw error
+            }
+        }
+        previewTransport = task
+        return try await task.value
+    }
+
     private func startPreviewRefresh(generation: String) {
         previewRefreshTask?.cancel()
         pendingPreviewGeneration = generation
+        previewObservationTerminal = false
+        guard observersVisible else { return }
         if surfaceDeviceRenderFailure() { return }
         guard let api, let jobID, let variantKey else {
             saveState = .previewFailed("Your edit is saved, but this device cannot check the new preview yet.")
@@ -9227,20 +9790,31 @@ struct NativeEditorTemporaryVideo: Sendable {
         let savedFrom = previewSupersededGeneration
         let interval = previewPollInterval
         let budget = previewPollBudget
+        let owner = api.mediaLibraryOwner, sleep = previewReadSleep
+        let wasSlow = previewSlowGeneration == generation
         previewRefreshTask = Task { [weak self] in
             // Only answered polls spend the budget: offline or a 5xx just waits longer between tries.
             var answered = 0
             var unreachable = 0
             var newerGeneration: String?
             var newerSightings = 0
-            while answered < budget {
+            var recovering = wasSlow
+            while true {
                 guard !Task.isCancelled else { return }
-                let backoff = unreachable == 0 ? interval : min(interval * (1 << min(unreachable, 4)), .seconds(15))
-                try? await Task.sleep(for: backoff)
+                recovering = recovering || answered >= budget || unreachable >= 12
+                let exhausted = recovering
+                let backoff = exhausted ? Self.latestJobSlowRecheck : (unreachable == 0 ? interval : min(interval * (1 << min(unreachable, 4)), .seconds(15)))
+                if exhausted, let self, self.editorOperationIdentity == identity, self.pendingPreviewGeneration == generation {
+                    self.previewSlowGeneration = generation
+                    self.saveState = .previewFailed("Your edit is saved. The preview will be checked again automatically.")
+                }
+                do { try await sleep(backoff) } catch { return }
                 guard !Task.isCancelled else { return }
                 let variant: [String: JSONValue]
                 do {
-                    variant = try await api.editorVariant(jobID: jobID, variantID: variantKey)
+                    guard let self, self.observersVisible, self.editorOperationIdentity == identity,
+                          self.pendingPreviewGeneration == generation, api.mediaLibraryOwner == owner else { return }
+                    variant = try await self.readSavedPreview(api: api, job: jobID, variant: variantKey, identity: identity, generation: generation)
                 } catch {
                     switch Self.refreshFailure(error) {
                     case .cancelled:
@@ -9248,18 +9822,21 @@ struct NativeEditorTemporaryVideo: Sendable {
                     case .appGate:
                         // Sign-in or update is shown app-wide; nothing to poll for until then.
                         return
-                    case let .transient(retryAfter):
-                        unreachable += 1
-                        if let retryAfter { try? await Task.sleep(for: .seconds(min(retryAfter, 60))) }
+                    case .transient:
+                        unreachable = min(unreachable + 1, 12)
                     case .readConflict, .targetLost, .runtimeUnavailable, .other:
-                        answered += 1
+                        guard let self, self.observersVisible, self.editorOperationIdentity == identity,
+                              self.pendingPreviewGeneration == generation, api.mediaLibraryOwner == owner else { return }
+                        self.previewObservationTerminal = true
+                        self.saveState = .previewFailed("Your edit is saved, but this preview cannot be checked right now.")
+                        return
                     }
                     continue
                 }
                 unreachable = 0
-                answered += 1
+                answered = min(answered + 1, budget)
                 guard !Task.isCancelled else { return }
-                guard let self, self.editorOperationIdentity == identity, self.pendingPreviewGeneration == generation else { return }
+                guard let self, self.observersVisible, api.mediaLibraryOwner == owner, self.editorOperationIdentity == identity, self.pendingPreviewGeneration == generation else { return }
                 // Device failures are reported on the authoritative variant;
                 // only reconcile the local renderer for that terminal status.
                 // Save-time reconciliation already covers the normal path,
@@ -9273,11 +9850,11 @@ struct NativeEditorTemporaryVideo: Sendable {
                     || variant["render_status"]?.stringValue == "needs_attention"
                     || (variant["render_status"]?.stringValue == "ready" && variantGeneration != generation)
                 )
-                if refreshDevice {
+                if refreshDevice && !exhausted {
                     await self.refreshDeviceRender()
                     guard !Task.isCancelled, self.editorOperationIdentity == identity, self.pendingPreviewGeneration == generation else { return }
                 }
-                if self.applyPreviewVariant(variant, generation: generation) { return }
+                if self.applyPreviewVariant(variant, generation: generation) { self.previewObservationTerminal = true; return }
                 // The server moved past this save: another device saved on top of it, or this
                 // iPhone published under a request the identity fence no longer recognises. Waiting
                 // for this generation can never end, so follow the newer one once it reads the same
@@ -9292,12 +9869,9 @@ struct NativeEditorTemporaryVideo: Sendable {
                 newerGeneration = current
                 guard newerSightings >= 2 else { continue }
                 self.pendingPreviewGeneration = current
-                if self.applyPreviewVariant(variant, generation: current) { return }
+                if self.applyPreviewVariant(variant, generation: current) { self.previewObservationTerminal = true; return }
                 self.pendingPreviewGeneration = generation
             }
-            guard !Task.isCancelled, let self, self.editorOperationIdentity == identity, self.pendingPreviewGeneration == generation else { return }
-            // Never reuse a read error's copy here: "This edit changed elsewhere" is a save conflict.
-            self.saveState = .previewFailed("Your edit is saved, but the preview is taking longer than expected. Try checking again.")
         }
     }
 
@@ -9363,6 +9937,14 @@ struct NativeEditorTemporaryVideo: Sendable {
             pendingPreviewGeneration = nil
             saveState = .saved
             announceEditApplied()
+            return true
+        }
+        if status == "needs_attention" {
+            saveState = .renderRetryNeeded("Your edit is saved, but its preview needs attention before rendering can continue.")
+            return true
+        }
+        if status == "cancelled" || status == "superseded" {
+            saveState = .previewFailed("Your edit is saved. This preview is no longer rendering.")
             return true
         }
         if status == "failed" {

@@ -61,6 +61,10 @@ class _FakeSession:
         assets = self._assets
 
         class _Result:
+            def scalar_one_or_none(self_inner):
+                # Legacy jobs in this fixture have no durable generation receipt.
+                return None
+
             def scalars(self_inner):
                 return self_inner
 

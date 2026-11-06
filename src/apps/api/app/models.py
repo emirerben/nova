@@ -17,6 +17,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    PrimaryKeyConstraint,
     SmallInteger,
     String,
     Text,
@@ -730,6 +731,55 @@ class Job(Base):
                 "OR (assembly_plan -> '_speech_cleanup_internal') "
                 "? 'render_generation_cleanup_pending')"
             ),
+        ),
+    )
+
+
+class SlidePostGenerationReceipt(Base):
+    """One client intent and immutable first-render input, independent of Job JSON."""
+
+    __tablename__ = "slide_post_generation_receipts"
+
+    client_request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=False
+    )
+    ownership_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    draft_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    request_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    # Deliberately not an FK: deleting a Job must not erase or recycle its receipt.
+    job_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, unique=True)
+    draft_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    asset_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    snapshot_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    dispatch_state: Mapped[str] = mapped_column(Text, nullable=False, server_default="unconfirmed")
+    execution_state: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    publish_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    next_publish_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    staged_result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    finalize_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    next_finalize_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    dispatch_queue: Mapped[str] = mapped_column(Text, nullable=False, server_default="plan-jobs")
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    __table_args__ = (
+        PrimaryKeyConstraint("client_request_id", name="pk_slide_post_generation_receipts"),
+        CheckConstraint(
+            "execution_state IN ('pending','running','completed','failed')",
+            name="ck_slide_post_receipt_execution",
+        ),
+        CheckConstraint("publish_attempts >= 0", name="ck_slide_post_receipt_attempts"),
+        CheckConstraint("finalize_attempts >= 0", name="ck_slide_post_receipt_finalize_attempts"),
+        CheckConstraint(
+            "draft_version >= 1 AND ownership_epoch >= 0", name="ck_slide_post_receipt_version"
+        ),
+        CheckConstraint(
+            "dispatch_state IN ('unconfirmed','published','publish_failed')",
+            name="ck_slide_post_receipt_dispatch",
         ),
     )
 
@@ -4841,4 +4891,96 @@ class CreatorGenerationReview(Base):
         Index("ix_generation_review_publish_order", "last_publish_attempt_at", "created_at"),
         Index("ix_generation_review_execution", "execution_id"),
         Index("ix_generation_review_owner", "owner_id"),
+    )
+
+
+class SlidePostRenderRevision(Base):
+    """One authorized saved revision of a keyed SlidePost's existing Job."""
+
+    __tablename__ = "slide_post_render_revisions"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    parent_request_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("slide_post_generation_receipts.client_request_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=False
+    )
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    ownership_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    draft_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    draft_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    asset_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    snapshot_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    native_client: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    published: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    publish_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    finalize_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_observe_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    staged_result: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    __table_args__ = (
+        UniqueConstraint(
+            "parent_request_id", "draft_version", name="uq_slide_post_revision_version"
+        ),
+        CheckConstraint(
+            "state IN ('pending','running','completed','failed','superseded','blocked')",
+            name="ck_slide_post_revision_state",
+        ),
+        CheckConstraint(
+            "publish_attempts >= 0 AND finalize_attempts >= 0",
+            name="ck_slide_post_revision_attempts",
+        ),
+        Index("ix_slide_post_revision_observe", "state", "next_observe_at"),
+    )
+
+
+class SlidePostAIRequest(Base):
+    """One immutable AI intent and its permanent paid-execution claim."""
+
+    __tablename__ = "slide_post_ai_requests"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    input_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    request_input: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    prepared_input: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    authority_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    next_delivery_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    delivery_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    resolved_input: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    claim_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, nullable=False, server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    __table_args__ = (
+        CheckConstraint("kind IN ('propose', 'chat_edit')", name="ck_slide_ai_kind"),
+        CheckConstraint(
+            "status IN ('pending', 'running', 'completed', 'unknown', 'rejected')",
+            name="ck_slide_ai_status",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'rejected') OR claim_id IS NOT NULL", name="ck_slide_ai_claim"
+        ),
+        CheckConstraint("status != 'completed' OR result IS NOT NULL", name="ck_slide_ai_result"),
+        Index("ix_slide_ai_owner_item", "owner_id", "item_id"),
+        Index("ix_slide_ai_delivery", "status", "next_delivery_at"),
+        CheckConstraint("delivery_attempts >= 0", name="ck_slide_ai_delivery_attempts"),
     )

@@ -96,6 +96,7 @@ from app.schemas.guided_edit_revision import (
     validate_guided_revision_lane_identities,
 )
 from app.schemas.montage_preset import MASONRY_MONTAGE_PRESET, is_collage_montage_preset
+from app.schemas.saved_user_song import SavedUserSong
 from app.schemas.user_song import MIN_PLAYABLE_SONG_S
 from app.services.cloud_render_policy import cloud_render_mutation_block_reason
 from app.services.content_plan_persona import (
@@ -614,6 +615,9 @@ class GenerativeVariant(BaseModel):
     # byte-identical. Display-only: never a catalog track, never editable via
     # music_track_id / mix / music_operations.
     user_song: UserSongOut | None = Field(default=None, exclude_if=lambda value: value is None)
+    saved_user_song: SavedUserSong | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     editor_capabilities: EditorCapabilitiesOut | None = None
     speech_cut_candidates: list[dict] | None = None
     speech_cut_revision: str | None = None
@@ -1147,6 +1151,9 @@ class NativeEditorAssetOut(BaseModel):
 
 
 class TimelineResponse(BaseModel):
+    saved_user_song: SavedUserSong | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     editor_state: Literal["renderable", "empty"] = "renderable"
     draft: DraftSnapshotOut | None = None
     native_assets: list[NativeEditorAssetOut] = Field(default_factory=list)
@@ -2919,7 +2926,19 @@ def _variants_for_response(job: Job) -> list[dict]:
         from app.services.editor_empty_drafts import public_saved_editor_variant
 
         out.append(public_saved_editor_variant(job, v))
-    return project_public_assembly_plan(out)
+    result = project_public_assembly_plan(out)
+    from app.services.saved_user_song import saved_user_song_for_variant
+
+    for variant in result:
+        variant.pop("saved_user_song", None)
+        if variant.get("variant_id") in (
+            projection.media_unavailable_variant_ids | projection.masked_last_good_variant_ids
+        ):
+            continue
+        if marker := saved_user_song_for_variant(job, variant):
+            variant["saved_user_song"] = marker
+            variant["editor_revision_number"] = marker["revision_number"]
+    return result
 
 
 def _find_variant(job: Job, variant_id: str) -> dict | None:
@@ -8911,6 +8930,14 @@ def dispatch_get_timeline(
             base_generation=variant_render_baseline(variant),
             has_user_edits=True,
         )
+    from app.services.saved_user_song import saved_user_song_for_variant
+
+    projection = project_public_assembly_plan_with_metadata(job.assembly_plan)
+    if variant and variant_id not in (
+        projection.media_unavailable_variant_ids | projection.masked_last_good_variant_ids
+    ):
+        if marker := saved_user_song_for_variant(job, variant):
+            timeline["saved_user_song"] = marker
     return timeline
 
 

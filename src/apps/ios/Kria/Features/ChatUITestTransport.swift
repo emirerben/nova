@@ -72,7 +72,15 @@ struct ChatUITestTokenStore: TokenStore {
     // `KRIA_FIXTURE_EXPIRED_TOKEN=1` (perf): an in-memory expired session, so the 401 -> refresh path runs.
     func read() throws -> MobileSession? {
         if PerfFixture.expiredToken { return PerfTokenState.shared.current }
-        return nil
+        // A synthetic account identity scopes offline durable render recovery without Keychain access.
+        // Each UI-test app may opt into a private account namespace. It lives in
+        // launchEnvironment, so relaunching that same app retains its durable journals.
+        let namespace = ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_ACCOUNT_NAMESPACE"]
+            .flatMap(UUID.init(uuidString:))?.uuidString.lowercased()
+        let subject = namespace.map { "chat-ui-fixture-\($0)" } ?? "chat-ui-fixture"
+        let payload = try JSONSerialization.data(withJSONObject: ["sub": subject]).base64EncodedString()
+            .replacingOccurrences(of: "=", with: "").replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+        return MobileSession(accessToken: "fixture.\(payload).fixture", refreshToken: "fixture-refresh", expiresIn: 3600)
     }
     func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) throws -> SessionStoreUpdate {
         guard PerfFixture.expiredToken else { throw APIError.unsupported }
@@ -174,6 +182,13 @@ final class CreationChatFixture: @unchecked Sendable {
     private var sendRefused = false
     private var slideDrafts: [String: [String: Any]] = [:]
     private var slideRendered: Set<String> = []
+    private var slideAIReceipts: [String: [String: Any]] = [:]
+    private var slideAIOriginalOperation: String?
+    private var slideAILegacyExecutingOperation: String?
+    private var slideAIExecutionCount = 0
+    private var slideAIOriginalLookups = 0
+    private var slideGenerationReceipts: [String: [String: Any]] = [:]
+    private var slideGenerationTargets: [String: String] = [:]
     private var generatedMediaOperations: [String: [String: Any]] = [:]
     private var generatedMediaAssets: [String: [[String: Any]]] = [:]
     private var generatedMediaPostCount = 0
@@ -1721,6 +1736,62 @@ final class CreationChatFixture: @unchecked Sendable {
     /// proposal, versioned save, and version-approved dispatch endpoints.
     private func slideResponse(_ request: URLRequest, itemID: String, parts: [String], body: [String: Any]) -> (Int, Data) {
         func response(_ object: Any, status: Int = 200) -> (Int, Data) { (status, (try? JSONSerialization.data(withJSONObject: object)) ?? Data()) }
+        let aiProjectID = "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
+        if let index = parts.firstIndex(of: "ai-requests") {
+            let operation = (index + 1 < parts.count ? parts[index + 1] : (body["client_request_id"] as? String ?? "")).lowercased()
+            let lostResponse = ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_AI_LOST_RESPONSE"] == "1"
+                && ((body["kind"] as? String) == "chat_edit" || (slideAIReceipts[operation]?["kind"] as? String) == "chat_edit")
+            if var stored = slideAIReceipts[operation] {
+                guard (stored["item_id"] as? String)?.lowercased() == itemID.lowercased() else {
+                    return response(["detail": "AI receipt belongs to another item"], status: 404)
+                }
+                if request.httpMethod != "GET" {
+                    guard let input = body["input"] as? [String: Any],
+                          let originalInput = stored["input"] as? [String: Any],
+                          (try? JSONSerialization.data(withJSONObject: input, options: .sortedKeys)) ==
+                            (try? JSONSerialization.data(withJSONObject: originalInput, options: .sortedKeys)),
+                          body["kind"] as? String == stored["kind"] as? String,
+                          (body["project_id"] as? String).flatMap(UUID.init(uuidString:)) == UUID(uuidString: aiProjectID) else {
+                        return response(["detail": "AI request identity conflict"], status: 409)
+                    }
+                    if lostResponse { return response(["detail": "Original response unavailable"], status: 503) }
+                }
+                if lostResponse {
+                    guard operation == slideAIOriginalOperation, slideAIExecutionCount == 1 else {
+                        return response(["detail": "Recovery did not preserve one original execution"], status: 409)
+                    }
+                    slideAIOriginalLookups += 1
+                    guard slideAIOriginalLookups > 0 else { return response(["detail": "Original lookup required"], status: 409) }
+                    if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_AI_WRONG_RECEIPT"] == "1" {
+                        stored["client_request_id"] = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+                    }
+                }
+                return response(stored)
+            }
+            if request.httpMethod == "GET" { return response(["detail": "AI receipt missing"], status: 404) }
+            guard (body["project_id"] as? String).flatMap(UUID.init(uuidString:)) == UUID(uuidString: aiProjectID), let input = body["input"] as? [String: Any],
+                  let kind = body["kind"] as? String, ["propose", "chat_edit"].contains(kind), UUID(uuidString: operation) != nil else {
+                return response(["detail": "Invalid AI intent"], status: 422)
+            }
+            if lostResponse {
+                guard slideAIOriginalOperation == nil else {
+                    return response(["detail": "Recovery must observe the original request UUID"], status: 409)
+                }
+                slideAIOriginalOperation = operation
+                slideAIExecutionCount += 1
+                slideAILegacyExecutingOperation = operation
+            }
+            let legacy = slideResponse(request, itemID: itemID, parts: Array(parts.prefix(index)) + [kind == "propose" ? "propose" : "chat-edit"], body: input)
+            slideAILegacyExecutingOperation = nil
+            guard legacy.0 == 200, let result = try? JSONSerialization.jsonObject(with: legacy.1) else { return legacy }
+            let receipt: [String: Any] = ["client_request_id": operation, "item_id": itemID, "project_id": aiProjectID,
+                "kind": kind, "input_digest": "fixture-exact-input", "input": input, "status": "completed", "result": result]
+            slideAIReceipts[operation] = receipt
+            // Compute/store once, then lose only the response. Duplicate POSTs never
+            // invoke the fake agent; only the original receipt GET reveals completion.
+            if lostResponse { return response(["detail": "Original response unavailable"], status: 503) }
+            return response(receipt)
+        }
         // `KRIA_SLIDE_POST_MANY=1`: twelve slides, so the strip overflows and auto-scroll can be exercised.
         let base = [("trulli-street", "jpg", "image"), ("istanbul", "mp4", "video"), ("lisbon", "jpg", "image")]
         let media = ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_MANY"] == "1" ? Array(repeating: base, count: 4).flatMap { $0 } : base
@@ -1773,6 +1844,10 @@ final class CreationChatFixture: @unchecked Sendable {
             return response(["draft": draft, "base_version": base, "fallback_used": false, "summary": "Open on the quiet street, move through the city, and close on the view."])
         }
         if parts.last == "chat-edit" {
+            if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_AI_LOST_RESPONSE"] == "1",
+               slideAILegacyExecutingOperation == nil {
+                return response(["detail": "Legacy AI fallback is forbidden in original-result recovery"], status: 409)
+            }
             // KRI-298 Lane E stub: reverse the slides and label the first two with a place. The editor's
             // own draft wins when sent; `base_version` is the stored version the next PUT must quote.
             let stored = slideDrafts[itemID]
@@ -1806,6 +1881,31 @@ final class CreationChatFixture: @unchecked Sendable {
             slideDrafts[itemID] = draft
             return response(["slide_post": draft])
         }
+        if parts.contains("generation-requests"), let operation = parts.last, operation != "generation-requests" {
+            guard let receipt = slideGenerationReceipts[operation] else { return response(["detail": "receipt missing"], status: 404) }
+            return response(receipt)
+        }
+        if parts.last == "generation-requests" {
+            guard let operation = body["client_request_id"] as? String, UUID(uuidString: operation) != nil,
+                  let version = body["expected_version"] as? Int else { return response(["detail": "invalid request"], status: 422) }
+            guard body.keys.contains("expected_current_job_id") else { return response(["detail": "target required"], status: 422) }
+            let expectedTarget = (body["expected_current_job_id"] as? String).flatMap(UUID.init(uuidString:))
+            let targetKey = expectedTarget?.uuidString ?? "null"
+            if let receipt = slideGenerationReceipts[operation] {
+                guard slideGenerationTargets[operation] == targetKey else { return response(["detail": "request conflict"], status: 409) }
+                return response(["generation_receipt": receipt])
+            }
+            let currentTarget = slideRendered.contains(itemID) ? UUID(uuidString: itemID) : nil
+            guard currentTarget == expectedTarget else { return response(["detail": "target changed"], status: 409) }
+            guard version == slideDrafts[itemID]?["version"] as? Int else { return response(["detail": "version conflict"], status: 409) }
+            let receipt: [String: Any] = ["client_request_id": operation, "item_id": itemID, "draft_version": version,
+                "job_id": itemID, "dispatch_state": "published", "job_status": "variants_ready", "is_current_target": true]
+            slideGenerationReceipts[operation] = receipt
+            slideGenerationTargets[operation] = targetKey
+            slideRendered.insert(itemID)
+            slideDrafts[itemID]?["rendered_version"] = version
+            return response(["generation_receipt": receipt])
+        }
         if parts.last == "generate" {
             slideRendered.insert(itemID)
             let version = slideDrafts[itemID]?["version"]
@@ -1817,7 +1917,7 @@ final class CreationChatFixture: @unchecked Sendable {
             lateAssetPolls[itemID] = polls
             assets.append(lateAsset(status: polls <= 2 ? "processing" : "ready"))
         }
-        var state: [String: Any] = ["schema_version": 1, "item_id": itemID, "title": "Three connected moments", "assets": assets, "render_status": "not_rendered", "slides": [], "validation_errors": []]
+        var state: [String: Any] = ["schema_version": 1, "generation_idempotency_version": 1, "ai_request_recovery_version": 1, "ai_request_delivery_version": 1, "ai_project_id": aiProjectID, "item_id": itemID, "title": "Three connected moments", "assets": assets, "render_status": "not_rendered", "slides": [], "validation_errors": []]
         if let draft = slideDrafts[itemID] { state["draft"] = draft }
         if slideRendered.contains(itemID), let draft = slideDrafts[itemID] {
             state["job_id"] = itemID; state["render_status"] = "ready"; state["rendered_version"] = draft["version"]

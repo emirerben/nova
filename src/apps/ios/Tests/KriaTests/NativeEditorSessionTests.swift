@@ -7,6 +7,164 @@ import XCTest
 
 @MainActor
 final class NativeEditorSessionTests: XCTestCase {
+    func testReadyJobReceivedDuringSaveIsRecheckedAfterSaveAndTransientReadFailure() async throws {
+        try await exerciseLatestJobDuringSave(runtimeVersion: 2)
+    }
+
+    func testLegacyDirtyLatestJobDoesNotRequireUnavailableDraftEndpoint() async throws {
+        try await exerciseLatestJobDuringSave(runtimeVersion: 1)
+    }
+
+    func testLatestJobRetriesSixtySecondHintWithoutAnotherNotification() async throws {
+        try await exerciseLatestJobDuringSave(runtimeVersion: 2, retryAfter: 60)
+    }
+
+    func testLatestJobRecoversAfterFastReadBudgetWithoutAnotherNotification() async throws {
+        try await exerciseLatestJobDuringSave(runtimeVersion: 2, failedReads: 5)
+    }
+
+    func testSupersededInFlightLatestReadRetainsSoleTransportAndLateRetryAfter() async throws {
+        try await exerciseLatestJobDuringSave(runtimeVersion: 2, retryAfter: 600, supersedeInFlight: true)
+    }
+
+    func testLatestJobRearmsBeyondFiveMinuteWindowWithoutShorteningRetryAfter() async throws {
+        try await exerciseLatestJobDuringSave(runtimeVersion: 2, retryAfter: 600)
+    }
+
+    func testLatestJobWatchContinuesSlowlyAfterSixtyFourRenderingChecks() async throws {
+        try await exerciseLatestJobDuringSave(runtimeVersion: 2, renderingWaits: 65)
+    }
+
+    func testSlowLatestJobWakeCannotSurviveAccountOrLoadReplacement() async throws {
+        for replacement in ["account", "load"] {
+            try await exerciseLatestJobDuringSave(runtimeVersion: 2, failedReads: 5, invalidateOnSlow: replacement)
+        }
+    }
+
+    func testSlowLatestJobWakeIsReplacedByNewerNotificationWithoutDuplicateRead() async throws {
+        try await exerciseLatestJobDuringSave(runtimeVersion: 2, failedReads: 5, invalidateOnSlow: "ticket")
+    }
+
+    func testSlowLatestJobReadSettlesCancelledOrSupersededTargetWithoutRendering() async throws {
+        for status in ["cancelled", "superseded", "failed"] {
+            try await exerciseLatestJobDuringSave(runtimeVersion: 2, failedReads: 5, terminalJobStatus: status)
+        }
+    }
+
+    private func exerciseLatestJobDuringSave(runtimeVersion: Int, retryAfter: Double? = nil,
+                                           failedReads: Int = 1, renderingWaits: Int = 0,
+                                           invalidateOnSlow: String? = nil, terminalJobStatus: String? = nil, supersedeInFlight: Bool = false) async throws {
+        let thread = UUID(), oldJob = UUID(), newJob = UUID()
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["sections": .object([
+            "text_elements": .array([.object(["id": .string("text"), "text": .string("Original"),
+                "start_s": .number(0), "end_s": .number(2)])])
+        ])])]
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant",
+            draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: oldJob.uuidString,
+            baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
+            authoritativeVariant: ["resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"),
+                "editor_capabilities": .object(["text_elements": .bool(true)])], suspendNextCommit: true)
+        let session = NativeEditorSession()
+        session.latestJobRetryDelays = [.zero]
+        var now = ContinuousClock.now
+        var waited: Duration = .zero
+        var watchWaits = 0
+        var readsAtInvalidation: Int?
+        fake.mediaLibraryOwner = "first"
+        session.newVersionPollDelays = [.seconds(1)]
+        session.latestJobReadNow = { now }
+        session.latestJobReadSleep = { delay in
+            waited += delay
+            if supersedeInFlight, delay >= .seconds(600) {
+                XCTAssertTrue(session.latestJobRefreshMessage?.contains("automatically") == true,
+                    "a paced cancellation must preserve the scheduled automatic-wait notice")
+            }
+            now = now.advanced(by: delay)
+            if renderingWaits > 0 {
+                watchWaits += 1
+                if watchWaits >= renderingWaits {
+                    fake.editorVariantsByJob[newJob] = [["variant_id": .string("variant"), "render_status": .string("ready")]]
+                }
+            }
+            if delay >= .seconds(300), let invalidateOnSlow, readsAtInvalidation == nil {
+                readsAtInvalidation = fake.projectCallCount
+                if invalidateOnSlow == "account" { fake.mediaLibraryOwner = "replacement" }
+                else if invalidateOnSlow == "ticket", let latest = fake.refreshedThread?.summary {
+                    fake.projectErrorQueue = []
+                    await session.adoptLatestJob(latest, api: fake)
+                } else { await session.load(api: fake, threadID: thread) }
+            }
+            await Task.yield()
+        }
+        await session.load(api: fake, threadID: thread)
+        if runtimeVersion == 1 { fake.draftError = .unsupported }
+        let draftReadsBefore = fake.draftCallCount
+        session.updateTextContent(id: "text", content: "Submitted")
+        let saving = Task { await session.save() }
+        _ = await waitUntil { fake.commitIsSuspended }
+        XCTAssertTrue(fake.commitIsSuspended)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        fake.refreshedThread = try decoder.decode(CreationThread.self, from: Data(#"""
+        {"id":"\#(thread.uuidString)","title":"Latest","status":"active","revision":2,"runtime_version":\#(runtimeVersion),
+         "active_job_id":"\#(newJob.uuidString)","active_plan_item_id":"item",
+         "state":{"selected_variant_id":"variant"},
+         "job":{"id":"\#(newJob.uuidString)","status":"\#(terminalJobStatus ?? "variants_ready")","variants":[{"variant_id":"variant","render_status":"ready"}]},
+         "updated_at":"2026-09-09T08:00:00Z"}
+        """#.utf8))
+        fake.editorVariantsByJob[newJob] = [["variant_id": .string("variant"), "render_status": .string(renderingWaits > 0 ? "rendering" : "ready")]]
+        let newest = try XCTUnwrap(fake.refreshedThread?.summary)
+        let readsBefore = fake.projectCallCount
+        fake.projectErrorQueue = Array(repeating: .requestFailed(status: 503, detail: .init("Temporary", retryAfter: retryAfter)), count: renderingWaits > 0 ? 0 : failedReads)
+        await session.adoptLatestJob(newest, api: fake)
+        XCTAssertEqual(fake.projectCallCount, readsBefore, "Save owns the document until its response settles")
+        session.updateTextContent(id: "text", content: "Still editing")
+        if supersedeInFlight { fake.suspendNextProject = true }
+        fake.resumeCommit()
+        await saving.value
+        if supersedeInFlight {
+            _ = await waitUntil { fake.projectIsSuspended }
+            await session.adoptLatestJob(newest, api: fake)
+            for _ in 0..<20 { await Task.yield() }
+            XCTAssertEqual(fake.projectCallCount, readsBefore + 1, "a replaced ticket must wait for the sole transport")
+            fake.resumeProject()
+        }
+        if invalidateOnSlow != nil {
+            _ = await waitUntil { readsAtInvalidation != nil }
+            if invalidateOnSlow == "ticket" {
+                _ = await waitUntil { session.newerJobPrompt?.activeJobID == newJob }
+                XCTAssertEqual(fake.projectCallCount, (readsAtInvalidation ?? 0) + 1)
+            } else {
+                for _ in 0..<30 { await Task.yield() }
+                XCTAssertEqual(fake.projectCallCount, readsAtInvalidation)
+            }
+            XCTAssertEqual(fake.commitCount, 1)
+            return
+        }
+        if terminalJobStatus != nil {
+            _ = await waitUntil { fake.projectCallCount >= readsBefore + failedReads + 1 }
+            let settledReads = fake.projectCallCount
+            for _ in 0..<30 { await Task.yield() }
+            XCTAssertEqual(fake.projectCallCount, settledReads)
+            XCTAssertNil(session.newerJobPrompt)
+            XCTAssertEqual(session.document.textElements.first?.text, "Still editing")
+            XCTAssertEqual(fake.commitCount, 1)
+            return
+        }
+        _ = await waitUntil { runtimeVersion == 1 ? session.mergeConflictMessage != nil : session.newerJobPrompt?.activeJobID == newJob }
+        XCTAssertGreaterThanOrEqual(fake.projectCallCount, readsBefore + 2)
+        if runtimeVersion == 1 {
+            XCTAssertNotNil(session.mergeConflictMessage)
+            XCTAssertEqual(fake.draftCallCount, draftReadsBefore)
+        } else { XCTAssertEqual(session.newerJobPrompt?.activeJobID, newJob) }
+        XCTAssertEqual(session.document.textElements.first?.text, "Still editing")
+        XCTAssertTrue(session.hasUnsavedChanges)
+        if let retryAfter { XCTAssertEqual(waited, .seconds(retryAfter)) }
+        if failedReads > 1 || renderingWaits > 64 { XCTAssertGreaterThanOrEqual(waited, .seconds(300)) }
+        XCTAssertEqual(fake.commitCount, 1, "read recovery never resubmits Save")
+    }
+
     func testDeviceNarrationRequestUsesPublishedGenerationAndExactTarget() throws {
         let jobID = UUID()
         let base = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
@@ -526,6 +684,10 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertNil(fake.lastRequest?.userSong, "a retry does not resend the removal")
 
         // A newer version refuses the next Save: the automatic reload and resend keep the removal folded.
+        // The authoritative response must include the acknowledged removal;
+        // returning the original song would represent a conflicting remote restoration.
+        fake.authoritativeVariant?["user_song"] = nil
+        fake.authoritativeVariant?["render_generation_id"] = .string("generation-2")
         fake.commitErrorQueue = [.conflict]
         fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-3",
             sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false),
@@ -538,6 +700,116 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.hasUnsavedChanges)
         await session.retryRender()
         XCTAssertNil(fake.lastRequest?.userSong, "nor does a retry after a conflict rebase")
+    }
+
+    func testSavedSongRemovalSurvivesExactGenerationRenderRecoveryProjectionWithoutResending() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        session.removeUserSong()
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-2",
+            sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: false, mix: false),
+            revisionNumber: 2, revisionHash: "saved", expectedDuration: nil,
+            renderStarted: false, renderRecovery: "Your edit is saved; its render needs more footage.")
+        await session.save()
+        XCTAssertTrue(session.userSongRemoved)
+        XCTAssertNil(session.document.userSong, "the removal is acknowledged, not an unsaved command")
+
+        // Durable intent advanced, but compilation retained the preceding song plan.
+        fake.authoritativeVariant?["render_generation_id"] = .string("generation-2")
+        fake.authoritativeVariant?["editor_revision_number"] = .number(2)
+        session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.5)
+        fake.commitErrorQueue = [.conflict]
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-2",
+            sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false),
+            revisionNumber: 2, revisionHash: "saved", expectedDuration: nil,
+            renderStarted: false, renderRecovery: "Your edit is saved; its render needs more footage.")
+        await session.save()
+        XCTAssertNil(session.mergeConflictMessage, "the exact saved removal outranks its retained render plan")
+        XCTAssertEqual(fake.commitCount, 3, "one conflict refresh and one resend")
+        XCTAssertNil(fake.lastRequest?.userSong, "the acknowledged removal must not be sent twice")
+        XCTAssertTrue(session.userSongRemoved)
+        XCTAssertNil(session.yourSong)
+        XCTAssertFalse(session.hasUnsavedChanges)
+
+        // A genuinely newer generation is a new authority, even with identical song metadata.
+        var newer = try XCTUnwrap(fake.authoritativeVariant)
+        newer["render_generation_id"] = .string("generation-3")
+        XCTAssertTrue(session.rebaseCleanDraft(from: newer))
+        XCTAssertFalse(session.userSongRemoved)
+        XCTAssertNotNil(session.yourSong)
+    }
+
+    func testRenderRecoverySongFallbackRejectsChangedOrMissingRevisionAtSameGeneration() async throws {
+        let cases: [(acknowledged: Int?, projected: JSONValue?)] = [
+            (2, .number(3)), (2, nil), (nil, .number(2)), (2, .string("2")),
+        ]
+        for testCase in cases {
+            let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+            session.removeUserSong()
+            fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-2",
+                sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: false, mix: false),
+                revisionNumber: testCase.acknowledged, revisionHash: "saved", expectedDuration: nil,
+                renderStarted: false, renderRecovery: "Your edit is saved; its render needs more footage.")
+            await session.save()
+            XCTAssertTrue(session.userSongRemoved)
+            var changed = try XCTUnwrap(fake.authoritativeVariant)
+            changed["render_generation_id"] = .string("generation-2")
+            changed["editor_revision_number"] = testCase.projected
+            XCTAssertTrue(session.rebaseCleanDraft(from: changed))
+            XCTAssertFalse(session.userSongRemoved, "an absent or changed revision cannot reuse the old acknowledgement")
+            XCTAssertNotNil(session.yourSong)
+            XCTAssertNil(session.document.userSong)
+            XCTAssertFalse(session.hasUnsavedChanges)
+        }
+    }
+
+    func testFreshLoadRestoresSavedSongRemovalFromBoundServerIntentWithoutResending() async throws {
+        let (_, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        let job = try XCTUnwrap(fake.draftSnapshot.baseJobID)
+        var variant = try XCTUnwrap(fake.authoritativeVariant)
+        variant["variant_id"] = .string("variant")
+        variant["render_generation_id"] = .string("generation-2")
+        variant["editor_revision_number"] = .number(2)
+        variant["saved_user_song"] = .object([
+            "job_id": .string(job), "variant_id": .string("variant"),
+            "generation": .string("generation-2"), "revision_number": .number(2),
+            "state": .object(["removed": .bool(true), "volume": .number(1)]),
+        ])
+        fake.authoritativeVariant = variant
+        let reopened = NativeEditorSession()
+        await reopened.load(api: fake, threadID: UUID())
+        XCTAssertTrue(reopened.userSongRemoved)
+        XCTAssertNil(reopened.yourSong, "the retained render plan cannot resurrect a saved removal after relaunch")
+        XCTAssertNil(reopened.document.userSong)
+        XCTAssertFalse(reopened.hasUnsavedChanges)
+        reopened.setClipTiming(clipID: try XCTUnwrap(reopened.timelineClips.first?.id), durationS: 1.5)
+        fake.commitResponse = okResponse("generation-3")
+        await reopened.save()
+        XCTAssertNil(fake.lastRequest?.userSong, "loaded saved intent is never an unsaved removal command")
+    }
+
+    func testFreshLoadIgnoresSavedSongMarkerForAnotherTargetGenerationOrRevision() async throws {
+        let (_, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        let job = try XCTUnwrap(fake.draftSnapshot.baseJobID)
+        var variant = try XCTUnwrap(fake.authoritativeVariant)
+        variant["variant_id"] = .string("variant")
+        variant["editor_revision_number"] = .number(2)
+        let correct: [String: JSONValue] = [
+            "job_id": .string(job), "variant_id": .string("variant"),
+            "generation": .string("generation-1"), "revision_number": .number(2),
+            "state": .object(["removed": .bool(true)]),
+        ]
+        for (field, wrong) in ["job_id": JSONValue.string(UUID().uuidString), "variant_id": .string("other"),
+                               "generation": .string("old"), "revision_number": .number(1)] {
+            var marker = correct
+            marker[field] = wrong
+            variant["saved_user_song"] = .object(marker)
+            fake.authoritativeVariant = variant
+            let reopened = NativeEditorSession()
+            await reopened.load(api: fake, threadID: UUID())
+            XCTAssertFalse(reopened.userSongRemoved, "mismatched \(field) cannot remove the current song")
+            XCTAssertNotNil(reopened.yourSong)
+            XCTAssertFalse(reopened.hasUnsavedChanges)
+        }
     }
 
     /// A render retry after a volume save re-sends the acknowledged volume (idempotent) so the render restarts.
@@ -2718,6 +2990,14 @@ final class NativeEditorSessionTests: XCTestCase {
     }
 
     func testLegacyRefreshAfterManualSaveAndConflictRebasePreservesNewLocalEdit() async throws {
+        try await exerciseLegacyRefreshAfterSave(overlappingTrim: true)
+    }
+
+    func testLegacyRefreshAfterManualSaveMergesIndependentTextFields() async throws {
+        try await exerciseLegacyRefreshAfterSave(overlappingTrim: false)
+    }
+
+    private func exerciseLegacyRefreshAfterSave(overlappingTrim: Bool) async throws {
         let jobID = UUID()
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
             draftID: "unused", itemID: "item", variantKey: "initial", draftRevision: 0,
@@ -2736,22 +3016,48 @@ final class NativeEditorSessionTests: XCTestCase {
         await session.save()
         XCTAssertEqual(fake.commitCount, 1)
         XCTAssertFalse(session.hasUnsavedChanges)
-        let saved = Self.variant(duration: 1.5, generation: "g2")
+        func renderedVariant(duration: Double, generation: String, textEnd: Double = 1) -> [String: JSONValue] {
+            var value = Self.variant(duration: duration, generation: generation)
+            value["text_elements"] = .array([.object([
+                "id": .string("remote-text"), "text": .string("Original"),
+                "start_s": .number(0), "end_s": .number(textEnd),
+            ])])
+            return value
+        }
+        let saved = renderedVariant(duration: 1.5, generation: "g2")
         fake.authoritativeVariant = saved
         XCTAssertTrue(session.rebaseCleanDraft(from: saved))
         session.saveState = .saved
-        session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.2)
+        if overlappingTrim {
+            session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.2)
+        } else {
+            session.updateTextContent(id: "remote-text", content: "My local edit")
+        }
         let afterSave = session.document
         await session.synchronizePromptRevision()
         XCTAssertEqual(session.document, afterSave)
         XCTAssertTrue(session.hasUnsavedChanges)
 
-        fake.authoritativeVariant = Self.variant(duration: 1.4, generation: "g3")
+        fake.authoritativeVariant = renderedVariant(duration: overlappingTrim ? 1.4 : 1.5,
+            generation: "g3", textEnd: overlappingTrim ? 1 : 0.8)
         await session.synchronizePromptRevision()
+        if overlappingTrim {
+            XCTAssertNotNil(session.mergeConflictMessage, "two different trims require a choice")
+            XCTAssertEqual(session.document, afterSave, "neither side overwrites the local edit before a choice")
+            XCTAssertTrue(session.hasUnsavedChanges)
+            XCTAssertTrue(session.canUndo)
+            XCTAssertEqual(fake.commitCount, 1, "a background conflict does not save")
+            session.resolveMergeConflicts(keepingLocal: true)
+        } else {
+            XCTAssertNil(session.mergeConflictMessage, "remote timing and local wording merge automatically")
+            XCTAssertEqual(session.document.textElements.first?.text, "My local edit")
+            XCTAssertEqual(session.document.textElements.first?.endS, 0.8)
+        }
         let rebased = session.document
         XCTAssertTrue(session.hasUnsavedChanges)
-        XCTAssertEqual(rebased.revision.baseGeneration, "g3", "the newest render loaded without a prompt")
-        XCTAssertEqual(rebased.clips, afterSave.clips, "with the unsaved trim kept on top")
+        XCTAssertNil(session.mergeConflictMessage)
+        XCTAssertEqual(rebased.revision.baseGeneration, "g3")
+        XCTAssertEqual(rebased.clips, afterSave.clips, "the unsaved trim survives merging or the explicit local choice")
         await session.synchronizePromptRevision()
         XCTAssertEqual(session.document, rebased)
         XCTAssertEqual(fake.draftCallCount, 0)
@@ -6534,9 +6840,20 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(session.canUndo)
     }
 
-    /// KRI-935: Save meets a newer version saved elsewhere. Without asking, the editor loads it, keeps the local
-    /// text on top, and sends the Save again against the new baseline.
+    /// A remote interval change and local wording change merge before the one automatic resend.
     func testSaveConflictLoadsLatestKeepsLocalSectionsAndResendsAutomatically() async {
+        await exerciseSaveConflictMerge(overlappingText: false)
+    }
+
+    func testSaveConflictOnSameTextRequiresChoiceBeforeResending() async {
+        await exerciseSaveConflictMerge(overlappingText: true)
+    }
+
+    func testLatestJobWaitsForWholeConflictSaveAttemptThenRechecksAutomatically() async {
+        await exerciseSaveConflictMerge(overlappingText: false, queueLatestDuringConflict: true)
+    }
+
+    private func exerciseSaveConflictMerge(overlappingText: Bool, queueLatestDuringConflict: Bool = false) async {
         let threadID = UUID()
         let textID = UUID().uuidString
         let snapshot: [String: JSONValue] = [
@@ -6550,33 +6867,80 @@ final class NativeEditorSessionTests: XCTestCase {
                 ]),
             ]),
         ]
-        let latestVariant: [String: JSONValue] = [
-            "render_generation_id": .string("g2"),
+        let originalVariant: [String: JSONValue] = [
+            "render_generation_id": .string("g1"),
             "resolved_archetype": .string("narrated"),
             "base_video_path": .string("base.mp4"),
             "editor_capabilities": .object(["text_elements": .bool(true)]),
             "text_elements": .array([.object([
-                "id": .string(textID), "text": .string("Changed elsewhere"),
+                "id": .string(textID), "text": .string("Original"),
                 "start_s": .number(0), "end_s": .number(2),
             ])]),
         ]
+        var latestVariant = originalVariant
+        latestVariant["render_generation_id"] = .string("g2")
+        latestVariant["text_elements"] = .array([.object([
+            "id": .string(textID), "text": .string(overlappingText ? "Changed elsewhere" : "Original"),
+            "start_s": .number(0), "end_s": .number(overlappingText ? 2 : 1.5),
+        ])])
         let fake = EditorCommitSpy(
             draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
-            authoritativeVariant: latestVariant.merging(["render_generation_id": .string("g1")]) { _, new in new }
+            authoritativeVariant: originalVariant
         )
         let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
         await session.load(api: fake, threadID: threadID)
+        XCTAssertEqual(session.document.textElements.first?.text, "Original", "both edits share an explicit clean baseline")
         session.updateTextContent(id: textID, content: "My local edit")
+        let localDocument = session.document
 
         // Someone else saved g2; the server refuses this Save once as stale.
         fake.authoritativeVariant = latestVariant
         fake.commitErrorQueue = [.conflict]
         fake.commitResponse = EditorCommitResponse(ok: true, generation: "g3", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
-        await session.save()
+        if queueLatestDuringConflict {
+            fake.suspendNextEditorVariant = true
+            let saving = Task { await session.save() }
+            _ = await waitUntil { fake.editorVariantIsSuspended }
+            XCTAssertTrue(fake.editorVariantIsSuspended, "the first 409 is resolving inside the same Save attempt")
+            let newJob = UUID()
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+            fake.refreshedThread = try? decoder.decode(CreationThread.self, from: Data(#"""
+            {"id":"\#(threadID.uuidString)","title":"Latest","status":"active","revision":2,"runtime_version":2,
+             "active_job_id":"\#(newJob.uuidString)","active_plan_item_id":"item","state":{"selected_variant_id":"variant"},
+             "job":{"id":"\#(newJob.uuidString)","status":"failed","variants":[{"variant_id":"variant","render_status":"failed"}]},
+             "updated_at":"2026-09-09T08:00:00Z"}
+            """#.utf8))
+            fake.editorVariantsByJob[newJob] = [["variant_id": .string("variant"), "render_status": .string("failed")]]
+            let readsBefore = fake.projectCallCount
+            if let latest = fake.refreshedThread?.summary { await session.adoptLatestJob(latest, api: fake) }
+            else { XCTFail("latest-project fixture must decode") }
+            for _ in 0..<20 { await Task.yield() }
+            XCTAssertEqual(fake.projectCallCount, readsBefore, "conflict reload still owns the whole Save attempt")
+            fake.resumeEditorVariant()
+            await saving.value
+            _ = await waitUntil { fake.projectCallCount > readsBefore }
+            XCTAssertGreaterThan(fake.projectCallCount, readsBefore, "the final owning Save defer must rearm the queued check")
+        } else {
+            await session.save()
+        }
 
-        XCTAssertEqual(fake.commitCount, 2, "the Save is resent once, without the creator asking")
+        if overlappingText {
+            XCTAssertEqual(fake.commitCount, 1, "the conflicting save is not blindly resent")
+            XCTAssertNotNil(session.mergeConflictMessage)
+            XCTAssertEqual(session.document, localDocument)
+            XCTAssertTrue(session.hasUnsavedChanges)
+            XCTAssertTrue(session.canUndo)
+            session.resolveMergeConflicts(keepingLocal: true)
+            XCTAssertNil(session.mergeConflictMessage)
+            XCTAssertTrue(session.hasUnsavedChanges)
+            XCTAssertEqual(fake.commitCount, 1, "choosing a conflict does not itself issue a save")
+            await session.save()
+        }
+        XCTAssertEqual(fake.commitCount, 2, "one resend follows either an independent merge or an explicit conflict choice")
         XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2", "against the newest version")
         XCTAssertEqual(fake.lastRequest?.textElements?.first?.objectValue?["text"]?.stringValue, "My local edit")
+        XCTAssertEqual(fake.lastRequest?.textElements?.first?.objectValue?["end_s"]?.numberValue,
+            overlappingText ? 2 : 1.5, "the remote independent interval survives the local text edit")
         XCTAssertEqual(session.document.textElements.first?.text, "My local edit")
         XCTAssertFalse(session.hasUnsavedChanges)
         XCTAssertEqual(session.saveState, .previewPending)
@@ -7569,6 +7933,7 @@ private actor SessionTestStatus {
 // Keep reports, counters and suspended-call state on the same actor as those readers.
 @MainActor
 final class EditorCommitSpy: KriaAPIClient {
+    var mediaLibraryOwner: String? = nil
     var draftSnapshot: DraftSnapshot
     var draftError: APIError?
     let openReceipt: OpenInEditorResponse?
@@ -7584,6 +7949,7 @@ final class EditorCommitSpy: KriaAPIClient {
     /// What `editorSourcePool` throws instead of answering (e.g. a 409 for a newer version).
     var sourcePoolError: APIError?
     var refreshedThread: CreationThread?
+    var projectErrorQueue: [APIError] = []
     private(set) var commitIsSuspended = false
     private var commitContinuation: CheckedContinuation<Void, Never>?
     private var commitResumeRequested = false
@@ -7612,6 +7978,7 @@ final class EditorCommitSpy: KriaAPIClient {
     var commitCount = 0
     var editorVariantCalls = 0
     var lastRequest: EditorCommitRequest?
+    var openCallCount = 0
     var openedJobID: UUID?
     var lastItemID: String?
     var draftCallCount = 0
@@ -7619,6 +7986,10 @@ final class EditorCommitSpy: KriaAPIClient {
     var editorVariantJobIDs: [UUID] = []
     var supersededJobIDs: Set<UUID> = []
     var projectCallCount = 0
+    var suspendNextProject = false
+    var projectIsSuspended = false
+    private var projectContinuation: CheckedContinuation<Void, Never>?
+    func resumeProject() { projectContinuation?.resume(); projectContinuation = nil }
     var editorVariantsCallCount = 0
     var sourcePoolCallCount = 0
     var sourcePoolExpectation: XCTestExpectation?
@@ -7682,6 +8053,12 @@ final class EditorCommitSpy: KriaAPIClient {
     }
     func project(threadID: UUID) async throws -> CreationThread {
         projectCallCount += 1
+        if suspendNextProject {
+            suspendNextProject = false; projectIsSuspended = true
+            await withCheckedContinuation { projectContinuation = $0 }
+            projectIsSuspended = false
+        }
+        if !projectErrorQueue.isEmpty { throw projectErrorQueue.removeFirst() }
         guard let refreshedThread else { throw APIError.unsupported }
         return refreshedThread
     }
@@ -7701,6 +8078,7 @@ final class EditorCommitSpy: KriaAPIClient {
     }
     func writeDraft(threadID: UUID, snapshot: [String: JSONValue], expectedRevision: Int, etag: String) async throws -> DraftSnapshot { throw APIError.unsupported }
     func openJobInEditor(jobID: UUID) async throws -> OpenInEditorResponse {
+        openCallCount += 1
         openedJobID = jobID
         if !openErrors.isEmpty { throw openErrors.removeFirst() }
         guard let openReceipt else { throw APIError.unsupported }
