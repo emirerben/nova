@@ -255,7 +255,12 @@
       "KriaUITests/SteerNowUITests/testEditAfterKriaPickedTheMessageUpNeverStopsIt",
       "KriaUITests/SteerNowUITests/testSteerAfterTheVideoStartedHidesTheButton",
       "KriaUITests/SteerNowUITests/testTurkishChatGetsTurkishSteerWords",
-      "KriaUITests/SteerNowUITests/testSwitchOffLooksLikeToday"
+      "KriaUITests/SteerNowUITests/testSwitchOffLooksLikeToday",
+      "KriaUITests/TalkRerecordUITests/testReRecordSwapsTheTakeAndMakesAFreshPlan",
+      "KriaUITests/TalkRerecordUITests/testRefusedSwapKeepsTheOldTakeAndStartsNoPlan",
+      "KriaUITests/TalkRerecordUITests/testBusyServerOffersRetryThenSwapsWithTheSameTake",
+      "KriaUITests/TalkRerecordUITests/testFullSlotOffersReplaceInsteadOfRefusing",
+      "KriaUITests/TalkRerecordUITests/testFlagOffHidesReRecord"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
