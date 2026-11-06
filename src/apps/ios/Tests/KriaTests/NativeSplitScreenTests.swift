@@ -655,3 +655,73 @@ extension NativeSplitScreenTests {
         }
     }
 }
+
+extension NativeSplitScreenTests {
+    @MainActor
+    func testUnmutedNarratedClipAudioIndicatorAndToggleMatchCompiledGain() throws {
+        let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        let footage = ResolvedEditorSource(clipIndex: 0, mediaID: "footage", asset: MediaAsset(id: "footage", relativePath: "footage.mp4", fingerprint: fingerprint, duration: 4), url: URL(fileURLWithPath: "/footage.mp4"))
+        let narration = ResolvedEditorSource(clipIndex: -1, mediaID: "voice", asset: MediaAsset(id: "voice", relativePath: "voice.m4a", fingerprint: fingerprint, duration: 2), url: URL(fileURLWithPath: "/voice.m4a"))
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let contexts: [(variant: [String: JSONValue], pinned: Bool?, resolved: Bool, narrated: Bool)] = [
+            (["resolved_archetype": .string("narrated")], nil, false, true),
+            (["resolved_archetype": .string("guided_story"), "render_receipt": .object(["narration_applied": .bool(true)])], nil, false, true),
+            (["render_destination": .string("device"), "resolved_archetype": .string("guided_story")], true, false, true),
+            (["render_destination": .string("device"), "resolved_archetype": .string("narrated")], false, false, false),
+            ([:], nil, true, true),
+            ([:], nil, false, false)
+        ]
+        for context in contexts {
+            for initial in [nil, .null, .number(0), .number(0.4)] as [JSONValue?] {
+                var raw: [String: JSONValue] = ["muted": .bool(false)]
+                raw["source_audio_volume"] = initial
+                let document = EditorDocument(clips: [.init(id: "source", clipIndex: 0, inS: 0, durationS: 2, raw: raw)], mix: ["original_level": .number(1)], capabilities: ["timeline": .init(editable: true), "original_audio": .init(editable: true), "clips.audio": .init(editable: true)])
+                let session = NativeEditorSession()
+                session.replaceDocumentForTesting(document)
+                session.configureClipAudioForTesting(variant: context.variant, pinnedNarrationPresent: context.pinned,
+                    resolvedNarration: context.resolved ? narration : nil)
+                let before = initial?.numberValue ?? (context.narrated ? 0 : 1)
+                XCTAssertEqual(session.isClipAudioOn(clipID: "source"), before > 0)
+                let initialRecipe = try compiler.compile(document: document, clips: session.timelineClips, items: [], sources: [0: footage],
+                    audioSources: context.narrated ? ["narration": narration] : [:]).recipe
+                XCTAssertEqual(initialRecipe.tracks.first(where: { $0.kind == .video })?.clips.first?.volume, before)
+                session.toggleClipAudio(clipID: "source")
+                XCTAssertEqual(session.isClipAudioOn(clipID: "source"), before <= 0)
+                if before <= 0 {
+                    XCTAssertEqual(session.document.clips[0].raw["source_audio_volume"], .number(1))
+                    XCTAssertEqual(session.document.clips[0].raw["muted"], .bool(false))
+                } else {
+                    XCTAssertEqual(session.document.clips[0].raw["source_audio_volume"], initial)
+                    XCTAssertEqual(session.document.clips[0].raw["muted"], .bool(true))
+                }
+                let reopened = EditorDocument(snapshot: session.document.encodeSnapshot())
+                let recipe = try compiler.compile(document: reopened, clips: session.timelineClips, items: [], sources: [0: footage],
+                    audioSources: context.narrated ? ["narration": narration] : [:]).recipe
+                XCTAssertEqual(recipe.tracks.first(where: { $0.kind == .video })?.clips.first?.volume, before > 0 ? 0 : 1)
+                session.undo()
+                XCTAssertEqual(session.document.clips[0].raw["source_audio_volume"], initial)
+                XCTAssertEqual(session.isClipAudioOn(clipID: "source"), before > 0)
+            }
+        }
+    }
+}
+
+extension NativeSplitScreenTests {
+    @MainActor
+    func testNewJobDiscardsResolvedAndPinnedNarrationAudioState() {
+        let narration = ResolvedEditorSource(clipIndex: -1, mediaID: "old-voice",
+            asset: MediaAsset(id: "old-voice", relativePath: "old-voice.m4a", duration: 2),
+            url: URL(fileURLWithPath: "/old-voice.m4a"))
+        for resolved in [false, true] {
+            let document = EditorDocument(clips: [.init(id: "source", clipIndex: 0, inS: 0, durationS: 2)],
+                mix: ["original_level": .number(1)])
+            let session = NativeEditorSession()
+            session.replaceDocumentForTesting(document)
+            session.configureClipAudioForTesting(variant: ["render_destination": .string("device")],
+                pinnedNarrationPresent: resolved ? nil : true, resolvedNarration: resolved ? narration : nil)
+            XCTAssertFalse(session.isClipAudioOn(clipID: "source"))
+            session.discardPlaybackForNewJobForTesting()
+            XCTAssertTrue(session.isClipAudioOn(clipID: "source"), "New non-narrated job must not inherit old narration defaults")
+        }
+    }
+}

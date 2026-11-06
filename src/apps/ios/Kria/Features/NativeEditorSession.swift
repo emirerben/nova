@@ -363,6 +363,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// successful empty resolution for this generation so ordinary editor
     /// rebuilds do not repeatedly poll the device-render endpoint.
     private var deviceNarrationResolutionGeneration: String?
+    @Published private var deviceNarrationPresence: (generation: String, present: Bool)?
     /// How the pinned device recipe plays the creator's song (KRI-374); nil when
     /// the recipe has none. Resolved with the narration, from the same recipe.
     @Published private(set) var deviceSongBed: NativeEditorSongBed?
@@ -2542,6 +2543,9 @@ struct NativeEditorTemporaryVideo: Sendable {
         sourcePreview = nil; sourceCompiler = nil; sourcePool = nil; resolvedSources = nil; previewTalkingCutaways = []
         liveSongVolumeActive = false; previewBuiltDocument = nil
         sourcePreviewState = .idle; sourcePreviewGeneration = nil
+        resolvedAudio.removeAll()
+        deviceNarrationResolutionGeneration = nil
+        deviceNarrationPresence = nil
         previewVariant = [:]
         pendingDeviceRenderIdentity = nil
         // The old job's recovery must not touch the new job's player.
@@ -3059,6 +3063,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         sourcePool = nil
         resolvedAudio = [:]
         deviceNarrationResolutionGeneration = nil
+        deviceNarrationPresence = nil
         resolvedMedia = [:]
         skippedPreviewMedia = []
         previewSkippedMediaCount = 0
@@ -3224,6 +3229,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         sourcePool = nil
         resolvedAudio.removeAll()
         deviceNarrationResolutionGeneration = nil
+        deviceNarrationPresence = nil
         resolvedMedia.removeAll()
         skippedPreviewMedia = []
         previewSkippedMediaCount = 0
@@ -3324,6 +3330,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             status, jobID: jobID, variantID: variantKey, generation: narrationOwnerGeneration(document)
         )
         let narrationAssetID = request.recipe.audio.narrationAssetID
+        deviceNarrationPresence = (narrationOwnerGeneration(document), narrationAssetID != nil)
         let songBed = NativeEditorSongBed(recipe: request.recipe)
         var result = DeviceRecipeAudio()
         guard narrationAssetID != nil || songBed != nil else { return result }
@@ -4231,6 +4238,13 @@ struct NativeEditorTemporaryVideo: Sendable {
     #if DEBUG
     /// Test seam (KRI-770): stage slot fields (`playback_rate`, a talking-source id) that a bare draft cannot carry.
     func replaceDocumentForTesting(_ value: EditorDocument) { document = value }
+    func discardPlaybackForNewJobForTesting() { discardPlaybackForNewJob() }
+    func configureClipAudioForTesting(variant: [String: JSONValue], pinnedNarrationPresent: Bool?, resolvedNarration: ResolvedEditorSource?) {
+        previewVariant = variant
+        rendersOnDevice = variant["render_destination"] == .string("device")
+        deviceNarrationPresence = pinnedNarrationPresent.map { (narrationOwnerGeneration(document), $0) }
+        resolvedAudio["narration"] = resolvedNarration
+    }
     func configureReplacementSourcesForTesting(pool: NativeEditorSourcePool, resolver: NativeEditorSourceResolver) {
         sourcePool = pool; sourceResolver = resolver; resolvedSources = [:]
     }
@@ -7112,10 +7126,24 @@ struct NativeEditorTemporaryVideo: Sendable {
         transactDocument(section: .mix) { $0.mix["original_level"] = .number((clamped * 100).rounded() / 100) }
     }
 
-    /// Whether this clip's own sound is heard right now: the whole-video level is up and the clip is not muted.
+    private var clipAudioHasNarration: Bool {
+        if resolvedAudio["narration"] != nil { return true }
+        if rendersOnDevice {
+            let generation = narrationOwnerGeneration(document)
+            if let known = deviceNarrationPresence, known.generation == generation { return known.present }
+            if deviceNarrationResolutionGeneration == generation { return false }
+        }
+        return Self.usesRenderedNarration(previewVariant)
+    }
+
+    /// Narrated clips opt into camera audio individually; missing or null gains retain legacy silence.
     func isClipAudioOn(clipID: String) -> Bool {
-        guard let index = clipSlotIndex(clipID) else { return false }
-        return originalAudioLevel > 0 && document.clips[index].raw["muted"] != .bool(true) && (document.clips[index].raw["source_audio_volume"]?.numberValue ?? 1) > 0
+        guard let index = clipSlotIndex(clipID), originalAudioLevel > 0,
+              document.clips[index].raw["muted"] != .bool(true) else { return false }
+        if let gain = document.clips[index].raw["source_audio_volume"]?.numberValue {
+            return gain.isFinite && gain > 0
+        }
+        return !clipAudioHasNarration
     }
 
     /// The per-clip audio button. Turning a clip on while the whole video's original audio is off
