@@ -3368,6 +3368,52 @@
         "src/apps/api/tests/routes/test_creation_thread_cleanup_requested.py",
         "scripts/ios/qendresa-13-tight-pauses-e2e.py"
       ]
+    },
+    {
+      "id": "saved-song-render-recovery",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_saved_user_song_state.py::test_status_and_timeline_expose_saved_intent_despite_old_song_plan tests/routes/test_saved_user_song_state.py::test_marker_requires_current_generation_and_valid_persisted_approval tests/routes/test_saved_user_song_state.py::test_missing_revision_cannot_echo_a_stored_or_client_marker",
+      "xctests": [
+        "KriaTests/NativeEditorSessionTests/testFreshLoadRestoresSavedSongRemovalFromBoundServerIntentWithoutResending",
+        "KriaTests/NativeEditorSessionTests/testSavedSongRemovalSurvivesExactGenerationRenderRecoveryProjectionWithoutResending",
+        "KriaTests/NativeEditorSessionTests/testFreshLoadIgnoresSavedSongMarkerForAnotherTargetGenerationOrRevision"
+      ],
+      "paths": [
+        "src/apps/api/app/schemas/saved_user_song.py",
+        "src/apps/api/app/services/saved_user_song.py",
+        "src/apps/api/tests/routes/test_saved_user_song_state.py",
+        "src/apps/api/app/routes/generative_jobs.py",
+        "src/apps/ios/Kria/Core/Services.swift",
+        "src/apps/ios/Kria/Features/NativeEditorSession.swift"
+      ]
+    },
+    {
+      "id": "slide-post-generation-receipt-recovery",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_slide_post_generation_receipts_postgres.py::test_lost_response_retry_returns_original_receipt_after_newer_target tests/routes/test_slide_post_generation_receipts_postgres.py::test_receipt_get_observes_same_version_successor_without_rewinding tests/routes/test_slide_post_generation_receipts_postgres.py::test_receipt_get_survives_deleted_job_without_any_mutation tests/routes/test_slide_post_generation_receipts_postgres.py::test_receipt_get_checks_current_item_access_and_key_scope tests/routes/test_slide_post_generation_receipts_postgres.py::test_new_uuid_cannot_replace_same_version_successor_from_stale_target tests/routes/test_slide_post_delivery_postgres.py::test_commit_before_first_publish_is_recovered_with_same_receipt tests/routes/test_slide_post_delivery_postgres.py::test_two_deliveries_claim_once_and_redelivery_never_recomputes tests/routes/test_slide_post_delivery_postgres.py::test_successor_target_rejects_staged_completion",
+      "xctests": [
+        "KriaTests/SlidePostSessionRecoveryTests/testCommittedLostResponseAcrossSessionRecreationReusesOneServerJob",
+        "KriaTests/SlidePostSessionRecoveryTests/testFreshReceiptReleasesSameVersionSupersededIntentWithoutSubmitting",
+        "KriaTests/SlidePostSessionRecoveryTests/testUnrelatedFailedJobDoesNotReleaseUnconfirmedIntent",
+        "KriaTests/SlidePostSessionRecoveryTests/testOldServerCannotResumePreparedIntentOrReceiveLegacyFallback",
+        "KriaTests/SlidePostSubmissionRecoveryTests/testReceiptStatusCanChangeButPinnedJobCannot"
+      ],
+      "paths": [
+        "src/apps/api/app/schemas/slide_post_generation.py",
+        "src/apps/api/app/services/slide_post_generation_receipts.py",
+        "src/apps/api/app/services/slide_post_generation_delivery.py",
+        "src/apps/api/app/services/slide_post_render_revisions.py",
+        "src/apps/api/tests/services/test_slide_post_generation_receipts.py",
+        "src/apps/api/tests/routes/test_slide_post_generation_receipts_postgres.py",
+        "src/apps/api/tests/routes/test_slide_post_delivery_postgres.py",
+        "src/apps/api/app/migrations/versions/0133_slide_post_generation_receipts.py",
+        "src/apps/api/app/migrations/versions/0134_slide_post_delivery_claim.py",
+        "src/apps/api/app/migrations/versions/0135_slide_post_finalize_budget.py",
+        "src/apps/api/app/migrations/versions/0136_slide_post_render_revisions.py",
+        "src/apps/ios/Kria/Core/SlidePostSubmissionJournal.swift",
+        "src/apps/ios/Kria/Core/SlidePost.swift",
+        "src/apps/ios/Tests/KriaTests/SlidePostSubmissionRecoveryTests.swift"
+      ]
     }
   ]
 }

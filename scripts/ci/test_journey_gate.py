@@ -389,5 +389,49 @@ class FixtureBundleTests(unittest.TestCase):
         self.assertIn('--journeys "$JOURNEY_IDS"', step)
 
 
+class RecoveryAPIReceiptTests(unittest.TestCase):
+    selectors = ["tests/routes/test_recovery.py::test_original"]
+
+    def receipt(self, xml):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        path = Path(temporary.name) / "junit.xml"
+        path.write_text(xml)
+        return path
+
+    def test_named_parameterized_cases_must_really_pass(self):
+        path = self.receipt(
+            '<testsuite><testcase classname="tests.routes.test_recovery" name="test_original[a]"/><testcase classname="tests.routes.test_recovery" name="test_original[b]"/></testsuite>'
+        )
+        gate.verify_api_cases(path, self.selectors)
+
+    def test_missing_unrelated_and_skipped_cases_fail_closed(self):
+        for child in ("<skipped/>", "<failure/>", "<error/>"):
+            with self.subTest(child=child), self.assertRaises(ValueError):
+                gate.verify_api_cases(
+                    self.receipt(
+                        '<testsuite><testcase classname="tests.routes.test_recovery" name="test_original">'
+                        + child
+                        + "</testcase></testsuite>"
+                    ),
+                    self.selectors,
+                )
+        for xml in (
+            "<testsuite/>",
+            '<testsuite><testcase classname="tests.routes.unrelated" name="test_original"/></testsuite>',
+        ):
+            with self.subTest(xml=xml), self.assertRaises(ValueError):
+                gate.verify_api_cases(self.receipt(xml), self.selectors)
+
+    def test_empty_or_non_named_selectors_do_not_certify_execution(self):
+        for selectors in ([], ["tests/routes/test_recovery.py"], self.selectors * 2):
+            with self.subTest(selectors=selectors), self.assertRaises(ValueError):
+                gate.verify_api_cases(self.receipt("<testsuite/>"), selectors)
+
+    def test_unknown_journey_cannot_produce_a_receipt(self):
+        with self.assertRaises(ValueError):
+            gate.api_tests_for_ids("not-a-journey")
+
+
 if __name__ == "__main__":
     unittest.main()
