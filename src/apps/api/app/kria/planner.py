@@ -270,6 +270,7 @@ from app.services.song_range import (
     song_range_of,
     song_range_question_text,
 )
+from app.services.source_replacement import source_replacement_supersedes
 from app.services.spoken_quotes import (
     Transcribe,
     closing_quote_notice,
@@ -2317,6 +2318,11 @@ async def _load_editor_target(
         _miss("no_current_job", session_id=None)
         return None
     thread = await db.get(CreationThread, thread_id)
+    if thread is not None and source_replacement_supersedes(getattr(thread, "state", None), job_id):
+        # Not in _GUARDED_MISSES: this Job's cuts and captions belong to a take the creator
+        # replaced, so every follow-up re-plans from the new take instead of editing them.
+        _miss("source_replaced", session_id=None)
+        return None
     if thread is None or thread.active_creator_agent_session_id is None:
         _miss("no_active_session", session_id=None)
         return None
@@ -6367,6 +6373,19 @@ async def _plan_scoped_turn(
             )
         if miss == "editor_state_stale":
             return _reply(_editor_state_stale_reply())
+        if miss == "source_replaced":
+            return _reply(
+                say(
+                    en=(
+                        "Those parts belonged to your old take. Ask me to make the video "
+                        "again and I'll plan it from your new one."
+                    ),
+                    tr=(
+                        "Bu bölümler eski çekimine aitti. Videoyu yeniden yapmamı iste, "
+                        "yeni çekiminle planlayayım."
+                    ),
+                )
+            )
         return _reply(
             say(
                 en="I couldn't open your current video to update it. Try again in a moment.",
@@ -6844,7 +6863,7 @@ async def _plan_live_turn(
                 target = await _load_editor_target(
                     db, thread_id=thread_id, item=item, **_state_kw(editor_state)
                 )
-                if target is None:
+                if target is None and _editor_target_miss.get() != "source_replaced":
                     if failed_editor_correction and _editor_target_miss.get() == "no_render":
                         _editor_target_miss.set("failed_draft_unavailable")
                     recovery = _editor_target_recovery(manifest)
@@ -6854,7 +6873,9 @@ async def _plan_live_turn(
                         brief_expected_version=prior_brief.version if prior_brief else 0,
                         defer_brief=False,
                     )
-                shape = plan_shape_from_editor_snapshot(target.snapshot)
+                # A replaced take leaves no target, so the shape reads "no render" and routes
+                # to a fresh plan rather than to the recovery reply above.
+                shape = plan_shape_from_editor_snapshot(target.snapshot if target else None)
                 await db.rollback()
                 route = route_requirements(fresh, shape, message=user_message, full_replan=False)
             if route == "editor_ops":
