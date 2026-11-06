@@ -293,7 +293,8 @@ enum NativeEditorInteraction {
     ) -> NativeEditorTimelineProjection {
         let speech = slots.contains { $0.id?.hasPrefix("native-phone-talking-source") == true }
         let renderedClock = slots.contains { !$0.removed && $0.raw["timing_mode"]?.stringValue == "rendered" }
-        let continuousClock = speech || renderedClock
+        let authoredFrameClock = slots.contains { !$0.removed && NativeLegacySourceWindow.preservesAuthoredClock($0) }
+        let continuousClock = speech || renderedClock || authoredFrameClock
         var baseWindows: [NativeEditorClipWindow] = []
         // A source-window marker opts the whole timeline into the server's
         // 30fps layout clock: downstream legacy slots and transition edges
@@ -447,16 +448,6 @@ enum NativeEditorInteraction {
             let rate = slot.raw["playback_rate"]?.numberValue ?? 1
             guard end.isFinite, end > slot.inS, rate.isFinite, rate > 0 else { return nil }
             return (end - slot.inS) / rate
-        }
-        if slot.raw["source_end_s"] == nil, slot.raw["native_source_span_s"] == nil,
-           (slot.raw["freeze_hold_s"]?.numberValue ?? 0) == 0,
-           slot.raw["source_kind"] != .string("image"),
-           let duration = slot.durationS, let available = slot.raw["source_duration_s"]?.numberValue,
-           (duration * (slot.raw["playback_rate"]?.numberValue ?? 1) > available + 0.000_001
-                || slot.raw["source_start_locked"] == .bool(true)),
-           NativeLegacySourceWindow.sourceSpan(start: slot.inS, duration: duration,
-               rate: slot.raw["playback_rate"]?.numberValue ?? 1, sourceDuration: available) != nil {
-            return duration
         }
         return sourcePreservingOutputDuration(
             sourceStart: slot.inS,

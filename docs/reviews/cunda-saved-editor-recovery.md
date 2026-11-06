@@ -12,7 +12,7 @@ The full native creation projection now retains `editor_state_version`, `editor_
 
 Opening uses the existing editor loader unchanged for lane hydration. It arms the existing explicit Retry render flow only for a matching persisted failed saved edit. Ordinary unchanged Save still does nothing. Explicit retry resends the timeline through normal commit validation and generation fences; opening and Refresh dispatch nothing. Concurrent local edits survive and a second tap during the commit does not duplicate it.
 
-The shared legacy numeric helper admits only a positive tail whose nearest 30fps ties-to-even duration equals authored duration within one microsecond, with at most half a frame plus one microsecond of padding. Strict fit/reanchor runs first. Native compilation uses the resolved original's duration for this compatibility exception; missing original duration grants no exception. Exact endpoints, explicit native spans, real freezes and non-grid overruns retain their existing behavior. A matching legacy tail opts its whole timeline into the frame clock, avoiding the old millisecond projection and derived 0.993x slowdown. The stored lanes are not rewritten.
+The shared legacy numeric helper admits only a positive tail whose nearest 30fps ties-to-even duration equals authored duration within one microsecond, with at most half a frame plus one microsecond of padding. Strict fit/reanchor runs first. Native compilation uses the resolved original's duration for this compatibility exception; missing original duration grants no exception. Exact endpoints, explicit native spans, real freezes and non-grid overruns retain their existing behavior. An authored fractional-frame duration retains its exact clock before sources load; this does not authorize source padding. Its neighboring durations and overlaps retain their continuous authored values. Source admission runs later against the resolved original, independently of saved duration hints. Absent and JSON-null endpoints share semantics; malformed non-null endpoints are refused. The stored lanes are not rewritten.
 
 ## Executed evidence
 
@@ -20,7 +20,7 @@ Base: `3d35555837fccd8d06e8c1b7d627cecb7ce13f98`.
 
 - Initial simulator attempts stopped at package cloning and object emission because disk was full. These were infrastructure failures, not a red behavioral result.
 - After capacity returned, original production source files from the base were temporarily restored in this isolated worktree. The new tests using only base APIs executed: 9 tests, 15 failed assertions including one thrown `invalidTimeline`. Observed failures included lost saved-draft fields, absent unchanged retry, 0.993103448275862 playback rate, no padding, 6.933 versus 6.933333333 timeline end, and mixed-timeline refusal. Implementation and test bytes were restored automatically afterward.
-- Final candidate: **232 simulator tests passed**, 0 failures, on iPhone 17 Pro / iOS 26.5. Selection: SavedEditorRecoveryTests (9), SavedDraftPreviewRangeTests (5), SlidePostRoutingTests (12), NativeEditorInteractionTests (33), NativeEditorRenderCompilerTests, NativeEditorSourcesTests (25), ChatDraftStagingTests (75). This includes actual generated 1.92s video plus image timelines, decoded frame attachments at the padded tail, no-op reopening, explicit retry commit payload, source identity guards and concurrent edit retention.
+- Initial candidate (superseded by the review correction below): **232 simulator tests passed**, 0 failures, on iPhone 17 Pro / iOS 26.5. Selection: SavedEditorRecoveryTests (9), SavedDraftPreviewRangeTests (5), SlidePostRoutingTests (12), NativeEditorInteractionTests (33), NativeEditorRenderCompilerTests, NativeEditorSourcesTests (25), ChatDraftStagingTests (75). This includes actual generated 1.92s video plus image timelines, decoded frame attachments at the padded tail, no-op reopening, explicit retry commit payload, source identity guards and concurrent edit retention.
 - A standalone execution of the production numeric helper passed 5,042 assertions across rates 0.25, 0.5, 1, 1.3, 2, 3.5 and 4, including exact incident geometry and non-grid/long-gap controls. This supports the numeric contract, not device export.
 - One extra exploratory original-duration fixture failed with APIError.unsupported before its intended check. It was removed; no behavior claim or production change was based on that result.
 
@@ -57,3 +57,65 @@ This is native simulator and offline fixture evidence, not recovery of the origi
 Post-integration static checks: changed backend Python sources compile without importing application code; scoped Ruff lint and format checks pass; `git diff --check` passes; journey mapping reports no unmapped paths; release-metadata ownership passes. No reliability gate maps to the changed paths. Full preship is not claimed: a revision-bound PR request-evidence record and current-main backend runtime test rerun remain pending, as do database-backed Save/reopen and physical-device/rollout verification. No PR, issue, push or deployment was created.
 
 The native application tree hash is `e96b315aada019529d88078feb4bfc78bb8ec9c9` both at tested native commit `4a001e44c34aca09dda34e120c866438ae0341aa` and after rebasing the combined candidate onto `31477c8e9b0eabf5f143d4b506b9543a7c17f44c`. The native package sources and all seven selected simulator test files are byte-identical too. The 232-test native result therefore retains its source binding; this equality does not establish current-main backend behavior or original-project recovery.
+
+
+## Review correction — 2026-11-06
+
+Independent review found three gaps in the initial candidate: JSON null skipped
+legacy eligibility, stale duration hints chose the projection clock, and a recovered
+tail snapped neighboring legacy durations/overlaps onto the frame grid. Tests were
+added before the correction. `/tmp/cunda-review-red.{log,xcresult}` executed eight
+tests with 25 failed assertions, including 0.993103x/0.982759x rates, missing holds,
+and altered off-grid timing. All prior evidence and the failed exploratory fixture
+record above remain preserved; the earlier 232-pass result did not cover these gaps.
+
+The correction removes duration hints from clock selection. An authored fractional
+30fps duration keeps its value and a continuous timeline cursor, without rounding
+neighbors or transitions. This clock selection grants no source compatibility.
+Compilation uses the bound original to restore the authored rate/span, tries strict
+fit/reanchor first, and only then admits the existing half-frame tail exception.
+Missing original measurements cannot grant padding. Missing/null source endpoints
+are equivalent; invalid non-null endpoints fail instead of becoming legacy slots.
+Stored authoring is unchanged; no endpoint is injected.
+
+The first corrected neighboring run caught an overly broad measured-duration
+requirement on an ordinary strict-fit fixture. That restriction was narrowed while
+keeping original measurement mandatory for inferred padding. The intermediate
+failure remains in `/tmp/cunda-review-green1.{log,xcresult}`.
+
+Final bounded simulator result: **238 tests passed**, zero failures, at
+`/tmp/cunda-review-green2.{log,xcresult}` (same seven classes as above;
+SavedDraftPreviewRangeTests now has 11 tests). This covers actual measured 1.92s
+video, shorter/longer/missing/null saved hints, original 1.90s refusal and 2.0s strict
+fit, missing original measurement, null and malformed endpoints, an off-grid 1.91s
+neighbor with 0.157s overlap, and independent text/audio times. No private media or
+production project was accessed.
+
+`Tests/Fixtures/saved_editor_legacy_wire.json` is generated from actual backend
+`prepare_authored_editor_commit` and `editor_sections` output with JSON serialization.
+The backend regression compares that fixture byte-for-value, checks null endpoints,
+and verifies exact video/transition/text clocks. Native reopens the same bundled
+snapshot through DraftSnapshot and compiles it, with a separate clip-audio lane to
+verify its off-grid timing too. This is an in-memory Save preparation and serialized
+snapshot contract test, not a database-backed Save/reopen transaction.
+
+Only a backend test was added; backend production files are unchanged. The new
+serialization test plus existing frame-padding suite passed **38 offline tests**
+(`/tmp/cunda-review-backend.log`), with connect/connect_ex/create_connection blocked
+before any app import and a clean environment containing dummy credentials. Scoped
+Ruff lint/format and diff checks pass. Parent separately reported 617 backend tests
+and green backend preship on base `31477c8`; those were not duplicated on Mac.
+
+Publication remains unauthorized. Physical iPhone recovery, pinned private draft
+and immutable original inspection, database Save/reopen, Photos export and rollout
+remain unverified. Speed draft #2125 is separate and unmerged: integration must
+reconcile NativeEditorSession/ChatWorkspace changes and check conditional-304 and
+late-response recovery behavior when that branch is combined. No production or
+settings changes, push, merge, source upload or issue update occurred.
+
+The 238-pass source binding is native application tree
+`7364702402611518e321c9b8bbbe92e6c3880df2`, iOS tests/fixtures tree
+`00693a2d20a8921b1ca1c948a0d80af778990840`, and native packages tree
+`a8ae4da503f219d9e6d1573556d68dcd7eb64af5`. Only the evidence document and
+backend test assertions/formatting changed after that native run. The new backend
+assertions were included in the final 38-pass offline execution.

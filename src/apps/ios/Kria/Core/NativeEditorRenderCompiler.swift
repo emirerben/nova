@@ -139,6 +139,10 @@ enum NativeEditorRenderError: Error, Equatable {
                                                    source: .original(mediaID: source.mediaID))
             urls[id] = source.url
             let authoredSlot = slot(for: clip, index: index)
+            if let authoredSlot, !NativeLegacySourceWindow.hasNoEndpoint(authoredSlot) {
+                guard let end = authoredSlot.raw["source_end_s"]?.numberValue,
+                      end.isFinite, end > authoredSlot.inS else { throw RecipeError.invalidTimeline }
+            }
             guard authoredSlot?.raw["layout"]?.stringValue != "supporting_card" else {
                 throw NativeEditorRenderError.unsupportedLane("supporting card")
             }
@@ -212,7 +216,7 @@ enum NativeEditorRenderError: Error, Equatable {
             // shorter moving span plus a hold. Only an unchanged authored
             // source window uses the duration-preserving render projection.
             let isAuthoredWindow = authoredSlot?.raw["native_source_span_s"] == nil
-                && authoredSlot?.raw["source_end_s"] == nil
+                && authoredSlot.map(NativeLegacySourceWindow.hasNoEndpoint) == true
                 && abs(outputDuration - authoredMovingDuration) < 0.000_001
                 && abs(sourceStart - (authoredSlot?.inS ?? sourceStart)) < 0.000_001
             if isAuthoredWindow, !freezes, let authoredSlot,
@@ -226,6 +230,12 @@ enum NativeEditorRenderError: Error, Equatable {
                 // surrounding microsecond geometry checks without admitting a
                 // genuinely longer source window.
                 let sourceWindowToleranceS = 0.000_001
+                if NativeLegacySourceWindow.preservesAuthoredClock(authoredSlot), source.asset.duration != nil {
+                    // A stale catalog hint may have shortened EditorClip.trimOut.
+                    // The bound original, not that projection, owns source fit.
+                    requestedRate = authoredRate
+                    sourceSpan = requestedSpan
+                }
                 if authoredSlot.inS + requestedSpan > available + sourceWindowToleranceS {
                     if requestedSpan <= available + sourceWindowToleranceS,
                        authoredSlot.raw["source_start_locked"] != .bool(true) {
