@@ -56,12 +56,10 @@ from app.agents._schemas.brief_extractor import BriefExtractionInput
 from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
 from app.agents.brief_extractor import (
     _NARROW_BRIEF_SECTION,
-    BRIEF_EXTRACTOR_PROMPT_VERSION,
     BriefExtractorAgent,
 )
 from app.agents.main_creator import (
     _BRIEF_PROMPT_SECTION,
-    MAIN_CREATOR_PROMPT_VERSION,
     MainCreatorAgent,
     brief_prompt_section,
     with_insert_clip_brief,
@@ -287,14 +285,6 @@ def test_brief_extractor_prompt_flag_off_is_byte_identical_and_on_changes_only_t
     assert on == off.replace(CAP_16, CAP_32)
     assert on.count(CAP_32) == 1 and CAP_16 not in on
     assert with_long_request_cap(section) in on
-
-
-def test_brief_extractor_prompt_version_is_bumped() -> None:
-    assert BRIEF_EXTRACTOR_PROMPT_VERSION == "2026-11-06-v68"  # v66 + item 16 (v68)
-
-
-def test_main_creator_prompt_version_is_bumped() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-06-v136"  # 16 v133, 20 v135, 18 v136
 
 
 # ------------------------------------------------------------------ f. follow-up path

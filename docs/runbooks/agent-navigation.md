@@ -102,7 +102,7 @@ recovery cases, and check `python3 scripts/reliability-gates.py select` for exis
 gates. Create the scratch database with `bash scripts/dev/test-db.sh` before
 DB-backed tests. A bounded local fix can finish with named gaps and owners; keep
 the parent incident open until its full journey succeeds. Serialize concurrent
-changes to hot files such as `brief_checks.py` and `MAIN_CREATOR_PROMPT_VERSION`;
+changes to hot files such as `brief_checks.py`;
 never stack a PR on an unmerged branch.
 
 ## Durable ticket handoff

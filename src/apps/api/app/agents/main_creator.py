@@ -14,6 +14,7 @@ from typing import ClassVar, Literal
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.agents._prompt_fingerprint import prompt_fingerprint
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import (
     CREATOR_AGENT_OUTPUT_ADAPTER,
@@ -68,210 +69,27 @@ from app.services.length_policy import creator_duration_s
 
 log = structlog.get_logger()
 
-# Named sound effects are model-read with verbatim licensed_sfx evidence (v35).
-# KRI-178: reaction beats (name/word-triggered photo/sticker + sound pop-ins,
-# plus a held closing shot) on a phone `subtitled` (Talking) edit (v36).
-# KRI-188: Creative Brief requirement extraction (`brief_updates`, taught only
-# when the brief is on for the creator) -- v37.
-# KRI-189: when/where clip facts with provenance (v38).
-# KRI-190: brief `facts` (distance/activity/start/end) and an `order` requirement
-# are always captured when the creator asks the edit to follow a route or sequence (v39).
-# KRI-244: descriptive footage chronology remains creative context unless the
-# creator actually asks the edit to order, group, label, include, or caption it (v40).
-# KRI-374: a creator-uploaded song as the music (`audio_strategy="user_song"` +
-# `song_sync`), taught only when the manifest carries a usable song (v42).
-# KRI-422: dictated per-shot texts are one per_clip brief entry per shot (they all
-# stay in force); `brief_updates` cap 8 -> 16 (v43).
-# KRI-459: stable IDs make changes and removals unambiguous (v44).
-# KRI-470: a stated video length ALWAYS becomes a `timing` requirement; the clarification
-# gate cannot compare a number the brief lost (v45; brief_extractor v2 shares the section).
-# KRI-506: delegated creative copy is proposed for a separate server approval (v46).
-# KRI-479: `voice_mode` (continuous | excerpts) for a montage that keeps one clip's camera
-# audio, taught only when the manifest advertises `phone_source_audio` AND the route can render
-# (`Settings.voice_behind_footage_enabled`) (v47).
-# KRI-522: brief facts for first_clip/last_clip, animation, position, placeholder (v48).
-# KRI-523: `pinned_texts` (whole-video corner text) + choice-answer brief rule (v49).
-# KRI-520: a Turkish chat gets a reply-language line at the end of the prompt; English is
-# byte-identical (v50).
-# KRI-519: reaction beats on an iPhone Voiceover edit, worded for the voiceover (v51).
-# KRI-525/526: pins may carry `start_s`/`end_s` or `clip`; the 4-line / 120-character limits are
-# taught so an over-long ask becomes a question, not a schema failure (v52).
-# KRI-598: no `execution_contract` where `guided_voiceover` is unavailable (runtime v2); on a
-# Voiceover edit a cue for an own clip is `include`, never `order`, and beats persist (v55).
-# KRI-614: a clip's `filename` (the name the app shows) identifies it when the creator writes it
-# (v56).
-# KRI-667: brief `facts` carry what an ask means in English keys and values (`triggers`,
-# `keep_whole_take`, `closing`, `speech_cleanup`, `captions`, `caption_language`) whatever the
-# creator's language, so the server checks them without re-reading the words (v58).
-# v59 combines these facts with KRI-669 heading groups and relative sizes.
-# KRI-700: a brighten / darken ask carries `footage_light`, so the server can say no draft
-# changes the footage's light instead of the summary promising it (v60).
-# v61 (KRI-674 live verification): per-clip camera sound is not spoken excerpts.
-# KRI-793: a captions ask that lists words to spell records them in `spellings`, which the
-# phone Talking writer applies to its captions and the render-ready review checks (v65).
-# KRI-791: an on-screen text timed to a spoken word carries `triggers` too (it was taught only
-# for photos, videos, stickers and sounds, so "Show MEROPE ... the first time she says Merope"
-# arrived with no trigger), plus `speaker` when someone other than the creator says it.
-# KRI-806: optional editorial plans pair only with licensed music and no kept clip sound.
-# v67 retains caption spellings, spoken triggers/speaker and the editorial audio pairing rule.
-# v66 combines both authored changes without losing either prompt instruction.
-# v66 (KRI-792): named spoken cuts carry cut_lines; caption spellings remain intact.
-# KRI-789: quoted start / end LINES inside a take are a `timing` trim (`start_line` /
-# `end_line`), never an `order` requirement; route places keep `order` (v67).
-# v68 combines caption spelling, spoken-text triggers/speaker, quoted trims and named cuts.
-# v69 retains all shared brief instructions plus editorial audio pairing.
-# v70 (KRI-851): the Talking reaction-beats section no longer forbids `opening_title`; a requested
-# title / closing text still goes in `opening_title` / `closing_title` alongside the beats.
-# KRI-814: a typed `delegates_all_choices` declaration for a message that states no requirement
-# and hands every choice to Kria, so readiness need not match the stock sentence (v71).
-# v72 (KRI-814): earlier creator lines never read into the brief are read with the current one.
-# v74 combines delegation v72 with subtitle-semantics v73, retaining all instructions.
-# v75 adds N2 fullscreen photo-then-original sequences to the complete v74 union.
-# v76 (KRI-816): a typed `starts_fresh` declaration withdraws the saved brief ("Start fresh").
-# v76 (KRI-815): `$voiceover_script_section` teaches `draft_voiceover_script` when footage is
-# attached and no voiceover is (a script request returns a script, not a doomed narrated draft).
-# v77 combines both v76 branches (KRI-816 starts_fresh + KRI-815 voiceover script section).
-# v77 (KRI-827): "no text on her face or on the plate" => `keep_text_off` facts.
-# v78 combines main's v77 (KRI-815 + KRI-816) with KRI-827's v77 (keep_text_off).
-# v77 (KRI-821): "mute the camera / crowd sound" is a typed `source_muted` audio intent.
-# v78 (KRI-821): a named cut of a repeated line records which take (`cut_line_occurrences`).
-# v79 combines main's v77 (KRI-815 + KRI-816) with KRI-821's v78.
-# v80 combines main's v79 (KRI-815/816/821) with KRI-827's keep_text_off (branch v78).
-# KRI-724: the Nth time a quoted phrase is said carries `speech_remove` {quote, occurrence}
-# beside its cut_lines, and an engine/motor noise ask carries `noise_reduction: "engine"`, so
-# the phone Talking worker cuts / filters from facts, never from the words (KRI-667) (v76,
-# on top of v75).
-# v76 (KRI-840): Talking reaction beats can ask for a photo full screen at a word
-# (`display_mode` "fullscreen"), and the shared brief records `display_mode`.
-# v76 (KRI-841): `ending_clip` (a video added after the talk, with its own sound, Talking only) and
-# the brief fact that records it next to `last_clip` (brief_extractor v21 shares the section).
-# v76 (KRI-842) adds the `clip_sound` fact: one clip's own sound under, or after, a voiceover.
-# KRI-847: a ceiling ("at most 15 seconds") carries `duration_bound: "at_most"` beside
-# `duration_s`, so a shorter draft meets it instead of missing 15 s +/- 10 % (v76).
-# v76 (KRI-849): "if you can't tell what he says, ask me instead of guessing" is a captions fact
-# (`ask_if_unclear`), and the creator's later answer is `unclear_answer` ("omit" or their own
-# words); the server compares two hearings of the speech and asks, it never reads the words.
-# v92 (KRI-881): main's v91 plus a research / sources ask as a typed `text` requirement with
-# `facts.research` ({topic, request_quote}); the server researches it before approval.
-# v93 combines main v92 research-before-approval with runtime creative skills.
-# v95 (KRI-689): the shared brief section records a clip-speed ask as `facts.playback_rate`
-# (0.25-4; "slow motion" = 0.5, "speed up" = 2) on a `style` requirement, never for pacing /
-# text / music or a speed ramp; the phone montage plans the rate onto the named clips.
-# v96: exact-timed small cards (`timed_cards`, flag PHONE_TIMED_CARDS_ENABLED) on phone
-# Montage / Voiceover edits, and the shared brief records a `timed_card` fact for the ask.
-# v97 (KRI-945): the described-text exception covers text on particular clips only; an
-# intro, explanation or facts for the whole video is never a clip intent.
-# v98 (KRI-942): the shared brief records clip sound on / off (`clip_sound` "on"/"off" with
-# `sound_clip`, `sound_from_s`/`sound_to_s`, `sound_line`, `sound_except`) for montages.
-# v99 (KRI-957): an after-voice clip ask's `triggers` is the line said in that clip, never the
-# creator's own last voiceover words ("after my last words \"before we eat\"").
-# v100 (KRI-994): a select ask records the media kind it restricts to / includes
-# (`only_media_kind` "video", `include_media_kind` "photo"), so the server can judge "clips
-# only" on the finished timeline and withdraw an earlier photo ask a later clips-only ask replaces.
-# v102 (29 Ekim lane D, KRI-1038): words shown a piece at a time are a `text_sequence`
-# requirement, not `captions: word_by_word`; "say" plus a quote with no voiceover is on-screen
-# text. (v101 is lane B's order-key edit; they merge in that order.)
-# v103 (KRI-1027): the shared brief records how sideways clips sit in a vertical video
-# (`landscape_fit` "fill" / "fit"), which preselects crop or black bars on the confirm screen.
-# v104 (30 Ekim): prompt-cache layout only, no rule change. The per-turn INPUT block
-# (creator context, footage, manifest, conversation, message) moved to
-# prompts/main_creator_turn.txt at the end so the rules above it form a shared prefix.
-# v105 (KRI-1077): title animation names come from the vocab registry (all designed edges).
-# v106 (prompt fidelity, animation): an UNNAMED animation ask ("with animations", "animated
-# text") is a `text` requirement carrying `animation: "any"`, not prose only; a named one
-# keeps its id. One fact for both: the disclosure unit's interim `animated: true` fact is gone.
-# v107 (KRI-1117): `background_media` (a photo / looping video behind the Talking speaker), taught
-# only where the manifest advertises `speaker_background`; every other prompt is byte-identical.
-# v108 (KRI-1093): the Lip-sync picker card (`manifest.chosen_format`) defaults an attached song
-# to `lipsync`; the song section gains one paragraph only on that manifest, so every other
-# render is byte-identical.
-# v109 (KRI-1151): a multi-clip Talking edit can show its other clips full screen where the creator
-# talks about them, optionally playing their own sound with the creator's voice muted under it.
-# Taught (with the voice-muted honesty) only where `talking_footage_cutaways(manifest)` is open,
-# so every other render is byte-identical; `MainCreatorInput.server_note` is the planner's one
-# corrective re-run after a refusal the open gates contradict (`app.kria.ask_refusals`).
-# v110 (parent KRI-1151): `insert_clips` (a footage clip played while the Talking take pauses),
-# taught only where `insert_clip_candidates(manifest)` is non-empty, and the shared brief records
-# it as an `insert_clip` fact (brief_extractor v46 shares the section). The cutaway section
-# says an insert exists only as `insert_clips` while that lane is open.
-# A clip shown while the talk keeps running is recorded as `display_mode` / `clip_sound`, never
-# `triggers`.
-# v109 (KRI-1162): commentary-style green screen. `background_media` gains `sequence` /
-# `spoken_phrase` / `cadence_s` / `speaker_frame`, taught in one extra paragraph only where the
-# manifest advertises `speaker_background_windows`; every other prompt is byte-identical.
-# v111: v109 (KRI-1162, 11-01), v109 (KRI-1151, 11-02) and v110 (insert clips) merged;
-# the prompt carries all three.
-# v112 (parent KRI-1151, thread b61b7673): "place them in between my speech" for clips that have
-# speech or sound of their own is an INSERT (one `insert_clips` row per clip, no phrase: the
-# worker pauses the talk at the end of the sentence about the clip, chosen by meaning), and
-# "over my speech / while I keep talking / keep my voice" stays the overlay. The creator's
-# position words decide the route, never the sound words ("use their audio" is listed once, on the
-# overlay side), and a clip with no sound of its own said "in between my speech" is the same
-# insert played silent (`keep_audio` false). Only the texts shown while the insert lane is open
-# change; every closed-gate prompt keeps its bytes. No live eval of this routing exists; the
-# fixtures under tests/fixtures/agent_evals/main_creator/kri1151_* are hand-authored.
-# v114 (KRI-1175, prod "Green 3"): "whichever photo or video I'm talking about" gives every
-# background_media.sequence entry a spoken_phrase from the take's own words (spoken order; one
-# phrase for two visuals of one thing; a visual never talked about is left out and named in
-# summary), so the worker lays them out on the words. Only the windows section changes (shown only
-# with the speaker_background_windows capability); every other prompt keeps its bytes. v113 is used
-# by unmerged branches (PR #2089, KRI-1173).
-# v116 (KRI-1177 / KRI-1164, Green 3, PR #2089; was v113 on its branch, v115 is #2088's): the
-# shared brief section records the creator's caption look (`caption_size`, `caption_position`,
-# `caption_color`, `caption_case`) and "no music" as `audio_intent: no_music`; the speaker's own
-# corner is never a caption position. On top of v114.
-# v117 (KRI-1189, Green 3; v115 is #2088's): the shared brief section records an unquoted "cut the
-# sentence I restarted" / "my retakes" / "tekrar aldığım cümle" as `cut_restarts: true` and never
-# copies the take's words into `cut_lines` (Green 3 r2 did); a named restart stays a cut line and
-# "start over" about the edit or a clip is no restart. On top of v116.
-# v118 (KRI-1173; v117 is held by #2092): a plain colour behind the speaker, on top of v116.
-# `background_media` takes `color` ("#RRGGBB") instead of `media_id`, taught in one extra
-# paragraph only where the manifest advertises `speaker_background_color`; the shared brief
-# section records `background_color` beside `speaker_background` (brief_extractor v53 shares
-# it). Every other creator prompt is byte-identical.
-# v119 (KRI-1189 lands after #2088): v117's `cut_restarts` teaching on top of v118. The
-# KRI-1189 replay fixtures keep the `2026-11-03-v117` label they were recorded under.
-# v120 (Qendresa item 12): the shared brief section records the caption shape as typed facts,
-# `caption_words` (1-3 words at a time) and `caption_box` (a #RRGGBB box behind the captions).
-# On top of v119; brief_extractor v55 shares it.
-# v121 (Qendresa 13, tight pauses; on top of v120, Qendresa 12 caption shape): the shared brief
-# section records an "all my pauses / tight pace" ask as `pauses: "tight"` beside
-# `speech_cleanup`. On top of v119.
-# v123 (Qendresa item 17, follow-up of KRI-1175; v121-v122 reserved by items 13-14): one
-# paragraph after the windows section teaching how to write a sequence entry's `spoken_phrase`
-# (as said in the take, with the words only said where that visual is introduced). Shown only
-# with BACKGROUND_FOLLOWS_TALK_ENABLED and the windows capability; every other prompt keeps its
-# bytes.
-# v125 (Qendresa item 16; v124 is reserved for item 15): two teachings, shown only with
-# SPEAKER_FULL_OPENING_ENABLED and the `speaker_full_opening` capability. Strategy: "start with me
-# full screen ... after that my recordings and me small in the corner" sets
-# `background_media.full_screen_opening` (+ `full_screen_opening_s` for a named length). Brief: the
-# shared section records `speaker_full_opening` / `speaker_full_opening_s` on the requirement it
-# belongs to (brief_extractor v60 shares it). Every other prompt keeps its bytes.
-# v126 (Qendresa item 18; v124 is reserved for item 15; shipped as v136, below): one paragraph
-# after the full-opening section, shown only with BACKGROUND_FOCUS_ENABLED and the
-# `background_focus` capability. The recordings behind the speaker are aimed at their readable
-# text by the compile; the planner sets `background_media.focus` (a named side) / `focus_zoom`
-# (a named amount) only when the creator names one. Every other prompt keeps its bytes.
-# v128 (Qendresa item 21), on top of v120 (Qendresa 12 caption shape): behind
-# `settings.clip_text_tiktok_look_enabled`, `_CLIP_TEXT_LOOK_PROMPT_SECTION` teaches one line
-# pinned in the MIDDLE for the whole video (`corner: "middle_center"`) and TikTok's own text look
-# (`look: "tiktok"`). Flag off => the rendered prompt is byte-identical to v120.
-# v131 (item 23, Related KRI-1129), on top of v120 (Qendresa 12 caption shape): with
-# BRIEF_LONG_REQUEST_ENABLED the brief section says "at most 32 objects" instead of 16.
-# Flag off: every prompt byte-identical.
-# v133 (Qendresa item 16; v130 until main reached v131 with item 23; v132 is held by item 24):
-# v125's two full-screen-opening teachings on top of v128 and v131. Flag off, every prompt keeps
-# its bytes.
-# v135 (Qendresa item 20, TITLE_LOOK_ENABLED): only while `title_look_enabled` is on, the Talking
-# reaction-beats section gains one rule: a logo/sticker she wants with or above the opening title
-# is a beat with `anchor: "title"`; the title stays in `opening_title`, " / " included. Flag off:
-# every prompt keeps its bytes. On top of v133 (#2111). Reserved as v129, renumbered once main
-# passed it; v132 and v134 are held by items 24 and 18.
-# v136 (Qendresa item 18; was v126, then v132, then v134 until item 20 merged as v135):
-# v126's background-focus paragraph on top of v133 (item 16) and v135 (item 20). Every other
-# prompt keeps its bytes.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-06-v136"
+# The prompt version is a fingerprint of these files, so it moves exactly when they change
+# (app/agents/_prompt_fingerprint.py). Don't bump or pin it and don't add a history here;
+# describe a prompt change in its PR. The hand-numbered history (to v136) is frozen in
+# docs/pipelines/prompt-version-history.md. A new prompt file or skill must be listed here
+# (tests/agents/test_prompt_fingerprint.py checks every load_prompt / load_skill).
+MAIN_CREATOR_PROMPT_SOURCES = (
+    "app/agents/main_creator.py",
+    "app/agents/prompt_vocab.py",
+    "app/agents/_schemas/text_animation_phases.py",  # {{TEXT_ANIMATION_EDGES}}
+    "app/agents/_writing_context.py",
+    "app/kria/reply_language.py",
+    "app/kria/brief.py",
+    "app/pipeline/phone_talking_cutaways.py",
+    "app/pipeline/phone_talking_mentions.py",
+    "app/agents/skills/edit-story/SKILL.md",
+    "app/agents/skills/grounded-hook/SKILL.md",
+    "app/agents/skills/meaningful-moment/SKILL.md",
+    "prompts/main_creator.txt",
+    "prompts/main_creator_turn.txt",
+)
+MAIN_CREATOR_PROMPT_VERSION = prompt_fingerprint("mc", MAIN_CREATOR_PROMPT_SOURCES)
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input

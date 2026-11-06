@@ -65,7 +65,8 @@ neither action grounding nor a correct export.
 ## Workflow rules
 
 - One worktree, one PR, one hot file: serialize changes to shared files such as
-  `brief_checks.py` or `MAIN_CREATOR_PROMPT_VERSION`.
+  `brief_checks.py`. Main Creator / brief-extractor prompt versions are automatic
+  fingerprints: never bump or pin them (`docs/pipelines/prompt-version-history.md`).
 - Never stack a PR on an unmerged branch; verify the destination branch and base.
 - Name the evidence level in handoffs. “Implemented” is not “deployed”; a deployed
   revision is not proof that the creator's request succeeded.
