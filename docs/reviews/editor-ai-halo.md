@@ -1,5 +1,7 @@
 # Editor AI activity feedback
 
+Tracking: [KRI-1230 — Show AI editing activity in the iPhone editor](https://linear.app/kria/issue/KRI-1230/show-ai-editing-activity-in-the-iphone-editor). Native checks remain pending.
+
 This records the standalone candidate and investigation. The authorized local integration branch is described in [the integration record](editor-ai-halo-integration.md), which supersedes the proposed implementation/ownership statements below.
 
 Acceptance, recorded before implementation:

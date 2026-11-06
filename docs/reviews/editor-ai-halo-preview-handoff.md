@@ -1,5 +1,7 @@
 # Preview handoff: source trace and proposed ownership boundary
 
+Tracking: [KRI-1230 — Show AI editing activity in the iPhone editor](https://linear.app/kria/issue/KRI-1230/show-ai-editing-activity-in-the-iphone-editor). Native checks remain pending.
+
 This records the standalone candidate and investigation. The authorized local integration branch is described in [the integration record](editor-ai-halo-integration.md), which supersedes the proposed implementation/ownership statements below.
 
 This is a proposal for coordination with the Cunda session owner. It is not an implemented retention mechanism. The inspected motion base is `05d9720d8b3f838f8b91963e183eb7206c34e538`; the Cunda comparison is `a7ed058ba570d62add9fb2ee9df2cc6aa91ade5a`. No session/player code was edited by this investigation.
