@@ -136,16 +136,20 @@ import XCTest
     var coordinators: [DeviceRenderCoordinator] = []
     let capabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.map(\.rawValue))
 
-    lazy var sessions = DeviceRenderSessions(fetch: { [remote] jobID, _ in
-        await remote.status(for: jobID)
-    }, factory: { [unowned self] _, _ in
-        let coordinator = try DeviceRenderCoordinator(directory: self.root.appendingPathComponent(String(self.coordinators.count)),
-            exporter: self.exporter, sources: ResetOwnershipSources(), publisher: ResetOwnershipPublisher(),
-            backgroundExecution: ResetOwnershipExecution(gate: self.gate))
-        self.coordinators.append(coordinator)
-        return coordinator
-    }, ownerIdentity: { [unowned self] in self.owner },
-       environment: .init(thermalState: { .nominal }, freeStorageBytes: { Int64.max }))
+    lazy var sessions: DeviceRenderSessions = makeSessions()
+
+    private func makeSessions() -> DeviceRenderSessions {
+        return DeviceRenderSessions(fetch: { [remote] jobID, _ in
+            await remote.status(for: jobID)
+        }, factory: { [unowned self] _, _ in
+            let coordinator = try DeviceRenderCoordinator(directory: self.root.appendingPathComponent(String(self.coordinators.count)),
+                exporter: self.exporter, sources: ResetOwnershipSources(), publisher: ResetOwnershipPublisher(),
+                backgroundExecution: ResetOwnershipExecution(gate: self.gate))
+            self.coordinators.append(coordinator)
+            return coordinator
+        }, ownerIdentity: { [unowned self] in self.owner },
+           environment: .init(thermalState: { .nominal }, freeStorageBytes: { Int64.max }))
+    }
 
     init(firstStarted: XCTestExpectation?, barriers: [Int: XCTestExpectation]) {
         let firstRequest = Self.request(job: UUID(), revision: 1)
