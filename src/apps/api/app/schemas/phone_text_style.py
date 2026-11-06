@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from types import MappingProxyType
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -31,6 +32,26 @@ CURATED_PHONE_FONTS = (
 CAPTION_PREFERRED_FONT = "TikTok Sans Bold"
 DEFAULT_STROKE_WIDTH = 0
 DEFAULT_SHADOW_ENABLED = False
+
+# Named looks a creator-confirmed line can carry (``PinnedText.look``). Read-only on purpose:
+# callers copy (``dict(TIKTOK_TEXT_LOOK)``) and then apply their own overrides.
+CLIP_TEXT_LOOKS = ("tiktok",)
+# Qendresa item 21, measured on her videos: TikTok Sans Bold, white, 56 px on a 1080x1920
+# canvas, wrapping at 0.72 of the width, with a faint soft shadow (the authored shadow paint
+# at opacity 0.2).
+TIKTOK_TEXT_LOOK = MappingProxyType(
+    {
+        "font_family": "TikTok Sans Bold",
+        "color": "#FFFFFF",
+        "size_px": 56,
+        "max_width_frac": 0.72,
+        "shadow_enabled": True,
+        "shadow_color": "#000000",
+        "shadow_opacity": 0.2,
+        "stroke_width": 0,
+        "alignment": "center",
+    }
+)
 
 
 class TextStyleRule(BaseModel):
