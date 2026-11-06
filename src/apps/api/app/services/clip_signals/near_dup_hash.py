@@ -51,7 +51,10 @@ MIN_MEAN_ABS_STEP = 1.0  # mean |left-right| difference of the 9x8 grid, 0-255 s
 MIN_ROW_VARIETY = 6
 
 # Pair decision (see the module docstring for where the numbers come from).
-MATCH_DISTANCE = 11  # Hamming distance (of 64) at or under which two keyframes are the same view
+# Hamming distance (of 64) at or under which two keyframes are the same view. Full recall begins
+# at 11 with the local decoder and at 12 on the CI runner (one duplicate pair re-decodes a bit
+# further apart); locally precision stays perfect up to 16, so 12 absorbs the decoder spread.
+MATCH_DISTANCE = 12
 MATCH_DISTANCE_NO_TIME = 9  # stricter when a capture time is missing on either clip
 MAX_CAPTURE_GAP_S = 600.0  # both clips timed and further apart than this: not the same moment
 
