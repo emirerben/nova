@@ -21,3 +21,18 @@ Steps and what a failure means:
 - **teeth:** every passing rule has at least one mutation (`TEETH`) that puts one piece of the old behavior back; TLC must catch it. Every new fix needs its own tooth: one mutation per fix, never bundled (bundles hid fixes with no tooth in round 2). If a fix's mutation is caught nowhere, either it is unnecessary (say why in findings.md) or the runs lack the scenario that needs it: add the scenario.
 
 Findings, prod evidence and what changed: `formal/ios_edit_flow/findings.md`. Statecharts of the fixed flow: `formal/ios_edit_flow/statechart/` (`editor-device`, `creation-rendering`). To extend the model to new code, use `/maintain-formal-verification-skill`.
+
+## Saved-render receipt companion
+
+The default verifier also runs `SavedRenderReceipt.tla` through
+`verify_saved_receipt.py`. Run that bounded check alone with
+`python3 formal/ios_edit_flow/verify_saved_receipt.py` and the same verified
+`TLA2TOOLS` / `JAVA` settings. It checks saved-generation export safety, no export
+during unresolved/coalesced reads, and replacement-editor isolation after a
+suspended Save. Three mutation modes (four runs, checking both replacement windows separately) must fail, and a reachability
+control must demonstrate export of the replacement.
+
+Mapping, bounds and exclusions are in `formal/ios_edit_flow/saved-receipt-correspondence.md`.
+This companion does not certify all behavior in the covered native functions.
+Its addition does not authorize globally resyncing `coverage.json`; unrelated
+baseline drift and unmodeled function branches must stay explicit.

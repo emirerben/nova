@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.24.0] - 2026-11-06
+
+### Changed
+- fix(ios): make New Chat immediate and reduce save/share waits (#2125) <!-- release-pr: 2125 -->
+
 ## [0.88.23.0] - 2026-11-06
 
 ### Changed
