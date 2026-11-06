@@ -93,7 +93,8 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # `speaker_full_opening` capability, so the pins cover v125 too (renumbered v133 on top of v131).
 # v128 (Qendresa item 21): its section renders only with CLIP_TEXT_TIKTOK_LOOK_ENABLED, so the
 # pins cover v128 too.
-# v135 (Qendresa item 20): its rule renders only with TITLE_LOOK_ENABLED, so the pins cover v135 too.
+# v135 (Qendresa item 20): its rule renders only with TITLE_LOOK_ENABLED, so the pins cover
+# v135 too.
 # v136 (Qendresa item 18, was v126 / v132 / v134): its paragraph renders only with
 # BACKGROUND_FOCUS_ENABLED and the `background_focus` capability, so the pins cover v136 too.
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
