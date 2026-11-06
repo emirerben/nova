@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.27.0] - 2026-11-06
+
+### Changed
+- fix(kria): an ending's words are never the opening title or a whole-video pin (says-done B follow-up to #2130) (#2138) <!-- release-pr: 2138 -->
+
+## [0.88.26.0] - 2026-11-06
+
+### Changed
+- perf(ios): live green-screen preview lag, four independent levers (KRI-1183) (#2121) <!-- release-pr: 2121 -->
+
+## [0.88.25.0] - 2026-11-06
+
+### Changed
+- Prompt versions for Main Creator and brief extractor are computed from their source files (no more version-line conflicts) (#2133) <!-- release-pr: 2133 -->
+
 ## [0.88.24.0] - 2026-11-06
 
 ### Changed
