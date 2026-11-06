@@ -1,5 +1,7 @@
 # Local halo/session integration candidate
 
+Latest landed-main candidate and validation limits: [KRI-1230 main integration](editor-ai-halo-main.md). Older integration/hold statements below record their original candidate.
+
 This branch is local integration preparation, explicitly authorized against Cunda `bc0bfd6ee198a5b5ec3e2d0dc3276b1908c50a3c`. The standalone halo remains unchanged at `d8c93aa545609c1d272986d623645885487d255e`. Cunda's worktree and published branch were not edited. Publication and merge require Cunda to land, rebase onto the resulting main, and affected revalidation. Native execution remains held. Tracking is now [KRI-1230](https://linear.app/kria/issue/KRI-1230/show-ai-editing-activity-in-the-iphone-editor) in iOS editor polish. The earlier capacity failure is historical and resolved; native/dependency/publication gates remain open.
 
 ## Choice: session-owned old-item handoff
