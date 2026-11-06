@@ -758,6 +758,7 @@ import XCTest
 }
 
 private actor ControlledThoughtProposalClient: KriaAPIClient {
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int) async throws -> TurnAccepted { throw APIError.unsupported }
     func projects() async throws -> [ProjectSummary] { throw APIError.unsupported }
     func project(threadID: UUID) async throws -> CreationThread { throw APIError.unsupported }
     func library() async throws -> [ProjectSummary] { throw APIError.unsupported }
