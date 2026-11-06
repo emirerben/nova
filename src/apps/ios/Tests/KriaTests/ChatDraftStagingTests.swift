@@ -682,7 +682,7 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertFalse(session.needsReload(for: project(jobB, revision: 26)))
     }
 
-    private func replanFixture(manualEdit: Bool) async -> (NativeEditorSession, EditorCommitSpy, ProjectSummary, UUID) {
+    private func replanFixture(manualEdit: Bool) async throws -> (NativeEditorSession, EditorCommitSpy, ProjectSummary, UUID) {
         let jobA = UUID(uuidString: Self.jobID)!, jobB = UUID(), threadID = UUID()
         func project(_ job: UUID, revision: Int) -> ProjectSummary {
             ProjectSummary(id: threadID, title: "Chat", status: .ready, updatedAt: .now, posterURL: nil,
@@ -698,13 +698,20 @@ final class ChatDraftStagingTests: XCTestCase {
         fake.authoritativeVariant = variantB
         fake.draftSnapshot = DraftSnapshot(draftID: "n", itemID: "item", variantKey: "initial", draftRevision: 1, snapshotHash: "h", etag: "e",
             baseJobID: jobB.uuidString, baseGenerationID: "gNew", snapshot: [:], canUndo: false, createdAt: .now)
-        return (session, fake, project(jobB, revision: 9), jobB)
+        let latest = try thread(threadID, job: jobB, revision: 9)
+        fake.refreshedThread = latest
+        return (session, fake, latest.summary, jobB)
     }
 
     func testReplanWithOnlyChatStagedEditsSwitchesToTheNewJobWithoutCommitting() async throws {
-        let (session, fake, newProject, jobB) = await replanFixture(manualEdit: false)
+        let (session, fake, newProject, jobB) = try await replanFixture(manualEdit: false)
         XCTAssertTrue(session.hasOnlyChatStagedChanges)
         await session.adoptLatestJob(newProject, api: fake)
+        let adopted = await settle {
+            (session.player?.currentItem?.asset as? AVURLAsset)?.url.lastPathComponent == "job-b.mp4"
+                && session.loadState == .loaded && !session.hasUnsavedChanges
+        }
+        XCTAssertTrue(adopted, "queued observation finishes adopting the new job")
         XCTAssertEqual(fake.commitCount, 0)
         XCTAssertNil(session.newerJobPrompt)
         XCTAssertFalse(session.hasUnsavedChanges, "obsolete staged edits dropped")
@@ -717,8 +724,10 @@ final class ChatDraftStagingTests: XCTestCase {
     }
 
     func testReplanWithManualEditsPromptsThenSwitchDiscardsAndKeepEditingStays() async throws {
-        let (session, fake, newProject, jobB) = await replanFixture(manualEdit: true)
+        let (session, fake, newProject, jobB) = try await replanFixture(manualEdit: true)
         await session.adoptLatestJob(newProject, api: fake)
+        let prompted = await settle { session.newerJobPrompt != nil }
+        XCTAssertTrue(prompted, "queued observation reaches the manual-edit decision")
         XCTAssertEqual(session.newerJobPrompt, newProject)
         XCTAssertTrue(session.hasUnsavedChanges, "no silent switch or discard")
         XCTAssertNotEqual(fake.editorVariantJobIDs.last, jobB)
@@ -726,6 +735,8 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertNil(session.newerJobPrompt)
         XCTAssertTrue(session.hasUnsavedChanges)
         await session.adoptLatestJob(newProject, api: fake)
+        let promptedAgain = await settle { session.newerJobPrompt != nil }
+        XCTAssertTrue(promptedAgain, "a new observation presents the decision again")
         XCTAssertNotNil(session.newerJobPrompt)
         await session.switchToLatestJob(newProject, api: fake)
         XCTAssertNil(session.newerJobPrompt)
@@ -770,6 +781,11 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertTrue(session.hasOnlyChatStagedChanges)
         // Old job's routes now 409 "content plan unavailable": adopt J2, no error banner.
         await session.synchronizePromptRevision()
+        let adopted = await settle {
+            (session.player?.currentItem?.asset as? AVURLAsset)?.url.lastPathComponent == "job-b.mp4"
+                && session.loadState == .loaded && !session.hasUnsavedChanges
+        }
+        XCTAssertTrue(adopted, "queued observation finishes adopting the new job")
         XCTAssertEqual(fake.editorVariantJobIDs.last, jobB)
         XCTAssertFalse(session.hasUnsavedChanges)
         XCTAssertEqual(fake.commitCount, 0)
@@ -783,6 +799,11 @@ final class ChatDraftStagingTests: XCTestCase {
         fake.draftSnapshot = DraftSnapshot(draftID: "n", itemID: "item", variantKey: "initial", draftRevision: 1, snapshotHash: "h", etag: "e",
             baseJobID: jobB.uuidString, baseGenerationID: "gNew", snapshot: [:], canUndo: false, createdAt: .now)
         await session.synchronizePromptRevision()
+        let adopted = await settle {
+            (session.player?.currentItem?.asset as? AVURLAsset)?.url.lastPathComponent == "job-b.mp4"
+                && session.loadState == .loaded && !session.hasUnsavedChanges
+        }
+        XCTAssertTrue(adopted, "queued observation finishes adopting the new job")
         XCTAssertEqual(fake.editorVariantJobIDs.last, jobB)
         XCTAssertFalse(session.hasUnsavedChanges)
         XCTAssertEqual(fake.commitCount, 0)
@@ -791,6 +812,8 @@ final class ChatDraftStagingTests: XCTestCase {
     func testSupersededJobWithManualEditsPromptsInsteadOfSwitching() async throws {
         let (session, fake, jobB) = try await supersededFixture(manualEdit: true)
         await session.synchronizePromptRevision()
+        let prompted = await settle { session.newerJobPrompt != nil }
+        XCTAssertTrue(prompted, "queued observation reaches the manual-edit decision")
         XCTAssertNotNil(session.newerJobPrompt)
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertNotEqual(fake.editorVariantJobIDs.last, jobB)
@@ -1264,10 +1287,12 @@ extension ChatDraftStagingTests {
     // MARK: L-a / S2-d: a re-plan whose new job is still rendering
 
     func testReplanStillRenderingKeepsTheOldVideoThenSwitchesWhenReady() async throws {
-        let (session, fake, newProject, jobB) = await replanFixture(manualEdit: false)
+        let (session, fake, newProject, jobB) = try await replanFixture(manualEdit: false)
         session.newVersionPollDelays = [.milliseconds(20)]
         fake.editorVariantsByJob[jobB] = []
         await session.adoptLatestJob(newProject, api: fake)
+        let rendering = await settle { session.refreshSync == .newVersionRendering }
+        XCTAssertTrue(rendering, "queued observation recognizes the unfinished render")
         func playing() -> String? { (session.player?.currentItem?.asset as? AVURLAsset)?.url.lastPathComponent }
         XCTAssertEqual(playing(), "job-a.mp4", "the working video must not be thrown away")
         XCTAssertEqual(session.loadState, .loaded)
@@ -1284,10 +1309,12 @@ extension ChatDraftStagingTests {
     }
 
     func testReplanStillRenderingWithManualEditsAsksOnlyOnceItIsReady() async throws {
-        let (session, fake, newProject, jobB) = await replanFixture(manualEdit: true)
+        let (session, fake, newProject, jobB) = try await replanFixture(manualEdit: true)
         session.newVersionPollDelays = [.milliseconds(20)]
         fake.editorVariantsByJob[jobB] = [["variant_id": .string("initial"), "render_status": .string("rendering")]]
         await session.adoptLatestJob(newProject, api: fake)
+        let rendering = await settle { session.refreshSync == .newVersionRendering }
+        XCTAssertTrue(rendering, "queued observation recognizes the unfinished render")
         XCTAssertNil(session.newerJobPrompt, "'A new version is ready' would be false while it renders")
         XCTAssertTrue(session.hasUnsavedChanges)
         fake.editorVariantsByJob[jobB] = [Self.variant(generation: "gNew")]
@@ -1297,7 +1324,7 @@ extension ChatDraftStagingTests {
     }
 
     func testChatSyncDuringAReplanRenderShowsTheNeutralChipNotAFailure() async throws {
-        let (session, fake, newProject, jobB) = await replanFixture(manualEdit: false)
+        let (session, fake, newProject, jobB) = try await replanFixture(manualEdit: false)
         session.refreshRetryDelays = [.seconds(3600)]
         session.newVersionPollDelays = [.seconds(3600)]
         // The draft follows the plan item to the new job, which has no variants yet (drafts.py:270-285).
@@ -1305,13 +1332,15 @@ extension ChatDraftStagingTests {
         fake.refreshedThread = try decodeThread(newProject.id, job: jobB)
         fake.editorVariantsByJob[jobB] = []
         await session.synchronizePromptRevision()
+        let rendering = await settle { session.refreshSync == .newVersionRendering }
+        XCTAssertTrue(rendering, "queued observation recognizes the unfinished render")
         XCTAssertEqual(session.refreshSync, .newVersionRendering)
         XCTAssertEqual(session.saveState, .idle)
         XCTAssertEqual((session.player?.currentItem?.asset as? AVURLAsset)?.url.lastPathComponent, "job-a.mp4")
     }
 
     func testFailedNewRenderLeavesTheCurrentVideoAndNoChip() async throws {
-        let (session, fake, newProject, jobB) = await replanFixture(manualEdit: false)
+        let (session, fake, newProject, jobB) = try await replanFixture(manualEdit: false)
         fake.editorVariantsByJob[jobB] = [["variant_id": .string("initial"), "render_status": .string("failed")]]
         await session.adoptLatestJob(newProject, api: fake)
         XCTAssertEqual(session.refreshSync, .idle)

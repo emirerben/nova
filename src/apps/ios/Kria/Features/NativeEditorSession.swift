@@ -227,7 +227,12 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var previewObservationTerminal = false
     private var previewSlowGeneration: String?
     private var previewTransport: Task<[String: JSONValue], Error>?
-    private var loadTransport: Task<Void, Never>?
+    private struct LoadTransport {
+        let epoch: UInt64
+        let token: UUID
+        let task: Task<Void, Never>
+    }
+    private var loadTransport: LoadTransport?
     var loadReadNow: () -> ContinuousClock.Instant = { ContinuousClock.now }
     var loadReadSleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     var previewReadNow: () -> ContinuousClock.Instant = { ContinuousClock.now }
@@ -2333,10 +2338,11 @@ struct NativeEditorTemporaryVideo: Sendable {
                 // (the newest edit, which the creator asked for); one Undo restores
                 // the creator's own version (KRI-935).
                 if let staged, variantUnchanged(variant) {
-                    var remote = nextDocument
-                    for section in staged.sections { copy(section, from: staged.document, into: &remote) }
-                    guard rebaseLocalEdits(onto: nextDocument, variant: variant, forcePreviewRebuild: false, remoteEdits: remote,
-                        destination: (nextJobID, nextVariantKey, snapshot.itemID), stagedRevision: snapshot.draftRevision) else { return }
+                    appendUndo(document); redoStack.removeAll()
+                    var merged = document
+                    for section in staged.sections { copy(section, from: staged.document, into: &merged) }
+                    document = Self.honoringDeletions(Set(merged.deletions), in: merged)
+                    changedSections.formUnion(staged.sections)
                     appliedChatDraftRevision = snapshot.draftRevision
                     chatStagedDocument = nil
                     refreshDirtyState(); refreshDuration()
@@ -3312,7 +3318,11 @@ struct NativeEditorTemporaryVideo: Sendable {
         let scope = observationScope(api: api, target: target)
         guard editorLoadEpoch == epoch else { throw CancellationError() }
         loadObservationScope = scope
-        while let active = loadTransport { await active.value; try Task.checkCancellation() }
+        while let active = loadTransport, active.epoch == epoch {
+            await active.task.value
+            try Task.checkCancellation()
+            guard editorLoadEpoch == epoch else { throw CancellationError() }
+        }
         while (loadObservationCooldowns[scope] ?? NativeEditorReadCooldown()).delay(now: loadReadNow()) > .zero {
             try await loadReadSleep((loadObservationCooldowns[scope] ?? NativeEditorReadCooldown()).delay(now: loadReadNow()))
             try Task.checkCancellation()
@@ -3320,19 +3330,21 @@ struct NativeEditorTemporaryVideo: Sendable {
         guard observersVisible, editorLoadEpoch == epoch, api?.mediaLibraryOwner == owner,
               observationScope(api: api, target: target) == scope,
               !(loadObservationCooldowns[scope]?.isPaused ?? false) else { throw CancellationError() }
-        if loadTransport != nil { return try await readLoadObservation(epoch: epoch, target: target, read: read) }
+        if loadTransport?.epoch == epoch { return try await readLoadObservation(epoch: epoch, target: target, read: read) }
+        let token = UUID()
         let transport = Task<Value, Error> { [weak self] in
-            defer { self?.loadTransport = nil }
+            defer { if self?.loadTransport?.token == token { self?.loadTransport = nil } }
             do { return try await read() }
             catch {
-                if let self, self.api?.mediaLibraryOwner == owner,
+                if let self, self.editorLoadEpoch == epoch, self.api?.mediaLibraryOwner == owner,
+                   self.observationScope(api: self.api, target: target) == scope,
                    case let APIError.requestFailed(_, detail) = error, let hint = detail.retryAfter {
                     self.loadObservationCooldowns[scope, default: NativeEditorReadCooldown()].record(seconds: hint, now: self.loadReadNow())
                 }
                 throw error
             }
         }
-        loadTransport = Task { _ = try? await transport.value }
+        loadTransport = LoadTransport(epoch: epoch, token: token, task: Task { _ = try? await transport.value })
         let value = try await transport.value
         try Task.checkCancellation()
         guard observersVisible, editorLoadEpoch == epoch, api?.mediaLibraryOwner == owner else { throw CancellationError() }
@@ -3340,6 +3352,13 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     #if DEBUG
+    func pendingMergeSnapshotForTesting() -> [String: JSONValue]? {
+        guard let context = pendingMerge else { return nil }
+        return ["base": .object(context.base.encodeSnapshot()), "local": .object(document.encodeSnapshot()),
+                "remote": .object(context.remote.encodeSnapshot()), "base_song": context.baseSong ?? .null,
+                "variant": .object(context.variant ?? [:])]
+    }
+
     /// KRI-669: deterministic provider/HTTP fixtures, real original resolution,
     /// placement, compiler, undo and local export. No account or network.
     @Published private(set) var gamedayFixtureSaved = false
@@ -9206,6 +9225,9 @@ struct NativeEditorTemporaryVideo: Sendable {
             guard self.editorOperationIdentity == identity else { return }
             switch result {
             case .needsResolution:
+                guard !Task.isCancelled, self.jobID == jobID, self.sourcePreviewSequence == sequence else { return }
+                self.sourcePreviewState = .failed("Review the conflicting changes above to prepare your preview. Your edits are still here.")
+                self.pendingPlayRequest = false
                 return
             case .reloaded:
                 return
