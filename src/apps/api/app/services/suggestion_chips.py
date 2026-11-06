@@ -854,6 +854,10 @@ def _measured_evidence(ctx: SuggestionContext, kind: str, targets: Sequence[Targ
             from app.services.suggestions.kinds import duplicates  # noqa: PLC0415
 
             return duplicates.evidence_lines(ctx, targets)
+        elif kind == "mute_clip":
+            from app.services.suggestions.kinds import mute_clip  # noqa: PLC0415
+
+            return mute_clip.evidence_lines(ctx, targets)
     except Exception:  # noqa: BLE001 - a missing evidence line falls back to the clip names
         log.warning("suggestion_chips.error", stage="measured_evidence", kind=kind, exc_info=True)
     return []

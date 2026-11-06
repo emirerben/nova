@@ -207,6 +207,42 @@ def candidate_targets(ctx: SuggestionContext) -> list[Target]:
     ]
 
 
+# What the clip's own measurement heard, in the creator's language: the stronger of the two noise
+# heads, or the plain fact when the signal measured noisy without saying which. Closed text, never
+# a transcript or footage word.
+_NOISE_LINE = {
+    "en": {
+        "wind": "Wind noise on clip {clip}",
+        "crowd": "Crowd noise on clip {clip}",
+        "noise": "Noisy sound on clip {clip}",
+    },
+    "tr": {
+        "wind": "{clip}. klipte rüzgâr gürültüsü",
+        "crowd": "{clip}. klipte kalabalık gürültüsü",
+        "noise": "{clip}. klipte gürültülü ses",
+    },
+}
+
+
+def evidence_lines(ctx: SuggestionContext, targets: Sequence[Target]) -> list[str]:
+    """The card's measured evidence: which noise the named clip's ``audio_quality`` signal heard.
+    Empty when the targets name no measured clip (the card then falls back to its clip name)."""
+    named = [t for t in targets if t.media_id and t.clip_ordinal is not None]
+    if len(named) != 1:
+        return []
+    target = named[0]
+    data = _signal(ctx, str(target.media_id))
+    if _measured_noisy(data) is None or data is None:
+        return []
+    wind, crowd = (
+        float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0.0
+        for v in (data.get("wind_score"), data.get("crowd_score"))
+    )
+    heard = "noise" if wind == crowd == 0.0 else "wind" if wind >= crowd else "crowd"
+    lang = "tr" if ctx.language.casefold().startswith("tr") else "en"
+    return [_NOISE_LINE[lang][heard].format(clip=target.clip_ordinal)]
+
+
 def _available(ctx: SuggestionContext) -> bool:
     return bool(_scan(ctx).noisy)
 
@@ -314,5 +350,6 @@ __all__ = [
     "Candidate",
     "Scan",
     "candidate_targets",
+    "evidence_lines",
     "loader_input",
 ]
