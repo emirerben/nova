@@ -9,9 +9,9 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-expected = urlparse(os.environ["DATABASE_URL"])
-assert expected.path == "/nova_auto_convergence_ai_20261106_test"
-assert expected.hostname in {"localhost", "127.0.0.1", "::1"} and (expected.port or 5432) == 5432
+from tests.slide_post_ai_worker_database_guard import validate_database_url
+
+expected_database = validate_database_url(os.environ["DATABASE_URL"], os.environ)
 
 connect = socket.socket.connect
 connect_ex = socket.socket.connect_ex
@@ -46,6 +46,7 @@ def assert_db(dsn=None, **kwargs):
     values = {}
     if dsn:
         if dsn.startswith(("postgresql://", "postgres://")):
+            assert validate_database_url(dsn, os.environ) == expected_database
             parsed = urlparse(dsn)
             values = {
                 "host": parsed.hostname,
@@ -55,7 +56,7 @@ def assert_db(dsn=None, **kwargs):
         else:
             values = psycopg2.extensions.parse_dsn(dsn)
     values.update(kwargs)
-    assert values.get("dbname", values.get("database")) == expected.path.lstrip("/")
+    assert values.get("dbname", values.get("database")) == expected_database
     assert (
         values.get("host") in {"localhost", "127.0.0.1", "::1"}
         and int(values.get("port", 5432)) == 5432

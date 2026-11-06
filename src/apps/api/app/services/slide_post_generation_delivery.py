@@ -134,7 +134,8 @@ def with_first_render_claim(fn):
 
 
 def write_rejected(db: Session, job: Job) -> bool:
-    if active_job.get() != job.id:
+    claimed_job = active_job.get()
+    if claimed_job is None or claimed_job != job.id:
         return False
     receipt = _receipt_for_job(db, job.id)
     return receipt is None or receipt.execution_state != "running"

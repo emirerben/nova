@@ -25989,8 +25989,10 @@ def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> bool:
         variants = list(plan.get("variants") or [])
         for i, v in enumerate(variants):
             if v.get("variant_id") == variant_id:
+                claimed_job_id = slide_delivery.active_job.get()
                 if (
-                    slide_delivery.active_job.get() == job.id
+                    claimed_job_id is not None
+                    and claimed_job_id == job.id
                     and v.get("render_status") in {"pending", "rendering"}
                     and v.get("render_generation_id")
                     and result.get("render_generation_id")

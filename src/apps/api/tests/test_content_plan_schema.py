@@ -116,6 +116,12 @@ _EXPECTED_CHAIN = {
     "0130": "0129",
     "0131": "0130",
     "0132": "0131",
+    "0133": "0132",
+    "0134": "0133",
+    "0135": "0134",
+    "0136": "0135",
+    "0137": "0136",
+    "0138": "0137",
 }
 
 
@@ -127,7 +133,7 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0132"], f"expected a single head 0132, got {heads}"
+    assert heads == ["0138"], f"expected a single head 0138, got {heads}"
 
 
 def test_video_poster_cleanup_sweep_index_matches_query_order() -> None:
