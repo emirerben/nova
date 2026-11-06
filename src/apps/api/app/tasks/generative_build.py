@@ -11424,6 +11424,16 @@ def _run_phone_subtitled_job(
                             if _label_frame is not None
                             else None
                         ),
+                        # Qendresa item 16: she is full-frame inside the opening (cut time, as the
+                        # lanes were remapped above), so a label there keeps off that face.
+                        full_screen_windows=(
+                            tuple(
+                                (float(span.start_s), float(span.end_s))
+                                for span in lanes.background.full_screen_windows
+                            )
+                            if lanes is not None and lanes.background is not None
+                            else ()
+                        ),
                         protected=protected_plan,
                         **text_canvas,
                     )
@@ -13145,14 +13155,17 @@ def _phone_talking_list_label_rows(
     protected: Any = None,
     canvas: Any = None,
     phrases: Any = None,
+    full_screen_windows: tuple[tuple[float, float], ...] = (),
 ) -> tuple[list[dict], dict[str, Any] | None]:
     """Item 19: one text row per numbered list label that has its moment, plus the receipt.
 
     Modelled on `_phone_talking_spoken_text_rows`. ``anchors`` (`LabelAnchor`) and ``words``
     are on the cut timeline the recipe plays; ``cards`` are ``(start_s, end_s, NormalizedBox)``
     of the cards on screen. ``speaker_frame`` maps the sampled face to where the matted speaker
-    is drawn, so a label stays off the corner face. The receipt keeps every ask that is a list
-    item; ``None`` when none is."""
+    is drawn, so a label stays off the corner face. ``full_screen_windows`` (Qendresa item 16, the
+    cut timeline like the rows) are where she is drawn full-frame instead: a label's time inside
+    one keeps off her full-frame face. The receipt keeps every ask that is a list item; ``None``
+    when none is."""
     from app.pipeline.phone_list_labels import list_label_rows  # noqa: PLC0415
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_spoken_text import _text_boxes, caption_boxes  # noqa: PLC0415
@@ -13177,6 +13190,7 @@ def _phone_talking_list_label_rows(
             position_x=position_x,
             avoid=avoid,
             speaker_frame=speaker_frame,
+            **({"full_screen_windows": full_screen_windows} if full_screen_windows else {}),
             **_protected_placement_kwargs(protected),
         )
 

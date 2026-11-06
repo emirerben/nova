@@ -476,6 +476,7 @@ def _lay_out_on_the_word(
                 notes=tuple({tuple(sorted(n.items())): n for n in notes}.values()),
                 cadence_s=cadence_s,
                 anchored=frozenset(anchors),
+                anchor_s=dict(anchors),
             )
     # Lead-in: the talk opens on its first visual. Only a held first window over a base outside
     # the sequence keeps that base before it, unless that would be a sliver (S50, S58). With a

@@ -538,6 +538,50 @@ def frame_face_box(box: NormalizedBox, frame: tuple[float, float, float]) -> Nor
     return NormalizedBox(x_at(box.left), y_at(box.top), x_at(box.right), y_at(box.bottom))
 
 
+def _as_drawn(
+    sample: Callable[[tuple[float, float]], tuple[list[NormalizedBox], Any]],
+    window: tuple[float, float],
+    speaker_frame: tuple[float, float, float] | None,
+    full_screen_windows: Sequence[tuple[float, float]],
+) -> tuple[list[NormalizedBox], list[Any]]:
+    """Boxes from the speaker's own video (faces, marked objects) where they are drawn over
+    ``window``: mapped into ``speaker_frame`` (item 19), except inside a full-screen span
+    (Qendresa item 16: she fills the canvas there, unmapped). ``sample(part)`` returns the
+    full-frame boxes over a part of the window and its receipt; the receipts come back in order.
+    No span overlapping the window: one sample over the whole window, exactly as before."""
+    start, end = window
+    spans = sorted(
+        (max(start, a), min(end, b))
+        for a, b in full_screen_windows
+        if speaker_frame is not None and a < end and start < b
+    )
+    if not spans:
+        boxes, receipt = sample(window)
+        if speaker_frame is not None:
+            boxes = [frame_face_box(box, speaker_frame) for box in boxes]
+        return boxes, [receipt]
+    parts: list[tuple[float, float, bool]] = []
+    cursor = start
+    for a, b in spans:
+        if a > cursor:
+            parts.append((cursor, a, False))
+        parts.append((max(a, cursor), b, True))
+        cursor = max(cursor, b)
+    if cursor < end:
+        parts.append((cursor, end, False))
+    boxes_out: list[NormalizedBox] = []
+    receipts: list[Any] = []
+    for a, b, full_screen in parts:
+        if b - a <= 1e-6:
+            continue
+        boxes, receipt = sample((a, b))
+        if not full_screen:
+            boxes = [frame_face_box(box, speaker_frame) for box in boxes]  # type: ignore[arg-type]
+        boxes_out.extend(boxes)
+        receipts.append(receipt)
+    return boxes_out, receipts
+
+
 def place_talking_title(
     row: dict,
     *,
@@ -553,6 +597,7 @@ def place_talking_title(
     objects: Sequence[ObjectTrack] = (),
     protect_all_faces: bool = False,
     speaker_frame: tuple[float, float, float] | None = None,
+    full_screen_windows: Sequence[tuple[float, float]] = (),
 ) -> tuple[dict, dict[str, Any]]:
     """``row`` moved off the speaker's face (and clear of the captions), plus
     a receipt for the job debug view. Never raises: anything that goes wrong
@@ -575,7 +620,9 @@ def place_talking_title(
 
     ``speaker_frame`` (width, x, y fractions; item 19) is where the matted speaker is drawn
     small in a corner: every sampled face box is mapped there (`frame_face_box`) so a row is
-    kept off the face as drawn. ``None`` (the default) leaves the placement unchanged."""
+    kept off the face as drawn. ``None`` (the default) leaves the placement unchanged.
+    ``full_screen_windows`` (Qendresa item 16, cut-timeline seconds) are where she is drawn
+    full-frame instead: the part of the row's time inside one keeps off her full-frame face."""
     default_y = float(row.get("y_frac") or 0.15)
     if objects or protect_all_faces:
         return place_protected_title(
@@ -592,21 +639,28 @@ def place_talking_title(
             objects=objects,
             protect_all_faces=protect_all_faces,
             speaker_frame=speaker_frame,
+            full_screen_windows=full_screen_windows,
         )
     try:
-        faces, receipt = _face_boxes(
-            clip_path,
-            window=(float(row["start_s"]), float(row["end_s"])),
-            keep_segments=keep_segments,
-            display_width=display_width,
-            display_height=display_height,
-            canvas=canvas,
-            scale=scale,
-            sample=sample or sample_face_regions,
-            position_x=position_x,
+        faces, receipts = _as_drawn(
+            lambda part: _face_boxes(
+                clip_path,
+                window=part,
+                keep_segments=keep_segments,
+                display_width=display_width,
+                display_height=display_height,
+                canvas=canvas,
+                scale=scale,
+                sample=sample or sample_face_regions,
+                position_x=position_x,
+            ),
+            (float(row["start_s"]), float(row["end_s"])),
+            speaker_frame,
+            full_screen_windows,
         )
-        if speaker_frame is not None:
-            faces = [frame_face_box(face, speaker_frame) for face in faces]
+        receipt = receipts[0]
+        if len(receipts) > 1:
+            receipt = {**receipt, "full_screen_parts": len(receipts)}
         probe = _translate_centered_box_to_y(_measure_title_box(row, canvas=canvas), default_y)
         chosen, decision = choose_title_y_frac(probe, default_y, faces, avoid=avoid)
         if avoid:
@@ -717,6 +771,7 @@ def place_protected_title(
     avoid: Sequence[NormalizedBox] = (),
     protect_all_faces: bool = False,
     speaker_frame: tuple[float, float, float] | None = None,
+    full_screen_windows: Sequence[tuple[float, float]] = (),
 ) -> tuple[dict, dict[str, Any]]:
     """KRI-827: ``row`` kept off every face and every marked object for its whole window.
 
@@ -729,33 +784,43 @@ def place_protected_title(
     default_y = float(row.get("y_frac") or 0.15)
     window = (float(row["start_s"]), float(row["end_s"]))
     try:
-        faces, receipt = _face_boxes(
-            clip_path,
-            window=window,
-            keep_segments=keep_segments,
-            display_width=display_width,
-            display_height=display_height,
-            canvas=canvas,
-            scale=scale,
-            sample=sample or sample_face_regions,
-            position_x=position_x,
-            all_faces=protect_all_faces,
+        faces, receipts = _as_drawn(
+            lambda part: _face_boxes(
+                clip_path,
+                window=part,
+                keep_segments=keep_segments,
+                display_width=display_width,
+                display_height=display_height,
+                canvas=canvas,
+                scale=scale,
+                sample=sample or sample_face_regions,
+                position_x=position_x,
+                all_faces=protect_all_faces,
+            ),
+            window,
+            speaker_frame,
+            full_screen_windows,
         )
-        if speaker_frame is not None:
-            faces = [frame_face_box(face, speaker_frame) for face in faces]
-        object_boxes, object_receipts = _object_boxes_for(
-            objects,
-            window=window,
-            keep_segments=keep_segments,
-            display_width=display_width,
-            display_height=display_height,
-            canvas=canvas,
-            scale=scale,
-            position_x=position_x,
+        receipt = receipts[0]
+        if len(receipts) > 1:
+            receipt = {**receipt, "full_screen_parts": len(receipts)}
+        # The marked object is in the speaker's own video: it moves with the face.
+        object_boxes, object_parts = _as_drawn(
+            lambda part: _object_boxes_for(
+                objects,
+                window=part,
+                keep_segments=keep_segments,
+                display_width=display_width,
+                display_height=display_height,
+                canvas=canvas,
+                scale=scale,
+                position_x=position_x,
+            ),
+            window,
+            speaker_frame,
+            full_screen_windows,
         )
-        if speaker_frame is not None:
-            # The marked object is in the speaker's own video: it moves with the face.
-            object_boxes = [frame_face_box(box, speaker_frame) for box in object_boxes]
+        object_receipts = [r for part in object_parts for r in part]
         verified = bool(object_receipts) and all(
             r["status"] == "seen" and r["track_status"] == "tracked" for r in object_receipts
         )
