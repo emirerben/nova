@@ -1370,9 +1370,10 @@ class Settings(BaseSettings):
     speech_excerpt_route_follows_prompt_enabled: bool = True
     slide_route_follows_prompt_enabled: bool = True
     # Planner boundary: a timing, cadence or repeat ask the recognizers do not read stays when
-    # the model quotes the creator's whole sentence for it (prompt v109). Default FALSE: dark
-    # until the paid live v109 eval runs, since a quote proves the words are the creator's, not
-    # that they ask for the field. false + restart = byte-identical to the foundation.
+    # the model quotes the creator's whole sentence for it. Default FALSE: keep disabled until
+    # semantic qualification proves that the quoted sentence requests the supplied field.
+    # A paid live eval alone does not fix that grounding gap. false + restart restores the
+    # foundation's timing, cadence and repeat behavior.
     planner_boundary_honest_enabled: bool = False
     # A title animation or label position the renderer has no name for is named on the
     # approval card instead of vanishing. false + restart = byte-identical to the foundation.
