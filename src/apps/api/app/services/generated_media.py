@@ -6,10 +6,11 @@ import hashlib
 import json
 import tempfile
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
+import structlog
 from google.api_core.exceptions import GoogleAPIError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select, text
@@ -47,6 +48,7 @@ from app.services.generated_asset_contracts import (
     image_payload,
     narration_events,
 )
+from app.services.generated_image_grounding import prompt_metadata
 from app.services.generated_media_admission import (
     admit_generated_asset,
     cleanup_expired_generated_media,
@@ -67,6 +69,7 @@ class GeneratedMediaRequest(BaseModel):
     capability: Literal["image", "image_edit", "narration"]
     prompt: str = Field(min_length=1, max_length=1500)
     editable_title: str = Field(default="", max_length=200)
+    transparent_background: bool = False
     source_asset_id: uuid.UUID | None = None
     source_generation: str | None = Field(default=None, max_length=100)
     script_id: str | None = Field(default=None, max_length=200)
@@ -75,6 +78,8 @@ class GeneratedMediaRequest(BaseModel):
 
     @model_validator(mode="after")
     def capability_inputs(self):
+        if self.transparent_background and self.capability != "image":
+            raise ValueError("Transparent backgrounds require image generation")
         source = self.source_asset_id is not None or self.source_generation is not None
         script = (
             self.script_id is not None
@@ -106,16 +111,11 @@ class GeneratedMediaAccept(BaseModel):
 
 
 def generated_media_enabled(capability: str) -> bool:
-    try:
-        verified = date.fromisoformat(settings.generated_media_price_verified_at)
-    except ValueError:
-        return False
     return bool(
         settings.ai_cost_control_enabled
         and settings.generated_media_live_approved
         and settings.generated_media_billing_organization
         and settings.openai_api_key
-        and timedelta(0) <= date.today() - verified <= timedelta(days=7)
         and settings.generated_media_max_request_usd >= (0.1 if capability == "narration" else 2)
         and settings.ai_openai_monthly_budget_usd > 0
         and (
@@ -302,6 +302,17 @@ def retry_generated_storage(db, operation_id, *, owner_id, item_id):
     return operation
 
 
+def _request_metadata(body: GeneratedMediaRequest) -> dict:
+    return {
+        **{
+            k: v
+            for k, v in body.model_dump(mode="json").items()
+            if k not in {"prompt", "editable_title", "client_event_id", "capability"}
+        },
+        **prompt_metadata(body.capability, body.prompt),
+    }
+
+
 def execute_generated_media(
     db: Session, *, owner_id, item_id, body: GeneratedMediaRequest, ctx: RunContext, transport=None
 ):
@@ -311,7 +322,9 @@ def execute_generated_media(
     request = (
         NarrationRequest(body.prompt)
         if body.capability == "narration"
-        else ImageRequest(body.prompt, body.editable_title)
+        else ImageRequest(
+            body.prompt, body.editable_title, transparent_background=body.transparent_background
+        )
     )
     if body.capability == "narration":
         narration_events(request)
@@ -321,9 +334,10 @@ def execute_generated_media(
             raise ValueError("Script changed; review the current script")
     else:
         image_payload(request)
-    digest = hashlib.sha256(
-        json.dumps(body.model_dump(mode="json"), sort_keys=True).encode()
-    ).hexdigest()
+    digest_payload = body.model_dump(mode="json")
+    if not body.transparent_background:
+        digest_payload.pop("transparent_background")
+    digest = hashlib.sha256(json.dumps(digest_payload, sort_keys=True).encode()).hexdigest()
     db.execute(
         text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
         {"key": f"generated:{owner_id}:{item_id}:{body.client_event_id}"},
@@ -349,11 +363,7 @@ def execute_generated_media(
         request_digest=digest,
         capability=body.capability,
         state="pending",
-        request_metadata={
-            k: v
-            for k, v in body.model_dump(mode="json").items()
-            if k not in {"prompt", "editable_title", "client_event_id", "capability"}
-        },
+        request_metadata=_request_metadata(body),
     )
     db.add(operation)
     db.commit()
@@ -411,12 +421,30 @@ def execute_generated_media(
             usage_json=asset.usage,
         )
     except ProviderRejected as exc:
+        log.warning(
+            "generated_media_provider_rejected",
+            operation_id=str(operation.id),
+            capability=body.capability,
+            model=model,
+            status_code=exc.status_code,
+            error_code=exc.error_code,
+            error_type=exc.error_type,
+            retryable=exc.retryable,
+        )
         release_paid_call(receipt)
         operation.state = "failed"
         operation.failure_code = "provider_rate_limited" if exc.retryable else "provider_rejected"
         db.commit()
         return operation
-    except Exception:
+    except Exception as exc:
+        log.error(
+            "generated_media_outcome_unknown",
+            operation_id=str(operation.id),
+            capability=body.capability,
+            model=model,
+            error_class=type(exc).__name__,
+            exc_info=True,
+        )
         db.rollback()
         mark_paid_call_unknown(receipt)
         operation = get_generated_operation(
@@ -512,6 +540,9 @@ def accept_generated_media(db, operation_id, *, owner_id, item_id, body: Generat
     db.commit()
     publish_preflight_after_commit(preflight)
     return operation
+
+
+log = structlog.get_logger()
 
 
 def operation_response(operation):

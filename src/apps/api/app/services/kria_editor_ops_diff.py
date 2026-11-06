@@ -27,6 +27,7 @@ from app.agents._schemas.text_animation_phases import (
     LEGACY_EFFECT_ENTRANCE,
     TEXT_ANIMATION_VOCAB,
 )
+from app.kria.clip_tilt import ClipTilt
 from app.kria.reply_language import say
 
 # --------------------------------------------------------------------------- vocabulary
@@ -427,6 +428,7 @@ _SLOT_FIELDS = (
     ("look_preset", "timeline", lambda r: r.get("look_preset") or "none"),
     ("playback_rate", "timeline", lambda r: _r(r.get("playback_rate") or 1.0, 2)),
     ("source_crop", "timeline", lambda r: r.get("source_crop")),
+    ("tilt", "timeline", lambda r: ClipTilt.from_row(r.get("tilt")).row()),
     (
         "transition_after",
         "transition",
@@ -957,6 +959,56 @@ def _describe_caption_meta(entry: DiffEntry) -> str:
     return say(en="Updated the captions", tr="Altyazılar güncellendi")
 
 
+def _describe_tilt(entry: DiffEntry, who: str) -> str:
+    """The receipt for a tilt: "Tilted clip 2 10 degrees right, blurred background"."""
+    afters = [t.after for t in entry.targets]
+    befores = [ClipTilt.from_row(t.before) for t in entry.targets]
+    tilts = [ClipTilt.from_row(after) for after in afters]
+    if all(
+        before.zoom != 1 and before.row() == {"rotation_deg": 0.0, "zoom": before.zoom}
+        for before in befores
+    ) and all(t.zoom == 1 and t.row() is None for t in tilts):
+        return say(en=f"Reset the zoom of {who}", tr=f"{who} yakınlaştırması sıfırlandı")
+    if all(after is None for after in afters):
+        return say(en=f"Straightened {who}", tr=f"{who} düzeltildi")
+    if all(
+        (before.rotation_deg, before.backdrop) == (tilt.rotation_deg, tilt.backdrop)
+        and before.zoom != tilt.zoom
+        for before, tilt in zip(befores, tilts, strict=True)
+    ):
+        if len({tilt.zoom for tilt in tilts}) == 1:
+            zoom = f"{tilts[0].zoom:g}x"
+            return say(en=f"Zoomed {who} to {zoom}", tr=f"{who} {zoom} yakınlaştırıldı")
+        return say(en=f"Changed the zoom of {who}", tr=f"{who} yakınlaştırması değişti")
+    if len({repr(after) for after in afters}) != 1:
+        return say(en=f"Changed the tilt of {who}", tr=f"{who} eğimi değişti")
+    tilt = tilts[0]
+    backdrop = tilt.backdrop
+    behind_en = behind_tr = ""
+    if backdrop is not None:
+        kind = backdrop.color if backdrop.kind == "color" else backdrop.kind
+        behind_en = {"blur": "blurred background", "media": "photo or video behind it"}.get(
+            kind, f"{kind} background"
+        )
+        behind_tr = {"blur": "bulanık arka plan", "media": "arkasında fotoğraf ya da video"}.get(
+            kind, f"{kind} arka plan"
+        )
+    if all(before.rotation_deg == tilt.rotation_deg for before in befores):
+        return say(
+            en=f"Changed the background behind {who}: {behind_en or 'plain'}",
+            tr=f"{who} arka planı değişti: {behind_tr or 'düz'}",
+        )
+    amount = f"{abs(tilt.rotation_deg):g}"
+    side_en, side_tr = ("right", "sağa") if tilt.rotation_deg > 0 else ("left", "sola")
+    if tilt.zoom != 1:
+        behind_en = f"zoomed to {tilt.zoom:g}x" + (f", {behind_en}" if behind_en else "")
+        behind_tr = f"{tilt.zoom:g}x yakınlaştırıldı" + (f", {behind_tr}" if behind_tr else "")
+    return say(
+        en=f"Tilted {who} {amount} degrees {side_en}" + (f", {behind_en}" if behind_en else ""),
+        tr=f"{who} {amount} derece {side_tr} eğildi" + (f", {behind_tr}" if behind_tr else ""),
+    )
+
+
 def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
     """One short sentence for an entry, in the turn's language."""
     who = describe_targets(entry, live_text_count)
@@ -996,6 +1048,8 @@ def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
             return say(en=f"Changed the speed of {who}", tr=f"{who} hızı değişti")
         if name == "source_crop":
             return say(en=f"Re-cropped {who}", tr=f"{who} yeniden kırpıldı")
+        if name == "tilt":
+            return _describe_tilt(entry, who)
         if name == "total_duration":
             return say(
                 en=f"Video length {first.before:g}s → {first.after:g}s",

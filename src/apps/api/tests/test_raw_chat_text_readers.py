@@ -47,6 +47,8 @@ RAW_TEXT_NAMES = frozenset(
         "_creator_requests_narrated_treatment",
         "speech_montage_possible",
         "mentions_speech",
+        # brief_asks: the one function that reads a requirement's description for a lane word.
+        "_description_says",
     }
 )
 # ``Requirement.text()`` is the brief's prose one-liner (zero-arg method call).
@@ -73,11 +75,35 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
         None,
     ),
     "agents/montage_reviewer.py": ("agent_prompt", "montage review input/prompt", None),
+    "kria/intent_review_catalog.py": (
+        "agent_prompt",
+        "Issued-requirement labels are frame-review model context; the server decides every "
+        "outcome from the catalog, never from this prose.",
+        frozenset({"_label"}),
+    ),
     "agents/narrated_clip_alignment.py": ("agent_prompt", "alignment input/prompt", None),
     "agents/narrated_storyboard.py": ("agent_prompt", "storyboard input/prompt", None),
     "agents/narration_annotations.py": ("agent_prompt", "annotation input/prompt", None),
     "agents/semantic_edit_proposal.py": ("agent_prompt", "semantic proposal prompt", None),
     "agents/speech_excerpt_planner.py": ("agent_prompt", "excerpt planner input/prompt", None),
+    "services/suggestion_serve.py": (
+        "agent_prompt",
+        "brief_headline hands the creator's live requests to the suggestion agent as one line of "
+        "model context (KRI-129: their request wins). It only feeds the agent input "
+        "(SuggestionContext.brief_headline -> build_agent_input), never a branch condition, a "
+        "card's action or the digest.",
+        frozenset({"brief_headline"}),
+    ),
+    "services/suggestions/brief_asks.py": (
+        "agent_prompt",
+        "KRI-667: whether the creator already asked about a lane is read from the requirement's "
+        "kind and facts. Only the two splits the brief writer records no typed signal for "
+        "(music against sound effects, which share the `audio` kind, and transitions) read the "
+        "description, once, over the shared fold, never the on-screen literal, and only to "
+        "withhold a suggestion card: it never decides a card's action, the digest, the route, "
+        "duration, voice, order or required text of any render.",
+        frozenset({"_description_says", "_kind_says", "_talks_about"}),
+    ),
     # --- plan time: pinned by approval ----------------------------------------------------------
     "cli/verify_protected_text.py": (
         "plan_time",
@@ -162,6 +188,22 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
     "services/slide_post_chat_edit.py": ("plan_time", "slide chat edit (own plan)", None),
     "tasks/edit_proposal_build.py": ("plan_time", "guided proposal drafting", None),
     # --- carry -----------------------------------------------------------------------------------
+    "kria/initial_render_review_authority.py": (
+        "carry",
+        "Checks pinned request identity without prose interpretation or output changes.",
+        frozenset({"resolve_initial_render_authority"}),
+    ),
+    "kria/intent_review_qualification.py": (
+        "content_only",
+        "Offline qualification harness: binds its own preregistered request text to a synthetic "
+        "brief to build the review cases; it reads no creator chat and decides no render.",
+        frozenset({"_packet"}),
+    ),
+    "services/render_review_admission.py": (
+        "carry",
+        "Copies request and dispatch settings into read-only admission; no prose routing.",
+        frozenset({"_inputs"}),
+    ),
     "services/generative_jobs.py": (
         "carry",
         "stores creator_request on the job; derives the caption LANGUAGE request from it "
@@ -172,6 +214,11 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
         "carry",
         "forwards the request into the job at dispatch",
         frozenset({"_dispatch_item_render", "dispatch_item_render_for"}),
+    ),
+    "kria/render_review_context.py": (
+        "carry",
+        "Copies approved request into immutable review context; no render decisions.",
+        frozenset({"build_render_review_context"}),
     ),
     "tasks/kria_runtime.py": (
         "carry",
@@ -189,10 +236,24 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
             }
         ),
     ),
+    "kria/request_budget.py": (
+        "content_only",
+        "Measures how long the request a tap would pin is (the same bound_request the binding "
+        "builds); no word is read and nothing branches on what the text says.",
+        frozenset({"request_over_budget"}),
+    ),
     "services/guided_narration_labels.py": (
         "content_only",
         "narration label wording for the approved guided plan",
         None,
+    ),
+    "pipeline/phone_title_look.py": (
+        "content_only",
+        "Qendresa item 20: initial dispatch pins her stacked title's look asks (per-line "
+        "face/colour, a named title font/colour, top-left/centre) beside "
+        "stamp_phone_text_style; it never changes route, duration, voice, order or the "
+        "title's words. Workers and retries read the pinned ask, never the prose",
+        frozenset({"stamp_title_look"}),
     ),
     "services/phone_text_styling.py": (
         "content_only",

@@ -39,6 +39,7 @@ SERVER_FIELDS = {
     "song_captions",
     "creator_duration_s",
     "target_duration_requested",
+    "pacing_requested",
     "selected_music_section",
 }
 MODEL_HIDDEN = {
@@ -46,6 +47,8 @@ MODEL_HIDDEN = {
     "reaction_beats",
     "closing_media",
     "ending_clip",
+    "insert_clips",
+    "background_media",
     "timed_cards",
     "song_sync",
     "voice_mode",
@@ -112,7 +115,10 @@ def main_creator_schema():
 
 
 def copilot_schema():
-    from app.agents.edit_copilot import _OP_FIELDS, _OP_REQUIRED, _STYLE_PATCH_FIELDS
+    from typing import get_args
+
+    from app.agents.edit_copilot import _OP_FIELDS, _OP_REQUIRED, _STYLE_PATCH_FIELDS, _op_fields
+    from app.schemas.edit_proposal import ProposalPace
     from app.services.kria_editor_ops_text import EXTRA_PATCH_FIELDS
 
     string = {"type": "string"}
@@ -170,6 +176,7 @@ def copilot_schema():
         "start_s",
         "end_s",
         "duration_s",
+        "source_start_s",
         "in_s",
         "target_s",
         "shift_s",
@@ -183,9 +190,11 @@ def copilot_schema():
         "x_frac",
         "y_frac",
         "zoom",
+        "zoom_delta",
         "size_px",
         "size_scale",
         "rotation_deg",
+        "rotation_delta_deg",
         "stroke_width",
         "letter_spacing",
         "line_spacing",
@@ -197,8 +206,9 @@ def copilot_schema():
         "duration",
         "delay",
         "amount",
+        "cadence_s",
     }
-    list_strings = {"target_ids", "segments", "slide_ids"}
+    list_strings = {"target_ids", "segments", "slide_ids", "asset_ids"}
     map_fields = {
         "effect",
         "config",
@@ -212,6 +222,15 @@ def copilot_schema():
     def field(name):
         if name == "gap_policy":
             return enum("scale", "close", "fixed")
+        if name == "pace":
+            return enum(*get_args(ProposalPace))
+        if name == "backdrop":
+            return enum("blank", "color", "blur")
+        if name == "preset":
+            # KRI-1162: the speaker's corner, a name and never numbers (S37).
+            return enum(
+                "small_bottom_right", "small_bottom_left", "small_top_right", "small_top_left"
+            )
         if name in bools:
             return boolean
         if name == "base_generation":
@@ -234,6 +253,22 @@ def copilot_schema():
             return obj({"find": string, "with": string}, ("find", "with"))
         if name == "patch":
             return patch
+        if name == "tilt":
+            return obj(
+                {
+                    "rotation_deg": number,
+                    "rotation_delta_deg": number,
+                    "zoom": number,
+                    "zoom_delta": number,
+                    "backdrop": obj(
+                        {
+                            "kind": enum("blank", "color", "blur", "media"),
+                            "color": string,
+                            "asset_id": string,
+                        }
+                    ),
+                }
+            )
         if name in map_fields:
             # Dynamic preset/animation metadata remains locally validated; it is
             # structurally typed JSON, not an untyped substitute for an op.
@@ -328,16 +363,23 @@ def copilot_schema():
             "transition_after",
             "transition_duration_s",
             "playback_rate",
+            "tilt",
+            "rotation_delta_deg",
         }
     )
     patch = obj(
         {
-            k: ({"anyOf": [field(k), {"type": "null"}]} if k == "background_color" else field(k))
+            k: (
+                {"anyOf": [field(k), {"type": "null"}]}
+                if k in {"background_color", "tilt"}
+                else field(k)
+            )
             for k in sorted(patch_names)
         }
     )
     ops = []
-    for name, fields in sorted(_OP_FIELDS.items()):
+    for name in sorted(_OP_FIELDS):
+        fields = _op_fields(name)
         ops.append(
             obj(
                 {

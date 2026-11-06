@@ -398,6 +398,7 @@ jobs:
           python -m alembic upgrade head
       - name: Run API test shard with timing reports
         env:
+          NOVA_REQUIRE_POSTGRES_TESTS: "1"
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_test
           REDIS_URL: redis://localhost:6379
           STORAGE_BUCKET: nova-test
@@ -411,8 +412,9 @@ jobs:
 
   # KRI-559 executes only incident-corpus journeys selected by ci-changes.
   # An affected source without a mapped fixture fails here, on a cheap Ubuntu
-  # runner (KRI-604): the macOS `journey` job needs this job, so an unmapped
-  # selection never queues for a macOS runner just to fail in its first step.
+  # runner (KRI-604). The macOS journey-native job checks the selector's
+  # journey_mapped output (the same validation) instead of waiting for this
+  # job, so an unmapped selection still never queues for a macOS runner.
   # The `test-api` gate still goes red because a skipped `journey` is not the
   # `success` it requires for a selected suite.
   journey-mapping:
@@ -741,6 +743,18 @@ jobs:
             tests/evals/test_clip_intent_planner_evals.py \
             tests/evals/test_main_creator_evals.py -q \
             | tee ../../../test-results/kri-559/voiceover-planner-api-tests.log
+      - name: Verify generated-overlay planning through the grounded planner and route
+        if: contains(needs.changes.outputs.journey_ids, 'native-generated-overlay-review')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/services/test_overlay_generation.py \
+            tests/routes/test_generated_media.py -q \
+            | tee ../../../test-results/kri-559/generated-overlay-api-tests.log
       - name: Verify a voiceover edit keeps every clip through the planner and dispatch
         if: contains(needs.changes.outputs.journey_ids, 'kri-593-voiceover-clips')
         working-directory: src/apps/api
@@ -957,6 +971,17 @@ jobs:
           set -o pipefail
           python3 -m pytest tests/tasks/test_named_line_windows_montage.py tests/tasks/test_long_take_moments_montage.py -q \
             | tee ../../../test-results/kri-559/named-line-windows-api-tests.log
+      - name: Verify a clip text the creator took back is neither planned nor locked as copy
+        if: contains(needs.changes.outputs.journey_ids, 'kri-1124-withdrawn-labels')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/kria/test_kri1124_withdrawn_labels_replay.py -q \
+            | tee ../../../test-results/kri-559/withdrawn-labels-api-tests.log
       - name: Verify a montage line the creator wants heard whole is held whole, never a pop-in
         if: contains(needs.changes.outputs.journey_ids, 'kri-760-whole-line-ask')
         working-directory: src/apps/api
@@ -1098,7 +1123,9 @@ jobs:
             | tee ../../../test-results/kri-559/camera-roll-api-tests.log
       - name: Seal portable fixture inputs for this exact workflow attempt
         if: needs.changes.outputs.journey_needs_native == 'true'
-        run: python3 scripts/ci/journey-gate.py seal-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
+        env:
+          JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
+        run: python3 scripts/ci/journey-gate.py seal-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}" --journeys "$JOURNEY_IDS"
       - name: Transfer fixture inputs and offline evidence
         if: needs.changes.outputs.journey_needs_native == 'true'
         uses: actions/upload-artifact@v4
@@ -1118,13 +1145,22 @@ jobs:
 
   journey-native:
     name: iPhone validation (${{ matrix.leg }})
-    needs: [changes, journey-mapping, journey-offline, journey-library]
+    # Starts with the selector, not after journey-offline/journey-library: the
+    # Macs compile while the Linux journeys run (~11 min, 2026-10-27..30) and
+    # block only where the fixture bundle is consumed (wait-for-jobs.py). The
+    # `journey` aggregate still requires both portable jobs to pass.
+    # It also starts without waiting for the journey-mapping job: the selector
+    # runs the same mapping check (journey_mapped), so an unmapped selection
+    # still never allocates a Mac (KRI-604), and the `journey` gate still
+    # requires journey-mapping. On 2026-11-04..06 that extra Linux hop delayed
+    # the Mac job's place in the 5-Mac queue by a mean 6.4 min (p90 24.4).
+    needs: [changes]
     if: >-
       !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.native_validation == 'true' &&
-      ((contains(needs.changes.outputs.journey_ids, 'kri-384-library-ingest') && needs.journey-library.result == 'success') ||
-       (!contains(needs.changes.outputs.journey_ids, 'kri-384-library-ingest') && needs.journey-library.result == 'skipped')) &&
-      ((needs.changes.outputs.journey == 'true' && needs.journey-mapping.result == 'success' && needs.journey-offline.result == 'success') ||
-       (needs.changes.outputs.journey == 'false' && needs.journey-mapping.result == 'skipped' && needs.journey-offline.result == 'skipped'))
+      needs.changes.outputs.journey_mapped == 'true'
+    permissions:
+      contents: read
+      actions: read
     runs-on: macos-15
     # Up to three duration-balanced legs. `unit` compiles, runs unit tests, the
     # UI smoke subset and the named-unit gate; `creation` and `screens` compile
@@ -1141,21 +1177,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Prepare native result directories
         run: mkdir -p test-results/kri-559 test-results/ios
-      - name: Download this attempt's portable fixture inputs
-        if: needs.changes.outputs.journey_needs_native == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: fixture-bundle-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
-          path: test-results/kri-559/
-      - name: Check fixture provenance and transferred bytes
-        if: needs.changes.outputs.journey_needs_native == 'true'
-        env:
-          JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
-        run: |
-          python3 scripts/ci/journey-gate.py verify-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
-          if [[ ",$JOURNEY_IDS," == *",kri-524-creation,"* ]]; then
-            python3 scripts/ci/journey-gate.py verify-input --fixture test-results/kri-559/fixture --head "${{ github.sha }}"
-          fi
       - name: Set up Xcode
         if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
         uses: maxim-lobanov/setup-xcode@v1
@@ -1197,23 +1218,39 @@ jobs:
           # Only the unit leg executes the unit suite; the other legs compile
           # the same bundles and skip it (verify.sh prepare-ui contract).
           KRIA_IOS_UNIT_TESTS: ${{ matrix.leg == 'unit' && github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true' && '1' || '0' }}
+          # The export/OCR proofs (~10 of the unit leg's minutes) run on PRs that
+          # touch render, export or text code; ios.yml runs them on every main push.
+          KRIA_IOS_SKIP_RENDER_EVIDENCE: ${{ github.event_name == 'pull_request' && needs.changes.outputs.ios_render_evidence == 'false' && '1' || '0' }}
+          # Selected journeys keep the proofs they name (journey-gate.py native-units).
+          KRIA_JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
           KRIA_RESTORE_INPUT_TIMES: '1'
         run: bash scripts/ios/verify.sh
-      - name: Record compiled iPhone input timestamps
-        if: matrix.leg == 'unit' && github.event_name == 'pull_request' && (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true')
-        run: python3 scripts/ios/cache-inputs.py save
-      - name: Save Xcode build data for the next run
-        if: matrix.leg == 'unit' && github.event_name == 'pull_request' && (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true') && steps.build-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+      # PR runs restore main's Xcode cache but never save their own. A PR
+      # cache (~0.9 GB per push) is only usable by later pushes to the same PR,
+      # and in the full 10 GB repo cache it evicted main's seed within 30-46
+      # minutes: 70 of 97 PR runs on 2026-11-04..06 compiled cold (+~10 min),
+      # and only 6 of 27 hits came from a PR's own save. ios.yml seeds main.
+      - name: Wait for the portable journeys this leg depends on
+        if: needs.changes.outputs.journey == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIBRARY: ${{ contains(needs.changes.outputs.journey_ids, 'kri-384-library-ingest') && 'journey-library' || '' }}
+        run: python3 scripts/ci/wait-for-jobs.py journey-offline "$LIBRARY"
+      - name: Download this attempt's portable fixture inputs
+        if: needs.changes.outputs.journey_needs_native == 'true'
+        uses: actions/download-artifact@v4
         with:
-          path: |
-            ~/Library/Caches/org.swift.swiftpm
-            src/apps/ios/.derived-data/Build
-            src/apps/ios/.derived-data/SourcePackages
-            src/apps/ios/.derived-data/ModuleCache.noindex
-            src/apps/ios/.derived-data/SDKStatCaches.noindex
-            src/apps/ios/.derived-data/CompilationCache.noindex
-          key: ${{ steps.build-cache.outputs.cache-primary-key }}
+          name: fixture-bundle-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+          path: test-results/kri-559/
+      - name: Check fixture provenance and transferred bytes
+        if: needs.changes.outputs.journey_needs_native == 'true'
+        env:
+          JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
+        run: |
+          python3 scripts/ci/journey-gate.py verify-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}" --journeys "$JOURNEY_IDS"
+          if [[ ",$JOURNEY_IDS," == *",kri-524-creation,"* ]]; then
+            python3 scripts/ci/journey-gate.py verify-input --fixture test-results/kri-559/fixture --head "${{ github.sha }}"
+          fi
       - name: Run selected iPhone UI scenarios
         if: github.event_name == 'pull_request' && needs.changes.outputs.ios_ui == 'true' && matrix.leg == 'unit'
         env:
@@ -1238,7 +1275,7 @@ jobs:
             --xctest NativeSpeedUITests/testDeviceClipSpeedAdjustsResetsAndUndoesThroughTheInspector \
             --xctest NativeSpeedUITests/testClosingSpeedInspectorCommitsResetForSingleUndo \
             --xctest NativeEditorInspectorUITests/testSourcePreviewTextCreationAndAnimations
-      - name: Verify server suggestion chips stay visible and send the chosen action
+      - name: Verify server suggestion chips and cards stay visible and send the chosen action
         if: matrix.leg == 'screens' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-756-suggestion-chips')
         working-directory: src/apps/ios
         run: |
@@ -1246,12 +1283,18 @@ jobs:
             -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
             -destination "platform=iOS Simulator,id=$(cat ../../../test-results/ios/simulator-id.txt)" \
             -only-testing:KriaUITests/CreationUITests/testServerSuggestionChipsSendOnTapAndReplaceFixedChips \
+            -only-testing:KriaUITests/CreationUITests/testSuggestionCardsInChatAndTheEditorImproveSheetShareOneSet \
+            -only-testing:KriaUITests/CreationUITests/testDeclinedSuggestionCardRepliesNoLongerFitsThenTheRefreshedSet \
+            -only-testing:KriaUITests/CreationUITests/testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize \
             -resultBundlePath ../../../test-results/kri-559/suggestion-chips-native.xcresult test-without-building
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/suggestion-chips-native.xcresult \
             > ../../../test-results/kri-559/suggestion-chips-native-tests.json
           python3 ../../../scripts/ci/journey-gate.py verify-tests \
             --test-results ../../../test-results/kri-559/suggestion-chips-native-tests.json \
-            --xctest CreationUITests/testServerSuggestionChipsSendOnTapAndReplaceFixedChips
+            --xctest CreationUITests/testServerSuggestionChipsSendOnTapAndReplaceFixedChips \
+            --xctest CreationUITests/testSuggestionCardsInChatAndTheEditorImproveSheetShareOneSet \
+            --xctest CreationUITests/testDeclinedSuggestionCardRepliesNoLongerFitsThenTheRefreshedSet \
+            --xctest CreationUITests/testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize
       - name: Verify both answer orders use one creation turn
         if: matrix.leg == 'screens' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-802-question-batch')
         working-directory: src/apps/ios

@@ -28,18 +28,21 @@ from app.agents._schemas.text_element import (
     resolve_narrated_storyboard_rows,
 )
 from app.config import settings
+from app.kria.clip_tilt import ClipTilt
 from app.pipeline.camera_effects import easing_bounds, resolve_easing
 from app.routes.generative_jobs import (
     EditorCommitBackgroundMusic,
     EditorCommitCaptionMeta,
     EditorCommitMix,
     EditorCommitRequest,
+    EditorCommitSpeakerBackground,
     TimelineSlotEdit,
     _editor_capabilities,
     _guided_source_context,
     _guided_v2_layouts,
     _guided_v2_revision,
     _guided_v2_slot_rows,
+    _speaker_background_shape_ok,
     is_phone_subtitled_editor_variant,
     is_phone_voiceover_lane_variant,
     variant_render_baseline,
@@ -60,6 +63,9 @@ from app.services.phone_voiceover_timeline import is_phone_voiceover_family_vari
 _IMAGE_SUFFIXES = {".avif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".webp"}
 _PORTABLE_FAMILIES = {
     "automatic_cut",
+    "background",
+    "background_focus",
+    "background_windows",
     "caption",
     "clip",
     "effect",
@@ -95,7 +101,7 @@ def timeline_patch_capabilities(job: Any, variant: dict[str, Any]) -> dict[str, 
             else value is True or (isinstance(value, dict) and value.get("editable") is True)
         )
 
-    return {
+    fields = {
         "duration_s": enabled("duration"),
         "in_s": enabled("in_s"),
         "removed": enabled("remove"),
@@ -105,6 +111,16 @@ def timeline_patch_capabilities(job: Any, variant: dict[str, Any]) -> dict[str, 
         "playback_rate": enabled("playback_rate", default=not device) and source_window_timeline,
         "source_crop": enabled("source_crop", default=False),
     }
+    if enabled("tilt", default=False):
+        # KRI-1137: present only while open, so every other snapshot and prompt is unchanged.
+        fields["tilt"] = True
+        if enabled("tilt_backdrop_media", default=False):
+            # KRI-1139: a pool photo or video behind a tilted clip; same rule, open-only.
+            fields["tilt_backdrop_media"] = True
+        if enabled("tilt_zoom", default=False):
+            # KRI-1169: the Zoom slider's twin; open-only, like the backdrop above.
+            fields["tilt_zoom"] = True
+    return fields
 
 
 _TEXT_STYLE_FIELDS = {
@@ -781,6 +797,12 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
         families.append("overlay")
     if caps.get("camera_effects") is True and not on_device:
         families.append("effect")
+    if background_state(job, variant)[0]:
+        families.append("background")
+        if background_windows_open(job, variant):
+            families.append("background_windows")
+        if background_focus_open(job, variant):
+            families.append("background_focus")
     return sorted(set(families) & _PORTABLE_FAMILIES)
 
 
@@ -801,14 +823,20 @@ def _sfx_base_missing(variant: dict[str, Any]) -> bool:
 _OVERLAY_SNAPSHOT_FIELDS = ("start_s", "end_s", "x_frac", "y_frac", "scale", "z")
 
 
-def _overlay_snapshot(variant: dict[str, Any]) -> dict[str, Any]:
+def _overlay_snapshot(variant: dict[str, Any], *, tilt: bool = False) -> dict[str, Any]:
     """The picture cards the copilot may address (KRI-661): path-free, indexed.
 
     ``counts`` is the whole picture even when the prompt can only list the first few
     rows, so "put all my photos on top" is answerable with ONE bulk op instead of
     thirty patches. ``asset_pool`` stays empty on purpose: a Talking Save refuses a
     photo Kria did not pin for this edit, so ``add_overlay`` fails closed in the parser.
+
+    ``tilt`` (KRI-1141, ``editor_capabilities.media_overlay_tilt``) opens ``patch_overlay``'s
+    ``rotation_deg`` / ``rotation_delta_deg`` and lists a tilted card's angle. It is present only
+    when ON, so a closed gate leaves the snapshot, and so the prompt, byte-identical.
     """
+    from app.agents.editor_ops_v2.overlays import card_rotation  # noqa: PLC0415
+
     rows = [row for row in variant.get("media_overlays") or [] if isinstance(row, dict)]
     cards = []
     for index, row in enumerate(rows):
@@ -820,6 +848,10 @@ def _overlay_snapshot(variant: dict[str, Any]) -> dict[str, Any]:
             "display_mode": "fullscreen" if row.get("display_mode") == "fullscreen" else "pip",
         }
         card.update({key: row.get(key) for key in _OVERLAY_SNAPSHOT_FIELDS})
+        if tilt:
+            angle = card_rotation(row)
+            if angle:
+                card["rotation_deg"] = angle
         label = row.get("label")
         if isinstance(label, str) and label:
             card["label"] = label[:60]
@@ -834,7 +866,216 @@ def _overlay_snapshot(variant: dict[str, Any]) -> dict[str, Any]:
         },
         "asset_pool": [],
         "pending_suggestions": [],
+        **({"tilt": True} if tilt else {}),
     }
+
+
+# Why a Talking edit's background cannot be set from chat, in words the model can repeat to the
+# creator (S18). Keyed by the reason `background_state` returns.
+_BACKGROUND_UNAVAILABLE = {
+    "cloud": "this edit is rendered in the cloud, so a photo or video can't go behind you here",
+    "shape": "this edit's timeline was customised, so a photo or video can't go behind you here",
+    "disabled": "backgrounds behind you aren't switched on yet",
+    "token_not_verified": "backgrounds behind you aren't ready on this iPhone app yet",
+    "client_protocol_below_min": "this version of the app can't show a background behind you yet",
+}
+# KRI-1173: why a plain colour behind the speaker cannot be set although the lane is open, keyed
+# by `speaker_background_color_unavailable_reason`. Plain words the model repeats as an unmet
+# request (S59).
+_BACKGROUND_COLOR_UNAVAILABLE = {
+    "color_token_not_verified": "a plain colour behind you isn't ready on this iPhone app yet",
+    "client_protocol_below_min": "this version of the app can't show a plain colour behind you yet",
+}
+_BACKGROUND_COLOR_UNAVAILABLE_DEFAULT = "a plain colour behind you isn't available right now"
+_BACKGROUND_ARCHETYPES = {"subtitled", "talking_head"}
+MAX_BACKGROUND_POOL_ROWS = 12
+
+
+def background_state(job: Any, variant: dict[str, Any]) -> tuple[bool, str | None]:
+    """(chat may set a background on this variant, why not).
+
+    Both ``(False, None)``: the kill switch is off or this is not a Talking edit, so the
+    snapshot says nothing about backgrounds and stays byte-identical to before the lane.
+    Otherwise it is the chat twin of ``generative_jobs._speaker_background_capability``
+    (device render, an editable shape, the phone gate), except that a worker-side planner has
+    no app build to ask, so the client protocol is checked only inside an HTTP request
+    (`speaker_background_unavailable_reason`'s default).
+    """
+    if not settings.speaker_background_enabled:
+        return False, None
+    if variant.get("resolved_archetype") not in _BACKGROUND_ARCHETYPES:
+        return False, None
+    if variant.get("render_destination") != "device":
+        return False, "cloud"
+    if not _speaker_background_shape_ok(job, variant):
+        return False, "shape"
+    from app.services.phone_rollout import speaker_background_unavailable_reason  # noqa: PLC0415
+
+    reason = speaker_background_unavailable_reason()
+    return reason is None, reason
+
+
+def background_windows_open(job: Any, variant: dict[str, Any]) -> bool:
+    """May chat also time several backgrounds and place the speaker in a corner (KRI-1162)?
+
+    The base lane is open (`background_state`) AND the windows gate holds
+    (`speaker_background_windows_unavailable_reason`, same worker-side client rule). False
+    adds nothing to the snapshot, so a closed windows gate is byte-identical to before.
+    """
+    if not background_state(job, variant)[0]:
+        return False
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        speaker_background_windows_unavailable_reason,
+    )
+
+    return speaker_background_windows_unavailable_reason() is None
+
+
+def background_focus_open(job: Any, variant: dict[str, Any]) -> bool:
+    """May chat aim and zoom the recordings behind the speaker (Qendresa item 18)?
+
+    The base lane is open AND the focus gate holds (flag, ``backgroundFocus`` verified, client
+    protocol >= 42 -- `background_focus_supported`, same worker-side client rule). False adds
+    nothing to the snapshot or the prompt, so a closed gate is byte-identical to before.
+    """
+    if not background_state(job, variant)[0]:
+        return False
+    from app.services.phone_rollout import background_focus_supported  # noqa: PLC0415
+
+    return background_focus_supported(require_client=True)
+
+
+def background_color_reason(job: Any, variant: dict[str, Any]) -> str | None:
+    """Why chat may not put a plain colour behind the speaker although the lane is open, in
+    words for the creator; None when the colour gate holds (KRI-1173).
+
+    Only meaningful while the base lane is open (`background_state`): the colour gate is the
+    base gate PLUS the ``speakerBackgroundColor`` token and the colour build gate
+    (`speaker_background_color_unavailable_reason`, same worker-side client rule).
+    """
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        speaker_background_color_unavailable_reason,
+    )
+
+    reason = speaker_background_color_unavailable_reason()
+    if reason is None:
+        return None
+    return _BACKGROUND_COLOR_UNAVAILABLE.get(reason, _BACKGROUND_COLOR_UNAVAILABLE_DEFAULT)
+
+
+def background_duration_s(variant: dict[str, Any]) -> float:
+    """The edit's length in seconds, 0.0 when the variant does not say (KRI-1162)."""
+    try:
+        return float(visual_block_variant_duration(variant))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def background_frame_preset(frame: object) -> str | None:
+    """The named corner a stored ``speaker_frame`` is, ``"custom"`` for any other geometry."""
+    if not isinstance(frame, dict) or not frame:
+        return None
+    from app.kria.portable_speaker_background import SPEAKER_FRAME_PRESETS  # noqa: PLC0415
+
+    for name, preset in SPEAKER_FRAME_PRESETS.items():
+        if all(abs(float(frame.get(key, -1)) - value) < 1e-6 for key, value in preset.items()):
+            return name
+    return "custom"
+
+
+def background_current(job: Any, variant: dict[str, Any]) -> dict[str, Any] | None:
+    """The background behind the speaker now: the variant's own row (an explicit ``None`` is a
+    cleared draft), else what the pinned recipe says for a Talking edit never Saved."""
+    if "speaker_background" in variant:
+        current = variant["speaker_background"]
+        # KRI-1173: a solid-colour fill carries a `color` and no `media_id`.
+        return (
+            current
+            if isinstance(current, dict) and (current.get("media_id") or current.get("color"))
+            else None
+        )
+    return derived_phone_background(job, variant)
+
+
+def _background_snapshot(
+    job: Any, variant: dict[str, Any], clip_context: dict[str, Any]
+) -> dict[str, Any] | None:
+    """The ``background`` section the copilot may address (KRI-1117), path-free.
+
+    ``pool`` is the item's ready photos and videos the server listed (``clip_context
+    ["background_pool"]``, built by the planner, which owns the DB read): an empty pool makes
+    ``set_background`` fail closed in the parser, like ``add_overlay`` with no asset pool. It is
+    a section of its own, never ``overlays.asset_pool``, which would also open ``add_overlay``
+    on a Talking edit. None while the lane says nothing (see `background_state`).
+    """
+    open_, reason = background_state(job, variant)
+    if not open_:
+        if reason is None:
+            return None
+        return {"available": False, "reason": _BACKGROUND_UNAVAILABLE[reason]}
+    current = background_current(job, variant)
+    pool = [
+        row
+        for row in clip_context.get("background_pool") or []
+        if isinstance(row, dict) and row.get("kind") in {"image", "video"}
+    ][:MAX_BACKGROUND_POOL_ROWS]
+    current_row: dict[str, Any] | None = None
+    focus_open = background_focus_open(job, variant)
+    if isinstance(current, dict) and current.get("media_id"):
+        current_row = {
+            "media_id": current.get("media_id"),
+            "kind": current.get("kind"),
+            "source_start_s": current.get("source_start_s", 0.0),
+        }
+        if focus_open and current.get("focus"):
+            current_row["focus"] = dict(current["focus"])
+    elif isinstance(current, dict) and current.get("color"):
+        # KRI-1173: a plain colour names no pool media and has no start.
+        current_row = {"kind": "color", "color": current.get("color")}
+    section: dict[str, Any] = {
+        "available": True,
+        "current": current_row,
+        "pool": pool,
+    }
+    # KRI-1173: whether chat may set a plain colour (and why not), beside the windows flag.
+    color_reason = background_color_reason(job, variant)
+    section["color_available"] = color_reason is None
+    if color_reason is not None:
+        section["color_reason"] = color_reason
+    if background_windows_open(job, variant):
+        # KRI-1162: only while the windows gate is open, so a closed gate's section is unchanged.
+        windows = current.get("windows") if isinstance(current, dict) else None
+        section["windows_available"] = True
+        section["duration_s"] = round(background_duration_s(variant), 3)
+        section["windows"] = [
+            {
+                "media_id": window.get("media_id"),
+                "start_s": window.get("start_s"),
+                "end_s": window.get("end_s"),
+                **(
+                    {"focus": dict(window["focus"])}
+                    if focus_open and isinstance(window.get("focus"), dict)
+                    else {}
+                ),
+            }
+            for window in windows or []
+            if isinstance(window, dict)
+        ]
+        section["speaker_frame"] = background_frame_preset(
+            current.get("speaker_frame") if isinstance(current, dict) else None
+        )
+    if focus_open:
+        section["focus_available"] = True
+    # Qendresa item 16: shown only while the speaker has a full-screen opening, so every other
+    # snapshot keeps its exact shape. Read-only for the model: no op sets it.
+    spans = current.get("full_screen_windows") if isinstance(current, dict) else None
+    if spans:
+        section["full_screen_windows"] = [
+            {"start_s": span.get("start_s"), "end_s": span.get("end_s")}
+            for span in spans
+            if isinstance(span, dict)
+        ]
+    return section
 
 
 def derived_phone_overlays(job: Any, variant: dict[str, Any]) -> list[dict[str, Any]] | None:
@@ -861,6 +1102,30 @@ def derived_phone_overlays(job: Any, variant: dict[str, Any]) -> list[dict[str, 
     )
     rows = (projected or {}).get("media_overlays")
     return [dict(row) for row in rows if isinstance(row, dict)] if rows is not None else None
+
+
+def derived_phone_background(job: Any, variant: dict[str, Any]) -> dict[str, Any] | None:
+    """A Talking edit's background as the editor shows it before its first Save.
+
+    The pinned device recipe is the only record until an editor Save persists the
+    ``speaker_background`` section (the HTTP read paths project it the same way,
+    `project_phone_subtitled_editor_sections`); a chat turn must see what Save sees. None when
+    the variant is not a Talking edit, its lanes are closed, or it has no background.
+    """
+    if not is_phone_subtitled_editor_variant(variant):
+        return None
+    from app.services.phone_rollout import phone_subtitled_editor_lanes_supported  # noqa: PLC0415
+    from app.services.phone_subtitled_editor import (  # noqa: PLC0415
+        project_phone_subtitled_editor_sections,
+    )
+
+    if not phone_subtitled_editor_lanes_supported():
+        return None
+    projected = project_phone_subtitled_editor_sections(
+        getattr(job, "assembly_plan", None) or {}, variant
+    )
+    document = (projected or {}).get("speaker_background")
+    return dict(document) if isinstance(document, dict) else None
 
 
 def _audio_notes(job: Any, variant: dict[str, Any]) -> list[str]:
@@ -1139,6 +1404,23 @@ def build_editor_snapshot(
         snapshot["editor_limits"] = {"max_timeline_slots": timeline_max_slots}
     if "clip" in families:
         snapshot["timeline_patch_capabilities"] = timeline_patch_capabilities(job, variant)
+        if snapshot["timeline_patch_capabilities"].get("tilt") is True:
+            zoom_open = snapshot["timeline_patch_capabilities"].get("tilt_zoom") is True
+            for slot, row in zip(slots, slot_rows, strict=True):
+                current = ClipTilt.from_row(row.get("tilt"))
+                if not zoom_open:
+                    current = current.model_copy(update={"zoom": 1.0})
+                if tilt := current.row():
+                    slot["tilt"] = tilt
+        if snapshot["timeline_patch_capabilities"].get("tilt_backdrop_media") is True:
+            # KRI-1139: the item's ready photos and videos a backdrop may name, the same rows
+            # the Talking background lists (the planner owns the DB read). Empty => the parser
+            # refuses every media backdrop, like add_overlay with no asset pool.
+            snapshot["tilt_backdrop_pool"] = [
+                row
+                for row in clip_context.get("background_pool") or []
+                if isinstance(row, dict) and row.get("kind") in {"image", "video"}
+            ][:MAX_BACKGROUND_POOL_ROWS]
         # Unlocks add_unused_sources/set_media_duration/stack_images bulk
         # selectors — see `_source_pool_rows`.
         snapshot["source_pool"] = _source_pool_rows(job, variant)
@@ -1256,7 +1538,14 @@ def build_editor_snapshot(
             "catalog": list(clip_context.get("sfx_catalog") or []),
         }
     if "overlay" in snapshot["allowed_op_families"]:
-        snapshot["overlays"] = _overlay_snapshot(variant)
+        snapshot["overlays"] = _overlay_snapshot(
+            variant, tilt=caps.get("media_overlay_tilt") is True
+        )
+    background = _background_snapshot(job, variant, clip_context)
+    if background is not None:
+        # Present only while the lane has something to say, so every other snapshot is
+        # byte-identical to before the Talking background existed (KRI-1117).
+        snapshot["background"] = background
     if "effect" in snapshot["allowed_op_families"]:
         snapshot["camera_effects"] = [
             {
@@ -1339,7 +1628,13 @@ def _timeline_models(rows: list[dict[str, Any]]) -> list[TimelineSlotEdit]:
             # Only guided rows carry these; omission on the wire means "inherit".
             **{
                 key: row[key]
-                for key in ("playback_rate", "source_crop", "source_start_locked", "source_end_s")
+                for key in (
+                    "playback_rate",
+                    "source_crop",
+                    "tilt",
+                    "source_start_locked",
+                    "source_end_s",
+                )
                 if key in row
             },
         )
@@ -1512,6 +1807,14 @@ def project_editor_draft(
         derived = derived_phone_overlays(job, projected)
         if derived is not None:
             projected["media_overlays"] = derived
+    # KRI-1117: a Talking edit's background. An explicit key (even `None`: cleared) is the
+    # draft's own; otherwise a never-Saved edit derives it from its pinned recipe.
+    if "speaker_background" in payload:
+        projected["speaker_background"] = copy.deepcopy(payload["speaker_background"])
+    elif job is not None and "speaker_background" not in projected:
+        derived_background = derived_phone_background(job, projected)
+        if derived_background is not None:
+            projected["speaker_background"] = derived_background
     mix = payload.get("mix")
     if isinstance(mix, dict):
         if mix.get("music_level") is not None:
@@ -1650,6 +1953,19 @@ def resolve_editor_base(
     if fresh:
         return EditorBase(project_editor_draft(variant, fresh, job), fresh, "head", reason)
     return EditorBase(project_editor_draft(variant, {}, job), {}, "variant", reason)
+
+
+def editor_payload_dump(payload: EditorCommitRequest) -> dict[str, Any]:
+    """``payload`` as the flat commit-shaped draft dict (None lanes dropped).
+
+    A cleared Talking background is the one lane whose ``None`` MEANS something: Save reads
+    an explicit ``speaker_background: null`` as "clear it", so it survives the None-drop (and
+    the draft's merge), where every other absent lane means "leave it".
+    """
+    data = payload.model_dump(mode="json", exclude_none=True)
+    if "speaker_background" in payload.model_fields_set and payload.speaker_background is None:
+        data["speaker_background"] = None
+    return data
 
 
 def merge_editor_draft(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
@@ -1876,7 +2192,7 @@ class _DraftState:
     compile_editor_ops builds the commit request from it at the end.
     changed names the lanes that reach the payload ("text", "timeline",
     "captions", "caption_meta", "mix", "music", "title", "camera_effects",
-    "sound_effects", "visual_media", "media_overlays").
+    "sound_effects", "visual_media", "media_overlays", "speaker_background").
     """
 
     job: Any
@@ -1919,6 +2235,10 @@ class _DraftState:
     post: dict[str, Any] = field(default_factory=dict)
     # Phone Talking picture cards (KRI-661); reaches the payload as `media_overlays`.
     media_overlays: list[dict[str, Any]] = field(default_factory=list)
+    # Phone Talking background (KRI-1117): the document `set_background` chose, None once
+    # `remove_background` cleared it. Reaches the payload only when "speaker_background" is in
+    # `changed`, so an untouched lane is absent (leave unchanged), never an explicit clear.
+    speaker_background: dict[str, Any] | None = None
 
     def text_bar(self, index: object) -> dict[str, Any]:
         row = self.text_bars[_require_index(self.text_bars, index, "Text")]
@@ -2753,6 +3073,15 @@ def compile_editor_ops(
             ):
                 raise KriaEditorOpError("That sequence does not fit on the final video")
     validate_sequence_collisions(state.text, initial_text)
+    # Tri-state (set / clear / leave): only a touched lane is passed, so an explicit `None`
+    # (clear) lands in `model_fields_set` and an untouched lane stays absent.
+    background_section: dict[str, Any] = {}
+    if "speaker_background" in changed:
+        background_section["speaker_background"] = (
+            EditorCommitSpeakerBackground(**state.speaker_background)
+            if state.speaker_background is not None
+            else None
+        )
     request = EditorCommitRequest(
         guided_revision_number=int(guided["revision_number"]) if guided is not None else None,
         visual_blocks=state.visual_blocks,
@@ -2789,6 +3118,7 @@ def compile_editor_ops(
         camera_effects=state.camera_effects if "camera_effects" in changed else None,
         sound_effects=state.sound_effects if "sound_effects" in changed else None,
         media_overlays=state.media_overlays if "media_overlays" in changed else None,
+        **background_section,
     )
     text_diff: list[dict[str, Any]] = []
     if "text" in changed:

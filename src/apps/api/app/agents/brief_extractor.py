@@ -7,13 +7,20 @@ from typing import ClassVar
 
 from pydantic import ValidationError
 
+from app.agents._prompt_fingerprint import prompt_fingerprint
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.brief_extractor import (
     BriefExtractionInput,
     BriefExtractionOutput,
 )
-from app.agents.main_creator import _BRIEF_PROMPT_SECTION
+from app.agents.main_creator import (
+    _BRIEF_PROMPT_SECTION,
+    with_full_opening_brief,
+    with_insert_clip_brief,
+    with_long_request_cap,
+)
 from app.agents.prompt_vocab import render_vocab_tokens
+from app.config import settings
 from app.kria.brief import (
     BriefUpdateBatchError,
     CreativeBrief,
@@ -24,42 +31,18 @@ from app.kria.brief import (
 )
 from app.pipeline.prompt_loader import load_prompt
 
-# v9 (KRI-667/KRI-669): shared brief preserves heading and language-neutral ask facts.
-# v10 (KRI-700): shared brief records `footage_light` for brighten / darken asks.
-# v11 (KRI-674 follow-up): timing examples satisfy the non-empty content contract.
-# v12 (KRI-721 live check): shared brief carries unprocessed source-audio intent.
-# v13 (KRI-793): shared brief records the words to spell in the captions (`spellings`).
-# v14 (KRI-791 + KRI-793): retain spellings and record text `triggers` + `speaker`.
-# v14 (KRI-792): named spoken cuts carry cut_lines as well as caption spellings.
-# v15 (KRI-789): shared brief records quoted start / end lines as a `timing` trim.
-# v16 shares the complete caption/spoken-trigger/quoted-trim/named-cut instruction union.
-# v17 (KRI-814): shared brief section teaches the typed `delegates_all_choices` declaration.
-# v18 (KRI-814): earlier creator lines never read into the brief are read with the current one.
-# v20 combines delegation v18 with subtitle-semantics v19 in the shared brief.
-# v21 (KRI-816): shared brief section teaches the typed `starts_fresh` declaration.
-# v22 (KRI-827): the shared brief section also records `keep_text_off` facts.
-# v21 (KRI-724): shared brief records `speech_remove` {quote, occurrence} and
-# `noise_reduction: "engine"`, on top of v20.
-# v21 (KRI-840): shared brief records `display_mode` ("fullscreen" / "pip") for a timed photo ask.
-# v21 (KRI-841): shared brief records a video added after the talk as `ending_clip` + `keep_audio`.
-# v21 (KRI-842): the shared brief records `clip_sound` (one clip's sound under / after a voice).
-# v21 (KRI-847): shared brief records a ceiling length as `duration_bound: "at_most"`.
-# v21 (KRI-849): shared brief records `ask_if_unclear` and the creator's `unclear_answer`.
-# v34 (KRI-881): main's v33 plus the shared brief section typing a research ask
-# (`facts.research`).
-# v35 (KRI-689): the shared brief section records a clip-speed ask as `facts.playback_rate`.
-# v36: the shared brief section records a `timed_card` fact (a photo as a small card at an
-# exact second / clip) for phone Montage and Voiceover edits.
-# v37 (KRI-942): the shared brief section records clip sound on / off (`clip_sound` "on"/"off").
-# v38 (KRI-957): an after-voice clip ask's `triggers` is the line said in that clip, never the
-# creator's own last voiceover words.
-# v39 (KRI-994): the shared brief section records `only_media_kind` / `include_media_kind` on a
-# select ask.
-# v41 (29 Ekim lane D, KRI-1038): the shared brief section records words shown a piece at a
-# time as a `text_sequence` requirement, not `captions: word_by_word`. (v40 is lane B's.)
-# v42 (KRI-1027): the shared brief section records `landscape_fit` ("fill" / "fit") on a style
-# ask about how sideways clips sit in a vertical video.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-30-v44"
+# A fingerprint of these files (app/agents/_prompt_fingerprint.py): main_creator.py is listed
+# because the shared brief section lives there. Don't bump or pin it; the hand-numbered
+# history (to v68) is frozen in docs/pipelines/prompt-version-history.md.
+BRIEF_EXTRACTOR_PROMPT_SOURCES = (
+    "app/agents/brief_extractor.py",
+    "app/agents/main_creator.py",
+    "app/kria/brief.py",
+    "app/agents/prompt_vocab.py",
+    "app/agents/_schemas/text_animation_phases.py",  # {{TEXT_ANIMATION_EDGES}}
+    "prompts/brief_extractor.txt",
+)
+BRIEF_EXTRACTOR_PROMPT_VERSION = prompt_fingerprint("be", BRIEF_EXTRACTOR_PROMPT_SOURCES)
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
@@ -117,12 +100,44 @@ the same. "Center the title" -> {"style_intent": {"set": [{"field": "alignment",
 "center"}], "target": "title"}}.
 """)
 _NARROW_BRIEF_SECTION += _STYLE_INTENT_SECTION
+_GENERATED_IMAGE_SECTION = """
+When the creator asks for an image you generated for them, a photo or sticker they added in
+this chat, or a Visuals video (a short video added as a Visual, not one of their filmed clips) to
+show on a spoken word ("the coffee image when I say kahve", "kahve dediğimde kahve görselini
+göster"), ALWAYS record it as a `style` requirement carrying {"triggers": ["<the spoken word,
+exactly as the creator wrote it, never translated>"]}, plus "display_mode" ("fullscreen" or
+"pip") only when they said which. Describe the image in `description` in the creator's own words
+for it. Record `triggers` even when the image's title is in another language than the word; the
+server matches the word against the voice. Never drop `triggers` from such an ask while keeping
+`display_mode`: a full-screen ask without `triggers` is read as a cutaway of the creator's own
+clips. The one exception is the creator's own footage: a clip they filmed and attached
+never carries `triggers`, whatever word they name and however they place it, shown while the
+talk keeps running ("show the talks when I talk about them", "kongre dediğimde kongre videosunu
+göster", "over my speech") or put in between their speech ("put the talks in between my
+speech"). Record it exactly as the paragraphs above say for that wording (`display_mode` /
+`clip_sound` for a clip shown over the talk, the insert fact for a clip placed in between their
+speech, when that paragraph is present), because the server finds each clip's moment from what
+the clip shows.
+"""
+_NARROW_BRIEF_SECTION += _GENERATED_IMAGE_SECTION
 _NARROW_BRIEF_SECTION += """
 Every add/change update needs a non-empty `literal` or `description`, including
 timing updates that have `duration_s` in `facts`. Keep all independently requested
 constraints in each response, including a schema-correction response; correcting
 one invalid field must not remove the other requested changes.
 """
+
+
+def _narrow_brief_section(insert_clips_open: bool) -> str:
+    section = (
+        with_insert_clip_brief(_NARROW_BRIEF_SECTION)
+        if insert_clips_open
+        else _NARROW_BRIEF_SECTION
+    )
+    if settings.brief_long_request_enabled:
+        section = with_long_request_cap(section)
+    # Qendresa item 16: "" unless SPEAKER_FULL_OPENING_ENABLED; flag off keeps the bytes.
+    return with_full_opening_brief(section) if settings.speaker_full_opening_enabled else section
 
 
 class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
@@ -156,7 +171,8 @@ class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
             creator_request=input.creator_request or "(none)",
             user_message=input.user_message,
             conversation=json.dumps(input.conversation, ensure_ascii=False),
-            brief_section=_NARROW_BRIEF_SECTION,
+            # Parent KRI-1151: the planner says whether the item can pause the take for a clip.
+            brief_section=_narrow_brief_section(input.insert_clips_open),
         )
 
     def parse(self, raw_text: str, input: BriefExtractionInput) -> BriefExtractionOutput:  # noqa: A002, ARG002

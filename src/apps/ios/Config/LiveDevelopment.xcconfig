@@ -1,6 +1,10 @@
 // A real-account development build for collaborators using their own Apple
 // Personal Team. Google OAuth client IDs are public application identifiers,
 // not secrets. The production API already allowlists this iOS client.
+// Personal Teams cannot sign Push. A paid-team developer opts in from
+// Local.xcconfig: KRIA_LIVE_DEVELOPMENT_ENTITLEMENTS = Kria/KriaLiveDevelopment.entitlements
+KRIA_LIVE_DEVELOPMENT_ENTITLEMENTS =
+KRIA_APS_ENVIRONMENT = development
 #include? "Local.xcconfig"
 
 API_BASE_URL = https:/$()/nova-video.fly.dev

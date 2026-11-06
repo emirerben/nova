@@ -1,0 +1,32 @@
+{
+ "description": "Speaker-background layer wire contract (KRI-1115). Every `valid` layer must decode (Python SpeakerBackgroundLayer, Swift SpeakerBackgroundLayer) and equal its `normalized` form; every `invalid` entry must be rejected by both.",
+ "valid": [
+  {
+   "name": "photo-defaults",
+   "layer": {"asset_id": "visual-1a2b", "media_kind": "image"},
+   "normalized": {"asset_id": "visual-1a2b", "media_kind": "image", "source_start": 0.0, "loop": true, "subject_track_id": "subtitled"}
+  },
+  {
+   "name": "video-explicit",
+   "layer": {"asset_id": "visual-9f", "media_kind": "video", "source_start": 2.5, "loop": false, "subject_track_id": "speaker"},
+   "normalized": {"asset_id": "visual-9f", "media_kind": "video", "source_start": 2.5, "loop": false, "subject_track_id": "speaker"}
+  },
+  {
+   "name": "video-at-the-start-limit",
+   "layer": {"asset_id": "visual-9f", "media_kind": "video", "source_start": 1800},
+   "normalized": {"asset_id": "visual-9f", "media_kind": "video", "source_start": 1800.0, "loop": true, "subject_track_id": "subtitled"}
+  }
+ ],
+ "invalid": [
+  {"name": "negative-source-start", "layer": {"asset_id": "visual-9f", "media_kind": "video", "source_start": -0.1}},
+  {"name": "source-start-past-the-budget", "layer": {"asset_id": "visual-9f", "media_kind": "video", "source_start": 1800.5}},
+  {"name": "photo-with-a-source-start", "layer": {"asset_id": "visual-1a2b", "media_kind": "image", "source_start": 1.0}},
+  {"name": "kind-gif", "layer": {"asset_id": "visual-1a2b", "media_kind": "gif"}},
+  {"name": "kind-missing", "layer": {"asset_id": "visual-1a2b"}},
+  {"name": "empty-asset-id", "layer": {"asset_id": "", "media_kind": "image"}},
+  {"name": "asset-id-with-whitespace", "layer": {"asset_id": "visual 1a", "media_kind": "image"}},
+  {"name": "asset-id-missing", "layer": {"media_kind": "image"}},
+  {"name": "empty-subject-track", "layer": {"asset_id": "visual-1a2b", "media_kind": "image", "subject_track_id": ""}},
+  {"name": "unknown-key", "layer": {"asset_id": "visual-1a2b", "media_kind": "image", "blur": 0.5}}
+ ]
+}

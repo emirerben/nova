@@ -159,6 +159,8 @@ class ContractFacts:
     # Matrix field path of the first exact-text requirement (from its ROLE), or None.
     text_field_path: str | None = None
     order_required: bool = False
+    # Leverkusen M2: the contract hides part of a clip (presence only, never the ids).
+    has_hidden_parts: bool = False
     unresolved: bool = False
 
 
@@ -302,6 +304,8 @@ def _present_requirements(contract: ContractFacts) -> list[tuple[str, str | None
         rows.append(("exact_texts", contract.text_field_path))
     if contract.order_required:
         rows.append(("order_required", REQUIREMENT_FIELD_PATHS["order_required"]))
+    if contract.has_hidden_parts:
+        rows.append(("hidden_parts", REQUIREMENT_FIELD_PATHS["hidden_parts"]))
     return rows
 
 
@@ -606,6 +610,7 @@ def contract_facts(contract: CreatorRenderContract) -> ContractFacts:
         original_audio=contract.original_audio,
         text_field_path=text_field_path(contract.exact_texts[0]) if contract.exact_texts else None,
         order_required=bool(contract.order_required),
+        has_hidden_parts=bool(contract.hidden_parts),
         unresolved=bool(contract.unresolved),
     )
 

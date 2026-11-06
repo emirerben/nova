@@ -24,6 +24,7 @@ class ImageRequest:
     editable_title: str = ""
     size: str = "1024x1536"
     quality: str = "low"
+    transparent_background: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,12 +53,17 @@ def image_payload(request: ImageRequest) -> dict:
         raise ValueError("explicit bounded image quality required")
     return {
         "model": IMAGE_MODEL,
-        "prompt": "Create only the visual asset. Do not include lettering, captions or titles.\n"
+        "prompt": (
+            "Create only the visual asset. Add no captions, titles or invented lettering; "
+            "lettering that belongs to a requested logo, emblem, sign or product is kept "
+            "as drawn.\n"
+        )
         + request.prompt,
         "size": request.size,
         "quality": request.quality,
         "n": 1,
         "output_format": "png",
+        **({"background": "transparent"} if request.transparent_background else {}),
     }
 
 

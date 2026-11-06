@@ -37,7 +37,14 @@ from typing import Any, Literal
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -994,6 +1001,9 @@ class TimelineSlotEdit(BaseModel):
     # this field and the write path falls back to the current/canonical value.
     layout: Literal["fullscreen", "supporting_card"] | None = None
     source_crop: dict[str, float] | None = None
+    # KRI-1136: the creator's tilt of this occurrence, ``{rotation_deg, backdrop}``. Omission
+    # keeps the saved tilt, an explicit null (or an upright blank value) clears it.
+    tilt: dict[str, Any] | None = None
     playback_rate: float | None = Field(default=None, ge=0.25, le=4.0)
     # Explicit selected source edge for source-preserving speed edits. Omission
     # retains the legacy duration * rate window contract.
@@ -1022,6 +1032,16 @@ class TimelineSlotEdit(BaseModel):
         if x + width > 1 + 1e-6 or y + height > 1 + 1e-6:
             raise ValueError("source_crop must stay within source bounds")
         return {"x": x, "y": y, "width": width, "height": height}
+
+    @field_validator("tilt", mode="before")
+    @classmethod
+    def validate_tilt(cls, value: object) -> dict[str, Any] | None:
+        from app.kria.clip_tilt_row import canonical_row_tilt  # noqa: PLC0415
+
+        try:
+            return canonical_row_tilt(value)
+        except ValueError as exc:
+            raise ValueError(f"tilt is invalid: {exc}") from exc
 
     @field_validator("look_preset", mode="before")
     @classmethod
@@ -1174,6 +1194,135 @@ class EditorCommitMusicWindow(BaseModel):
         return value
 
 
+class EditorCommitBackgroundFocus(BaseModel):
+    """Where a background picture is aimed (Qendresa item 18): the document's complete
+    ``{x, y, zoom}`` (0 = left/top edge, 1 = right/bottom edge; zoom a multiple of the cover
+    scale). The same bounds as the recipe's `SpeakerBackgroundFocus`."""
+
+    model_config = {"extra": "forbid"}
+
+    x: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+    y: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+    zoom: float = Field(ge=0.2, le=4.0, allow_inf_nan=False)
+
+
+class EditorCommitSpeakerBackgroundWindow(BaseModel):
+    """One timed background of the Save section (KRI-1162): a pool visual shown from
+    ``start_s`` to ``end_s`` (the edit's timeline). Order, overlap and the 0.5 s minimum are
+    checked by `_validate_speaker_background_section` so they answer with their own code."""
+
+    model_config = {"extra": "forbid"}
+
+    media_id: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    kind: Literal["image", "video"]
+    source_start_s: float = Field(default=0.0, ge=0.0, le=1800.0, allow_inf_nan=False)
+    start_s: float = Field(ge=0.0, le=1800.0, allow_inf_nan=False)
+    end_s: float = Field(ge=0.0, le=1800.0, allow_inf_nan=False)
+    # Qendresa item 18: omitted from the dump while None (an old-shape window still equals the
+    # stored document).
+    focus: EditorCommitBackgroundFocus | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unused(self, handler):  # noqa: ANN001, ANN202
+        data = handler(self)
+        if data.get("focus") is None:
+            data.pop("focus", None)
+        return data
+
+
+class EditorCommitSpeakerFullScreenWindow(BaseModel):
+    """One full-screen span of the Save section (Qendresa item 16): from ``start_s`` to ``end_s``
+    of the edit's timeline the speaker's own take is drawn full-frame. Order, overlap, the
+    0.5 s minimum, the count and the edit end are checked by
+    `_validate_speaker_full_screen_windows` so they answer with their own code."""
+
+    model_config = {"extra": "forbid"}
+
+    start_s: float = Field(ge=0.0, le=1800.0, allow_inf_nan=False)
+    end_s: float = Field(ge=0.0, le=1800.0, allow_inf_nan=False)
+
+
+# The docstring below is part of the generated tool / mobile contracts (kria_contracts), so it
+# stays as written. Besides the named corner presets, the iPhone editor also writes any frame
+# inside these ranges when the creator drags or pinches the speaker on the preview.
+class EditorCommitSpeakerFrame(BaseModel):
+    """Where the matted speaker is drawn (KRI-1162): the document's ``speaker_frame``. The app
+    writes it from a named corner preset; the server never takes a corner name on the wire."""
+
+    model_config = {"extra": "forbid"}
+
+    width_fraction: float = Field(ge=0.2, le=1.0, allow_inf_nan=False)
+    x_fraction: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+    y_fraction: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+
+
+class EditorCommitSpeakerBackground(BaseModel):
+    """Editor Save section for the Talk-to-camera background (KRI-1117).
+
+    The wire is the same ``{media_id, kind, source_start_s}`` the editor document carries:
+    the media id names a visual in this item's pool, never a path (the server pins the
+    exact bytes). Sent as an object to set it, as an explicit ``null`` to clear it.
+
+    KRI-1162: ``windows`` (1..40 timed backgrounds over the fill) and ``speaker_frame`` are
+    optional and omitted from the dump while unused, so an old-shape Save dumps exactly as it
+    did and still equals the stored document.
+
+    KRI-1173: ``kind: "color"`` + ``color`` (``#RRGGBB``, any case in, UPPERCASE stored) is a
+    solid-colour fill: no ``media_id``, no pin, ``source_start_s`` 0 (omitted from the dump).
+    """
+
+    model_config = {"extra": "forbid"}
+
+    # KRI-1173: ``media_id`` is absent for a colour fill and required for a photo or video; the
+    # Save validator answers a wrong combination with its own code (``speaker_background_color_
+    # invalid``) instead of a generic schema 422.
+    media_id: str | None = Field(default=None, min_length=1, max_length=160, pattern=r"^\S+$")
+    kind: Literal["image", "video", "color"]
+    # KRI-1173: ``#RRGGBB`` of a colour fill. Any case is accepted here and stored UPPERCASE;
+    # the hex itself is checked by `_validate_speaker_background_section`.
+    color: str | None = Field(default=None, max_length=64)
+    source_start_s: float = Field(default=0.0, ge=0.0, le=1800.0, allow_inf_nan=False)
+    windows: list[EditorCommitSpeakerBackgroundWindow] | None = Field(
+        default=None, min_length=1, max_length=40
+    )
+    speaker_frame: EditorCommitSpeakerFrame | None = None
+    # Qendresa item 16: omitted from the dump while unused (so an old-shape Save still equals
+    # the stored document). No length bounds here: `_validate_speaker_full_screen_windows`
+    # answers a bad list with `speaker_full_opening_invalid`.
+    full_screen_windows: list[EditorCommitSpeakerFullScreenWindow] | None = None
+    # Qendresa item 18: the fill's focus (photo/video only), omitted while None.
+    focus: EditorCommitBackgroundFocus | None = None
+
+    @field_validator("color", mode="before")
+    @classmethod
+    def _uppercase_color(cls, value: object) -> object:
+        return value.strip().upper() if isinstance(value, str) else value
+
+    @property
+    def uses_windows(self) -> bool:
+        return bool(self.windows) or self.speaker_frame is not None
+
+    @model_serializer(mode="wrap")
+    def _omit_unused(self, handler):  # noqa: ANN001, ANN202
+        data = handler(self)
+        if data.get("media_id") is None:
+            data.pop("media_id", None)
+        if data.get("color") is None:
+            data.pop("color", None)
+        if data.get("kind") == "color":
+            # A colour has no source start: the document carries `{kind, color}` only.
+            data.pop("source_start_s", None)
+        if not data.get("windows"):
+            data.pop("windows", None)
+        if data.get("speaker_frame") is None:
+            data.pop("speaker_frame", None)
+        if not data.get("full_screen_windows"):
+            data.pop("full_screen_windows", None)
+        if data.get("focus") is None:
+            data.pop("focus", None)
+        return data
+
+
 class EditorCommitUserSong(BaseModel):
     """Editor Save section for the creator's own song (KRI-428), phone guided variants.
 
@@ -1311,6 +1460,9 @@ class EditorCommitRequest(BaseModel):
     # variants only; validated by `validate_drawings` and compiled into the pinned recipe's
     # `drawing_layers` on every phone Save.
     drawings: list[dict] | None = Field(default=None, max_length=12)
+    # KRI-1117: the Talk-to-camera background. TRI-STATE like `carousel_moment`: absent from
+    # `model_fields_set` = leave unchanged; explicit `null` = clear; an object = set.
+    speaker_background: EditorCommitSpeakerBackground | None = None
     # Carousel-moment edit (Blossom carousel), staged as a batched-Save section —
     # reuses `CarouselMomentEditRequest` verbatim (do not fork). Tri-state at
     # THIS level, mirroring `EditVariantRequest.carousel_moment` /
@@ -1621,6 +1773,7 @@ class EditorCommitSections(BaseModel):
     motion_scenes: bool = False
     camera_effects: bool = False
     drawings: bool = False
+    speaker_background: bool = False
     carousel_moment: bool = False
     title: bool
 
@@ -2233,6 +2386,8 @@ def _augment_variant_with_phone_subtitled_editor_sections(job: Job, v: dict) -> 
     if not projected:
         return v
     patch = {}
+    if "speaker_background" not in v and projected.get("speaker_background") is not None:
+        patch["speaker_background"] = projected["speaker_background"]
     if "sound_effects" not in v and projected.get("sound_effects") is not None:
         patch["sound_effects"] = projected["sound_effects"]
     if "media_overlays" not in v and projected.get("media_overlays") is not None:
@@ -2753,6 +2908,7 @@ def _variants_for_response(job: Job) -> list[dict]:
             # KRI-287: the app registers an added photo/video against this
             # revision; a Voiceover edit has no guided revision of its own.
             or _phone_voiceover_editor_media_available(job, v)
+            or _phone_subtitled_editor_media_available(job, v)
         ):
             from app.services.phone_editor_sources import (
                 phone_editor_source_revision,  # noqa: PLC0415
@@ -5476,6 +5632,7 @@ async def dispatch_set_orientation(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="guided_story_revision_unavailable",
             )
+        _require_rendered_clock_reader(current_revision)
         if revision_number is None or base_generation is None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -7029,7 +7186,7 @@ def _with_phone_narrated_title(
 
 
 # The editor sections a phone Talking Save persists onto the variant.
-_PHONE_SUBTITLED_EDITOR_LANE_KEYS = ("sound_effects", "media_overlays")
+_PHONE_SUBTITLED_EDITOR_LANE_KEYS = ("sound_effects", "media_overlays", "speaker_background")
 
 
 def _phone_subtitled_editor_lanes_open(job: Job, variant: dict) -> bool:
@@ -7044,7 +7201,11 @@ def _phone_subtitled_editor_lanes_open(job: Job, variant: dict) -> bool:
     if not _phone_editor_lanes_available(job, variant):
         return False
     capabilities = _editor_capabilities(job, variant)
-    return capabilities.get("sfx") is True or capabilities.get("overlays") is True
+    return (
+        capabilities.get("sfx") is True
+        or capabilities.get("overlays") is True
+        or capabilities.get("speaker_background") is True
+    )
 
 
 def _clamp_phone_editor_capabilities(
@@ -7060,6 +7221,8 @@ def _clamp_phone_editor_capabilities(
     narrated_text: bool = False,
     voiceover_lanes: bool = False,
     voiceover_media: bool = False,
+    subtitled_media: bool = False,
+    authored_media: bool = False,
     shape: Any = None,
     subtitled_text: bool = False,
     guided_sfx: bool = False,
@@ -7116,7 +7279,10 @@ def _clamp_phone_editor_capabilities(
     subtitled_carve_out = {"sfx", "overlays"} if (subtitled_lanes or voiceover_lanes) else set()
     if guided_sfx:
         subtitled_carve_out = subtitled_carve_out | {"sfx"}
-    if voiceover_media:
+    # KRI-1142: a Talking edit with added pictures is carved out like a Voiceover one: pictures
+    # only, no add-clip (the cut belongs to the speaker's take).
+    speech_media = voiceover_media or subtitled_media
+    if speech_media:
         media_carve_out = {("lanes", "visual_blocks")}
     elif media_enabled:
         media_carve_out = {("clips", "add"), ("lanes", "visual_blocks")}
@@ -7143,7 +7309,7 @@ def _clamp_phone_editor_capabilities(
                 for name, value in operations.items()
             }
     for lane in _PHONE_UNSUPPORTED_TOP_LEVEL:
-        if (media_enabled or voiceover_media) and lane == "visual_blocks":
+        if (media_enabled or speech_media) and lane == "visual_blocks":
             continue
         if lane in subtitled_carve_out:
             continue
@@ -7154,7 +7320,17 @@ def _clamp_phone_editor_capabilities(
             clamped[lane] = False
             if f"{lane}_reason" in clamped:
                 clamped[f"{lane}_reason"] = _PHONE_EDIT_UNSUPPORTED_REASON
-    if voiceover_media and "visual_blocks" in clamped:
+    if (
+        authored_media
+        and "visual_blocks" in clamped
+        and clamped.get("visual_blocks_reason") == "no_clean_base"
+    ):
+        # KRI-1142: an authored or empty phone edit has no clean base video either, and Save
+        # compiles its picture blocks into the authored recipe. Only the no-clean-base closure
+        # is lifted; any other reason (a lyrics variant) stays closed.
+        clamped["visual_blocks"] = True
+        clamped["visual_blocks_reason"] = None
+    if speech_media and "visual_blocks" in clamped:
         # The cloud map closes `visual_blocks` for want of a clean base video
         # (`no_clean_base`); a phone Voiceover edit has none, and needs none:
         # Save compiles the blocks into the pinned recipe (KRI-287).
@@ -7244,7 +7420,7 @@ def _clamp_phone_editor_capabilities(
                 "value": shape.landscape_fit.value,
                 "reason": shape.landscape_fit.reason,
             }
-    if media_enabled or voiceover_media:
+    if media_enabled or speech_media:
         clamped["phone_editor_media"] = {
             "enabled": True,
             "visual_kinds": ["image", "video"],
@@ -7501,8 +7677,54 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     # Bend (recorded editor snapshots and replays), and the app reads a missing key as off.
     if _text_bend_capability(variant):
         capabilities["text_bend"] = True
+    # KRI-1117: present only when ON (same reason as `text_bend`): recorded editor snapshots
+    # and every cloud / closed-gate payload keep their exact shape.
+    if _speaker_background_capability(job, variant):
+        capabilities["speaker_background"] = True
+        # KRI-1162: timed backgrounds + the speaker frame, present only when ON (same reason).
+        if _speaker_background_windows_capability(job, variant):
+            capabilities["speaker_background_windows"] = True
+        # KRI-1173: a solid-colour fill, present only when ON (same reason).
+        if _speaker_background_color_capability(job, variant):
+            capabilities["speaker_background_color"] = True
+        # Qendresa item 16: the speaker full screen before the corner, present only when ON.
+        if _speaker_full_opening_capability(job, variant):
+            capabilities["speaker_full_opening"] = True
+        # Qendresa item 18: aim a background at its text, present only when ON.
+        if _background_focus_capability(job, variant):
+            capabilities["background_focus"] = {"editable": True}
     if _caption_animation_capability(variant, capabilities):
         capabilities["caption_animation"] = True
+    if _clip_tilt_capability(job, variant, capabilities):
+        # KRI-1136: present only when ON, like `text_bend`: every closed-gate payload keeps
+        # its exact shape. PR C (the copilot) reads the same `clips.tilt` entry.
+        capabilities["clips"] = {
+            **(capabilities.get("clips") if isinstance(capabilities.get("clips"), dict) else {}),
+            "tilt": {"editable": True, "reason": None},
+        }
+        from app.services.phone_rollout import clip_backdrop_media_supported  # noqa: PLC0415
+
+        if clip_backdrop_media_supported():
+            # KRI-1139: a pool photo or video behind the clip. Present only when ON, so the
+            # payload of a build or deployment without it keeps its exact shape.
+            capabilities["clips"]["tilt_backdrop_media"] = {"editable": True, "reason": None}
+        from app.services.phone_rollout import clip_tilt_zoom_supported  # noqa: PLC0415
+
+        if clip_tilt_zoom_supported():
+            # KRI-1169: the Zoom slider. Present only when ON, like `tilt_backdrop_media`.
+            capabilities["clips"]["tilt_zoom"] = {"editable": True, "reason": None}
+    range_leaf = _talking_range_capability(job, variant)
+    if range_leaf is not None:
+        # Present only when ON: every closed-gate payload keeps its exact shape. `timeline`
+        # stays false for Talking; this leaf alone opens the Range sheet (the speaker window).
+        capabilities["clips"] = {
+            **(capabilities.get("clips") if isinstance(capabilities.get("clips"), dict) else {}),
+            "source_window": range_leaf,
+        }
+    if _media_overlay_tilt_capability(variant, capabilities):
+        # KRI-1141: present only when ON (same reason as `text_bend`); the editor opens the
+        # rotate gesture and the Rotation slider for a card, and nothing else of `editor_style`.
+        capabilities["media_overlay_tilt"] = True
     from app.services.client_protocol import CAPTION_STYLE_SCOPE_PROTOCOL, current_client_protocol
 
     protocol = current_client_protocol()
@@ -7514,6 +7736,71 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     ):
         capabilities["caption_style_scope"] = True
     return capabilities
+
+
+def _talking_range_capability(job: Job, variant: dict) -> dict | None:
+    """``editor_capabilities.clips.source_window`` for a phone Talking edit, or None (absent).
+
+    ``editable`` is exactly "Save will compile a Range window now"; when it is not, ``reason``
+    names why (`phone_talking_range.talking_range_reason`) so the app can say so in plain words.
+    """
+    from app.services.phone_rollout import phone_talking_range_supported  # noqa: PLC0415
+    from app.services.phone_talking_range import (  # noqa: PLC0415
+        is_phone_talking_range_variant,
+        talking_range_reason,
+    )
+
+    if not (is_phone_talking_range_variant(variant) and phone_talking_range_supported()):
+        return None
+    reason = talking_range_reason(job, variant)
+    return {"editable": reason is None, "reason": reason}
+
+
+def _media_overlay_tilt_capability(variant: dict, capabilities: dict) -> bool:
+    """KRI-1141: may the app tilt a picture card (``editor_capabilities.media_overlay_tilt``)?
+
+    Only a device-rendered Talking variant whose card lane is open: that Save recompiles each
+    card's ``editor_style.rotation_deg`` into the pinned recipe (`SubtitledOverlayCard`), while
+    the clamp keeps ``visual_editor_style`` (zoom, fit, animation) closed. And only while the
+    kill switch, the ``clipTilt`` verified token and the requesting build's protocol all hold.
+    """
+    from app.services.phone_rollout import card_tilt_supported  # noqa: PLC0415
+    from app.services.phone_subtitled_editor import (  # noqa: PLC0415
+        is_phone_subtitled_editor_variant,
+    )
+
+    return bool(
+        is_phone_subtitled_editor_variant(variant)
+        and capabilities.get("overlays") is True
+        and card_tilt_supported()
+    )
+
+
+def _clip_tilt_capability(job: Job, variant: dict, capabilities: dict) -> bool:
+    """KRI-1136: may the app tilt a clip (``editor_capabilities.clips.tilt``)?
+
+    Device renders only (the cloud has no ``clipTilt``), on the shapes whose Save recompiles
+    a row ``tilt`` into the pinned recipe (an authored timeline, a guided/montage edit with
+    its revision, a phone Voiceover cut), and only while the kill switch, the verified token
+    and the requesting build's protocol all hold. A worker (no app build to ask) is judged
+    on the first two.
+    """
+    from app.services.phone_rollout import clip_tilt_supported  # noqa: PLC0415
+
+    if (
+        variant.get("render_destination") != "device"
+        or variant.get("resolved_archetype") == "slides"
+        or not clip_tilt_supported()
+    ):
+        return False
+    return bool(
+        variant.get("editor_timeline_mode") == "authored"
+        or (
+            variant.get("resolved_archetype") == "guided_story"
+            and capabilities.get("timeline") is True
+        )
+        or _phone_voiceover_crop_edits_enabled(job, variant)
+    )
 
 
 def _caption_animation_capability(variant: dict, capabilities: dict) -> bool:
@@ -7601,6 +7888,7 @@ def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
     capabilities = _base_editor_capabilities(job, variant)
     if variant.get("render_destination") == "device":
         voiceover_media = _phone_voiceover_editor_media_available(job, variant)
+        subtitled_media = _phone_subtitled_editor_media_available(job, variant)
         subtitled_lanes = _phone_subtitled_editor_lanes_available(job, variant)
         voiceover_lanes = _phone_voiceover_editor_lanes_available(variant)
         shape = device_editor_offer(
@@ -7618,7 +7906,9 @@ def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
         )
         return _clamp_phone_editor_capabilities(
             capabilities,
-            media_enabled=voiceover_media or _phone_editor_media_available(job, variant),
+            media_enabled=(
+                voiceover_media or subtitled_media or _phone_editor_media_available(job, variant)
+            ),
             subtitled_lanes=subtitled_lanes,
             guided_story=variant.get("resolved_archetype") == "guided_story",
             narrated=variant.get("resolved_archetype") == "narrated",
@@ -7626,6 +7916,8 @@ def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
             narrated_text=_phone_narrated_title_edits_available(variant),
             voiceover_lanes=voiceover_lanes,
             voiceover_media=voiceover_media,
+            subtitled_media=subtitled_media,
+            authored_media=_phone_authored_media_available(job, variant),
             shape=shape,
             subtitled_text=subtitled_lanes and _phone_subtitled_text_lane_available(variant),
             guided_sfx=_phone_guided_sfx_available(job, variant),
@@ -7645,6 +7937,16 @@ def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
             ),
         )
     return capabilities
+
+
+def _phone_authored_media_available(job: Job, variant: dict) -> bool:
+    """KRI-1142: an authored or empty phone edit may add pictures once visual blocks are on.
+
+    `authored_phone_sources_available` already checks the media flag, the phone rollout and the
+    verified features; it does not check the visual-block switch."""
+    from app.services.phone_editor_sources import authored_phone_sources_available
+
+    return bool(settings.visual_blocks_enabled and authored_phone_sources_available(job, variant))
 
 
 def _phone_voiceover_editor_media_available(
@@ -7692,6 +7994,30 @@ def _phone_voiceover_editor_media_available(
         return False
 
 
+def _phone_subtitled_editor_media_available(job: Job, variant: dict) -> bool:
+    """True when a phone Talking (`subtitled`) edit may add a picture (KRI-1142).
+
+    Needs the shape Save compiles media for (a plain device `subtitled` variant, not an
+    authored or empty one, which has its own path), the rollout gate, phone rendering for this
+    creator and the revision-1 source catalog registration fences against."""
+    from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
+    from app.services.phone_editor_sources import phone_editor_source_revision  # noqa: PLC0415
+    from app.services.phone_rollout import phone_subtitled_editor_media_supported  # noqa: PLC0415
+
+    if variant.get("editor_timeline_mode") == "authored" or variant.get("editor_state") == "empty":
+        return False
+    if not (
+        variant.get("render_destination") == "device" and is_phone_subtitled_editor_variant(variant)
+    ):
+        return False
+    if not (phone_subtitled_editor_media_supported() and phone_rendering_allowed_for_job(job)):
+        return False
+    try:
+        return phone_editor_source_revision(job, variant) is not None
+    except (TypeError, ValueError):
+        return False
+
+
 def _phone_editor_media_available(
     job: Job, variant: dict, *, require_client: bool | None = None
 ) -> bool:
@@ -7702,6 +8028,8 @@ def _phone_editor_media_available(
     if authored_phone_sources_available(job, variant):
         return True
     if _phone_voiceover_editor_media_available(job, variant, require_client=require_client):
+        return True
+    if _phone_subtitled_editor_media_available(job, variant):
         return True
 
     return bool(
@@ -9078,6 +9406,9 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
                 )
             )
         except ValueError:
+            if persisted.get("timing_mode") is not None:
+                log.warning("guided_editor_clock_revision_invalid", job_id=str(job.id))
+                return None
             # A corrupt/stale revision must not make the read endpoint 500. The
             # immutable approval remains the safe projection until the client
             # refreshes and saves a new revision.
@@ -9093,6 +9424,53 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
         log.warning("guided_editor_approval_projection_failed", job_id=str(job.id), exc_info=True)
         return None
     try:
+        rendered_source_durations = None
+        from app.services.device_render import DEVICE_RENDER_FIELD
+        from app.services.phone_sources import (
+            PHONE_SOURCES_FIELD,
+            PHONE_VISUALS_FIELD,
+            PhoneSourceBinding,
+            PhoneVisualBinding,
+        )
+
+        # Reader-first rollout: an existing plan or receipt never upgrades a saved clock.
+        # No production writer stamps this marker until every reader is compatible.
+        clock_marker = _stored_variant_field(job, variant, "_guided_editor_clock")
+        if clock_marker not in (None, "rendered-v1"):
+            raise ValueError("unsupported guided editor clock")
+        rendered_clock_requested = clock_marker == "rendered-v1"
+        has_native_state = any(
+            key in assembly
+            for key in (PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD, DEVICE_RENDER_FIELD)
+        )
+        if rendered_clock_requested:
+            if not has_native_state or not _stored_variant_field(
+                job, variant, PHONE_EDITOR_PLAN_FIELD
+            ):
+                raise ValueError("rendered editor clock requires native source receipts")
+            bindings = [
+                PhoneSourceBinding.model_validate(row)
+                for row in assembly.get(PHONE_SOURCES_FIELD) or []
+            ]
+            by_identity = {
+                (item.media_id, item.proxy_path, item.generation): item for item in bindings
+            }
+            visuals = {
+                (item.media_id, item.gcs_path, item.generation): item
+                for row in assembly.get(PHONE_VISUALS_FIELD) or []
+                for item in [PhoneVisualBinding.model_validate(row)]
+            }
+            rendered_source_durations = {}
+            for source in snapshot.media:
+                binding = by_identity.get((source.media_id, source.gcs_path, source.generation))
+                if binding is None:
+                    visual = visuals.get((source.media_id, source.gcs_path, source.generation))
+                    if visual is None or visual.kind != source.kind:
+                        raise ValueError("rendered editor source lacks its original receipt")
+                    if visual.kind == "video":
+                        rendered_source_durations[source.media_id] = visual.duration_s
+                else:
+                    rendered_source_durations[source.media_id] = binding.original.duration_s
         # Older approvals recorded the confirmed style only in the creator
         # identity. Recover presentation for the initial editor projection,
         # leaving the immutable approval, plan hash, and word receipts intact.
@@ -9120,6 +9498,7 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
                 snapshot=snapshot.model_dump(mode="json"),
                 execution_plan=projected_plan,
                 base_generation=variant_render_baseline(variant),
+                rendered_source_durations=rendered_source_durations,
             )
         )
     except (TypeError, ValueError):
@@ -9248,7 +9627,11 @@ def _guided_v2_slot_rows(
                 "source_duration_s": source.get("duration_s"),
                 "in_s": segment.get("source_start_s"),
                 "duration_s": segment.get("duration_s"),
+                **(
+                    {"timing_mode": "rendered"} if revision.get("timing_mode") == "rendered" else {}
+                ),
                 **({"source_crop": segment["source_crop"]} if segment.get("source_crop") else {}),
+                **({"tilt": segment["tilt"]} if segment.get("tilt") else {}),
                 **(
                     {"playback_rate": segment["playback_rate"]}
                     if segment.get("playback_rate") is not None
@@ -9287,6 +9670,42 @@ def _guided_v2_slot_rows(
     return slots
 
 
+def _require_rendered_clock_reader(revision: dict) -> None:
+    from app.services.client_protocol import (
+        RENDERED_TIMELINE_CLOCK_PROTOCOL,
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if (
+        revision.get("timing_mode") == "rendered"
+        and in_http_request()
+        and (current_client_protocol() or 0) < RENDERED_TIMELINE_CLOCK_PROTOCOL
+    ):
+        raise HTTPException(
+            status_code=426,
+            detail={
+                "code": "client_update_required",
+                "feature": "rendered_timeline_clock",
+                "minimum_client_protocol": RENDERED_TIMELINE_CLOCK_PROTOCOL,
+            },
+        )
+
+
+def require_editor_clock_reader(job: Job, variant: dict) -> None:
+    """Check server-owned clock state before changing the editor's mode."""
+    saved = variant.get("guided_edit_revision")
+    marker = _stored_variant_field(job, variant, "_guided_editor_clock")
+    if marker is None and not (isinstance(saved, dict) and saved.get("timing_mode") is not None):
+        return
+    current = _guided_v2_revision(job, variant)
+    if current is None:
+        raise _timeline_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "guided_story_revision_unavailable"
+        )
+    _require_rendered_clock_reader(current)
+
+
 def _guided_v2_timeline_projection(
     job: Job,
     variant: dict,
@@ -9307,6 +9726,7 @@ def _guided_v2_timeline_projection(
             "clips": [],
             "edit_wide_look_presets": [],
         }
+    _require_rendered_clock_reader(revision)
     sources = list(revision.get("sources") or [])
     segment_layout, layout_by_media_id = _guided_v2_layouts(job, variant)
 
@@ -9431,6 +9851,15 @@ def resolve_timeline_slots_for_edit(
             else resolve_authored_cloud_slots
         )
         return resolver(job, variant, slots, preserve_intent=preserve_intent)
+    from app.services.phone_rollout import phone_talking_range_supported  # noqa: PLC0415
+    from app.services.phone_talking_range import (  # noqa: PLC0415
+        is_phone_talking_range_variant,
+        resolve_phone_talking_range_slots,
+    )
+
+    if is_phone_talking_range_variant(variant) and phone_talking_range_supported():
+        # Range on a phone Talking edit: only the speaker's own window rows may change.
+        return resolve_phone_talking_range_slots(job, variant, slots)
     reason = _timeline_ineligibility(job, variant)
     if reason is not None:
         raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, reason)
@@ -9929,6 +10358,7 @@ def _guided_v2_revision_for_write(
         raise _timeline_error(
             status.HTTP_422_UNPROCESSABLE_ENTITY, "guided_story_revision_unavailable"
         )
+    _require_rendered_clock_reader(current)
     if payload.revision_number is None:
         raise _timeline_error(status.HTTP_409_CONFLICT, "GUIDED_REVISION_TOKEN_REQUIRED")
     if payload.revision_number is not None and payload.revision_number != int(
@@ -10300,6 +10730,7 @@ def _guided_v2_revision_from_commit(
         raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_REVISION_INVALID")
     if payload.base_generation != variant_render_baseline(variant):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="baseline_conflict")
+    _require_rendered_clock_reader(current)
     if payload.guided_revision_number is not None and payload.guided_revision_number != int(
         current["revision_number"]
     ):
@@ -10307,6 +10738,9 @@ def _guided_v2_revision_from_commit(
     if payload.guided_revision_number is None:
         raise _timeline_error(status.HTTP_409_CONFLICT, "GUIDED_REVISION_TOKEN_REQUIRED")
     raw = dict(payload.guided_revision or current)
+    raw.pop("timing_mode", None)
+    if current.get("timing_mode") is not None:
+        raw["timing_mode"] = current["timing_mode"]
     if raw.get("caption_meta") is not None:
         try:
             raw["caption_meta"] = EditorCommitCaptionMeta.model_validate(
@@ -10651,6 +11085,7 @@ def require_guided_story_editor_commit(
         and payload.motion_scenes is None
         and payload.camera_effects is None
         and payload.drawings is None
+        and "speaker_background" not in payload.model_fields_set
         and payload.title is None
         and not payload.remove_music
         and "carousel_moment" not in payload.model_fields_set
@@ -10732,6 +11167,7 @@ def prepare_editor_commit(
             job, variant, allow_authored=payload.editor_state_version in (1, 2)
         )
         _require_caption_animation_client(job, variant, payload)
+        _require_clip_tilt_gates(job, variant, payload)
     if variant is not None and variant.get("render_destination") == "device":
         from app.services.phone_editor import prepare_phone_editor_commit  # noqa: PLC0415
         from app.services.phone_editor_sources import editor_sources_for_variant
@@ -10768,6 +11204,25 @@ def prepare_editor_commit(
                 phone_sfx_catalog_paths=phone_sfx_catalog_paths,
                 creator_brief_binding=creator_brief_binding,
             )
+        from app.services.phone_rollout import phone_talking_range_supported  # noqa: PLC0415
+        from app.services.phone_talking_range import (  # noqa: PLC0415
+            is_phone_talking_range_variant,
+            prepare_phone_talking_range_commit,
+        )
+
+        if (
+            payload.timeline_slots is not None
+            and is_phone_talking_range_variant(variant)
+            and phone_talking_range_supported()
+        ):
+            return prepare_phone_talking_range_commit(
+                job,
+                variant_id,
+                payload,
+                validation_arguments=arguments,
+                phone_sfx_catalog_paths=phone_sfx_catalog_paths,
+                creator_brief_binding=creator_brief_binding,
+            )
         return prepare_phone_editor_commit(
             job,
             variant_id,
@@ -10777,6 +11232,101 @@ def prepare_editor_commit(
             learning_sections=payload.model_fields_set,
         )
     return _prepare_editor_commit(job, variant_id, payload, **arguments)
+
+
+def _require_clip_tilt_gates(job: Job, variant: dict, payload: EditorCommitRequest) -> None:
+    """The Save-time gates of a clip tilt (KRI-1136).
+
+    426 for an app build below ``media_tilt_min_client_protocol`` whose timeline Save lands on
+    a variant that already holds a tilt: it previews the clip upright and its payload cannot
+    say the tilt, so letting it replace the timeline would silently straighten the clip.
+    422 ``clip_tilt_unavailable`` for a tilt that is new or changed while the flag or the
+    verified token is off (keeping or clearing a stored tilt is always allowed).
+    """
+    from app.kria.clip_tilt_row import canonical_row_tilt  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        clip_backdrop_media_client_supported,
+        clip_backdrop_media_supported,
+        clip_tilt_client_supported,
+        clip_tilt_supported,
+        clip_tilt_zoom_client_supported,
+        clip_tilt_zoom_supported,
+    )
+    from app.services.phone_subtitled_editor import pinned_visual  # noqa: PLC0415
+
+    slots = payload.timeline_slots
+    if slots is None:
+        return
+    stored = {
+        row["slot_id"]: canonical_row_tilt(row.get("tilt"))
+        for row in editor_deletion_timeline(job, variant)
+        if row.get("slot_id")
+    }
+    if not clip_backdrop_media_client_supported() and any(
+        _tilt_media_asset(tilt) for tilt in stored.values()
+    ):
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "clip_backdrop_media",
+                "minimum_client_protocol": settings.media_backdrop_min_client_protocol,
+            },
+        )
+    if not clip_tilt_client_supported() and any(stored.values()):
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "clip_tilt",
+                "minimum_client_protocol": settings.media_tilt_min_client_protocol,
+            },
+        )
+    if not clip_tilt_zoom_client_supported() and any(
+        (tilt or {}).get("zoom", 1) != 1 for tilt in stored.values()
+    ):
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "tilt_zoom",
+                "minimum_client_protocol": settings.media_tilt_zoom_min_client_protocol,
+            },
+        )
+    changed = [
+        slot
+        for slot in slots
+        if not slot.removed
+        and "tilt" in slot.model_fields_set
+        and slot.tilt is not None
+        and slot.tilt != stored.get(slot.slot_id)
+    ]
+    if changed and (
+        variant.get("render_destination") != "device"
+        or not clip_tilt_supported(require_client=False)
+    ):
+        raise HTTPException(422, detail={"code": "clip_tilt_unavailable"})
+    if not clip_tilt_zoom_supported() and any(
+        (slot.tilt or {}).get("zoom", 1) not in (1, (stored.get(slot.slot_id) or {}).get("zoom", 1))
+        for slot in changed
+    ):
+        raise HTTPException(422, detail={"code": "clip_tilt_zoom_unavailable"})
+    for slot in changed:
+        media_id = _tilt_media_asset(slot.tilt)
+        if media_id is None:
+            continue
+        if not clip_backdrop_media_supported(require_client=False):
+            raise HTTPException(422, detail={"code": "clip_backdrop_media_unavailable"})
+        if pinned_visual(job.assembly_plan or {}, media_id) is None:
+            raise HTTPException(422, detail={"code": "clip_backdrop_media_not_in_pool"})
+
+
+def _tilt_media_asset(tilt: dict[str, Any] | None) -> str | None:
+    """The Visuals-pool id a canonical row ``tilt`` draws behind its clip, else None."""
+    backdrop = (tilt or {}).get("backdrop")
+    if isinstance(backdrop, dict) and backdrop.get("kind") == "media":
+        return str(backdrop["asset_id"])
+    return None
 
 
 def _require_caption_animation_client(
@@ -10916,6 +11466,501 @@ def _validate_drawings_section(
     return validated
 
 
+def _speaker_background_shape_ok(job: Job, variant: dict) -> bool:
+    """Can this variant carry a background at all (the shape half of the capability)?
+
+    A device-rendered Talk-to-camera edit whose lanes the editor recompiles. Cloud variants,
+    other archetypes, empty drafts and authored timelines (whose compiler has no such lane)
+    are all closed.
+    """
+    return bool(
+        variant.get("editor_state") != "empty"
+        and variant.get("editor_timeline_mode") != "authored"
+        and _phone_subtitled_editor_lanes_available(job, variant)
+    )
+
+
+def _speaker_background_capability(job: Job, variant: dict) -> bool:
+    """KRI-1117: may the app author a background on this variant
+    (``editor_capabilities.speaker_background``)?
+
+    Only a device-rendered Talk-to-camera edit, and only while `speaker_background_supported`
+    holds for this app build (kill switch, ``speakerBackground`` verified, protocol >=
+    ``speaker_background_min_client_protocol``). Cloud variants never advertise it.
+    """
+    from app.services.phone_rollout import speaker_background_supported  # noqa: PLC0415
+
+    return bool(
+        variant.get("render_destination") == "device"
+        and _speaker_background_shape_ok(job, variant)
+        and speaker_background_supported(require_client=True)
+    )
+
+
+def _speaker_background_windows_capability(job: Job, variant: dict) -> bool:
+    """KRI-1162: may the app author background windows and a speaker frame
+    (``editor_capabilities.speaker_background_windows``)? The base capability AND the windows
+    gate (``speakerBackgroundWindows`` verified, protocol >=
+    ``speaker_background_windows_min_client_protocol``)."""
+    from app.services.phone_rollout import speaker_background_windows_supported  # noqa: PLC0415
+
+    return bool(
+        _speaker_background_capability(job, variant)
+        and speaker_background_windows_supported(require_client=True)
+    )
+
+
+def _speaker_background_color_capability(job: Job, variant: dict) -> bool:
+    """KRI-1173: may the app author a solid-colour fill
+    (``editor_capabilities.speaker_background_color``)? The base capability AND the colour
+    gate (``speakerBackgroundColor`` verified, protocol >=
+    ``speaker_background_color_min_client_protocol``)."""
+    from app.services.phone_rollout import speaker_background_color_supported  # noqa: PLC0415
+
+    return bool(
+        _speaker_background_capability(job, variant)
+        and speaker_background_color_supported(require_client=True)
+    )
+
+
+def _speaker_full_opening_capability(job: Job, variant: dict) -> bool:
+    """Qendresa item 16: may the app author ``full_screen_windows``
+    (``editor_capabilities.speaker_full_opening``)? The base capability AND the full-opening
+    gate (flag, windows gate, ``speakerFrameWindows`` verified, protocol >= 41)."""
+    from app.services.phone_rollout import speaker_full_opening_supported  # noqa: PLC0415
+
+    return bool(
+        _speaker_background_capability(job, variant)
+        and speaker_full_opening_supported(require_client=True)
+    )
+
+
+def _background_focus_capability(job: Job, variant: dict) -> bool:
+    """Qendresa item 18: may the app aim a background (``editor_capabilities.background_focus``)?
+    The base capability AND the focus gate (flag, ``backgroundFocus`` verified, protocol >= 42)."""
+    from app.services.phone_rollout import background_focus_supported  # noqa: PLC0415
+
+    return bool(
+        _speaker_background_capability(job, variant)
+        and background_focus_supported(require_client=True)
+    )
+
+
+def _validate_background_focus_change(
+    requested: EditorCommitSpeakerBackground,
+    job: Job,
+    variant: dict,
+    *,
+    is_color: bool,
+) -> None:
+    """Qendresa item 18 (F1, F11): a focus on a colour fill is invalid; SETTING a focus needs the
+    focus gate: 426 below the protocol, 422 ``background_focus_disabled`` otherwise.
+
+    The baseline is the document the editor shows: the variant's stored one, else the one
+    projected from the pinned recipe (a never-Saved variant whose recipe carries a measured
+    focus). A requested focus is a "set" only when that exact (media, focus) pair is not already
+    on the baseline's fill or any baseline window of the same media (a fill keeping the baseline
+    fill's focus on a swapped photo counts too), so an echo, a carried aim,
+    or an aim inherited by a new window of the same media is never refused by a gate closed
+    since. Removing a focus is never gated."""
+    from app.services.kria_editor_ops import background_current  # noqa: PLC0415
+    from app.services.phone_rollout import background_focus_unavailable_reason  # noqa: PLC0415
+
+    if is_color and requested.focus is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "background_focus_invalid"},
+        )
+    stored = variant.get("speaker_background")
+    if isinstance(stored, dict) and (stored.get("media_id") or stored.get("color")):
+        baseline: dict = stored
+    elif "speaker_background" in variant:
+        baseline = {}
+    else:
+        baseline = background_current(job, variant) or {}
+    known: set[tuple[str, tuple[float, float, float]]] = set()
+
+    def _key(media_id: object, focus: object) -> tuple[str, tuple[float, float, float]] | None:
+        if not isinstance(media_id, str) or not isinstance(focus, dict):
+            return None
+        try:
+            return media_id, (float(focus["x"]), float(focus["y"]), float(focus["zoom"]))
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    for entry in [baseline, *(baseline.get("windows") or [])]:
+        if isinstance(entry, dict) and (key := _key(entry.get("media_id"), entry.get("focus"))):
+            known.add(key)
+
+    def _is_set(media_id: object, focus: Any) -> bool:
+        if focus is None:
+            return False
+        return _key(media_id, focus.model_dump()) not in known
+
+    # A fill swapped for another photo keeps the aim it showed (the app echoes it).
+    fill_echo = (
+        requested.focus is not None
+        and _key("fill", requested.focus.model_dump()) == _key("fill", baseline.get("focus"))
+        and baseline.get("focus") is not None
+    )
+    changed = not fill_echo and _is_set(requested.media_id, requested.focus)
+    for window in requested.windows or []:
+        if _is_set(window.media_id, window.focus):
+            changed = True
+    if not changed:
+        return
+    reason = background_focus_unavailable_reason()
+    if reason == "client_protocol_below_min":
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "background_focus",
+                "minimum_client_protocol": settings.background_focus_min_client_protocol,
+            },
+        )
+    if reason is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "background_focus_disabled", "reason": reason},
+        )
+
+
+def _new_recording_focus(job: Job, variant: dict, assembly: dict) -> dict[str, Any]:
+    """Qendresa item 18 (F14): the measured aim of the recordings THIS request newly pinned, for
+    the variant's recipe canvas (portrait when the variant has no pinned recipe). A media never
+    pinned before cannot carry a creator's choice, so a request focus-less fill/window of it
+    takes this aim without overwriting anything. Empty with the focus gate closed."""
+    from app.services.phone_rollout import background_focus_unavailable_reason  # noqa: PLC0415
+    from app.services.phone_speaker_background import (  # noqa: PLC0415
+        NEW_BACKGROUND_COLUMNS_ATTR,
+        new_background_focus,
+    )
+    from app.services.phone_subtitled_editor import _pinned_recipe  # noqa: PLC0415
+
+    if not getattr(job, NEW_BACKGROUND_COLUMNS_ATTR, None):
+        return {}
+    if background_focus_unavailable_reason() is not None:
+        return {}
+    recipe = _pinned_recipe(assembly, str(variant.get("variant_id") or ""))
+    canvas_w, canvas_h = (
+        (recipe.canvas.width, recipe.canvas.height) if recipe is not None else (1080, 1920)
+    )
+    return new_background_focus(job, canvas_w, canvas_h)
+
+
+def _validate_speaker_full_screen_windows(
+    requested: EditorCommitSpeakerBackground, variant: dict
+) -> None:
+    """Qendresa item 16 (S76): refuse spans the phone cannot draw. 1..4, sorted, never
+    overlapping (touching is fine), each at least 0.5 s, and inside the edit when its length
+    is known. Answers ``speaker_full_opening_invalid``."""
+    from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+        MAX_FULL_SCREEN_WINDOWS,
+        MIN_BACKGROUND_WINDOW_S,
+    )
+
+    spans = requested.full_screen_windows or []
+    duration = variant.get("duration_s")
+    previous_end = 0.0
+    ok = len(spans) <= MAX_FULL_SCREEN_WINDOWS
+    for span in spans:
+        if (
+            span.end_s - span.start_s < MIN_BACKGROUND_WINDOW_S - 1e-9
+            or span.start_s < previous_end
+        ):
+            ok = False
+        if isinstance(duration, int | float) and span.end_s > duration + 1e-6:
+            ok = False
+        previous_end = span.end_s
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "speaker_full_opening_invalid"},
+        )
+
+
+_BACKGROUND_COLOR_RE = re.compile(r"^#[0-9A-F]{6}$")
+
+
+def _speaker_background_color_invalid() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={"code": "speaker_background_color_invalid"},
+    )
+
+
+def _validate_speaker_background_windows(
+    requested: EditorCommitSpeakerBackground, assembly: dict
+) -> None:
+    """KRI-1162 (S28, S35): refuse a window list the compositor cannot show.
+
+    Sorted by start, never overlapping, each at least 0.5 s, every visual a pinned pool visual
+    (the route pinned each new id before this runs) of the asked kind, a photo with no source
+    start and a video's start inside its footage.
+    """
+    from app.pipeline.phone_subtitled_lanes import MIN_BACKGROUND_WINDOW_S  # noqa: PLC0415
+    from app.services.phone_subtitled_editor import pinned_visual  # noqa: PLC0415
+
+    windows = requested.windows or []
+    previous_end = 0.0
+    for window in windows:
+        if window.end_s - window.start_s < MIN_BACKGROUND_WINDOW_S or window.start_s < previous_end:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_window_invalid"},
+            )
+        previous_end = window.end_s
+    for window in windows:
+        binding = pinned_visual(assembly, window.media_id)
+        if binding is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_media_not_in_pool"},
+            )
+        if binding.kind != window.kind:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_kind_mismatch"},
+            )
+        if (binding.kind == "image" and window.source_start_s != 0) or (
+            binding.kind == "video" and window.source_start_s >= (binding.duration_s or 0.0)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_start_out_of_range"},
+            )
+
+
+def _validate_speaker_background_section(
+    job: Job, variant: dict, payload: EditorCommitRequest
+) -> tuple[bool, dict | None]:
+    """Save-time twin of the ``speaker_background`` capability (KRI-1117).
+
+    Returns ``(touched, document)``: ``touched`` False when the Save leaves the lane alone
+    (absent, or an echo of what is stored); otherwise ``document`` is the validated
+    ``{media_id, kind, source_start_s}``, or ``None`` to clear.
+
+    Clearing is always allowed on a variant that can carry a background, even with the
+    kill switch off, so creators can take it off. Setting needs the gate (426 for an
+    app build below the minimum protocol, 422 otherwise) and a visual this job pinned from
+    THIS item's pool (S19): the route pins a new pool visual before it gets here, and any
+    other id (another item's, another user's, a made-up one) is refused.
+    """
+    from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+        SubtitledBackground,
+        SubtitledBackgroundFocus,
+        SubtitledBackgroundWindow,
+        SubtitledFullScreenWindow,
+        SubtitledSpeakerFrame,
+    )
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        speaker_background_color_unavailable_reason,
+        speaker_background_unavailable_reason,
+        speaker_background_windows_unavailable_reason,
+        speaker_full_opening_unavailable_reason,
+    )
+    from app.services.phone_subtitled_editor import (  # noqa: PLC0415
+        pinned_visual,
+        speaker_background_document,
+        variant_carries_speaker_background,
+    )
+
+    if "speaker_background" not in payload.model_fields_set:
+        return False, None
+    requested = payload.speaker_background
+    assembly = job.assembly_plan or {}
+    carries = variant_carries_speaker_background(assembly, variant)
+    shape_ok = _speaker_background_shape_ok(job, variant)
+    if requested is None:
+        if not carries:
+            return False, None
+        if not shape_ok:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_unsupported"},
+            )
+        return True, None
+    if not shape_ok:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "speaker_background_unsupported"},
+        )
+    document = requested.model_dump(mode="json")
+    stored = variant.get("speaker_background")
+    if isinstance(stored, dict) and stored == document:
+        return False, None
+    reason = speaker_background_unavailable_reason()
+    if reason == "client_protocol_below_min":
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_background",
+                "minimum_client_protocol": settings.speaker_background_min_client_protocol,
+            },
+        )
+    if reason is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "speaker_background_disabled", "reason": reason},
+        )
+    is_color = requested.kind == "color"
+    if is_color:
+        # KRI-1173 (S49, S55): the colour gate on top of the base gate above.
+        color_reason = speaker_background_color_unavailable_reason()
+        if color_reason == "client_protocol_below_min":
+            raise HTTPException(
+                426,
+                detail={
+                    "code": "client_update_required",
+                    "feature": "speaker_background_color",
+                    "minimum_client_protocol": (
+                        settings.speaker_background_color_min_client_protocol
+                    ),
+                },
+            )
+        if color_reason is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_color_disabled", "reason": color_reason},
+            )
+        if (
+            requested.media_id is not None
+            or requested.color is None
+            or not _BACKGROUND_COLOR_RE.fullmatch(requested.color)
+            or requested.source_start_s != 0
+        ):
+            raise _speaker_background_color_invalid()
+    elif requested.media_id is None or requested.color is not None:
+        raise _speaker_background_color_invalid()
+    if requested.uses_windows:
+        # KRI-1162 (S32, S33): the windows gate on top of the base gate above.
+        windows_reason = speaker_background_windows_unavailable_reason()
+        if windows_reason == "client_protocol_below_min":
+            raise HTTPException(
+                426,
+                detail={
+                    "code": "client_update_required",
+                    "feature": "speaker_background_windows",
+                    "minimum_client_protocol": (
+                        settings.speaker_background_windows_min_client_protocol
+                    ),
+                },
+            )
+        if windows_reason is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_windows_disabled", "reason": windows_reason},
+            )
+    from app.services.kria_editor_ops import background_current  # noqa: PLC0415
+
+    # The spans the editor document shows NOW: the variant's own Saved row, else the pinned
+    # recipe's for a worker-rendered variant (never Saved), so an unchanged opening echoed back
+    # is not re-gated.
+    current = background_current(job, variant)
+    stored_spans = current.get("full_screen_windows") if isinstance(current, dict) else None
+    new_spans = [span.model_dump() for span in requested.full_screen_windows or []]
+    if new_spans:
+        # Qendresa item 16 (S76, S77): the full-opening gate on top of the windows gate above.
+        # Only a Save that sets or changes the spans needs it; one that merely keeps what the
+        # variant already carries (a fill change) is not refused by a gate closed since.
+        opening_reason = (
+            speaker_full_opening_unavailable_reason() if new_spans != stored_spans else None
+        )
+        if opening_reason == "client_protocol_below_min":
+            raise HTTPException(
+                426,
+                detail={
+                    "code": "client_update_required",
+                    "feature": "speaker_full_opening",
+                    "minimum_client_protocol": (settings.speaker_full_opening_min_client_protocol),
+                },
+            )
+        if opening_reason is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_full_opening_disabled", "reason": opening_reason},
+            )
+        if new_spans != stored_spans:
+            _validate_speaker_full_screen_windows(requested, variant)
+    _validate_background_focus_change(requested, job, variant, is_color=is_color)
+    auto_focus = _new_recording_focus(job, variant, assembly)
+    fill: dict[str, Any]
+    if is_color:
+        # KRI-1173 (S54): a colour is not a pool visual -- nothing to look up or pin.
+        fill = {"kind": "color", "color": requested.color}
+    else:
+        binding = pinned_visual(assembly, requested.media_id)
+        if binding is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_media_not_in_pool"},
+            )
+        if binding.kind != requested.kind:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_kind_mismatch"},
+            )
+        if binding.kind == "image" and requested.source_start_s != 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_start_out_of_range"},
+            )
+        if binding.kind == "video" and requested.source_start_s >= (binding.duration_s or 0.0):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_background_start_out_of_range"},
+            )
+        fill = {
+            "media_id": binding.media_id,
+            "gcs_path": binding.gcs_path,
+            "generation": binding.generation,
+            "kind": binding.kind,
+            "source_start_s": requested.source_start_s,
+        }
+        if requested.focus is not None:
+            fill["focus"] = SubtitledBackgroundFocus(**requested.focus.model_dump())
+        elif requested.media_id in auto_focus:
+            fill["focus"] = auto_focus[requested.media_id]
+    window_lanes: list[SubtitledBackgroundWindow] = []
+    if requested.uses_windows:
+        _validate_speaker_background_windows(requested, assembly)
+        for window in requested.windows or []:
+            window_binding = pinned_visual(assembly, window.media_id)
+            window_lanes.append(
+                SubtitledBackgroundWindow(
+                    media_id=window_binding.media_id,
+                    gcs_path=window_binding.gcs_path,
+                    generation=window_binding.generation,
+                    kind=window_binding.kind,
+                    source_start_s=window.source_start_s,
+                    start_s=window.start_s,
+                    end_s=window.end_s,
+                    focus=(
+                        SubtitledBackgroundFocus(**window.focus.model_dump())
+                        if window.focus is not None
+                        else auto_focus.get(window.media_id)
+                    ),
+                )
+            )
+    return True, speaker_background_document(
+        SubtitledBackground(
+            **fill,
+            windows=tuple(window_lanes),
+            speaker_frame=(
+                SubtitledSpeakerFrame(**requested.speaker_frame.model_dump())
+                if requested.speaker_frame is not None
+                else None
+            ),
+            full_screen_windows=tuple(
+                SubtitledFullScreenWindow(start_s=span.start_s, end_s=span.end_s)
+                for span in requested.full_screen_windows or []
+            ),
+        )
+    )
+
+
 def _validate_landscape_fit_section(job: Job, variant: dict, value: str) -> str:
     """The Save-time twin of the `landscape_fit` capability (KRI-306).
 
@@ -10997,6 +12042,7 @@ def _prepare_editor_commit(
         require_phone_text_style_client,
     )
 
+    require_editor_clock_reader(job, variant)
     require_phone_text_style_client(variant.get(PHONE_TEXT_STYLE_FIELD))
     payload = normalize_editor_deletion_request(job, variant_id, payload)
     require_guided_story_editor_commit(job, variant_id, payload)
@@ -11014,6 +12060,7 @@ def _prepare_editor_commit(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="guided_story_revision_unavailable",
             )
+        _require_rendered_clock_reader(current)
         if payload.guided_revision_number is None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="GUIDED_REVISION_TOKEN_REQUIRED"
@@ -11123,6 +12170,7 @@ def _prepare_editor_commit(
         and payload.motion_scenes is None
         and payload.camera_effects is None
         and payload.drawings is None
+        and "speaker_background" not in payload.model_fields_set
         and payload.guided_revision is None
         and payload.title is None
         and not payload.remove_music
@@ -11649,8 +12697,11 @@ def _prepare_editor_commit(
         phone_guided = guided_v2 and variant.get("render_destination") == "device"
         # KRI-287: a phone Voiceover edit has no clean base video either; Save
         # compiles its media blocks into the pinned device recipe.
-        phone_media = phone_guided or _phone_voiceover_editor_media_available(
-            job, variant, require_client=False
+        phone_media = (
+            phone_guided
+            or _phone_voiceover_editor_media_available(job, variant, require_client=False)
+            or _phone_authored_media_available(job, variant)
+            or _phone_subtitled_editor_media_available(job, variant)
         )
         if not _settings_visual.visual_blocks_enabled:
             if "visual_block" not in payload._deleted_kinds or not _is_exact_deletion_survivor(
@@ -11960,6 +13011,10 @@ def _prepare_editor_commit(
             job, variant, payload, duration_s=drawing_duration_s
         )
 
+    speaker_background_touched, validated_speaker_background = _validate_speaker_background_section(
+        job, variant, payload
+    )
+
     # Older clients may commit only the overlay section. Enforce the bundle
     # invariant server-side so linked generated effects cannot be orphaned.
     # Explicit group IDs are the sole linkage; legacy timing is never guessed.
@@ -12070,6 +13125,7 @@ def _prepare_editor_commit(
         or validated_motion_scenes is not None
         or validated_camera_effects is not None
         or validated_drawings is not None
+        or speaker_background_touched
         or carousel_moment_touched
         or guided_timeline_commit
         or payload._lyric_line_suppressions is not None
@@ -12225,6 +13281,12 @@ def _prepare_editor_commit(
             updated["camera_effects"] = validated_camera_effects or None
         if validated_drawings is not None:
             updated["drawings"] = validated_drawings or None
+        if speaker_background_touched:
+            # The phone Save recompiles the lanes and rewrites this row from them.
+            if validated_speaker_background is None:
+                updated.pop("speaker_background", None)
+            else:
+                updated["speaker_background"] = validated_speaker_background
         if carousel_moment_touched:
             updated["carousel_moment"] = merged_carousel_moment
             # Same idiom as visual_blocks_cache_stale/motion_cache_stale above:
@@ -12352,6 +13414,8 @@ def _prepare_editor_commit(
         "motion_scenes_override": validated_motion_scenes,
         "camera_effects_override": validated_camera_effects,
         "drawings_override": validated_drawings,
+        "speaker_background_touched": speaker_background_touched,
+        "speaker_background_override": validated_speaker_background,
         "pending_overlay_camera_rebuild": pending_overlay_camera_rebuild,
         "orientation_override": validated_orientation,
         "landscape_fit_override": validated_landscape_fit,
@@ -12393,6 +13457,7 @@ def _prepare_editor_commit(
             "motion_scenes": validated_motion_scenes is not None,
             "camera_effects": validated_camera_effects is not None,
             "drawings": validated_drawings is not None,
+            "speaker_background": speaker_background_touched,
             "carousel_moment": carousel_moment_touched,
         },
     }

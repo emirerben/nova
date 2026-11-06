@@ -1,0 +1,106 @@
+{
+  "source": {
+    "issue": "Leverkusen M2 run 1, finding F1 (Linear draft A; Linear at its free cap, no ticket)",
+    "run": "Leverkusen M2 montage chat 'Taha 1', iPhone, 2026-10-30 19:58:50Z (turn c0ce1621, attempt 2 of 2)",
+    "thread": "d048973b-0cfe-4e3d-a002-e7f7a2a94031",
+    "plan_item": "0f4b842f-2a01-4b79-8c11-84dc7ae4da63",
+    "server": "Fly eed794157, nova.creator.main prompt 2026-10-30-v105",
+    "client": "iOS protocol 25",
+    "recorded": [
+      "prompt (verbatim, thread event 5)",
+      "turn-1 reply and its choice_question (verbatim, turn c0ce1621 plan): conflict ask_user:missing_media, options 'Build without it' / 'I'll upload it'",
+      "attempt 2 ran nova.creator.main only (input sha d6a3ae1c..., 589 tokens out): no clip-intent planner, resolver or vision call (live_prod.log 20:00:18Z); attempt 1 with the same input sha proposed a strategy and ran planner, resolver and 2 vision checks",
+      "media ids, file names, kinds, durations (thread events 3-4, the turn-2 picker payload)",
+      "the TOR picker row's key, label and intent id (turn 1a0a5b16 clip_question)",
+      "vision on the TOR row in turn 1a0a5b16: IMG_1039 kept, IMG_1037 and the scoreboard photo unsure (resolver stats in the run NOTES)"
+    ],
+    "reconstructed": [
+      "main_creator_action: the Main Creator output is redacted at write time; the question, reason code and options are read back from the reply's choice_question (ask_user_choice lists the options after the question).",
+      "inventory_turn1: the clip-intent planner I/O is redacted. Rows follow the resolver stats the run logged for turn 1a0a5b16 (selfie first, scoreboard, TOR third, Taha, exclude kids); TOR's key, label and intent id are recorded. The run's 'label the selfie' row is left out: it is on-screen text, not a shot anyone looks for.",
+      "record: each clip's stored analysis is not captured (reading plan_items.clip_assignments from the prod DB needs Yasin's OK). IMG_1039's stand-in leaves out the 1.5 s big-screen moment, the run's suspected cause. The fix does not depend on it: the gate looks inside the clips whatever the records say.",
+      "shows: the kit answer key, not a stored record."
+    ]
+  },
+  "prompt": "Quick reaction edit about my friend Taha. He's the one with brown hair, round glasses and the dark zip sweater (on the left in our selfie). Order: our selfie, the 0:0 scoreboard, the \"TOR\" on the big screen, then only the moments where Taha is celebrating in both goal clips. The kids at the start of the second goal clip are another family's children, so don't show them. Put Taha's scream in slow motion. Keep the stadium cheering on the goal clips. Label the selfie \"Taha 🤝 me\". Make it 12 seconds.",
+  "turn1_reply": "I have the selfie, the scoreboard, and the goal clips, but I couldn't find the shot of 'TOR' on the big screen. Should I build the edit without it, or do you want to upload it?\n1. Build without it\n2. I'll upload it\nTap an option, or tell me in your own words.",
+  "turn1_conflict": "ask_user:missing_media",
+  "main_creator_action": {
+    "kind": "ask_user",
+    "question": "I have the selfie, the scoreboard, and the goal clips, but I couldn't find the shot of 'TOR' on the big screen. Should I build the edit without it, or do you want to upload it?",
+    "reason_code": "missing_media",
+    "options": ["Build without it", "I'll upload it"]
+  },
+  "tor": {
+    "intent_id": "order_tor_screen_third",
+    "key": "order:the-tor-on-the-big-screen",
+    "label": "the \"TOR\" on the big screen"
+  },
+  "inventory_turn1": [
+    {
+      "intent_id": "order_selfie_first",
+      "op": "order",
+      "position": "first",
+      "attribute": "our selfie",
+      "source_quote": "Order: our selfie"
+    },
+    {
+      "intent_id": "order_scoreboard_second",
+      "op": "order",
+      "attribute": "the 0:0 scoreboard",
+      "source_quote": "the 0:0 scoreboard"
+    },
+    {
+      "intent_id": "order_tor_screen_third",
+      "op": "order",
+      "attribute": "the \"TOR\" on the big screen",
+      "source_quote": "the \"TOR\" on the big screen"
+    },
+    {
+      "intent_id": "order_taha_fourth",
+      "op": "order",
+      "position": "last",
+      "attribute": "Taha celebrating",
+      "source_quote": "then only the moments where Taha is celebrating in both goal clips"
+    },
+    {
+      "intent_id": "exclude_kids",
+      "op": "exclude",
+      "attribute": "the kids at the start of the second goal clip",
+      "source_quote": "The kids at the start of the second goal clip are another family's children, so don't show them."
+    }
+  ],
+  "media": [
+    {
+      "media_id": "analysis-proxy-ios-3E88363F-BB1E-497D-B70A-99113022296E.mp4",
+      "file_name": "IMG_1037",
+      "kind": "video",
+      "duration_s": 9.866667,
+      "shows": "goal 1: 0-4.5 pitch, 5.0-9.8 Taha celebrating (face 6.0-8.5), a small child bottom right 9.0-9.8",
+      "record": "goal 1 from the stands: the pitch, then a young man in glasses and a dark zip sweater celebrating"
+    },
+    {
+      "media_id": "analysis-proxy-ios-C418D565-73A3-4329-80EF-8C5826E9EB83.mp4",
+      "file_name": "IMG_1039",
+      "kind": "video",
+      "duration_s": 18.333333,
+      "shows": "goal 2: 0.0-2.5 other guests' children waving scarves, 2.5-6.0 pan, 6.0-7.5 TOR on the big screen, 7.5-11.0 the stand, 11.0-12.0 man in a cream sweater, 12.0-13.8 Taha screaming, 14.5-18.3 pitch",
+      "record": "goal 2 in the stands: children waving scarves, fans cheering, a man screaming with joy"
+    },
+    {
+      "media_id": "asset-ace2d46a-ee5c-41cc-9e7d-c524523efe40",
+      "file_name": null,
+      "kind": "image",
+      "duration_s": null,
+      "shows": "selfie: Taha left, the creator right, a smiling man behind",
+      "record": "a selfie of two friends in a football stadium"
+    },
+    {
+      "media_id": "asset-84e812d6-2552-4295-ad85-f0b6523f813d",
+      "file_name": null,
+      "kind": "image",
+      "duration_s": null,
+      "shows": "scoreboard 0:0 at 20:41, pyro smoke",
+      "record": "a stadium scoreboard showing 0:0 with smoke from flares"
+    }
+  ]
+}

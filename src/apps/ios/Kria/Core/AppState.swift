@@ -37,13 +37,27 @@ enum ProfileFetchState: Equatable, Sendable {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") { return "teleprompter-ui-fixture" }
         #endif
-        guard isSignedIn, let session = try? tokenStore.read(),
-              let subject = Self.jwtSubject(in: session.accessToken) else { return nil }
-        return SHA256.hash(data: Data(subject.utf8)).map { String(format: "%02x", $0) }.joined()
+        guard isSignedIn else { lastKnownLocalIdentity = nil; return nil }
+        let session: MobileSession?
+        do { session = try tokenStore.read() }
+        catch {
+            // The Keychain could not be read (for example, the device is locked). That is an unknown
+            // owner, not a different one: keep the identity this signed-in session already proved so
+            // in-flight device renders are not torn down. Nothing here changes how the token is stored.
+            return lastKnownLocalIdentity
+        }
+        guard let session, let subject = Self.jwtSubject(in: session.accessToken) else { lastKnownLocalIdentity = nil; return nil }
+        let identity = SHA256.hash(data: Data(subject.utf8)).map { String(format: "%02x", $0) }.joined()
+        lastKnownLocalIdentity = identity
+        return identity
     }
+    /// The owner the last successful token read proved. Cleared on sign-in, sign-out, expiry and any
+    /// read that proves the session is gone or has no subject, so it can never outlive an account.
+    private var lastKnownLocalIdentity: String?
 
     func clearLocalAccountMedia() {
         guard let identity = localStorageIdentity else { return }
+        try? DeviceRenderIntentPersistence.store.removeAccount(owner: identity)
         try? TeleprompterStore.removeAccount(accountID: identity)
         try? MediaLibraryOriginals(owner: identity).removeAccount()
         Task { await TranscriptCache.shared.removeAccount(owner: identity) }
@@ -63,12 +77,20 @@ enum ProfileFetchState: Equatable, Sendable {
         if isSignedIn, let session { hasAIConsent = defaults.bool(forKey: Self.aiConsentKey(for: session)) }
         sessionExpiredSubscription = NotificationCenter.default.publisher(for: .kriaSessionExpired)
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.expireSession() }
+            .sink { [weak self] notification in
+                guard let self else { return }
+                if notification.object is MobileSession {
+                    do { guard try self.tokenStore.read() == nil else { return } }
+                    catch { return }
+                }
+                self.expireSession()
+            }
         projectDeletedSubscription = NotificationCenter.default.publisher(for: .kriaProjectDeleted)
             .receive(on: RunLoop.main)
             .sink { [weak self] notification in
                 guard let projectID = notification.object as? UUID,
                       let identity = self?.localStorageIdentity else { return }
+                try? DeviceRenderIntentPersistence.store.removeProject(owner: identity, projectID: projectID)
                 try? TeleprompterStore.removeProject(accountID: identity, projectID: projectID)
                 Task { await TranscriptCache.shared.remove(owner: identity, threadID: projectID) }
             }
@@ -83,6 +105,7 @@ enum ProfileFetchState: Equatable, Sendable {
     }
     func signIn(with session: MobileSession, displayName: String?) throws {
         try tokenStore.write(session)
+        lastKnownLocalIdentity = nil
         defaults.set(false, forKey: Self.invalidatedSessionKey)
         self.displayName = displayName
         isSignedIn = true
@@ -98,6 +121,7 @@ enum ProfileFetchState: Equatable, Sendable {
         // deletion fails, a process restart must not resurrect that session.
         defaults.set(true, forKey: Self.invalidatedSessionKey)
         try? tokenStore.delete()
+        lastKnownLocalIdentity = nil
         displayName = nil
         email = nil
         linkedProviders = []
@@ -110,6 +134,7 @@ enum ProfileFetchState: Equatable, Sendable {
     private func expireSession() {
         defaults.set(true, forKey: Self.invalidatedSessionKey)
         try? tokenStore.delete()
+        lastKnownLocalIdentity = nil
         displayName = nil
         email = nil
         linkedProviders = []
@@ -236,25 +261,39 @@ enum WorkspaceDestination: Equatable, Sendable {
     /// KRI-640: the full chat a create call returned, held until its screen opens so the
     /// new chat shows at once instead of reading itself back from the server first.
     private var createdThreads: [UUID: CreationThread] = [:]
+    /// Chats this launch made. The launch sweep is for chats a killed app left behind, never for one the
+    /// creator just opened, which New chat now allows while the first project list is still loading.
+    private var chatsCreatedThisLaunch: Set<UUID> = []
     let chatDrafts: ChatDraftStore
     let chatKeepers = ChatKeeperStore()
     /// Where the next page of older chats starts; nil when the list is complete.
     @Published private(set) var projectsNextCursor: String?
     private var isLoadingMoreProjects = false
     private var collectionGeneration = 0
+    /// The signed-in account's local storage owner (the same identity device renders use), for on-device recordings.
+    @ObservationIgnored private let localOwner: @MainActor () -> String?
+    var localAccountID: String? { localOwner() }
     init(
         api: KriaAPIClient = KriaAPI(),
         editorOperations: EditorOperations = LocalEditorOperations(),
         cache: CacheRepository? = nil,
-        chatDrafts: ChatDraftStore = ChatDraftStore()
+        chatDrafts: ChatDraftStore = ChatDraftStore(),
+        renderOwner: @escaping @MainActor () -> String? = { nil },
+        uploadSessionConfiguration: URLSessionConfiguration? = nil
     ) {
         Perf.begin("appmodel.init")
         defer { Perf.end("appmodel.init") }
         self.chatDrafts = chatDrafts
+        self.localOwner = renderOwner
         self.api = api
         self.editorOperations = editorOperations
-        self.uploads = BackgroundUploadCoordinator(api: api)
-        self.deviceRenders = DeviceRenderSessions(api: api)
+        let sessionUploads = uploadSessionConfiguration.map { BackgroundUploadCoordinator(api: api, defaultsKey: "kria.rerecord-ui-fixture.uploads", sessionConfiguration: $0) }
+        #if DEBUG
+        self.uploads = ChatUITestTransport.placeHintUploads(api: api) ?? sessionUploads ?? BackgroundUploadCoordinator(api: api)
+        #else
+        self.uploads = sessionUploads ?? BackgroundUploadCoordinator(api: api)
+        #endif
+        self.deviceRenders = DeviceRenderSessions(api: api, ownerIdentity: renderOwner)
         self.cache = cache
         Perf.begin("cache.load")
         if let cache, let cached = try? cache.projects(), !cached.isEmpty {
@@ -453,30 +492,99 @@ enum WorkspaceDestination: Equatable, Sendable {
             }
         }
     }
-    func createProject() async {
-        guard !isCreatingProject else { return }
+    /// The conversation New chat shows the moment it is tapped, before the server has made it. Nothing can
+    /// be sent or uploaded to it: that needs the thread's real id, which only the create reply carries.
+    struct PendingNewChat: Equatable {
+        let id = UUID()
+        var failure: String?
+        /// What the creator typed while the chat was being made. It is theirs for the NEW chat only: it moves
+        /// into that chat's own draft once the server's thread exists, and never into any other conversation.
+        var draft = ""
+    }
+    @Published private(set) var pendingNewChat: PendingNewChat?
+    /// Text typed into a pending chat the creator then walked away from while its create was still running.
+    private var abandonedNewChatDrafts: [UUID: String] = [:]
+    /// Text from a pending chat whose create failed after (or while) the creator left it. Nothing is selected for
+    /// them; the next New chat starts with this text.
+    @Published private(set) var unsentNewChatDraft: String?
+
+    func setPendingNewChatDraft(_ text: String) { pendingNewChat?.draft = text }
+
+    /// Leaves the pending conversation without ending its create. A create still running keeps the typed text
+    /// for the chat it makes; a failed one has nothing to keep it for.
+    private func leavePendingNewChat() {
+        guard let pending = pendingNewChat else { return }
+        if !pending.draft.isEmpty {
+            if isCreatingProject { abandonedNewChatDrafts[pending.id] = pending.draft }
+            else if pending.failure != nil { unsentNewChatDraft = pending.draft }
+        }
+        pendingNewChat = nil
+    }
+
+    /// Synchronous half of New chat: the pending conversation is on screen before this returns.
+    /// Nil while a create is already running, so repeated taps are one chat.
+    private func beginCreation() -> UUID? {
+        guard !isCreatingProject else { return nil }
         isCreatingProject = true
-        defer { isCreatingProject = false }
         errorMessage = nil
+        // A retry after a failure is the same conversation: what was typed stays.
+        var pending = PendingNewChat()
+        if let failed = pendingNewChat, failed.failure != nil { pending.draft = failed.draft }
+        else if let unsent = unsentNewChatDraft { pending.draft = unsent }
+        unsentNewChatDraft = nil
+        pendingNewChat = pending
+        return pending.id
+    }
+    /// New chat from a tap: shows the pending conversation at once and creates it in the background.
+    func startNewChat() {
+        guard let token = beginCreation() else { return }
+        Task { await finishCreation(token) }
+    }
+    func createProject() async {
+        guard let token = beginCreation() else { return }
+        await finishCreation(token)
+    }
+    /// Leaves the pending conversation (or its failure) for the chat that was open before.
+    func cancelPendingNewChat() { pendingNewChat = nil }
+
+    private func finishCreation(_ token: UUID) async {
+        defer { isCreatingProject = false }
         do {
             let thread = try await api.createThread(message: nil)
             let project = thread.summary
-            createdThreads[project.id] = thread
             collectionGeneration += 1
             projects.insert(project, at: 0)
             projectsState = .loaded
             try? cache?.upsert([project])
+            // The text typed while waiting belongs to this new chat, kept as its own unsent draft.
+            let typed = pendingNewChat?.id == token ? (pendingNewChat?.draft ?? "") : (abandonedNewChatDrafts.removeValue(forKey: token) ?? "")
+            if !typed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { chatDrafts.setDraft(typed, for: project.id) }
+            // The creator may have opened another chat while this was being made. That is their latest
+            // choice: the new chat is then cleaned up (unless it holds their text) instead of pulling them back.
+            guard pendingNewChat?.id == token else {
+                Task { await discardIfAbandoned(project.id) }
+                return
+            }
+            createdThreads[project.id] = thread
+            chatsCreatedThisLaunch.insert(project.id)
+            pendingNewChat = nil
             selectedProject = project
             destination = .chat(project.id)
         } catch {
+            let left = abandonedNewChatDrafts.removeValue(forKey: token)
+            guard pendingNewChat?.id == token else {
+                if let left, !left.isEmpty { unsentNewChatDraft = left }
+                return
+            }
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") {
                 let project = ProjectSummary(id: UUID(), title: "Untitled project", status: .draft, updatedAt: .now, posterURL: nil)
-                projects.insert(project, at: 0); selectedProject = project; destination = .chat(project.id); projectsState = .loaded
-            } else { errorMessage = error.localizedDescription }
-            #else
-            errorMessage = error.localizedDescription
+                projects.insert(project, at: 0); pendingNewChat = nil; selectedProject = project; destination = .chat(project.id); projectsState = .loaded
+                return
+            }
             #endif
+            errorMessage = error.localizedDescription
+            pendingNewChat?.failure = error.localizedDescription
         }
     }
     func takeCreatedThread(_ id: UUID) -> CreationThread? { createdThreads.removeValue(forKey: id) }
@@ -489,8 +597,12 @@ enum WorkspaceDestination: Equatable, Sendable {
         let api = api
         async let capabilitiesPrefetch: Void = api.prefetchCreationCapabilities()
         async let uploadRecovery: Void = uploads.restorePendingTasks()
+        let selectedBeforeLoad = selectedProject?.id
         await loadProjects()
-        selectWorkspaceProject(preferredProjectID: preferredProjectID)
+        // New chat works while this list loads. A chat the creator opened meanwhile (New chat, a drawer
+        // pick) is their latest choice; restoring the remembered one would pull them off it.
+        let creatorMovedOn = selectedProject?.id != selectedBeforeLoad
+        selectWorkspaceProject(preferredProjectID: creatorMovedOn ? nil : preferredProjectID)
         await uploadRecovery
         await capabilitiesPrefetch
     }
@@ -540,15 +652,27 @@ enum WorkspaceDestination: Equatable, Sendable {
     /// False when the chat was deleted on this phone, which never reopens it.
     @discardableResult func selectProject(_ project: ProjectSummary) -> Bool {
         guard !deletedProjectIDs.contains(project.id) else { return false }
+        leavePendingNewChat()
         selectedProject = projects.first(where: { $0.id == project.id }) ?? project
         destination = .chat(project.id)
         errorMessage = nil
         return true
     }
 
+    @discardableResult func openNativeActivity(id: UUID, expectedOwner: String?) async throws -> Bool {
+        guard let expectedOwner, expectedOwner == api.mediaLibraryOwner, !Task.isCancelled else { return false }
+        let activity = try await api.nativeActivity(id: id, owner: expectedOwner)
+        guard expectedOwner == api.mediaLibraryOwner, !Task.isCancelled else { return false }
+        let project = try await api.nativeActivityProject(threadID: activity.threadID, owner: expectedOwner)
+        guard expectedOwner == api.mediaLibraryOwner, !Task.isCancelled else { return false }
+        _ = try await api.readNativeActivity(id: id, owner: expectedOwner)
+        guard expectedOwner == api.mediaLibraryOwner, !Task.isCancelled else { return false }
+        return selectProject(project.summary)
+    }
+
     /// Shows the camera roll in the workspace. The selected project stays selected underneath, so closing the
     /// camera roll by choosing a chat needs no extra state.
-    func openCameraRoll() { destination = .cameraRoll }
+    func openCameraRoll() { leavePendingNewChat(); destination = .cameraRoll }
     var showsCameraRoll: Bool { destination == .cameraRoll }
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws {
         do {
@@ -611,7 +735,7 @@ enum WorkspaceDestination: Equatable, Sendable {
     /// `keeping` is given (the app is foregrounded on it).
     func sweepAbandonedChats(keeping: UUID? = nil) async {
         for project in projects where project.status == .draft && project.id != keeping && !project.awaitsConfirmation
-            && !chatKeepers.contains(project.id) {
+            && !chatKeepers.contains(project.id) && !chatsCreatedThisLaunch.contains(project.id) {
             await discardIfAbandoned(project.id)
         }
     }

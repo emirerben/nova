@@ -264,7 +264,6 @@ def _inventory(*guards: dict, digest: str = DIGEST, state: str = "started") -> l
         _managed_machine("api", digest=digest, state=state, autostop=True),
         _managed_machine("worker", digest=digest, state=state),
         _managed_machine("light", digest=digest, state=state),
-        _managed_machine("autoplace", digest=digest, state=state),
         *guards,
     ]
 
@@ -440,7 +439,6 @@ def test_launcher_accepts_autostopped_managed_machines_on_the_exact_digest(
             ),
             _managed_machine("worker", state="stopped", requested_stop=True),
             _managed_machine("light"),
-            _managed_machine("autoplace"),
             *guards,
         ]
 
@@ -473,7 +471,6 @@ def test_launcher_accepts_never_started_dormant_worker_on_the_exact_digest(
             _managed_machine("api", autostop=True),
             _managed_machine("worker", state="stopped"),
             _managed_machine("light"),
-            _managed_machine("autoplace"),
             *guards,
         ]
 
@@ -514,7 +511,6 @@ def test_launcher_rejects_managed_machine_that_never_settles(tmp_path: Path) -> 
         "all-api-stopped",
         "api-stopped-without-autostop",
         "light-stopped",
-        "autoplace-stopped",
         "worker-crashed",
     ],
 )
@@ -526,7 +522,6 @@ def test_launcher_rejects_stopped_machine_without_documented_lifecycle(
         _managed_machine("api", autostop=True),
         _managed_machine("worker"),
         _managed_machine("light"),
-        _managed_machine("autoplace"),
     ]
     if failure == "all-api-stopped":
         machines[0] = _managed_machine("api", state="stopped", autostop=True)
@@ -534,8 +529,6 @@ def test_launcher_rejects_stopped_machine_without_documented_lifecycle(
         machines.append(_managed_machine("api", state="stopped", machine_id="feedapi0002"))
     elif failure == "light-stopped":
         machines[2] = _managed_machine("light", state="stopped")
-    elif failure == "autoplace-stopped":
-        machines[3] = _managed_machine("autoplace", state="stopped")
     else:
         machines[1] = _managed_machine("worker", state="stopped", oom_killed=True)
 
@@ -554,7 +547,6 @@ def test_launcher_rejects_missing_required_process_group(tmp_path: Path) -> None
     missing_light = [
         _managed_machine("api", autostop=True),
         _managed_machine("worker"),
-        _managed_machine("autoplace"),
     ]
     result = _run(
         tmp_path,
@@ -563,7 +555,7 @@ def test_launcher_rejects_missing_required_process_group(tmp_path: Path) -> None
     )
 
     assert result.returncode == 1
-    assert "missing a required api, worker, light, or autoplace" in result.stderr
+    assert "missing a required api, worker, or light" in result.stderr
     assert not (tmp_path / "create.args").exists()
 
 
@@ -1175,6 +1167,118 @@ def test_backfill_reproves_managed_digest_after_winning_name_before_start(
     assert not (tmp_path / "destroy.args").exists()
 
 
+def _release_command_machine(
+    state: str, *, digest: str, created_at: str | None = None, started: bool = False
+) -> dict:
+    machine = _managed_machine(
+        "fly_app_release_command", digest=digest, state=state, machine_id="feedrelcmd01"
+    )
+    if created_at is not None:
+        machine["created_at"] = created_at
+    if started:
+        machine["events"] = [{"type": "start", "timestamp": 1}]
+    return machine
+
+
+def test_deploy_guard_ignores_stopped_release_command_debris(tmp_path: Path) -> None:
+    """A release machine left by an aborted deploy must not block every later deploy.
+
+    Incident 2026-10-30: v1961's release_command timed out pulling the image and
+    left a stopped fly_app_release_command Machine on the new digest. The fleet
+    check counted it as a second production digest and refused all deploys.
+    """
+    new_digest = f"sha256:{'d' * 64}"
+    debris = _release_command_machine("stopped", digest=new_digest)
+    result = _run(
+        tmp_path,
+        [_image()],
+        args=["--acquire-deploy-guard"],
+        machine_sequence=[
+            [*_inventory(), debris],
+            [*_inventory(), debris],
+            [*_inventory(), debris],
+            [*_inventory(_deploy_guard()), debris],
+        ],
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "immutable image digest" not in result.stderr
+    assert not (tmp_path / "destroy.args").exists()
+
+
+def test_deploy_guard_refuses_while_release_command_is_in_flight(tmp_path: Path) -> None:
+    running = _release_command_machine("started", digest=f"sha256:{'d' * 64}")
+    result = _run(
+        tmp_path,
+        [_image()],
+        args=["--acquire-deploy-guard"],
+        machine_sequence=[[*_inventory(), running]] * 4,
+    )
+
+    assert result.returncode == 1
+    assert "release_command Machine" in result.stderr
+    assert not (tmp_path / "create.args").exists()
+
+
+# NOW_EPOCH is 2_000_000_000 (2033-05-18T03:33:20Z).
+_STALE_CREATED = "2033-05-18T03:00:00Z"  # 33 min old, past the 15 min stale age
+_FRESH_CREATED = "2033-05-18T03:30:00Z"  # 3 min old
+
+
+def test_deploy_guard_destroys_stale_release_machine_that_never_started(tmp_path: Path) -> None:
+    """flyctl abandons the release Machine mid image-prep; auto_destroy never fires."""
+    stuck = _release_command_machine(
+        "created", digest=f"sha256:{'d' * 64}", created_at=_STALE_CREATED
+    )
+    result = _run(
+        tmp_path,
+        [_image()],
+        args=["--acquire-deploy-guard"],
+        machine_sequence=[
+            [*_inventory(), stuck],
+            _inventory(),
+            _inventory(),
+            _inventory(),
+            _inventory(_deploy_guard()),
+        ],
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "feedrelcmd01" in (tmp_path / "destroy.args").read_text()
+
+
+def test_deploy_guard_never_destroys_a_live_release_machine(tmp_path: Path) -> None:
+    other = f"sha256:{'d' * 64}"
+    cases = {
+        "fresh_never_started": _release_command_machine(
+            "created", digest=other, created_at=_FRESH_CREATED
+        ),
+        "stale_but_started": _release_command_machine(
+            "started", digest=other, created_at=_STALE_CREATED, started=True
+        ),
+        "stale_with_unreadable_events": {
+            k: v
+            for k, v in _release_command_machine(
+                "created", digest=other, created_at=_STALE_CREATED
+            ).items()
+            if k != "events"
+        },
+        "stale_with_unreadable_created_at": _release_command_machine(
+            "created", digest=other, created_at="not-a-timestamp"
+        ),
+    }
+    for name, machine in cases.items():
+        result = _run(
+            tmp_path / name,
+            [_image()],
+            args=["--acquire-deploy-guard"],
+            machine_sequence=[[*_inventory(), machine]] * 4,
+        )
+        assert result.returncode == 1, name
+        assert "release_command Machine is still running" in result.stderr, name
+        assert not (tmp_path / name / "destroy.args").exists(), name
+
+
 def test_deploy_guard_acquire_is_dormant_and_exact_release_is_forced(
     tmp_path: Path,
 ) -> None:
@@ -1323,7 +1427,7 @@ def test_expired_deploy_guard_is_retained_when_managed_fleet_is_mixed(
 RELEASE_ORPHAN_DIGEST = f"sha256:{'e' * 64}"
 
 
-def _release_command_machine(
+def _release_orphan_machine(
     state: str = "stopped",
     *,
     digest: str = RELEASE_ORPHAN_DIGEST,
@@ -1361,7 +1465,7 @@ def test_stopped_release_command_orphan_on_another_digest_does_not_block_acquisi
     died with "do not expose one immutable image digest". It serves nothing; the fleet is still
     one digest.
     """
-    result = _acquire_with(tmp_path, _release_command_machine("stopped"))
+    result = _acquire_with(tmp_path, _release_orphan_machine("stopped"))
 
     assert result.returncode == 0, result.stderr
     assert "do not expose one immutable image digest" not in result.stderr
@@ -1371,10 +1475,10 @@ def test_stopped_release_command_orphan_on_another_digest_does_not_block_acquisi
 @pytest.mark.parametrize(
     "state", ["created", "starting", "started", "stopping", "replacing", "destroying", "suspended"]
 )
-def test_release_command_machine_that_may_still_run_a_migration_still_blocks(
+def test_release_orphan_machine_that_may_still_run_a_migration_still_blocks(
     tmp_path: Path, state: str
 ) -> None:
-    result = _acquire_with(tmp_path, _release_command_machine(state))
+    result = _acquire_with(tmp_path, _release_orphan_machine(state))
 
     assert result.returncode == 1
     assert (
@@ -1390,7 +1494,7 @@ def test_stopped_machine_in_a_real_process_group_on_another_digest_still_blocks(
 ) -> None:
     for group in ("worker", "api", "light", "autoplace", "speech_analysis", "release_command"):
         sub = tmp_path / group
-        result = _acquire_with(sub, _release_command_machine("stopped", group=group))
+        result = _acquire_with(sub, _release_orphan_machine("stopped", group=group))
         assert result.returncode == 1, (group, result.stderr)
         assert "do not expose one immutable image digest" in result.stderr, group
         assert not (sub / "create.args").exists(), group
@@ -1405,7 +1509,7 @@ def test_real_fleet_divergence_still_blocks_when_a_release_orphan_is_also_presen
         _managed_machine("worker", digest=other),
         _managed_machine("light"),
         _managed_machine("autoplace"),
-        _release_command_machine("stopped"),
+        _release_orphan_machine("stopped"),
     ]
     result = _run(
         tmp_path,
@@ -1423,7 +1527,7 @@ def test_expired_foreign_guard_is_reclaimed_past_a_stopped_release_command_orpha
     tmp_path: Path,
 ) -> None:
     """The guard left by the aborted deploy must be reclaimable once its lease passes."""
-    orphan = _release_command_machine("stopped")
+    orphan = _release_orphan_machine("stopped")
     expired = _deploy_guard(
         machine_id=FOREIGN_MACHINE_ID,
         owner="99999:1",
@@ -1452,12 +1556,13 @@ def test_expired_foreign_guard_is_reclaimed_past_a_stopped_release_command_orpha
     assert FOREIGN_MACHINE_ID in (tmp_path / "destroy.args").read_text()
 
 
-def test_inventory_filter_drops_only_stopped_release_command_machines() -> None:
+def test_inventory_filter_drops_only_stopped_release_orphan_machines() -> None:
     inventory_filter = REPO_ROOT / "scripts" / "fly-production-inventory.jq"
     machines = [
         _managed_machine("api"),
-        _release_command_machine("stopped"),
-        _release_command_machine("started"),
+        _release_orphan_machine("stopped"),
+        _release_orphan_machine("destroyed"),
+        _release_orphan_machine("started"),
         _managed_machine("worker", state="stopped"),
         _deploy_guard(),
     ]
@@ -1470,6 +1575,7 @@ def test_inventory_filter_drops_only_stopped_release_command_machines() -> None:
     )
     kept = [(m["name"], m["state"]) for m in json.loads(out.stdout)]
     assert ("nova-release-command", "stopped") not in kept
+    assert ("nova-release-command", "destroyed") not in kept
     assert ("nova-release-command", "started") in kept
     assert len(kept) == 4
 
@@ -1571,17 +1677,17 @@ def test_backfill_gate_passes_in_an_empty_workspace_past_a_stopped_release_orpha
     tmp_path: Path,
 ) -> None:
     """Red before the fix: with `jq -f scripts/...` the step dies because no checkout exists yet."""
-    result = _run_backfill_gate(tmp_path, _inventory(_release_command_machine("stopped")))
+    result = _run_backfill_gate(tmp_path, _inventory(_release_orphan_machine("stopped")))
 
     assert result.returncode == 0, result.stderr
     assert "do not expose one immutable digest" not in result.stdout
 
 
 @pytest.mark.parametrize("state", ["created", "starting", "started", "stopping", "replacing"])
-def test_backfill_gate_still_refuses_a_release_command_machine_that_may_be_running(
+def test_backfill_gate_still_refuses_a_release_orphan_machine_that_may_be_running(
     tmp_path: Path, state: str
 ) -> None:
-    result = _run_backfill_gate(tmp_path, _inventory(_release_command_machine(state)))
+    result = _run_backfill_gate(tmp_path, _inventory(_release_orphan_machine(state)))
 
     assert result.returncode == 1
     assert "managed production Machines do not expose one immutable digest" in result.stdout
@@ -1593,7 +1699,7 @@ def test_backfill_gate_refuses_real_divergence_beside_a_release_orphan(tmp_path:
         _managed_machine("worker", digest=f"sha256:{'c' * 64}"),
         _managed_machine("light"),
         _managed_machine("autoplace"),
-        _release_command_machine("stopped"),
+        _release_orphan_machine("stopped"),
     ]
     result = _run_backfill_gate(tmp_path, inventory)
 
@@ -1616,7 +1722,7 @@ def test_inventory_filter_keeps_reserved_names_and_operation_metadata_visible() 
         ("anything", {"nova_operation": "fly-deploy-guard"}),
         ("anything", {"nova_operation": "video-poster-backfill"}),
     ):
-        machine = _release_command_machine("stopped")
+        machine = _release_orphan_machine("stopped")
         machine["name"] = name
         machine["config"]["metadata"].update(metadata)
         out = subprocess.run(
@@ -2070,7 +2176,7 @@ def test_workflows_pin_revision_keep_historical_lock_and_gate_deploy() -> None:
         assert "managed_fleet_has_transitional_states" in workflow
         assert "managed_fleet_is_operationally_stable" in workflow
         assert '.fly_process_group) == "light"' in workflow
-        assert '.fly_process_group) == "autoplace"' in workflow
+        assert '.fly_process_group) == "autoplace"' not in workflow
         assert "($lifecycle_events | length == 0)" in workflow
         assert "$last_exit.requested_stop == true" in workflow
         assert '.autostop == true or .autostop == "stop"' in workflow

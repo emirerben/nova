@@ -534,7 +534,6 @@ def test_story_planning_receives_real_coverage_without_double_counting_overlaps(
         "distinct_sources": 2,
         "available_source_seconds": 15.0,
         "maximum_story_seconds": 60,
-        "maximum_story_moments": 8,
     }
 
 

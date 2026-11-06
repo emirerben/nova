@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "evidence": "Numeric excerpt of retained original descriptor, successful native recipe and private phone editor plan; no original media or signed URLs included",
+  "source_duration_s": 1.92,
+  "source_start_s": 0,
+  "successful_source_window_s": 1.92,
+  "old_editor_projection_s": 1.933333,
+  "expected_editor_window_s": 1.92,
+  "retained_moment_count": 28,
+  "wrong_window_control": "1.933333 seconds must not be accepted against a 1.920-second original",
+  "scope_limit": "Does not establish physical-phone stack, original request fulfillment or exported picture fidelity",
+  "activation_boundary": "Reader-first only. Unmarked existing projects keep legacy timing. Explicit server-owned opt-in and a compatible protocol26 client are required for rendered-clock HTTP reads and writes; no production producer/migration is included."
+}

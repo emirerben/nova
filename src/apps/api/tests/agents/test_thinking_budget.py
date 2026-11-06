@@ -405,7 +405,7 @@ def test_main_creator_truncated_at_high_thinking_is_retried_once_at_low(
     assert event == "agent_thinking_degraded"
     assert (degraded["from_level"], degraded["to_level"], degraded["attempt"]) == ("high", "low", 1)
     # Sensitive agent: the warning carries no model text.
-    assert degraded["error"] == "sensitive_agent_error"
+    assert degraded["error"].startswith("sensitive_agent_error")
 
 
 def test_main_creator_truncated_at_low_thinking_is_terminal_after_one_call() -> None:

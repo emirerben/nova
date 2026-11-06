@@ -1132,3 +1132,154 @@ def test_render_notes_count_every_skipped_hit_of_a_capped_beat() -> None:
         "Placed 24 of 30 moments you named",
         'You said "kahve" more times than one edit can mark, so the last ones were skipped',
     ]
+
+
+def test_unplaced_generated_image_names_the_image_and_the_why_in_plain_words() -> None:
+    from app.kria.reply_language import reply_language_for
+
+    receipt = {
+        "version": 1,
+        "matcher": "agent",
+        "face_sampling": "skipped",
+        "placed": [],
+        "unplaced": [
+            {
+                "media_id": "g1",
+                "label": "Beer",
+                "reason": "no_spoken_match",
+                "kind": "image",
+                "origin": "generated",
+            }
+        ],
+    }
+    en = render_notes_from_overlay_receipt(receipt)
+    assert any('The image you made, "Beer"' in n and "no spoken moment" in n for n in en), en
+    assert not any("no_spoken_match" in n or "generated.png" in n for n in en)
+    with reply_language_for("tr"):
+        tr = render_notes_from_overlay_receipt(receipt)
+    assert any('"Beer"' in n and "oluşturduğun" in n for n in tr), tr
+    # An uploaded Visual keeps its existing sentence.
+    upload = {
+        **receipt,
+        "unplaced": [{"media_id": "u", "label": "a.jpg", "reason": "no_spoken_match"}],
+    }
+    assert 'Couldn\'t find a spoken moment for "a.jpg"' in render_notes_from_overlay_receipt(upload)
+
+
+def _overlay_receipt(*unplaced: tuple[str, str], placed: int = 0, **extra) -> dict:
+    return {
+        "version": 1,
+        "matcher": "agent",
+        "face_sampling": "skipped",
+        "placed": [{"media_id": f"p{i}", "label": f"p{i}.jpg"} for i in range(placed)],
+        "unplaced": [
+            {"media_id": f"u{i}", "label": label, "reason": reason, **extra}
+            for i, (label, reason) in enumerate(unplaced)
+        ],
+    }
+
+
+def test_overlay_receipt_notes_read_fully_in_turkish() -> None:
+    from app.kria.reply_language import reply_language_for
+
+    receipt = _overlay_receipt(("a.jpg", "no_spoken_match"), ("b.jpg", "no_safe_spot"))
+    with reply_language_for("tr"):
+        tr = render_notes_from_overlay_receipt(receipt)
+    assert tr == [
+        "2 görselden 0 tanesi kart olarak gösterildi",
+        '"a.jpg" için konuşmanda uygun bir an bulamadım',
+        '"b.jpg" için yüzü veya altyazıları kapatmayacak bir yer yoktu',
+    ]
+    assert render_notes_from_overlay_receipt(receipt)[0] == "Showed 0 of 2 Visuals as cards"
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "no_spoken_match",
+        "hook_window",
+        "video_not_supported",
+        "no_safe_spot",
+        "overlap",
+        "density_cap",
+        "too_short",
+        "no_room_in_timeline",
+        "bind_failed",
+        "error: boom",
+        "something_new",
+    ],
+)
+def test_every_overlay_miss_sentence_has_a_turkish_twin(reason: str) -> None:
+    from app.kria.reply_language import reply_language_for
+
+    receipt = _overlay_receipt(("a.jpg", reason), placed=1)
+    en = render_notes_from_overlay_receipt(receipt)
+    with reply_language_for("tr"):
+        tr = render_notes_from_overlay_receipt(receipt)
+    assert len(tr) == len(en) == 2
+    for note in tr:
+        assert not any(
+            w in note for w in ("Visual", "Showed", "Couldn't", "card", "room", "skipped")
+        )
+    assert tr[1] != en[1] and '"a.jpg"' in tr[1]
+
+
+@pytest.mark.parametrize("layout", ["fullscreen", "mixed", "cards"])
+def test_overlay_headlines_have_turkish_twins_in_every_layout(layout: str) -> None:
+    from app.kria.reply_language import reply_language_for
+
+    placed = [
+        {"media_id": "p1", "label": "p1", "display": "fullscreen"},
+        {"media_id": "p2", "label": "p2", "display": "card"},
+    ]
+    for unplaced in ([], [{"media_id": "u", "label": "u.jpg", "reason": "overlap"}]):
+        receipt = {
+            "version": 1,
+            "matcher": "agent",
+            "layout": layout,
+            "placed": placed[:1] if layout != "mixed" else placed,
+            "unplaced": unplaced,
+        }
+        with reply_language_for("tr"):
+            (headline, *_) = render_notes_from_overlay_receipt(receipt)
+        assert "görsel" in headline
+        assert not any(w in headline for w in ("Visual", "Showed", "shown", "full screen", "card"))
+    with reply_language_for("tr"):
+        assert render_notes_from_overlay_receipt({"matcher": "failed"}) == [
+            "Bu sefer görsellerin için kart anlarını kontrol edemedim"
+        ]
+
+
+def _generated_receipt(reason: str) -> dict:
+    return _overlay_receipt(("Beer", reason), origin="generated")
+
+
+def test_the_generated_image_followup_is_promised_only_when_that_path_is_on(monkeypatch) -> None:
+    import app.services.phone_rollout as rollout
+    from app.kria.reply_language import reply_language_for
+
+    receipt = _generated_receipt("no_spoken_match")
+    monkeypatch.setattr(rollout, "phone_subtitled_reaction_beats_supported", lambda: True)
+    on = render_notes_from_overlay_receipt(receipt)[1]
+    with reply_language_for("tr"):
+        on_tr = render_notes_from_overlay_receipt(receipt)[1]
+    assert "I'll place it there" in on and "koyarım" in on_tr
+    monkeypatch.setattr(rollout, "phone_subtitled_reaction_beats_supported", lambda: False)
+    off = render_notes_from_overlay_receipt(receipt)[1]
+    with reply_language_for("tr"):
+        off_tr = render_notes_from_overlay_receipt(receipt)[1]
+    assert "place it" not in off and "Tell me" not in off
+    assert "koyarım" not in off_tr and '"Beer"' in off and '"Beer"' in off_tr
+
+
+def test_a_hook_window_miss_does_not_claim_there_was_no_spoken_moment(monkeypatch) -> None:
+    import app.services.phone_rollout as rollout
+    from app.kria.reply_language import reply_language_for
+
+    monkeypatch.setattr(rollout, "phone_subtitled_reaction_beats_supported", lambda: True)
+    receipt = _generated_receipt("hook_window")
+    en = render_notes_from_overlay_receipt(receipt)[1]
+    with reply_language_for("tr"):
+        tr = render_notes_from_overlay_receipt(receipt)[1]
+    assert "no spoken moment" not in en and "opening" in en and '"Beer"' in en
+    assert "uygun bir an bulamadım" not in tr and "açılış" in tr

@@ -1,0 +1,550 @@
+{
+ "_doc": "KRI-1192 F15: sha256 of every English/Turkish caption output on main fa1a64f5b (before the caption-language change). See tests/pipeline/test_kri1192_en_tr_byte_identity.py.",
+ "outputs": {
+  "en/1675/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "58d3815feb1b8dfac86c1018ef49a5685b55b692685008a25fa9fb8728ec6f7f"
+  },
+  "en/1675/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "4f654ff5cabd99e4cfe0da362ce6f9c1062c0653bb3dbebbeb30d980c6f6b99f"
+  },
+  "en/1675/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "ad2d4c1d482e861a1937ef8d7ce53deda8adbe32bbab3d750992b50da48fec31"
+  },
+  "en/1675/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "3af5ed6af60f44b1c051daa1d5fe636a8ec7097a35a67b3359d29411f77d5e32"
+  },
+  "en/1728/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "e2681f59262ce2611a938ea14038e5040ca310c6a84813259f0dfd2f73cd1997"
+  },
+  "en/1728/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "d3bf0d270b5e0af6ce131067dca3ae33773d8504e8758e87fbb8c341551ab8e7"
+  },
+  "en/1728/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "db0f39a3692d518dc3f03d7af8ac2f9e887bb529e38b53fa112f9741fdbc02c3"
+  },
+  "en/1728/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "c0c62a51d9c3d46d5f49e87a9cd22730154e31c78d4c72a1d96641610a415f95"
+  },
+  "en/1729/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "0f544563ff6c490ff812381f8fd88dca8340ecd83ec1996e3f9e32f53930a0a8"
+  },
+  "en/1729/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "38ea9b0048d2cf50ed0d3f94b8c76be1d906e9cf5e989b7c940422ba1f8ed2ed"
+  },
+  "en/1729/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "ec0edbabf2cc079d755163f6ff16f99d2f06da42334560d83001c7a8dfa3b45a"
+  },
+  "en/1729/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "42e84435e58c61adccccf0418577d019698a6ca90872189e3e1a53245e75e987"
+  },
+  "en/1806/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "d57b868c774b661cdfdb2faf54845a7adca0159fe592aa603e756dbe9eababeb"
+  },
+  "en/1806/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "6c374b6ce3804136b12bac5588718de0a6603ce5ee4d908bce38f403288e6d51"
+  },
+  "en/1806/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "67ec45a1312516e37f985be036ffe88759269012c65256e8d2d127339a69bf5a"
+  },
+  "en/1806/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "406f05de495fafc3cb3a893c0fdcf4d551b97cdab8eee629eae3866a31d4357b"
+  },
+  "en/1846/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "763503f4bccfe3e655ac716101ae4d3a438cb60a0791fd4a9867ddbd00307633"
+  },
+  "en/1846/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "cb8e4d037598213571e0eb15ca803344929328f860aaa00a43c2e9ff0eb0e0e5"
+  },
+  "en/1846/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "1fcb82ec5a68c98f501886fc36ccd20ec718ff2a76ec2d4cc48119beef18d12c"
+  },
+  "en/1846/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "0b2f193bda78294cebf0df4072dbd3c14150d699b7da6f9dbf7f1ddbf1aec154"
+  },
+  "en/1855/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "19d348d10cdec36cb98b59b9d21fab9d9cf0d6be0dc89f50400717fe0b64b150"
+  },
+  "en/1855/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "b94ffb543998a3add6b20c8e05bb9fd994821077c5a3633a87250affb48c544f"
+  },
+  "en/1855/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "09e8ffd4d87b49e636d64efbffcb883db1f6688b34cd6ee8c6b050df5087a190"
+  },
+  "en/1855/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "670e7042b379bbfcae656316e2a8dcc3179d1ebdc5472fdaee000c8ddea9c2d8"
+  },
+  "en/1876/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "0362b8f234f2b67fd3956ab2370261a52e04bd247dcfe4e281878cf621c37d35"
+  },
+  "en/1876/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "a0c3f11bfe2c3f98d679bc293edcd34cd528c22380bc10f55c7a0b4e3a725f81"
+  },
+  "en/1876/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "94ed258f86946e652f7661179862cb3730da5021a3a794341999a25c957e2d91"
+  },
+  "en/1876/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "5c6edc343ac6fa6c245a0857769659bfdfe98ae03421c5833531c710d5e2e607"
+  },
+  "en/1904/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "f905bded33f2d3cc0d735fd35981fd12d2f41128427cd0e2bd38ce1d9c4642ba"
+  },
+  "en/1904/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "e46a482a9878ef4931872293d37954a8ad3e1db64947683eec81a541be1f1ca8"
+  },
+  "en/1904/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "45021364d29a6589c7e6e95ff4c9a21b1142156eec0bb8d4b83e6e77c876a228"
+  },
+  "en/1904/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "f2893225c16c9eff5aa50daea7deed91f25508623cc8af80361a0ad38577f7e4"
+  },
+  "en/1914/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "3a8082ba8dac6a66937d1007f97b1e1fbe4c159c04888a340823c73953bc44fb"
+  },
+  "en/1914/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "9433be820dc1835ff60a972826e000781c79fe37c2162b9a51a8e434772a77d9"
+  },
+  "en/1914/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "e8bccc4672fed0545321d130e59d679217b6a14b8e01c3cac42ac5132a9df490"
+  },
+  "en/1914/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "90651ce851bcfe5f67fb98c35e03099b9f39fd8004a86ed684888e2a53bf7bb4"
+  },
+  "en/1919/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "4ec680edfd6bae18682456e4334b5a750e2fc65e9603d6a15c84089ea474f1a3"
+  },
+  "en/1919/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "50287c410dcdc535b94df7d4d7333471e96d9829f500a235d94d8cda995204eb"
+  },
+  "en/1919/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "f82b7afaf88cb26a7f7dc1c9674ef080c3463e6ee2185d604addc2abda7e3276"
+  },
+  "en/1919/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "2688e589c233526fa7d959d95c116b13d330d429b7b67a5251d5dfeda775b6c0"
+  },
+  "en/1938/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "58d71c233ecc0f0316bbb28f7923aba694ad980bc570aba8e9662e115a361714"
+  },
+  "en/1938/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "c83d941795555c1023e68d6222d3d26a2282e6c60ebfeebd2ffe9202fafb3d1f"
+  },
+  "en/1938/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "5a31dcff66a109b4ee42b2464cd70037005d9c95144dc304dfc1c21d60204aa7"
+  },
+  "en/1938/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "6ed0b7d8fbac92e4ebf9c04d21c3fd2db16f5e8db7cd2bde28237418104da38b"
+  },
+  "en/1950/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "b28098ce0e7564ab6060437303bd02baff035ad26fc369f2305b660832343615"
+  },
+  "en/1950/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "48e78f18c409e7f5bde4edd0cccc82f84b8465c68b7148ad7342166c40e930b3"
+  },
+  "en/1950/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "3d43fbd5e8671a5de2fce45d1b1ac74b690c3516b5341d6aa7e34e10218d8491"
+  },
+  "en/1950/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "b930774baf128f634a5f19d4d8a5660b3878547df88ba75f1bad53f0d7f4c74a"
+  },
+  "en/ass/creator_font_big_curls": {
+   "platform_sensitive": false,
+   "sha256": "b5ce3f2fe2ab03a499020af5d42c5f141ccd9a9c32a8839a5f0e8e2c60526823"
+  },
+  "en/ass/editor_highlight": {
+   "platform_sensitive": false,
+   "sha256": "d4032c71af475a2e85069327c0073c5fa6dc4c4de74594bce45eca9a7febb1ec"
+  },
+  "en/ass/editor_word": {
+   "platform_sensitive": false,
+   "sha256": "199e6013d06316490106acd227c8b143cf9b2019f8453e4f4b7734b71ed05ec2"
+  },
+  "en/ass/legacy_karaoke": {
+   "platform_sensitive": false,
+   "sha256": "aeb2bc50d326209ae108d54d305f742c48aab2f09eb2feeec75932f0369d23fc"
+  },
+  "en/ass/legacy_plain": {
+   "platform_sensitive": false,
+   "sha256": "913942ccc1d2958384d3ad5f25aaf5b7064663b973214d696111b85f7877d36d"
+  },
+  "en/ass/narrated_plain": {
+   "platform_sensitive": false,
+   "sha256": "913942ccc1d2958384d3ad5f25aaf5b7064663b973214d696111b85f7877d36d"
+  },
+  "en/ass/narrated_word": {
+   "platform_sensitive": false,
+   "sha256": "2ed6ab574689053558b081c04b7ae2f82eda2265467f9f143014de212cbac340"
+  },
+  "en/ass/per_cue_override": {
+   "platform_sensitive": false,
+   "sha256": "eba1dd4b15b438f03c8dcf5ce22faa16fe55f58723e0ed4114b6d4dd81d60079"
+  },
+  "en/ass/smart": {
+   "platform_sensitive": true,
+   "sha256": "e183787aeee666f3cd5119999673e081161017fb19c8f74b7467c418987814de"
+  },
+  "en/ass/subtitled_sentence": {
+   "platform_sensitive": false,
+   "sha256": "9004751b8a035acadb407e6020b5c54172472f07a7d895f5b6e42e436b728a4d"
+  },
+  "en/ass/subtitled_word_pop": {
+   "platform_sensitive": false,
+   "sha256": "882037ae1a24dc7791d64c1ee994d8a367ec29aee35ff21d3eec34332108c73b"
+  },
+  "en/guided/highlight": {
+   "platform_sensitive": false,
+   "sha256": "25d19a17088961d3ac2a3b694b80960da39fa5f8b7ddbf87a5c2fa8a0b8a0a65"
+  },
+  "en/guided/legacy": {
+   "platform_sensitive": false,
+   "sha256": "d68d4980b21b188ad70c370f6a2e67440d1a3f02eca13c33419ff0c5f89a907f"
+  },
+  "en/guided/sentence": {
+   "platform_sensitive": false,
+   "sha256": "e744f72f83a4dd3b83d3a41a382fcb36d9f3c6263ed4918facd25a55acd00236"
+  },
+  "en/guided/word": {
+   "platform_sensitive": false,
+   "sha256": "5f6eff36dd8d11083edbd19cde1686ec86d233e93f35fdda68b71afe4a860732"
+  },
+  "en/measure": {
+   "platform_sensitive": true,
+   "sha256": "4e9183fa939b44dab407a8a92a45f1b633d4511dfb976528698a7d8ba5464271"
+  },
+  "en/phone/sentence": {
+   "platform_sensitive": true,
+   "sha256": "59dcb936494f2d5ffdcdf8575331fe552bafb2f98d46da98fae89014b28bb629"
+  },
+  "en/phone/static": {
+   "platform_sensitive": true,
+   "sha256": "c27f11861d18ca0d07f27909c82309e6a4b3ba13b43536661e249488e0ec17fc"
+  },
+  "en/phone/word": {
+   "platform_sensitive": true,
+   "sha256": "fed8540ddafaa3cbc2c8888ba6fa15fe28ff7565ab338a8ce3e1c6c4c60f70d2"
+  },
+  "en/skia/auto_shape": {
+   "platform_sensitive": false,
+   "sha256": "599ab59eef21895f089a4ef3e5576f6824c2305a281c282c0bd454c3ec83fb82"
+  },
+  "tr/1660/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "96fb195a957b54b8c1f178d7623bb62ca595ffe538c1f75dc5deed6ff43c7faa"
+  },
+  "tr/1660/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "8e70c666d13dac09f92248f3412067cb30c345d496be6bf3fd2739286f7792dc"
+  },
+  "tr/1660/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "07a001081b2514e928907a1aeb431f2ecae79799342c6d5406ab78ac5126e947"
+  },
+  "tr/1660/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "45a04f3c35b6bb79f2798239f10a9b9964342c7d418faf201c1da87c22cf78a0"
+  },
+  "tr/1684/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "0cae27d824dfc510b46b71692167430f20ee331376f57b65131fc1c54586e889"
+  },
+  "tr/1684/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "47e0df602b3ad36f3fe2960dd77ba430196ae0ef6ce271c668f3095d30885880"
+  },
+  "tr/1684/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "b04926222c094357e6ef556f10bb8a7e79acf5bd52a905a473866f74435ef573"
+  },
+  "tr/1684/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "0b492a5f4b56477e4cae940c0d43ac4383346c8fe86a4cd10729a20be377d986"
+  },
+  "tr/1689/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "0e1c334f4cbf87a203c4eb79a2ff1e2f7c0d4c4e5b02865aecc1f23ee8769f7d"
+  },
+  "tr/1689/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "7470f5ebd35278e1cea47dc1cf5479e4402b3cf2e3f56ca63145c12389e15271"
+  },
+  "tr/1689/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "dc229cd05ff1878bcedd4cebd6ca7fc1d7bbdae96185c19b03a98a49207d67a3"
+  },
+  "tr/1689/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "aed2d37ba8bf79346b171a34d3e0c73389bda85dc6fea805de30f93098c8a0d4"
+  },
+  "tr/1692/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "cd95cc01ac6530d62653317cfee39fb0d646257a7a8154c15d64d52ccb0c7c89"
+  },
+  "tr/1692/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "b872f00037d6125431c0a7281d98d7f34472b7bcc0fb36b6366e695b260dba59"
+  },
+  "tr/1692/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "0cd01caafd0e1c458fc5168e09546c5c605a8af577c68de7fa9194985327048a"
+  },
+  "tr/1692/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "bc4652b832dde0641ba50389b9f888beb6249ef52122e2561336c1ac61d2b99f"
+  },
+  "tr/1711/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "9a5a0fb8e6066aa898f6c9c98a85fd4aab0cb0012f2975a2394d81d1d3a741fd"
+  },
+  "tr/1711/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "bd88b9aca2b233a836744e9d0e55bc864b3c3522d695cbca33d614690fdb07b4"
+  },
+  "tr/1711/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "3ec23fc518d08a89d5b2db7f0172b88395c0b03bdf6db1241f98cebcc490ae81"
+  },
+  "tr/1711/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "cbe850d4e40a73b4605372dabea00a255f46001bbc68d0f492398de829702ddd"
+  },
+  "tr/1740/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "07df1beb09d9c1c9bbd3738a052dbb2891c687f68234c669f8df875c7d4d9bf6"
+  },
+  "tr/1740/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "85cc192370d2ba2d1dcf3304315cc1976f0f7f99674c1018c81bbdf626a1b329"
+  },
+  "tr/1740/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "25406ba438130186e702064be62518f1905b663020fe49f17d11cb835bbba5dc"
+  },
+  "tr/1740/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "bf80621bf7ff486ca035946bf503914c6e7166ee3e007463d3cca5310ced2901"
+  },
+  "tr/1752/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "ffdde0243894b88cda328ae5fa867cba3de694f616946148df7a7b0130ed2a9a"
+  },
+  "tr/1752/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "9350018b0c6605f7f68febc9e91b1ca89afdcd3407e9a4b4d342967f3b21ea06"
+  },
+  "tr/1752/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "355c6ab7ef2f21d7b543f614094307e3a41406c310efb7b85a13da78ed053b27"
+  },
+  "tr/1752/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "7c07a5d05f18fb01c197d3bf97286be96cf19a71bd9a551273d117346151d088"
+  },
+  "tr/1790/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "2263e2894b0d3ec7d74d7e877364ea1234e6d25bba8f2dd0ae12a9f2b50fc2dd"
+  },
+  "tr/1790/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "0d49ad26dd25b804d42b29bbababae111eb506c7bc0a61e87463e1ab3e3d1c40"
+  },
+  "tr/1790/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "59b2ae00ada7f667301d249b4ad13a8ae2b2481b4e9aee7811f48a6e8590c9ec"
+  },
+  "tr/1790/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "1f9afa47bcd7ae14124bf72ec91ab4b1f9849e9391a84922f0161c2b63adbf66"
+  },
+  "tr/1884/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "b603d746a96e4ce11a7163c247fe00da7a8abbaeb6f84b0fcda598820590f407"
+  },
+  "tr/1884/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "a48a94c85665c627bc8acd4f28de98f4e0d273e2a7051c2dfd515afce098844a"
+  },
+  "tr/1884/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "9f45053421ed277c3063c68ec866441b7fd494e353c9aaa8901783ea501da732"
+  },
+  "tr/1884/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "17c23decc9ab7c1660fad199a70031899a1cafc64683f5a46a703d1dc7ca4f1b"
+  },
+  "tr/1908/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "fedf0fbb4028536c3e9975aa952d34d2c0e4fad91849547cc1b935ff6c77b954"
+  },
+  "tr/1908/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "055c9e5be6fd1720eaffea4bbdf03fe386b3e8592788d4126ee42db589a11f99"
+  },
+  "tr/1908/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "d70cd838a232f62d25a10e9681b9adf3d81d9c77d298fe5b230035c776333efc"
+  },
+  "tr/1908/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "80852f5effffa526813dc6d00156b6cad0ebfbe8348eade053b6efc9357576d7"
+  },
+  "tr/2002/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "5f997d978281be7008fda55d20684baac24d20b23fdfc7e86498e33f5eeac577"
+  },
+  "tr/2002/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "8ab8bcc6597fcf713c3599bc910837b07c935d1265f5e5b1b7aaef3f7d2df1a6"
+  },
+  "tr/2002/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "195dfc72abdab2d94ebcfa0955a83b388a72f1f9d37064998f6a655499e87e94"
+  },
+  "tr/2002/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "d01591153a9aa5ba2f40ba9a654a5e0d4d7dd79ccde9a9abb7dc090b8895956e"
+  },
+  "tr/2004/phone_cues": {
+   "platform_sensitive": false,
+   "sha256": "c666005e01f0d7ac9c0c083eb771f9324f0e027d4a01306e5cee29498c8f8832"
+  },
+  "tr/2004/plain_cues": {
+   "platform_sensitive": false,
+   "sha256": "4279266ed23794d7fb2ac9c2c46382dc873c3c045da6ae723abc86a1a8c4d570"
+  },
+  "tr/2004/resplit_cues": {
+   "platform_sensitive": false,
+   "sha256": "e9a788b6e8d7878eadf55adc826b6ad6a918b28b9781041e22858f44017444f3"
+  },
+  "tr/2004/word_cues": {
+   "platform_sensitive": false,
+   "sha256": "dd544283c0da782b492fe6db6b13d7c5a1ecc46b644fe5a8fd52a356156a60a8"
+  },
+  "tr/ass/creator_font_big_curls": {
+   "platform_sensitive": false,
+   "sha256": "8463218a839cba804e015e26ec666a91b3c88787c0f24587a699e38f6eeeea5a"
+  },
+  "tr/ass/editor_highlight": {
+   "platform_sensitive": false,
+   "sha256": "1e1e79d233621fe5b281b79d25f67a468f9f88a92dffeae37bbde8fdf919c449"
+  },
+  "tr/ass/editor_word": {
+   "platform_sensitive": false,
+   "sha256": "97fb81db8eeef996b0670480eb600a23a38329702109d67922e355d534aa56ec"
+  },
+  "tr/ass/legacy_karaoke": {
+   "platform_sensitive": false,
+   "sha256": "e81f66e37f7dc4fdd9a20c034a4d17e3cf258269a43c7e2c151228e11f25dc81"
+  },
+  "tr/ass/legacy_plain": {
+   "platform_sensitive": false,
+   "sha256": "785ff930282845ca304aafd2c3c032c982d6541064c039bbd094c4a3a9b7317a"
+  },
+  "tr/ass/narrated_plain": {
+   "platform_sensitive": false,
+   "sha256": "785ff930282845ca304aafd2c3c032c982d6541064c039bbd094c4a3a9b7317a"
+  },
+  "tr/ass/narrated_word": {
+   "platform_sensitive": false,
+   "sha256": "573493fbe9b465bbbc4cccd5636f6a6aa41cf4ed5b1eefc6453a99afba838a56"
+  },
+  "tr/ass/per_cue_override": {
+   "platform_sensitive": false,
+   "sha256": "cc595bc72b2e28183fb91d181f0581995d240f70dc5331fabecdf70153735cfd"
+  },
+  "tr/ass/smart": {
+   "platform_sensitive": true,
+   "sha256": "227e55f90bdf7215e56985ba19fc5b54eddbdb13e60bc7469618b226bb4d0d43"
+  },
+  "tr/ass/subtitled_sentence": {
+   "platform_sensitive": false,
+   "sha256": "dfc7ae7b83980c4d4f6e3f8fae85e07cde34f3302c670f6f7eba648adb5aa302"
+  },
+  "tr/ass/subtitled_word_pop": {
+   "platform_sensitive": false,
+   "sha256": "cf5bafbbe8514e2c24c4f76924d911316acae46438d332b1292c606921116fe7"
+  },
+  "tr/guided/highlight": {
+   "platform_sensitive": false,
+   "sha256": "c33f0a3c306a41ed26436c5a109e01249519749402d8413a96cb6817c519302b"
+  },
+  "tr/guided/legacy": {
+   "platform_sensitive": false,
+   "sha256": "a8b420757a22a050a1060ae9bfc9d47646ee4a315d325b7352ce730c01163181"
+  },
+  "tr/guided/sentence": {
+   "platform_sensitive": false,
+   "sha256": "207ae22a0134dc08eb6990354964529402d77eaa8e0f9a829a5ffcb8ed3fe44c"
+  },
+  "tr/guided/word": {
+   "platform_sensitive": false,
+   "sha256": "e70015b15d7c1135a82c4f47fba2448abe554907324816b89fb8cb15d335f09b"
+  },
+  "tr/measure": {
+   "platform_sensitive": true,
+   "sha256": "979eaa09357d8a8dcb07bcdcc9d33c186ec7139756e68b0d54f8317e820e3a2a"
+  },
+  "tr/phone/sentence": {
+   "platform_sensitive": true,
+   "sha256": "05709ad186d3ff98ed69fe1cbd0417e607a87741ff0499613e47b852d17febdf"
+  },
+  "tr/phone/static": {
+   "platform_sensitive": true,
+   "sha256": "83ac2afe34933baf9dfc2eec0b84f94c7c3f88fadd59c639df5705c3ac27a500"
+  },
+  "tr/phone/word": {
+   "platform_sensitive": true,
+   "sha256": "fa77240612ed2e8b4eba97fecb81d5c74772fb85af75043a0f559fd2f42e60ee"
+  },
+  "tr/skia/auto_shape": {
+   "platform_sensitive": false,
+   "sha256": "7a9cabc3c547146ff8635987e7b85f2804e11955af4e8fc42ccd94fcd3727ff2"
+  }
+ },
+ "platform": "darwin-arm64"
+}

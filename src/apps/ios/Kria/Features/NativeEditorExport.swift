@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 /// Header Save states. A clean editor shows a quiet checkmark rather than an
 /// actionable glyph, so a disabled Save can never read as a broken download
@@ -47,25 +48,36 @@ private struct ResolvedExportFile {
 /// fallback — download the matching cloud render); this class resolves that
 /// route once, hands the result to Photos or the share sheet, and always
 /// removes any temporary copy it made.
+@MainActor protocol NativeEditorExportSource: AnyObject {
+    func videoDownloadRoute(deviceLocalFile: URL?) throws -> NativeEditorVideoDownloadRoute
+    func exportDisplayedSourcePreview(progress: (@Sendable (Double) -> Void)?) async throws -> NativeEditorTemporaryVideo
+}
+
 @MainActor final class NativeEditorExporter: ObservableObject {
     @Published private(set) var phase: NativeEditorExportPhase = .idle
     @Published var isSharing = false
     @Published private(set) var sharedFile: URL?
     private let photos: any PhotoLibrarySaving
     private let downloader: NativeEditorVideoDownloader
+    private let scheduler: any ContinuedProcessingExportScheduling
+    private let isForeground: @MainActor () -> Bool
     private var sharedFileIsOwned = false
     private var dismissTask: Task<Void, Never>?
 
     init(
         photos: any PhotoLibrarySaving = PhotoLibrarySaver(),
-        downloader: NativeEditorVideoDownloader = NativeEditorVideoDownloader()
+        downloader: NativeEditorVideoDownloader = NativeEditorVideoDownloader(),
+        scheduler: any ContinuedProcessingExportScheduling = AppleContinuedProcessingExportScheduler(),
+        isForeground: @escaping @MainActor () -> Bool = { UIApplication.shared.applicationState == .active }
     ) {
         self.photos = photos
         self.downloader = downloader
+        self.scheduler = scheduler
+        self.isForeground = isForeground
     }
 
-    func saveToPhotos(from session: NativeEditorSession, api: any KriaAPIClient, deviceLocalFile: URL?) async {
-        guard let resolved = await prepare(from: session, api: api, deviceLocalFile: deviceLocalFile) else { return }
+    func saveToPhotos(from session: any NativeEditorExportSource, api: any KriaAPIClient, deviceLocalFile: URL?) async {
+        guard let resolved = await prepare(from: session, api: api, deviceLocalFile: deviceLocalFile, origin: .save) else { return }
         defer { if let cleanupURL = resolved.cleanupURL { try? FileManager.default.removeItem(at: cleanupURL) } }
         do {
             try await photos.saveVideo(at: resolved.fileURL)
@@ -75,8 +87,8 @@ private struct ResolvedExportFile {
         }
     }
 
-    func share(from session: NativeEditorSession, api: any KriaAPIClient, deviceLocalFile: URL?) async {
-        guard let resolved = await prepare(from: session, api: api, deviceLocalFile: deviceLocalFile) else { return }
+    func share(from session: any NativeEditorExportSource, api: any KriaAPIClient, deviceLocalFile: URL?) async {
+        guard let resolved = await prepare(from: session, api: api, deviceLocalFile: deviceLocalFile, origin: .share) else { return }
         removeSharedFile()
         sharedFileIsOwned = resolved.cleanupURL != nil
         sharedFile = resolved.fileURL
@@ -96,14 +108,22 @@ private struct ResolvedExportFile {
         phase = .idle
     }
 
-    private func prepare(from session: NativeEditorSession, api: any KriaAPIClient, deviceLocalFile: URL?) async -> ResolvedExportFile? {
+    private func prepare(from session: any NativeEditorExportSource, api: any KriaAPIClient, deviceLocalFile: URL?, origin: ContinuedProcessingExport.Origin) async -> ResolvedExportFile? {
         guard phase != .preparing else { return nil }
         dismissTask?.cancel()
         phase = .preparing
         do {
             switch try session.videoDownloadRoute(deviceLocalFile: deviceLocalFile) {
             case .sourcePreview:
-                let exported = try await session.exportDisplayedSourcePreview()
+                let runner = ContinuedProcessingExport(scheduler: scheduler, isForeground: isForeground)
+                let exported = try await runner.run(origin: origin, title: "Preparing your video", subtitle: "Exporting the current preview", operation: { progress in
+                    try await session.exportDisplayedSourcePreview(progress: { fraction in
+                        guard fraction.isFinite, (0...1).contains(fraction) else { return }
+                        Task { @MainActor in progress(Int64(fraction * 1000), 1000) }
+                    })
+                }, discard: { exported in
+                    try? FileManager.default.removeItem(at: exported.cleanupURL)
+                })
                 return ResolvedExportFile(fileURL: exported.fileURL, cleanupURL: exported.cleanupURL)
             case let .localFile(file):
                 return ResolvedExportFile(fileURL: file, cleanupURL: nil)

@@ -2866,6 +2866,10 @@ def _dispatch_item_render(
         from app.services.phone_text_styling import stamp_phone_text_style  # noqa: PLC0415
 
         stamp_phone_text_style(job)
+        from app.pipeline.phone_title_look import stamp_title_look  # noqa: PLC0415
+
+        # Qendresa item 20: her stacked title's look asks, pinned once (no-op with it off).
+        stamp_title_look(job)
     except ValueError as exc:
         log.warning(
             "plan_item_render.invalid_clips",

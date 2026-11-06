@@ -1,0 +1,1020 @@
+{
+ "_source": "prod thread 1a2189cc (2026-10-30, Leverkusen kit M1 run 2), approved job 93f662a7: creator_brief_binding.brief (v3, as persisted) + media_snapshot.clip_assignments and visuals (trimmed to duration, sound, proxy size, capture time and analysis), all_candidates.creator_strategy with the 21 s length still in force when the windows were planned (the simpler version then dropped r5), the three placed Visuals, the approved length_plan windows, and the creator's first message (turn 78855290), which wrote r4. Ids are the kit file names (IMG_1002 = the train clip).",
+ "creator_message": "Montage of my night at the BayArena: my friend Taha invited me to his VIP box for Bayer Leverkusen vs 1. FC Nürnberg in the DFB-Pokal. Put everything in the order I filmed it, starting with the train ride. Make it all vertical, no black bars. Skip the photo of the empty train seat, and use only one of the two photos of the view from our box. Keep the sound only on the train clip with the announcement \"Nächster Halt: Leverkusen Mitte\" and mute everything else. Title: \"Pokalnacht in Leverkusen 🔴⚫\". Make it 25 seconds. Suggest a song but don't add it.",
+ "brief": {
+  "version": 3,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "order",
+    "facts": {
+     "key": "capture_time"
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "Put everything in the order I filmed it",
+    "source_turn_id": "78855290-993b-4696-ada2-dc121510ced2"
+   },
+   {
+    "id": "r2",
+    "kind": "style",
+    "facts": {
+     "landscape_fit": "fill"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make it all vertical, no black bars",
+    "source_turn_id": "78855290-993b-4696-ada2-dc121510ced2"
+   },
+   {
+    "id": "r3",
+    "kind": "select",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Skip the photo of the empty train seat, and use only one of the two photos of the view from our box",
+    "source_turn_id": "78855290-993b-4696-ada2-dc121510ced2"
+   },
+   {
+    "id": "r4",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "off",
+     "sound_except": [
+      {
+       "sound_media": "IMG_1002"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Keep the sound only on the train clip with the announcement and mute everything else",
+    "source_turn_id": "78855290-993b-4696-ada2-dc121510ced2"
+   },
+   {
+    "id": "r5",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 21
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "Make it 21 seconds instead",
+    "source_turn_id": "e7cac9df-08f9-4747-bc6f-4511a676ba5b"
+   },
+   {
+    "id": "r6",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "Pokalnacht in Leverkusen 🔴⚫",
+    "description": null,
+    "source_turn_id": "78855290-993b-4696-ada2-dc121510ced2"
+   }
+  ]
+ },
+ "strategy": {
+  "pacing": "balanced",
+  "direction": "guided_story",
+  "rationale": "Proceeding without the strict timing and sequence constraints. I've arranged the clips naturally from the train ride to the stadium box and match highlights. Only the train announcement is kept audible, and all footage is formatted vertically to remove black bars. A great track for this vibe would be 'Gata Only' by FloyyMenor if you decide to add music later.",
+  "voice_mode": "per_clip",
+  "edit_format": "montage",
+  "media_scope": "selected",
+  "clip_intents": [
+   {
+    "op": "order",
+    "order_by": "capture_time",
+    "attribute": "everything",
+    "intent_id": "order_capture_time_all"
+   },
+   {
+    "op": "include",
+    "attribute": "one of the two photos of the view from our box",
+    "intent_id": "include_one_view_photo"
+   }
+  ],
+  "caption_style": "auto",
+  "montage_audio": {
+   "source_media_ids": [
+    "IMG_1002"
+   ],
+   "preview_source_beds": false,
+   "preserve_source_audio": true
+  },
+  "opening_title": "Pokalnacht in Leverkusen 🔴⚫",
+  "audio_strategy": "original_audio",
+  "render_program": "guided",
+  "story_structure": [
+   "Train journey with the next stop announcement",
+   "Team lineup and view from the VIP box",
+   "Match action and crowd celebrations"
+  ],
+  "target_duration_s": 21,
+  "creator_duration_s": 21,
+  "selected_media_ids": [
+   "IMG_1002",
+   "IMG_0995",
+   "IMG_1038",
+   "IMG_1019",
+   "IMG_1026",
+   "IMG_1027",
+   "IMG_1028",
+   "IMG_1036",
+   "IMG_1037",
+   "IMG_1043",
+   "IMG_1039"
+  ],
+  "video_reuse_policy": "once",
+  "optional_treatments": [],
+  "resolved_clip_intents": [
+   {
+    "op": "order",
+    "status": "resolved",
+    "order_by": "capture_time",
+    "attribute": "everything",
+    "intent_id": "order_capture_time_all",
+    "assignments": [
+     {
+      "evidence": "filming order",
+      "media_id": "IMG_1036",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "IMG_1027",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "IMG_1037",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "IMG_1026",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "IMG_1043",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "IMG_1028",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "IMG_1002",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "IMG_1039",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "IMG_0995",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "IMG_1019",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "IMG_1038",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "IMG_1001",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "IMG_1017",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "include",
+    "status": "resolved",
+    "attribute": "one of the two photos of the view from our box",
+    "intent_id": "include_one_view_photo",
+    "assignments": [
+     {
+      "evidence": "A wide shot from inside a stadium luxury box, featuring red spectator seats in the foreground, a brightly lit green football field",
+      "media_id": "IMG_1017",
+      "confidence": 0.9
+     }
+    ]
+   }
+  ],
+  "selected_music_section": null,
+  "target_duration_requested": true
+ },
+ "clips": [
+  {
+   "media_id": "IMG_1036",
+   "kind": "video",
+   "duration_s": 8.533333,
+   "has_audio": true,
+   "width": 320,
+   "height": 568,
+   "capture": {
+    "capture_time": "2026-10-28T19:49:47Z"
+   },
+   "analysis": {
+    "transcript": "",
+    "description": "crowd cheers loudly, waving flags fans continue chanting with flags waving",
+    "best_moments": [
+     {
+      "end_s": 4.0,
+      "energy": 7.0,
+      "start_s": 0.0,
+      "description": "crowd cheers loudly, waving flags"
+     },
+     {
+      "end_s": 8.0,
+      "energy": 7.5,
+      "start_s": 4.5,
+      "description": "fans continue chanting with flags waving"
+     }
+    ],
+    "on_screen_text": "",
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "large banner with text 'UNSER VEREIN SEIT 1900'",
+      "red and black flags"
+     ],
+     "brands": [],
+     "people": {
+      "note": "a large crowd of football fans wearing red and dark clothing",
+      "count": null,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "to_camera": false,
+      "has_speech": false,
+      "transcript": ""
+     },
+     "actions": [
+      "fans cheer",
+      "fans wave flags"
+     ],
+     "setting": "inside a football stadium during a match",
+     "subject": "football stadium crowd",
+     "summary": "A large crowd of football fans inside a stadium cheers and waves flags, with a prominent banner visible. Red lights illuminate parts of the stadium ceiling.",
+     "activity": "football fans cheering and waving flags",
+     "audio_type": "ambient",
+     "content_type": "ambience",
+     "on_screen_text": "",
+     "visual_quality": "sharp and steady with foreground obstruction",
+     "notable_moments": [
+      {
+       "end_s": 4.0,
+       "start_s": 0.0,
+       "description": "crowd cheers loudly, waving flags"
+      },
+      {
+       "end_s": 8.0,
+       "start_s": 4.5,
+       "description": "fans continue chanting with flags waving"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "media_id": "IMG_1027",
+   "kind": "video",
+   "duration_s": 8.066667,
+   "has_audio": true,
+   "width": 320,
+   "height": 568,
+   "capture": {
+    "capture_time": "2026-10-28T19:33:14Z"
+   },
+   "analysis": {
+    "transcript": "",
+    "description": "wide shot of football pitch and stadium lights crowd cheers with flags waving",
+    "best_moments": [
+     {
+      "end_s": 1.5,
+      "energy": 6.0,
+      "start_s": 0.0,
+      "description": "wide shot of football pitch and stadium lights"
+     },
+     {
+      "end_s": 7.5,
+      "energy": 8.0,
+      "start_s": 5.0,
+      "description": "crowd cheers with flags waving"
+     }
+    ],
+    "on_screen_text": "",
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "red and black flags",
+      "stadium banners"
+     ],
+     "brands": [
+      "Zalando",
+      "BASF",
+      "Bayer 04 Leverkusen"
+     ],
+     "people": {
+      "note": "large crowd of fans in the stadium stands",
+      "count": null,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "to_camera": false,
+      "has_speech": false,
+      "transcript": ""
+     },
+     "actions": [
+      "camera pans across the stadium",
+      "fans cheer and wave flags"
+     ],
+     "setting": "indoor football stadium at night",
+     "subject": "stadium crowd and football pitch",
+     "summary": "The video shows a wide view of a football stadium, panning from the empty pitch to a section of the stands filled with cheering fans, some waving flags and banners. The stadium lights are on, and the atmosphere is lively.",
+     "activity": "fans cheering and waving flags in a football stadium",
+     "audio_type": "mixed",
+     "content_type": "ambience",
+     "on_screen_text": "",
+     "visual_quality": "sharp and steady pan",
+     "notable_moments": [
+      {
+       "end_s": 1.5,
+       "start_s": 0.0,
+       "description": "wide shot of football pitch and stadium lights"
+      },
+      {
+       "end_s": 7.5,
+       "start_s": 5.0,
+       "description": "crowd cheers with flags waving"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "media_id": "IMG_1037",
+   "kind": "video",
+   "duration_s": 9.866667,
+   "has_audio": true,
+   "width": 320,
+   "height": 568,
+   "capture": {
+    "capture_time": "2026-10-28T20:25:46Z"
+   },
+   "analysis": {
+    "transcript": "",
+    "description": "",
+    "best_moments": [],
+    "on_screen_text": "",
+    "understanding": {
+     "kind": "video",
+     "brands": [],
+     "people": {
+      "note": "crowd in the stadium and a young man in the stands",
+      "count": null,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "to_camera": false,
+      "has_speech": false,
+      "transcript": ""
+     },
+     "actions": [
+      "soccer players play on the field",
+      "young man turns to camera",
+      "young man waves a scarf enthusiastically"
+     ],
+     "setting": "indoor soccer stadium during a night match",
+     "subject": "soccer match in a stadium",
+     "summary": "The video shows a soccer match in progress from an elevated perspective in a stadium. A young man in the stands turns to the camera, waves a scarf, and cheers enthusiastically.",
+     "activity": "watching a soccer match and cheering",
+     "audio_type": "music",
+     "content_type": "action",
+     "on_screen_text": "",
+     "visual_quality": "shaky handheld, stays sharp",
+     "notable_moments": []
+    }
+   }
+  },
+  {
+   "media_id": "IMG_1026",
+   "kind": "video",
+   "duration_s": 6.533333,
+   "has_audio": true,
+   "width": 320,
+   "height": 568,
+   "capture": {
+    "capture_time": "2026-10-28T19:16:50Z"
+   },
+   "analysis": {
+    "transcript": "250. 250.",
+    "description": "players standing on field during warm-up player bending over a ball on the pitch football players moving across the field",
+    "best_moments": [
+     {
+      "end_s": 3.0,
+      "energy": 4.0,
+      "start_s": 0.0,
+      "description": "players standing on field during warm-up"
+     },
+     {
+      "end_s": 6.0,
+      "energy": 5.0,
+      "start_s": 3.0,
+      "description": "player bending over a ball on the pitch"
+     },
+     {
+      "end_s": 9.0,
+      "energy": 4.0,
+      "start_s": 6.0,
+      "description": "football players moving across the field"
+     }
+    ],
+    "on_screen_text": "250. 250.",
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "green football pitch",
+      "white football",
+      "football goal",
+      "stadium seating",
+      "advertising boards"
+     ],
+     "brands": [
+      "Bayer 04",
+      "ZALANDO",
+      "WIESENHOF",
+      "ERGO",
+      "bwin"
+     ],
+     "people": {
+      "note": "several football players and a large crowd of spectators",
+      "count": 99,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "250. 250."
+     },
+     "actions": [
+      "players standing on field",
+      "player bending over ball",
+      "players moving around field"
+     ],
+     "setting": "football stadium",
+     "subject": "football players on pitch",
+     "summary": "The clip shows a wide view of a football stadium with players on the green pitch, some standing and others engaged in light activity. Spectators fill the stands in the background, and stadium lights illuminate the scene.",
+     "activity": "football players training or warming up",
+     "audio_type": "ambient",
+     "content_type": "action",
+     "on_screen_text": "",
+     "visual_quality": "shaky handheld, slightly blurry",
+     "notable_moments": [
+      {
+       "end_s": 3.0,
+       "start_s": 0.0,
+       "description": "players standing on field during warm-up"
+      },
+      {
+       "end_s": 6.0,
+       "start_s": 3.0,
+       "description": "player bending over a ball on the pitch"
+      },
+      {
+       "end_s": 9.0,
+       "start_s": 6.0,
+       "description": "football players moving across the field"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "media_id": "IMG_1043",
+   "kind": "video",
+   "duration_s": 7.5,
+   "has_audio": true,
+   "width": 320,
+   "height": 568,
+   "capture": {
+    "capture_time": "2026-10-28T21:47:37Z"
+   },
+   "analysis": {
+    "transcript": "",
+    "description": "crowd cheers loudly and waves flags players huddle on the pitch fans continue waving flags from stands",
+    "best_moments": [
+     {
+      "end_s": 5.0,
+      "energy": 7.0,
+      "start_s": 0.0,
+      "description": "crowd cheers loudly and waves flags"
+     },
+     {
+      "end_s": 7.0,
+      "energy": 6.0,
+      "start_s": 5.0,
+      "description": "players huddle on the pitch"
+     },
+     {
+      "end_s": 9.0,
+      "energy": 6.5,
+      "start_s": 7.0,
+      "description": "fans continue waving flags from stands"
+     }
+    ],
+    "on_screen_text": "",
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "red stadium seats",
+      "white and red flags",
+      "green football pitch",
+      "white football goal net",
+      "black stadium banner with 'SEIT 1900'",
+      "orange safety vests"
+     ],
+     "brands": [],
+     "people": {
+      "note": "large crowd of fans in the stands, multiple football players on the field, security personnel around the pitch",
+      "count": 99,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "to_camera": false,
+      "has_speech": false,
+      "transcript": ""
+     },
+     "actions": [
+      "fans cheering and moving arms",
+      "fans waving flags",
+      "football players huddling on the pitch"
+     ],
+     "setting": "football stadium",
+     "subject": "football stadium crowd and players",
+     "summary": "The video shows a wide view of a football stadium during what appears to be a match or event. Fans in the stands are cheering and waving flags, while players are gathered on the field. A large banner with \"SEIT 1900\" is visible in the stands.",
+     "activity": "fans cheering and waving flags, football players gathering on the pitch",
+     "audio_type": "ambient",
+     "content_type": "action",
+     "on_screen_text": "",
+     "visual_quality": "sharp and steady",
+     "notable_moments": [
+      {
+       "end_s": 5.0,
+       "start_s": 0.0,
+       "description": "crowd cheers loudly and waves flags"
+      },
+      {
+       "end_s": 7.0,
+       "start_s": 5.0,
+       "description": "players huddle on the pitch"
+      },
+      {
+       "end_s": 9.0,
+       "start_s": 7.0,
+       "description": "fans continue waving flags from stands"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "media_id": "IMG_1028",
+   "kind": "video",
+   "duration_s": 11.066667,
+   "has_audio": true,
+   "width": 320,
+   "height": 568,
+   "capture": {
+    "capture_time": "2026-10-28T19:36:41Z"
+   },
+   "analysis": {
+    "transcript": "Mit der Nummer 28, Janis. Mit der Nummer 2 spielt Facundo.",
+    "description": "announcer calls out player number 28 to a cheering crowd crowd cheers loudly as stadium lights flash red announcer calls out player number 2, Facundo crowd cheers as stadium lights flash red and white",
+    "best_moments": [
+     {
+      "end_s": 3.0,
+      "energy": 6.0,
+      "start_s": 0.0,
+      "description": "announcer calls out player number 28 to a cheering crowd"
+     },
+     {
+      "end_s": 6.2,
+      "energy": 7.0,
+      "start_s": 3.7,
+      "description": "crowd cheers loudly as stadium lights flash red"
+     },
+     {
+      "end_s": 10.0,
+      "energy": 6.0,
+      "start_s": 7.2,
+      "description": "announcer calls out player number 2, Facundo"
+     },
+     {
+      "end_s": 11.5,
+      "energy": 6.0,
+      "start_s": 10.5,
+      "description": "crowd cheers as stadium lights flash red and white"
+     }
+    ],
+    "on_screen_text": "Mit der Nummer 28, Janis. Mit der Nummer 2 spielt Facundo.",
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "large green football pitch",
+      "stadium seating areas",
+      "red stadium lights",
+      "large video screen"
+     ],
+     "brands": [],
+     "people": {
+      "note": "large crowd of spectators in a stadium",
+      "count": 99,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "language": "hawaiian",
+      "segments": [
+       {
+        "text": "Der Torhüter Nr.",
+        "end_s": 2.36,
+        "start_s": 0.0
+       },
+       {
+        "text": "28 Jannis",
+        "end_s": 4.96,
+        "start_s": 2.66
+       },
+       {
+        "text": "Mit der Nr.",
+        "end_s": 7.42,
+        "start_s": 5.82
+       },
+       {
+        "text": "2 spielt Fakulto",
+        "end_s": 9.48,
+        "start_s": 7.42
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Mit der Nummer 28, Janis. Mit der Nummer 2 spielt Facundo."
+     },
+     "actions": [
+      "stadium lights illuminate pitch",
+      "crowd cheers in response to announcer"
+     ],
+     "setting": "football stadium at night",
+     "subject": "football stadium crowd",
+     "summary": "The video shows a wide view of a football stadium at night, with the pitch illuminated and red lights in the stands. An announcer is heard calling out player names and numbers, while the crowd cheers. The camera pans slightly, showing the atmosphere inside the stadium.",
+     "activity": "attending a football match",
+     "audio_type": "mixed",
+     "content_type": "ambience",
+     "on_screen_text": "",
+     "visual_quality": "sharp and steady, slight pan",
+     "notable_moments": [
+      {
+       "end_s": 3.0,
+       "start_s": 0.0,
+       "description": "announcer calls out player number 28 to a cheering crowd"
+      },
+      {
+       "end_s": 6.2,
+       "start_s": 3.7,
+       "description": "crowd cheers loudly as stadium lights flash red"
+      },
+      {
+       "end_s": 10.0,
+       "start_s": 7.2,
+       "description": "announcer calls out player number 2, Facundo"
+      },
+      {
+       "end_s": 11.5,
+       "start_s": 10.5,
+       "description": "crowd cheers as stadium lights flash red and white"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "media_id": "IMG_1002",
+   "kind": "video",
+   "duration_s": 7.866667,
+   "has_audio": true,
+   "width": 320,
+   "height": 568,
+   "capture": {
+    "capture_time": "2026-10-28T17:42:36Z"
+   },
+   "analysis": {
+    "transcript": "Hauptbahnhof. Nächster Halt, Leverkusen Mitte.",
+    "description": "train interior window view train moving past lights pan to train cabin interior",
+    "best_moments": [
+     {
+      "end_s": 1.7,
+      "energy": 3.0,
+      "start_s": 0.0,
+      "description": "train interior window view"
+     },
+     {
+      "end_s": 4.5,
+      "energy": 4.0,
+      "start_s": 2.5,
+      "description": "train moving past lights"
+     },
+     {
+      "end_s": 8.0,
+      "energy": 3.0,
+      "start_s": 6.0,
+      "description": "pan to train cabin interior"
+     }
+    ],
+    "on_screen_text": "Hauptbahnhof. Nächster Halt, Leverkusen Mitte.",
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "white train seats"
+     ],
+     "brands": [],
+     "people": {
+      "note": "passengers in a train, one reflected in window holding a phone",
+      "count": 3,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "language": "de",
+      "segments": [
+       {
+        "text": "Aachen Hauptbahnhof.",
+        "end_s": 1.34,
+        "start_s": 0.0
+       },
+       {
+        "text": "Nächster Halt Leverkurve Mitte.",
+        "end_s": 4.3,
+        "start_s": 2.22
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Hauptbahnhof. Nächster Halt, Leverkusen Mitte."
+     },
+     "setting": "train interior at night",
+     "subject": "train interior with passenger reflection",
+     "summary": "The video shows the interior of a train, primarily focusing on a window reflecting a passenger holding a phone. An announcement for the next stop, Leverkusen Mitte, is heard.",
+     "activity": "traveling by train",
+     "audio_type": "dialogue",
+     "content_type": "ambience",
+     "on_screen_text": "",
+     "visual_quality": "shaky handheld",
+     "notable_moments": [
+      {
+       "end_s": 1.7,
+       "start_s": 0.0,
+       "description": "train interior window view"
+      },
+      {
+       "end_s": 4.5,
+       "start_s": 2.5,
+       "description": "train moving past lights"
+      },
+      {
+       "end_s": 8.0,
+       "start_s": 6.0,
+       "description": "pan to train cabin interior"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "media_id": "IMG_1039",
+   "kind": "video",
+   "duration_s": 18.333333,
+   "has_audio": true,
+   "width": 320,
+   "height": 568,
+   "capture": {
+    "capture_time": "2026-10-28T21:35:40Z"
+   },
+   "analysis": {
+    "transcript": "",
+    "description": "fans cheer and wave scarves camera pans to stadium interior crowd celebrates a goal man enthusiastically waves scarf wide shot of stadium crowd",
+    "best_moments": [
+     {
+      "end_s": 1.9,
+      "energy": 7.5,
+      "start_s": 0.0,
+      "description": "fans cheer and wave scarves"
+     },
+     {
+      "end_s": 5.4,
+      "energy": 6.0,
+      "start_s": 2.2,
+      "description": "camera pans to stadium interior"
+     },
+     {
+      "end_s": 10.4,
+      "energy": 8.0,
+      "start_s": 6.8,
+      "description": "crowd celebrates a goal"
+     },
+     {
+      "end_s": 13.9,
+      "energy": 9.0,
+      "start_s": 11.2,
+      "description": "man enthusiastically waves scarf"
+     },
+     {
+      "end_s": 18.9,
+      "energy": 7.0,
+      "start_s": 14.5,
+      "description": "wide shot of stadium crowd"
+     }
+    ],
+    "on_screen_text": "",
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "red stadium seats",
+      "black and white football scarf"
+     ],
+     "brands": [],
+     "people": {
+      "note": "a diverse crowd of fans, including adults and children",
+      "count": 99,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "to_camera": false,
+      "has_speech": false,
+      "transcript": ""
+     },
+     "actions": [
+      "people cheer loudly",
+      "people wave scarves in the air",
+      "camera pans across the stadium",
+      "people celebrate a goal"
+     ],
+     "setting": "indoor football stadium suite and stands at night",
+     "subject": "stadium crowd",
+     "summary": "A group of fans in a stadium suite celebrate while watching a football match. The camera shows them cheering and waving scarves, then pans across the large, lively stadium and the football pitch.",
+     "activity": "fans cheering and watching a football match",
+     "audio_type": "ambient",
+     "content_type": "action",
+     "on_screen_text": "",
+     "visual_quality": "shaky handheld, stays sharp",
+     "notable_moments": [
+      {
+       "end_s": 1.9,
+       "start_s": 0.0,
+       "description": "fans cheer and wave scarves"
+      },
+      {
+       "end_s": 5.4,
+       "start_s": 2.2,
+       "description": "camera pans to stadium interior"
+      },
+      {
+       "end_s": 10.4,
+       "start_s": 6.8,
+       "description": "crowd celebrates a goal"
+      },
+      {
+       "end_s": 13.9,
+       "start_s": 11.2,
+       "description": "man enthusiastically waves scarf"
+      },
+      {
+       "end_s": 18.9,
+       "start_s": 14.5,
+       "description": "wide shot of stadium crowd"
+      }
+     ]
+    }
+   }
+  }
+ ],
+ "visuals": [
+  {
+   "kind": "image",
+   "media_id": "IMG_0995",
+   "capture": {
+    "capture_time": "2026-10-28T17:34:31Z"
+   }
+  },
+  {
+   "kind": "image",
+   "media_id": "IMG_1019",
+   "capture": {
+    "capture_time": "2026-10-28T18:52:22Z"
+   }
+  },
+  {
+   "kind": "image",
+   "media_id": "IMG_1038",
+   "capture": {
+    "capture_time": "2026-10-28T20:33:20Z"
+   }
+  },
+  {
+   "kind": "image",
+   "media_id": "IMG_1001",
+   "capture": {
+    "capture_time": "2026-10-28T17:35:12Z"
+   }
+  },
+  {
+   "kind": "image",
+   "media_id": "IMG_1017",
+   "capture": {
+    "capture_time": "2026-10-28T18:52:13Z"
+   }
+  }
+ ],
+ "visual_ids": [
+  "IMG_0995",
+  "IMG_1019",
+  "IMG_1038"
+ ],
+ "approved_windows": [
+  {
+   "media_id": "IMG_1036",
+   "source_start_s": 4.5,
+   "source_end_s": 6.7,
+   "reason": "best_moment"
+  },
+  {
+   "media_id": "IMG_1027",
+   "source_start_s": 5.0,
+   "source_end_s": 7.2,
+   "reason": "best_moment"
+  },
+  {
+   "media_id": "IMG_1037",
+   "source_start_s": 0.0,
+   "source_end_s": 2.2,
+   "reason": "analysis_fallback"
+  },
+  {
+   "media_id": "IMG_1026",
+   "source_start_s": 3.0,
+   "source_end_s": 5.2,
+   "reason": "best_moment"
+  },
+  {
+   "media_id": "IMG_1043",
+   "source_start_s": 0.0,
+   "source_end_s": 2.2,
+   "reason": "best_moment"
+  },
+  {
+   "media_id": "IMG_1028",
+   "source_start_s": 3.7,
+   "source_end_s": 5.9,
+   "reason": "best_moment"
+  },
+  {
+   "media_id": "IMG_1002",
+   "source_start_s": 2.5,
+   "source_end_s": 4.5,
+   "reason": "best_moment"
+  },
+  {
+   "media_id": "IMG_1039",
+   "source_start_s": 11.2,
+   "source_end_s": 13.4,
+   "reason": "best_moment"
+  }
+ ],
+ "measured": {
+  "line": "Nächster Halt: Leverkusen Mitte",
+  "sentence_s": [
+   1.9,
+   4.1
+  ],
+  "method": "kit source _src/raw/IMG_1002.MOV: voice-band (300-3400 Hz) RMS in 100 ms steps (bursts 0.0-1.1 'Aachen Hauptbahnhof', 1.9-2.6 'Naechster Halt', 3.1-4.0 'Leverkusen Mitte' over a -50 dB floor) and local whisper large-v3-turbo on short cuts (1.9-4.3 s and 1.6-4.4 s: 'Naechster Halt: Leverkusen Mitte.'; 2.2-4.4 s and 2.5-4.5 s: 'Leverkusen Mitte.'; 1.8-3.7 s: 'Naechster Halt, Leverkus'). The clip's own timed segment says 2.22-4.30 s."
+ }
+}

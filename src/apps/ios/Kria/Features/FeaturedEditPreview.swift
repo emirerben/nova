@@ -3,12 +3,24 @@ import SwiftUI
 import UIKit
 
 enum FeaturedEdit: String, CaseIterable, Identifiable {
-    case bosphorus, lisbon, sunset, office, talking
+    case bosphorus, lisbon, sunset, office, talking, lipsync
 
     static let onboarding: [FeaturedEdit] = [.bosphorus, .lisbon, .sunset, .office, .talking]
     var id: String { rawValue }
     var resource: String { "featured-\(rawValue)" }
-    var aspectRatio: CGFloat { self == .bosphorus || self == .talking ? 9 / 16 : 16 / 9 }
+    var aspectRatio: CGFloat { self == .bosphorus || self == .talking || self == .lipsync ? 9 / 16 : 16 / 9 }
+}
+
+extension CreationFormat {
+    /// The bundled preview video a format card plays; nil falls back to the still poster.
+    var previewEdit: FeaturedEdit? {
+        switch self {
+        case .montage: .bosphorus
+        case .lipsync: .lipsync
+        case .talkingToCamera: .talking
+        case .narrated, .slides: nil
+        }
+    }
 }
 
 @MainActor final class FeaturedEditPlayback: ObservableObject {

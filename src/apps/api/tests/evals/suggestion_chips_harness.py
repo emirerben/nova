@@ -642,8 +642,134 @@ def east_run_cases() -> list[Case]:
     return cases
 
 
+def _intro_bar(bar_id: str, role: str | None, start_s: float | None, **extra: Any) -> dict:
+    bar: dict[str, Any] = {
+        "id": bar_id,
+        "role": role,
+        "text": "Assos: Settled since the Bronze Age",
+        "end_s": 4.0,
+        "font_family": "Inter",
+        "size_px": 64,
+        "effect": "static",
+        **extra,
+    }
+    if start_s is not None:
+        bar["start_s"] = start_s
+    return bar
+
+
+# Failure modes of the "Animate the title" chip (errors unit). The chip runs a
+# ``group: "title"`` op, so it may be offered ONLY for a bar `kria_editor_ops_text.classify`
+# calls the title. Each row is one way the suggester's idea of a title and the editor's can
+# disagree; ``offered`` is whether the chip may appear.
+TITLE_RESOLUTION_ROWS: list[tuple[str, str, list[dict[str, Any]], bool]] = [
+    (
+        "caption_only_first_bar_at_2s",
+        "Assos: only researched caption bars, first at 2.27 s. The editor names no title.",
+        [_intro_bar("authored-text-0", "generative_intro", 2.27)],
+        False,
+    ),
+    (
+        "intro_bar_inside_half_second",
+        "An opening intro bar at 0.4 s is the title for both sides.",
+        [_intro_bar("authored-text-0", "generative_intro", 0.4)],
+        True,
+    ),
+    (
+        "intro_bar_just_after_half_second",
+        "0.51 s is past the editor's opening window: not a title.",
+        [_intro_bar("authored-text-0", "generative_intro", 0.51)],
+        False,
+    ),
+    (
+        "intro_bar_without_a_start_time",
+        "An older snapshot row with no start_s cannot be proven to open the video.",
+        [_intro_bar("authored-text-0", "generative_intro", None)],
+        False,
+    ),
+    (
+        "explicit_title_role_late",
+        "role=title is a title whenever it starts.",
+        [_intro_bar("title-1", "title", 3.0)],
+        True,
+    ),
+    (
+        "late_intro_then_real_title",
+        "A body caption first, an explicit title second: the chip points at the title.",
+        [
+            _intro_bar("authored-text-0", "generative_intro", 2.27),
+            _intro_bar("title-1", "title", 6.0),
+        ],
+        True,
+    ),
+    (
+        "chat_added_text_at_zero",
+        "A chat-added kria- text at 0 s is free text, never the title.",
+        [_intro_bar("kria-text-1", "generative_intro", 0.0)],
+        False,
+    ),
+    (
+        "removed_title",
+        "A removed title bar is not offered.",
+        [_intro_bar("guided-title", "generative_intro", 0.0, removed=True)],
+        False,
+    ),
+]
+
+
+def title_resolution_cases() -> list[Case]:
+    cases = []
+    for key, description, bars, offered in TITLE_RESOLUTION_ROWS:
+        name = f"title_resolution::{key}"
+        expect = {
+            "state": "ready",
+            **({"kinds_include": ["title_animation"]} if offered else {}),
+            **({} if offered else {"kinds_exclude": ["title_animation"]}),
+        }
+        context = {
+            "thread_id": f"thread-{key}",
+            "state": "ready",
+            "language": "en",
+            "client_protocol": 13,
+            "media_digest": f"digest-{key}",
+            "understanding": "n/a",
+            "runtime_version": 2,
+            "render_generation_id": "gen-1",
+            "variant_id": "v1",
+            "resolved_archetype": "unified_montage",
+            "edit_format": "montage",
+            "clips": [
+                {
+                    "media_id": f"clip-{i + 1}",
+                    "ordinal": i + 1,
+                    "kind": "video",
+                    "subject": subject,
+                    "setting": "",
+                    "has_speech": False,
+                    "to_camera": False,
+                    "duration_s": 4.0,
+                    "notable_moments": [{"start_s": 0.5, "end_s": 2.0, "label": subject}],
+                }
+                for i, subject in enumerate(("old harbour", "temple columns", "hillside view"))
+            ],
+            "snapshot_preset": "guided_story_titled",
+            "snapshot": {"text_bars": bars},
+        }
+        cases.append(
+            Case(
+                name=name,
+                path=FIXTURE_DIR / f"{name}.json",
+                description=description,
+                raw={"name": name, "context": context, "expect": expect},
+                expect=expect,
+                tags=["title_resolution", "offered" if offered else "hidden"],
+            )
+        )
+    return cases
+
+
 def all_cases() -> list[Case]:
-    return [*load_cases(), *nermin_cases(), *east_run_cases()]
+    return [*load_cases(), *nermin_cases(), *east_run_cases(), *title_resolution_cases()]
 
 
 # ── G9 executability: recorded planner response -> real adapter + compiler ───────────
@@ -840,6 +966,14 @@ def check_grounding(case: Case, out: sc.SuggestionSetOut) -> list[str]:
                 problems.append(f"{chip.id}: moment starts after the clip ends")
         if a.text_bar_index is not None and not (0 <= a.text_bar_index < len(bars)):
             problems.append(f"{chip.id}: text_bar_index {a.text_bar_index} out of range")
+        if chip.kind == "title_animation" and a.text_bar_index is not None:
+            # Dry run: the editor must resolve the very bar the chip points at as "the title".
+            from app.services.kria_editor_ops_text import title_bar_ids
+
+            if a.text_bar_index < len(bars) and bars[a.text_bar_index].get(
+                "id"
+            ) not in title_bar_ids(snapshot or {}):
+                problems.append(f"{chip.id}: the editor cannot resolve this bar as the title")
         # A whole-video chip still needs real footage or a real render behind it.
         if not clips and snapshot is None:
             problems.append(f"{chip.id}: no footage and no render to ground on")

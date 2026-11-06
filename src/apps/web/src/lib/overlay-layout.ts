@@ -469,8 +469,16 @@ function perWord(
   return text.replace(/\S+/g, (w) => (TURKISH_ONLY_LETTERS.test(w) ? turkish(w) : english(w)));
 }
 
+/** KRI-1192: a whitespace-delimited word with a Greek letter upper-cases with ICU's Greek
+ *  rule (accents dropped: "καλημέρα" → "ΚΑΛΗΜΕΡΑ"; mirror of `_upper` in app/text_fold.py). */
+const GREEK_LETTER = /[\u0370-\u03FF\u1F00-\u1FFF]/;
+const upperWithGreek = (t: string) =>
+  GREEK_LETTER.test(t)
+    ? t.replace(/\S+/g, (w) => (GREEK_LETTER.test(w) ? w.toLocaleUpperCase("el") : w.toUpperCase()))
+    : t.toUpperCase();
+
 export function textUpper(text: string, language?: string | null): string {
-  return perWord(text, language, trUpper, (t) => t.toUpperCase());
+  return perWord(text, language, trUpper, upperWithGreek);
 }
 
 export function textLower(text: string, language?: string | null): string {
@@ -497,7 +505,10 @@ export function applyTextCase(
     return text.replace(/\S+/g, (w) => {
       const lang = usesTurkishCase(w, language) ? "tr" : null;
       const chars = Array.from(w);
-      return textUpper(chars[0] ?? "", lang) + textLower(chars.slice(1).join(""), lang);
+      const first = chars[0] ?? "";
+      // A Greek initial keeps its accent ("όπως" → "Όπως"); only all-caps drops it.
+      const initial = GREEK_LETTER.test(first) ? first.toUpperCase() : textUpper(first, lang);
+      return initial + textLower(chars.slice(1).join(""), lang);
     });
   }
   return text;

@@ -1,0 +1,475 @@
+{
+ "_about": "KRI-1124: Leverkusen M4 run 1 (job 98eac78f, thread eeac2d3b, 2026-10-31). Brief v8, strategy and render-contract order exactly as stored on the failed job; media ids are the real manifest ids; durations from the job's phone source bindings.",
+ "brief": {
+  "version": 8,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "order",
+    "facts": {
+     "key": "capture_time",
+     "last_clip": "the Nürnberg players thanking their fans at the end",
+     "first_clip": "the entrance turnstiles"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "entrance turnstiles, Nürnberg bus, Taha selfie, warm-up with screen, light show, 0:0 pyro, fans, goal, players thanking fans.",
+    "source_turn_id": "9ffcdd7f-a3f0-4c6c-9426-fd1b9c052dee"
+   },
+   {
+    "id": "r2",
+    "kind": "select",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Skip the photo that's too dark to see anything",
+    "source_turn_id": "08c9b87e-97f3-4717-afdb-710802fb04d9"
+   },
+   {
+    "id": "r3",
+    "kind": "select",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Keep the light show even though it's dark, that's the show",
+    "source_turn_id": "08c9b87e-97f3-4717-afdb-710802fb04d9"
+   },
+   {
+    "id": "r4",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "superseded",
+    "literal": "Arrival",
+    "description": "the night photo of the whole stadium lit up in red",
+    "source_turn_id": "28ccef40-a9f4-4ecf-923d-1abfa49096c0"
+   },
+   {
+    "id": "r5",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "superseded",
+    "literal": "Warm-up",
+    "description": "the warm-up photo",
+    "source_turn_id": "bc46a7c4-9725-425e-b4cc-e81a12dd0756"
+   },
+   {
+    "id": "r6",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "superseded",
+    "literal": "Kick-off",
+    "description": "on the 0:0",
+    "source_turn_id": "08c9b87e-97f3-4717-afdb-710802fb04d9"
+   },
+   {
+    "id": "r7",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "superseded",
+    "literal": "Away end",
+    "description": "on the Nürnberg fans",
+    "source_turn_id": "08c9b87e-97f3-4717-afdb-710802fb04d9"
+   },
+   {
+    "id": "r8",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "superseded",
+    "literal": "GOAL",
+    "description": "on the goal",
+    "source_turn_id": "08c9b87e-97f3-4717-afdb-710802fb04d9"
+   },
+   {
+    "id": "r9",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "superseded",
+    "literal": "Full time",
+    "description": "the last photo, the Nürnberg players thanking their fans",
+    "source_turn_id": "bc46a7c4-9725-425e-b4cc-e81a12dd0756"
+   },
+   {
+    "id": "r10",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 20
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make it 20 seconds",
+    "source_turn_id": "08c9b87e-97f3-4717-afdb-710802fb04d9"
+   },
+   {
+    "id": "r11",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "off",
+     "sound_except": [
+      {
+       "sound_media": "the goal"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Only the goal keeps its sound",
+    "source_turn_id": "08c9b87e-97f3-4717-afdb-710802fb04d9"
+   }
+  ]
+ },
+ "strategy": {
+  "pacing": "balanced",
+  "direction": "guided_story",
+  "rationale": "Proceeding with the guided montage, dropping the two problematic text labels while maintaining your requested 20-second duration, exact chronological clip sequence, and selective audio muting.",
+  "voice_mode": "per_clip",
+  "edit_format": "montage",
+  "media_scope": "selected",
+  "clip_intents": [
+   {
+    "op": "order",
+    "position": "first",
+    "attribute": "the stadium from outside",
+    "intent_id": "order_stadium_outside_first"
+   },
+   {
+    "op": "order",
+    "attribute": "the entrance gate",
+    "intent_id": "order_entrance_gate_second"
+   },
+   {
+    "op": "order",
+    "attribute": "the Nürnberg team bus",
+    "intent_id": "order_nuremberg_bus_third"
+   },
+   {
+    "op": "order",
+    "attribute": "my selfie with Taha",
+    "intent_id": "order_selfie_with_taha_fourth"
+   },
+   {
+    "op": "order",
+    "attribute": "the warm-up",
+    "intent_id": "order_warm_up_fifth"
+   },
+   {
+    "op": "order",
+    "attribute": "the light show",
+    "intent_id": "order_light_show_sixth"
+   },
+   {
+    "op": "order",
+    "attribute": "the 0:0 with the pyro",
+    "intent_id": "order_0_0_pyro_seventh"
+   },
+   {
+    "op": "order",
+    "attribute": "the Nürnberg fans",
+    "intent_id": "order_nurnberg_fans_eighth"
+   },
+   {
+    "op": "order",
+    "attribute": "the first goal",
+    "intent_id": "order_first_goal_ninth"
+   },
+   {
+    "op": "order",
+    "position": "last",
+    "attribute": "the Nürnberg players thanking their fans at the end",
+    "intent_id": "order_nurnberg_players_thanking-9e5bd062"
+   },
+   {
+    "op": "exclude",
+    "attribute": "the photo that's too dark to see anything",
+    "intent_id": "exclude_dark_photo",
+    "requirement_id": "r2"
+   },
+   {
+    "op": "include",
+    "attribute": "the light show",
+    "intent_id": "include_light_show"
+   },
+   {
+    "op": "label",
+    "attribute": "the stadium",
+    "intent_id": "label_stadium_arrival",
+    "creator_text": "Arrival"
+   },
+   {
+    "op": "label",
+    "attribute": "the goal",
+    "intent_id": "label_goal_goal",
+    "creator_text": "GOAL"
+   },
+   {
+    "op": "label",
+    "attribute": "the last one",
+    "intent_id": "label_last_one_full_time",
+    "creator_text": "Full time"
+   }
+  ],
+  "caption_style": "auto",
+  "montage_audio": {
+   "source_media_ids": [],
+   "preview_source_beds": false,
+   "preserve_source_audio": true
+  },
+  "audio_strategy": "original_audio",
+  "render_program": "guided",
+  "story_structure": [],
+  "target_duration_s": 20,
+  "creator_duration_s": 20,
+  "selected_media_ids": [
+   "analysis-proxy-ios-67E18328-733F-46AB-99D0-4959F9ADBBBC.mp4",
+   "analysis-proxy-ios-75AB1D95-024C-4CBA-8AF8-D84F7D18CC60.mp4",
+   "asset-0697fe1b-5e07-4a6c-ac66-5df8e27827f3",
+   "asset-7b4f1c9f-7b3c-467d-9a44-20317ae9f696",
+   "asset-a8bbb7a0-95be-4e37-9689-7c05aac1e190",
+   "asset-70501f3d-cbd6-46bb-bfc4-2f572de09c15",
+   "asset-76654025-b1b1-4353-986b-c2e716ddde3e",
+   "asset-bc5abc8d-6c3c-472c-ae1a-c3f39e200ca8",
+   "asset-da156baf-ff35-49a0-83c7-76df249e830e",
+   "asset-f04e1cda-1233-4c43-8b06-d7d2ca807b98"
+  ],
+  "video_reuse_policy": "once",
+  "optional_treatments": [],
+  "resolved_clip_intents": [
+   {
+    "op": "order",
+    "status": "resolved",
+    "position": "first",
+    "attribute": "the stadium from outside",
+    "intent_id": "order_stadium_outside_first",
+    "assignments": [
+     {
+      "evidence": "Stadium exterior at night, brightly illuminated with red lights",
+      "media_id": "asset-76654025-b1b1-4353-986b-c2e716ddde3e",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "attribute": "the entrance gate",
+    "intent_id": "order_entrance_gate_second",
+    "assignments": [
+     {
+      "evidence": "BayArena stadium entrance, with turnstiles",
+      "media_id": "asset-70501f3d-cbd6-46bb-bfc4-2f572de09c15",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "attribute": "the Nürnberg team bus",
+    "intent_id": "order_nuremberg_bus_third",
+    "assignments": [
+     {
+      "evidence": "large black and red team bus with the '1. FCN' logo",
+      "media_id": "asset-bc5abc8d-6c3c-472c-ae1a-c3f39e200ca8",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "attribute": "my selfie with Taha",
+    "intent_id": "order_selfie_with_taha_fourth",
+    "assignments": [
+     {
+      "evidence": "A close-up selfie of three men",
+      "media_id": "asset-0697fe1b-5e07-4a6c-ac66-5df8e27827f3",
+      "confidence": 0.8
+     }
+    ]
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "attribute": "the warm-up",
+    "intent_id": "order_warm_up_fifth",
+    "assignments": [
+     {
+      "evidence": "creator selected",
+      "media_id": "asset-bc5abc8d-6c3c-472c-ae1a-c3f39e200ca8",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "attribute": "the light show",
+    "intent_id": "order_light_show_sixth",
+    "assignments": [
+     {
+      "evidence": "creator selected",
+      "media_id": "analysis-proxy-ios-75AB1D95-024C-4CBA-8AF8-D84F7D18CC60.mp4",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "attribute": "the 0:0 with the pyro",
+    "intent_id": "order_0_0_pyro_seventh",
+    "assignments": [
+     {
+      "evidence": "Football stadium with pyrotechnics... 0:0 score displayed on the scoreboard",
+      "media_id": "asset-7b4f1c9f-7b3c-467d-9a44-20317ae9f696",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "attribute": "the Nürnberg fans",
+    "intent_id": "order_nurnberg_fans_eighth",
+    "assignments": [
+     {
+      "evidence": "packed soccer stadium stand, with large banners including one that reads 'NÜRNBERG'",
+      "media_id": "asset-a8bbb7a0-95be-4e37-9689-7c05aac1e190",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "attribute": "the first goal",
+    "intent_id": "order_first_goal_ninth",
+    "assignments": [
+     {
+      "evidence": "creator selected",
+      "media_id": "analysis-proxy-ios-67E18328-733F-46AB-99D0-4959F9ADBBBC.mp4",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "position": "last",
+    "attribute": "the Nürnberg players thanking their fans at the end",
+    "intent_id": "order_nurnberg_players_thanking-9e5bd062",
+    "assignments": [
+     {
+      "evidence": "creator selected",
+      "media_id": "asset-da156baf-ff35-49a0-83c7-76df249e830e",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "exclude",
+    "status": "resolved",
+    "attribute": "the photo that's too dark to see anything",
+    "intent_id": "exclude_dark_photo",
+    "assignments": [
+     {
+      "evidence": "creator selected",
+      "media_id": "asset-2edcb0db-e659-4ab6-b480-09d260ff394e",
+      "confidence": 1.0
+     }
+    ],
+    "requirement_id": "r2"
+   },
+   {
+    "op": "include",
+    "status": "resolved",
+    "attribute": "the light show",
+    "intent_id": "include_light_show",
+    "assignments": [
+     {
+      "evidence": "creator selected",
+      "media_id": "analysis-proxy-ios-75AB1D95-024C-4CBA-8AF8-D84F7D18CC60.mp4",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "label",
+    "status": "resolved",
+    "attribute": "the stadium",
+    "intent_id": "label_stadium_arrival",
+    "assignments": [
+     {
+      "value": "Arrival",
+      "evidence": "Stadium exterior at night, illuminated with red lights",
+      "media_id": "asset-76654025-b1b1-4353-986b-c2e716ddde3e",
+      "grounding": "creator_text",
+      "confidence": 1.0
+     }
+    ],
+    "creator_text": "Arrival"
+   },
+   {
+    "op": "label",
+    "status": "resolved",
+    "attribute": "the goal",
+    "intent_id": "label_goal_goal",
+    "assignments": [
+     {
+      "value": "GOAL",
+      "evidence": "creator selected",
+      "media_id": "analysis-proxy-ios-67E18328-733F-46AB-99D0-4959F9ADBBBC.mp4",
+      "grounding": "creator_text",
+      "confidence": 1.0
+     }
+    ],
+    "creator_text": "GOAL"
+   },
+   {
+    "op": "label",
+    "status": "resolved",
+    "attribute": "the last one",
+    "intent_id": "label_last_one_full_time",
+    "assignments": [
+     {
+      "value": "Full time",
+      "evidence": "creator selected",
+      "media_id": "asset-da156baf-ff35-49a0-83c7-76df249e830e",
+      "grounding": "creator_text",
+      "confidence": 1.0
+     }
+    ],
+    "creator_text": "Full time"
+   }
+  ],
+  "selected_music_section": null,
+  "target_duration_requested": true
+ },
+ "order_ids": [
+  "asset-76654025-b1b1-4353-986b-c2e716ddde3e",
+  "asset-70501f3d-cbd6-46bb-bfc4-2f572de09c15",
+  "asset-bc5abc8d-6c3c-472c-ae1a-c3f39e200ca8",
+  "asset-0697fe1b-5e07-4a6c-ac66-5df8e27827f3",
+  "analysis-proxy-ios-75AB1D95-024C-4CBA-8AF8-D84F7D18CC60.mp4",
+  "asset-7b4f1c9f-7b3c-467d-9a44-20317ae9f696",
+  "asset-a8bbb7a0-95be-4e37-9689-7c05aac1e190",
+  "analysis-proxy-ios-67E18328-733F-46AB-99D0-4959F9ADBBBC.mp4",
+  "asset-f04e1cda-1233-4c43-8b06-d7d2ca807b98",
+  "asset-da156baf-ff35-49a0-83c7-76df249e830e"
+ ],
+ "video_durations_s": {
+  "analysis-proxy-ios-67E18328-733F-46AB-99D0-4959F9ADBBBC.mp4": 9.836666666666666,
+  "analysis-proxy-ios-75AB1D95-024C-4CBA-8AF8-D84F7D18CC60.mp4": 11.035
+ },
+ "creator_request": "Full creator request (chronological):\nTell the evening as a story, in this order: the stadium from outside, the entrance gate, the Nürnberg team bus, my selfie with Taha, the warm-up, the light show, the 0:0 with the pyro, the Nürnberg fans, the first goal, and the Nürnberg players thanking their fans at the end. Skip the photo that's too dark to see anything. Keep the light show even though it's dark, that's the show. Short labels: \"Arrival\" on the stadium, \"Warm-up\", \"Kick-off\" on the 0:0, \"Away end\" on the Nürnberg fans, \"GOAL\" on the goal and \"Full time\" on the last one. Only the goal keeps its sound. Make it 20 seconds.\nPut “Warm-up” on the warm-up photo and “Full time” on the last photo, the Nürnberg players thanking their fans.\nLeave out the Warm up and Away end labels\nThe warm-up: clip 9. The first goal: clip 1. The first goal: clip 1. The Nürnberg players thanking their fans at the end: clip 10. The Nürnberg players thanking their fans at the end: clip 10\nThe entrance gate is only the photo with the turnstiles, not the stadium from outside. The warm-up is the photo of the players on the pitch with the big Leverkusen screen, not the team bus.\nThe stadium from outside is the night photo of the whole stadium lit up in red. It comes first\nThe light show: clip 2\nThe photo that's too dark to see anything: clip 6\nSkip that part\nLeave out the kick off label\nMake it without these\n\nCreative brief v8 (everything the creator has asked for, still in force):\n- [r1] [order/global] entrance turnstiles, Nürnberg bus, Taha selfie, warm-up with screen, light show, 0:0 pyro, fans, goal, players thanking fans. facts={first_clip: the entrance turnstiles; key: capture_time; last_clip: the Nürnberg players thanking their fans at the end}\n- [r2] [select/global] Skip the photo that's too dark to see anything\n- [r3] [select/global] Keep the light show even though it's dark, that's the show\n- [r10] [timing/global] Make it 20 seconds facts={duration_s: 20}\n- [r11] [audio/global] Only the goal keeps its sound facts={clip_sound: off; sound_except: [{\"sound_media\":\"the goal\"}]}\nLatest message: Make it without these\n\nSuperseded requirements (historical only; do not reintroduce). The current creative brief above is authoritative:\n- r4: the night photo of the whole stadium lit up in red (\"Arrival\")\n- r5: the warm-up photo (\"Warm-up\")\n- r6: on the 0:0 (\"Kick-off\")\n- r7: on the Nürnberg fans (\"Away end\")\n- r8: on the goal (\"GOAL\")\n- r9: the last photo, the Nürnberg players thanking their fans (\"Full time\")"
+}

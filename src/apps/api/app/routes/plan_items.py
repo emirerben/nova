@@ -148,6 +148,7 @@ from app.routes.generative_jobs import (
     persist_variant_captions_enabled,
     prepare_editor_commit,
     require_editable_variant,
+    require_editor_clock_reader,
     require_guided_story_editor_commit,
     rollback_speech_cut_dispatch,
     speech_cut_director_context,
@@ -4752,6 +4753,51 @@ def _require_sticker_capable_client(slides: list[SlideRef], client_protocol: int
         )
 
 
+def _require_tilt_capable_client(
+    slides: list[SlideRef], client_protocol: int | None, current: SlidePostDraft | None = None
+) -> None:
+    """426 when a save carries a tilt from a build that cannot decode it (KRI-1138).
+
+    A build below ``media_tilt_min_client_protocol`` neither sends nor round-trips ``tilt``
+    (an unknown key is dropped), so a tilt in its save means something forged or replayed it.
+    Same ``client_update_required`` shape the sticker lane uses. A build that DOES understand it
+    while the flag is off is not refused: the merge ignores its value and keeps the stored one.
+
+    ``zoom`` (KRI-1170) needs protocol ``media_tilt_zoom_min_client_protocol``: below it a zoomed
+    tilt is refused, and so is a tilt (or ``null``) sent over a slide whose STORED tilt is zoomed,
+    since that build re-encodes the tilt without the key and the save would erase the zoom.
+    """
+    zoom_floor = settings.media_tilt_zoom_min_client_protocol
+    if client_protocol is None or client_protocol < zoom_floor:
+        stored_zoomed = {
+            ref.id
+            for ref in (current.slides if current is not None else [])
+            if ref.edits is not None and ref.edits.tilt is not None and ref.edits.tilt.zoom != 1.0
+        }
+        for ref in slides:
+            edits = ref.edits
+            if edits is None:
+                continue
+            sent_zoom = edits.tilt is not None and edits.tilt.zoom != 1.0
+            overwrites_stored = (
+                settings.media_tilt_enabled
+                and ref.id in stored_zoomed
+                and "tilt" in edits.model_fields_set
+            )
+            if sent_zoom or overwrites_stored:
+                raise HTTPException(
+                    status_code=status.HTTP_426_UPGRADE_REQUIRED,
+                    detail={"code": "client_update_required", "feature": "slide_tilt_zoom"},
+                )
+    if not any(ref.edits is not None and ref.edits.tilt is not None for ref in slides):
+        return
+    if client_protocol is None or client_protocol < settings.media_tilt_min_client_protocol:
+        raise HTTPException(
+            status_code=status.HTTP_426_UPGRADE_REQUIRED,
+            detail={"code": "client_update_required", "feature": "slide_tilt"},
+        )
+
+
 async def _validate_slide_stickers(
     item: PlanItem,
     user_id: uuid.UUID,
@@ -4860,6 +4906,7 @@ async def put_slide_post_draft(
     )
     _validate_slide_ref_ownership(body.slides, owned_assets)
     _require_sticker_capable_client(body.slides, client_protocol)
+    _require_tilt_capable_client(body.slides, client_protocol, current)
     platform_profile = coerce_platform_profile(_require_slide_post_profile(body.platform_profile))
     try:
         # Old clients omit `texts`; keep the stored rich text (KRI-299).
@@ -4883,6 +4930,11 @@ async def put_slide_post_draft(
         # SLIDE_POST_STICKERS_ENABLED is off.
         body.slides = merge_stored_edit_key(
             current, body.slides, "stickers", accept_incoming=settings.slide_post_stickers_enabled
+        )
+        # ...and for a tilted photo or video (KRI-1138): same three states, ignored while
+        # MEDIA_TILT_ENABLED is off.
+        body.slides = merge_stored_edit_key(
+            current, body.slides, "tilt", accept_incoming=settings.media_tilt_enabled
         )
         await _validate_slide_stickers(item, user.id, current, body.slides, db)
         aspect = (
@@ -5128,7 +5180,7 @@ def _backfill_slide_post_sizes(draft: SlidePostDraft, stored: SlidePostDraft) ->
         # Omitted keys (older app, web) mean "unchanged": backfill Fit and the
         # slide drawing (KRI-589) from the stored draft.
         fill: dict[str, object] = {}
-        for key in ("fit", "drawing", "stickers"):
+        for key in ("fit", "drawing", "stickers", "tilt"):
             stored_value = getattr(old_edits, key) if old_edits is not None else None
             sent = ref.edits is not None and key in ref.edits.model_fields_set
             if not sent and stored_value is not None:
@@ -5286,6 +5338,17 @@ async def chat_edit_slide_post(
                 and settings.slide_post_framing_enabled
                 and (client_protocol or 0) >= settings.slide_post_sizes_min_client_protocol
             ),
+            # set_slide_tilt needs an app that round-trips the tilt (KRI-1138).
+            tilt_enabled=bool(
+                settings.media_tilt_enabled
+                and (client_protocol or 0) >= settings.media_tilt_min_client_protocol
+            ),
+            # ...and its zoom needs one that round-trips that key too (KRI-1170).
+            tilt_zoom_enabled=bool(
+                settings.media_tilt_enabled
+                and (client_protocol or 0) >= settings.media_tilt_min_client_protocol
+                and (client_protocol or 0) >= settings.media_tilt_zoom_min_client_protocol
+            ),
         )
     except Exception:
         if thoughts is not None:
@@ -5378,6 +5441,7 @@ def _slide_post_export_is_current(draft: SlidePostDraft | None, variant: dict | 
         SLIDES_FRAMING_RENDERER_VERSION,
         SLIDES_SIZES_RENDERER_VERSION,
         SLIDES_STICKER_RENDERER_VERSION,
+        SLIDES_TILT_RENDERER_VERSION,
     )
     from app.pipeline.slide_post.build import (  # noqa: PLC0415
         SLIDE_IMAGE_NORMALIZER_VERSION,
@@ -5411,6 +5475,11 @@ def _slide_post_export_is_current(draft: SlidePostDraft | None, variant: dict | 
         # A worker older than the sticker compositor silently omits them (KRI-647).
         stamped = slide_post.get("renderer_version")
         if not isinstance(stamped, int) or stamped < SLIDES_STICKER_RENDERER_VERSION:
+            return False
+    if any(ref.edits is not None and ref.edits.tilt is not None for ref in draft.slides):
+        # A worker older than the tilt renderer exports the media upright (KRI-1138).
+        stamped = slide_post.get("renderer_version")
+        if not isinstance(stamped, int) or stamped < SLIDES_TILT_RENDERER_VERSION:
             return False
     expected_ids = [str(ref.asset_id) for ref in draft.slides]
     rendered_ids = [str(row.get("asset_id")) for row in rendered if isinstance(row, dict)]
@@ -6244,6 +6313,21 @@ _COPILOT_FAST_MONTAGE_REPLY = (
 )
 
 
+def _copilot_montage_pace_note(request_op: dict) -> str | None:
+    """The registry's pacing line for a pace the creator stated that this montage cannot follow
+    (KRI-1097 wave 2). Its cuts do not follow a pace (the 1.2 s fast-cut cap in
+    `EditProposalSnapshot`, `deterministic_fast_cuts` takes none, the web drawer accepts 0.4 to
+    1.2 s cuts), so a balanced or relaxed ask is named on the reply, never claimed and never put
+    on the op."""
+    from app.kria.route_capabilities import _lines as lines  # noqa: PLC0415
+
+    return lines.pacing_line(
+        lambda value, _strategy: value == "fast",
+        "a fast montage keeps its short cuts",
+        "hızlı montaj kısa kesimlerini koruyor",
+    )(request_op.get("pace"), {})
+
+
 @router.post(
     "/{item_id}/variants/{variant_id}/copilot/turn",
     response_model=CopilotTurnResponse,
@@ -6427,13 +6511,22 @@ async def plan_item_copilot_turn(
         "hard_cuts": True,
         "minimal_text": True,
     }
+    pace_note = (
+        _copilot_montage_pace_note(request_op)
+        if settings.copilot_direction_follows_request_enabled
+        else None
+    )
     return await record(
         response.model_copy(
             update={
                 "ops": [server_op],
                 "outcome": "applied",
                 "needs_clarification": False,
-                "reply": _COPILOT_FAST_MONTAGE_REPLY,
+                "reply": (
+                    f"{_COPILOT_FAST_MONTAGE_REPLY} {pace_note}."
+                    if pace_note
+                    else _COPILOT_FAST_MONTAGE_REPLY
+                ),
                 "rejection_reasons": [],
             }
         )
@@ -7567,6 +7660,17 @@ async def set_source_audio_mix(
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
 
+async def _refresh_suggestions_after_save(item_id: str) -> None:
+    """A Save changes the Job without a draft revision: warm the Improve cards for it.
+
+    Flag-gated (KRIA_SUGGESTION_EDITOR_TRIGGERS_ENABLED), debounced, never raises, and only ever
+    called after the commit so no row lock is held.
+    """
+    from app.services.suggestion_serve import arefresh_for_item  # noqa: PLC0415
+
+    await arefresh_for_item(item_id, trigger="editor_save")
+
+
 @router.post(
     "/{item_id}/variants/{variant_id}/editor-commit",
     response_model=EditorCommitResponse,
@@ -7679,6 +7783,7 @@ async def _editor_commit_item(
     # enforce the same compare-and-fail fence before creating its draft.
     if body.base_generation != variant_render_baseline(locked_variant):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="baseline_conflict")
+    require_editor_clock_reader(locked_job, locked_variant)
     initial_deletions = list(body.deletions)
     if is_empty_editor_variant(locked_variant) and any(
         deletion.kind == "clip" for deletion in initial_deletions
@@ -8036,6 +8141,7 @@ async def _editor_commit_item(
             section_flags=section_flags,
         )
         await db.commit()
+        await _refresh_suggestions_after_save(item_id)
         log.info(
             "plan_item_editor_commit_empty_draft",
             item_id=item_id,
@@ -8062,6 +8168,7 @@ async def _editor_commit_item(
                 motion_scenes=section_flags.get("motion_scenes", False),
                 camera_effects=section_flags.get("camera_effects", False),
                 drawings=section_flags.get("drawings", False),
+                speaker_background=section_flags.get("speaker_background", False),
                 carousel_moment=section_flags.get("carousel_moment", False),
                 title=cleaned_title is not None,
             ),
@@ -8082,6 +8189,16 @@ async def _editor_commit_item(
             db, locked_job, _find_variant(locked_job, variant_id) or {}
         ),
     }
+    if draft_baseline is None:
+        from app.services.phone_speaker_background import (  # noqa: PLC0415
+            pin_background_for_commit,
+        )
+
+        # KRI-1117: a Save that sets a Talking background pins the pool visual first (only
+        # one the validator can accept; every other case gets its own refusal there).
+        await pin_background_for_commit(
+            db, locked_job, variant_id, commit_body, plan_item_id=item.id
+        )
     if draft_baseline is not None:
         from app.services.authored_editor import prepare_authored_editor_commit  # noqa: PLC0415
 
@@ -8215,6 +8332,8 @@ async def _editor_commit_item(
                 generation=prep["generation"],
             )
 
+    # After the render kick: a slow Redis or database here delays the response, never the render.
+    await _refresh_suggestions_after_save(item_id)
     log.info(
         "plan_item_editor_commit",
         item_id=item_id,
@@ -8256,6 +8375,7 @@ async def _editor_commit_item(
             motion_scenes=prep["sections"].get("motion_scenes", False),
             camera_effects=prep["sections"].get("camera_effects", False),
             drawings=prep["sections"].get("drawings", False),
+            speaker_background=prep["sections"].get("speaker_background", False),
             carousel_moment=prep["sections"].get("carousel_moment", False),
             title=cleaned_title is not None,
         ),

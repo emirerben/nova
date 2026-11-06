@@ -136,6 +136,12 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         reason="Cropping a clip's frame is a hand gesture on the phone; no agent op reframes "
         "a single clip.",
     ),
+    "clip_tilt": _g(
+        "agent_ops",
+        "setClipTilt applyTiltBackdropToAllClips",
+        ("patch_slots",),
+        fields=("tilt",),
+    ),
     "clip_audio": _g(
         "agent_ops",
         "toggleClipAudio setOriginalAudioLevel setOriginalMixLevel",
@@ -197,6 +203,48 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "setCarouselPosition setCarouselMomentPosition removeCarouselMoment",
         ("set_carousel_moment",),
     ),
+    # The Talk-to-camera background (KRI-1117). The scanner counts only `func` declarations, so the
+    # session's read helpers (`canEditSpeakerBackground`, `speakerBackground`,
+    # `speakerBackgroundChoices` are computed properties; `backgroundChoices(from:)` is `static`)
+    # need no row. The agent reaches the same Save section through set_background/remove_background
+    # (`speaker_background` in the editor commit), only while the editor capability is open.
+    "speaker_background": _g(
+        "agent_ops",
+        "setSpeakerBackground setSpeakerBackgroundColor removeSpeakerBackground "
+        "setSpeakerBackgroundWindows addSpeakerBackgroundWindow removeSpeakerBackgroundWindow "
+        "setSpeakerFrame clearSpeakerFrame",
+        (
+            "set_background",
+            "set_background_color",
+            "remove_background",
+            "set_background_sequence",
+            "set_speaker_frame",
+            "clear_speaker_frame",
+        ),
+    ),
+    # Qendresa item 16: the speaker full screen in their own take before the background / corner.
+    # The planner writes it from the creator's first ask (`background_media.full_screen_opening`);
+    # the copilot ops keep it through every background change and `remove_background` clears it,
+    # but no chat op removes the opening alone yet.
+    "speaker_full_opening": _g(
+        "agent_unsupported",
+        "removeFullScreenOpening",
+        reason="Removing only the full-screen opening is editor-only; chat keeps it through every "
+        "background op and clears it with remove_background.",
+    ),
+    # Qendresa item 18: aim a screen-recording background at its text (left / centre / right and a
+    # zoom). Chat reaches it with `set_background_focus`; the getter is a read-only query.
+    "background_focus": _g("agent_ops", "setSpeakerBackgroundFocus", ("set_background_focus",)),
+    # Moving / resizing the framed speaker by hand on the preview writes free geometry. The
+    # agent picks only the named corners (set_speaker_frame / clear_speaker_frame above):
+    # presets, never raw numbers from the model (KRI-1162 S37). Rows:
+    # docs/reviews/speaker-frame-direct-manipulation-failure-modes.md (SF12).
+    "speaker_frame_by_hand": _g(
+        "agent_unsupported",
+        "setSpeakerFrameCenter setSpeakerFrameWidth",
+        reason="Free speaker position and size come from a finger on the preview; the agent "
+        "places the speaker only in a named corner (set_speaker_frame), by design.",
+    ),
     "video_shape": _g(
         "agent_unsupported",
         "setVideoShape",
@@ -205,10 +253,23 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     ),
     # --------------------------------------------------------------- history
     "history": _g("agent_ops", "undo redo", ("undo_last_edit", "repeat_last_edit")),
+    "generated_overlay_approval": _g(
+        "agent_unsupported",
+        "applyOverlayProposal",
+        reason="Generated overlays require explicit native preview approval; chat cannot "
+        "spend on or accept a generated asset through this flow.",
+    ),
+    "overlay_planning_and_queries": _g(
+        "not_an_edit",
+        "requestOverlayPlan containsOverlayProposal overlayBaseTime overlayOutputTime "
+        "overlayDocumentFingerprint",
+        reason="Read-only proposal planning, identity checks and editor clock conversion.",
+    ),
     # ----------------------------------------------------------- not an edit
     "lifecycle_and_sync": _g(
         "not_an_edit",
         "load save reconcileOnOpen reconcilePlaybackState needsReload isBehindActiveJob "
+        "loadForEditorOpen "
         "adoptLatestJob adoptActiveJobFromThread switchToLatestJob keepEditingCurrentJob "
         "synchronizePromptRevision resumeRefreshSync refreshDeviceRender retryRender "
         "retryDeviceRender retryPreview retryPreviewRefresh rebaseCleanDraft "
@@ -224,6 +285,11 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "auditPreviewWindow",
         reason="Loading, saving, rendering, importing and test fixtures change no creative lane.",
     ),
+    "background_tool_navigation": _g(
+        "not_an_edit",
+        "requestBackgroundTool",
+        reason="Opens the Background tool panel; the edit itself is the actions in it.",
+    ),
     "playback_and_selection": _g(
         "not_an_edit",
         "togglePlayback pausePlayback seek select selectClip cycleSelection selectedObject "
@@ -237,12 +303,15 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "canEdit canEditCaptionAnimation canEditOperation capability capabilityReason "
         "operationCapability operationCapabilityReason readOnlyReason cropBlockedReason "
         "cropSourceFrame speedBlockedReason sourceWindowBlockedReason sourceWindowContext "
-        "sourceWindowLength sourceWindowSlot effectiveSourceRate canAdjustMotionSpeed "
+        "sourceWindowLength sourceWindowSlot sourceWindowExplainsOnTap effectiveSourceRate "
+        "canAdjustMotionSpeed "
         "motionRuntimeMismatchReason isMotionSceneReadOnly isClipAudioOn isCaptionUnitEdited "
         "captionAnimationPhases captionParkTime captionTimelineRange captionTimelineRanges "
         "cameraEffectEasing clipSlotClearValue drawing drawingCapMessage pasteUnavailableMessage "
         "soundEffectPreviewURL visualLayerSelections visualRaw footageCrop footagePlaybackRate "
-        "textElement textAnchor captionPosition captionStyleSize",
+        "textElement textAnchor captionPosition captionStyleSize clipTilt tiltBlockedReason "
+        "tiltBackdropIsMissing "
+        "canRotateVisual speakerBackgroundFocus",
         reason="Read-only queries the UI uses to decide what to offer.",
     ),
 }

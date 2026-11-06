@@ -10,8 +10,10 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import re
 import unicodedata
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
@@ -361,22 +363,310 @@ def _check_copy(texts: list[dict], constraints: Mapping[str, str]) -> None:
         movable.remove(moved)
 
 
-def _check_added_text(
-    operations: list[dict], requirements: Sequence[BriefRequirement] | None
-) -> None:
-    if requirements is None or any(
-        req.live
+def _authorizing_asks(requirements: Sequence[BriefRequirement]) -> list[BriefRequirement]:
+    """Live asks that let the text pass write a new text row."""
+    return [
+        req
+        for req in requirements
+        if req.live
         and (
             (req.kind == "text" and req.scope != "title")
             # A title or whole-video sequence already has its bar (the opening title,
             # `unified_montage.brief_view`): only one on a clip needs a new text to split.
             or (is_text_sequence(req) and req.scope not in _SEQUENCE_TITLE_SCOPES)
         )
-        for req in requirements
-    ):
+    ]
+
+
+def _check_added_text(
+    operations: list[dict], requirements: Sequence[BriefRequirement] | None
+) -> None:
+    if requirements is None or _authorizing_asks(requirements):
         return
     if any(op.get("op") == "add_text" for op in operations):
         raise CreationTextCompositionError("Text composition added unrequested text")
+
+
+def _ask_words(text: str) -> tuple[str, ...]:
+    """Words compared across case, accents, punctuation, emoji and line breaks.
+
+    The shared Turkish-aware fold (KRI-786): any punctuation splits a word
+    ("Istanbul'da" == "Istanbul da") and emoji never count.
+    """
+    from app.text_fold import loose_words  # noqa: PLC0415
+
+    return tuple(loose_words(text))
+
+
+# The emoji presentation selectors only pick how a mark is drawn: "❤" and "❤️" are one heart.
+_PRESENTATION_SELECTORS = str.maketrans("", "", chr(0xFE0E) + chr(0xFE0F))
+
+
+def _ask_marks(text: str) -> list[tuple[str, ...]]:
+    """Her emoji and punctuation, in order, in runs that a word ends (whitespace does not).
+
+    One mark per grapheme cluster, split as the renderer splits text (``regex`` ``\\X``),
+    so a skin-toned or ZWJ emoji is one mark and a piece of it is a different one. A
+    cluster with a letter or digit is part of a word (``_ask_words``), never a mark.
+    """
+    import regex  # noqa: PLC0415 - Unicode graphemes
+
+    from app.text_fold import fold_text  # noqa: PLC0415
+
+    runs: list[tuple[str, ...]] = []
+    run: list[str] = []
+    for grapheme in regex.findall(r"\X", fold_text(text)):
+        if grapheme.isspace():
+            continue
+        if _ask_words(grapheme):
+            if run:
+                runs.append(tuple(run))
+                run = []
+            continue
+        mark = grapheme.translate(_PRESENTATION_SELECTORS)
+        if mark:
+            run.append(mark)
+    if run:
+        runs.append(tuple(run))
+    return runs
+
+
+def _screen_start(op: dict) -> float:
+    """When an added line appears; a bad time sorts first (the replay rejects it later)."""
+    try:
+        start = float(op.get("start_s") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return start if math.isfinite(start) else 0.0
+
+
+# Bounds the exact-cover search below; a composer writes a handful of lines, so real
+# programs finish in far fewer steps. Past it the best cover found so far is kept.
+_COVER_SEARCH_STEPS = 20_000
+
+
+def _exact_covers(
+    chunks: list[tuple[str, ...]], literals: list[tuple[str, ...]], budget: list[float]
+) -> frozenset[int]:
+    """Indexes of the added lines that spell her literals exactly (item 22 review).
+
+    ``chunks`` are the added lines' words in screen order. A copy of a literal is one line,
+    or consecutive lines, that spell it word for word: same words, same order, nothing
+    skipped, added or repeated ("this is good" is not "this is not good", "go go go go" is
+    not "go go"). Literal ``j`` makes at most ``budget[j]`` copies (``math.inf`` for a
+    per-clip ask), so a second copy, or a piece of one, is not hers to add. A copy left
+    unfinished keeps none of its lines. Keeps the choice that shows the most of her words;
+    on a tie, the first found, trying for each line in screen order: continue the copy,
+    start a copy, drop the line.
+    """
+    tail = [0] * (len(chunks) + 1)
+    for i in range(len(chunks) - 1, -1, -1):
+        tail[i] = tail[i + 1] + len(chunks[i])
+    best: list = [0, frozenset()]
+    steps = 0
+
+    def walk(i, current, used, score, kept):
+        # ``current``: the copy being spelled, (literal, words placed, its lines) or None.
+        nonlocal steps
+        steps += 1
+        if i == len(chunks):
+            if score > best[0]:
+                best[:] = [score, kept]
+            return
+        placed = current[1] if current else 0
+        if steps > _COVER_SEARCH_STEPS or score + placed + tail[i] <= best[0]:
+            return
+        words = chunks[i]
+        n = len(words)
+        if current is not None:
+            j, pos, lines = current
+            if literals[j][pos : pos + n] == words:
+                if pos + n == len(literals[j]):
+                    done = (*used[:j], used[j] + 1, *used[j + 1 :])
+                    walk(i + 1, None, done, score + len(literals[j]), kept | lines | {i})
+                else:
+                    walk(i + 1, (j, pos + n, lines | {i}), used, score, kept)
+        # A new copy starts here; an unfinished one before it is dropped with its lines.
+        for j, literal in enumerate(literals):
+            if used[j] >= budget[j] or literal[:n] != words:
+                continue
+            if n == len(literal):
+                done = (*used[:j], used[j] + 1, *used[j + 1 :])
+                walk(i + 1, None, done, score + n, kept | {i})
+            else:
+                walk(i + 1, (j, n, frozenset({i})), used, score, kept)
+        walk(i + 1, current, used, score, kept)  # this line is dropped
+
+    walk(0, None, (0,) * len(literals), 0, frozenset())
+    return best[1]
+
+
+def _planned_bar_lines(composed: list[dict], owners: set) -> list[str]:
+    """The line each planned bar still shows once the program ran (one per bar)."""
+    groups: dict[str, list[dict]] = {}
+    for row in composed:
+        if row.get("removed") or is_caption_text_bar(row):
+            continue
+        params = row.get("source_params") or {}
+        owner = row.get("id") if row.get("id") in owners else params.get("sequence_source_id")
+        if owner in owners:
+            groups.setdefault(owner, []).append(row)
+    lines: list[str] = []
+    for rows in groups.values():
+        ordered = sorted(rows, key=lambda row: row["start_s"])
+        cumulative = len(ordered) > 1 and all(
+            (row.get("source_params") or {}).get("sequence_mode") == "cumulative" for row in ordered
+        )
+        lines.append(
+            ordered[-1]["text"] if cumulative else " ".join(row["text"] for row in ordered)
+        )
+    return lines
+
+
+def _holds(run: tuple[str, ...], marks: tuple[str, ...]) -> bool:
+    """Whether ``marks`` sit together, in this order, inside her ``run``."""
+    width = len(marks)
+    return any(run[k : k + width] == marks for k in range(len(run) - width + 1))
+
+
+def _drop_unasked_added_text(
+    operations: list[dict],
+    requirements: Sequence[BriefRequirement] | None,
+    *,
+    plan: dict,
+    texts: list[dict],
+    slots: list[dict],
+    pinned_ops: list[dict],
+    snapshot: EditProposalSnapshot,
+    ctx: RunContext | None,
+) -> list[dict]:
+    """Drop composer ``add_text`` ops that are not the creator's own words (item 22).
+
+    "Just this text, nothing else" must not render an invented line or a second copy of
+    hers, and her line must read exactly as she wrote it (``_exact_covers``): a line that
+    skips, repeats or reorders her words, or leaves her line unfinished, is dropped.
+    Her emoji and punctuation (``_ask_marks``) share one budget: a line of only marks stays
+    when they sit together, in her order, in one of her literals, and each is still left
+    after the planned bars and kept lines showing her words used theirs. A literal of only
+    marks authorizes those marks, never a word.
+    It drops instead of raising: raising fails the creator's whole video, so a drop
+    that would stop the program replaying is skipped. Research ops are always kept (her
+    own research ask), as are described asks (the composer writes the copy), a missing
+    brief and story builds, so their system-owned copy never regresses.
+    """
+    if requirements is None:
+        return operations
+    if snapshot.editorial_plan is not None or _is_story_snapshot(snapshot):
+        _check_added_text(operations, requirements)
+        return operations
+    asks = _authorizing_asks(requirements)
+    from app.text_fold import fold_text  # noqa: PLC0415
+
+    # A described ask (no literal) lets the composer write the copy. A literal of only emoji
+    # or punctuation is still checked below: its marks are budgeted and it adds no words.
+    if any(not fold_text(req.literal or "") for req in asks):
+        return operations
+    literals = [_ask_words(req.literal or "") for req in asks]
+    unbounded = {lit for req, lit in zip(asks, literals, strict=True) if req.scope == "per_clip"}
+    allowed: dict[tuple[str, ...], int] = {}
+    for req, lit in zip(asks, literals, strict=True):
+        allowed[lit] = allowed.get(lit, 0) + (req.scope != "per_clip")
+    distinct = [lit for lit in allowed if lit]
+    # Each of her marks, as often as her literals have it in total (uncapped for a per-clip
+    # ask), and the runs a line of marks must sit in.
+    marks_left: dict[str, float] = {}
+    her_runs: list[tuple[str, ...]] = []
+    for req in asks:
+        for run in _ask_marks(req.literal or ""):
+            her_runs.append(run)
+            for mark in run:
+                per_clip = req.scope == "per_clip"
+                marks_left[mark] = math.inf if per_clip else marks_left.get(mark, 0) + 1
+    digest = _digest(texts, slots)
+
+    def replay(ops: list[dict]) -> list[dict]:
+        program = TextCompositionProgram(base_digest=digest, operations=[*pinned_ops, *ops])
+        return replay_text_composition(plan, program)["text_elements"]
+
+    # An add_text never changes a planned bar and no later op can address an added one, so
+    # the adds are left out: a malformed extra line is then dropped instead of failing the
+    # replay. If that replay fails (a later op counted the added row), retry with every op.
+    try:
+        try:
+            composed = replay([op for op in operations if op.get("op") != "add_text"])
+        except CreationTextCompositionError:
+            composed = replay(operations)
+    except CreationTextCompositionError:
+        return operations  # the real replay right after raises exactly as it does today
+    planned = _planned_bar_lines(composed, {row.get("id") for row in texts})
+    shown = Counter(_ask_words(line) for line in planned)
+    # A planned bar that still shows her line is one of its copies.
+    budget = [
+        math.inf if lit in unbounded else max(0, allowed[lit] - shown[lit]) for lit in distinct
+    ]
+    added = [
+        (index, _ask_words(str(op.get("text") or "")))
+        for index, op in enumerate(operations)
+        if op.get("op") == "add_text" and not isinstance(op.get("research"), dict)
+    ]
+    worded = sorted(
+        ((index, words) for index, words in added if words),
+        key=lambda item: (_screen_start(operations[item[0]]), item[0]),
+    )
+    covers = _exact_covers([words for _, words in worded], distinct, budget)
+    keep = {worded[k][0] for k in covers}
+
+    def spend(text: str) -> None:
+        for mark in (mark for run in _ask_marks(text) for mark in run):
+            if mark in marks_left:
+                marks_left[mark] = max(0, marks_left[mark] - 1)
+
+    # Her marks already on screen: a planned bar showing her line, and each kept line of her
+    # words (emoji there never drop the line, the word fold ignores them, but they use hers).
+    for line in planned:
+        if _ask_words(line) in allowed:
+            spend(line)
+    for index in keep:
+        spend(str(operations[index].get("text") or ""))
+    # A line of only marks, first on screen first: hers when its marks sit together, in her
+    # order, in one of her literals, and each is still left.
+    marked = sorted(
+        (index for index, words in added if not words),
+        key=lambda index: (_screen_start(operations[index]), index),
+    )
+    for index in marked:
+        runs = _ask_marks(str(operations[index].get("text") or ""))
+        if len(runs) != 1 or not any(_holds(run, runs[0]) for run in her_runs):
+            continue
+        need = Counter(runs[0])
+        if all(marks_left.get(mark, 0) >= count for mark, count in need.items()):
+            for mark, count in need.items():
+                marks_left[mark] -= count
+            keep.add(index)
+    kept, dropped = [], []
+    for index, op in enumerate(operations):
+        if op.get("op") != "add_text" or isinstance(op.get("research"), dict) or index in keep:
+            kept.append(op)
+        else:
+            dropped.append(str(op.get("text") or ""))
+    if not dropped:
+        return kept
+    try:
+        replay(kept)
+    except CreationTextCompositionError as exc:
+        log.info(
+            "creation_text_unasked_kept",
+            job_id=getattr(ctx, "job_id", None),
+            reason=str(exc)[:120],
+        )
+        return operations
+    log.info(
+        "creation_text_unasked_dropped",
+        job_id=getattr(ctx, "job_id", None),
+        dropped=len(dropped),
+        texts=[t[:80] for t in dropped],
+    )
+    return kept
 
 
 def snapshot_copy_constraints(
@@ -432,7 +722,9 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
         raise CreationTextCompositionError("Text composition contains a non-text operation")
     if not program.operations:
         _check_copy(texts, program.copy_constraints)
-        return plan
+        if program.text_look is None:
+            return plan
+        return _replay_look_only(plan, texts, program)
     try:
         # add_text uses random IDs in interactive editing. Bind new identities
         # deterministically here so compiling an approved snapshot is repeatable.
@@ -506,6 +798,7 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
         raise
     except (ValueError, TypeError, KeyError) as exc:
         raise CreationTextCompositionError(f"Text composition could not compile: {exc}") from exc
+    rows = apply_text_look(rows, program.text_look)
     result = copy.deepcopy(plan)
     result["text_elements"] = rows
     _check_copy(rows, program.copy_constraints)
@@ -515,6 +808,119 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
     return GuidedStoryExecutionPlan.model_validate(result).model_dump(
         mode="json", exclude_none=False
     )
+
+
+def _replay_look_only(plan: dict, texts: list[dict], program: TextCompositionProgram) -> dict:
+    """A program with no operations but an entrance default: the base lane plus the look."""
+    try:
+        rows = [
+            TextElement.model_validate(row).model_dump(mode="json", exclude_none=False)
+            for row in texts
+        ]
+    except (ValueError, TypeError, KeyError) as exc:
+        raise CreationTextCompositionError(f"Text composition could not compile: {exc}") from exc
+    result = copy.deepcopy(plan)
+    result["text_elements"] = apply_text_look(rows, program.text_look)
+    from app.pipeline.guided_story import GuidedStoryExecutionPlan
+
+    return GuidedStoryExecutionPlan.model_validate(result).model_dump(
+        mode="json", exclude_none=False
+    )
+
+
+def _plays_entrance(row: Mapping[str, Any]) -> bool:
+    """Has this row already decided how it enters (the composer, the creator, a legacy effect)?"""
+    if row.get("animation_phases") is not None:
+        return True
+    effect = str(row.get("effect") or "static")
+    if effect in {"static", "none"}:
+        return False
+    # A story beat's placeholder caption carries the direction's own default fade-in, which is
+    # nobody's choice: the creator's named entrance still goes on it (`story_direction`).
+    return not (effect == "fade-in" and _is_story_seed_id(row.get("id")))
+
+
+def _is_story_seed_id(row_id: object) -> bool:
+    from app.config import settings  # noqa: PLC0415
+    from app.pipeline.story_direction import STORY_SEED_PREFIX  # noqa: PLC0415
+
+    return settings.story_directions_on_montage_enabled and str(row_id or "").startswith(
+        STORY_SEED_PREFIX
+    )
+
+
+def _look_rows(rows: list[dict], target: str) -> list[dict]:
+    """The animatable rows a look target names, in lane order."""
+    from app.kria.brief_checks import _CLIP_ID_PART_RE, _text_style_rows  # noqa: PLC0415
+
+    styles = {style.id: style for style in _text_style_rows(rows)}
+    token = target.split(":", 1)[1] if target.startswith("clip:") else ""
+
+    def named(clip_id: str | None) -> bool:
+        if not clip_id or not token:
+            return False
+        if clip_id == token:
+            return True
+        parts = {part.casefold() for part in _CLIP_ID_PART_RE.split(clip_id)}
+        return len(token) >= 6 and token.isalnum() and token.casefold() in parts
+
+    picked = []
+    for row in rows:
+        style = styles.get(row.get("id"))
+        # Caption-lane, lyric and removed rows are not in `styles`; a creator's pinned corner
+        # text (a stamp, a sign-off) keeps the look the creator pinned it with.
+        if style is None or str(row.get("id") or "").startswith("guided-pinned-"):
+            continue
+        if (
+            target == "all"
+            or (target == "title" and style.kind == "title")
+            or (target == "labels" and style.kind == "label")
+            or (token and style.kind == "label" and named(style.clip_id))
+        ):
+            picked.append(row)
+    return picked
+
+
+def apply_text_look(rows: list[dict], look: Any) -> list[dict]:
+    """Rows with the creator's entrance default applied to every named row that plays none.
+
+    Most specific target first, so a creator's "typewriter on the title, fade on the rest"
+    keeps both. Never overwrites a row that already enters some way. ``look`` None returns
+    ``rows`` unchanged (byte-identical).
+    """
+    if look is None:
+        return rows
+    from app.kria.animation_ask import entrance_patch  # noqa: PLC0415
+
+    rows = copy.deepcopy(rows)
+    for entry in look.entries:
+        patch = entrance_patch(entry.entrance, look.form)
+        for row in _look_rows(rows, entry.target):
+            if not _plays_entrance(row):
+                row.update(patch)
+    return rows
+
+
+def unanimated_look_rows(rows: list[dict], look: Any) -> int:
+    """How many rows a look names that still play no entrance (0 = the ask is on screen)."""
+    if look is None:
+        return 0
+    seen: set[str] = set()
+    for entry in look.entries:
+        seen.update(
+            str(row.get("id")) for row in _look_rows(rows, entry.target) if not _plays_entrance(row)
+        )
+    return len(seen)
+
+
+def _research_entrance_patch(look: Any) -> dict[str, Any] | None:
+    """The style patch researched explanations are added with: the ``all`` entry's entrance."""
+    if look is None:
+        return None
+    from app.kria.animation_ask import entrance_patch  # noqa: PLC0415
+
+    entry = next((e for e in look.entries if e.target == "all"), None)
+    return entrance_patch(entry.entrance, look.form) if entry is not None else None
 
 
 _CAPTION_LANE_SAMPLE_LINES = 6
@@ -693,6 +1099,63 @@ def creation_model_snapshot(
     return model_snapshot
 
 
+def _requested_look(text_requirements: Sequence[BriefRequirement] | None) -> Any:
+    """The creator's animation ask as a ``TextLook``, else None (nothing asked, switch off, or
+    a phone that plays no text entrance: logged, never an error)."""
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.text_animation_ask_enabled or not text_requirements:
+        return None
+    from app.kria.animation_ask import animation_targets, text_look_for  # noqa: PLC0415
+    from app.schemas.text_composition import TextLook  # noqa: PLC0415
+
+    live = [req for req in text_requirements if req.live]
+    if not animation_targets(live):
+        return None
+    look = text_look_for(live)
+    if look is None:
+        log.info("creation_text_animation_unavailable", reason="phone_gate_closed")
+        return None
+    return TextLook.model_validate(look)
+
+
+def _ensure_text_look(snapshot: EditProposalSnapshot, look: Any) -> EditProposalSnapshot:
+    """Check that the creator's animation ask is on the composed text, and complete it if not.
+
+    The composer is asked for the ask but can omit it, and researched explanations replace its
+    output entirely; so, like the hierarchy facts, the finished lane is verified. Unlike them
+    this never raises: a missing entrance is filled by the deterministic look, and anything
+    that still plays none is reported (``creation_text_animation_unmet``) for the receipt to
+    say, never a reason to fail the render.
+    """
+    if look is None:
+        return snapshot
+    from app.pipeline.guided_story import compile_proposal_execution_plan  # noqa: PLC0415
+
+    try:
+        plan = compile_proposal_execution_plan(snapshot)
+        missing = unanimated_look_rows(plan["text_elements"], look)
+        if not missing:
+            return snapshot
+        program = snapshot.text_composition
+        if program is None:
+            texts, slots = _lanes(plan)
+            program = TextCompositionProgram(base_digest=_digest(texts, slots))
+        repaired = snapshot.model_copy(
+            update={"text_composition": program.model_copy(update={"text_look": look})}
+        )
+        left = unanimated_look_rows(
+            compile_proposal_execution_plan(repaired)["text_elements"], look
+        )
+        log.info("creation_text_animation_completed", missing=missing, unmet=left)
+        if left:
+            log.warning("creation_text_animation_unmet", rows=left)
+        return repaired
+    except Exception as exc:  # noqa: BLE001 - report-only: an animation ask never fails a render
+        log.warning("creation_text_animation_skipped", error=str(exc)[:200])
+        return snapshot
+
+
 def compose_creation_text(
     snapshot: EditProposalSnapshot,
     *,
@@ -701,6 +1164,97 @@ def compose_creation_text(
     copy_constraints: Mapping[str, str] | None = None,
     text_requirements: Sequence[BriefRequirement] | None = None,
     prepared_research: PreparedResearch | None = None,
+) -> EditProposalSnapshot:
+    """Compose the initial text lane, then make sure a requested animation is on it."""
+    look = _requested_look(text_requirements)
+    composed = _compose_creation_text(
+        snapshot,
+        creator_request=creator_request,
+        ctx=ctx,
+        copy_constraints=copy_constraints,
+        text_requirements=text_requirements,
+        prepared_research=prepared_research,
+        research_look=look,
+    )
+    return _ensure_text_look(_drop_unused_story_seeds(composed), look)
+
+
+def _drop_unused_story_seeds(snapshot: EditProposalSnapshot) -> EditProposalSnapshot:
+    """A story build's placeholder captions the text step did not replace, removed.
+
+    `story_direction` seeds every beat with the planner's chapter line so the plan has text and
+    the text step has a window per beat. Once the step has written captions of its own, an
+    untouched placeholder is an outline line on screen where the video wants none, so it goes.
+    With nothing written (no request, the step left the lane as it was) the placeholders stay:
+    the story keeps its chapter text. Report-only: any trouble keeps the snapshot as composed.
+    """
+    program = snapshot.text_composition
+    if program is None or not program.operations or not _is_story_snapshot(snapshot):
+        return snapshot
+    from app.pipeline.guided_story import compile_proposal_execution_plan  # noqa: PLC0415
+    from app.pipeline.story_direction import STORY_SEED_PREFIX  # noqa: PLC0415
+
+    try:
+        base = compile_proposal_execution_plan(
+            snapshot.model_copy(update={"text_composition": None})
+        )
+        final = compile_proposal_execution_plan(snapshot)["text_elements"]
+        seeds = {
+            row["id"]: row
+            for row in base["text_elements"]
+            if str(row.get("id") or "").startswith(STORY_SEED_PREFIX)
+        }
+        untouched_ids = {row["id"] for row in final if seeds.get(row.get("id")) == row}
+        written = [
+            row
+            for row in final
+            if row.get("id") not in untouched_ids and not is_caption_text_bar(row)
+        ]
+        if not untouched_ids or not written:
+            return snapshot
+        # A removal addresses a bar by its place in the lane the program started from (removed
+        # bars keep their place until the lane is rebuilt), not by its place in the result.
+        untouched = [
+            index
+            for index, row in enumerate(base["text_elements"])
+            if row.get("id") in untouched_ids
+        ]
+        cleaned = snapshot.model_copy(
+            update={
+                "text_composition": program.model_copy(
+                    update={
+                        "operations": [
+                            *program.operations,
+                            *({"op": "remove_text", "bar_index": i} for i in reversed(untouched)),
+                        ]
+                    }
+                )
+            }
+        )
+        compile_proposal_execution_plan(cleaned)
+        return cleaned
+    except Exception as exc:  # noqa: BLE001 - report-only: placeholders may stay, never a failure
+        from app.pipeline.story_direction import error_fields  # noqa: PLC0415
+
+        log.warning("story_seed_cleanup_skipped", **error_fields(exc))
+        return snapshot
+
+
+def _is_story_snapshot(snapshot: EditProposalSnapshot) -> bool:
+    from app.pipeline.story_direction import STORY_BEAT_PREFIX  # noqa: PLC0415
+
+    return any(beat.beat_id.startswith(STORY_BEAT_PREFIX) for beat in snapshot.story_beats)
+
+
+def _compose_creation_text(
+    snapshot: EditProposalSnapshot,
+    *,
+    creator_request: str,
+    ctx: RunContext | None = None,
+    copy_constraints: Mapping[str, str] | None = None,
+    text_requirements: Sequence[BriefRequirement] | None = None,
+    prepared_research: PreparedResearch | None = None,
+    research_look: Any = None,
 ) -> EditProposalSnapshot:
     """Compose the initial text lane of a planned draft.
 
@@ -884,7 +1438,14 @@ def compose_creation_text(
         from app.services.researched_text import run_researched_revision
 
         output = run_researched_revision(
-            output.research_request, utterance=creator_request, snapshot=model_snapshot, ctx=ctx
+            output.research_request,
+            utterance=creator_request,
+            snapshot=model_snapshot,
+            ctx=ctx,
+            # The creator's "with animations" reaches the explanations that replace the
+            # composer's output (None unless they asked, so the ops stay byte-identical).
+            look=_research_entrance_patch(research_look),
+            handled_elsewhere=("animation",) if research_look else (),
         )
     if (
         output.needs_clarification
@@ -900,9 +1461,24 @@ def compose_creation_text(
             "Text composition is incomplete: " + (details or output.reply)
         )
     operations = output.ops
-    _check_added_text(operations, text_requirements)
+    from app.config import settings  # noqa: PLC0415
+
+    asked_only = settings.text_composer_asked_only_enabled
+    if not asked_only:
+        _check_added_text(operations, text_requirements)
     if caption_lane is not None:
         operations = _to_full_bar_indexes(operations, texts_for_model)
+    if asked_only:
+        operations = _drop_unasked_added_text(
+            operations,
+            text_requirements,
+            plan=plan,
+            texts=texts,
+            slots=slots,
+            pinned_ops=pinned_ops,
+            snapshot=snapshot,
+            ctx=ctx,
+        )
     # The composer addressed the lane with the approved research already in place.
     operations = [*pinned_ops, *operations]
     program = TextCompositionProgram(

@@ -1,0 +1,159 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-11-02-v108",
+  "input": {
+    "utterance": "ikinci slaytı biraz yakınlaştır",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "surface": "slide_post",
+      "allowed_op_families": [
+        "text",
+        "clip",
+        "timeline",
+        "slides"
+      ],
+      "base_generation": "slide-post-v2",
+      "has_narrated_captions": false,
+      "max_duration_s": 3.0,
+      "remaining_duration_s": 0.0,
+      "slots": [
+        {
+          "key": "slide-1",
+          "slot_id": "slide-1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "duration_beats": null,
+          "source_duration_s": null,
+          "output_start_s": 0.0,
+          "output_end_s": 1.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null,
+          "look_preset": "none",
+          "media_kind": "image",
+          "media_id": "slide-1",
+          "is_cover": true,
+          "orientation": "portrait",
+          "cropped": false
+        },
+        {
+          "key": "slide-2",
+          "slot_id": "slide-2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "duration_beats": null,
+          "source_duration_s": null,
+          "output_start_s": 1.0,
+          "output_end_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null,
+          "look_preset": "none",
+          "media_kind": "image",
+          "media_id": "slide-2",
+          "is_cover": false,
+          "orientation": "portrait",
+          "cropped": false,
+          "tilt": {
+            "rotation_deg": 0.0,
+            "backdrop": {
+              "kind": "blank"
+            },
+            "zoom": 1.5
+          }
+        },
+        {
+          "key": "slide-3",
+          "slot_id": "slide-3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "duration_beats": null,
+          "source_duration_s": null,
+          "output_start_s": 2.0,
+          "output_end_s": 3.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null,
+          "look_preset": "none",
+          "media_kind": "image",
+          "media_id": "slide-3",
+          "is_cover": false,
+          "orientation": "portrait",
+          "cropped": false
+        }
+      ],
+      "text_bars": [],
+      "total_duration_s": 3.0,
+      "post": {
+        "caption": "",
+        "cover_index": 0,
+        "platform_profile": "tiktok_photo",
+        "framing_enabled": true,
+        "landscape_allowed": true,
+        "tilt_enabled": true,
+        "tilt_zoom_enabled": true
+      },
+      "editor_ops_version": 2
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"set_slide_tilt\", \"slide_indexes\": [1], \"zoom_delta\": 0.25}], \"confidence\": 0.95, \"reply\": \"İkinci slayt biraz daha yakın.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "set_slide_tilt",
+        "changes": [
+          {
+            "slide_id": "slide-2",
+            "tilt": {
+              "rotation_deg": 0.0,
+              "backdrop": {
+                "kind": "blank"
+              },
+              "zoom": 1.75
+            }
+          }
+        ]
+      }
+    ],
+    "confidence": 0.95,
+    "reply": "İkinci slayt biraz daha yakın.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "proposed",
+    "rejection_reasons": [],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": [],
+    "reply_notes": "",
+    "claimed_ops": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "TR: 'biraz yakinlastir' is a small zoom_delta from the slide's current 1.5x",
+    "lane": "kria-1170-slide-zoom",
+    "exact_edit_ops": [
+      {
+        "op": "set_slide_tilt",
+        "changes": [
+          {
+            "slide_id": "slide-2",
+            "tilt": {
+              "rotation_deg": 0.0,
+              "backdrop": {
+                "kind": "blank"
+              },
+              "zoom": 1.75
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

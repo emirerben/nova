@@ -186,8 +186,19 @@ def understanding_attempts(analysis: dict[str, Any] | None) -> int:
     return raw if isinstance(raw, int) and raw > 0 else 0
 
 
+# `PlanItemAsset.analysis["source"]` of an image Kria itself generated (generated_media_admission).
+GENERATED_SOURCE = "generated"
+
+
 def understanding_incomplete(analysis: dict[str, Any] | None, *, kind: str = "video") -> bool:
-    """True while a clip has no usable record AND analysis may still produce one."""
+    """True while a clip has no usable record AND analysis may still produce one.
+
+    A generated image is never analysed (`analyze_kria_clips` reads clip assignments, not pool
+    assets) and Kria wrote it, so nothing is pending: reporting it as incomplete held every
+    turn on its thread for the full wait and then continued the turn (prod b61b7673).
+    """
+    if isinstance(analysis, dict) and analysis.get("source") == GENERATED_SOURCE:
+        return False
     return (
         clip_record(analysis, kind=kind).is_empty()
         and understanding_attempts(analysis) < UNDERSTANDING_MAX_ATTEMPTS

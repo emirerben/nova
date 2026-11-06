@@ -237,9 +237,20 @@ class DeviceRetryOut(_DeviceModel):
     phase: Literal["awaiting_device"]
 
 
-def recipe_digest(recipe: DeviceRecipe) -> str:
+def canonical_recipe_document(recipe: DeviceRecipe) -> dict:
+    """The recipe as JSON, identical in every process.
+
+    ``required_capabilities`` is a set, so its serialized order follows the process's hash
+    seed. Anything that is hashed or compared across processes must use this.
+    """
+
     document = recipe.model_dump(mode="json")
     document["required_capabilities"] = sorted(document["required_capabilities"])
+    return document
+
+
+def recipe_digest(recipe: DeviceRecipe) -> str:
+    document = canonical_recipe_document(recipe)
     payload = json.dumps(document, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(payload.encode()).hexdigest()
 

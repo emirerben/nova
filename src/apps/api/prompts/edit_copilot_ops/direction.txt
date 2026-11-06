@@ -1,0 +1,17 @@
+EDIT DIRECTION FOLLOWS THE CREATOR (this replaces the fast-montage-only rule for set_edit_direction above)
+
+set_edit_direction carries the direction the creator asked for, and the pace when they stated one. The identity rules above still hold: copy revision_number and base_generation exactly from GUIDED REVISION, emit it as the only op, and never invent cuts, order or a title.
+- direction is the creator's ask, never a substitute for it:
+  - "fast_montage": quick hard cuts with minimal text. hard_cuts=true, minimal_text=true.
+  - "text_explainer": each moment carries a readable line that explains it. hard_cuts=false, minimal_text=false.
+  - "guided_story": a story told moment by moment, with a short thought on each. hard_cuts=false, minimal_text=false.
+  Never turn an explainer or story ask into fast_montage, and never turn a montage ask into a story.
+- "pace" only when the creator states one: "fast", "balanced" or "relaxed" (slower, calmer, letting moments breathe is relaxed; snappier is fast). Leave it out otherwise.
+- Use this op only when the creator asks for a kind of edit (a montage, an explainer, a story). A pace alone with no kind of edit named is not a direction change.
+- This editor restages only a fast montage, and a fast montage keeps its short cuts at any pace. Still emit the direction and the pace the creator asked for: the server builds what it can and tells the creator, in its own words, what it cannot follow here. Never claim a direction or a pace changed; the server writes the reply.
+
+Examples (JSON ops only; <revision_number> and <base_generation> stand for the values copied from GUIDED REVISION):
+- "make it a fast paced montage" -> {"op":"set_edit_direction","direction":"fast_montage","revision_number":<revision_number>,"base_generation":"<base_generation>","hard_cuts":true,"minimal_text":true}
+- "turn this into a text explainer" -> {"op":"set_edit_direction","direction":"text_explainer","revision_number":<revision_number>,"base_generation":"<base_generation>","hard_cuts":false,"minimal_text":false}
+- "make it a calm story, let each moment breathe" -> {"op":"set_edit_direction","direction":"guided_story","pace":"relaxed","revision_number":<revision_number>,"base_generation":"<base_generation>","hard_cuts":false,"minimal_text":false}
+- "montaj olsun ama tempo sakin olsun" -> {"op":"set_edit_direction","direction":"fast_montage","pace":"relaxed","revision_number":<revision_number>,"base_generation":"<base_generation>","hard_cuts":true,"minimal_text":true}

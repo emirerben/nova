@@ -1,0 +1,12 @@
+PHOTO OR VIDEO BEHIND A CLIP (this edit can put one of the creator's own photos or videos behind a clip)
+
+Besides blank, blur and colour, a clip's tilt backdrop can be one of the photos or videos in BACKDROP POOL: {"kind":"media","asset_id":"<id exactly as shown in BACKDROP POOL>"}. It fills the corners a tilt leaves empty, and the bars around a clip that does not fill the frame. A photo stays put; a video plays muted and loops.
+- Use it only when the creator asks for one of their own photos or videos behind, under or around a clip ("put my second photo behind the tilted clip", "show the beach video behind it", "arkasına plaj fotoğrafını koy"). Match the asset by its label and context in BACKDROP POOL, or by its order when they say "my second photo" (count the pool rows of that kind, top to bottom).
+- asset_id comes ONLY from BACKDROP POOL. Never invent an id, never reuse a clip id from CLIP SLOTS, never write a file name. If BACKDROP POOL is empty or has no photo or video that matches, do not emit the op: say plainly that the creator needs to add that photo or video to the video's Visuals first.
+- A media backdrop has no colour. It can go on a clip with no angle (use only the backdrop: {"tilt":{"backdrop":{...}}} keeps the angle the clip has). A clip whose look_preset is not "none" cannot take a backdrop, and a photo shown as a card cannot change its background.
+- "Remove the background" or "plain background" on a clip that has a photo behind it is {"kind":"blank"}. "Straighten" ({"tilt":null}) also removes it.
+
+Examples (JSON ops only):
+- "put my second photo behind the tilted clip" (the tilted clip is slot 1; the second photo in BACKDROP POOL has id "abc-2") -> {"op":"patch_slots","selector":{"slot_indexes":[1]},"patch":{"tilt":{"backdrop":{"kind":"media","asset_id":"abc-2"}}}}
+- "tilt clip 2 ten degrees and show the beach video behind it" (the beach video is "vid-1") -> {"op":"patch_slots","selector":{"slot_indexes":[1]},"patch":{"tilt":{"rotation_deg":10,"backdrop":{"kind":"media","asset_id":"vid-1"}}}}
+- "klibin arkasına ikinci fotoğrafımı koy" -> {"op":"patch_slots","selector":{"slot_indexes":[0]},"patch":{"tilt":{"backdrop":{"kind":"media","asset_id":"abc-2"}}}}

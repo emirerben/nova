@@ -67,6 +67,7 @@ from app.services.creator_label_reply import (
 )
 from app.services.spoken_quotes import regound_quoted_intents
 from app.services.too_short_clips import resolve_too_short
+from app.services.turn_checkpoint import checkpointed, note_wait, timed_step
 from app.text_fold import loose_words
 
 if TYPE_CHECKING:
@@ -89,6 +90,9 @@ class PlannedIntentResolution:
     inventory: dict[str, Any] | None = None
     checked_intents: tuple[ClipIntent, ...] = ()
     rejected_selections: tuple[RejectedClipSelection, ...] = ()
+    # Leverkusen M2: previews of asks whose op the schema doesn't have (the planner's
+    # ``unexpressed``). Never a question; the turn's draft names them (`unexpressed_notice`).
+    unexpressed_asks: tuple[str, ...] = ()
 
 
 # KRI-950: the record a picker turn keeps (`KriaTurnPlan.clip_intent_inventory`). A planner
@@ -196,7 +200,9 @@ async def wait_for_clip_understanding(
         if not _unanalysed(clips) or remaining <= 0:
             break
         await asyncio.sleep(min(UNDERSTANDING_POLL_S, remaining))
-    return clips, round(time.monotonic() - started, 1)
+    spent = round(time.monotonic() - started, 1)
+    note_wait("clip_understanding_wait", seconds=spent)
+    return clips, spent
 
 
 def resolve_order_by_intent(intent: ClipIntent, clips: list[IntentClip]) -> ResolvedClipIntent:
@@ -574,7 +580,10 @@ def apply_file_name_references(
     "first ımg_7382 then ımg_7820" names clips the resolver cannot see: its records carry
     what a clip shows, never its file name, so it used to ask "which of your clips match
     ımg_7382?". An intent whose attribute is nothing but file names, each naming exactly
-    one clip (``services.clip_file_names``), is settled here like a tapped answer.
+    one clip (``services.clip_file_names``), is settled here like a tapped answer. So is
+    one whose words the creator tied to file names in a sentence of their own ("The goals
+    are IMG_1037 and IMG_1039." for "the two goal clips", KRI-1112:
+    ``ClipNameIndex.subject_references``).
 
     Returns ``(settled, remaining, split)``. An ``order`` intent naming several clips is a
     sequence: ``split`` maps its id to one order intent per clip, in the order named, each
@@ -593,6 +602,11 @@ def apply_file_name_references(
         refs, others = index.references(intent.attribute)
         if refs and names_only(others) and all(ref.media_id for ref in refs):
             named[intent.intent_id] = refs
+        elif not refs:
+            # KRI-1112: "the two goal clips" after "The goals are IMG_1037 and IMG_1039."
+            bound = index.subject_references(creator_request, intent.attribute)
+            if bound is not None:
+                named[intent.intent_id] = bound
     pinned: set[str] = set()
     for intent in intents:
         refs = named.get(intent.intent_id, [])
@@ -769,8 +783,64 @@ def with_brief_labels(
     return [*intents, *added] if added else intents
 
 
+# KRI-1111: words that never tell two things apart ("my ticket" is the ticket), as in
+# `clip_order_sequence`'s moment names.
+_THING_FILLER = frozenset({"a", "an", "the", "my", "our", "your", "his", "her", "its", "their"})
+# Ops whose text the resolver writes from the footage unless the creator dictated it.
+_AUTHORED_TEXT_OPS = frozenset({"label", "caption"})
+
+
+def _thing(text: str | None) -> tuple[str, ...]:
+    return tuple(word for word in loose_words(text or "") if word not in _THING_FILLER)
+
+
+def excluded_anchors(intents: Sequence[ClipIntent], anchors: Mapping[str, str]) -> dict[str, str]:
+    """The brief's first / last clips this turn's inventory leaves out instead (KRI-1111).
+
+    Leverkusen M3 (thread 83f2dcaa, 2026-10-31): "Start with my ticket", then "Then leave the
+    ticket out" and "Leave the ticket out completely". The brief kept ``first_clip: "my
+    ticket"`` (a change that leaves a sticky fact out carries it back, KRI-522); the planner,
+    which reads every creator message, pinned no first clip and wrote an ``exclude`` for "the
+    ticket" (13:21 and 13:27). A clip left out of the edit cannot open it, so such an end is
+    not added back (``with_brief_anchors``) and the turn takes it off the brief
+    (``anchor_exclusions.withdraw_excluded_anchors``).
+
+    Only a leave-out of the same thing counts: exactly the end's words, case, accents,
+    articles and "my" / "your" aside. "The blurry clip" or "the ticket stub" leave it as it
+    is, and so does a spot the planner pinned itself.
+    """
+    pinned = {i.position for i in intents if i.op == "order" and not i.order_by and i.position}
+    left_out = {_thing(i.attribute) for i in intents if i.op == "exclude"} - {()}
+    out: dict[str, str] = {}
+    for position in ("first", "last"):
+        words = " ".join(str(anchors.get(position) or "").split())
+        if words and position not in pinned and _thing(words) in left_out:
+            out[position] = words
+    return out
+
+
+def authored_text_withdrawn(brief: CreativeBrief | None) -> bool:
+    """The creator withdrew every brief ask for clip text the server writes (KRI-1111).
+
+    Leverkusen M3: "Label each goal clip with who scored and in which minute" (r5) was
+    superseded by "Leave the names and minutes out, just write "TOR!"" (13:22), yet the planner,
+    reading every creator message, wrote the scorer and minute labels again on three turns and
+    the creator was asked "I couldn't find any clips for "who scored"" each time. Only text
+    asks with no dictated words count (a title, or "TOR!", is never authored). False when one
+    is still live, or when the brief never recorded one: the planner's labels then stand.
+    """
+    if brief is None:
+        return False
+    asks = [
+        req
+        for req in brief.requirements
+        if req.kind == "text" and req.scope != "title" and not req.literal
+    ]
+    return bool(asks) and not any(req.live for req in asks)
+
+
 def with_brief_anchors(intents: list[ClipIntent], anchors: Mapping[str, str]) -> list[ClipIntent]:
-    """Add the first / last clip a filming-order brief names that no planned row places (KRI-1067).
+    """Seat the first / last clip a filming-order brief names that no planned row places (KRI-1067).
 
     Leverkusen M1 (2026-10-29): "chronological order from arrival to the final whistle" kept
     ``last_clip: "the final whistle"`` on the brief, but the planner wrote no ``last`` pin for
@@ -781,23 +851,46 @@ def with_brief_anchors(intents: list[ClipIntent], anchors: Mapping[str, str]) ->
     (KRI-282, KRI-1025). Its id and attribute come from the brief's words alone, so the answer
     still binds on the next turn, when the planner may leave it out again.
 
-    A spot the planner already pinned (in any words), or words it already wrote as an order
-    row (a second row for them would argue with it), are left as they are.
+    A spot the planner already pinned (in any words) is left as it is, and so is an end the
+    creator has since left out (``excluded_anchors``, KRI-1111): a clip left out of the edit
+    is never seated or added back as its first / last clip. Words it already wrote as a plain
+    order row are that row's spot, not a second row's (two rows for the same words would
+    argue, KRI-764), so that row takes the position in place (KRI-1123). Leverkusen M4
+    (2026-10-31): "tell the evening as a story, in this order: the stadium from outside, ...
+    the Nürnberg players thanking their fans at the end" was planned as one plain row per beat,
+    so the brief's ``first_clip`` / ``last_clip`` each had a row and neither was seated; the
+    contract refused by name, and the readiness gate copied the refusal onto every requirement.
+    A row for the same words pinned to the other spot or ordered by a fact (``order_by``) is
+    left alone.
     """
     rows = [i for i in intents if i.op == "order" and not i.order_by]
     pinned = {i.position for i in rows if i.position}
     have = {label_key(i.attribute) for i in rows}
     taken = {intent.intent_id for intent in intents}
+    left_out = excluded_anchors(intents, anchors)
+    seated = list(intents)
     added: list[ClipIntent] = []
     for position in ("first", "last"):
         words = " ".join(str(anchors.get(position) or "").split())
         key = label_key(words)
-        if (
-            not key
-            or position in pinned
-            or key in have
-            or len(intents) + len(added) >= MAX_CLIP_INTENTS
-        ):
+        if not key or position in pinned or position in left_out:
+            continue
+        same = next(
+            (
+                n
+                for n, intent in enumerate(seated)
+                if intent.op == "order"
+                and not intent.order_by
+                and intent.position is None
+                and label_key(intent.attribute) == key
+            ),
+            None,
+        )
+        if same is not None:
+            seated[same] = seated[same].model_copy(update={"position": position})
+            pinned.add(position)
+            continue
+        if key in have or len(intents) + len(added) >= MAX_CLIP_INTENTS:
             continue
         intent_id, n = fit_intent_id(f"order-{position}-{key.replace(' ', '-')}"), 2
         while intent_id in taken:
@@ -810,7 +903,7 @@ def with_brief_anchors(intents: list[ClipIntent], anchors: Mapping[str, str]) ->
             continue
         have.add(key)
         taken.add(intent_id)
-    return [*intents, *added] if added else intents
+    return [*seated, *added]
 
 
 def with_filming_end_ticks(
@@ -1154,6 +1247,7 @@ async def plan_and_resolve_clip_intents(
     sequence_texts: Sequence[str] = (),
     checked_inventory: Any = None,
     brief_anchors: Mapping[str, str] | None = None,
+    authored_text_asks_withdrawn: bool = False,
 ) -> PlannedIntentResolution:
     """``describe_clips`` (KRI-612): the Creative Brief asks for a line on each clip saying
     what it shows, so the inventory always carries one description label for it.
@@ -1182,7 +1276,11 @@ async def plan_and_resolve_clip_intents(
 
     ``brief_anchors`` (KRI-1067, ``stated_anchors``): a filming-order brief's first / last
     clip, by the creator's words. One the inventory leaves unplaced joins it
-    (``with_brief_anchors``), and its picker row ticks the end of filming order."""
+    (``with_brief_anchors``), and its picker row ticks the end of filming order.
+
+    ``authored_text_asks_withdrawn`` (KRI-1111, ``authored_text_withdrawn``): the creator
+    withdrew every brief ask for clip text the server writes, so a label or caption the
+    planner wrote without the creator's own words (fresh or reused) is left out, never asked."""
     if len(creator_request) > CREATOR_REQUEST_MAX_CHARS:
         return PlannedIntentResolution(
             [],
@@ -1220,9 +1318,22 @@ async def plan_and_resolve_clip_intents(
     if checked_inventory is not None:
         log.info("clip_intent_planner.inventory_reuse", reused=reused is not None)
     try:
-        output = reused or await asyncio.to_thread(
-            ClipIntentPlannerAgent(default_client()).run, planner_input, ctx=run_context
-        )
+        if reused is not None:
+            output = reused
+        else:
+
+            async def _plan() -> ClipIntentPlannerOutput:
+                return await asyncio.to_thread(
+                    ClipIntentPlannerAgent(default_client()).run, planner_input, ctx=run_context
+                )
+
+            output = await checkpointed(
+                "clip_intent_planner",
+                agent_cls=ClipIntentPlannerAgent,
+                agent_input=planner_input,
+                output_cls=ClipIntentPlannerOutput,
+                call=_plan,
+            )
     except TerminalSchemaError as exc:
         # Invalid model output is a content-recovery problem, not a failed
         # preparation. Ask for a restatement and trust none of the candidate
@@ -1276,6 +1387,13 @@ async def plan_and_resolve_clip_intents(
     silent_drops = dict(output.silent_drops)
     if len(planned_intents) < len(output.intents):
         silent_drops["whole_video_caption_dropped"] = len(output.intents) - len(planned_intents)
+    if authored_text_asks_withdrawn:
+        # KRI-1111: the planner re-reads every message, so the withdrawn "who scored" ask
+        # came back every turn; the brief says the creator took it back.
+        kept = [i for i in planned_intents if i.op not in _AUTHORED_TEXT_OPS or i.creator_text]
+        if len(kept) < len(planned_intents):
+            silent_drops["withdrawn_text_dropped"] = len(planned_intents) - len(kept)
+            planned_intents = kept
     if silent_drops:
         # KRI-456 / KRI-945: style asks, title lines and whole-video texts the planner minted
         # as caption intents, dropped without asking. Closed-vocabulary counts only, never text.
@@ -1378,6 +1496,7 @@ async def plan_and_resolve_clip_intents(
             **kwargs,
             checked_intents=checked_intents,
             rejected_selections=rejected_selections,
+            unexpressed_asks=tuple(output.unexpressed),
         )
 
     selected, visual_intents, dropped_ids = apply_creator_selections(
@@ -1496,25 +1615,27 @@ async def plan_and_resolve_clip_intents(
             )
 
     async def _resolve(pending: list[ClipIntent]) -> IntentResolution:
-        return await resolve_clip_intents_for_turn(
-            intents=pending,
-            creator_request=creator_request,
-            clips=clips,
-            run_context=run_context,
-            background=background,
-            checkpoint=checkpoint,
-            max_vision_requeries=max_vision_requeries,
-            vision_deadline_s=vision_deadline_s,
-            # KRI-516: chapter captions under a filming-time order are stretches of the day.
-            # Omitted otherwise, so every other call is unchanged.
-            **({"filming_order": True} if order_by_intents else {}),
-            # KRI-692: a Turkish chat's picker row never shows a model-written English label.
-            **(
-                {"creator_words": {i.intent_id: i.source_quote for i in output.intents}}
-                if current_reply_language() == "tr"
-                else {}
-            ),
-        )
+        # The vision re-check reads clips with the model: tens of seconds a run, so it is timed.
+        with timed_step("clip_intent_resolution"):
+            return await resolve_clip_intents_for_turn(
+                intents=pending,
+                creator_request=creator_request,
+                clips=clips,
+                run_context=run_context,
+                background=background,
+                checkpoint=checkpoint,
+                max_vision_requeries=max_vision_requeries,
+                vision_deadline_s=vision_deadline_s,
+                # KRI-516: chapter captions under a filming-time order are stretches of the day.
+                # Omitted otherwise, so every other call is unchanged.
+                **({"filming_order": True} if order_by_intents else {}),
+                # KRI-692: a Turkish chat's picker row never shows a model-written English label.
+                **(
+                    {"creator_words": {i.intent_id: i.source_quote for i in output.intents}}
+                    if current_reply_language() == "tr"
+                    else {}
+                ),
+            )
 
     # KRI-991: the resolver is not deterministic and re-reads the whole list every turn, so a
     # match the asking turn already found stands and only the rest is resolved (once, or not at

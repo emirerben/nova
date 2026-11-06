@@ -11,11 +11,18 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
     case text = "Text"
     case captions = "Captions"
     case visuals = "Visuals"
+    /// KRI-1118: shown only when the server opens `speaker_background` (a Talk-to-camera edit rendered on the phone).
+    case background = "Background"
     case sounds = "Sounds"
     /// KRI-589: shown only when the variant opens `drawings.add`.
     case draw = "Draw"
 
     var id: String { rawValue }
+
+    /// The tools the rail offers: Draw and Background appear only when the server opens them for this variant.
+    static func railTools(showsDraw: Bool, showsBackground: Bool) -> [NativeEditorTool] {
+        allCases.filter { $0 != .kria && ($0 != .draw || showsDraw) && ($0 != .background || showsBackground) }
+    }
 
     var icon: String {
         switch self {
@@ -23,6 +30,7 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
         case .text: "textformat"
         case .captions: "captions.bubble"
         case .visuals: "camera.filters"
+        case .background: "photo.on.rectangle"
         case .sounds: "waveform"
         case .draw: "pencil.tip"
         }
@@ -34,6 +42,7 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
         case .text: "Add or edit text overlays"
         case .captions: "Turn captions on or off and choose a style"
         case .visuals: "Browse visual lanes and adjust supported effects"
+        case .background: "Put a photo or video behind you"
         case .sounds: "Adjust music and add sound effects"
         case .draw: "Draw on the video with your finger"
         }
@@ -75,13 +84,18 @@ struct NativeEditorSaveBanner: View {
     var reviewInChat: (() -> Void)? = nil
     @Environment(\.openURL) private var openURL
 
-    @ViewBuilder var body: some View {
+    var showsRenderRetryAction: Bool {
         switch session.saveState {
-        case .failed(let message):
-            banner(title: "Couldn’t save this edit", detail: message, systemImage: "exclamationmark.triangle", tint: .red)
-        case .renderRetryNeeded(let message):
-            VStack(spacing: 0) {
-                banner(title: "Saved — render didn’t start", detail: message, systemImage: "arrow.clockwise", tint: .orange)
+        case .renderRetryNeeded: return true
+        case .failed: return session.hasPendingRenderRetry && !session.isSaving
+        default: return false
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            statusBanner
+            if showsRenderRetryAction {
                 Button("Retry render") { Task { await session.retryRender() } }
                     .font(KriaFont.body(12).weight(.semibold))
                     .foregroundStyle(KriaColor.ink)
@@ -89,6 +103,15 @@ struct NativeEditorSaveBanner: View {
                     .background(KriaColor.softZinc)
                     .accessibilityIdentifier("native-editor-retry-render")
             }
+        }
+    }
+
+    @ViewBuilder private var statusBanner: some View {
+        switch session.saveState {
+        case .failed(let message):
+            banner(title: "Couldn’t save this edit", detail: message, systemImage: "exclamationmark.triangle", tint: .red)
+        case .renderRetryNeeded(let message):
+            banner(title: "Saved — render didn’t start", detail: message, systemImage: "arrow.clockwise", tint: .orange)
         case .deviceRenderRetryNeeded(let message):
             let step = session.deviceRenderNextStep
             VStack(spacing: 0) {
@@ -397,6 +420,7 @@ struct NativeEditorContextStrip: View {
     @ObservedObject var session: NativeEditorSession
     let onAdjust: () -> Void
     var onCrop: () -> Void = {}
+    var onTilt: () -> Void = {}
     /// KRI-717: opens the Range picker (which part of the source clip plays).
     var onRange: () -> Void = {}
     let onTransition: () -> Void
@@ -421,7 +445,7 @@ struct NativeEditorContextStrip: View {
                         .padding(.horizontal, 16)
                 }
                 .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
-                .disabled(rangeBlocked != nil)
+                .disabled(rangeBlocked != nil && !session.sourceWindowExplainsOnTap(for: session.selection))
                 .accessibilityIdentifier("native-editor-clip-range")
                 .accessibilityHint(rangeBlocked ?? "Choose which part of the original clip plays")
 
@@ -437,6 +461,20 @@ struct NativeEditorContextStrip: View {
                     .disabled(blocked != nil || !session.canEdit(.timeline))
                     .accessibilityIdentifier("native-editor-clip-crop")
                     .accessibilityHint(blocked ?? "Choose which part of this clip shows")
+                }
+
+                // KRI-1136: only where the server explicitly lists `clips.tilt`.
+                if session.canTiltClips {
+                    let tiltBlocked = session.tiltBlockedReason(for: session.selection)
+                    Button(action: onTilt) {
+                        Label("Tilt", systemImage: "rotate.right")
+                            .frame(minHeight: 44)
+                            .padding(.horizontal, 16)
+                    }
+                    .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
+                    .disabled(tiltBlocked != nil || !session.canEdit(.timeline))
+                    .accessibilityIdentifier("native-editor-clip-tilt")
+                    .accessibilityHint(tiltBlocked ?? "Turn this clip to any angle")
                 }
 
                 // Toggles the selected clip's own sound (it used to open Adjust and show a static
@@ -588,56 +626,39 @@ struct NativeEditorToolRail: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var selectionNamespace
     let selected: NativeEditorTool?
-    var availableWidth: CGFloat = 328
     var connected = false
     /// The Draw tool is offered only when the server opens drawings for this variant.
     var showsDraw = false
+    /// The Background tool is offered only when the server opens `speaker_background` for this variant.
+    var showsBackground = false
     let onSelect: (NativeEditorTool) -> Void
-    private var tools: [NativeEditorTool] { NativeEditorTool.allCases.filter { $0 != .kria && ($0 != .draw || showsDraw) } }
+    private var tools: [NativeEditorTool] { NativeEditorTool.railTools(showsDraw: showsDraw, showsBackground: showsBackground) }
 
     private var shouldReduceMotion: Bool {
         reduceMotion || ProcessInfo.processInfo.environment["UI_TEST_REDUCE_MOTION"] == "1"
     }
 
     var body: some View {
-        HStack(spacing: NativeEditorIslandMetrics.toolSpacing) {
-            ForEach(tools) { tool in
-                Button { onSelect(tool) } label: {
-                    VStack(spacing: 4) {
-                        Image(systemName: tool.icon)
-                            .font(.system(size: 17, weight: .medium))
-                        Text(tool.rawValue)
-                            .font(KriaFont.body(11).weight(selected == tool ? .semibold : .medium))
-                            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                            .lineLimit(1)
-                            // The island pins each tool to a fixed width, so
-                            // larger Dynamic Type shrinks the label instead
-                            // of truncating it.
-                            .minimumScaleFactor(0.7)
+        GeometryReader { proxy in
+            let layout = NativeEditorIslandMetrics.toolRailLayout(toolCount: tools.count, railWidth: proxy.size.width)
+            if layout.scrolls {
+                ScrollViewReader { scroller in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        toolRow(itemWidth: layout.itemWidth)
+                            .padding(.vertical, NativeEditorIslandMetrics.islandVerticalPadding)
                     }
-                    .foregroundStyle(selected == tool ? KriaColor.ink : KriaColor.zinc)
-                    .frame(width: min(NativeEditorIslandMetrics.toolWidth, max(44, (availableWidth - 22) / CGFloat(tools.count))), height: NativeEditorIslandMetrics.toolHeight)
-                    .background {
-                        if selected == tool {
-                            if shouldReduceMotion {
-                                Capsule().fill(KriaColor.ink.opacity(0.07))
-                            } else {
-                                Capsule().fill(KriaColor.ink.opacity(0.07))
-                                    .matchedGeometryEffect(id: "native-editor-tool-selection", in: selectionNamespace)
-                            }
-                        }
-                    }
-                    .contentShape(Capsule())
+                    .contentMargins(.horizontal, NativeEditorIslandMetrics.islandHorizontalPadding, for: .scrollContent)
+                    .onChange(of: selected, initial: true) { _, tool in reveal(tool, in: scroller, animated: true) }
+                    .onChange(of: layout) { _, _ in reveal(selected, in: scroller, animated: false) }
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(tool.rawValue)
-                .accessibilityHint(selected == tool ? "Close this panel" : tool.accessibilityHint)
-                .accessibilityAddTraits(selected == tool ? .isSelected : [])
-                .accessibilityIdentifier("native-editor-tool-\(tool.rawValue.lowercased())")
+            } else {
+                // A rail that fits stays a plain row, so nothing that swipes the screen can land on it.
+                toolRow(itemWidth: layout.itemWidth)
+                    .padding(.horizontal, NativeEditorIslandMetrics.islandHorizontalPadding)
+                    .padding(.vertical, NativeEditorIslandMetrics.islandVerticalPadding)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .padding(.horizontal, NativeEditorIslandMetrics.islandHorizontalPadding)
-        .padding(.vertical, NativeEditorIslandMetrics.islandVerticalPadding)
         .frame(height: NativeEditorIslandMetrics.islandHeight)
         .accessibilityElement(children: .contain)
         // `.glassEffect()` (used by `.nativeEditorIslandSurface()` on iOS
@@ -662,6 +683,58 @@ struct NativeEditorToolRail: View {
         .nativeEditorIslandSurface(isEnabled: !connected)
         .animation(shouldReduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.86), value: selected)
     }
+
+    private func toolButton(_ tool: NativeEditorTool, itemWidth: CGFloat) -> some View {
+        Button { onSelect(tool) } label: {
+            VStack(spacing: 4) {
+                Image(systemName: tool.icon)
+                    .font(.system(size: 17, weight: .medium))
+                Text(tool.rawValue)
+                    .font(KriaFont.body(11).weight(selected == tool ? .semibold : .medium))
+                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .foregroundStyle(selected == tool ? KriaColor.ink : KriaColor.zinc)
+            .frame(width: itemWidth, height: NativeEditorIslandMetrics.toolHeight)
+            .background {
+                if selected == tool {
+                    if shouldReduceMotion {
+                        Capsule().fill(KriaColor.ink.opacity(0.07))
+                    } else {
+                        Capsule().fill(KriaColor.ink.opacity(0.07))
+                            .matchedGeometryEffect(id: "native-editor-tool-selection", in: selectionNamespace)
+                    }
+                }
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(tool.rawValue)
+        .accessibilityHint(selected == tool ? "Close this panel" : tool.accessibilityHint)
+        .accessibilityAddTraits(selected == tool ? .isSelected : [])
+        .accessibilityIdentifier("native-editor-tool-\(tool.rawValue.lowercased())")
+    }
+
+    private func toolRow(itemWidth: CGFloat) -> some View {
+        HStack(spacing: NativeEditorIslandMetrics.toolSpacing) {
+            ForEach(tools) { tool in toolButton(tool, itemWidth: itemWidth) }
+        }
+    }
+
+    /// Scrolls only as far as the open tool needs. With no tool open, or the first one, the rail goes back to rest
+    /// so the next tool is cut by the edge again.
+    private func reveal(_ tool: NativeEditorTool?, in scroller: ScrollViewProxy, animated: Bool) {
+        guard let first = tools.first else { return }
+        let atStart = tool == nil || tool == first
+        guard let target = atStart ? first : tool else { return }
+        let anchor: UnitPoint? = atStart ? .leading : nil
+        if animated && !shouldReduceMotion {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { scroller.scrollTo(target.id, anchor: anchor) }
+        } else {
+            scroller.scrollTo(target.id, anchor: anchor)
+        }
+    }
 }
 
 struct NativeEditorUnavailableView: View {
@@ -678,7 +751,7 @@ struct NativeEditorUnavailableView: View {
                     .frame(width: 42, height: 42)
                     .background(KriaColor.sage)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                Text(title).font(KriaFont.display(25))
+                Text(title).font(KriaFont.headline(25))
             }
             Text(reason)
                 .font(KriaFont.body(15))

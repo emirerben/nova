@@ -38,6 +38,11 @@ Turkish while its untimed transcript has the English line:
 * ``ground_named_lines`` -- a line only the untimed transcript has gets the word-timed
   whisper pass on that one clip; ``described_lines`` seats one window per clip holding
   every named line it says.
+
+Leverkusen M1 run 2 (thread 1a2189cc): the brief recorded "...with the announcement and mute
+everything else", the creator's sentence with its quoted line cut out:
+
+* ``restore_cut_quote`` -- the creator's words a description copied, quote put back.
 """
 
 from __future__ import annotations
@@ -127,6 +132,10 @@ DESCRIBED_MOMENT_MIN_S = 2.5
 # timed 4.04 s), so a described sentence keeps more breath before it than after.
 DESCRIBED_LEAD_S = 0.8
 _CLAUSE_BREAKS = ",;:.!?\n"
+# A quoted line the brief writer cut from right after the creator's words sits behind only
+# these marks, and never past the end of their sentence.
+_QUOTE_JOINERS = " :,-–—"
+_SENTENCE_ENDS = ".!?…"
 _EDGE_PUNCTUATION = "\"'“”‘’«»„()[]{},;:.!?…"
 
 # whisper-1's trailing-silence inventions, folded: never a line anyone said.
@@ -170,6 +179,45 @@ def quoted_spans(text: str | None) -> list[tuple[int, int, str]]:
         if len(fold_tokens(phrase)) >= MIN_QUOTE_TOKENS:
             out.append((match.start(), match.end(), phrase))
     return out
+
+
+def restore_cut_quote(description: str | None, source: str | None) -> str | None:
+    """``source``'s own words that ``description`` copied, with the quoted line it cut put back.
+
+    Leverkusen M1 run 2 (thread 1a2189cc): the creator wrote 'Keep the sound only on the train
+    clip with the announcement "Nächster Halt: Leverkusen Mitte" and mute everything else.' and
+    the brief recorded that sentence without its quote, so nothing downstream knew which line to
+    keep whole (`kept_sound_lines`). None unless ``description`` is one run of ``source``'s
+    words outside its quotes, said once, with a quoted line inside that run or right after it.
+    """
+    if not description or not source:
+        return None
+    spans = [(match.start(), match.end()) for match in _QUOTED_RE.finditer(source)]
+    if not spans:
+        return None
+    want = fold_tokens(description)
+    outside = [
+        (token, start, end)
+        for token, start, end in _token_offsets(source)
+        if not any(low <= start < high for low, high in spans)
+    ]
+    tokens = [token for token, _start, _end in outside]
+    width = len(want)
+    hits = [i for i in range(len(tokens) - width + 1) if width and tokens[i : i + width] == want]
+    if len(hits) != 1:
+        return None
+    low, high = outside[hits[0]][1], outside[hits[0] + width - 1][2]
+    cut = False
+    for start, end in spans:
+        inside = low < start and end <= high
+        after = (
+            start >= high
+            and not source[high:start].strip(_QUOTE_JOINERS)
+            and source[high - 1] not in _SENTENCE_ENDS
+        )
+        if inside or after:
+            cut, high = True, max(high, end)
+    return source[low:high].strip().rstrip(_CLAUSE_BREAKS + "…") if cut else None
 
 
 def fold_tokens(text: object) -> list[str]:

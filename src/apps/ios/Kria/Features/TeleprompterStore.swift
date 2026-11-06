@@ -18,6 +18,8 @@ struct TeleprompterTakeManifest: Codable, Equatable, Sendable, Identifiable {
     var fileName: String
     var status: TeleprompterTakeStatus
     var interrupted: Bool
+    /// Why the take stopped. Optional so older manifests still decode.
+    var stopReason: TakeStopReason?
     var capturedAt: Date
     var script: TeleprompterScriptDraft
     var intakeID: UUID
@@ -29,6 +31,12 @@ struct TeleprompterTakeManifest: Codable, Equatable, Sendable, Identifiable {
     var audioCheck: TakeAudioCheck?
     /// Whether the raw take reached the Photos library. Optional so older manifests still decode.
     var savedToPhotos: Bool?
+    /// KRI-1119: the background the creator filmed in front of. The movie is still the raw camera. Optional so
+    /// older manifests decode unchanged, and omitted from the JSON when nil.
+    var speakerBackground: SpeakerBackgroundReference?
+    /// KRI-1160: set when Cinematic was on for this take. The movie itself is always an ordinary one. Optional so older
+    /// manifests decode unchanged.
+    var cinematic: CinematicTakeOutcome?
 
     init(id: UUID = UUID(), fileName: String? = nil, status: TeleprompterTakeStatus = .capturing,
          interrupted: Bool = false, capturedAt: Date = .now, script: TeleprompterScriptDraft, intakeID: UUID = UUID(),

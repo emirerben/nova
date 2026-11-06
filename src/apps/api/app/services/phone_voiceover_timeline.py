@@ -31,7 +31,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.kria.clip_tilt_row import row_tilt_from_clip
 from app.kria.recipes_v2 import EditRecipeV2
+from app.pipeline.phone_recipe_shared import display_dims, letterbox_scale, split_clip_scale
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
 from app.services.phone_subtitled_editor import _pinned_recipe
 
@@ -137,10 +139,18 @@ def _clip_rows(
     return rows
 
 
-def _crop_field(clip: Any) -> dict:
-    """``{"source_crop": {...}}`` for a cropped clip, else nothing (KRI-44)."""
+def _crop_field(clip: Any, binding: PhoneSourceBinding, canvas: Any) -> dict:
+    """``{"source_crop": {...}}`` for a cropped clip, else nothing (KRI-44).
+
+    A tilted clip also carries ``{"tilt": {...}}`` (KRI-1136), so the editor opens on it. Its
+    zoom (KRI-1169) is the part of ``transform.scale`` beyond the clip's letterbox scale.
+    """
     crop = getattr(clip, "source_crop", None)
-    return {"source_crop": crop.model_dump()} if crop is not None else {}
+    fields = {"source_crop": crop.model_dump()} if crop is not None else {}
+    letterbox = letterbox_scale(display_dims(binding.original), canvas)
+    _, zoom = split_clip_scale(clip.transform.scale, letterbox)
+    tilt = row_tilt_from_clip(clip, zoom=zoom)
+    return {**fields, "tilt": tilt} if tilt is not None else fields
 
 
 def _selected_source_audio_ids(variant: dict) -> frozenset[str] | None:
@@ -241,7 +251,7 @@ def narrated_timings_and_assignments(
                 "duration_beats": None,
                 "order": len(slots),
                 "removed": False,
-                **_crop_field(clip),
+                **_crop_field(clip, binding, recipe.canvas),
             }
         )
         timings.append({"step_id": step_id, "start_s": start, "end_s": end, "confidence": 1.0})
@@ -297,7 +307,7 @@ def voiceover_ai_timeline(
             # A retimed clip plays `duration_s * playback_rate` source seconds;
             # the editor and a timeline Save must keep that speed (KRI-290).
             slot["playback_rate"] = round(float(clip.rate), 6)
-        slot.update(_crop_field(clip))
+        slot.update(_crop_field(clip, binding, recipe.canvas))
         slots.append(slot)
     return {"beat_grid": [], "slots": slots} if slots else None
 

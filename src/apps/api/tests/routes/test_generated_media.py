@@ -59,3 +59,64 @@ def test_capability_inputs_cannot_mix_source_and_script_contracts():
     for row in invalid:
         with pytest.raises(ValidationError):
             GeneratedMediaRequest(**base, **row)
+
+
+def test_paid_overlay_planning_obeys_the_same_account_gate_as_image_generation(monkeypatch):
+    from app.routes import overlay_generation
+
+    app = FastAPI()
+    app.include_router(overlay_generation.router, prefix="/plan-items")
+    user = User(id=uuid.uuid4(), email="offline@example.test")
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[is_native_client] = lambda: True
+    app.dependency_overrides[kria_client_protocol] = lambda: 99
+    called = []
+
+    def planned(*_args, **_kwargs):
+        called.append(1)
+        return overlay_generation.OverlayPlanResponse(
+            document_fingerprint="f", base_generation="g1", message="ok"
+        )
+
+    monkeypatch.setattr(overlay_generation, "generate_overlay_plan", planned)
+    monkeypatch.setattr(settings, "generated_images_enabled", False)
+    body = {
+        "job_id": str(uuid.uuid4()),
+        "variant_id": "v1",
+        "mode": "automatic",
+        "prompt": "",
+        "base_generation": "g1",
+        "document_fingerprint": "f",
+        "editor_snapshot": {},
+    }
+    client = TestClient(app)
+    assert client.post(f"/plan-items/{uuid.uuid4()}/overlay-plan", json=body).status_code == 404
+    assert called == []
+    # Positive control: the same request reaches the planner once the account gate opens.
+    monkeypatch.setattr(
+        overlay_generation, "generated_capabilities", lambda *a: {"generated_images": True}
+    )
+    assert client.post(f"/plan-items/{uuid.uuid4()}/overlay-plan", json=body).status_code == 200
+    assert called == [1]
+
+
+def test_generated_images_do_not_expire_with_the_calendar(monkeypatch):
+    """No weekly 'prices verified' attestation: the gate depends on the live approval, the
+    organization, the key, the budgets and the kill switch, never on today's date."""
+    from app.services.generated_media import generated_media_enabled
+
+    for name, value in {
+        "ai_cost_control_enabled": True,
+        "generated_images_enabled": True,
+        "generated_media_live_approved": True,
+        "generated_media_billing_organization": "org-offline",
+        "openai_api_key": "sk-offline",
+        "generated_media_max_request_usd": 2.0,
+        "ai_openai_monthly_budget_usd": 100,
+        "ai_openai_image_budget_usd": 100,
+    }.items():
+        monkeypatch.setattr(settings, name, value)
+
+    assert generated_media_enabled("image") is True
+    monkeypatch.setattr(settings, "generated_images_enabled", False)
+    assert generated_media_enabled("image") is False

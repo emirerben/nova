@@ -1,0 +1,30 @@
+{
+ "id": "targets_over_the_cap_are_clamped",
+ "description": "Four target handles where three is the most: the first three stand, the answer survives.",
+ "context": "rd_captions_off_with_cues",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "captions",
+    "target_ids": [
+     "c1",
+     "c2",
+     "c3",
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 1
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "cards": [
+   "captions"
+  ]
+ },
+ "tags": [
+  "natural"
+ ]
+}

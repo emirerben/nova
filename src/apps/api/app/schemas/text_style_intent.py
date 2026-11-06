@@ -90,6 +90,7 @@ LABEL_ANCHORS: dict[LabelPosition, tuple[float, float, Literal["left", "center",
     "bottom": (0.5, 0.78, "center"),
     "bottom_right": (0.92, 0.78, "right"),
 }
+LABEL_DEFAULT_POSITION: LabelPosition = "bottom"
 
 # The typewriter reveal shares the entrance envelope `min(0.4 / speed, hold / 2)`
 # (pipeline/text_animation_phases.py). At speed 1 a whole sentence would appear in 0.4s,

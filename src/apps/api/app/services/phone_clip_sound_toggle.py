@@ -300,6 +300,76 @@ def conflict_reasons(lane: ToggleLane) -> dict[str, str]:
     return {ask.requirement_id: CONTRACT_CONFLICT for ask in lane.asks}
 
 
+def mute_relaxed_contract(
+    contract: Any, lane: ToggleLane, assembly: Mapping[str, Any], *, variant_id: str
+) -> Any | None:
+    """The pinned contract without its camera-audio pin, when the creator muted every clip.
+
+    Qendresa case 4: a job dispatched while the contract still pinned
+    ``original_audio="require"`` from the planner's ``audio_strategy`` alone refuses the
+    whole-video mute its draft promised (a contract built since then pins none:
+    ``creator_render_contract.creator_mutes_whole_video``). The creator's typed ask wins
+    exactly as their own editor Save does (KRI-736, ``phone_editor._relax_requirement``):
+    ``require`` and ``audio_source_ids`` are cleared and nothing else.
+
+    None when the switch is off, the asks keep any camera sound (a partial mute, an exception,
+    an "on"), the contract pins none, or the job's prepared-execution stamp records the
+    contract's digest: the initial render review requires the pinned contract to be that
+    stamped one, so such a job keeps the old step-down (and its honest "contract" reason).
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.kria.clip_sound_toggle_ask import mutes_whole_video  # noqa: PLC0415
+    from app.kria.prepared_execution import variant_stamp  # noqa: PLC0415
+
+    if contract is None or not settings.creator_mute_wins_enabled:
+        return None
+    if not mutes_whole_video(lane.asks):
+        return None
+    if (variant_stamp(assembly, variant_id) or {}).get("contract_digest"):
+        return None
+    if contract.original_audio != "require" and not contract.audio_source_ids:
+        return None
+    return contract.rebind(
+        original_audio=None if contract.original_audio == "require" else contract.original_audio,
+        audio_source_ids=(),
+    )
+
+
+def stage_contract_revision(
+    assembly: Mapping[str, Any],
+    pinned: Any,
+    revised: Any,
+    strategy: Mapping[str, Any],
+    *,
+    variant_id: str,
+) -> dict[str, Any]:
+    """``assembly`` with ``revised`` as ``variant_id``'s contract revision (what the pin verifies
+    against) and the approved length policy re-stamped for its digest, mode and bound kept, as
+    the editor's relax does; without the re-stamp the pin reads the policy as unreadable."""
+    from app.services.device_render import CONTRACT_REVISIONS_FIELD  # noqa: PLC0415
+    from app.services.length_policy_state import (  # noqa: PLC0415
+        read_length_policy,
+        stamp_length_policy,
+    )
+
+    try:
+        policy = read_length_policy(assembly, pinned)
+    except ValueError:
+        policy = None  # unreadable: the pin-time check refuses it on its own terms
+    revisions = dict(assembly.get(CONTRACT_REVISIONS_FIELD) or {})
+    revisions[variant_id] = revised.model_dump(mode="json")
+    staged = {**assembly, CONTRACT_REVISIONS_FIELD: revisions}
+    if policy is not None:
+        staged = stamp_length_policy(
+            staged,
+            strategy,
+            revised,
+            mode=policy.check_mode,
+            duration_bound=policy.requested_duration_bound,
+        )
+    return staged
+
+
 def rendered_toggle_receipt(
     assembly: Mapping[str, Any],
     variant: Mapping[str, Any],
@@ -330,6 +400,20 @@ def rendered_toggle_receipt(
         return None
     if not bindings:
         return None
+    from app.pipeline.phone_talking_cutaway_sound import rendered_cutaway_receipt  # noqa: PLC0415
+    from app.services.phone_rollout import phone_talking_cutaway_sound_supported  # noqa: PLC0415
+
+    talking = (
+        rendered_cutaway_receipt(
+            asks,
+            recipe,
+            silent_media_ids=[b.media_id for b in bindings if b.original.has_audio is False],
+        )
+        if phone_talking_cutaway_sound_supported()
+        else None
+    )
+    if talking is not None:
+        return talking
     asset_to_media = {b.render_asset().id: b.media_id for b in bindings}
     track_id = next(
         (t.id for t in recipe.tracks if t.kind == "video" and t.id == STORY_TRACK_ID),

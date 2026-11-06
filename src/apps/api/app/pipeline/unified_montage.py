@@ -41,13 +41,14 @@ from __future__ import annotations
 
 import math
 import unicodedata
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
 from pydantic import ValidationError
 
+from app.config import settings
 from app.kria.asset_holds import (
     AssetHold,
     hold_outcomes,
@@ -76,9 +77,26 @@ from app.kria.freeze_ask import (
 from app.kria.speed_ask import SpeedSpec, live_speeds
 from app.kria.text_sequence import is_text_sequence
 from app.kria.text_shape_ask import CURVED, CURVED_TEXT_BEND, text_shape
-from app.pipeline.best_parts import BestPart, BestPartsResult, select_best_parts
+from app.pipeline.best_parts import (
+    MAX_BEST_PARTS_DURATION_S,
+    BestPart,
+    BestPartsResult,
+    select_best_parts,
+)
 from app.pipeline.font_coverage import drop_color_emoji
+from app.pipeline.hidden_parts import (
+    HiddenPart,
+    HiddenPartShown,
+    check_windows,
+    hidden_parts_from_strategy,
+    keep_out,
+    parts_by_media,
+    shows_hidden,
+    unsettled_hidden_parts,
+    usable_s,
+)
 from app.pipeline.pinned_text import drawable_pins, pins_from_strategy
+from app.pipeline.story_direction import story_floor_for
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.edit_proposal import (
     CREATOR_SELECTED_ORIENTATION_REASON,
@@ -95,6 +113,7 @@ from app.schemas.edit_proposal import (
     StoryBeat,
     canonical_media_digest,
     mixed_media_hold_bounds,
+    pace_hold_bounds,
 )
 from app.schemas.text_style_intent import (
     normalize_label_position,
@@ -115,11 +134,19 @@ from app.services.clip_order_sequence import (
     apply_sequence,
     moment_seats,
     row_relations,
+    seat_owners,
     sequence_rows,
     unconfirmed_order_groups,
 )
 from app.services.creator_omissions import creator_omission_outcomes
-from app.services.length_policy import natural_length_owner
+from app.services.length_policy import (
+    direction_not_built,
+    effective_pace,
+    natural_length_owner,
+    route_direction,
+    stated_pace,
+    story_direction,
+)
 from app.services.order_mode import order_mode, seeded_permutation
 from app.services.order_mode import random_order_seed as order_seed_of
 from app.services.spoken_quotes import is_outro_hallucination
@@ -131,6 +158,7 @@ from app.services.spoken_roles import (
     window_holds,
     window_inside,
 )
+from app.text_fold import loose_words
 
 FPS = 30
 # The reading-time rule: 0.8s to notice the text plus 60ms per character,
@@ -166,6 +194,11 @@ def min_display_s(chars: int) -> float:
 
 def _nfc(value: object) -> str:
     return unicodedata.normalize("NFC", str(value or "")).strip()
+
+
+def _text_key(value: object) -> str:
+    """A creator's words without case, accents or punctuation ("Full-time!" == "Full time")."""
+    return " ".join(loose_words(_nfc(value)))
 
 
 def _cap_label(text: str, provenance: str) -> str:
@@ -224,6 +257,11 @@ class BriefView:
     # described label; only the scoped ones above are applied per clip.
     wants_order: bool = False
     order_by_capture: bool = False
+    # Leverkusen M1 run 2 #3: no order ask is live, but the last basis the creator let go
+    # of (the simpler version, "Continue without a fixed order") was filming time. Dropping
+    # it waived the check, not the wish: the montage still plays by filming time where the
+    # footage is dated, and nothing claims or verifies it (see ``plan_unified_montage``).
+    kept_filming_order: bool = False
     # KRI-585: an order requirement says "the order I added them", so what the clips
     # say never moves one (filming-time keys set ``order_by_capture`` instead).
     order_basis_stated: bool = False
@@ -236,6 +274,12 @@ class BriefView:
     time_format: str = "hh_mm"
     title_literal: str | None = None
     global_literal: str | None = None
+    # Qendresa case 9: every live ``text/global`` literal (the brief's whole-video / pinned
+    # text) as ``(text, facts.position, ending)``: position raw (normalized where it is used),
+    # ``ending`` = THAT requirement carries a typed ``facts.closing`` (drawn at the end only).
+    global_literals: tuple[tuple[str, object, bool], ...] = ()
+    # Any live title-scope text ask (worded or not): that title is the creator's own.
+    title_asked: bool = False
     facts: Mapping[str, Any] = field(default_factory=dict)
     target_duration_s: float | None = None
     # KRI-522: how the creator asked the title to enter / where labels sit / that the
@@ -243,6 +287,13 @@ class BriefView:
     title_animation: str | None = None
     label_position: str | None = None
     placeholder_labels: bool = False
+    # Prompt fidelity (animation): the animation a live text ask names at ANY scope, and the
+    # corner a global text ask names. ``text_animation`` is the creator's NAMED edge for the
+    # whole text (an unnamed "with animations" is `animation_requested` alone: the creation text
+    # pass gives it the default entrance). Both stay None with `text_animation_ask_enabled` off.
+    text_animation: str | None = None
+    animation_requested: bool = False
+    text_position: str | None = None
     # KRI-828 / KRI-899: every live freeze the creator asked for (corroborated by their
     # words), a later correction already folded into the freeze it changes
     # (`freeze_ask.live_freezes`).
@@ -259,6 +310,16 @@ class BriefView:
     curved_title: bool = False
     curved_labels: bool = False
     curved_texts: frozenset[str] = frozenset()
+    # KRI-1124: the words (`_text_key`) of text requirements the creator took back
+    # (superseded), minus any a live text requirement asks for again. The strategy's clip
+    # intents are re-derived from the whole thread every turn and never learn of the
+    # withdrawal, so `_without_withdrawn_texts` leaves those words out of the plan.
+    withdrawn_texts: frozenset[str] = frozenset()
+
+
+def _closing_fact(value: object) -> bool:
+    """The typed ``facts.closing`` marks an ending: a non-empty string or exactly ``True``."""
+    return value is True or (isinstance(value, str) and bool(value.strip()))
 
 
 def brief_view(brief: Any) -> BriefView:
@@ -275,6 +336,8 @@ def brief_view(brief: Any) -> BriefView:
     clip_literals: dict[str, str] = {}
     title_literal: str | None = None
     global_literal: str | None = None
+    global_literals: list[tuple[str, object, bool]] = []
+    title_asked = False
     facts: dict[str, Any] = {}
     target: float | None = None
     title_animation: str | None = None
@@ -283,13 +346,41 @@ def brief_view(brief: Any) -> BriefView:
     curved_title = curved_labels = False
     curved_texts: set[str] = set()
     live = brief.live()
+    animation_requested = False
+    text_animation: str | None = None
+    text_position: str | None = None
+    if settings.text_animation_ask_enabled:
+        from app.kria.animation_ask import (  # noqa: PLC0415
+            animation_targets,
+            requested_text_position,
+        )
+
+        asks = animation_targets(live)
+        animation_requested = bool(asks)
+        text_animation = next((a.edge for t, a in asks if t == "all" and a.named), None)
+        text_position = requested_text_position(live)
     freezes = live_freezes(live)
     speeds = live_speeds(live)
+    withdrawn_texts = {
+        _text_key(req.literal)
+        for req in brief.requirements
+        if not req.live and req.kind == "text" and req.literal
+    } - {_text_key(req.literal) for req in live if req.kind == "text" and req.literal}
+    withdrawn_texts.discard("")
     for req in live:
         for key, value in (req.facts or {}).items():
             if value not in (None, "") and key not in facts:
                 facts[str(key)] = value
         if req.kind == "text":
+            if req.scope == "global" and req.literal:
+                global_literals.append(
+                    (
+                        _nfc(req.literal),
+                        (req.facts or {}).get("position"),
+                        bool(_closing_fact((req.facts or {}).get("closing"))),
+                    )
+                )
+            title_asked = title_asked or req.scope == "title"
             if text_shape(req) == CURVED:
                 curved_title = curved_title or req.scope == "title"
                 curved_labels = curved_labels or req.scope == "per_clip"
@@ -353,24 +444,55 @@ def brief_view(brief: Any) -> BriefView:
         clip_literals=clip_literals,
         wants_order=wants_order,
         order_by_capture=order_capture,
+        kept_filming_order=not wants_order and _dropped_filming_order(brief),
         order_basis_stated=basis_stated,
         random_order_seed=None if order_capture else random_seed,
         per_clip_text_is_time=wants_time,
         time_format="hour" if hour_only else "hh_mm",
         title_literal=title_literal,
         global_literal=global_literal,
+        global_literals=tuple(global_literals),
+        title_asked=title_asked or bool(title_literal),
         facts=facts,
         target_duration_s=target,
         title_animation=title_animation,
         label_position=label_position,
         placeholder_labels=placeholder_labels,
+        text_animation=text_animation,
+        animation_requested=animation_requested,
+        text_position=text_position,
         freezes=freezes,
         speeds=speeds,
         hold_requirements=hold_requirements(brief),
         curved_title=curved_title,
         curved_labels=curved_labels,
         curved_texts=frozenset(curved_texts),
+        withdrawn_texts=frozenset(withdrawn_texts),
     )
+
+
+def _dropped_filming_order(brief: Any) -> bool:
+    """Was the last order basis the brief superseded filming time (``kept_filming_order``)?
+
+    A dropped upload-order or random-order ask written after it wins, so a creator who
+    moved away from filming order before letting go of order altogether keeps that. So does
+    a filming-order ask the CREATOR removed (``SUPERSEDED_BY_FACT``): a server waiver
+    waives the check, not the wish, but the creator's own withdrawal withdraws the wish.
+    A removal stored with no mark (before it existed) reads as a waiver.
+    """
+    from app.kria.brief import SUPERSEDED_BY_FACT  # noqa: PLC0415 - pipeline imports kria
+    from app.services.choice_questions import ATTACHMENT_ORDER_KEY  # noqa: PLC0415
+
+    filming = False
+    for req in brief.requirements:
+        if req.live or req.kind != "order":
+            continue
+        key = str((req.facts or {}).get("key") or (req.facts or {}).get("by") or "").casefold()
+        if key in _CAPTURE_ORDER_KEYS:
+            filming = (req.facts or {}).get(SUPERSEDED_BY_FACT) != "creator"
+        elif key == ATTACHMENT_ORDER_KEY or order_mode(req) == "random":
+            filming = False
+    return filming
 
 
 def _fact_is_true(value: object) -> bool:
@@ -582,6 +704,29 @@ class UnifiedMontagePlan:
     # "label"), media_id, bend (None = straight), reason (None / "phone" / "animation")}.
     # Empty without a curve ask, so every earlier record is unchanged.
     text_shapes: list[dict[str, Any]] = field(default_factory=list)
+    # Leverkusen M2: each part of a clip the creator asked never to show, as planned:
+    # {media_id, edge, seconds, shown_from_s, shown_to_s} (the earliest and latest source
+    # second any cut of that clip plays). Empty without such an ask, so every earlier record
+    # is unchanged.
+    hidden_parts: list[dict[str, Any]] = field(default_factory=list)
+    # The direction the strategy asked for when this route built a different one (it builds
+    # hard-cut fast montages only): the plan was built as ``snapshot.direction`` and a receipt
+    # may say so. None (every plan whose strategy direction was built) is not recorded.
+    requested_direction: str | None = None
+    # Text-explainer unit: a story direction (text_explainer / guided_story) built as story
+    # beats lists how many; ``story_fallback`` is the fast plan it was built from (the worker
+    # falls back to it if the text step cannot place the story's text), and
+    # ``direction_fallback`` is the reason a story direction was cut as a fast montage
+    # (`story_direction.fallback_note`). All empty for every other plan, so records stay as is.
+    story_beats: int | None = None
+    story_fallback: UnifiedMontagePlan | None = None
+    direction_fallback: str | None = None
+
+    @property
+    def cuts(self) -> list[FastMontageCut]:
+        """The planned cuts (clip, source window, length) in play order, whatever layout the
+        snapshot has: a story plan keeps the fast plan's cuts it was built from."""
+        return list((self.story_fallback or self).snapshot.fast_cuts or [])
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
@@ -663,6 +808,19 @@ class UnifiedMontagePlan:
         shapes = (
             {"text_shapes": [dict(row) for row in self.text_shapes]} if self.text_shapes else {}
         )
+        hidden = (
+            {"hidden_parts": [dict(row) for row in self.hidden_parts]} if self.hidden_parts else {}
+        )
+        direction_asked = (
+            {"requested_direction": self.requested_direction} if self.requested_direction else {}
+        )
+        if self.story_beats is not None:
+            direction_asked["story"] = {
+                "direction": self.snapshot.direction,
+                "beats": self.story_beats,
+            }
+        if self.direction_fallback:
+            direction_asked["direction_fallback"] = self.direction_fallback
         record = {
             "version": 1,
             "brief_version": self.brief_version,
@@ -711,6 +869,8 @@ class UnifiedMontagePlan:
             **spoken,
             **shown,
             **shapes,
+            **hidden,
+            **direction_asked,
         }
 
         if self.snapshot.text_composition is not None:
@@ -862,10 +1022,54 @@ def unheld_still_frames(mixed_media_timing: MixedMediaTimingProfile | None) -> i
     return int(math.ceil(want_s * FPS - 1e-9))
 
 
-def _capacity_frames(clip: UnifiedClip) -> int:
+def _capacity_frames(clip: UnifiedClip, hidden: Sequence[HiddenPart] = ()) -> int:
     if clip.kind == "image":
         return int(round(STILL_MAX_S * FPS))
+    if hidden:
+        # Leverkusen M2: a clip with a part the creator hid can only grow into what it may
+        # still show, or the keep-out step would find no room for the cut.
+        return max(1, int(math.floor(usable_s(float(clip.duration_s), hidden) * FPS + 1e-6)))
     return max(1, int(math.floor((float(clip.duration_s) + 0.001) * FPS + 1e-6)))
+
+
+def _hidden_by_media(
+    ordered: Sequence[UnifiedClip], parts: Sequence[HiddenPart]
+) -> dict[str, tuple[HiddenPart, ...]]:
+    """Each clip's hidden parts, keyed by the id its cuts carry (``media_id``).
+
+    The resolved intents name clips by manifest id (``ref_id``); a part names a video, so a
+    photo never gets one."""
+    by_ref = parts_by_media(parts)
+    return {
+        clip.media_id: tuple(replace(part, media_id=clip.media_id) for part in by_ref[clip.ref_id])
+        for clip in ordered
+        if clip.kind == "video" and clip.ref_id in by_ref
+    }
+
+
+def _kept_out(
+    spans: list[tuple[str, float, float, bool]],
+    hidden: Mapping[str, Sequence[HiddenPart]],
+    durations: Mapping[str, float],
+    *,
+    movable: Callable[[int], bool],
+) -> list[tuple[str, float, float, bool]]:
+    """``spans`` with every movable window slid out of its clip's hidden parts (same length).
+
+    A window that may not move (an approved or a frozen one) or has no room left raises
+    ``HiddenPartShown``: the plan is refused, never rendered with the part."""
+    out = list(spans)
+    for index, (media_id, start, end, approved) in enumerate(spans):
+        parts = hidden.get(media_id)
+        if not parts or not shows_hidden(start, end, durations[media_id], parts):
+            continue
+        moved = keep_out(start, end, durations[media_id], parts) if movable(index) else None
+        if moved is None:
+            raise HiddenPartShown(
+                f"cut {index + 1} of {media_id} cannot leave out the part the creator hid"
+            )
+        out[index] = (media_id, moved[0], moved[1], approved)
+    return out
 
 
 def _window_start_s(clip: UnifiedClip, duration_s: float) -> float:
@@ -1150,6 +1354,21 @@ def _group_first(
     return result
 
 
+def _tapped_members(strategy: Mapping[str, Any]) -> frozenset[tuple[str, str]]:
+    """(folded order-row words, clip ref) for each clip the creator tapped in the clip picker
+    for that row (evidence ``creator selected``): nothing in the clip's record matched it."""
+    from app.schemas.clip_intents import CREATOR_SELECTED_EVIDENCE  # noqa: PLC0415
+
+    return frozenset(
+        (fold_text(_nfc(intent.get("attribute"))), str(assignment.get("media_id")))
+        for intent in strategy.get("resolved_clip_intents") or []
+        if isinstance(intent, Mapping) and intent.get("op") == "order"
+        for assignment in intent.get("assignments") or []
+        if isinstance(assignment, Mapping)
+        and assignment.get("evidence") == CREATOR_SELECTED_EVIDENCE
+    )
+
+
 def _sequence_intents(
     strategy: Mapping[str, Any], enabled: bool
 ) -> list[tuple[str | None, str, list[str], str]]:
@@ -1212,18 +1431,20 @@ def _sequence_outcomes(
     moment_record: Sequence[Mapping[str, Any]] | None = None,
     unconfirmed_groups: frozenset[SequenceGroupKey] = frozenset(),
     seated_visuals: frozenset[str] = frozenset(),
+    tapped: frozenset[tuple[str, str]] = frozenset(),
+    clip_numbers: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """Did each described group land where the creator said? Read off the finished order.
 
     Every row also carries a ``code`` (KRI-503) so the receipt never re-parses ``reason``:
     ``landed`` / ``misplaced`` (a described group is not where it was asked), ``absent`` (none
-    of its clips are in the edit), ``contained`` (a ``then`` group whose clips are all already
-    in an earlier group), ``repeat`` (a first / last group naming clips an earlier group
-    already seated at that same spot: the creator said it twice, KRI-764), ``conflict`` (a
-    first / last group naming clips an earlier group seated at another spot: one clip cannot
-    be both, the earlier claim stands), ``visual`` (its members are Visuals-pool items, which
-    no sequence rule seats) and ``unresolved``. ``status`` keeps its meaning for every other
-    consumer.
+    of its clips are in the edit), ``contained`` (a ``then`` group whose clips other rows
+    all seat: an earlier group, or a first / last pin, KRI-1109), ``repeat`` (a first / last
+    group naming clips an earlier group already seated at that same spot: the creator said it
+    twice, KRI-764), ``conflict`` (a first / last group naming clips an earlier pin seated at
+    the other end: one clip cannot be both, the earlier claim stands), ``visual`` (its
+    members are Visuals-pool items, which no sequence rule seats) and ``unresolved``.
+    ``status`` keeps its meaning for every other consumer.
 
     A row lands (KRI-941) when the finished cut agrees with it against EVERY other clip in the
     edit, named or not: a ``first`` group leads the whole cut, a ``last`` group closes it, and
@@ -1240,17 +1461,21 @@ def _sequence_outcomes(
     ``seated_visuals`` (KRI-1069) are the refs of the dated Visuals a filming-order montage
     seats in the chronology like clips ("open on the lineup sheet" names a photo): they are
     judged like clips. Empty (the default), every Visual is left out as before.
+
+    Leverkusen M2 run 3: a row that landed still names a MOMENT inside its videos ("then the
+    TOR on the big screen"). Where the clip record places it, the row is met only when a cut
+    shows it; where it doesn't and the creator's tap (``tapped``: (row words, clip ref)) is
+    the only evidence the clip has it, a cut that plays part of the clip is an honest
+    ``not_found_in_clip`` (``_clip_moment_miss``). ``clip_numbers`` name the clip as the app
+    numbers it.
     """
     seated = [c for c in ordered if c.lane == "clip" or c.ref_id in seated_visuals]
+    by_ref = {clip.ref_id: clip for clip in ordered}
     spot = {clip.ref_id: i for i, clip in enumerate(seated)}
     visuals = {clip.ref_id for clip in ordered if clip.lane != "clip"} - seated_visuals
-    # The row that seats each clip: the first one naming it (``apply_sequence``'s own rule).
-    owner: dict[str, int] = {}
-    for at, (_p, _n, members, status) in enumerate(rows):
-        if status == "resolved":
-            for member in members:
-                if member in spot:
-                    owner.setdefault(member, at)
+    # The row that seats each clip, by ``apply_sequence``'s own rule: a first / last row
+    # takes its clips out of a ``then`` group (KRI-1109), else the first row naming them.
+    owner = seat_owners(rows, present=spot)
     relations = row_relations(rows, present=spot)
     moments = (
         _moment_outcomes(seats, cuts, spans=spans, record=moment_record)
@@ -1258,7 +1483,6 @@ def _sequence_outcomes(
         else {}
     )
     out: list[dict[str, Any]] = []
-    seen: set[str] = set()
     landed_clips: set[str] = set()
     for index, ((position, name, members, status), relation) in enumerate(
         zip(rows, relations, strict=True)
@@ -1266,10 +1490,9 @@ def _sequence_outcomes(
         label = f"{position or 'then'}: {name}" if name else "the order you described"
         row = {"op": "order", "name": label, "position": position or "then"}
         if index in moments:
-            seen.update(m for m in members if m in spot)
             out.append({**row, **moments[index]})
             continue
-        mine = [m for m in members if m in spot and m not in seen]
+        mine = [m for m in members if owner.get(m) == index]
         if status != "resolved":
             out.append(
                 {
@@ -1303,7 +1526,7 @@ def _sequence_outcomes(
             )
             continue
         if not mine:
-            if any(m in seen for m in members):
+            if any(m in owner for m in members):
                 code, reason = "contained", "its clips are already in an earlier group"
             elif members and all(m in visuals for m in members):
                 code, reason = "visual", "I found no clips of it"
@@ -1311,10 +1534,17 @@ def _sequence_outcomes(
                 code, reason = "absent", "I found no clips of it"
             out.append({**row, "status": "not_possible", "code": code, "reason": reason})
             continue
-        seen.update(mine)
         met = _group_landed(position, index, mine, spot, owner, rows)
         if met:
             landed_clips.update(mine)
+        miss = (
+            _clip_moment_miss(name, mine, by_ref, spans, tapped, clip_numbers)
+            if met and seats is None
+            else None
+        )
+        if miss is not None:
+            out.append({**row, **miss})
+            continue
         out.append(
             {
                 **row,
@@ -1329,6 +1559,64 @@ def _sequence_outcomes(
                 status="partial", code="member_order_unknown", reason=UNCONFIRMED_MEMBER_ORDER
             )
     return out
+
+
+# Leverkusen M2 run 3: a named moment inside one of a multi-clip edit's videos, not shown.
+MOMENT_NOT_FOUND_IN_CLIP = "not_found_in_clip"
+MOMENT_NOT_SHOWN_IN_CLIP = "not_shown_in_clip"
+
+
+def _clip_moment_miss(
+    words: str,
+    members: Sequence[str],
+    by_ref: Mapping[str, UnifiedClip],
+    spans: Sequence[tuple[str, float, float]],
+    tapped: frozenset[tuple[str, str]],
+    clip_numbers: Sequence[str],
+) -> dict[str, Any] | None:
+    """The first video of a landed row whose cut can't be shown to hold the moment the row's
+    words name, as outcome fields, else None.
+
+    Shown: a cut plays (nearly) the whole clip, or one overlaps the moment the clip record
+    places (``named_moments.shows``). Not shown although placed: ``not_shown_in_clip``. Not
+    placed: ``not_found_in_clip`` only when the creator's tap is the clip's sole evidence; a
+    clip the resolver matched by its own record keeps the clip-level verdict it had.
+    """
+    from app.services.named_moments import (  # noqa: PLC0415
+        WHOLE_CLIP_SLACK_S,
+        locate_in_clip,
+        moment_terms,
+        shows,
+    )
+
+    if not moment_terms(words):
+        return None
+    folded = fold_text(words)
+    for ref in members:
+        clip = by_ref.get(ref)
+        if clip is None or clip.lane != "clip" or clip.kind != "video":
+            continue
+        played = [(start, end) for r, start, end in spans if r == ref]
+        if any(end - start >= clip.duration_s - WHOLE_CLIP_SLACK_S for start, end in played):
+            continue
+        found = locate_in_clip(words, clip.analysis, float(clip.duration_s))
+        if found.found is not None:
+            if any(shows(start, end, found.found) for start, end in played):
+                continue
+            code = MOMENT_NOT_SHOWN_IN_CLIP
+        elif (folded, ref) in tapped:
+            code = MOMENT_NOT_FOUND_IN_CLIP
+        else:
+            continue
+        number = clip_numbers.index(clip.media_id) + 1 if clip.media_id in clip_numbers else None
+        return {
+            "status": "partial",
+            "code": code,
+            "reason": MOMENT_NOT_LOCATED,
+            "moment_words": words,
+            "clip_number": number,
+        }
+    return None
 
 
 # KRI-723: what a named moment's row says when the plan cannot show it is that action. Each
@@ -1689,12 +1977,14 @@ def plan_unified_montage(
     song_plan_item_id: str | None = None,
     song_generation: int | None = None,
     output_orientation: str | None = None,
+    output_orientation_reason: str | None = None,
     creator_duration_proven: bool = False,
     approved_length_plan: Mapping[str, Any] | None = None,
     speech_order: bool = False,
     freeze_frames: bool = False,
     clip_speed: bool = False,
     text_bend: bool = False,
+    clip_numbers: Sequence[str] = (),
 ) -> UnifiedMontagePlan:
     """Build the guided fast-montage plan for ``clips`` (attachment order).
 
@@ -1749,6 +2039,10 @@ def plan_unified_montage(
     are recorded as locked so the receipt says why. With no speed ask, the plan is
     byte-identical.
 
+    ``clip_numbers`` (Leverkusen M2 run 3) are the project's own clips' media ids as the app
+    numbers them ("clip 2" is the second), so a speed ask that names a clip by its number
+    lands on that clip whatever order the montage plays in. Empty, no ask is read that way.
+
     ``text_bend`` (KRI-1029) says the phone that approved can draw bent text
     (``phone_rollout.text_bend_planned_for``). Then every text the creator asked curved
     (``view.curved_*``) carries ``CURVED_TEXT_BEND``; off, it stays straight and the record's
@@ -1759,7 +2053,14 @@ def plan_unified_montage(
     trees"); the clip's label stays, where the creator put it, and covers the opening.
     """
     view = view or BriefView()
-    strategy = strategy or {}
+    if view.kept_filming_order and not view.order_by_capture and not creator_order:
+        # Leverkusen M1 run 2 #3: "Make it without these" dropped the filming-order ask
+        # (its check failed), and this plan fell back to upload order: the train ride,
+        # filmed second, played 10th of 11. Plan exactly as under the ask (dated photos
+        # join the chronology, KRI-1069); with no live requirement, no receipt or contract
+        # promises it. A hand reorder made since is the later word and keeps its order.
+        view = replace(view, order_by_capture=True)
+    strategy = _without_withdrawn_texts(strategy or {}, view.withdrawn_texts)
     creator_omissions = creator_omission_outcomes(strategy)
     if (
         view.version is not None
@@ -1784,6 +2085,16 @@ def plan_unified_montage(
                 if not isinstance(row, Mapping) or row.get("op") not in {"caption", "label"}
             ],
         }
+    # The planner's pace sets how long a clip is held when nothing else does (a creator
+    # length, a label's reading time and an approved window all still win). None keeps the
+    # constants below byte for byte (silence, or ``PACE_DRIVES_CUTS_ENABLED`` off).
+    pace = effective_pace(strategy)
+    default_cut_s = pace_hold_bounds(pace).preferred_s if pace is not None else DEFAULT_CUT_S
+    growth_max_s = pace_hold_bounds(pace).maximum_s if pace is not None else READING_MAX_S
+    # A story direction (text_explainer / guided_story) holds every clip at least its own
+    # minimum moment: the same floor approval-time planning applies, only where nothing the
+    # creator asked keeps this a fast montage (`story_direction.story_blocker`).
+    story_floor_s = story_floor_for(strategy, view) if song_duration_s is None else None
     if song_duration_s is not None and (song_plan_item_id is None or song_generation is None):
         raise ValueError("a song montage needs the song's plan item and generation")
     if not clips:
@@ -1861,6 +2172,15 @@ def plan_unified_montage(
         # Visuals that did not join the chronology keep their spread slot, and the
         # receipt says their place is not the filmed order.
         fallback_ids = [*fallback_ids, *(v.media_id for v in spread_visuals)]
+
+    # Leverkusen M2: parts of a clip the creator asked never to show. Every window below is
+    # kept out of them, and a privacy ask nobody settled (no clip, edge or seconds) is never
+    # rendered around: the plan is refused.
+    unsettled = unsettled_hidden_parts(strategy)
+    if unsettled:
+        raise HiddenPartShown(f"which part of {unsettled[0]} to leave out is not settled")
+    hidden = _hidden_by_media(ordered, hidden_parts_from_strategy(strategy))
+    clip_durations = {clip.media_id: float(clip.duration_s) for clip in ordered}
 
     # KRI-496: only footage-owned, unnamed timing gets its length and source
     # windows from analysis. Song, voiceover, original-audio takes and a proven
@@ -2034,6 +2354,7 @@ def plan_unified_montage(
     )
     closing = _nfc(strategy.get("closing_title")) or None
     pins = _pinned_texts(strategy)
+    title, title_source, pins = _whole_video_title_pin(strategy, view, title, title_source, pins)
     requested_font = strategy.get("font_family")
     requested_font = requested_font if isinstance(requested_font, str) and requested_font else None
     labelled_before = set(labels)
@@ -2069,12 +2390,35 @@ def plan_unified_montage(
         minimums = {media_id: label.min_display_s for media_id, label in labels.items()}
         for media_id, floor in seat_minimums.items():
             minimums[media_id] = max(floor, minimums.get(media_id, 0.0))
+        for media_id, parts in hidden.items():
+            # A hidden part's clip offers only what it may still show.
+            room = usable_s(clip_durations[media_id], parts)
+            seat_maximums[media_id] = min(seat_maximums.get(media_id, room), room)
         candidate = select_best_parts(
             sources,
             minimum_total_duration_s=MIN_TOTAL_S,
             minimum_duration_s=minimums,
             maximum_duration_s=seat_maximums,
         )
+        if pace is not None or story_floor_s is not None:
+            # The same rule the approval-time plan applies (``paced_selection``): the planner's
+            # pace (and a story direction's minimum moment) sets how long each clip is held,
+            # with no creator length stated.
+            from app.services.length_planning import paced_selection  # noqa: PLC0415
+
+            candidate = (
+                paced_selection(
+                    sources,
+                    pace,
+                    budget=None,
+                    extend_budget=False,
+                    cap_s=MAX_BEST_PARTS_DURATION_S,
+                    minimums=minimums,
+                    maximums=seat_maximums,
+                    story_floor_s=story_floor_s,
+                )
+                or candidate
+            )
         candidate = _frame_bound_best_parts(candidate)
         if candidate.ok and candidate.duration_s >= MIN_TOTAL_S:
             best_parts = candidate
@@ -2166,7 +2510,7 @@ def plan_unified_montage(
         elif clip.kind == "image" and (mixed_media_timing is not None or label is None):
             want_s = unheld_still_frames(mixed_media_timing) / FPS
         else:
-            want_s = label.min_display_s if label is not None else DEFAULT_CUT_S
+            want_s = label.min_display_s if label is not None else default_cut_s
         want = int(math.ceil(want_s * FPS - 1e-9))
         if clip.media_id in holds and not approved_parts:
             want = holds[clip.media_id].frames
@@ -2179,7 +2523,7 @@ def plan_unified_montage(
             image_bounds = mixed_media_hold_bounds("image", mixed_media_timing)
             cap = min(_capacity_frames(clip), int(math.floor(image_bounds.maximum_s * FPS)))
         else:
-            cap = _capacity_frames(clip)
+            cap = _capacity_frames(clip, hidden.get(clip.media_id, ()))
         if label is not None and cap < want:
             short.append(clip.media_id)
         wanted.append(min(want, cap))
@@ -2195,7 +2539,7 @@ def plan_unified_montage(
     # A creator-stated length is honoured even when it needs cuts longer than a
     # beat of attention (one long clip, a day vlog); a default fast montage is not.
     growth_ceiling = (
-        list(capacity) if target_s else [min(cap, int(READING_MAX_S * FPS)) for cap in capacity]
+        list(capacity) if target_s else [min(cap, int(growth_max_s * FPS)) for cap in capacity]
     )
     # A held photo is pinned like a labelled cut: never grown, never shrunk (``_shrink``
     # only takes frames from unlabelled cuts), never trimmed for a song below.
@@ -2420,6 +2764,9 @@ def plan_unified_montage(
                 start = round(max(0.0, clip.duration_s - duration), 3)
                 end = round(start + duration, 3)
         spans.append((clip.media_id, start, end, selected_window is not None))
+    # Leverkusen M2: a selector's or a default window slides out of a hidden part (same
+    # length); a creator-approved window never moves, so one that shows a part is refused.
+    spans = _kept_out(spans, hidden, clip_durations, movable=lambda _index: not approved_windows)
     for clip in ordered:
         aspect = clip.aspect
         if clip.width and clip.height:
@@ -2488,7 +2835,17 @@ def plan_unified_montage(
                 # Only a creator-approved window keeps its edges; a selector's pick is a
                 # planned cut whose output length matters more than its exact footage.
                 creator_windows=approved_windows,
+                clip_numbers=clip_numbers,
             )
+    if hidden:
+        # A freeze ends on its creator's frame and a retimed cut shows more or less footage:
+        # both can reach a hidden part again. A held frame never moves.
+        spans = _kept_out(
+            spans,
+            hidden,
+            clip_durations,
+            movable=lambda index: not approved_windows and index not in freeze_holds,
+        )
     cuts = [
         FastMontageCut(
             cut_id=f"unified-cut-{index + 1}",
@@ -2511,6 +2868,12 @@ def plan_unified_montage(
         )
         for index, (media_id, start, end, approved) in enumerate(spans)
     ]
+    # The last word before any compiler sees the plan: no cut shows a hidden part.
+    check_windows(
+        [(cut.media_id, cut.source_start_s, cut.source_end_s) for cut in cuts],
+        clip_durations,
+        [part for parts in hidden.values() for part in parts],
+    )
     for row in freeze_records:
         if row.get("status") == "held":
             row["cut_id"] = cuts[row.pop("cut_index")].cut_id
@@ -2535,8 +2898,12 @@ def plan_unified_montage(
     pins = drawable_pins(pins, total_s, [cut.output_duration_s for cut in cuts])
     # KRI-522: the brief is cumulative, so the creator's ask survives a later turn whose
     # strategy omits it; the strategy's own typed value is the fallback.
-    title_animation = view.title_animation or normalize_title_animation(
-        strategy.get("title_animation")
+    title_animation = (
+        view.title_animation
+        or normalize_title_animation(strategy.get("title_animation"))
+        # A named edge for "all the text" is the title's too (the title is drawn here, so it
+        # keeps its own centred, held look); an unnamed ask is completed by the text pass.
+        or view.text_animation
     )
     title_shown_as_label = _title_shown_as_label(
         title, labels.get(cuts[0].media_id) if cuts else None, strategy, title_animation
@@ -2578,24 +2945,37 @@ def plan_unified_montage(
         snapshot_kwargs["title_animation"] = title_animation
     if title_bend is not None:
         snapshot_kwargs["title_bend"] = title_bend
-    label_position = view.label_position or normalize_label_position(strategy.get("label_position"))
+    label_position = (
+        view.label_position
+        # A global "bottom left" is the corner the labels this route draws sit in.
+        or view.text_position
+        or normalize_label_position(strategy.get("label_position"))
+    )
     if label_position is not None and labels:
         snapshot_kwargs["label_position"] = label_position
     if output_orientation in ("portrait", "landscape"):
         snapshot_kwargs["output_orientation"] = output_orientation
-        snapshot_kwargs["output_orientation_reason"] = CREATOR_SELECTED_ORIENTATION_REASON
+        # The caller says whether the creator picked this shape or the app echoed the
+        # server default; absent keeps the original wording.
+        snapshot_kwargs["output_orientation_reason"] = (
+            output_orientation_reason or CREATOR_SELECTED_ORIENTATION_REASON
+        )
     style: dict[str, Any] = {}
     if family is not None:
         style["font_family"] = family
     if isinstance(strategy.get("text_color"), str) and strategy.get("text_color"):
         style["text_color"] = strategy["text_color"]
 
+    # The strategy's direction where this route can build it; else fast_montage, and the plan
+    # records what was asked (the approval card's disclosure reads it).
+    built_direction = route_direction(strategy)
+
     def build(extra: Mapping[str, Any]) -> EditProposalSnapshot:
         return EditProposalSnapshot(
-            direction="fast_montage",
+            direction=built_direction,  # type: ignore[arg-type]
             goal=(editorial.get("viewer_goal", "") if editorial else ""),
             editorial_plan=editorial,
-            pace="fast",
+            pace=stated_pace(strategy) or "fast",
             duration_s=total_s,
             title=(title or SNAPSHOT_FALLBACK_TITLE)[:100],
             opening_title=title,
@@ -2617,7 +2997,7 @@ def plan_unified_montage(
         # An unknown font or colour is a style preference, never a reason to
         # fail the render: fall back to the default typography.
         snapshot = build({})
-    return UnifiedMontagePlan(
+    plan = UnifiedMontagePlan(
         snapshot=snapshot,
         clip_ids=[clip.media_id for clip in ordered],
         title=title,
@@ -2636,6 +3016,7 @@ def plan_unified_montage(
             spans=[(ref_of[cut.media_id], cut.source_start_s, cut.source_end_s) for cut in cuts],
             moment_record=moment_record,
             seated_visuals=frozenset(v.ref_id for v in timed_visuals),
+            clip_numbers=clip_numbers,
         )
         + creator_omissions,
         ordering_choice=choice,
@@ -2682,7 +3063,59 @@ def plan_unified_montage(
         ),
         title_shown_as_label=title_shown_as_label,
         text_shapes=text_shapes,
+        requested_direction=direction_not_built(strategy),
+        hidden_parts=[
+            {
+                **part.json(),
+                "shown_from_s": min(c.source_start_s for c in cuts if c.media_id == media_id),
+                "shown_to_s": max(c.source_end_s for c in cuts if c.media_id == media_id),
+            }
+            for media_id, parts in hidden.items()
+            for part in parts
+            if any(cut.media_id == media_id for cut in cuts)
+        ],
     )
+    return _as_story_direction(
+        plan,
+        strategy,
+        view,
+        approved_length_plan=approved_length_plan,
+        song=song_duration_s is not None,
+    )
+
+
+def _as_story_direction(
+    plan: UnifiedMontagePlan,
+    strategy: Mapping[str, Any],
+    view: BriefView,
+    *,
+    approved_length_plan: Mapping[str, Any] | None,
+    song: bool,
+) -> UnifiedMontagePlan:
+    """``plan`` rebuilt as the planner's story direction where the route can, else ``plan``.
+
+    A text_explainer / guided_story strategy is built as story beats over the same clips
+    (`story_direction.build_story_plan`); where a creator's ask or the footage keeps it a fast
+    montage the plan says why (``direction_fallback``). Any other direction, or the kill switch
+    off, returns ``plan`` untouched.
+    """
+    direction = story_direction(strategy)
+    if direction is None:
+        return plan
+    from app.pipeline.story_direction import build_story_plan  # noqa: PLC0415
+
+    story, reason = build_story_plan(
+        plan,
+        strategy=strategy,
+        view=view,
+        direction=direction,
+        stated_pace=stated_pace(strategy),
+        approved_length_plan=approved_length_plan,
+        song=song,
+    )
+    if story is not None:
+        return story
+    return replace(plan, direction_fallback=reason)
 
 
 def _title_shown_as_label(
@@ -2862,25 +3295,77 @@ def _locked_speed(spec: SpeedSpec, reason: str) -> dict[str, Any]:
     return {**_speed_row(spec), "status": "locked", "reason": reason, "cut_indexes": []}
 
 
+def app_clip_numbers(assignments: Iterable[Any]) -> tuple[str, ...]:
+    """The project's own clips' media ids as the app numbers them: the item's clip rows in
+    order, Visuals (``asset-*``) never counted (``strategy_policy._clip_numbers``'s rule)."""
+    ids = (
+        str(row.get("media_id") or "")
+        for row in assignments
+        if isinstance(row, Mapping) and row.get("media_id")
+    )
+    return tuple(dict.fromkeys(media_id for media_id in ids if not media_id.startswith("asset-")))
+
+
+# Leverkusen M2 run 3: why a speed ask on a clip the creator named by its number moves no cut.
+SPEED_CLIP_NOT_IN_EDIT = "clip_not_in_edit"  # no clip with that number plays in this edit
+SPEED_MOMENT_NOT_FOUND = "moment_not_found"  # the clip's record doesn't place the moment
+SPEED_MOMENT_NOT_SHOWN = "moment_not_shown"  # located, but the planned window doesn't show it
+_SPEED_MISSES = frozenset({SPEED_CLIP_NOT_IN_EDIT, SPEED_MOMENT_NOT_FOUND, SPEED_MOMENT_NOT_SHOWN})
+
+
+def _numbered_clip_targets(
+    spec: SpeedSpec,
+    spans: Sequence[tuple[str, float, float, bool]],
+    by_id: Mapping[str, UnifiedClip],
+    clip_numbers: Sequence[str],
+) -> tuple[list[int] | None, str]:
+    """ "Put Taha's scream at the end of clip 2 in slow motion": the cuts of clip 2 that show the
+    moment the words name (``named_moments.locate_in_clip``, the clip's stored moments only),
+    every cut of clip 2 when the words name no moment, else ``(None, why)``. A cut of clip 2
+    that doesn't show the scream is never slowed in its place."""
+    from app.services.named_moments import locate_in_clip, moment_terms, shows  # noqa: PLC0415
+
+    number = spec.clip_number or 0
+    media_id = clip_numbers[number - 1] if 0 < number <= len(clip_numbers) else None
+    clip = by_id.get(media_id) if media_id is not None else None
+    hits = [k for k, (media, *_rest) in enumerate(spans) if media == media_id]
+    if clip is None or not hits:
+        return None, SPEED_CLIP_NOT_IN_EDIT
+    words = " ".join(spec.target_words)
+    if not moment_terms(words):
+        return hits, "clip_number"  # "put clip 2 in slow motion": the whole clip
+    found = locate_in_clip(words, clip.analysis, float(clip.duration_s))
+    if found.found is None:
+        return None, SPEED_MOMENT_NOT_FOUND
+    shown = [k for k in hits if shows(spans[k][1], spans[k][2], found.found)]
+    return (shown, "clip_moment") if shown else (None, SPEED_MOMENT_NOT_SHOWN)
+
+
 def _speed_targets(
     spec: SpeedSpec,
     spans: Sequence[tuple[str, float, float, bool]],
     by_id: Mapping[str, UnifiedClip],
     pinned: Sequence[tuple[int, str]],
+    clip_numbers: Sequence[str] = (),
 ) -> tuple[list[int] | None, str]:
-    """(cut indexes the ask names, how they were found), or ``(None, "")`` when the creator's
+    """(cut indexes the ask names, how they were found), or ``(None, why)`` when the creator's
     words name no clip of this edit (or more than one): nothing is guessed (KRI-900's rule).
+    ``why`` is ``""`` or one of ``_SPEED_MISSES``.
 
-    In order: a ``clip:<id>`` scope; the creator's words against the moments they pointed at
-    before approval (KRI-723, same matcher as a freeze); those words against the clips'
-    analysed moments (exactly one clip); a cut position ("the last clip"); nothing named =
-    every cut (a whole-edit ask).
+    In order: a ``clip:<id>`` scope; a clip named by its number (``clip_numbers``: the
+    project's own clips as the app numbers them), narrowed to the cuts that show the moment
+    the words name there; the creator's words against the moments they pointed at before
+    approval (KRI-723, same matcher as a freeze); those words against the clips' analysed
+    moments (exactly one clip); a cut position ("the last clip"); nothing named = every cut (a
+    whole-edit ask).
     """
     if spec.media_id is not None:
         ref_to_media = {clip.ref_id: clip.media_id for clip in by_id.values()}
         media_id = ref_to_media.get(spec.media_id, spec.media_id)
         hits = [k for k, (media, *_rest) in enumerate(spans) if media == media_id]
         return (hits or None), "scope"
+    if spec.clip_number is not None:
+        return _numbered_clip_targets(spec, spans, by_id, clip_numbers)
     if spec.target_words:
         from app.services.named_moments import pointed_match  # noqa: PLC0415
 
@@ -2920,6 +3405,7 @@ def _ground_speeds(
     pinned: Sequence[tuple[int, str]] = (),
     freeze_holds: Mapping[int, float] | None = None,
     creator_windows: bool = True,
+    clip_numbers: Sequence[str] = (),
 ) -> tuple[list[tuple[str, float, float, bool]], dict[int, float], list[dict[str, Any]]]:
     """KRI-689: every speed ask the creator made, each on the cuts it names.
 
@@ -2945,8 +3431,19 @@ def _ground_speeds(
         if spec.ramp:
             rows.append({**row, "status": "ramp", "cut_indexes": []})
             continue
-        targets, grounding = _speed_targets(spec, spans, by_id, pinned)
+        targets, grounding = _speed_targets(spec, spans, by_id, pinned, clip_numbers)
         if targets is None:
+            if grounding in _SPEED_MISSES:
+                rows.append(
+                    {
+                        **row,
+                        "status": grounding,
+                        "clip_number": spec.clip_number,
+                        "moment_words": " ".join(spec.target_words),
+                        "cut_indexes": [],
+                    }
+                )
+                continue
             rows.append({**row, "status": "not_grounded", "cut_indexes": []})
             continue
         videos = [
@@ -3585,6 +4082,81 @@ def _fit_typography(
     return (chosen if keep else None), title, closing, labels
 
 
+# Qendresa case 9: a whole-video line's typed position -> the pin corner that draws it.
+_POSITION_CORNERS: dict[str, str] = {
+    "top_left": "top_left",
+    "top": "top_center",
+    "top_right": "top_right",
+    "middle": "middle_center",
+    "bottom_left": "bottom_left",
+    "bottom": "bottom_center",
+    "bottom_right": "bottom_right",
+}
+
+
+def _whole_video_pin_on() -> bool:
+    # A function so ``_title``, which imports ``settings`` locally, reads the module's switch.
+    return bool(settings.whole_video_text_pin_enabled)
+
+
+def _whole_video_title_pin(
+    strategy: Mapping[str, Any],
+    view: BriefView,
+    title: str | None,
+    title_source: str,
+    pins: list[PinnedText],
+) -> tuple[str | None, str, list[PinnedText]]:
+    """A whole-video line the planner drew as the opening title, pinned for the whole video.
+
+    Qendresa Q3 case 9: "put this text ... for the whole video" is a ``text/global`` literal in
+    the brief (the rule that also asks the planner for ``pinned_texts``). Filed instead as
+    ``opening_title``, or with no text field so ``_title`` used the literal, it showed for the
+    2.2 s title hold of an 11 s video. When the title's words are such a literal it becomes one
+    whole-video pin (``title`` none), which the ``opening`` text role and the phone repair
+    still accept (a pin drawn from 0 s). Typed facts only (KRI-667). Unchanged: any live
+    title-scope ask (she asked for a title, worded or not), a typed title hold
+    (``opening_title_duration_s``) or a title entrance (pins have none), and the switch off.
+    Corner: the literal's typed ``position`` when it names one (the middle only where item 21
+    draws middle pins), else ``top_center``.
+    An ending ("end with THANK YOU", ``facts.closing``) is never pinned: it is drawn at the end.
+    The ending flag is per requirement: the same words asked once for the whole video and once
+    as an ending still pin for the whole video.
+    A pin of the same words already in ``pins`` is never doubled: a whole-video one is reused
+    (the title is dropped, the pin stays where she put it); a timed one is a deliberate ask,
+    so the title is left as it was.
+    """
+    if not settings.whole_video_text_pin_enabled or not title or not view.global_literals:
+        return title, title_source, pins
+    if (
+        strategy.get("opening_title_duration_s") is not None
+        or view.title_animation
+        or normalize_title_animation(strategy.get("title_animation"))
+        or view.text_animation
+    ):
+        return title, title_source, pins
+    if view.title_asked:
+        # She asked for a title too: the planner's title stays hers to judge.
+        return title, title_source, pins
+    key = fold_text(_nfc(title))
+    matches = [
+        (spot, ending) for text, spot, ending in view.global_literals if fold_text(text) == key
+    ]
+    wanted = [spot for spot, ending in matches if not ending]
+    if not wanted:
+        # No such literal, or only an ending has these words.
+        return title, title_source, pins
+    position = wanted[0]
+    same_words = [pin for pin in pins if fold_text(_nfc(pin.text)) == key]
+    if any(pin.is_whole_video for pin in same_words):
+        return None, "none", pins
+    if same_words:
+        return title, title_source, pins
+    corner = _POSITION_CORNERS.get(normalize_label_position(position) or "", "top_center")
+    if corner == "middle_center" and not settings.clip_text_tiktok_look_enabled:
+        corner = "top_center"
+    return None, "none", [*pins, PinnedText(text=_nfc(title), corner=corner)]
+
+
 def _pinned_texts(strategy: Mapping[str, Any]) -> list[PinnedText]:
     """KRI-523: the creator's corner text, as confirmed on the strategy."""
     return pins_from_strategy(strategy)
@@ -3739,6 +4311,60 @@ def _chapter_group_ids(
     return chapters, described
 
 
+def _creator_wording(intent: Mapping[str, Any]) -> list[str]:
+    """The creator's own words a clip-text intent would print (empty for a placeholder)."""
+    words = [intent.get("creator_text")]
+    if intent.get("caption_grounding") == "creator_text":
+        words.append(intent.get("caption_text"))
+    words.extend(
+        row.get("value")
+        for row in intent.get("assignments") or []
+        if isinstance(row, Mapping) and row.get("grounding") == "creator_text"
+    )
+    return [text for text in (_nfc(word) for word in words) if text]
+
+
+def _without_withdrawn_texts(
+    strategy: Mapping[str, Any], withdrawn: frozenset[str]
+) -> Mapping[str, Any]:
+    """``strategy`` minus the clip text the creator has taken back (KRI-1124).
+
+    Leverkusen M4: "Skip that part" and "Make it without these" superseded the brief's
+    "Arrival" / "GOAL" / "Full time" texts, but the clip-intent planner reads the whole
+    thread every turn and still wrote their label intents (carrying no ``requirement_id``).
+    Planned, they became confirmed copy that the creation-text pass, told the brief asks for
+    no text, then removed (the render failed) or left on screen. The brief owns what text is
+    wanted, so a label or caption whose every creator-worded text is in ``withdrawn`` is
+    dropped from both intent lists, here where the plan reads them; the copy lock stays strict.
+
+    A positional ``shot_labels`` list is dropped only when every row is withdrawn: its rows
+    sit on clips by index, so removing one would move the rest onto the wrong clips.
+    """
+    if not withdrawn:
+        return strategy
+    out = dict(strategy)
+    for key in ("clip_intents", "resolved_clip_intents"):
+        rows = strategy.get(key)
+        if not isinstance(rows, list):
+            continue
+        kept = [
+            row
+            for row in rows
+            if not (
+                isinstance(row, Mapping)
+                and row.get("op") in {"label", "caption"}
+                and (words := _creator_wording(row))
+                and all(_text_key(word) in withdrawn for word in words)
+            )
+        ]
+        if len(kept) != len(rows):
+            out[key] = kept
+    positional = [text for text in (_nfc(x) for x in strategy.get("shot_labels") or []) if text]
+    if positional and all(_text_key(text) in withdrawn for text in positional):
+        out["shot_labels"] = None
+    return out
+
+
 def _intent_labels(strategy: Mapping[str, Any], enabled: bool) -> dict[str, tuple[str, bool]]:
     """media_id -> (text, creator_wrote_it) from server-verified label intents."""
     if not enabled:
@@ -3811,6 +4437,7 @@ def _intent_outcomes(
     spans: Sequence[tuple[str, float, float]] = (),
     moment_record: Sequence[Mapping[str, Any]] | None = None,
     seated_visuals: frozenset[str] = frozenset(),
+    clip_numbers: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """What each requested group / sport label / chapter text did in this plan (KRI-282).
 
@@ -3829,6 +4456,8 @@ def _intent_outcomes(
         moment_record=moment_record,
         unconfirmed_groups=unconfirmed_order_groups(strategy.get("resolved_clip_intents")),
         seated_visuals=seated_visuals,
+        tapped=_tapped_members(strategy),
+        clip_numbers=clip_numbers,
     )
     position = {clip.ref_id: i for i, clip in enumerate(ordered)}
     printed = {
@@ -3927,6 +4556,20 @@ def _title(
         return None, "none"
     confirmed = _nfc(strategy.get("opening_title"))
     if confirmed:
+        from app.config import settings  # noqa: PLC0415
+
+        if settings.clip_text_tiktok_look_enabled:
+            # Item 21: the same words already pinned for the whole video as a middle line or in
+            # a named look are drawn once, by the pin (KRI-523's dedup for brief literals is the
+            # model). A corner pin without a look still draws beside the title, as with the flag
+            # off.
+            whole = {
+                fold_text(pin.text)
+                for pin in _pinned_texts(strategy)
+                if pin.is_whole_video and (pin.corner == "middle_center" or pin.look is not None)
+            }
+            if fold_text(confirmed) in whole:
+                return None, "none"
         return confirmed, "creator"
 
     def titles(literal: str | None) -> bool:
@@ -3948,9 +4591,14 @@ def _title(
     start = _first(view.facts, _START_KEYS)
     end = _first(view.facts, _END_KEYS)
     labelled = {fold_text(text) for text in creator_label_texts}
-    if titles(view.global_literal) and fold_text(_nfc(view.global_literal)) not in labelled:
+    if _whole_video_pin_on() and view.global_literals:
+        # An ending ("end with X") is not the opening title.
+        fallback = next((text for text, _spot, ending in view.global_literals if not ending), None)
+    else:
+        fallback = view.global_literal
+    if titles(fallback) and fold_text(_nfc(fallback)) not in labelled:
         route = f"{start} → {end}" if start and end else ""
-        headline = _nfc(view.global_literal)
+        headline = _nfc(fallback)
         if route and route.casefold() not in headline.casefold():
             headline = f"{headline} · {route}"
         return headline[:100], "brief"
@@ -3973,6 +4621,7 @@ def title_source_exists(strategy: Mapping[str, Any], brief: Any) -> bool:
     phone path's production setting).
     """
     view = brief_view(brief)
+    strategy = _without_withdrawn_texts(strategy, view.withdrawn_texts)
     intents = _intent_labels(strategy, True).values()
     creator_labels = [
         *view.clip_literals.values(),

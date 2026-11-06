@@ -206,7 +206,7 @@ def sequence_timing_plan_from_operations(
 
 
 def merge_sequence_brief_updates(prior, planned, plan, snapshot, message):
-    from app.kria.brief import BriefUpdate, apply_updates
+    from app.kria.brief import SUPERSEDED_BY_FACT, BriefUpdate, apply_updates
 
     projected = apply_updates(prior, planned, source_turn_id=None)
     reconciled = apply_updates(
@@ -219,6 +219,21 @@ def merge_sequence_brief_updates(prior, planned, plan, snapshot, message):
     version = prior.version if prior else 0
     updates = []
     fields = ("kind", "scope", "literal", "description", "facts")
+    reconciled_by_id = {req.id: req for req in reconciled.requirements}
+    for before in prior.requirements if prior else ():
+        # A fresh start re-marks an already-superseded requirement as the creator's removal;
+        # that is not a live change, so carry it as the remove that makes it.
+        after = reconciled_by_id.get(before.id)
+        if (
+            not before.live
+            and after is not None
+            and after.facts.get(SUPERSEDED_BY_FACT) != before.facts.get(SUPERSEDED_BY_FACT)
+        ):
+            updates.append(
+                BriefUpdate(
+                    operation="remove", target_requirement_id=before.id, expected_version=version
+                )
+            )
     for identifier, before in old.items():
         after = current.get(identifier)
         if after is None:

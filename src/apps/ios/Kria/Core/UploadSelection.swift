@@ -86,19 +86,6 @@ struct PhotoSelectionDiff: Equatable, Sendable {
     var isEmpty: Bool { added.isEmpty && removed.isEmpty }
 }
 
-/// KRI-175: when the live picker closes itself. It has no Add/Cancel of its own (continuous selection
-/// drops them), so a pick that fills it — the one clip of a talking-to-camera video — takes the user
-/// straight back instead of leaving them to find Done.
-enum PhotoPickerAutoClose {
-    /// Only a pick the user just made closes it: opening an already-full picker (the seeded selection)
-    /// or un-choosing one must leave it open, so they can swap. A swap at a limit of 1 replaces the
-    /// selection without changing its size, so this looks for a new identifier, not a larger count.
-    static func shouldClose(previous: [String], current: [String], limit: Int) -> Bool {
-        guard limit > 0, current.count >= limit else { return false }
-        return !PhotoSelectionDiff(current: current, known: previous).added.isEmpty
-    }
-}
-
 /// Result of the user un-choosing an asset, so the picker knows whether to let it go or put it back.
 enum DeselectOutcome: Equatable, Sendable {
     /// Nothing had reached the server; whatever was in progress is unwound.
@@ -133,6 +120,8 @@ struct UploadFailure: Identifiable, Equatable, Sendable {
     /// Why it failed decides what the creator is told and offered (KRI-211): an unreadable file is
     /// simply left out, while an upload that failed on the way still exists and can be retried.
     var cause: Cause = .unreadable
+    /// Set when the failed upload was a re-record: the swap did not happen and the old take is still attached.
+    var replacesMediaID: String? = nil
 
     enum Cause: Sendable {
         /// The file could not be read at all; choosing it again is the only way back.

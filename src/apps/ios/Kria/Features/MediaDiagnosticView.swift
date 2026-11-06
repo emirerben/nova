@@ -117,7 +117,7 @@ struct MediaDiagnosticView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text("Media diagnostics").font(KriaFont.display(34))
+                Text("Media diagnostics").font(KriaFont.headline(34))
                 Text("Internal-only AVFoundation preview, seek, instrumentation, and local-export gate.")
                     .foregroundStyle(KriaColor.zinc)
 

@@ -1,0 +1,1438 @@
+{
+  "fixture": "slide_post",
+  "route": "slide_post",
+  "mode": "offline",
+  "source": {
+    "kind": "synthetic",
+    "what": "Synthetic slide post drafted by the planner. The 7 prod slide jobs the scout found (2026-09-30 to 2026-10-06) were manual Plan-page posts with no planner turn, so there was no planner strategy to replay.",
+    "captured": "hand-written 2026-11-01 (no prod thread found by the KRI-1097 fixture scout)",
+    "recorded": [],
+    "reconstructed": [
+      "everything: creator message, Creative Brief, planner strategy and summary, clips",
+      "the planner's choices are written as the planner returns them for this request (post-parse strategy, with the server's provenance flags where the creator states a pace or a length); no model is replayed",
+      "the approval card is assembled offline from the real pure functions the draft turn calls (scripts/kria/score_route.py approval_card); the DB-bound turn body is not run",
+      "phone source bindings: synthetic proxy paths (score_route.media_rows)"
+    ],
+    "redacted": [],
+    "see": "tests/fixtures/kria_replay/slide_post/README.md"
+  },
+  "network_attempts_blocked": 0,
+  "registry": true,
+  "pre_registry": false,
+  "passed": 16,
+  "failed": 0,
+  "all_green": true,
+  "by_kind": {
+    "route": {
+      "passed": 1,
+      "failed": 0
+    },
+    "disclosed_ok": {
+      "passed": 12,
+      "failed": 0
+    },
+    "honored": {
+      "passed": 0,
+      "failed": 0
+    },
+    "gate": {
+      "passed": 3,
+      "failed": 0
+    }
+  },
+  "inconclusive": [],
+  "lane_targets": {},
+  "expected_red": [],
+  "unexpected_red": [],
+  "unexpected_green": [],
+  "missing_targets": [],
+  "not_graded": {
+    "honored": "no render target: the slide lane (L6) discloses every video-only field and changes the planner prompt, which an offline replay of a written strategy cannot show"
+  },
+  "exclusions": {
+    "count": 0,
+    "fields": [],
+    "asks": [],
+    "unexplained": []
+  },
+  "report_only": [
+    10
+  ],
+  "controls_ok": true,
+  "negative_controls": [
+    {
+      "name": "2 a card that names the pace without its registry line must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 the card's pacing registry line must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 a render recipe that meets the field must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 an undecided receipt must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a typed decline before approval must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 a checked met receipt must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 a recipe value that is not the asked animation must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 a recipe value that is the asked animation must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 a boolean where a value belongs must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 a length 50% off the asked one must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 a length within 10% of the asked one must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 clip holds inside the asked pace's hold bounds must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 clip holds outside the asked pace's hold bounds must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "lane targets: a render target the fixture stopped grading must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: another field's card line does not disclose this one must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: the field's own card line must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a line on the English card the Turkish card lacks must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: an opposite-meaning free-text line naming the field must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a line with another code (not the route's table) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a line whose code is not the one the table gives the field must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 on_card: a recorded line the reply does not carry is not on the card must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: a length ask with only another field's line must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: a length ask with the length registry line must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: a length ask with an opposite-meaning free-text line must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 on_card: a line the compact card line names is on the card must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a text-animation decline on an animation ask discloses the title animation must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a decline labelled text_animation on a framing ask must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a text_animation decline with another decline's text must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a decline about another ask (title position) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a route decline no receipt carries is not on the card must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: the animation decline on an animation ask must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: the animation decline answering a length ask must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: the title-position decline answering an animation ask must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 an assembly step's target_duration_s is not a strategy read must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "def other_objects(step, view, row):",
+        "    if step.in_s is None or step.target_duration_s is None:",
+        "        return None",
+        "    plan = {\"target_duration_s\": 3}",
+        "    seconds = row[\"target_duration_s\"]",
+        "    target = view.target_duration_s",
+        "    return plan, seconds, target"
+      ]
+    },
+    {
+      "name": "10 strategy.get('target_duration_s') is a strategy read must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a carrier that is free text is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a carrier in a file that does not exist must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a function that only names the field is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a class that names the field is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a function in the route's own files that reads the field must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read through a converted strategy (typed = _strategy(s)) must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read through a helper that returns the key it is given must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read that decides a refusal must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read of a similarly named field is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read off a local dict named like a strategy (not the parameter) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a read that is only logged must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a helper that removes the field is not a read must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 deleting the field is not a read must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 the schema class CreativeStrategy is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": "agents/_schemas/creator_agent.py:CreativeStrategy is neither in this route's READERS nor a shared carrier"
+    },
+    {
+      "name": "10 a function in another route's file is not this route's carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": "pipeline/unified_montage.py:x is in unified_montage's code, not this route's"
+    },
+    {
+      "name": "10 a route that lists another route's reader file must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "pipeline/unified_montage.py is also unified_montage's reader file"
+      ]
+    },
+    {
+      "name": "10 a new unconsumed field must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "zz_new_unconsumed_field"
+      ]
+    },
+    {
+      "name": "10 an Applied claim with no reader must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "zz_claimed_field"
+      ]
+    },
+    {
+      "name": "10 an Applied claim read only as step.<field> must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "target_duration_s"
+      ]
+    },
+    {
+      "name": "10 an Applied claim with a free-text carrier must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": "'the captions just work' is not <path under app/>:<function>"
+    },
+    {
+      "name": "10.entry an entry outside the route's code must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10.entry an entry its file does not define must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10.entry a recipe path that does not parse must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10.lines a EN not-applied line with no negation must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10.lines a TR not-applied line with no negation must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10.lines every recorded not-applied line says so must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "10.lines a line reworded to say it is applied (intro_hook) must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "the slide_post lines differ from the golden at ['/en/every_field/card', '/en/every_field/lines', '/en/voice_no_captions/card', '/en/voice_no_captions/lines', '/tr/every_field/card', '/tr/every_field/lines']: if the change is meant, re-record with --write-golden-lines and review the diff"
+      ]
+    },
+    {
+      "name": "10.lines the reworded line with its golden re-recorded (intro_hook) must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "replay contract: an honest module over an honest entry must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "replay contract: a constant recipe that never calls the entry must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: a run that does not call the render entry plan exactly once with the fixture's own plan and asks must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a route helper that reads the plan (not the render entry) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: a run that does not call the render entry plan exactly once with the fixture's own plan and asks must FAIL",
+        "replay: the module handing the plan, the asks or its own function to route code other than the render entry must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: an entry fed a plan the module wrote, not the fixture's, must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: a run that does not call the render entry plan exactly once with the fixture's own plan and asks must FAIL",
+        "replay length_s: a recipe that does not follow every other value asked (5 moves) must FAIL",
+        "replay pace: a recipe that does not follow every other value asked (2 moves) must FAIL",
+        "replay pace: clip holds that do not grow from fast to balanced to relaxed must FAIL",
+        "replay title_animation: a recipe that does not follow every other value asked (9 moves) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that reads the plan itself (.get) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module reading the fixture's plan or asks itself (only the route's code may) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that copies the plan (dict()) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module reading the fixture's plan or asks itself (only the route's code may) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that compares the plan (==) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module reading the fixture's plan or asks itself (only the route's code may) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that iterates the asks must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module reading the fixture's plan or asks itself (only the route's code may) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that probes an attribute of the plan (.value) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module reading the fixture's plan or asks itself (only the route's code may) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that feeds a route helper's reading of the plan into the entry must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module handing the plan, the asks or its own function to route code other than the render entry must FAIL",
+        "replay length_s: a recipe that does not follow every other value asked (5 moves) must FAIL",
+        "replay pace: a recipe that does not follow every other value asked (2 moves) must FAIL",
+        "replay pace: clip holds that do not grow from fast to balanced to relaxed must FAIL",
+        "replay title_animation: an ask that still changes the recipe with talking_head_route_follows_prompt_enabled off must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that hands the route a function of its own must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module handing the plan, the asks or its own function to route code other than the render entry must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that hashes the plan (static rules off) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module reading the fixture's plan or asks itself (only the route's code may) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that deep-copies the plan (static rules off) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module reading the fixture's plan or asks itself (only the route's code may) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that calls the entry twice must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: a run that does not call the render entry plan exactly once with the fixture's own plan and asks must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that reads the lane switch (static rules off) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: a run that does not call the render entry plan exactly once with the fixture's own plan and asks must FAIL",
+        "replay: the module reading talking_head_route_follows_prompt_enabled or the settings (only the route's code may) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that hands the switch to a route helper (static rules off) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: the module reading talking_head_route_follows_prompt_enabled or the settings (only the route's code may) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: a module that counts its runs must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay: a module that breaks the replay rules (settings, introspection, state between runs, imports outside app/ and plain stdlib) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: an entry that ignores the lane switch must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay length_s: an ask that still changes the recipe with talking_head_route_follows_prompt_enabled off must FAIL",
+        "replay pace: an ask that still changes the recipe with talking_head_route_follows_prompt_enabled off must FAIL",
+        "replay title_animation: an ask that still changes the recipe with talking_head_route_follows_prompt_enabled off must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: an entry that follows only two of the animations must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay title_animation: a recipe that does not follow every other value asked (9 moves) must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: an entry that reads only the plan field (ignores the typed ask) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay length_s: the typed ask alone (plan field dropped) not met must FAIL",
+        "replay title_animation: the typed ask alone (plan field dropped) not met must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: an entry that reads only the typed ask (ignores the plan field) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay length_s: the plan's field alone (typed ask dropped) not met must FAIL",
+        "replay title_animation: the plan's field alone (typed ask dropped) not met must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: an entry whose pace follows only when an animation is asked must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "replay title_animation: moving or dropping it changing another claimed value must FAIL"
+      ]
+    },
+    {
+      "name": "replay contract: an entry whose helper follows the ask but whose recipe hard-codes the entrance must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "replay: no route replay, so no render claim to control",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "replay": {
+    "source": null,
+    "honored": {},
+    "controls": [],
+    "valid": true,
+    "recipe": null
+  },
+  "card": {
+    "en": {
+      "route": "slide_post",
+      "lines_shown": true,
+      "reply": "I'll make a fast slide post of Kas: arrival, old town, sunset, with your title popping in and music, about 20 seconds.\n- Couldn't: animate the title in (I can't animate on-screen text on this video yet, so the text shows without motion)\n- Couldn't: kinetic captions (I can't add subtitles of the speech to this video yet, so it has none)\nHeads-up for this video:\n- I can't use the opening hook idea (\"Three days, zero plans\") on this video yet, so it won't be shown as text\n- I can't follow the planned story structure (Arrival, The old town, Sunset) on this video yet, so it won't change the order of the clips\n- The fast pacing isn't applied on this video yet: a slide post shows each slide for its own time\n- The guided story direction isn't applied on this video yet: a slide post shows your slides in order\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- A slide post plays no added music or voiceover yet, so the planned audio won't be used\n- Also not applied on this video yet: the length you asked for, the opening title, the title animation",
+      "changes": [
+        "Fast pacing",
+        "Slides format"
+      ],
+      "receipts": [
+        {
+          "requirement_id": "r1",
+          "brief_version": null,
+          "generation_id": null,
+          "status": "not_possible",
+          "verification": "checked",
+          "stage": "checked",
+          "target_media_ids": [],
+          "reason": "I can't animate on-screen text on this video yet, so the text shows without motion",
+          "inferred": [],
+          "inferred_labels": []
+        },
+        {
+          "requirement_id": "r3",
+          "brief_version": null,
+          "generation_id": null,
+          "status": "not_possible",
+          "verification": "checked",
+          "stage": "checked",
+          "target_media_ids": [],
+          "reason": "I can't add subtitles of the speech to this video yet, so it has none",
+          "inferred": [],
+          "inferred_labels": []
+        }
+      ],
+      "not_applied": [
+        {
+          "code": "not_applied_on_route",
+          "subject": "intro_hook",
+          "text": "I can't use the opening hook idea (\"Three days, zero plans\") on this video yet, so it won't be shown as text",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "story_structure",
+          "text": "I can't follow the planned story structure (Arrival, The old town, Sunset) on this video yet, so it won't change the order of the clips",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "pacing",
+          "text": "The fast pacing isn't applied on this video yet: a slide post shows each slide for its own time",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "direction",
+          "text": "The guided story direction isn't applied on this video yet: a slide post shows your slides in order",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "caption_style",
+          "text": "I can't apply the kinetic caption style on this video yet, so it won't be used",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "audio_strategy",
+          "text": "A slide post plays no added music or voiceover yet, so the planned audio won't be used",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "target_duration_s",
+          "text": "I can't make this video the length you asked for yet: a slide post's length follows its slides",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "opening_title",
+          "text": "I can't add the opening title (\"Three days in Kas\") on this video yet",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "title_animation",
+          "text": "I can't animate the title (pop) on this video yet, so it shows without motion",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        }
+      ],
+      "declines": [
+        {
+          "requirement_id": "r1",
+          "subject": "text_animation",
+          "field": "title_animation",
+          "text": "I can't animate on-screen text on this video yet, so the text shows without motion",
+          "on_card": true
+        },
+        {
+          "requirement_id": "r3",
+          "subject": "captions",
+          "field": "caption_style",
+          "text": "I can't add subtitles of the speech to this video yet, so it has none",
+          "on_card": true
+        }
+      ]
+    },
+    "tr": {
+      "route": "slide_post",
+      "lines_shown": true,
+      "reply": "I'll make a fast slide post of Kas: arrival, old town, sunset, with your title popping in and music, about 20 seconds.\n- Yapamadım: animate the title in (Bu videoda ekrandaki yazıyı henüz canlandıramıyorum, o yüzden yazı hareketsiz görünecek)\n- Yapamadım: kinetic captions (Bu videoya henüz konuşmanın altyazısını ekleyemiyorum, o yüzden altyazı yok)\nBu video için not:\n- Açılış kanca fikrini (\"Three days, zero plans\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- Planlanan hikâye yapısını (Arrival, The old town, Sunset) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek\n- fast tempo bu videoda henüz uygulanmıyor: slayt gönderisi her slaytı kendi süresince gösteriyor\n- guided story yönü bu videoda henüz uygulanmıyor: slayt gönderisi slaytlarını sırayla gösteriyor\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Slayt gönderisi henüz eklenmiş müzik ya da seslendirme çalmıyor, planlanan ses kullanılmayacak\n- Bu videoda henüz uygulanmayanlar: istediğin uzunluk, açılış başlığı, başlık animasyonu",
+      "changes": [
+        "Tempo: Hızlı",
+        "Format: Slayt"
+      ],
+      "receipts": [
+        {
+          "requirement_id": "r1",
+          "brief_version": null,
+          "generation_id": null,
+          "status": "not_possible",
+          "verification": "checked",
+          "stage": "checked",
+          "target_media_ids": [],
+          "reason": "Bu videoda ekrandaki yazıyı henüz canlandıramıyorum, o yüzden yazı hareketsiz görünecek",
+          "inferred": [],
+          "inferred_labels": []
+        },
+        {
+          "requirement_id": "r3",
+          "brief_version": null,
+          "generation_id": null,
+          "status": "not_possible",
+          "verification": "checked",
+          "stage": "checked",
+          "target_media_ids": [],
+          "reason": "Bu videoya henüz konuşmanın altyazısını ekleyemiyorum, o yüzden altyazı yok",
+          "inferred": [],
+          "inferred_labels": []
+        }
+      ],
+      "not_applied": [
+        {
+          "code": "not_applied_on_route",
+          "subject": "intro_hook",
+          "text": "Açılış kanca fikrini (\"Three days, zero plans\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "story_structure",
+          "text": "Planlanan hikâye yapısını (Arrival, The old town, Sunset) bu videoda henüz uygulayamıyorum, o yüzden kliplerin sırasını değiştirmeyecek",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "pacing",
+          "text": "fast tempo bu videoda henüz uygulanmıyor: slayt gönderisi her slaytı kendi süresince gösteriyor",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "direction",
+          "text": "guided story yönü bu videoda henüz uygulanmıyor: slayt gönderisi slaytlarını sırayla gösteriyor",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "caption_style",
+          "text": "kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "audio_strategy",
+          "text": "Slayt gönderisi henüz eklenmiş müzik ya da seslendirme çalmıyor, planlanan ses kullanılmayacak",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "target_duration_s",
+          "text": "Bu videoyu henüz istediğin uzunlukta yapamıyorum: slayt gönderisinin uzunluğu slaytlarına bağlı",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "opening_title",
+          "text": "Açılış başlığını (\"Three days in Kas\") bu videoya henüz ekleyemiyorum",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        },
+        {
+          "code": "not_applied_on_route",
+          "subject": "title_animation",
+          "text": "Başlığı (pop) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek",
+          "on_card": true,
+          "table_code": "not_applied_on_route"
+        }
+      ],
+      "declines": [
+        {
+          "requirement_id": "r1",
+          "subject": "text_animation",
+          "field": "title_animation",
+          "text": "Bu videoda ekrandaki yazıyı henüz canlandıramıyorum, o yüzden yazı hareketsiz görünecek",
+          "on_card": true
+        },
+        {
+          "requirement_id": "r3",
+          "subject": "captions",
+          "field": "caption_style",
+          "text": "Bu videoya henüz konuşmanın altyazısını ekleyemiyorum, o yüzden altyazı yok",
+          "on_card": true
+        }
+      ]
+    }
+  },
+  "checks": [
+    {
+      "id": 1,
+      "name": "route: the draft resolves to the route that renders it",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "fixture_route": "slide_post",
+        "card_route": "slide_post",
+        "lines_shown": true
+      },
+      "kind": "route"
+    },
+    {
+      "id": "2.direction",
+      "name": "direction: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "disclosed_by_language": {
+          "en": true,
+          "tr": true
+        },
+        "value": "guided_story",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.pacing",
+      "name": "pacing: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "disclosed_by_language": {
+          "en": true,
+          "tr": true
+        },
+        "value": "fast",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.intro_hook",
+      "name": "intro_hook: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "disclosed_by_language": {
+          "en": true,
+          "tr": true
+        },
+        "value": "Three days, zero plans",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.story_structure",
+      "name": "story_structure: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "disclosed_by_language": {
+          "en": true,
+          "tr": true
+        },
+        "value": [
+          "Arrival",
+          "The old town",
+          "Sunset"
+        ],
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.caption_style",
+      "name": "caption_style: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "disclosed_by_language": {
+          "en": true,
+          "tr": true
+        },
+        "value": "kinetic",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.opening_title",
+      "name": "opening_title: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "disclosed_by_language": {
+          "en": true,
+          "tr": true
+        },
+        "value": "Three days in Kas",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.title_animation",
+      "name": "title_animation: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "disclosed_by_language": {
+          "en": true,
+          "tr": true
+        },
+        "value": "pop",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.target_duration_s",
+      "name": "target_duration_s: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "disclosed_by_language": {
+          "en": true,
+          "tr": true
+        },
+        "value": 20,
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "2.audio_strategy",
+      "name": "audio_strategy: honored in the render or disclosed before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "applied": false,
+        "disclosed_on_card": true,
+        "disclosed_by_language": {
+          "en": true,
+          "tr": true
+        },
+        "value": "licensed_music",
+        "render_evidence": null
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "3.r1",
+      "name": "r1: the ask is honored or declined before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "met": false,
+        "declined_before_approval": true,
+        "disclosed_on_card": false,
+        "card_line": null,
+        "honored_at_render": false,
+        "receipt": {
+          "status": "not_possible",
+          "verification": "checked",
+          "reason": "I can't animate on-screen text on this video yet, so the text shows without motion"
+        },
+        "by_language": {
+          "en": true,
+          "tr": true
+        },
+        "requirement": {
+          "id": "r1",
+          "kind": "style",
+          "scope": "global",
+          "literal": null,
+          "description": "animate the title in",
+          "facts": {
+            "animation": "pop"
+          },
+          "source_turn_id": "synthetic-turn",
+          "status": "open"
+        }
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "3.r2",
+      "name": "r2: the ask is honored or declined before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "met": false,
+        "declined_before_approval": false,
+        "disclosed_on_card": true,
+        "card_line": "I can't make this video the length you asked for yet: a slide post's length follows its slides",
+        "honored_at_render": false,
+        "receipt": {
+          "status": null,
+          "verification": null,
+          "reason": null
+        },
+        "by_language": {
+          "en": true,
+          "tr": true
+        },
+        "requirement": {
+          "id": "r2",
+          "kind": "timing",
+          "scope": "global",
+          "literal": null,
+          "description": "keep it 20 seconds",
+          "facts": {
+            "duration_s": 20
+          },
+          "source_turn_id": "synthetic-turn",
+          "status": "open"
+        }
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "3.r3",
+      "name": "r3: the ask is honored or declined before approval",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "pass": true,
+        "met": false,
+        "declined_before_approval": true,
+        "disclosed_on_card": false,
+        "card_line": null,
+        "honored_at_render": false,
+        "receipt": {
+          "status": "not_possible",
+          "verification": "checked",
+          "reason": "I can't add subtitles of the speech to this video yet, so it has none"
+        },
+        "by_language": {
+          "en": true,
+          "tr": true
+        },
+        "requirement": {
+          "id": "r3",
+          "kind": "style",
+          "scope": "global",
+          "literal": null,
+          "description": "kinetic captions",
+          "facts": {
+            "captions": "on"
+          },
+          "source_turn_id": "synthetic-turn",
+          "status": "open"
+        }
+      },
+      "kind": "disclosed_ok"
+    },
+    {
+      "id": "10.claims",
+      "name": "registry claims: every field the table marks applied is read by the route's code",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "claimed_applied_unread": [],
+        "bad_carriers": {},
+        "carriers": {
+          "edit_format": "kria/runtime.py:_apply_strategy_approval_media"
+        },
+        "shared_readers": []
+      },
+      "kind": "gate"
+    },
+    {
+      "id": "10.lines",
+      "name": "card lines: the route's lines and their typed codes equal the recorded golden",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "changed": [],
+        "no_negation": []
+      },
+      "kind": "gate"
+    },
+    {
+      "id": "10.entry",
+      "name": "render entry: the table names the function the route's job runner renders from",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "entry": "tasks/generative_build.py:_build_slide_post_result",
+        "recipe": {}
+      },
+      "kind": "gate"
+    },
+    {
+      "id": 10,
+      "name": "consumer gate (REPORT ONLY): fields the route ignores and the card does not disclose",
+      "pass": false,
+      "verdict": "REPORT (gaps)",
+      "why_it_fails": [
+        "the slide_post route reads none of ['archetype', 'hero_media_id', 'execution_contract', 'media_scope', 'editorial_plan', 'opening_title_duration_s', 'shot_labels', 'closing_title', 'font_family', 'text_color', 'label_position', 'image_layout', 'render_program', 'selected_media_ids', 'optional_treatments', 'overlay_display', 'licensed_sfx', 'mixed_media_timing', 'montage_audio', 'video_reuse_policy', 'montage_cadence'] and the approval card does not say they are not applied"
+      ],
+      "evidence": {
+        "registry_drift": {
+          "listed_but_read": [],
+          "unread_but_unlisted": [
+            "editorial_plan",
+            "execution_contract",
+            "font_family",
+            "image_layout",
+            "media_scope",
+            "mixed_media_timing",
+            "montage_audio",
+            "montage_cadence",
+            "opening_title_duration_s",
+            "render_program",
+            "selected_media_ids",
+            "text_color",
+            "video_reuse_policy"
+          ]
+        },
+        "pass": false,
+        "settable_fields": 32,
+        "claimed_applied_unread": [],
+        "bad_carriers": {},
+        "shared_readers": [],
+        "unconsumed": [
+          "direction",
+          "archetype",
+          "hero_media_id",
+          "audio_strategy",
+          "execution_contract",
+          "media_scope",
+          "story_structure",
+          "editorial_plan",
+          "caption_style",
+          "intro_hook",
+          "opening_title",
+          "opening_title_duration_s",
+          "shot_labels",
+          "closing_title",
+          "font_family",
+          "text_color",
+          "title_animation",
+          "label_position",
+          "image_layout",
+          "pacing",
+          "target_duration_s",
+          "render_program",
+          "selected_media_ids",
+          "optional_treatments",
+          "overlay_display",
+          "licensed_sfx",
+          "mixed_media_timing",
+          "montage_audio",
+          "video_reuse_policy",
+          "montage_cadence"
+        ],
+        "undisclosed": [
+          "archetype",
+          "hero_media_id",
+          "execution_contract",
+          "media_scope",
+          "editorial_plan",
+          "opening_title_duration_s",
+          "shot_labels",
+          "closing_title",
+          "font_family",
+          "text_color",
+          "label_position",
+          "image_layout",
+          "render_program",
+          "selected_media_ids",
+          "optional_treatments",
+          "overlay_display",
+          "licensed_sfx",
+          "mixed_media_timing",
+          "montage_audio",
+          "video_reuse_policy",
+          "montage_cadence"
+        ],
+        "disclosed": [
+          "direction",
+          "audio_strategy",
+          "story_structure",
+          "caption_style",
+          "intro_hook",
+          "opening_title",
+          "title_animation",
+          "pacing",
+          "target_duration_s"
+        ],
+        "exempt": {
+          "rationale": "explanatory prose shown to the creator, nothing to apply"
+        },
+        "carriers": {
+          "edit_format": "kria/runtime.py:_apply_strategy_approval_media"
+        },
+        "readers": {}
+      },
+      "report_only": true,
+      "kind": "report"
+    }
+  ]
+}

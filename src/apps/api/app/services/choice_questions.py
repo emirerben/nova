@@ -3258,11 +3258,26 @@ def _source_coverage(
             "insufficient_media",
             "duration_out_of_bounds",
             "named_moments_unplaceable",
+            "hidden_part_unplaceable",
         }
     ):
         return None
     can_leave_out = False
-    if "no_video_sources" in codes:
+    if "hidden_part_unplaceable" in codes:
+        # Leverkusen M2: the part of a clip the creator asked never to show leaves no room
+        # for its window. Never rendered with the part; the creator decides.
+        reason = say(
+            en=(
+                "I can't make this length without showing the part of a clip you asked me to "
+                "leave out. Ask for a different length, or leave that clip out."
+            ),
+            tr=(
+                "Gösterme dediğin klip bölümünü göstermeden bu uzunluğu yapamıyorum. Başka "
+                "bir uzunluk iste ya da o klibi dışarıda bırak."
+            ),
+        )
+        label = "Update the selected clips"
+    elif "no_video_sources" in codes:
         # KRI-990: only photos are selected; there is no clip to plan the edit around.
         reason = say(
             en=(

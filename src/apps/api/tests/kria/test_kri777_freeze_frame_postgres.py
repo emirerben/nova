@@ -52,6 +52,20 @@ _FREEZE_EN = "Freeze the frame for one second on Atakan's bite"
 _FREEZE_TR = "Atakan'ın ısırığında kareyi bir saniye dondur"
 _EN = "I can't freeze a frame in this edit yet, so that moment plays normally"
 _TR = "Bu düzenlemede henüz bir kareyi donduramıyorum, o yüzden o an normal akıyor"
+# The phone montage keeps its fast cut for this plan (the photo's own text keeps the guided story
+# out) and holds clips by its own default, not the plan's unasked balanced pace. Both are the
+# planner's own choices, so since Green 4/5 (`kria_headsup_asked_only_enabled`) the card no longer
+# names them; with the switch off it says both for every account (KRI-1097 route registry).
+_HEADS_UP = (
+    "Heads-up for this video:\n"
+    "- The balanced pacing isn't applied on this video yet: the cuts follow a fast pace\n"
+    "- The guided story direction isn't applied on this video yet: it is cut as a fast montage"
+)
+_HEADS_UP_TR = (
+    "Bu video için not:\n"
+    "- balanced tempo bu videoda henüz uygulanmıyor: kesimler hızlı tempoda\n"
+    "- guided story yönü bu videoda henüz uygulanmıyor: hızlı bir montaj olarak kesiliyor"
+)
 _PROXY = "users/u/creation-threads/t/analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4"
 _PHOTO = "clip:asset-6ae61e1a-96ff-4776-8f95-54ace669db23"
 
@@ -202,7 +216,7 @@ async def test_a_turkish_chat_gets_the_turkish_couldnt(monkeypatch):
     status, reply, card, payload = await _draft(monkeypatch, freeze=_FREEZE_TR, language="tr")
 
     assert status == "awaiting_approval"
-    assert reply == f"İstediklerinin hepsi videoya giremedi:\n- Yapamadım: {_FREEZE_TR} ({_TR})"
+    assert reply == (f"İstediklerinin hepsi videoya giremedi:\n- Yapamadım: {_FREEZE_TR} ({_TR})")
     assert card.endswith(reply)
     assert _EN not in reply and _EN not in card
     assert "freeze the frame on the bite" not in card
@@ -216,3 +230,13 @@ async def test_without_a_freeze_ask_the_models_summary_stays(monkeypatch):
     assert status == "awaiting_approval"
     assert reply == _SUMMARY
     assert card == f"Render this draft: {_SUMMARY}"
+
+
+@pytest.mark.asyncio
+async def test_switch_off_names_the_planners_pace_and_direction_as_before(monkeypatch):
+    """`kria_headsup_asked_only_enabled` off: byte-identical to before Green 4/5, EN and TR."""
+    monkeypatch.setattr(settings, "kria_headsup_asked_only_enabled", False)
+    _status, reply, _card, _payload = await _draft(monkeypatch, freeze=None)
+    assert reply == f"{_SUMMARY}\n{_HEADS_UP}"
+    _status, reply, _card, _payload = await _draft(monkeypatch, freeze=_FREEZE_TR, language="tr")
+    assert reply.endswith(f"({_TR})\n{_HEADS_UP_TR}")

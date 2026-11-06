@@ -713,6 +713,7 @@ def test_decide_approval_delegates_and_publishes_denied_turn_successor(
         "speech_cleanup_choice": None,
         "output_orientation": None,
         "landscape_fit": None,
+        "render_shape_origin": None,
         "automatic_repair_attempts": 0,
     }
     publish.assert_called_once_with(successor_id)

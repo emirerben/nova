@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import unicodedata
 import uuid
@@ -1319,7 +1320,7 @@ async def test_an_unreadable_brief_update_is_not_called_a_context_limit(
 async def test_bound_rendered_extraction_failure_recovers_without_creation_or_editor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.agents._runtime import TerminalError
+    from app.agents._runtime import TerminalSchemaError
 
     db, item, creator_id, copilot, runs = _wire_planner(
         monkeypatch, output=None, editor_plan=_editor_plan(), snapshot={"text_bars": []}
@@ -1336,7 +1337,7 @@ async def test_bound_rendered_extraction_failure_recovers_without_creation_or_ed
             pass
 
         def run(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN201
-            raise TerminalError("schema retries exhausted")
+            raise TerminalSchemaError("schema retries exhausted")
 
     monkeypatch.setattr(planner, "BriefExtractorAgent", FailedExtractor)
     result = await plan_live_turn(
@@ -1352,6 +1353,82 @@ async def test_bound_rendered_extraction_failure_recovers_without_creation_or_ed
     assert result.brief_updates == () and result.brief_expected_version == prior.version
     assert runs == []
     copilot.assert_not_awaited()
+
+
+def _extractor_fixture(monkeypatch: pytest.MonkeyPatch, failures: list[Exception]):
+    """Fake extractor that raises ``failures`` in order, then answers; records request ids."""
+    seen: list[str] = []
+
+    class Extractor:
+        def __init__(self, _client) -> None:  # noqa: ANN001
+            pass
+
+        def run(self, _input, *, ctx):  # noqa: ANN001, ANN201
+            seen.append(ctx.request_id)
+            if failures:
+                raise failures.pop(0)
+            return "answer"
+
+    monkeypatch.setattr(planner, "BriefExtractorAgent", Extractor)
+    monkeypatch.setattr(planner, "default_client", lambda: object())
+    monkeypatch.setattr(planner, "_EXTRACTOR_RETRY_BACKOFF_S", 0.0)
+    inputs = SimpleNamespace(agent_input=SimpleNamespace(user_message="x", conversation=[]))
+    call = functools.partial(
+        planner._call_brief_extractor,
+        inputs,
+        creator_request="Animate the title",
+        thread_id=uuid.uuid4(),
+        creator_id=uuid.uuid4(),
+        item_id=uuid.uuid4(),
+        creator_agent_session_id=None,
+    )
+    return call, seen
+
+
+def _transient_terminal() -> Exception:
+    from app.agents._runtime import TerminalError, TransientError
+
+    terminal = TerminalError("brief_extractor: exhausted 2 model(s) after 2 attempt(s)")
+    terminal.__cause__ = TransientError("503")
+    return terminal
+
+
+@pytest.mark.asyncio
+async def test_extractor_retries_once_after_a_transient_provider_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    call, seen = _extractor_fixture(monkeypatch, [_transient_terminal()])
+    assert await call() == "answer"
+    # Two runs, two DISTINCT request ids (the paid-call reservation key includes it).
+    assert len(seen) == 2 and seen[0] != seen[1]
+
+
+@pytest.mark.asyncio
+async def test_extractor_gives_up_after_one_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    call, seen = _extractor_fixture(
+        monkeypatch, [_transient_terminal(), _transient_terminal(), _transient_terminal()]
+    )
+    with pytest.raises(RuntimeError):
+        await call()
+    assert len(seen) == 2
+
+
+@pytest.mark.asyncio
+async def test_extractor_does_not_retry_a_misread_or_a_flagged_off_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.agents._runtime import TerminalSchemaError
+
+    call, seen = _extractor_fixture(monkeypatch, [TerminalSchemaError("schema")])
+    with pytest.raises(RuntimeError):
+        await call()
+    assert len(seen) == 1
+    # Kill switch off: byte-identical to before (one run, no retry).
+    monkeypatch.setattr(settings, "kria_error_honesty_enabled", False)
+    call, seen = _extractor_fixture(monkeypatch, [_transient_terminal()])
+    with pytest.raises(RuntimeError):
+        await call()
+    assert len(seen) == 1
 
 
 @pytest.mark.asyncio

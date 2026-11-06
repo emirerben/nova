@@ -1,0 +1,130 @@
+{
+  "agent": "nova.compose.overlay_placement",
+  "prompt_version": "1.4.0",
+  "input": {
+    "words": [
+      {
+        "word": "Sabah",
+        "start_s": 2.0,
+        "end_s": 2.35
+      },
+      {
+        "word": "uyanınca",
+        "start_s": 2.4,
+        "end_s": 2.75
+      },
+      {
+        "word": "ilk",
+        "start_s": 2.8,
+        "end_s": 3.15
+      },
+      {
+        "word": "işim",
+        "start_s": 3.2,
+        "end_s": 3.55
+      },
+      {
+        "word": "kahve",
+        "start_s": 3.6,
+        "end_s": 3.95
+      },
+      {
+        "word": "yapmak",
+        "start_s": 4.0,
+        "end_s": 4.35
+      },
+      {
+        "word": "ama",
+        "start_s": 4.4,
+        "end_s": 4.75
+      },
+      {
+        "word": "bugün",
+        "start_s": 4.8,
+        "end_s": 5.15
+      },
+      {
+        "word": "biraz",
+        "start_s": 5.2,
+        "end_s": 5.55
+      },
+      {
+        "word": "farklı",
+        "start_s": 5.6,
+        "end_s": 5.95
+      },
+      {
+        "word": "bir",
+        "start_s": 6.0,
+        "end_s": 6.35
+      },
+      {
+        "word": "gün",
+        "start_s": 6.4,
+        "end_s": 6.75
+      },
+      {
+        "word": "olacak",
+        "start_s": 6.8,
+        "end_s": 7.15
+      }
+    ],
+    "occupied": [],
+    "duration_s": 40.0,
+    "archetype": "talking_head",
+    "spoken_language": "tr",
+    "assets": [
+      {
+        "asset_id": "asset_coffee",
+        "kind": "image",
+        "origin": "generated",
+        "user_context": "Coffee",
+        "subject": "Coffee",
+        "description": "Coffee",
+        "on_screen_text": "",
+        "duration_s": null,
+        "aspect": 0.6667,
+        "width": 1024,
+        "height": 1536,
+        "generation_prompt": "A photorealistic cup of coffee, soft natural light"
+      },
+      {
+        "asset_id": "asset_tea",
+        "kind": "image",
+        "origin": "generated",
+        "user_context": "Tea",
+        "subject": "Tea",
+        "description": "Tea",
+        "on_screen_text": "",
+        "duration_s": null,
+        "aspect": 0.6667,
+        "width": 1024,
+        "height": 1536,
+        "generation_prompt": "A cup of green tea on a tray"
+      }
+    ]
+  },
+  "raw_text": "{\"placements\": [{\"asset_id\": \"asset_coffee\", \"slot\": \"top\", \"start_s\": 3.6, \"end_s\": 6.6, \"confidence_tier\": \"confident\", \"reason\": \"You say \\\"kahve\\\" — the Coffee image shows it.\", \"transcript_anchor\": \"kahve yapmak\", \"sfx_intent\": \"pop_in\"}], \"wishlist\": []}",
+  "output": {
+    "placements": [
+      {
+        "asset_id": "asset_coffee",
+        "slot": "top",
+        "start_s": 3.6,
+        "end_s": 6.6,
+        "confidence_tier": "confident",
+        "reason": "You say \"kahve\" — the Coffee image shows it.",
+        "transcript_anchor": "kahve yapmak",
+        "sfx_intent": "pop_in"
+      }
+    ],
+    "wishlist": []
+  },
+  "meta": {
+    "source": "hand_authored_contract",
+    "kind": "contract",
+    "pins": "the output contract (a correct answer parses and has this shape) and the prompt content, not model behaviour",
+    "case": "A word that translates the title ('kahve' for Coffee) is placed; a sibling drink (Tea) at the same word is omitted.",
+    "unproven": "Recorded-response contract. The transcript and timings are synthetic. Whether the real model follows prompt 1.4.0 on this input is NOT measured here; only a live run measures it."
+  }
+}

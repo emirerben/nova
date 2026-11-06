@@ -7,6 +7,21 @@ import UIKit
 /// Offline chat fixture: every HTTP request is intercepted, even if a caller
 /// changes its URL. The existing UI-only fallback supplies projects and drafts.
 enum ChatUITestTransport {
+    /// Uploads in the re-record fixture run through the same offline server, so the PUT lands and the real attach
+    /// path (reserve, upload, replace) runs without a network. Nil for every other fixture: the background session stays.
+    static func uploadSessionConfiguration() -> URLSessionConfiguration? {
+        guard CreationChatFixture.rerecordMode != nil else { return nil }
+        // Every launch starts with no leftover uploads, except a relaunch that is testing recovery.
+        if ProcessInfo.processInfo.environment["KRIA_RERECORD_KEEP_UPLOADS"] != "1" {
+            for suffix in ["", ".preparing", ".photo-selection", ".editor-source-placements"] {
+                UserDefaults.standard.removeObject(forKey: "kria.rerecord-ui-fixture.uploads" + suffix)
+            }
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ChatUITestURLProtocol.self]
+        return configuration
+    }
+
     static func api() -> KriaAPI {
         if ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA"] == "1" {
             URLProtocol.registerClass(GeneratedMediaImageFixtureProtocol.self)
@@ -21,7 +36,20 @@ enum ChatUITestTransport {
     }
 }
 
-private final class GeneratedMediaImageFixtureProtocol: URLProtocol, @unchecked Sendable {
+extension ChatUITestTransport {
+    /// Item 24: the place-hint fixture must really move a recording into Overlays, but the app's coordinator uploads
+    /// through a background session, which cannot use a URLProtocol. This scenario gets an ephemeral one.
+    @MainActor static func placeHintUploads(api: KriaAPIClient) -> BackgroundUploadCoordinator? {
+        guard ProcessInfo.processInfo.arguments.contains("-ui-testing-chat"), UploadPlaceHintFixture.mode != nil else { return nil }
+        let key = "place-hint-ui-fixture"
+        UserDefaults.standard.removeObject(forKey: key)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ChatUITestURLProtocol.self]
+        return BackgroundUploadCoordinator(api: api, defaultsKey: key, sessionConfiguration: configuration)
+    }
+}
+
+final class GeneratedMediaImageFixtureProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "generated-media-image.invalid" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
@@ -42,7 +70,14 @@ private final class GeneratedMediaImageFixtureProtocol: URLProtocol, @unchecked 
 /// UI fixtures must never read or rotate a developer's Keychain session.
 struct ChatUITestTokenStore: TokenStore {
     // `KRIA_FIXTURE_EXPIRED_TOKEN=1` (perf): an in-memory expired session, so the 401 -> refresh path runs.
-    func read() throws -> MobileSession? { PerfFixture.expiredToken ? PerfTokenState.shared.current : nil }
+    func read() throws -> MobileSession? {
+        if PerfFixture.expiredToken { return PerfTokenState.shared.current }
+        return nil
+    }
+    func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) throws -> SessionStoreUpdate {
+        guard PerfFixture.expiredToken else { throw APIError.unsupported }
+        return PerfTokenState.shared.updateSession(replacement, ifCurrent: expected)
+    }
     func write(_ session: MobileSession) throws { if PerfFixture.expiredToken { PerfTokenState.shared.store(session) } }
     func delete() throws {}
 }
@@ -52,6 +87,13 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     private var delayedResponse: DispatchWorkItem?
     override func startLoading() {
+        if request.httpMethod == "POST", request.url?.path == "/creation-threads",
+           let delay = ProcessInfo.processInfo.environment["KRIA_CHAT_CREATE_DELAY"].flatMap(Double.init), delay > 0 {
+            let work = DispatchWorkItem { [weak self] in self?.finishLoading() }
+            delayedResponse = work
+            DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: work)
+            return
+        }
         if PerfFixture.isFullProjectionRead(request) {
             Perf.mark("fixture.full.arrived")
             PerfCounters.shared.setOnce("fixture fullDelayMS", Int(PerfFixture.delay(for: request) * 1000))
@@ -138,6 +180,11 @@ final class CreationChatFixture: @unchecked Sendable {
     private var generatedMediaLookupCount = 0
     private var rejectedGeneratedMediaEvent: String?
     private var loadedGeneratedMediaFixture = false
+    /// Item 24: visuals "uploaded" (reserve -> PUT -> register) per plan item, for `KRIA_CHAT_PLACE_HINT_FIXTURE`.
+    private var placeHintPools: [String: [[String: Any]]] = [:]
+    /// `KRIA_TALKING_RERECORD=busy-twice`: the first two swap attempts (the app's own automatic pair) are refused
+    /// while a render runs; the creator's retry goes through.
+    fileprivate var rerecordBusyRefusals = 0
 
     private var generatedFixtureStorageKey: String? {
         ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA_PERSIST"].map { "kria.generated-media-fixture." + $0 }
@@ -168,6 +215,9 @@ final class CreationChatFixture: @unchecked Sendable {
     private var answeredCapabilitiesRead = false
     /// KRI-756: how many times each thread asked for its first-prompt chips (the first answer is `pending`).
     private var suggestionAsks: [String: Int] = [:]
+    /// Threads whose stale suggestion was answered with "no longer fits" (`KRIA_SUGGESTION_CARDS=stale`); the next set they get is the refreshed one.
+    private var staleSuggestionThreads: Set<String> = []
+    private var dismissedSuggestions: [String: Set<String>] = [:]
     /// `KRIA_CHAT_SLOW_READS` (KRI-640): GETs of one chat (or anything under it) and every capabilities read but the
     /// first. The project list and the create call stay fast.
     func isSlowRead(_ request: URLRequest) -> Bool {
@@ -218,6 +268,23 @@ final class CreationChatFixture: @unchecked Sendable {
     Checking which moment of the clip the title should land on.
     """
     private let approvalID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    /// `KRIA_CHAT_STEER_NOW` (Steer now): a message sent while Kria works on a turn waits behind it, like the server's
+    /// one queue slot (`runtime.submit_turn`), and `POST …/turns/{id}/cancel {"steer": true}` hands over to it. Modes:
+    /// `planning` (the first turn stays planning), `card` (its card is up), `rendering` (its approved video is being made),
+    /// `stale` (the first Steer finds the revision moved), `refused` (the Steer lands after the video started),
+    /// `trash_race` (like `card`; the first trash / Edit finds the revision moved and Kria picks the message up before the
+    /// retry).
+    /// `KRIA_CHAT_STEER_NOW_CAP=0` is a server with the switch off.
+    private var steerMode: String? { ProcessInfo.processInfo.environment["KRIA_CHAT_STEER_NOW"] }
+    private var steerSwitchOn: Bool { steerMode != nil && ProcessInfo.processInfo.environment["KRIA_CHAT_STEER_NOW_CAP"] != "0" }
+    private var steerActive: [String: String] = [:]
+    private var steerWaiting: [String: String] = [:]
+    private var steerAccepted: [String: String] = [:]
+    private var steerPromotion: [String: Int] = [:]
+    private var steerStaleServed = false
+    private let steerApprovalID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    static let steerFirstSummary = "Open on the laugh and keep the pacing quick."
+    static let steerTypedSummary = "Your request: you small at the bottom right, white captions in the middle, no music."
     static var researchPreviewFixture: [String: Any] { [
         "version": 1,
         "retrieved_at": "2026-10-25T09:00:00Z",
@@ -247,7 +314,7 @@ final class CreationChatFixture: @unchecked Sendable {
         if mode == "invalid", start != nil || end != nil { return (422, "song_range_invalid", "That starts after your song ends.") }
         guard let start, let end else { return nil }
         if start >= 90 { return (422, "song_range_invalid", "That starts after your song ends.") }
-        if end - start < 5 { return (422, "song_range_invalid", "Pick at least five seconds of your song.") }
+        if end - start < 5 { return (422, "song_range_invalid", "Pick at least five seconds.") }
         return nil
     }
     /// KRI-756: the server's `SuggestionSetOut`, shaped like the real contract. `ready` once a render finished,
@@ -270,6 +337,17 @@ final class CreationChatFixture: @unchecked Sendable {
         let events = thread["events"] as? [[String: Any]] ?? []
         let media = (thread["state"] as? [String: Any])?["media"] as? [[String: Any]] ?? []
         if (thread["job"] as? [String: Any])?["status"] as? String == "ready" {
+            // `KRIA_SUGGESTION_CARDS` (AI suggestion blocks): the ready set carries v2 `suggestions`. The value names the
+            // mock (`SuggestionCardsMocks`); `stale` answers a fresh set once its first card was refused.
+            if let mode = ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CARDS"] {
+                switch mode {
+                case "turkish": return SuggestionCardsMocks.turkish()
+                case "unknown": return SuggestionCardsMocks.unknown()
+                case "empty": return SuggestionCardsMocks.empty()
+                case "stale": return staleSuggestionThreads.contains(id) ? SuggestionCardsMocks.refreshed() : SuggestionCardsMocks.stale()
+                default: return SuggestionCardsMocks.ready()
+                }
+            }
             return set("ready", [chip(1, "hook", "Add a hook", "Add a hook that matches the video"),
                                  chip(2, "captions", "Add captions", "Add captions"),
                                  chip(3, "music", "Turn the music down", "Turn the music down"),
@@ -294,11 +372,13 @@ final class CreationChatFixture: @unchecked Sendable {
         defer { saveGeneratedFixture() }
         let path = request.url?.path ?? ""
         let body = (try? JSONSerialization.jsonObject(with: bodyData(request))) as? [String: Any] ?? [:]
+        let parts0 = path.split(separator: "/").map(String.init)
         func response(_ object: Any, status: Int = 200) -> (Int, Data) { (status, (try? JSONSerialization.data(withJSONObject: object)) ?? Data()) }
         if path.hasPrefix("/me/memory"), ProcessInfo.processInfo.environment["KRIA_CHAT_FINISHED_LEARNING"] == "1" {
             let reply = AccountTextPreferenceFixture.shared.reply(request, stale: false, learning: true, initiallyEnabled: true)
             return (reply.0, Data(reply.1.utf8))
         }
+        if let reply = rerecordRespond(request, path: path, body: body) { return reply }
         seedDeviceDeliveryThread()
         mirrorDeviceDelivery()
         if path == "/creation-threads/capabilities" {
@@ -307,12 +387,19 @@ final class CreationChatFixture: @unchecked Sendable {
             // `KRIA_CHAT_TALKING_MAX_CLIPS`: Talking's cap. 10 is a server with KRI-719 multi-clip Talking on;
             // `1` is one with it off (a single pick then closes Apple's picker on its own).
             let talkingMaxClips = ProcessInfo.processInfo.environment["KRIA_CHAT_TALKING_MAX_CLIPS"].flatMap(Int.init) ?? 10
-            var capabilities: [String: Any] = ["formats": [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", talkingMaxClips), ("slides", "slides", 20)].map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
+            // `KRIA_CHAT_LIPSYNC=1`: the server also offers the Lip-sync card (a montage underneath) and `media.song`.
+            // Off by default so the position of Voiceover and Talk to camera in the carousel stays what other tests expect.
+            let offersLipsync = ProcessInfo.processInfo.environment["KRIA_CHAT_LIPSYNC"] == "1"
+            var formatRows: [(String, String, Int)] = [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", talkingMaxClips), ("slides", "slides", 20)]
+            if offersLipsync { formatRows.append(("lipsync", "montage", 10)) }
+            var capabilities: [String: Any] = ["formats": formatRows.map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
+            if offersLipsync { capabilities["media"] = ["song": ["max": 1, "max_file_bytes": 52_428_800, "content_types": ["audio/mpeg", "audio/mp4"]]] }
             if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS"] == "1" { capabilities["live_plan_review_enabled"] = true }
             // `-camera-roll-surface-fixture` (KRI-944): the Camera roll row in the drawer. The surface brings its own fixture API.
             if ProcessInfo.processInfo.arguments.contains("-camera-roll-surface-fixture") { capabilities["media_collections"] = true }
             // `KRIA_SUGGESTION_CHIPS=1` (KRI-756): the server offers footage-aware suggestion chips. Unset = an old server.
             if ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS"] == "1" { capabilities["suggestion_chips"] = true }
+            if steerSwitchOn { capabilities["steer_now"] = true }
             // `KRIA_CHAT_PLAN_BLOCKS_VERSION=2`: the server speaks live-plan contract v2 (structured payloads,
             // 8 sections including post_caption, Review entry points). Absent = an older feed-only server.
             if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS"] == "1",
@@ -325,6 +412,10 @@ final class CreationChatFixture: @unchecked Sendable {
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_DRAWING"] == "1" { capabilities["slide_post_drawing"] = true }
             // KRIA_SLIDE_POST_STICKERS (KRI-460): pasted pictures on slides. The server only advertises it to protocol 8 builds.
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_STICKERS"] == "1" { capabilities["slide_post_stickers"] = true }
+            // KRIA_SLIDE_POST_TILT (KRI-1138): the Tilt tool. The server only advertises it to protocol 28 builds.
+            if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_TILT"] == "1" { capabilities["slide_post_tilt"] = true }
+            // KRIA_SLIDE_POST_TILT_ZOOM (KRI-1170): the Zoom slider. The server only advertises it to protocol 33 builds.
+            if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_TILT_ZOOM"] == "1" { capabilities["slide_post_tilt_zoom"] = true }
             // KRIA_TEXT_BEND (KRI-646): the Bend slider. The server only advertises it to protocol 9 builds.
             if ProcessInfo.processInfo.environment["KRIA_TEXT_BEND"] == "1" { capabilities["text_bend"] = true }
             // KRIA_VOICE_DICTATION (KRI-742): the mic button; the engine is scripted (see DictationController).
@@ -334,8 +425,9 @@ final class CreationChatFixture: @unchecked Sendable {
                 capabilities["slide_post_sizes"] = true
             }
             // KRIA_CHAT_CLIP_QUESTION: "1" = server advertises clip_selection_questions; "legacy" = it still
-            // sends the clip_question payload but does not advertise the capability (old-server fallback).
-            if ["1", "history", "photo"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"]) { capabilities["clip_selection_questions"] = true }
+            // sends the clip_question payload but does not advertise the capability (old-server fallback);
+            // "later-suggested" = "1" with the suggestion on the second group instead of the first.
+            if ["1", "history", "photo", "later-suggested"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"]) { capabilities["clip_selection_questions"] = true }
             // KRIA_CHAT_SONG_ORDER: "1" = server advertises media.song, song_order_questions and
             // song_order_placements (the song timeline, KRI-561); "list" = media.song and song_order_questions only
             // (the vertical order list, an older server); "legacy" = it still sends the song_order_question payload
@@ -392,7 +484,32 @@ final class CreationChatFixture: @unchecked Sendable {
             if DeviceRenderUITestFixture.scenario != nil || ProcessInfo.processInfo.environment["KRIA_TELEPROMPTER_REVIEW_FIXTURE"] == "1" {
                 capabilities["phone_rendering"] = ["enabled": true, "recipe_versions": [1, 2], "verified_features": MediaCapability.allCases.map(\.rawValue)]
             }
+            if UploadPlaceHintFixture.capabilityOn { capabilities["upload_place_hint"] = true }
             return response(capabilities)
+        }
+        if UploadPlaceHintFixture.mode != nil {
+            // The recording's re-upload: bytes go to a fixture URL, then register, then the pool read.
+            if request.httpMethod == "PUT", path.hasPrefix("/place-hint-upload/") { return response([String: Any]()) }
+            if parts0.first == "plan-items", parts0.count >= 3, parts0[2] == "assets" {
+                let item = parts0[1]
+                if request.httpMethod == "POST", parts0.last == "upload-urls" {
+                    let reservation = UUID().uuidString
+                    return response(["urls": [["reservation_id": reservation, "upload_url": "https://fixture.invalid/place-hint-upload/\(reservation)",
+                                               "gcs_path": "fixture/place-hint/\(reservation)", "upload_headers": [String: String]()]]])
+                }
+                if request.httpMethod == "POST", parts0.count == 3 {
+                    let contentType = body["content_type"] as? String ?? "video/mp4"
+                    let asset: [String: Any] = ["id": body["reservation_id"] as? String ?? UUID().uuidString,
+                                                "kind": contentType.hasPrefix("image/") ? "image" : "video", "status": "ready",
+                                                "media_status": "available", "source_filename": body["source_filename"] as? String ?? "Video"]
+                    placeHintPools[item, default: []].append(asset)
+                    return response(asset)
+                }
+                if request.httpMethod == "GET", parts0.count == 3 {
+                    let assets = placeHintPools[item] ?? []
+                    return response(["assets": assets, "max_assets": 10, "occupied_assets": assets.count])
+                }
+            }
         }
         if path.hasSuffix("/upload-urls"), ProcessInfo.processInfo.environment["KRIA_TELEPROMPTER_REVIEW_FIXTURE"] == "1" {
             return response(["detail": "This fixture deliberately rejects intake."], status: 422)
@@ -501,8 +618,13 @@ final class CreationChatFixture: @unchecked Sendable {
             if parts.last == "narration-script" { return response(script) }
             if parts.count == 3, request.httpMethod == "POST" {
                 generatedMediaPostCount += 1
-                if ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA_REJECT_ONCE"] == "1" {
-                    if generatedMediaPostCount == 1 {
+                // "1" rejects the first request; "edit" rejects the first Edit image request and lets everything before it through.
+                let rejectMode = ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA_REJECT_ONCE"]
+                if rejectMode == "1" || rejectMode == "edit" {
+                    let isRejectedRequest = rejectMode == "1"
+                        ? generatedMediaPostCount == 1
+                        : (body["capability"] as? String == "image_edit" && rejectedGeneratedMediaEvent == nil)
+                    if isRejectedRequest {
                         rejectedGeneratedMediaEvent = body["client_event_id"] as? String
                         return response(["detail": "Source changed before submission"], status: 409)
                     }
@@ -513,11 +635,17 @@ final class CreationChatFixture: @unchecked Sendable {
                 if ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA_RECOVERED"] == "1" {
                     return response(["detail": "Recovery must not POST generation again"], status: 409)
                 }
-                if body["capability"] as? String == "image", let eventID = body["client_event_id"] as? String {
+                if let capability = body["capability"] as? String, capability == "image" || capability == "image_edit",
+                   let eventID = body["client_event_id"] as? String {
                     let imageURL = "https://generated-media-image.invalid/cover.jpg"
-                    let operation: [String: Any] = ["id": eventID, "state": "ready", "capability": "image",
+                    var operation: [String: Any] = ["id": eventID, "state": "ready", "capability": capability,
                         "asset_id": "generated-" + eventID, "preview_url": imageURL, "source_url": imageURL,
                         "retryable": false, "fixture_title": body["editable_title"] ?? ""]
+                    // An edit echoes the source it was made from, which is what the approval check compares.
+                    if capability == "image_edit" {
+                        operation["source_asset_id"] = body["source_asset_id"] ?? NSNull()
+                        operation["source_generation"] = body["source_generation"] ?? NSNull()
+                    }
                     generatedMediaOperations[eventID] = operation
                     return response(operation)
                 }
@@ -542,14 +670,15 @@ final class CreationChatFixture: @unchecked Sendable {
             guard let operation = generatedMediaOperations[operationID] else { return response(["detail": "Unknown fixture request"], status: 404) }
             if request.httpMethod == "GET" { generatedMediaLookupCount += 1 }
             if parts.last == "accept", request.httpMethod == "POST" {
-                if operation["capability"] as? String == "image" {
+                if ["image", "image_edit"].contains(operation["capability"] as? String ?? "") {
                     if ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA_RECOVERED"] == "1",
                        generatedMediaPostCount != 1 || generatedMediaLookupCount < 1 {
                         return response(["detail": "Recovery counters did not prove one POST and a status lookup"], status: 409)
                     }
-                    generatedMediaAssets[itemID] = [["id": operation["asset_id"]!, "kind": "image", "status": "ready",
+                    generatedMediaAssets[itemID, default: []].removeAll { $0["id"] as? String == operation["asset_id"] as? String }
+                    generatedMediaAssets[itemID, default: []].append(["id": operation["asset_id"]!, "kind": "image", "status": "ready",
                         "source_filename": operation["fixture_title"] ?? "", "preview_url": operation["preview_url"]!,
-                        "source_url": operation["source_url"]!, "generation": "1"]]
+                        "source_url": operation["source_url"]!, "generation": "1"])
                     return response(operation)
                 }
                 guard body["script_id"] as? String == "vos-fixture", body["script_version"] as? Int == 1,
@@ -579,7 +708,17 @@ final class CreationChatFixture: @unchecked Sendable {
         // KRI-756 (`KRIA_SUGGESTION_CHIPS=1`): the server's chip sets, shaped like `SuggestionSetOut`. Unset = a server without the route.
         if parts.count == 3, parts[2] == "suggestions" {
             guard ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS"] == "1" else { return response(["detail": "Not Found"], status: 404) }
-            return response(fixtureSuggestions(id: id, thread: thread))
+            var served = fixtureSuggestions(id: id, thread: thread)
+            // A dismissed card is never offered again (the server keeps them in the thread's ring).
+            if let cards = served["suggestions"] as? [[String: Any]], let gone = dismissedSuggestions[id] {
+                served["suggestions"] = cards.filter { !gone.contains($0["id"] as? String ?? "") }
+            }
+            return response(served)
+        }
+        if parts.count == 4, parts[2] == "suggestions", parts[3] == "dismiss", request.httpMethod == "POST" {
+            guard ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS"] == "1" else { return response(["detail": "Not Found"], status: 404) }
+            if let card = body["chip_id"] as? String { dismissedSuggestions[id, default: []].insert(card) }
+            return response([String: Any]())
         }
         // KRI-561: the signed song URL. The fixture hands out a generated tone as a file URL (no network).
         if parts.count == 3, parts[2] == "song-audio", ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] == "1" {
@@ -612,7 +751,7 @@ final class CreationChatFixture: @unchecked Sendable {
             let start = body["start_s"] as? Double, end = body["end_s"] as? Double
             if let start, let end {
                 if start >= songSeconds { return problem(422, "song_range_invalid", "That starts after your song ends.") }
-                if end - start < 5 { return problem(422, "song_range_invalid", "Pick at least five seconds of your song.") }
+                if end - start < 5 { return problem(422, "song_range_invalid", "Pick at least five seconds.") }
                 media[songIndex]["song_range"] = ["start_s": start, "end_s": min(end, songSeconds)]
             } else {
                 media[songIndex].removeValue(forKey: "song_range")
@@ -680,6 +819,82 @@ final class CreationChatFixture: @unchecked Sendable {
             thread["events"] = events; thread["revision"] = revision; threads[id] = thread
             return response(["turn_id": turn, "thread_revision": revision, "status": "cancelled", "approval_ids": [String]()])
         }
+        if parts.last == "cancel", parts.count == 5, parts[2] == "turns", steerMode != nil {
+            // Steer now, as `runtime.cancel_turn(steer=True)` answers it.
+            func problem(_ status: Int, _ code: String, _ message: String) -> (Int, Data) {
+                response(["problem": ["code": code, "message": message, "recovery": "refresh_replan"]], status: status)
+            }
+            let steering = body["steer"] as? Bool == true
+            if steering { guard steerSwitchOn else { return problem(404, "steer_now_unavailable", "Steer now is unavailable.") } }
+            if steering, steerMode == "refused" {
+                return problem(409, "turn_not_cancellable", "Your video is already being made.")
+            }
+            if steering, steerMode == "stale", !steerStaleServed {
+                steerStaleServed = true
+                append("status_update", role: "system", payload: ["note": "a worker event moved the revision"])
+                thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+                return problem(409, "thread_revision_stale", "The project changed before cancellation.")
+            }
+            let stopped = parts[3]
+            let stillWaiting = steerWaiting[id]?.lowercased() == stopped.lowercased()
+            if !steering, steerMode == "trash_race", !steerStaleServed, stillWaiting, let first = steerActive[id] {
+                // The first removal finds the revision moved. Before the app retries, the first card is dismissed and Kria
+                // picks the waiting message up (the server's promotion writes no event, so the app cannot see it).
+                steerStaleServed = true
+                append("approval_denied", role: "system", payload: ["approval_id": approvalID, "turn_id": first])
+                steerActive[id] = steerWaiting[id]
+                steerWaiting[id] = nil
+                thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+                return problem(409, "thread_revision_stale", "The project changed before cancellation.")
+            }
+            if !steering, body["only_if_queued"] as? Bool == true, !stillWaiting {
+                // Like `cancel_turn(only_if_queued=True)`: checked before the revision, never stops a running turn.
+                return problem(409, "turn_no_longer_queued", "Kria already started on this message.")
+            }
+            if (body["expected_thread_revision"] as? Int) != revision {
+                return problem(409, "thread_revision_stale", "The project changed before cancellation.")
+            }
+            if !steering {
+                // The trash / Edit: the cancel of the waiting message, marked so Kria never reads it.
+                guard stillWaiting else {
+                    if steerActive[id]?.lowercased() == stopped.lowercased() {
+                        // Like the server, a plain cancel (no `only_if_queued`) stops the turn Kria now runs.
+                        append("turn_cancelled", role: "system", payload: ["turn_id": stopped, "approval_ids": [String]()])
+                        steerActive[id] = nil
+                        steerPromotion[id] = nil
+                        thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+                        return response(["turn_id": stopped, "thread_revision": revision, "status": "cancelled", "approval_ids": [String]()])
+                    }
+                    return problem(409, "turn_not_cancellable", "Kria already started on this message.")
+                }
+                var payload: [String: Any] = ["turn_id": stopped, "approval_ids": [String]()]
+                if steerSwitchOn { payload["removed_while_waiting"] = true }
+                append("turn_cancelled", role: "system", payload: payload)
+                steerWaiting[id] = nil
+                thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+                return response(["turn_id": stopped, "thread_revision": revision, "status": "cancelled", "approval_ids": [String]()])
+            }
+            guard steerActive[id]?.lowercased() == stopped.lowercased(),
+                  let waiting = steerWaiting[id] else {
+                return problem(409, "nothing_to_steer_to", "No message is waiting behind this one.")
+            }
+            let cardUp = events.contains {
+                $0["event_type"] as? String == "approval_requested" && ($0["payload"] as? [String: Any])?["turn_id"] as? String == stopped
+            }
+            if cardUp { append("approval_cancelled", role: "system", payload: ["approval_id": approvalID, "turn_id": stopped]) }
+            append("turn_cancelled", role: "system", payload: ["turn_id": stopped, "approval_ids": cardUp ? [approvalID] : [String](),
+                                                              "steered_to_turn_id": waiting])
+            let turkish = state["reply_language"] as? String == "tr"
+            append("status_update", text: turkish ? "Durdurdum. Bunun yerine yeni mesajın üzerinde çalışıyorum."
+                                                  : "Stopped. Working on your newer message instead.",
+                   payload: ["turn_id": stopped])
+            steerActive[id] = waiting
+            steerWaiting[id] = nil
+            steerPromotion[id] = 0
+            thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+            return response(["turn_id": stopped, "thread_revision": revision, "status": "cancelled",
+                             "approval_ids": cardUp ? [approvalID] : [String]()])
+        }
         if parts.last == "actions" {
             let action = body["action"] as? String ?? ""
             let payload = body["payload"] as? [String: Any] ?? [:]
@@ -697,9 +912,16 @@ final class CreationChatFixture: @unchecked Sendable {
             }
             if action == "select_format" {
                 state["format"] = payload["format"]
+                if payload["format"] as? String == "lipsync" { state["edit_format"] = "montage" }
                 // A phone-render account's clip is an analysis proxy; the original stays on the iPhone.
                 let mediaID = DeviceRenderUITestFixture.scenario == nil ? "fixture-clip" : "analysis-proxy-fixture-clip"
-                if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA"] == "1" {
+                if let hintMode = UploadPlaceHintFixture.mode {
+                    let media = UploadPlaceHintFixture.media(mode: hintMode)
+                    UploadPlaceHintFixture.prepare(mode: hintMode, threadID: id)
+                    state["media"] = media
+                    append("action_select_format", role: "user", payload: payload)
+                    append("media_added", role: "system", payload: ["media": media, "media_count": media.count])
+                } else if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA"] == "1" {
                     var clip: [String: Any] = ["media_id": mediaID, "kind": "video", "filename": "sample.mov"]
                     if let seconds = ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA_DURATION"].flatMap(Double.init) {
                         clip["duration_s"] = seconds
@@ -722,8 +944,8 @@ final class CreationChatFixture: @unchecked Sendable {
                 }
                 // Match the server's user event so an intentional format choice keeps
                 // the offline project alive during background capture/recovery tests.
-                append("action_select_format", role: "user", payload: payload)
-                if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA"] == "1" {
+                if UploadPlaceHintFixture.mode == nil { append("action_select_format", role: "user", payload: payload) }
+                if UploadPlaceHintFixture.mode == nil, ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA"] == "1" {
                     append("media_added", role: "system", payload: [
                         "media": [[
                             "media_id": mediaID, "kind": "video", "filename": "sample.mov"
@@ -763,7 +985,12 @@ final class CreationChatFixture: @unchecked Sendable {
                     renders[id] = 0
                 }
                 append("generation_started")
-            } else if action == "remove_media" { state["media"] = []; append("action_remove_media") }
+            } else if action == "remove_media" {
+                if UploadPlaceHintFixture.mode != nil, let removed = payload["media_id"] as? String {
+                    state["media"] = (state["media"] as? [[String: Any]] ?? []).filter { $0["media_id"] as? String != removed }
+                } else { state["media"] = [] }
+                append("action_remove_media")
+            }
         } else if parts.last == "messages" || parts.last == "turns" {
             let turnID = body["client_event_id"] as? String ?? id
             if let mode = ProcessInfo.processInfo.environment["KRIA_CHAT_SEND_FAILURE"], mode != "lost-response", !sendRefused,
@@ -860,12 +1087,44 @@ final class CreationChatFixture: @unchecked Sendable {
             // KRI-756: like the server, a stored user message keeps the chip tap it carried. `KRIA_SUGGESTION_CHIPS_ECHO=1`
             // answers with the received tap so the UI test can pin the wire shape (and that a plain send carries none).
             if let tap = body["suggestion"] as? [String: Any] { userPayload["suggestion"] = tap }
+            if runtime == 2, steerMode != nil, body["scope"] == nil {
+                // The server's one queue slot: a message sent while a turn runs waits behind it; a third is refused.
+                userPayload["turn_id"] = turnID
+                if let active = steerActive[id] {
+                    if steerWaiting[id] != nil {
+                        return response(["problem": ["code": "queued_successor_exists",
+                                                     "message": "A follow-up is already waiting for the current turn."]], status: 409)
+                    }
+                    userPayload["turn_status"] = "queued"
+                    if steerSwitchOn { userPayload["queued_behind_turn_id"] = active }
+                    steerWaiting[id] = turnID
+                    steerAccepted[id] = "queued"
+                } else {
+                    userPayload["turn_status"] = "pending"
+                    steerActive[id] = turnID
+                    steerAccepted[id] = "pending"
+                }
+                if let language = ProcessInfo.processInfo.environment["KRIA_CHAT_REPLY_LANGUAGE"] { state["reply_language"] = language }
+            }
             append("user_message", role: "user", text: body["message"] as? String, payload: userPayload, clientEventID: turnID)
-            if let scope = body["scope"] as? [String] {
+            if runtime == 2, let mode = steerMode, body["scope"] == nil {
+                // The first turn's card is up at once, except while it is held planning.
+                if steerAccepted[id] == "pending", !["planning", "stale"].contains(mode) {
+                    append("assistant_response", text: "Your draft is ready for review.", payload: ["turn_id": turnID])
+                    append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
+                    append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
+                }
+            } else if let scope = body["scope"] as? [String] {
                 review.scopedTurn(id: id, initial: reviewInitialBlocks, scope: scope, edits: body["manual_edits"] as? [[String: Any]] ?? [], turnID: turnID)
                 append("assistant_response", text: "Your draft is ready for review.", payload: ["turn_id": turnID, "turn_value": "response"])
                 append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
                 append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
+            } else if ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CARDS"] == "stale",
+                      (body["suggestion"] as? [String: Any])?["chip_id"] as? String == SuggestionCardsMocks.staleCardID {
+                // The real pinned-tap refusal (`plan_pinned_suggestion_turn`): an ordinary accepted turn whose reply says the
+                // card no longer fits, then a new set. No 409 and no error code, so the phone has to cope with a plain reply.
+                staleSuggestionThreads.insert(id)
+                append("assistant_response", text: SuggestionCardsMocks.noLongerFitsReply, payload: ["turn_id": turnID, "turn_value": "recovery"])
             } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS_ECHO"] == "1" {
                 let tap = body["suggestion"] as? [String: Any]
                 append("assistant_response", text: "Got it. suggestion[\(tap?["set_id"] as? String ?? "none")/\(tap?["chip_id"] as? String ?? "none")]",
@@ -1047,6 +1306,9 @@ final class CreationChatFixture: @unchecked Sendable {
                     let none = (selection["none_keys"] as? [String] ?? []).joined(separator: "+")
                     append("assistant_response", text: "Got it. answers[\(answers.joined(separator: ";"))] none[\(none)] skipped[\(selection["skipped"] as? Bool ?? false)]")
                 } else {
+                    // "later-suggested" (Leverkusen M2): the first group has no suggestion and the second one has a
+                    // partial one, so a pre-ticked group is one the creator has not looked at yet.
+                    let laterSuggested = ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] == "later-suggested"
                     append("assistant_response", text: "I couldn't verify any clips for dodgeball. Could you clarify?", payload: [
                         "turn_id": turnID, "turn_value": "question",
                         "clip_question": [
@@ -1054,9 +1316,10 @@ final class CreationChatFixture: @unchecked Sendable {
                             "categories": [
                                 ["key": "dodgeball", "label": "Dodgeball", "op": "group",
                                  "candidate_media_ids": ["fixture-clip", "fixture-clip-2", "fixture-clip-3"],
-                                 "suggested_media_ids": ["fixture-clip-2"]],
+                                 "suggested_media_ids": laterSuggested ? [] : ["fixture-clip-2"]],
                                 ["key": "football", "label": "Football", "op": "group",
-                                 "candidate_media_ids": ["fixture-clip-3", "fixture-clip-4"], "suggested_media_ids": []],
+                                 "candidate_media_ids": ["fixture-clip-3", "fixture-clip-4"],
+                                 "suggested_media_ids": laterSuggested ? ["fixture-clip-4"] : []],
                             ],
                         ] as [String: Any],
                     ])
@@ -1083,6 +1346,31 @@ final class CreationChatFixture: @unchecked Sendable {
                     "plan_hash": "fixture-plan-\(version)"
                 ])
             }
+        } else if parts.contains("approvals"), steerMode != nil {
+            // Steer now: the card names its own approval (the first turn's, or the waiting message's after a Steer).
+            let approvalKey = parts.count >= 4 ? parts[3] : approvalID
+            let requested = events.last(where: {
+                $0["event_type"] as? String == "approval_requested"
+                    && (($0["payload"] as? [String: Any])?["approval_id"] as? String)?.lowercased() == approvalKey.lowercased()
+            })?["payload"] as? [String: Any]
+            let turnID = requested?["turn_id"] as? String ?? id
+            if parts.last == "approve" {
+                // Approving starts the video and holds it there: the waiting message runs after it.
+                append("approval_approved", payload: ["approval_id": approvalKey, "turn_id": turnID, "render_dispatched": false])
+                append("render_queued", role: "system", payload: ["turn_id": turnID, "job_id": id])
+                thread["active_job_id"] = id
+                thread["job"] = ["id": id, "status": "processing", "variants": []]
+                thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+                return response(["approval_id": approvalKey, "thread_id": id, "status": "approved", "thread_revision": revision])
+            }
+            let cancelled = events.contains {
+                $0["event_type"] as? String == "approval_cancelled"
+                    && (($0["payload"] as? [String: Any])?["approval_id"] as? String)?.lowercased() == approvalKey.lowercased()
+            }
+            let summary = approvalKey.lowercased() == steerApprovalID ? Self.steerTypedSummary : Self.steerFirstSummary
+            return response(["approval_id": approvalKey, "turn_id": turnID, "draft_id": id, "draft_revision": 1,
+                             "status": cancelled ? "cancelled" : "pending", "consequence_summary": summary,
+                             "expires_at": "2099-09-10T10:00:00Z", "approval_fingerprint": String(repeating: "a", count: 64)])
         } else if parts.contains("approvals") {
             if parts.last == "approve", reviewEnabled, review.hasPending(id) {
                 // The creator tapped Update video / Undo: the pending review draft starts a NEW job.
@@ -1190,6 +1478,15 @@ final class CreationChatFixture: @unchecked Sendable {
                 editorTurnTicks[id] = nil
             } else { editorTurnTicks[id] = tick + 1 }
         }
+        if parts.last == "delta", let tick = steerPromotion[id], let promoted = steerActive[id] {
+            // The promoted message plans for a few polls (the Thinking row), then its own card arrives.
+            if tick >= 3 {
+                append("assistant_response", text: "Your draft is ready for review.", payload: ["turn_id": promoted])
+                append("draft_applied", payload: ["turn_id": promoted, "draft_id": id])
+                append("approval_requested", payload: ["approval_id": steerApprovalID, "turn_id": promoted])
+                steerPromotion[id] = nil
+            } else { steerPromotion[id] = tick + 1 }
+        }
         thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
         if reviewEnabled, parts.count == 3, parts[2] == "plan" {
             // First render still deciding = planning; once the staged feed has finished, the plan is ready to review.
@@ -1210,6 +1507,9 @@ final class CreationChatFixture: @unchecked Sendable {
             // Like the server (`runtime.py`), the accepted turn id is the one stamped on that turn's events
             // (the client event id), so `ChatThinkingSettlement` can match the reply to the wait.
             let acceptedTurnID = editorTurnIDs[id] ?? (body["client_event_id"] as? String ?? id)
+            if steerMode != nil, let accepted = steerAccepted.removeValue(forKey: id) {
+                return response(["turn_id": acceptedTurnID, "thread_revision": revision, "status": accepted], status: 202)
+            }
             return response(["turn_id": acceptedTurnID, "thread_revision": revision, "status": "queued"], status: 202)
         }
         if parts.last == "approve" { return response(["approval_id": approvalID, "thread_id": id, "status": "approved", "thread_revision": revision]) }
@@ -1870,6 +2170,119 @@ enum MomentOrderFixture {
                  "found": window(5.0, 6.5, "man takes first bite of dessert"), "suggestions": [] as [Any]],
             ] as [[String: Any]],
         ]
+    }
+}
+#endif
+
+#if DEBUG
+
+// MARK: KRIA_TALKING_RERECORD (re-record from the ready Talking video)
+
+/// `KRIA_TALKING_RERECORD=ready|no-audio|busy-twice|slot-full|no-replace`: a Talking chat that already has one attached take.
+/// `ready` also has a finished video and a server that offers replace; the other values change how the swap ends.
+/// `slot-full` has no video yet (replace offered only because the one clip slot is full). `no-replace` is a server
+/// without the flag: a finished video and no `replace` capability.
+/// A plain attach is answered like the real cap (400 `clip_cap_exceeded`), so an app that attaches a second speaker
+/// instead of swapping fails loudly rather than passing.
+extension CreationChatFixture {
+    /// New for every launch: the chat caches its transcript by thread id, and a previous run's reply must not reappear.
+    static let rerecordThreadID = UUID().uuidString
+    static let rerecordOldJob = "EEEEEEEE-EEEE-EEEE-EEEE-EEEEEEEEEEEE"
+    static let rerecordNewJob = "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"
+    static let rerecordOldMediaID = "analysis-proxy-old-take.mp4"
+    static let rerecordOldFilename = "Old take.mov"
+    static var rerecordMode: String? { ProcessInfo.processInfo.environment["KRIA_TALKING_RERECORD"] }
+
+    fileprivate func rerecordRespond(_ request: URLRequest, path: String, body: [String: Any]) -> (Int, Data)? {
+        guard let mode = Self.rerecordMode else { return nil }
+        func response(_ object: Any, status: Int = 200) -> (Int, Data) { (status, (try? JSONSerialization.data(withJSONObject: object)) ?? Data()) }
+        func problem(_ status: Int, _ code: String, _ message: String) -> (Int, Data) {
+            response(["problem": ["code": code, "message": message, "phase": "accept", "retryable": false, "recovery": "none"]], status: status)
+        }
+        let id = Self.rerecordThreadID
+        if request.url?.host == "fixture.invalid", request.httpMethod == "PUT" { return response([:]) }
+        if threads[id] == nil {
+            func event(_ seq: Int, _ type: String, _ payload: [String: Any] = [:]) -> [String: Any] {
+                ["id": UUID().uuidString, "sequence": seq, "revision": seq + 1, "role": "assistant", "event_type": type, "content": "", "payload": payload, "created_at": "2026-09-10T10:00:00Z"]
+            }
+            let clip: [String: Any] = ["media_id": Self.rerecordOldMediaID, "kind": "video", "filename": Self.rerecordOldFilename, "duration_s": 2,
+                                       "upload_contract": ["purpose": "analysis_proxy"]]
+            var thread: [String: Any] = ["id": id, "title": "Talking to camera", "status": "active", "revision": 4, "runtime_version": 1,
+                "state": ["format": "talking_to_camera", "edit_format": "subtitled", "media": [clip]],
+                "events": [event(0, "thread_created"), event(1, "format_prompt"), event(2, "action_select_format", ["format": "talking_to_camera"]), event(3, "media_added", ["media": [clip], "media_count": 1])],
+                "active_plan_item_id": id, "updated_at": "2026-09-10T10:00:00Z"]
+            var clips: [String: Any] = ["current": 1, "max": 1, "server_max": 10]
+            if mode != "slot-full" {
+                thread["active_job_id"] = Self.rerecordOldJob
+                thread["job"] = ["id": Self.rerecordOldJob, "status": "ready", "variants": [["variant_id": "original_text", "render_status": "ready", "output_url": "https://fixture.invalid/result.mp4"]]]
+            }
+            if mode != "no-replace" { clips["replace"] = true }
+            thread["media_capabilities"] = ["clips": clips, "visuals": ["current": 0, "max": 10]]
+            threads[id] = thread
+        }
+        guard var thread = threads[id] else { return nil }
+        var state = thread["state"] as? [String: Any] ?? [:]
+        var events = thread["events"] as? [[String: Any]] ?? []
+        var revision = thread["revision"] as? Int ?? 0
+        func append(_ type: String, role: String = "assistant", text: String = "", payload: [String: Any] = [:], clientEventID: String? = nil) {
+            revision += 1
+            var event: [String: Any] = ["id": UUID().uuidString, "sequence": events.count, "revision": revision, "role": role, "event_type": type, "content": text, "payload": payload, "created_at": "2026-09-10T10:05:00Z"]
+            if let clientEventID { event["client_event_id"] = clientEventID }
+            events.append(event)
+        }
+        func save() { thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread }
+        guard path.hasPrefix("/creation-threads/\(id)") else { return nil }
+        let method = request.httpMethod ?? "GET"
+        var media = state["media"] as? [[String: Any]] ?? []
+        let currentClipID = media.first?["media_id"] as? String
+
+        if path.hasSuffix("/upload-urls"), method == "POST" {
+            let file = (body["files"] as? [[String: Any]])?.first ?? [:]
+            guard file["replaces_media_id"] as? String == currentClipID else {
+                return problem(400, "clip_cap_exceeded", "This edit already has the most clips it can take.")
+            }
+            return response([["media_id": "analysis-proxy-\(UUID().uuidString).mp4", "upload_url": "https://fixture.invalid/upload",
+                              "gcs_path": "fixture/new-take.mp4", "content_type": "video/mp4", "upload_headers": [String: String]()]])
+        }
+        if path.hasSuffix("/media"), method == "POST" {
+            return problem(400, "clip_cap_exceeded", "This edit already has the most clips it can take.")
+        }
+        if path.hasSuffix("/media/replace"), method == "POST" {
+            let key = body["client_event_id"] as? String ?? ""
+            if events.contains(where: { $0["client_event_id"] as? String == key && $0["event_type"] as? String == "media_replaced" }) { return response(thread) }
+            if mode == "no-audio" { return problem(422, "retake_has_no_audio", "That take has no audio.") }
+            if mode == "busy-twice", rerecordBusyRefusals < 2 {
+                rerecordBusyRefusals += 1
+                return problem(409, "render_in_progress", "A render is still running.")
+            }
+            guard body["replaced_media_id"] as? String == currentClipID else { return problem(409, "retake_target_missing", "That clip is no longer attached.") }
+            guard body["expected_revision"] as? Int == revision else { return problem(409, "revision_mismatch", "This chat changed.") }
+            guard let incoming = body["media"] as? [String: Any], incoming["kind"] as? String == "video",
+                  let newID = incoming["media_id"] as? String else { return problem(422, "retake_kind_mismatch", "A replacement must be a video.") }
+            let filename = incoming["filename"] as? String ?? "New take.mov"
+            media[0] = ["media_id": newID, "kind": "video", "filename": filename, "duration_s": 2, "upload_contract": ["purpose": "analysis_proxy"]]
+            state["media"] = media
+            state["source_replacement"] = ["replaced_media_id": currentClipID ?? "", "media_id": newID,
+                                           "superseded_job_id": thread["active_job_id"] as? String ?? NSNull(), "revision": revision + 1]
+            append("media_replaced", role: "user", payload: ["replaced_media_id": currentClipID ?? "", "media": media, "media_count": 1, "reason": "retake"], clientEventID: key)
+            var clips = (thread["media_capabilities"] as? [String: Any])?["clips"] as? [String: Any] ?? [:]
+            clips["current"] = 1
+            thread["media_capabilities"] = ["clips": clips, "visuals": ["current": 0, "max": 10]]
+            save()
+            return response(thread)
+        }
+        if method == "POST", path.hasSuffix("/messages") || path.hasSuffix("/turns"), let marker = state["source_replacement"] as? [String: Any],
+           marker["superseded_job_id"] as? String == thread["active_job_id"] as? String {
+            let key = body["client_event_id"] as? String ?? ""
+            guard !events.contains(where: { $0["client_event_id"] as? String == key && $0["event_type"] as? String == "user_message" }) else { return response(thread) }
+            append("user_message", role: "user", text: body["message"] as? String ?? "", clientEventID: key)
+            thread["active_job_id"] = Self.rerecordNewJob
+            thread["job"] = ["id": Self.rerecordNewJob, "status": "ready", "variants": [["variant_id": "original_text", "render_status": "ready", "output_url": "https://fixture.invalid/result.mp4"]]]
+            append("assistant_review", text: "Made it again from your new take.")
+            save()
+            return response(thread)
+        }
+        return nil
     }
 }
 #endif

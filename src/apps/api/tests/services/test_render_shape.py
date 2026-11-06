@@ -559,3 +559,57 @@ def test_legacy_routing_still_reads_the_request_words(monkeypatch):
         _montage_offer(camera_audio=False, request="play my best lines", speech=False).has_choice
         is False
     )
+
+
+# ── who made the pick: creator vs the preselected default echoed back ───────
+
+
+def _landscape_default_offer() -> rs.RenderShapeOffer:
+    landscape = [_assignment(1920, 1080)] * 3
+    offer = _offer(item=_item(landscape))
+    assert offer.default_orientation == "landscape"
+    return offer
+
+
+def test_an_echoed_default_is_stamped_default_and_a_differing_value_a_pick():
+    offer = _landscape_default_offer()
+    echoed = rs.resolve_choice(offer, offer.default_orientation, offer.default_fit)
+    assert rs.stamp_origin(offer, echoed, None)["origin"] == "default"
+    picked = rs.resolve_choice(offer, "portrait", "fit")
+    assert rs.stamp_origin(offer, picked, None)["origin"] == "creator"
+
+
+def test_a_newer_client_marker_wins_over_the_value_inference():
+    offer = _landscape_default_offer()
+    echoed = rs.resolve_choice(offer, "landscape", "fill")
+    assert rs.stamp_origin(offer, echoed, "explicit_pick")["origin"] == "creator"
+    picked = rs.resolve_choice(offer, "portrait", "fit")
+    assert rs.stamp_origin(offer, picked, "preselected")["origin"] == "default"
+
+
+def test_the_plan_reason_is_the_creators_only_for_a_creator_stamp():
+    key = rs.CREATOR_RENDER_SHAPE_KEY
+    shape = {"output_orientation": "landscape", "landscape_fit": "fill"}
+    creator = rs.orientation_reason({key: {**shape, "origin": "creator"}})
+    assert creator == "The creator selected this output format."
+    assert rs.orientation_reason({key: {**shape, "origin": "default"}}) != creator
+    assert rs.orientation_reason({key: shape}) != creator  # no stamp = an unknown default
+
+
+def test_switch_off_writes_no_stamp_and_every_shape_reads_as_the_creators(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "render_shape_origin_honest_enabled", False)
+    offer = _landscape_default_offer()
+    echoed = rs.resolve_choice(offer, "landscape", "fill")
+    assert rs.stamp_origin(offer, echoed, "preselected") == echoed
+    key = rs.CREATOR_RENDER_SHAPE_KEY
+    assert rs.orientation_reason({key: echoed}) == "The creator selected this output format."
+
+
+def test_the_origin_stamp_survives_the_job_round_trip():
+    key = rs.CREATOR_RENDER_SHAPE_KEY
+    stored = {"output_orientation": "portrait", "landscape_fit": "fit", "origin": "creator"}
+    assert rs.shape_from_all_candidates({key: stored}) == stored
+    junk = {**stored, "origin": "bogus"}
+    assert "origin" not in rs.shape_from_all_candidates({key: junk})

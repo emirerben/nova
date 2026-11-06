@@ -157,6 +157,16 @@
             "title": "Output Orientation",
             "type": "string"
           },
+          "render_shape_origin": {
+            "default": null,
+            "enum": [
+              "explicit_pick",
+              "preselected"
+            ],
+            "nullable": true,
+            "title": "Render Shape Origin",
+            "type": "string"
+          },
           "speech_cleanup_analysis_id": {
             "default": null,
             "format": "uuid",
@@ -912,6 +922,43 @@
           "option_key"
         ],
         "title": "ChoiceSelectionIn",
+        "type": "object"
+      },
+      "ClipBackdrop": {
+        "additionalProperties": false,
+        "description": "What shows behind a main-track clip where the clip does not cover the canvas.\n\nMirrors ``KriaMediaEngine.ClipBackdrop``: ``{\"kind\": \"blank\" | \"color\" | \"blur\" | \"media\",\n\"color\": \"#RRGGBB\", \"asset_id\": \"<pool visual id>\"}`` with ``color`` present for ``color``\nonly and ``asset_id`` for ``media`` only. ``blank`` is black (drawn as nothing); ``blur``\nis a blurred cover-fit copy of the same clip frame; ``media`` is a Visuals-pool photo (held)\nor video (looping, muted) cover-fit to the canvas. ``asset_id`` is the pool visual id\n(``VisualRenderAsset.visual_id``), the same value a clip row's ``tilt`` carries.",
+        "properties": {
+          "asset_id": {
+            "default": null,
+            "maxLength": 160,
+            "minLength": 1,
+            "nullable": true,
+            "pattern": "^\\S+$",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "color": {
+            "default": null,
+            "nullable": true,
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Color",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "blank",
+              "color",
+              "blur",
+              "media"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "ClipBackdrop",
         "type": "object"
       },
       "ClipCapture": {
@@ -1725,6 +1772,16 @@
             "title": "Slide Post Stickers",
             "type": "boolean"
           },
+          "slide_post_tilt": {
+            "default": false,
+            "title": "Slide Post Tilt",
+            "type": "boolean"
+          },
+          "slide_post_tilt_zoom": {
+            "default": false,
+            "title": "Slide Post Tilt Zoom",
+            "type": "boolean"
+          },
           "song_filming_range": {
             "default": false,
             "title": "Song Filming Range",
@@ -1745,6 +1802,21 @@
             "title": "Song Range Questions",
             "type": "boolean"
           },
+          "speaker_background": {
+            "default": false,
+            "title": "Speaker Background",
+            "type": "boolean"
+          },
+          "speaker_background_color": {
+            "default": false,
+            "title": "Speaker Background Color",
+            "type": "boolean"
+          },
+          "steer_now": {
+            "default": false,
+            "title": "Steer Now",
+            "type": "boolean"
+          },
           "suggestion_chips": {
             "default": false,
             "title": "Suggestion Chips",
@@ -1753,6 +1825,11 @@
           "text_bend": {
             "default": false,
             "title": "Text Bend",
+            "type": "boolean"
+          },
+          "upload_place_hint": {
+            "default": false,
+            "title": "Upload Place Hint",
             "type": "boolean"
           },
           "visuals_enabled": {
@@ -3185,6 +3262,14 @@
                 "singleWordText",
                 "freezeFrame",
                 "behindSubject",
+                "speakerBackground",
+                "speakerBackgroundWindows",
+                "speakerBackgroundColor",
+                "speakerFrameWindows",
+                "backgroundFocus",
+                "clipTilt",
+                "clipBackdropMedia",
+                "scriptFonts",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -3310,6 +3395,14 @@
                 "singleWordText",
                 "freezeFrame",
                 "behindSubject",
+                "speakerBackground",
+                "speakerBackgroundWindows",
+                "speakerBackgroundColor",
+                "speakerFrameWindows",
+                "backgroundFocus",
+                "clipTilt",
+                "clipBackdropMedia",
+                "scriptFonts",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -3336,6 +3429,11 @@
             ],
             "title": "Schema Version",
             "type": "integer"
+          },
+          "speaker_background": {
+            "$ref": "#/components/schemas/SpeakerBackgroundLayer",
+            "default": null,
+            "nullable": true
           },
           "text_layers": {
             "items": {
@@ -3481,6 +3579,37 @@
           }
         },
         "title": "EditorCaptionLinePlacement",
+        "type": "object"
+      },
+      "EditorCommitBackgroundFocus": {
+        "additionalProperties": false,
+        "description": "Where a background picture is aimed (Qendresa item 18): the document's complete\n``{x, y, zoom}`` (0 = left/top edge, 1 = right/bottom edge; zoom a multiple of the cover\nscale). The same bounds as the recipe's `SpeakerBackgroundFocus`.",
+        "properties": {
+          "x": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Y",
+            "type": "number"
+          },
+          "zoom": {
+            "maximum": 4.0,
+            "minimum": 0.2,
+            "title": "Zoom",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "zoom"
+        ],
+        "title": "EditorCommitBackgroundFocus",
         "type": "object"
       },
       "EditorCommitBackgroundMusic": {
@@ -3850,6 +3979,11 @@
             "title": "Sound Effects",
             "type": "array"
           },
+          "speaker_background": {
+            "$ref": "#/components/schemas/EditorCommitSpeakerBackground",
+            "default": null,
+            "nullable": true
+          },
           "text_elements": {
             "default": null,
             "items": {
@@ -4044,6 +4178,11 @@
             "title": "Sound Effects",
             "type": "boolean"
           },
+          "speaker_background": {
+            "default": false,
+            "title": "Speaker Background",
+            "type": "boolean"
+          },
           "text_elements": {
             "title": "Text Elements",
             "type": "boolean"
@@ -4075,6 +4214,187 @@
           "title"
         ],
         "title": "EditorCommitSections",
+        "type": "object"
+      },
+      "EditorCommitSpeakerBackground": {
+        "additionalProperties": false,
+        "description": "Editor Save section for the Talk-to-camera background (KRI-1117).\n\nThe wire is the same ``{media_id, kind, source_start_s}`` the editor document carries:\nthe media id names a visual in this item's pool, never a path (the server pins the\nexact bytes). Sent as an object to set it, as an explicit ``null`` to clear it.\n\nKRI-1162: ``windows`` (1..40 timed backgrounds over the fill) and ``speaker_frame`` are\noptional and omitted from the dump while unused, so an old-shape Save dumps exactly as it\ndid and still equals the stored document.\n\nKRI-1173: ``kind: \"color\"`` + ``color`` (``#RRGGBB``, any case in, UPPERCASE stored) is a\nsolid-colour fill: no ``media_id``, no pin, ``source_start_s`` 0 (omitted from the dump).",
+        "properties": {
+          "color": {
+            "default": null,
+            "maxLength": 64,
+            "nullable": true,
+            "title": "Color",
+            "type": "string"
+          },
+          "focus": {
+            "$ref": "#/components/schemas/EditorCommitBackgroundFocus",
+            "default": null,
+            "nullable": true
+          },
+          "full_screen_windows": {
+            "default": null,
+            "items": {
+              "$ref": "#/components/schemas/EditorCommitSpeakerFullScreenWindow"
+            },
+            "nullable": true,
+            "title": "Full Screen Windows",
+            "type": "array"
+          },
+          "kind": {
+            "enum": [
+              "image",
+              "video",
+              "color"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "media_id": {
+            "default": null,
+            "maxLength": 160,
+            "minLength": 1,
+            "nullable": true,
+            "pattern": "^\\S+$",
+            "title": "Media Id",
+            "type": "string"
+          },
+          "source_start_s": {
+            "default": 0.0,
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "Source Start S",
+            "type": "number"
+          },
+          "speaker_frame": {
+            "$ref": "#/components/schemas/EditorCommitSpeakerFrame",
+            "default": null,
+            "nullable": true
+          },
+          "windows": {
+            "default": null,
+            "items": {
+              "$ref": "#/components/schemas/EditorCommitSpeakerBackgroundWindow"
+            },
+            "maxItems": 40,
+            "minItems": 1,
+            "nullable": true,
+            "title": "Windows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "EditorCommitSpeakerBackground",
+        "type": "object"
+      },
+      "EditorCommitSpeakerBackgroundWindow": {
+        "additionalProperties": false,
+        "description": "One timed background of the Save section (KRI-1162): a pool visual shown from\n``start_s`` to ``end_s`` (the edit's timeline). Order, overlap and the 0.5 s minimum are\nchecked by `_validate_speaker_background_section` so they answer with their own code.",
+        "properties": {
+          "end_s": {
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "End S",
+            "type": "number"
+          },
+          "focus": {
+            "$ref": "#/components/schemas/EditorCommitBackgroundFocus",
+            "default": null,
+            "nullable": true
+          },
+          "kind": {
+            "enum": [
+              "image",
+              "video"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "media_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Media Id",
+            "type": "string"
+          },
+          "source_start_s": {
+            "default": 0.0,
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "Source Start S",
+            "type": "number"
+          },
+          "start_s": {
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "Start S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "media_id",
+          "kind",
+          "start_s",
+          "end_s"
+        ],
+        "title": "EditorCommitSpeakerBackgroundWindow",
+        "type": "object"
+      },
+      "EditorCommitSpeakerFrame": {
+        "additionalProperties": false,
+        "description": "Where the matted speaker is drawn (KRI-1162): the document's ``speaker_frame``. The app\nwrites it from a named corner preset; the server never takes a corner name on the wire.",
+        "properties": {
+          "width_fraction": {
+            "maximum": 1.0,
+            "minimum": 0.2,
+            "title": "Width Fraction",
+            "type": "number"
+          },
+          "x_fraction": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "X Fraction",
+            "type": "number"
+          },
+          "y_fraction": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Y Fraction",
+            "type": "number"
+          }
+        },
+        "required": [
+          "width_fraction",
+          "x_fraction",
+          "y_fraction"
+        ],
+        "title": "EditorCommitSpeakerFrame",
+        "type": "object"
+      },
+      "EditorCommitSpeakerFullScreenWindow": {
+        "additionalProperties": false,
+        "description": "One full-screen span of the Save section (Qendresa item 16): from ``start_s`` to ``end_s``\nof the edit's timeline the speaker's own take is drawn full-frame. Order, overlap, the\n0.5 s minimum, the count and the edit end are checked by\n`_validate_speaker_full_screen_windows` so they answer with their own code.",
+        "properties": {
+          "end_s": {
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "End S",
+            "type": "number"
+          },
+          "start_s": {
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "Start S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "start_s",
+          "end_s"
+        ],
+        "title": "EditorCommitSpeakerFullScreenWindow",
         "type": "object"
       },
       "EditorCommitUserSong": {
@@ -4493,6 +4813,11 @@
             "title": "Sound Effects",
             "type": "array"
           },
+          "speaker_background": {
+            "$ref": "#/components/schemas/EditorCommitSpeakerBackground",
+            "default": null,
+            "nullable": true
+          },
           "text_elements": {
             "default": null,
             "items": {
@@ -4687,6 +5012,13 @@
             "nullable": true,
             "title": "Source Start Locked",
             "type": "boolean"
+          },
+          "tilt": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Tilt",
+            "type": "object"
           },
           "transition_after": {
             "default": "cut",
@@ -9243,6 +9575,47 @@
         "title": "RenderShapeOut",
         "type": "object"
       },
+      "ReplaceMediaBody": {
+        "additionalProperties": false,
+        "properties": {
+          "client_event_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Client Event Id",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "media": {
+            "$ref": "#/components/schemas/MediaInput"
+          },
+          "reason": {
+            "default": "retake",
+            "enum": [
+              "retake"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "replaced_media_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Replaced Media Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "replaced_media_id",
+          "media",
+          "client_event_id",
+          "expected_revision"
+        ],
+        "title": "ReplaceMediaBody",
+        "type": "object"
+      },
       "RequestOutcomeContext": {
         "additionalProperties": false,
         "properties": {
@@ -9720,6 +10093,11 @@
             "nullable": true,
             "title": "Texts",
             "type": "array"
+          },
+          "tilt": {
+            "$ref": "#/components/schemas/SlideTilt",
+            "default": null,
+            "nullable": true
           }
         },
         "title": "SlideEdits",
@@ -10666,6 +11044,58 @@
         "title": "SlideTextElement",
         "type": "object"
       },
+      "SlideTilt": {
+        "additionalProperties": false,
+        "description": "A slide's media turned to any angle about the canvas centre (KRI-1138).\n\n``rotation_deg`` is clockwise-positive in -180..180 (the clip tilt, sticker and text\nconvention). Only the PHOTO or VIDEO turns: text, ink, stickers and the watermark stay\nupright on top. What the turn uncovers shows ``backdrop`` (default blank = black).\n``zoom`` (1 = as framed) scales the media about the canvas centre before it turns; it is\nleft out of the serialized form at 1 so a tilt stored before zoom existed keeps its shape\nand cache digest. Frozen by ``tests/fixtures/slide-tilt-parity/v1.json`` and ``v2.json``.",
+        "properties": {
+          "backdrop": {
+            "$ref": "#/components/schemas/SlideTiltBackdrop"
+          },
+          "rotation_deg": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Rotation Deg",
+            "type": "number"
+          },
+          "zoom": {
+            "default": 1.0,
+            "maximum": 3.0,
+            "minimum": 0.5,
+            "title": "Zoom",
+            "type": "number"
+          }
+        },
+        "required": [
+          "rotation_deg"
+        ],
+        "title": "SlideTilt",
+        "type": "object"
+      },
+      "SlideTiltBackdrop": {
+        "additionalProperties": false,
+        "description": "What shows behind a tilted slide where the media no longer covers the canvas (KRI-1138).\n\nThe slide twin of ``app.kria.recipes.ClipBackdrop`` and ``KriaMediaEngine.ClipBackdrop``:\n``blank`` is black, ``color`` carries a ``#RRGGBB``, ``blur`` is a blurred cover-fit copy of\nthe same photo or video frame (the Fit \"blur\" bars' strength, ``FIT_BLUR_SIGMA_PX``).",
+        "properties": {
+          "color": {
+            "default": null,
+            "nullable": true,
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Color",
+            "type": "string"
+          },
+          "kind": {
+            "default": "blank",
+            "enum": [
+              "blank",
+              "color",
+              "blur"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "title": "SlideTiltBackdrop",
+        "type": "object"
+      },
       "SmoothRevealContent": {
         "additionalProperties": false,
         "properties": {
@@ -10914,6 +11344,233 @@
         "title": "SourceCrop",
         "type": "object"
       },
+      "SpeakerBackgroundFocus": {
+        "additionalProperties": false,
+        "description": "Qendresa item 18: where a background picture is aimed. ``x`` / ``y`` align the drawn\npicture in the frame (0 left/top, 0.5 centre, 1 right/bottom); ``zoom`` multiplies the cover\nscale (never drawn smaller than the whole picture).",
+        "properties": {
+          "x": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Y",
+            "type": "number"
+          },
+          "zoom": {
+            "maximum": 4.0,
+            "minimum": 0.2,
+            "title": "Zoom",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "zoom"
+        ],
+        "title": "SpeakerBackgroundFocus",
+        "type": "object"
+      },
+      "SpeakerBackgroundLayer": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_id": {
+            "default": null,
+            "maxLength": 160,
+            "minLength": 1,
+            "nullable": true,
+            "pattern": "^\\S+$",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "color": {
+            "default": null,
+            "nullable": true,
+            "pattern": "^#[0-9A-F]{6}$",
+            "title": "Color",
+            "type": "string"
+          },
+          "focus": {
+            "$ref": "#/components/schemas/SpeakerBackgroundFocus",
+            "default": null,
+            "nullable": true
+          },
+          "full_screen_windows": {
+            "default": null,
+            "items": {
+              "$ref": "#/components/schemas/SpeakerFullScreenWindow"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "nullable": true,
+            "title": "Full Screen Windows",
+            "type": "array"
+          },
+          "loop": {
+            "default": true,
+            "title": "Loop",
+            "type": "boolean"
+          },
+          "media_kind": {
+            "enum": [
+              "image",
+              "video",
+              "color"
+            ],
+            "title": "Media Kind",
+            "type": "string"
+          },
+          "source_start": {
+            "default": 0.0,
+            "maximum": 1800.0,
+            "minimum": 0,
+            "title": "Source Start",
+            "type": "number"
+          },
+          "speaker_frame": {
+            "$ref": "#/components/schemas/SpeakerFrame",
+            "default": null,
+            "nullable": true
+          },
+          "subject_track_id": {
+            "default": "subtitled",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Subject Track Id",
+            "type": "string"
+          },
+          "windows": {
+            "default": null,
+            "items": {
+              "$ref": "#/components/schemas/SpeakerBackgroundWindow"
+            },
+            "maxItems": 40,
+            "minItems": 1,
+            "nullable": true,
+            "title": "Windows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "media_kind"
+        ],
+        "title": "SpeakerBackgroundLayer",
+        "type": "object"
+      },
+      "SpeakerBackgroundWindow": {
+        "additionalProperties": false,
+        "description": "One timed background: ``asset_id`` shows from ``start`` to ``end`` (output seconds).\nA video plays from ``source_start`` and loops inside the window; a photo is held.",
+        "properties": {
+          "asset_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "end": {
+            "exclusiveMinimum": true,
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "End",
+            "type": "number"
+          },
+          "focus": {
+            "$ref": "#/components/schemas/SpeakerBackgroundFocus",
+            "default": null,
+            "nullable": true
+          },
+          "media_kind": {
+            "enum": [
+              "image",
+              "video"
+            ],
+            "title": "Media Kind",
+            "type": "string"
+          },
+          "source_start": {
+            "default": 0.0,
+            "maximum": 1800.0,
+            "minimum": 0,
+            "title": "Source Start",
+            "type": "number"
+          },
+          "start": {
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "Start",
+            "type": "number"
+          }
+        },
+        "required": [
+          "asset_id",
+          "media_kind",
+          "start",
+          "end"
+        ],
+        "title": "SpeakerBackgroundWindow",
+        "type": "object"
+      },
+      "SpeakerFrame": {
+        "additionalProperties": false,
+        "description": "Where the matted speaker is drawn: uniformly scaled so its width is\n``width_fraction`` of the canvas width, centred at (``x_fraction``, ``y_fraction``).\nThe person mask is computed on the full-size speaker layer first (S27).",
+        "properties": {
+          "width_fraction": {
+            "maximum": 1.0,
+            "minimum": 0.2,
+            "title": "Width Fraction",
+            "type": "number"
+          },
+          "x_fraction": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "X Fraction",
+            "type": "number"
+          },
+          "y_fraction": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Y Fraction",
+            "type": "number"
+          }
+        },
+        "required": [
+          "width_fraction",
+          "x_fraction",
+          "y_fraction"
+        ],
+        "title": "SpeakerFrame",
+        "type": "object"
+      },
+      "SpeakerFullScreenWindow": {
+        "additionalProperties": false,
+        "description": "Qendresa item 16: from ``start`` to ``end`` (output seconds) the speaker's own take shows\nfull-frame and untouched (no mask, no background, no corner frame).",
+        "properties": {
+          "end": {
+            "exclusiveMinimum": true,
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "End",
+            "type": "number"
+          },
+          "start": {
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "Start",
+            "type": "number"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "SpeakerFullScreenWindow",
+        "type": "object"
+      },
       "StaggeredContent": {
         "additionalProperties": false,
         "properties": {
@@ -11001,7 +11658,7 @@
             "items": {
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 60,
             "minItems": 1,
             "title": "Beat Reasons",
             "type": "array"
@@ -11121,14 +11778,14 @@
               "format": "uuid",
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 60,
             "minItems": 1,
             "nullable": true,
             "title": "Moment Order",
             "type": "array"
           },
           "replace_index": {
-            "maximum": 7.0,
+            "maximum": 59.0,
             "minimum": 0.0,
             "nullable": true,
             "title": "Replace Index",
@@ -11544,6 +12201,134 @@
         "title": "SuggestionChipOut",
         "type": "object"
       },
+      "SuggestionDigest": {
+        "description": "What a set was computed from. A card is stale the moment any of these moves.",
+        "properties": {
+          "brief_version": {
+            "default": null,
+            "nullable": true,
+            "title": "Brief Version",
+            "type": "integer"
+          },
+          "language": {
+            "default": "en",
+            "title": "Language",
+            "type": "string"
+          },
+          "media_digest": {
+            "default": "",
+            "title": "Media Digest",
+            "type": "string"
+          },
+          "prompt_version": {
+            "default": "",
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "signals_version": {
+            "default": "",
+            "title": "Signals Version",
+            "type": "string"
+          },
+          "snapshot_hash": {
+            "default": null,
+            "nullable": true,
+            "title": "Snapshot Hash",
+            "type": "string"
+          },
+          "state": {
+            "default": "none",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "title": "SuggestionDigest",
+        "type": "object"
+      },
+      "SuggestionDismissOut": {
+        "description": "What happened to a dismiss. Every value is a normal outcome, never an error.",
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "SuggestionDismissOut",
+        "type": "object"
+      },
+      "SuggestionOut": {
+        "description": "Wire projection of a ``Suggestion``: no action, no witness (those stay server-side).",
+        "properties": {
+          "action_type": {
+            "default": "",
+            "title": "Action Type",
+            "type": "string"
+          },
+          "anchor": {
+            "$ref": "#/components/schemas/ChipAnchorOut"
+          },
+          "copy_text": {
+            "default": null,
+            "nullable": true,
+            "title": "Copy Text",
+            "type": "string"
+          },
+          "cost_usd": {
+            "default": null,
+            "nullable": true,
+            "title": "Cost Usd",
+            "type": "number"
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "id": {
+            "default": "",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "",
+            "title": "Kind",
+            "type": "string"
+          },
+          "prompt": {
+            "default": "",
+            "title": "Prompt",
+            "type": "string"
+          },
+          "rank": {
+            "default": 1,
+            "title": "Rank",
+            "type": "integer"
+          },
+          "requires_protocol": {
+            "default": null,
+            "nullable": true,
+            "title": "Requires Protocol",
+            "type": "integer"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          },
+          "why": {
+            "default": "",
+            "title": "Why",
+            "type": "string"
+          }
+        },
+        "title": "SuggestionOut",
+        "type": "object"
+      },
       "SuggestionSetOut": {
         "properties": {
           "anchor": {
@@ -11555,6 +12340,11 @@
             },
             "title": "Chips",
             "type": "array"
+          },
+          "digest": {
+            "$ref": "#/components/schemas/SuggestionDigest",
+            "default": null,
+            "nullable": true
           },
           "retry_after_s": {
             "default": null,
@@ -11581,6 +12371,13 @@
             "default": "unavailable",
             "title": "Status",
             "type": "string"
+          },
+          "suggestions": {
+            "items": {
+              "$ref": "#/components/schemas/SuggestionOut"
+            },
+            "title": "Suggestions",
+            "type": "array"
           },
           "understanding": {
             "default": "empty",
@@ -12387,6 +13184,11 @@
             "title": "Audio Fade Out",
             "type": "number"
           },
+          "backdrop": {
+            "$ref": "#/components/schemas/ClipBackdrop",
+            "default": null,
+            "nullable": true
+          },
           "hold_duration": {
             "default": null,
             "maximum": 1800,
@@ -12623,6 +13425,13 @@
             "title": "Source Start Locked",
             "type": "boolean"
           },
+          "tilt": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Tilt",
+            "type": "object"
+          },
           "transition_after": {
             "default": "cut",
             "enum": [
@@ -12740,6 +13549,15 @@
             "title": "Status",
             "type": "string"
           },
+          "suggestion_outcome": {
+            "default": null,
+            "enum": [
+              "refused"
+            ],
+            "nullable": true,
+            "title": "Suggestion Outcome",
+            "type": "string"
+          },
           "thread_revision": {
             "title": "Thread Revision",
             "type": "integer"
@@ -12764,6 +13582,16 @@
             "minimum": 0,
             "title": "Expected Thread Revision",
             "type": "integer"
+          },
+          "only_if_queued": {
+            "default": false,
+            "title": "Only If Queued",
+            "type": "boolean"
+          },
+          "steer": {
+            "default": false,
+            "title": "Steer",
+            "type": "boolean"
           }
         },
         "required": [
@@ -12892,6 +13720,14 @@
             "maxLength": 240,
             "minLength": 1,
             "title": "Filename",
+            "type": "string"
+          },
+          "replaces_media_id": {
+            "default": null,
+            "maxLength": 160,
+            "minLength": 1,
+            "nullable": true,
+            "title": "Replaces Media Id",
             "type": "string"
           },
           "role": {
@@ -14423,6 +15259,81 @@
         ]
       }
     },
+    "/creation-threads/{thread_id}/media/replace": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "replaceCreationThreadMedia",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplaceMediaBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreationThreadOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Re-recording is unavailable"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
+          "422": {
+            "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
     "/creation-threads/{thread_id}/messages": {
       "parameters": [
         {
@@ -14730,6 +15641,78 @@
           }
         }
       ]
+    },
+    "/creation-threads/{thread_id}/suggestions/dismiss": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "dismissCreationSuggestion",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuggestionTapIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuggestionDismissOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
+          "422": {
+            "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
     },
     "/creation-threads/{thread_id}/turns": {
       "parameters": [

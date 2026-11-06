@@ -321,15 +321,6 @@ final class ChatWorkspaceTests: XCTestCase {
         }
     }
 
-    func testOverallProgressAveragesEveryClipOnItsWayAndCountsPreparingOnesAsZero() {
-        XCTAssertEqual(FootageReadiness.overallProgress(uploads: [1, 0], preparingCount: 0), 0.5)
-        // Two uploads at 100% and 50%, plus two clips not yet uploading: (1 + 0.5) / 4.
-        XCTAssertEqual(FootageReadiness.overallProgress(uploads: [1, 0.5], preparingCount: 2), 0.375, accuracy: 0.0001)
-        XCTAssertEqual(FootageReadiness.overallProgress(uploads: [], preparingCount: 3), 0, "only preparing clips: nothing has uploaded yet")
-        XCTAssertEqual(FootageReadiness.overallProgress(uploads: [], preparingCount: 0), 0, "no division by zero")
-        XCTAssertEqual(FootageReadiness.overallProgress(uploads: [3], preparingCount: 0), 1, "clamped to a valid ProgressView value")
-    }
-
     /// The fallback is what the composer/picker allow before `/capabilities`
     /// has loaded (or if it fails to load) -- it must match the server's real
     /// default (50) for every format except talking-to-camera, which takes
@@ -351,6 +342,21 @@ final class ChatWorkspaceTests: XCTestCase {
                        "another format's limit never stands in for Talking's")
         XCTAssertEqual(CreationFormat.maximumClipCount(for: .montage, serverLimits: [.montage: 20]), 20)
         XCTAssertEqual(CreationFormat.maximumClipCount(for: nil, serverLimits: [.talkingToCamera: 1]), 50)
+    }
+
+    /// The server's `lipsync` format is a montage underneath: it parses, is the far-right card after
+    /// the Slider, shares montage's clip cap, and an `edit_format: montage` thread without a `format` stays Montage.
+    func testLipsyncFormatIsTheLastCardAndRunsAsMontage() {
+        XCTAssertEqual(CreationFormat(serverValue: "lipsync"), .lipsync)
+        XCTAssertEqual(CreationFormat.lipsync.serverValue, "lipsync")
+        XCTAssertEqual(CreationFormat.allCases.sorted { $0.carouselOrder < $1.carouselOrder },
+                       [.montage, .narrated, .talkingToCamera, .slides, .lipsync])
+        XCTAssertTrue(CreationFormat.lipsync.runsAsMontage)
+        XCTAssertTrue(CreationFormat.montage.runsAsMontage)
+        XCTAssertFalse(CreationFormat.narrated.runsAsMontage)
+        XCTAssertFalse(CreationFormat.lipsync.usesVisualPool)
+        XCTAssertEqual(CreationFormat.maximumClipCount(for: .lipsync, serverLimits: [.lipsync: 12, .montage: 50]), 12)
+        XCTAssertEqual(CreationFormat.maximumClipCount(for: .lipsync, serverLimits: [:]), 50)
     }
 
     func testAttachedClipCountIgnoresVoiceoverAndVisualMedia() {

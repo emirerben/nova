@@ -15,6 +15,7 @@ from app.services.celery_isolation import (
     result_backend_transport_options,
 )
 from app.services.celery_soft_shutdown import install_soft_shutdown_early_exit
+from app.services.notification_runtime import notification_beat_schedule
 
 # Local launchers set this once per worktree.  It is intentionally an env var,
 # rather than a settings field: the shared .env is symlinked by
@@ -63,11 +64,13 @@ celery_app = Celery(
         "app.tasks.tiktok",
         "app.tasks.account_lifecycle",
         "app.tasks.apple_revocation",
+        "app.tasks.notification_delivery",
         "app.tasks.edit_training_exports",
         "app.tasks.edit_training_artifacts",
         "app.tasks.creator_quality_review",
         "app.tasks.creator_workspace",
         "app.tasks.kria_runtime",
+        "app.tasks.render_review",
         "app.tasks.kria_clip_understanding",
         "app.tasks.kria_suggester",
         "app.tasks.user_song",
@@ -108,6 +111,8 @@ celery_app = Celery(
 # machine that might be stopped) but is at least loud in effect: Beat
 # entries are rare and reviewed, unlike per-request dispatch call sites.
 MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
+    "tasks.sweep_notifications",
+    "tasks.deliver_notification",
     "tasks.reconcile_generated_media",
     "tasks.reconcile_export_verifications",
     "app.tasks.request_following.collect",
@@ -129,6 +134,7 @@ MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
     # the `worker` machine it's managing — obviously.
     "tasks.manage_render_worker_lifecycle",
     "tasks.reconcile_kria_turns",
+    "tasks.reconcile_generation_reviews",
     "tasks.reconcile_creator_preparations",
     "tasks.prune_kria_drafts",
     "tasks.execute_kria_approval",
@@ -230,6 +236,8 @@ celery_app.conf.update(
         "tasks.observe_kria_job": {"queue": "agent-control"},
         "tasks.extract_kria_brief": {"queue": "agent-control"},
         "tasks.kria_suggester": {"queue": "agent-control"},
+        "tasks.prepare_generation_review": {"queue": settings.kria_intent_review_evidence_queue},
+        "tasks.review_generation_intent": {"queue": "agent-control"},
         "tasks.analyze_kria_clips": {"queue": settings.pool_asset_analysis_queue},
         "tasks.analyze_user_song": {"queue": settings.pool_asset_analysis_queue},
         "tasks.align_user_song_takes": {"queue": settings.pool_asset_analysis_queue},
@@ -328,6 +336,10 @@ celery_app.conf.update(
             "task": "tasks.reconcile_kria_turns",
             "schedule": 60.0,
         },
+        "reconcile-generation-reviews-every-minute": {
+            "task": "tasks.reconcile_generation_reviews",
+            "schedule": 60.0,
+        },
         "prune-kria-draft-bodies-daily": {
             "task": "tasks.prune_kria_drafts",
             "schedule": crontab(hour=4, minute=15),
@@ -367,6 +379,8 @@ celery_app.conf.update(
         },
     },
 )
+
+celery_app.conf.beat_schedule.update(notification_beat_schedule())
 
 if settings.celery_soft_shutdown_early_exit_enabled:
     install_soft_shutdown_early_exit()

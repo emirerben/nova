@@ -1984,3 +1984,38 @@ def test_the_declining_build_that_renders_the_recipe_now_may_retry(fixture, monk
 
     assert response.status_code == 200, response.text
     assert response.json()["identity"]["recipe_revision"] == 2
+
+
+def _text_check(status="failed", visible=True, at=11.89):
+    return {
+        "kind": "text",
+        "layer_id": "authored-text-2",
+        "at_s": at,
+        "expected_visible": visible,
+        "status": status,
+        "reason": "copy_words_missing",
+    }
+
+
+def test_a_rejected_text_check_leaves_an_honest_note_and_only_a_note(monkeypatch):
+    job = SimpleNamespace(assembly_plan={})
+    report = {"status": "rejected", "checks": [_text_check()]}
+    notes = routes._export_text_notes(job, report)
+    assert len(notes) == 1 and "couldn't confirm" in notes[0] and "12s" in notes[0]
+    # The report itself is untouched: the note never changes what is verified or shipped.
+    assert report == {"status": "rejected", "checks": [_text_check()]}
+
+    job.assembly_plan = {"creator_reply_language": "tr"}
+    assert "doğrulayamadım" in routes._export_text_notes(job, report)[0]
+
+    # Not a failed, expected-visible text read: no note.
+    for quiet in (
+        {"status": "checked", "checks": [_text_check(status="passed")]},
+        {"status": "rejected", "checks": [_text_check(visible=False)]},
+        {"status": "rejected", "checks": [{"kind": "picture", "status": "failed"}]},
+        None,
+    ):
+        assert routes._export_text_notes(job, quiet) == []
+
+    monkeypatch.setattr(settings, "export_text_note_enabled", False)
+    assert routes._export_text_notes(job, report) == []

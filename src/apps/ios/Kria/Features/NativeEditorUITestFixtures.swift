@@ -29,10 +29,22 @@ enum NativeEditorUITestFixtures {
         /// KRI-589: a 6 s cut whose variant opens the drawings lane; Save commits through a stub transport
         /// that keeps the saved drawings across relaunches (`-ui-testing-editor-drawing-reset` starts clean).
         case drawing = "drawing"
+        /// A Talking edit whose variant opens both Background and Draw: the rail's full six tools, which overflow it.
+        /// Declared before `speakerBackground` so its flag wins when both are passed (that one wires the stub transport).
+        case railSixTools = "rail-six-tools"
+        /// KRI-1118: a Talking edit whose variant opens the `speaker_background` capability, with two ready pool visuals
+        /// (a photo and a video). Save commits through the same stub transport and keeps the saved lane across
+        /// relaunches (`-ui-testing-editor-speaker-background-reset` starts with no background).
+        case speakerBackground = "speaker-background"
         /// Three clips of different lengths (1.0 / 1.4 / 1.2 s) that sit inside one viewport, so a long-press drag
         /// can reorder them without reaching the auto-scroll edge, and the durations tell the order apart. Each is
         /// at least 1 s so the default crossfades are never capped by a short neighbour and the length is exact.
         case reorderClips = "reorder-clips"
+        /// KRI-717 on a phone Talking edit: three kept segments of one take (timeline closed, Range open through
+        /// `clips.source_window`). Save commits through the stub transport, which keeps the saved windows across
+        /// relaunches (`-ui-testing-editor-talking-range-reset` starts clean; `-ui-testing-editor-talking-range-closed`
+        /// closes the leaf with a reason).
+        case talkingRange = "talking-range"
     }
 
     /// Three catalog sounds in two categories; nil preview URLs keep UI tests off the network.
@@ -147,12 +159,128 @@ enum NativeEditorUITestFixtures {
         case .retimedClips: retimedClips
         case .songTrim: songTrim
         case .drawing: drawing
+        case .railSixTools: railSixTools
+        case .speakerBackground: speakerBackground
         case .reorderClips: reorderClips
+        case .talkingRange: talkingRange
         }
     }
 
+    /// The Talking Range windows the stub commit transport last saved (UserDefaults, so a relaunch "reopens" them).
+    static let savedTalkingRangeKey = "kria.ui-test.saved-talking-range.v1"
+
+    /// Three kept segments of one 4.6 s take (the bundled preview footage is 4.67 s) at source 0-1, 1.5-2.5 and
+    /// 3-4 s, output 0-1, 1-2 and 2-3 s, with one caption in each. The server keeps the timeline closed for Talking
+    /// and opens only Range. Needs `-ui-testing-editor-live-preview` for the compiled preview the sheet reads.
+    static let talkingRange: EditorDraft = {
+        let windows: [(id: String, start: Double)] = [
+            ("native-phone-talking-source", 0), ("native-phone-talking-source-1", 1.5), ("native-phone-talking-source-2", 3),
+        ]
+        let clips = windows.enumerated().map { index, window in
+            EditorClip(id: id(700 + index), assetID: id(1_700), sourceClipIndex: 0,
+                       start: Double(index), end: Double(index + 1), trimIn: window.start, trimOut: window.start + 1,
+                       sourceDuration: 4.6, slotID: window.id)
+        }
+        let closed = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-talking-range-closed")
+        let leaf: JSONValue = closed
+            ? .object(["editable": .bool(false), "reason": .string("talking_range_multi_clip")])
+            : .object(["editable": .bool(true)])
+        let words = ["First part", "Second part", "Third part"]
+        return draft(clips: clips, text: [], captions: true, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "caption_cues": .array(words.enumerated().map { index, text in
+                .object(["id": .string("talking-range-cue-\(index)"), "text": .string(text),
+                         "start_s": .number(Double(index) + 0.1), "end_s": .number(Double(index) + 0.9)])
+            }),
+            "caption_meta": .object(["enabled": .bool(true), "style": .string("sentence")]),
+        ], rootExtras: [
+            "render_destination": .string("device"),
+            "resolved_archetype": .string("subtitled"),
+            "editor_capabilities": .object([
+                "timeline": .bool(false),
+                "caption_cues": .object(["editable": .bool(true)]),
+                "caption_meta": .object(["editable": .bool(true)]),
+                "text_elements": .object(["editable": .bool(false), "reason": .string("Text isn’t editable for this edit on this iPhone.")]),
+                "clips": .object(["source_window": leaf]),
+            ]),
+        ])
+    }()
+
     /// The drawings the stub commit transport last saved (UserDefaults, so a relaunch "reopens" them).
     static let savedDrawingsKey = "kria.ui-test.saved-drawings.v1"
+    /// KRI-1136: the first timeline slot's saved `tilt`, kept across relaunches by the stub commit transport.
+    static let savedTiltKey = "kria.ui-test.saved-tilt.v1"
+
+    /// The `speaker_background` value the stub commit transport last saved (UserDefaults; JSON `null` = cleared).
+    static let savedSpeakerBackgroundKey = "kria.ui-test.saved-speaker-background.v1"
+
+    /// The two pool visuals the Background fixture offers; no URLs, so the tiles show their placeholders offline.
+    static let speakerBackgroundVisuals: [CreationVisual] = [
+        CreationVisual(id: "fixture-bg-photo", kind: "image", status: "ready", sourceFilename: "Beach photo", displayURL: nil, previewURL: nil, retryable: nil),
+        CreationVisual(id: "fixture-bg-video", kind: "video", status: "ready", sourceFilename: "City video", displayURL: nil, previewURL: nil, retryable: nil),
+    ]
+
+    static var speakerBackground: EditorDraft {
+        let defaults = UserDefaults.standard
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background-reset") {
+            defaults.removeObject(forKey: savedSpeakerBackgroundKey)
+        }
+        var value = talkingCaptions
+        var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
+        caps["speaker_background"] = .object(["editable": .bool(true)])
+        // KRI-1173: the colour gate is open too, so the Background tool offers the Colour section.
+        caps["speaker_background_color"] = .object(["editable": .bool(true)])
+        // KRI-1162: `-ui-testing-editor-speaker-background-windows` also opens the timed-background gate and, until a
+        // save has been kept (reset forgets it), seeds the lane with a photo fill and two windows (a photo 0-2 s, a video 2.5-5 s).
+        let windowsOn = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background-windows")
+        if windowsOn { caps["speaker_background_windows"] = .object(["editable": .bool(true)]) }
+        // Qendresa item 18: the Aim and Zoom controls (`background_focus`) open with the windows gate or on their own.
+        if windowsOn || ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background-focus") {
+            caps["background_focus"] = .object(["editable": .bool(true)])
+        }
+        value.serverSnapshot["editor_capabilities"] = .object(caps)
+        var lane: JSONValue?
+        if let data = defaults.data(forKey: savedSpeakerBackgroundKey), let saved = try? JSONDecoder().decode(JSONValue.self, from: data) {
+            lane = saved
+        } else if windowsOn, ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-frame") {
+            lane = seededSpeakerFrame
+        } else if windowsOn {
+            lane = seededSpeakerBackgroundWindows
+        }
+        if let lane {
+            var payload = value.serverSnapshot["editor_payload"]?.objectValue ?? [:]
+            var sections = payload["sections"]?.objectValue ?? [:]
+            sections["speaker_background"] = lane
+            payload["sections"] = .object(sections)
+            value.serverSnapshot["editor_payload"] = .object(payload)
+        }
+        return value
+    }
+
+    /// The lane `-ui-testing-editor-speaker-frame` (with the windows gate) starts from: the speaker small at the bottom
+    /// right (`small_bottom_right`) over a plain colour, which the simulator preview can draw without any pool media.
+    static let seededSpeakerFrame: JSONValue = .object([
+        "kind": .string("color"), "color": .string("#2B6CB0"),
+        "speaker_frame": .object(["width_fraction": .number(0.42), "x_fraction": .number(0.76), "y_fraction": .number(0.8)]),
+    ])
+
+    /// The lane `-ui-testing-editor-speaker-background-windows` starts from.
+    static let seededSpeakerBackgroundWindows: JSONValue = .object([
+        "media_id": .string("fixture-bg-photo"), "kind": .string("image"), "source_start_s": .number(0),
+        "windows": .array([
+            .object(["media_id": .string("fixture-bg-photo"), "kind": .string("image"), "source_start_s": .number(0),
+                     "start_s": .number(0), "end_s": .number(2)]),
+            .object(["media_id": .string("fixture-bg-video"), "kind": .string("video"), "source_start_s": .number(0),
+                     "start_s": .number(2.5), "end_s": .number(5)]),
+        ]),
+    ])
+    static var railSixTools: EditorDraft {
+        var value = speakerBackground
+        var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
+        caps["drawings"] = .object(["add": .bool(true), "edit": .bool(true), "trim": .bool(true), "delete": .bool(true)])
+        value.serverSnapshot["editor_capabilities"] = .object(caps)
+        return value
+    }
 
     static let drawing: EditorDraft = {
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-drawing-reset") {
@@ -754,6 +882,9 @@ enum NativeEditorUITestCommitTransport {
     static func api() -> KriaAPI {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [CommitURLProtocol.self]
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
+            URLProtocol.registerClass(GeneratedMediaImageFixtureProtocol.self)
+        }
         return KriaAPI(baseURL: URL(string: "https://editor-ui-testing.invalid")!, tokenStore: UITestTokenStore(), session: URLSession(configuration: configuration))
     }
 
@@ -763,7 +894,19 @@ enum NativeEditorUITestCommitTransport {
         func delete() throws {}
     }
 
+    private final class FailOnce: @unchecked Sendable {
+        private let lock = NSLock()
+        private var failed = false
+        func takeFailure() -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            if failed { return false }
+            failed = true
+            return true
+        }
+    }
+
     private final class CommitURLProtocol: URLProtocol, @unchecked Sendable {
+        static let capabilityFailures = FailOnce()
         override class func canInit(with request: URLRequest) -> Bool { true }
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
@@ -771,7 +914,60 @@ enum NativeEditorUITestCommitTransport {
             guard let url = request.url else { client?.urlProtocol(self, didFailWithError: URLError(.badURL)); return }
             var status = 404
             var body = Data(#"{"detail":"not stubbed"}"#.utf8)
-            if url.path.hasSuffix("/device-render"), let data = UserDefaults.standard.data(forKey: NativeEditorUITestFixtures.gamedayRecipeKey) {
+            if url.path.hasSuffix("/capabilities"), ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
+                // KRIA_OVERLAY_CAPABILITY_FAIL_ONCE: the first account check of this launch fails, the retry succeeds.
+                if ProcessInfo.processInfo.environment["KRIA_OVERLAY_CAPABILITY_FAIL_ONCE"] == "1", Self.capabilityFailures.takeFailure() {
+                    client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+                    return
+                }
+                status = 200; body = Data(#"{"formats":[],"generated_images":true}"#.utf8)
+            } else if url.path.contains("/generated-media"), ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
+                if ProcessInfo.processInfo.environment["KRIA_OVERLAY_REGISTRATION_RECOVERY"] == "1",
+                   url.path.hasSuffix("/generated-media"), request.httpMethod == "POST" {
+                    UserDefaults.standard.set(UserDefaults.standard.integer(forKey: "overlay-fixture-generation-count") + 1, forKey: "overlay-fixture-generation-count")
+                }
+                let count = UserDefaults.standard.integer(forKey: "overlay-fixture-generation-count")
+                let generatedID = count > 1 ? "fixture-generated-image-b" : "fixture-generated-image"
+                let imageURL = "https://generated-media-image.invalid/cover.jpg"
+                let response: [String: JSONValue] = ["id": .string("fixture-overlay-operation"), "state": .string("ready"),
+                    "capability": .string("image"), "retryable": .bool(false), "asset_id": .string(generatedID),
+                    "preview_url": .string(imageURL), "source_url": .string(imageURL)]
+                status = 200; body = (try? JSONEncoder().encode(response)) ?? body
+            } else if url.path.hasSuffix("/assets"), ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
+                let response: [String: JSONValue] = ["max_assets": .number(20), "assets": .array(["fixture-generated-image", "fixture-generated-image-b"].map { id in .object([
+                    "id": .string(id), "kind": .string("image"), "status": .string("ready"),
+                    "source_filename": .string("Generated fixture.jpg"), "gcs_path": .string("fixture/generated.jpg"),
+                    "source_url": .string("https://generated-media-image.invalid/cover.jpg")
+                ]) })]
+                status = 200; body = (try? JSONEncoder().encode(response)) ?? body
+            } else if url.path.hasSuffix("/overlay-plan") {
+                var data = request.httpBody ?? Data()
+                if data.isEmpty, let stream = request.httpBodyStream {
+                    stream.open(); defer { stream.close() }
+                    var buffer = [UInt8](repeating: 0, count: 4096)
+                    while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; data.append(buffer, count: count) }
+                }
+                let fields = (try? JSONDecoder().decode([String: JSONValue].self, from: data)) ?? [:]
+                if fields["mode"] == .string("automatic"), fields["prompt"] != .string("") {
+                    client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+                    return
+                }
+                let response: [String: JSONValue] = [
+                    "document_fingerprint": fields["document_fingerprint"] ?? .string(""),
+                    "base_generation": fields["base_generation"] ?? .string(""),
+                    "message": .string(ProcessInfo.processInfo.environment["KRIA_OVERLAY_MIXED"] == "1"
+                        ? "Synthetic offline overlay plan. Upload the real logo or choose it from your visual library."
+                        : "Synthetic offline overlay plan."),
+                    "overlays": .array([.object([
+                        "id": .string("DCC14763-5702-4AE3-8510-8C72845E6B15"), "kind": .string(ProcessInfo.processInfo.environment["KRIA_OVERLAY_IMAGE"] == "1" ? "image" : "text"),
+                        "title": .string("Synthetic graphic"), "prompt": .string("A synthetic image for native UI testing"), "text": .string("10"),
+                        "start_s": .number(0.5), "end_s": .number(1.5),
+                        "x_frac": .number(0.2), "y_frac": .number(0.3), "scale": .number(0.2),
+                        "reason": .string("Synthetic placement at 0.5 seconds.")
+                    ])])
+                ]
+                status = 200; body = (try? JSONEncoder().encode(response)) ?? body
+            } else if url.path.hasSuffix("/device-render"), let data = UserDefaults.standard.data(forKey: NativeEditorUITestFixtures.gamedayRecipeKey) {
                 status = 200; body = data
             } else if url.path.hasSuffix("/timeline"), let data = UserDefaults.standard.data(forKey: NativeEditorUITestFixtures.gamedayPoolKey) {
                 status = 200; body = data
@@ -783,6 +979,24 @@ enum NativeEditorUITestCommitTransport {
                     while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; data.append(buffer, count: count) }
                 }
                 let fields = (try? JSONDecoder().decode([String: JSONValue].self, from: data)) ?? [:]
+                if ProcessInfo.processInfo.environment["KRIA_OVERLAY_REGISTRATION_RECOVERY"] == "1" {
+                    let key = fields["client_import_id"]?.stringValue ?? ""
+                    let source = fields["source_id"]?.stringValue ?? ""
+                    var registrations = UserDefaults.standard.dictionary(forKey: "overlay-fixture-registrations") as? [String: String] ?? [:]
+                    if let existing = registrations[key], existing != source {
+                        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 409, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+                        client?.urlProtocol(self, didLoad: Data(#"{"detail":"import_id_reused"}"#.utf8))
+                        client?.urlProtocolDidFinishLoading(self)
+                        return
+                    }
+                    let first = registrations.isEmpty
+                    registrations[key] = source
+                    UserDefaults.standard.set(registrations, forKey: "overlay-fixture-registrations")
+                    if first {
+                        client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+                        return
+                    }
+                }
                 let response: [String: JSONValue] = ["import_id": fields["client_import_id"] ?? .string(UUID().uuidString),
                     "status": .string("ready"), "source_id": .string("gameday-istanbul-source-4"), "source_index": .number(4),
                     "source": .object(["media_id": .string("gameday-istanbul-source-4"), "duration_s": .number(4)]), "retryable": .bool(false)]
@@ -795,8 +1009,27 @@ enum NativeEditorUITestCommitTransport {
                     while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; data.append(buffer, count: count) }
                 }
                 let fields = (try? JSONDecoder().decode([String: JSONValue].self, from: data)) ?? [:]
+                if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays"),
+                   let visuals = fields["visual_blocks"], let data = try? JSONEncoder().encode(visuals) {
+                    UserDefaults.standard.set(data, forKey: "overlay-fixture-saved-visuals")
+                }
                 if let drawings = fields["drawings"], let saved = try? JSONEncoder().encode(drawings) {
                     UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedDrawingsKey)
+                }
+                if let slots = fields["timeline_slots"]?.arrayValue, let first = slots.first?.objectValue {
+                    if let tilt = first["tilt"], tilt != .null, let saved = try? JSONEncoder().encode(tilt) {
+                        UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedTiltKey)
+                    } else if first["tilt"] != nil {
+                        UserDefaults.standard.removeObject(forKey: NativeEditorUITestFixtures.savedTiltKey)
+                    }
+                }
+                if let slots = fields["timeline_slots"]?.arrayValue,
+                   slots.contains(where: { $0.objectValue?["slot_id"]?.stringValue?.hasPrefix("native-phone-talking-source") == true }),
+                   let saved = try? JSONEncoder().encode(JSONValue.object(["timeline_slots": .array(slots), "caption_cues": fields["caption_cues"] ?? .null])) {
+                    UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedTalkingRangeKey)
+                }
+                if let lane = fields["speaker_background"], let saved = try? JSONEncoder().encode(lane) {
+                    UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedSpeakerBackgroundKey)
                 }
                 let sections = fields.keys.filter { $0 != "base_generation" && $0 != "editor_state_version" && $0 != "deletions" && $0 != "remove_music" }
                 var flags = Dictionary(uniqueKeysWithValues: sections.map { ($0, JSONValue.bool(true)) })

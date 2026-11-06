@@ -17,6 +17,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -1691,6 +1692,9 @@ class CreatorAgentTurn(Base):
     # The editor's unsaved state (EditorStateIn) for this turn; NULLed on completion.
     # Never copied into thread events (up to 256 KB).
     editor_state: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # One entry per run that asked to run again (KRI-709): {epoch, outcome, reason, at, calls}.
+    # Redacted by construction (names, milliseconds, reason codes); surfaced on `kria/trace`.
+    planning_runs: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
@@ -2051,6 +2055,13 @@ class CreatorAgentExecution(Base):
         ),
         UniqueConstraint(
             "session_id", "idempotency_key", name="uq_creator_agent_executions_idempotency"
+        ),
+        Index(
+            "idx_creator_executions_pending_review_admission",
+            "completed_at",
+            postgresql_where=text(
+                "status = 'completed' AND result->'intent_review_admission'->>'status' = 'pending'"
+            ),
         ),
         Index("idx_creator_agent_executions_session_created", "session_id", "created_at"),
         Index(
@@ -4602,4 +4613,232 @@ class GeneratedMediaOperation(Base):
     )
     expires_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, nullable=False, server_default=text("now() + interval '24 hours'")
+    )
+
+
+class NativeActivity(Base):
+    __tablename__ = "native_activities"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creation_threads.id", ondelete="CASCADE"), nullable=False
+    )
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=False
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    variant_id: Mapped[str] = mapped_column(Text, nullable=False)
+    ownership_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    identity: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    generation: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    semantic_key: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, nullable=False, server_default=func.now()
+    )
+    read_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('video_ready', 'action_required')", name="ck_native_activity_kind"
+        ),
+        CheckConstraint(
+            "ownership_epoch >= 0 AND length(variant_id) > 0 AND length(generation) > 0",
+            name="ck_native_activity_target",
+        ),
+        Index("idx_native_activity_owner_created", "owner_id", "created_at", "id"),
+    )
+
+
+class NotificationInstallation(Base):
+    __tablename__ = "notification_installations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    family_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    environment: Mapped[str] = mapped_column(Text, nullable=False)
+    topic: Mapped[str] = mapped_column(Text, nullable=False)
+    encrypted_token: Mapped[bytes | None] = mapped_column(BYTEA, nullable=True)
+    token_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    registration_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    registered_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "environment IN ('sandbox', 'production') AND registration_version > 0",
+            name="ck_notification_installation_target",
+        ),
+        CheckConstraint(
+            "revoked_at IS NOT NULL OR encrypted_token IS NOT NULL",
+            name="ck_notification_installation_token",
+        ),
+        Index("idx_notification_installation_owner", "owner_id"),
+        Index(
+            "uq_notification_installation_active_target",
+            "environment",
+            "topic",
+            "token_fingerprint",
+            unique=True,
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
+    )
+
+
+class NotificationDelivery(Base):
+    __tablename__ = "notification_deliveries"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    activity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("native_activities.id", ondelete="CASCADE"), nullable=False
+    )
+    installation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("notification_installations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    registration_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    available_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    lease_until: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    lease_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    last_result_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("activity_id", "installation_id", name="uq_notification_delivery_pair"),
+        CheckConstraint(
+            "status IN ('pending','leased','accepted','suppressed','rejected','exhausted','uncertain')",
+            name="ck_notification_delivery_status",
+        ),
+        CheckConstraint(
+            "attempts >= 0 AND registration_version > 0", name="ck_notification_delivery_attempts"
+        ),
+        CheckConstraint(
+            "(status = 'leased' AND lease_id IS NOT NULL AND lease_until IS NOT NULL) OR "
+            "(status != 'leased' AND lease_id IS NULL AND lease_until IS NULL)",
+            name="ck_notification_delivery_lease",
+        ),
+        Index("idx_notification_delivery_due", "status", "available_at"),
+    )
+
+
+class CreatorGenerationReview(Base):
+    """Durable advisory evidence outbox; never grants a model call or edit."""
+
+    __tablename__ = "creator_generation_reviews"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    execution_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_executions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    review_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    input_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    inputs: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lease_token: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    last_publish_attempt_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    tier: Mapped[str] = mapped_column(Text, nullable=False, default="evidence")
+    max_usd: Mapped[float | None] = mapped_column(Numeric(6, 4), nullable=True)
+    evidence_ready_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    review_attempts: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    paid_call_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    parent_review_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_generation_reviews.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    repair_draft_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creator_edit_drafts.id", ondelete="CASCADE"), nullable=True
+    )
+    repair_render_execution_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_executions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    repair_staged_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    receipt_event_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    question_event_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','running','evidence_ready','unavailable','stale','exhausted',"
+            "'reviewing','review_unknown','no_findings','suggestion','needs_confirmation',"
+            "'repair_staged','repair_verified','repair_unverified','repair_reverted',"
+            "'repair_abandoned')",
+            name="ck_generation_review_status",
+        ),
+        UniqueConstraint("paid_call_key", name="uq_generation_review_paid_call_key"),
+        UniqueConstraint("parent_review_id", name="uq_generation_review_parent"),
+        UniqueConstraint(
+            "repair_render_execution_id", name="uq_generation_review_repair_execution"
+        ),
+        CheckConstraint("tier IN ('evidence','review','repair')", name="ck_generation_review_tier"),
+        CheckConstraint(
+            "max_usd IS NULL OR (max_usd > 0 AND max_usd <= 0.25)",
+            name="ck_generation_review_max_usd",
+        ),
+        CheckConstraint(
+            "review_attempts >= 0 AND review_attempts <= 2",
+            name="ck_generation_review_review_attempts",
+        ),
+        CheckConstraint(
+            "review IS NULL OR octet_length(review::text) <= 131072",
+            name="ck_generation_review_review_size",
+        ),
+        CheckConstraint(
+            "status NOT IN ('unavailable','stale','exhausted','review_unknown','no_findings',"
+            "'suggestion','needs_confirmation','repair_verified','repair_unverified',"
+            "'repair_reverted','repair_abandoned') OR reason IS NOT NULL",
+            name="ck_generation_review_terminal_reason",
+        ),
+        CheckConstraint(
+            "status <> 'reviewing' OR (lease_token IS NOT NULL AND lease_until IS NOT NULL "
+            "AND paid_call_key IS NOT NULL)",
+            name="ck_generation_review_reviewing_lease",
+        ),
+        CheckConstraint(
+            "status !~ '^repair_' OR repair_draft_id IS NOT NULL",
+            name="ck_generation_review_repair_draft",
+        ),
+        Index(
+            "ix_generation_review_repair_staged",
+            "repair_staged_at",
+            postgresql_where=text("status = 'repair_staged'"),
+        ),
+        CheckConstraint("attempts >= 0 AND attempts <= 3", name="ck_generation_review_attempts"),
+        CheckConstraint(
+            "octet_length(inputs::text) <= 2097152", name="ck_generation_review_inputs"
+        ),
+        CheckConstraint(
+            "result IS NULL OR octet_length(result::text) <= 4194304",
+            name="ck_generation_review_result",
+        ),
+        Index("ix_generation_review_pending", "status", "lease_until"),
+        Index("ix_generation_review_publish_order", "last_publish_attempt_at", "created_at"),
+        Index("ix_generation_review_execution", "execution_id"),
+        Index("ix_generation_review_owner", "owner_id"),
     )

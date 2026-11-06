@@ -25,7 +25,7 @@ import json
 import re
 import unicodedata
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -41,11 +41,13 @@ from pydantic.json_schema import SkipJsonSchema
 from sqlalchemy import func, select
 
 from app.agents._schemas.text_element import _ALLOWED_FONTS, _HEX_COLOR_RE
+from app.config import settings
 from app.kria.asset_holds import Authority, resolve_clip_scope, stamp_authority
 from app.kria.brief_route import fold_text, loose_text, wants_filming_time_text
 from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.duplicate_send import is_duplicate_answer
 from app.kria.order_replacement import OrderReplacementProof
+from app.kria.removed_messages import is_removed, removed_turn_ids_sync
 from app.kria.reply_language import detect_chat_language
 from app.kria.select_asks import withdrawn_photo_asks
 from app.kria.text_shape_ask import TEXT_SHAPE_FACT, with_text_shape
@@ -63,6 +65,15 @@ if TYPE_CHECKING:
 # `text_sequence` (29 Ekim): the creator's own words shown on screen in pieces, never captions.
 RequirementKind = Literal["text", "order", "select", "timing", "audio", "style", "text_sequence"]
 RequirementStatus = Literal["open", "met", "partial", "not_possible", "superseded"]
+# Who removed a requirement, stamped into its facts when the removal is applied (never inferred
+# later): "creator" for the creator's own words (the default; a model-emitted remove, a fresh
+# start), "server" for a waiver the server made (the simpler version, an automatic omission).
+# A requirement removed before this existed has no mark: its provenance is unknown. A later
+# creator removal of an already-superseded requirement moves its mark up to "creator"; a server
+# removal never changes an existing mark.
+SUPERSEDED_BY_FACT = "superseded_by"
+CREATOR_REMOVAL = "creator"
+SERVER_REMOVAL = "server"
 Route = Literal["replan", "editor_ops"]
 
 # Two titles plus six dictated shot texts used all of the old 8, so a duration
@@ -71,8 +82,38 @@ MAX_UPDATES_PER_TURN = 16
 # This bounds a single planner response, not the ledger.  A larger model batch
 # is rejected as a whole so the caller can recover without losing its tail.
 MAX_BRIEF_REQUEST_CHARS = 9_000
+# A long creation prompt (e.g. a screen walkthrough with five numbered labels) files ~17
+# asks, past the 16 cap.  32 is 2x, the same headroom KRI-422 chose.  Over 16 entries a
+# batch must also fit the size budget below, which keeps KRI-459's protection: a looping
+# model is still refused whole, and the budget is the size of one planning batch of the
+# brief context, so one turn can never by itself fill the next turn's planning context.
+# The new worst case (9,000 chars) is below today's 16-entry worst case (~40k chars).
+# Only reachable behind BRIEF_LONG_REQUEST_ENABLED.
+LONG_REQUEST_MAX_UPDATES = 32
+LONG_REQUEST_MAX_CHARS = MAX_BRIEF_REQUEST_CHARS
+
+
+def max_updates_per_turn() -> int:
+    return LONG_REQUEST_MAX_UPDATES if settings.brief_long_request_enabled else MAX_UPDATES_PER_TURN
+
+
+def brief_batch_chars(updates: Iterable[BriefUpdate]) -> int:
+    return sum(
+        len(
+            json.dumps(
+                u.model_dump(mode="json", exclude_none=True),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
+        for u in updates
+    )
+
+
 _SCOPE_RE = re.compile(r"^(title|per_clip|global|clip:[A-Za-z0-9._:-]{1,100})$")
 _MAX_FACTS_BYTES = 2_000
+_MAX_DESCRIPTION_CHARS = 300
 
 
 def _nfc(value: str) -> str:
@@ -212,7 +253,7 @@ class BriefUpdate(_BriefModel):
     kind: RequirementKind | None = None
     scope: str | None = None
     literal: str | None = Field(default=None, max_length=200)
-    description: str | None = Field(default=None, max_length=300)
+    description: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_CHARS)
     facts: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("scope", mode="before")
@@ -282,7 +323,7 @@ class BriefRequirement(_BriefModel):
     kind: RequirementKind
     scope: str
     literal: str | None = Field(default=None, max_length=200)
-    description: str | None = Field(default=None, max_length=300)
+    description: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_CHARS)
     facts: dict[str, Any] = Field(default_factory=dict)
     source_turn_id: str | None = None
     status: RequirementStatus = "open"
@@ -437,14 +478,17 @@ def parse_brief_updates(raw: object) -> list[BriefUpdate]:
     """Strictly parse a complete update batch without silently dropping entries.
 
     One entry the parser cannot read still refuses the whole batch, and the error names that
-    entry and the rule it broke so the model's retry can fix it (KRI-805).
+    entry and the rule it broke so the model's retry can fix it (KRI-805). The entry cap is 16,
+    or 32 with BRIEF_LONG_REQUEST_ENABLED when a batch over 16 fits LONG_REQUEST_MAX_CHARS;
+    a larger batch is refused whole, never truncated.
     """
     if not isinstance(raw, list):
         if raw in (None, []):
             return []
         raise BriefUpdateBatchError("brief_updates must be a list")
-    if len(raw) > MAX_UPDATES_PER_TURN:
-        raise BriefUpdateBatchError(f"brief_updates exceeds {MAX_UPDATES_PER_TURN} entries")
+    limit = max_updates_per_turn()
+    if len(raw) > limit:
+        raise BriefUpdateBatchError(f"brief_updates exceeds {limit} entries")
     out: list[BriefUpdate] = []
     for index, item in enumerate(raw):
         try:
@@ -458,6 +502,12 @@ def parse_brief_updates(raw: object) -> list[BriefUpdate]:
     targets = [update.target_requirement_id for update in out if update.operation != "add"]
     if len(targets) != len(set(targets)):
         raise BriefUpdateBatchError("brief_updates changes or removes one requirement twice")
+    if len(out) > MAX_UPDATES_PER_TURN and brief_batch_chars(out) > LONG_REQUEST_MAX_CHARS:
+        raise BriefUpdateBatchError(
+            f"brief_updates over {MAX_UPDATES_PER_TURN} entries exceed "
+            f"{LONG_REQUEST_MAX_CHARS} characters: shorten descriptions and facts, "
+            "keep every ask"
+        )
     return out
 
 
@@ -513,6 +563,10 @@ def start_fresh_updates(
     match). This turn's own adds stand, and a change this turn already aimed at a saved
     requirement keeps that target (it is not removed twice). Removals are bound to the
     brief the prompt showed, like any other change/remove.
+
+    A requirement an earlier turn already superseded is removed again unless the creator
+    already owns that removal: the fresh start is the creator's word, so a filming-order ask
+    the server waived (or one stored before the mark existed) must not outlive it.
     """
     updates = tuple(updates)
     shown = prior or CreativeBrief()
@@ -521,10 +575,18 @@ def start_fresh_updates(
         BriefUpdate(
             operation="remove", target_requirement_id=req.id, expected_version=shown.version
         )
-        for req in shown.live()
+        for req in shown.requirements
         if req.id not in targeted
+        and (req.live or req.facts.get(SUPERSEDED_BY_FACT) != CREATOR_REMOVAL)
     )
     return (*removals, *updates)
+
+
+def removed_target_ids(updates: Iterable[BriefUpdate]) -> frozenset[str]:
+    """Ids a batch removes: what a server-owned writer passes as ``server_removed_ids``."""
+    return frozenset(
+        update.target_requirement_id or "" for update in updates if update.operation == "remove"
+    )
 
 
 def _next_id_number(requirements: Iterable[BriefRequirement]) -> int:
@@ -556,9 +618,15 @@ def merge_requirements(
 # changes the words ("the hook should say ...") restates the requirement without them; the
 # creator never withdrew them, so a same-kind, same-scope change keeps them unless it sets them.
 # KRI-841: so is the video a Talking edit ends on (`ending_clip`) and whether it keeps its sound.
+# Parent KRI-1151: and the clip it pauses the take for (`insert_clip`, where it goes).
 # KRI-945: and the server's mark on a title literal it copied from an approved wording.
+# KRI-1161: and the photo / video behind the speaker (`speaker_background`) with whether several
+# take turns (`background_changes`) and whether the speaker sits small in a corner
+# (`speaker_small`).
 # KRI-1029: and the text's shape ("curved title"), which "make the title just X" restates
 # without.
+# Qendresa item 16: and that the speaker starts full screen in their own take before the
+# background / corner (`speaker_full_opening`, with `speaker_full_opening_s` for a named length).
 STICKY_FACTS = frozenset(
     {
         "first_clip",
@@ -567,16 +635,50 @@ STICKY_FACTS = frozenset(
         "position",
         "placeholder",
         "ending_clip",
+        "insert_clip",
+        "insert_at_phrase",
+        "insert_at_s",
         "keep_audio",
+        "speaker_background",
+        "background_color",
+        "background_changes",
+        "speaker_small",
+        "speaker_full_opening",
+        "speaker_full_opening_s",
         APPROVED_COPY_FACT,
         TEXT_SHAPE_FACT,
     }
 )
 
 
+def _order_basis_key(facts: Mapping[str, Any]) -> str:
+    key = str(facts.get("key") or "").strip().casefold()
+    return "capture_time" if key in _CAPTURE_ORDER_KEYS else key
+
+
+def _replaces_order(target: BriefRequirement, update: BriefUpdate) -> bool:
+    """KRI-1112: an order change from one stated basis to another is a new order.
+
+    Leverkusen M3 (13:38): "Use exactly this order: IMG_1028, ... IMG_1043. This replaces my
+    earlier order and ending requests." became ``key: exact_sequence`` over
+    ``capture_time``, yet v5 kept the old ``first_clip`` / ``last_clip``, which held the
+    creator's complete list back. The "start with" / "end on" words were said of the old
+    order; the new one keeps only the ends its own change restates. A reworded order on the
+    same basis (KRI-522), or the first basis given to a pin-only "start with X", keeps them.
+    """
+    if target.kind != "order" or update.kind != "order":
+        return False
+    old, new = _order_basis_key(target.facts), _order_basis_key(update.facts)
+    return bool(old) and bool(new) and old != new
+
+
 def _carry_sticky_facts(target: BriefRequirement, update: BriefUpdate) -> dict[str, Any]:
     facts = update.facts
-    if update.kind == target.kind and update.scope == target.scope:
+    if (
+        update.kind == target.kind
+        and update.scope == target.scope
+        and not _replaces_order(target, update)
+    ):
         kept = {
             k: v for k, v in target.facts.items() if k in STICKY_FACTS and k not in update.facts
         }
@@ -592,21 +694,50 @@ def _carry_sticky_facts(target: BriefRequirement, update: BriefUpdate) -> dict[s
     return facts
 
 
+def _with_cut_quote(update: BriefUpdate, *sources: str | None) -> str | None:
+    """``update``'s description, with a quoted line it cut from the creator's words put back.
+
+    Leverkusen M1 run 2 (thread 1a2189cc): "...the train clip with the announcement "Nächster
+    Halt: Leverkusen Mitte"..." was recorded without its quote, so the clip played a moment that
+    cut the line (`kept_sound_lines`). Only a sound ask with no literal: its quote names the line
+    to keep, and the clip-sound toggle reads facts, never these words. ``sources`` are the
+    creator's own message, then (for a change) the description it replaces.
+    """
+    if update.kind != "audio" or update.literal:
+        return update.description
+    from app.services.spoken_quotes import restore_cut_quote  # noqa: PLC0415
+
+    for source in sources:
+        restored = restore_cut_quote(update.description, source)
+        if restored and len(restored) <= _MAX_DESCRIPTION_CHARS:
+            return _nfc(restored)
+    return update.description
+
+
 def apply_updates(
     prior: CreativeBrief | None,
     updates: Iterable[BriefUpdate],
     *,
     source_turn_id: str | None,
     creator_text: str | None = None,
+    server_removed_ids: Collection[str] = (),
 ) -> CreativeBrief:
     """Server-assign ids and merge ``updates`` into ``prior`` (version is set on persist).
 
     ``creator_text`` is the creator's own message for this turn (KRI-824): each new or
     changed requirement's ``authority`` is stamped from it, never from the update.
+
+    Each removed requirement records who removed it in its facts (``SUPERSEDED_BY_FACT``):
+    "server" only for an id in ``server_removed_ids`` (a waiver the server made), otherwise
+    "creator". The set is per requirement, so one batch can carry both. A ``remove`` may also
+    name an already-superseded requirement: that only moves the mark up (a creator's removal
+    sets "creator"; a server removal never changes an existing mark), so the creator's last
+    word wins over an earlier waiver and a retry changes nothing.
     """
     prior = prior or CreativeBrief()
     updates = list(updates)
     live_by_id = {req.id: req for req in prior.live()}
+    known_ids = {req.id for req in prior.requirements}
     if any(
         update.operation != "add" and update.expected_version != prior.version for update in updates
     ):
@@ -615,7 +746,8 @@ def apply_updates(
     if len(targets) != len(set(targets)):
         raise BriefUpdateBatchError("conflicting updates target the same requirement")
     for update in updates:
-        if update.operation != "add" and update.target_requirement_id not in live_by_id:
+        reachable = known_ids if update.operation == "remove" else live_by_id
+        if update.operation != "add" and update.target_requirement_id not in reachable:
             raise BriefUpdateBatchError("target requirement is missing or superseded")
     counter = _next_id_number(prior.requirements)
     incoming: list[BriefRequirement] = []
@@ -637,7 +769,7 @@ def apply_updates(
                     "kind": update.kind,
                     "scope": update.scope,
                     "literal": update.literal,
-                    "description": update.description,
+                    "description": _with_cut_quote(update, creator_text, target.description),
                     # KRI-1029: this turn's own shape words win over a carried shape.
                     "facts": with_text_shape(
                         update.kind,
@@ -665,7 +797,7 @@ def apply_updates(
             kind=update.kind,
             scope=update.scope,
             literal=update.literal,
-            description=update.description,
+            description=_with_cut_quote(update, creator_text),
             facts=with_text_shape(
                 update.kind,
                 update.description,
@@ -693,8 +825,26 @@ def apply_updates(
     )
     requirements = []
     for req in prior.requirements:
-        if req.id in removed and req.live:
-            requirements.append(req.model_copy(update={"status": "superseded"}))
+        if req.id in removed:
+            by = SERVER_REMOVAL if req.id in server_removed_ids else CREATOR_REMOVAL
+            if req.live:
+                requirements.append(
+                    req.model_copy(
+                        update={
+                            "status": "superseded",
+                            "facts": {**req.facts, SUPERSEDED_BY_FACT: by},
+                        }
+                    )
+                )
+            elif by == CREATOR_REMOVAL and req.facts.get(SUPERSEDED_BY_FACT) != CREATOR_REMOVAL:
+                # Already waived (or stored before the mark existed): the creator's word is last.
+                requirements.append(
+                    req.model_copy(
+                        update={"facts": {**req.facts, SUPERSEDED_BY_FACT: CREATOR_REMOVAL}}
+                    )
+                )
+            else:
+                requirements.append(req)
         elif req.id in changed and req.live:
             requirements.append(changed[req.id])
         elif req.id in withdrawn and req.live:
@@ -1681,10 +1831,14 @@ def _delegation_covers_request(
         )
     ).all()
     read = {str(event_id) for event_id in read_event_ids}
+    # Steer now: a waiting message the creator took back is owed no read.
+    removed = removed_turn_ids_sync(db, thread_id, (payload for _id, _content, payload in earlier))
     return all(
         str(event_id) in read
         for event_id, content, payload in earlier
-        if str(content).strip() and not is_duplicate_answer(payload)
+        if str(content).strip()
+        and not is_duplicate_answer(payload)
+        and not is_removed(payload, removed)
     )
 
 
@@ -1697,6 +1851,7 @@ def persist_brief_version_sync(
     record_empty: bool = False,
     delegation_read_event_ids: Iterable[str] = (),
     order_replacement: OrderReplacementWriteContext | None = None,
+    server_removed_ids: Collection[str] = (),
 ) -> CreativeBrief | None:
     """Append one version for ``turn_id``; idempotent per turn.
 
@@ -1761,7 +1916,11 @@ def persist_brief_version_sync(
         )
     else:
         merged = apply_updates(
-            prior, updates, source_turn_id=str(turn_id), creator_text=creator_text
+            prior,
+            updates,
+            source_turn_id=str(turn_id),
+            creator_text=creator_text,
+            server_removed_ids=server_removed_ids,
         )
     next_version = (
         int(
@@ -1786,6 +1945,10 @@ def persist_brief_version_sync(
 
 
 __all__ = [
+    "LONG_REQUEST_MAX_CHARS",
+    "LONG_REQUEST_MAX_UPDATES",
+    "brief_batch_chars",
+    "max_updates_per_turn",
     "BriefContextOverflow",
     "BriefCoverage",
     "BriefCoverageError",

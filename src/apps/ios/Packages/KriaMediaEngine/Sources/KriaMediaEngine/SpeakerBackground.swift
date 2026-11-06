@@ -1,0 +1,457 @@
+import Foundation
+#if canImport(AVFoundation)
+import AVFoundation
+import CoreImage
+import ImageIO
+#endif
+
+// Talk-to-camera green screen (KRI-1115). Mirrors `app/kria/portable_speaker_background.py`; the wire is
+// snake_case, decoded with `.convertFromSnakeCase`, and `tests/fixtures/speaker-background-parity/v1.json`
+// pins both sides. Rendered by `SpeakerMatte` and `RecipeVideoCompositor.composeBelowText` (KRI-1116).
+
+public enum SpeakerBackgroundLimits {
+    public static let maxSourceStart = 1800.0
+    /// KRI-1162: the timed-background contract, enforced identically by `portable_speaker_background.py`.
+    public static let maxWindows = 40
+    /// Qendresa item 16: full-screen openings/endings (capability `speakerFrameWindows`).
+    public static let maxFullScreenWindows = 4
+    public static let maxTimeline = 1800.0
+    public static let minWindowSeconds = 0.5
+    public static let minFrameWidthFraction = 0.2
+    public static let maxIDLength = 160
+    public static let defaultSubjectTrackID = "subtitled"
+    /// Qendresa item 18: the zoom a background focus may carry (a multiple of cover; below 1 the picture no longer fills the frame).
+    public static let minFocusZoom = 0.2
+    public static let maxFocusZoom = 4.0
+}
+
+/// Qendresa item 18 (capability `backgroundFocus`): where a photo or video background is aimed. Same meaning as
+/// `VisualMediaPlacement`: the picture is scaled to cover the canvas times `zoom` (never smaller than the whole picture), then
+/// offset by `x` / `y` across the spare room: 0 = left / top edge, 0.5 = centre, 1 = right / bottom edge.
+public struct SpeakerBackgroundFocus: Codable, Equatable, Sendable {
+    public let x: Double
+    public let y: Double
+    public let zoom: Double
+
+    public init(x: Double, y: Double, zoom: Double) { self.x = x; self.y = y; self.zoom = zoom }
+
+    private enum CodingKeys: String, CodingKey { case x, y, zoom }
+
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownAssetFields(decoder, allowed: ["x", "y", "zoom"])
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        x = try c.decode(Double.self, forKey: .x)
+        y = try c.decode(Double.self, forKey: .y)
+        zoom = try c.decode(Double.self, forKey: .zoom)
+        try validate()
+    }
+
+    public func validate() throws {
+        guard x.isFinite, y.isFinite, zoom.isFinite, (0...1).contains(x), (0...1).contains(y),
+              (SpeakerBackgroundLimits.minFocusZoom...SpeakerBackgroundLimits.maxFocusZoom).contains(zoom)
+        else { throw RecipeError.invalidTimeline }
+    }
+}
+
+/// KRI-1162: one timed background. Its photo (held) or muted video (looping inside the window from
+/// `sourceStart`) shows from `start` to `end` seconds of the edit; where no window covers the time the
+/// layer's own (fill) background shows.
+public struct SpeakerBackgroundWindow: Codable, Equatable, Sendable {
+    public let assetID: String
+    public let mediaKind: VisualMediaKind
+    public let sourceStart: Double
+    public let start: Double
+    public let end: Double
+    /// Qendresa item 18: where this window's picture is aimed; nil = today's centre cover-fit (key absent).
+    public let focus: SpeakerBackgroundFocus?
+
+    public init(assetID: String, mediaKind: VisualMediaKind, sourceStart: Double = 0, start: Double, end: Double,
+                focus: SpeakerBackgroundFocus? = nil) {
+        self.assetID = assetID; self.mediaKind = mediaKind; self.sourceStart = sourceStart; self.start = start; self.end = end
+        self.focus = focus
+    }
+
+    private enum CodingKeys: String, CodingKey { case assetID = "assetId", mediaKind, sourceStart, start, end, focus }
+
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownAssetFields(decoder, allowed: ["assetId", "mediaKind", "sourceStart", "start", "end", "focus"])
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        assetID = try c.decode(String.self, forKey: .assetID)
+        mediaKind = try c.decode(VisualMediaKind.self, forKey: .mediaKind)
+        sourceStart = try c.decodeIfPresent(Double.self, forKey: .sourceStart) ?? 0
+        start = try c.decode(Double.self, forKey: .start)
+        end = try c.decode(Double.self, forKey: .end)
+        focus = try c.decodeIfPresent(SpeakerBackgroundFocus.self, forKey: .focus)
+        try validate()
+    }
+
+    public func validate() throws {
+        try focus?.validate()
+        guard !assetID.isEmpty, assetID.count <= SpeakerBackgroundLimits.maxIDLength, !assetID.contains(where: \.isWhitespace),
+              sourceStart.isFinite, (0...SpeakerBackgroundLimits.maxSourceStart).contains(sourceStart),
+              mediaKind == .video || sourceStart == 0,
+              start.isFinite, end.isFinite, (0...SpeakerBackgroundLimits.maxTimeline).contains(start),
+              end > 0, end <= SpeakerBackgroundLimits.maxTimeline,
+              end - start >= SpeakerBackgroundLimits.minWindowSeconds
+        else { throw RecipeError.invalidTimeline }
+    }
+}
+
+/// Qendresa item 16: a span of the edit in which the speaker's own take is drawn full-frame and untouched (no person
+/// mask, no background, no `speakerFrame`). Same bounds as a background window; `start <= t < end` is inside.
+public struct SpeakerFullScreenWindow: Codable, Equatable, Sendable {
+    public let start: Double
+    public let end: Double
+
+    public init(start: Double, end: Double) { self.start = start; self.end = end }
+
+    private enum CodingKeys: String, CodingKey { case start, end }
+
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownAssetFields(decoder, allowed: ["start", "end"])
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        start = try c.decode(Double.self, forKey: .start)
+        end = try c.decode(Double.self, forKey: .end)
+        try validate()
+    }
+
+    public func validate() throws {
+        guard start.isFinite, end.isFinite, (0...SpeakerBackgroundLimits.maxTimeline).contains(start),
+              end > 0, end <= SpeakerBackgroundLimits.maxTimeline,
+              end - start >= SpeakerBackgroundLimits.minWindowSeconds
+        else { throw RecipeError.invalidTimeline }
+    }
+}
+
+/// KRI-1162: where the matted speaker is drawn. The speaker layer (after its own crop and zoom) is scaled
+/// uniformly so its width is `widthFraction` of the canvas width and centred at (`xFraction`, `yFraction`),
+/// canvas fractions with the origin at the top-left, the convention of `VisualMediaPlacement`.
+public struct SpeakerFrame: Codable, Equatable, Sendable {
+    public let widthFraction: Double
+    public let xFraction: Double
+    public let yFraction: Double
+
+    public init(widthFraction: Double, xFraction: Double, yFraction: Double) {
+        self.widthFraction = widthFraction; self.xFraction = xFraction; self.yFraction = yFraction
+    }
+
+    private enum CodingKeys: String, CodingKey { case widthFraction, xFraction, yFraction }
+
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownAssetFields(decoder, allowed: ["widthFraction", "xFraction", "yFraction"])
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        widthFraction = try c.decode(Double.self, forKey: .widthFraction)
+        xFraction = try c.decode(Double.self, forKey: .xFraction)
+        yFraction = try c.decode(Double.self, forKey: .yFraction)
+        try validate()
+    }
+
+    /// The scaled speaker picture in canvas fractions (top-left origin), before any clipping to the canvas: the canvas
+    /// scaled uniformly by `widthFraction`, so it is `widthFraction` of the width AND of the height, centred on the frame.
+    public var canvasRect: CGRect {
+        CGRect(x: xFraction - widthFraction / 2, y: yFraction - widthFraction / 2, width: widthFraction, height: widthFraction)
+    }
+
+    public func validate() throws {
+        guard widthFraction.isFinite, xFraction.isFinite, yFraction.isFinite,
+              (SpeakerBackgroundLimits.minFrameWidthFraction...1).contains(widthFraction),
+              (0...1).contains(xFraction), (0...1).contains(yFraction)
+        else { throw RecipeError.invalidTimeline }
+    }
+}
+
+/// KRI-1173: what fills the layer behind the speaker. `VisualMediaKind` is shared with manifest `.visual`
+/// sources and windows and must not gain a colour case, so the fill has its own kind.
+public enum SpeakerBackgroundFillKind: String, Codable, Sendable { case image, video, color }
+
+/// One picture or looping video, or (KRI-1173) one solid colour, composited behind the speaker for the whole edit. KRI-1162 adds timed
+/// `windows` that override it in their span and a `speakerFrame` that draws the speaker small; both are
+/// absent from the wire while unused, so a first-cut layer encodes exactly as before.
+public struct SpeakerBackgroundLayer: Codable, Equatable, Sendable {
+    /// Names a `VisualRenderAsset` in the recipe's manifest. Nil exactly when the fill is a solid colour.
+    public let assetID: String?
+    public let mediaKind: SpeakerBackgroundFillKind
+    /// Seconds into a video background where playback starts. Always 0 for a photo or a colour.
+    public let sourceStart: Double
+    public let loop: Bool
+    public let subjectTrackID: String
+    /// Sorted by `start`, non-overlapping, 1...40 entries; nil while unused (never empty).
+    public let windows: [SpeakerBackgroundWindow]?
+    public let speakerFrame: SpeakerFrame?
+    /// `#RRGGBB` (uppercase) when the fill is a solid colour (KRI-1173); nil for a photo or video.
+    public let color: String?
+    /// Qendresa item 16: spans where the raw speaker take fills the frame. Sorted, disjoint, 1...4; nil while unused (never empty).
+    public let fullScreenWindows: [SpeakerFullScreenWindow]?
+    /// Qendresa item 18: where the photo/video FILL is aimed; nil = today's centre cover-fit (key absent). Never with a colour fill.
+    public let focus: SpeakerBackgroundFocus?
+
+    public init(assetID: String?, mediaKind: SpeakerBackgroundFillKind, sourceStart: Double = 0, loop: Bool = true,
+                subjectTrackID: String = SpeakerBackgroundLimits.defaultSubjectTrackID,
+                windows: [SpeakerBackgroundWindow]? = nil, speakerFrame: SpeakerFrame? = nil, color: String? = nil,
+                fullScreenWindows: [SpeakerFullScreenWindow]? = nil, focus: SpeakerBackgroundFocus? = nil) {
+        self.assetID = assetID; self.mediaKind = mediaKind; self.sourceStart = sourceStart
+        self.loop = loop; self.subjectTrackID = subjectTrackID
+        self.windows = windows; self.speakerFrame = speakerFrame; self.color = color
+        self.fullScreenWindows = fullScreenWindows; self.focus = focus
+    }
+
+    /// True when the speaker's own take is drawn full-frame, unmasked, at `time` (output seconds; `start <= time < end`).
+    public func showsSpeakerFullScreen(at time: Double) -> Bool {
+        Self.fullScreen(fullScreenWindows ?? [], at: time)
+    }
+
+    /// The same test on a bare window list (the compositor instruction carries the list, not the layer).
+    static func fullScreen(_ windows: [SpeakerFullScreenWindow], at time: Double) -> Bool {
+        windows.contains { $0.start <= time && time < $0.end }
+    }
+
+    /// A photo or video fill, as before KRI-1173 (source compatible with call sites that pass a `VisualMediaKind`).
+    public init(assetID: String, mediaKind: VisualMediaKind, sourceStart: Double = 0, loop: Bool = true,
+                subjectTrackID: String = SpeakerBackgroundLimits.defaultSubjectTrackID,
+                windows: [SpeakerBackgroundWindow]? = nil, speakerFrame: SpeakerFrame? = nil,
+                fullScreenWindows: [SpeakerFullScreenWindow]? = nil, focus: SpeakerBackgroundFocus? = nil) {
+        self.init(assetID: assetID, mediaKind: mediaKind == .video ? SpeakerBackgroundFillKind.video : .image, sourceStart: sourceStart,
+                  loop: loop, subjectTrackID: subjectTrackID, windows: windows, speakerFrame: speakerFrame, color: nil,
+                  fullScreenWindows: fullScreenWindows, focus: focus)
+    }
+
+    /// A solid-colour fill; `hex` is `#RRGGBB` in uppercase (checked by `validate()`).
+    public static func color(_ hex: String, subjectTrackID: String = SpeakerBackgroundLimits.defaultSubjectTrackID,
+                             windows: [SpeakerBackgroundWindow]? = nil, speakerFrame: SpeakerFrame? = nil,
+                             fullScreenWindows: [SpeakerFullScreenWindow]? = nil,
+                             focus: SpeakerBackgroundFocus? = nil) -> SpeakerBackgroundLayer {
+        SpeakerBackgroundLayer(assetID: nil, mediaKind: .color, subjectTrackID: subjectTrackID, windows: windows,
+                               speakerFrame: speakerFrame, color: hex, fullScreenWindows: fullScreenWindows, focus: focus)
+    }
+
+    /// The same background with the speaker drawn at `frame` (nil = full-frame). Every other field is kept.
+    public func replacingSpeakerFrame(_ frame: SpeakerFrame?) -> SpeakerBackgroundLayer {
+        SpeakerBackgroundLayer(assetID: assetID, mediaKind: mediaKind, sourceStart: sourceStart, loop: loop,
+                               subjectTrackID: subjectTrackID, windows: windows, speakerFrame: frame, color: color,
+                               fullScreenWindows: fullScreenWindows, focus: focus)
+    }
+
+    /// `next` differs from this background only by MOVING or RESIZING an existing speaker frame (SF5): both carry a
+    /// frame and nothing else changed. Adding or removing the frame is not a move: the matte reports a frame-less
+    /// speaker differently, so that change takes the editor's full rebuild.
+    public func onlyMovesTheSpeakerFrame(to next: SpeakerBackgroundLayer) -> Bool {
+        speakerFrame != nil && next.speakerFrame != nil && next.replacingSpeakerFrame(speakerFrame) == self
+    }
+
+    /// The manifest kind of a photo/video fill; nil for a colour, which has no manifest asset.
+    public var visualMediaKind: VisualMediaKind? {
+        switch mediaKind {
+        case .image: return .image
+        case .video: return .video
+        case .color: return nil
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case assetID = "assetId", mediaKind, sourceStart, loop, subjectTrackID = "subjectTrackId", windows, speakerFrame, color, fullScreenWindows, focus
+    }
+
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownAssetFields(decoder, allowed: ["assetId", "mediaKind", "sourceStart", "loop", "subjectTrackId", "windows", "speakerFrame", "color", "fullScreenWindows", "focus"])
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // KRI-1173: `assetId` / `color` are absent when unused. A JSON `null` is INVALID for both (it is not "absent" here).
+        assetID = c.contains(.assetID) ? try c.decode(String.self, forKey: .assetID) : nil
+        color = c.contains(.color) ? try c.decode(String.self, forKey: .color) : nil
+        mediaKind = try c.decode(SpeakerBackgroundFillKind.self, forKey: .mediaKind)
+        sourceStart = try c.decodeIfPresent(Double.self, forKey: .sourceStart) ?? 0
+        loop = try c.decodeIfPresent(Bool.self, forKey: .loop) ?? true
+        subjectTrackID = try c.decodeIfPresent(String.self, forKey: .subjectTrackID) ?? SpeakerBackgroundLimits.defaultSubjectTrackID
+        // `null` reads as absent, as on the server; an empty list is rejected by `validate()`.
+        windows = try c.decodeIfPresent([SpeakerBackgroundWindow].self, forKey: .windows)
+        speakerFrame = try c.decodeIfPresent(SpeakerFrame.self, forKey: .speakerFrame)
+        fullScreenWindows = try c.decodeIfPresent([SpeakerFullScreenWindow].self, forKey: .fullScreenWindows)
+        focus = try c.decodeIfPresent(SpeakerBackgroundFocus.self, forKey: .focus)
+        try validate()
+    }
+
+    /// Exactly `#` + six uppercase hex digits (the recipe wire; case and names are normalised before it).
+    static func isStrictHexColor(_ value: String) -> Bool {
+        let digits = Array(value.utf8)
+        return digits.count == 7 && digits[0] == UInt8(ascii: "#")
+            && digits[1...].allSatisfy { ($0 >= 48 && $0 <= 57) || ($0 >= 65 && $0 <= 70) }
+    }
+
+    public func validate() throws {
+        // KRI-1173: `mediaKind == .color` <=> `color != nil` <=> `assetID == nil`.
+        if mediaKind == .color {
+            guard assetID == nil, let color, Self.isStrictHexColor(color) else { throw RecipeError.invalidTimeline }
+        } else {
+            guard color == nil, let assetID, !assetID.isEmpty, assetID.count <= SpeakerBackgroundLimits.maxIDLength,
+                  !assetID.contains(where: \.isWhitespace) else { throw RecipeError.invalidTimeline }
+        }
+        guard !subjectTrackID.isEmpty, subjectTrackID.count <= SpeakerBackgroundLimits.maxIDLength,
+              sourceStart.isFinite, (0...SpeakerBackgroundLimits.maxSourceStart).contains(sourceStart),
+              mediaKind == .video || sourceStart == 0
+        else { throw RecipeError.invalidTimeline }
+        if let windows {
+            guard (1...SpeakerBackgroundLimits.maxWindows).contains(windows.count) else { throw RecipeError.invalidTimeline }
+            for window in windows { try window.validate() }
+            // S28: the compositor picks THE window containing the time, so they are sorted and disjoint
+            // (touching ends are fine).
+            for (earlier, later) in zip(windows, windows.dropFirst()) where later.start < earlier.end { throw RecipeError.invalidTimeline }
+        }
+        try speakerFrame?.validate()
+        if let focus {
+            // A solid colour has no picture to aim.
+            guard mediaKind != .color else { throw RecipeError.invalidTimeline }
+            try focus.validate()
+        }
+        if let fullScreenWindows {
+            guard (1...SpeakerBackgroundLimits.maxFullScreenWindows).contains(fullScreenWindows.count) else { throw RecipeError.invalidTimeline }
+            for window in fullScreenWindows { try window.validate() }
+            for (earlier, later) in zip(fullScreenWindows, fullScreenWindows.dropFirst()) where later.start < earlier.end { throw RecipeError.invalidTimeline }
+        }
+    }
+}
+
+#if canImport(AVFoundation)
+extension AVPlayerPreviewComposer {
+    static let speakerBackgroundClipID = "kria-speaker-background"
+
+    /// The clips the matte cuts out: the creator's own footage on the background's subject track. A
+    /// Visuals-pool clip on that track (the ending clip) is not a speaker and renders as without a background.
+    static func speakerClipIDs(in recipe: EditRecipe) -> Set<String> {
+        guard let background = recipe.speakerBackground else { return [] }
+        let visuals = Set((recipe.assetManifest?.assets ?? []).compactMap { asset -> String? in
+            if case .visual = asset.source { return asset.id }
+            return nil
+        })
+        return Set(recipe.tracks.filter { $0.id == background.subjectTrackID }.flatMap(\.clips)
+            .filter { !visuals.contains($0.sourceAssetID) }.map(\.id))
+    }
+
+    /// The fill background plus one layer per timed window (KRI-1162), fill first. The fill spans the whole
+    /// edit; each window layer exists only inside its span, clipped to the edit, and a window that starts at
+    /// or past the end builds nothing.
+    static func speakerBackgroundLayers(_ background: SpeakerBackgroundLayer, assetURLs: [String: URL], composition: AVMutableComposition,
+                                        canvas: CGSize, duration: Double) async throws -> [RecipeVideoLayer] {
+        var layers: [RecipeVideoLayer]
+        if background.mediaKind == .color {
+            // KRI-1173: a solid colour needs no asset, no composition track and no sample window.
+            layers = [try speakerBackgroundColorLayer(background, canvas: canvas, duration: duration)]
+        } else {
+            guard let assetID = background.assetID, let url = assetURLs[assetID] else {
+                throw MediaEngineError.missingAsset(background.assetID ?? "")
+            }
+            layers = [try await speakerBackgroundLayer(background, url: url, composition: composition, canvas: canvas, duration: duration)]
+        }
+        for (index, window) in (background.windows ?? []).enumerated() where window.start < duration {
+            guard let windowURL = assetURLs[window.assetID] else { throw MediaEngineError.missingAsset(window.assetID) }
+            var layer = try await backgroundMediaLayer(assetID: window.assetID, mediaKind: window.mediaKind, sourceStart: window.sourceStart,
+                                                       loop: true, url: windowURL, composition: composition, canvas: canvas,
+                                                       start: window.start, end: min(window.end, duration),
+                                                       clipID: "\(speakerBackgroundClipID)-window-\(index)", focus: window.focus)
+            layer.speakerBackgroundWindow = true
+            layers.append(layer)
+        }
+        return layers
+    }
+
+    /// The fill as one layer spanning the edit, cover-fit the way a fullscreen cutaway is
+    /// (`VisualMediaPlacement` without a width). A photo is fitted and downscaled to the canvas once, so no
+    /// frame resamples the full-resolution original. A video gets its own composition track, looped from
+    /// `sourceStart`, or held on its last frame when `loop` is false; its audio is never inserted (S11).
+    static func speakerBackgroundLayer(_ background: SpeakerBackgroundLayer, url: URL, composition: AVMutableComposition,
+                                       canvas: CGSize, duration: Double) async throws -> RecipeVideoLayer {
+        guard let assetID = background.assetID, let kind = background.visualMediaKind else { throw RecipeError.invalidTimeline }
+        return try await backgroundMediaLayer(assetID: assetID, mediaKind: kind, sourceStart: background.sourceStart,
+                                       loop: background.loop, url: url, composition: composition, canvas: canvas,
+                                       start: 0, end: duration, clipID: speakerBackgroundClipID, focus: background.focus)
+    }
+
+    /// KRI-1173: the solid-colour fill as one flat sRGB layer spanning the edit. Preview and export both draw this one
+    /// image, so they show the same colour.
+    static func speakerBackgroundColorLayer(_ background: SpeakerBackgroundLayer, canvas: CGSize, duration: Double) throws -> RecipeVideoLayer {
+        guard let hex = background.color, let rgb = ClipBackdrop.components(hex),
+              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let color = CIColor(red: rgb.red, green: rgb.green, blue: rgb.blue, alpha: 1, colorSpace: space) else { throw RecipeError.invalidTimeline }
+        var layer = RecipeVideoLayer(trackID: nil, image: CIImage(color: color).cropped(to: CGRect(origin: .zero, size: canvas)),
+                                     transform: .identity, start: 0, end: duration, fadeIn: 0, isPrimary: false,
+                                     clipID: speakerBackgroundClipID, naturalSize: canvas)
+        layer.speakerRole = .background
+        return layer
+    }
+
+    /// One background medium shown from `start` to `end` seconds. A video window is its own composition
+    /// track holding samples ONLY inside its span, so at most one background track decodes at a time (S31).
+    private static func backgroundMediaLayer(assetID: String, mediaKind: VisualMediaKind, sourceStart: Double, loop: Bool, url: URL,
+                                             composition: AVMutableComposition, canvas: CGSize, start spanStart: Double, end spanEnd: Double,
+                                             clipID: String, focus: SpeakerBackgroundFocus? = nil) async throws -> RecipeVideoLayer {
+        let frame = CGRect(origin: .zero, size: canvas)
+        // Qendresa item 18: nil focus is exactly today's placement. An aimed one is built below, once the picture's upright size is known.
+        var placement = VisualMediaPlacement(order: 0, windowStart: spanStart, windowEnd: spanEnd)
+        func aimed(_ focus: SpeakerBackgroundFocus?, uprightSize: CGSize) -> VisualMediaPlacement {
+            guard let focus, uprightSize.width > 0, uprightSize.height > 0 else { return placement }
+            // Never draw the picture smaller than the whole picture: contain / cover is the lowest zoom that still shows all of it.
+            let cover = max(canvas.width / uprightSize.width, canvas.height / uprightSize.height)
+            let contain = min(canvas.width / uprightSize.width, canvas.height / uprightSize.height)
+            return VisualMediaPlacement(order: 0, focalX: focus.x, focalY: focus.y, zoom: max(focus.zoom, contain / cover),
+                                        windowStart: spanStart, windowEnd: spanEnd)
+        }
+        var layer: RecipeVideoLayer
+        switch mediaKind {
+        case .image:
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil), CGImageSourceGetCount(source) > 0,
+                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { throw MediaEngineError.missingAsset(assetID) }
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+            let orientation = (properties?[kCGImagePropertyOrientation] as? NSNumber)?.int32Value ?? 1
+            guard (1...8).contains(orientation) else { throw MediaEngineError.missingAsset(assetID) }
+            let oriented = CIImage(cgImage: try StillFrame.flattened(image)).oriented(forExifOrientation: orientation)
+            let upright = oriented.transformed(by: CGAffineTransform(translationX: -oriented.extent.minX, y: -oriented.extent.minY))
+            placement = aimed(focus, uprightSize: upright.extent.size)
+            let fitted = placement.position(upright, preferred: .identity, canvas: frame, time: spanStart, clipStart: spanStart, clipEnd: spanEnd).cropped(to: frame)
+            let context = CIContext(options: [.cacheIntermediates: false, .workingColorSpace: CGColorSpace(name: CGColorSpace.linearSRGB)!])
+            guard let rendered = context.createCGImage(fitted, from: frame, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!) else {
+                throw MediaEngineError.exportUnavailable
+            }
+            layer = RecipeVideoLayer(trackID: nil, image: CIImage(cgImage: rendered), transform: .identity, start: spanStart, end: spanEnd,
+                                     fadeIn: 0, isPrimary: false, clipID: clipID, naturalSize: canvas)
+        case .video:
+            let asset = AVURLAsset(url: url)
+            guard let source = try await asset.loadTracks(withMediaType: .video).first,
+                  let track = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+                throw MediaEngineError.missingAsset(assetID)
+            }
+            let naturalSize = try await source.load(.naturalSize)
+            let displayed = naturalSize.applying(try await source.load(.preferredTransform))
+            placement = aimed(focus, uprightSize: CGSize(width: abs(displayed.width), height: abs(displayed.height)))
+            let window = try await videoSampleWindow(of: source)
+            let fps = Double(try await source.load(.nominalFrameRate))
+            let sourceFrame = 1 / max(1, fps.isFinite && fps > 0 ? fps : 30)
+            let start = max(sourceStart, window.start)
+            guard window.end - start >= sourceFrame else { throw RecipeError.invalidTimeline }
+            func time(_ seconds: Double) -> CMTime { CMTime(value: Int64((seconds * 60_000).rounded()), timescale: 60_000) }
+            let range = CMTimeRange(start: time(start), end: time(window.end))
+            let from = time(spanStart), end = time(spanEnd)
+            if loop {
+                var at = from
+                while at < end {
+                    try track.insertTimeRange(CMTimeRange(start: range.start, duration: min(range.duration, end - at)), of: source, at: at)
+                    // Anchor each repeat on what the track actually holds, so no sliver between repeats is left empty.
+                    guard track.timeRange.end > at else { throw MediaEngineError.missingAsset(assetID) }
+                    at = track.timeRange.end
+                }
+            } else {
+                try track.insertTimeRange(CMTimeRange(start: range.start, duration: min(range.duration, end - from)), of: source, at: from)
+                let tailStart = track.timeRange.end
+                if tailStart < end {
+                    let tail = CMTimeRange(start: range.end - time(sourceFrame), duration: time(sourceFrame))
+                    try track.insertTimeRange(tail, of: source, at: tailStart)
+                    track.scaleTimeRange(CMTimeRange(start: tailStart, duration: tail.duration), toDuration: end - tailStart)
+                }
+            }
+            layer = RecipeVideoLayer(trackID: track.trackID, image: nil, transform: .identity, start: spanStart, end: spanEnd, fadeIn: 0,
+                                     isPrimary: false, clipID: clipID, naturalSize: try await source.load(.naturalSize),
+                                     preferredTransform: coreImagePreferredTransform(try await source.load(.preferredTransform)),
+                                     visualPlacement: placement)
+        }
+        layer.speakerRole = .background
+        return layer
+    }
+}
+#endif

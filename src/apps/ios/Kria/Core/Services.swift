@@ -79,6 +79,18 @@ protocol TokenStore: Sendable {
     func read() throws -> MobileSession?
     func write(_ session: MobileSession) throws
     func delete() throws
+    func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) throws -> SessionStoreUpdate
+}
+
+struct SessionStoreUpdate: Sendable {
+    let applied: Bool
+    let current: MobileSession?
+}
+
+extension TokenStore {
+    func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) throws -> SessionStoreUpdate {
+        throw APIError.unsupported
+    }
 }
 
 struct MobileSession: Codable, Sendable, Equatable {
@@ -89,21 +101,33 @@ struct MobileSession: Codable, Sendable, Equatable {
 }
 
 struct KeychainTokenStore: TokenStore, @unchecked Sendable {
+    private static let mutationLock = NSLock()
     let service: String
     let account: String
     init(service: String = "com.kria.auth", account: String = "access-token") { self.service = service; self.account = account }
-    func read() throws -> MobileSession? {
+    func read() throws -> MobileSession? { try Self.mutationLock.withLock { try readUnlocked() } }
+    func write(_ session: MobileSession) throws { try Self.mutationLock.withLock { try writeUnlocked(session) } }
+    func delete() throws { try Self.mutationLock.withLock { try deleteUnlocked() } }
+    func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) throws -> SessionStoreUpdate {
+        try Self.mutationLock.withLock {
+            let current = try readUnlocked()
+            guard current == expected else { return SessionStoreUpdate(applied: false, current: current) }
+            if let replacement { try writeUnlocked(replacement) } else { try deleteUnlocked() }
+            return SessionStoreUpdate(applied: true, current: replacement)
+        }
+    }
+    private func readUnlocked() throws -> MobileSession? {
         var query = baseQuery; query[kSecReturnData as String] = true; query[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?; let status = SecItemCopyMatching(query as CFDictionary, &item)
         if status == errSecItemNotFound { return nil }; guard status == errSecSuccess, let data = item as? Data else { throw KeychainError(status) }
         return try JSONDecoder().decode(MobileSession.self, from: data)
     }
-    func write(_ session: MobileSession) throws {
+    private func writeUnlocked(_ session: MobileSession) throws {
         let data = try JSONEncoder().encode(session); let status = SecItemUpdate(baseQuery as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecItemNotFound { var query = baseQuery; query[kSecValueData as String] = data; let add = SecItemAdd(query as CFDictionary, nil); guard add == errSecSuccess else { throw KeychainError(add) } }
         else if status != errSecSuccess { throw KeychainError(status) }
     }
-    func delete() throws { let status = SecItemDelete(baseQuery as CFDictionary); guard status == errSecSuccess || status == errSecItemNotFound else { throw KeychainError(status) } }
+    private func deleteUnlocked() throws { let status = SecItemDelete(baseQuery as CFDictionary); guard status == errSecSuccess || status == errSecItemNotFound else { throw KeychainError(status) } }
     private var baseQuery: [String: Any] { [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account] }
 }
 struct KeychainError: Error, LocalizedError { let status: OSStatus; init(_ status: OSStatus) { self.status = status }; var errorDescription: String? { "Secure sign-in storage is unavailable." } }
@@ -115,7 +139,7 @@ protocol SlidePostProposalClient: Sendable {
     func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse
 }
 
-protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, CameraRollItemsClient, Sendable {
+protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgroundClient, CameraRollItemsClient, Sendable {
     func editorialTaste() async throws -> EditorialTasteProfile
     func saveEditorialTaste(_ body: EditorialTasteWrite) async throws -> EditorialTasteProfile
     func forgetEditorialTaste(revision: Int, eventID: String) async throws -> EditorialTasteProfile
@@ -180,6 +204,12 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, CameraRollItem
     /// One page of chats, newest first. `nextCursor` is nil on the last page.
     func projectsPage(cursor: String?) async throws -> ProjectPage
     func project(threadID: UUID) async throws -> CreationThread
+    func nativeActivity(id: UUID) async throws -> NativeActivity
+    func readNativeActivity(id: UUID) async throws -> NativeActivity
+    func nativeActivity(id: UUID, owner: String) async throws -> NativeActivity
+    func nativeActivityProject(threadID: UUID, owner: String) async throws -> CreationThread
+    func readNativeActivity(id: UUID, owner: String) async throws -> NativeActivity
+    func overlayPlan(itemID: String, body: OverlayPlanRequest) async throws -> OverlayPlan
     func generatedMediaByEvent(itemID: String, clientEventID: String) async throws -> GeneratedMediaOperation
     func generatedNarrationScript(itemID: String) async throws -> GeneratedNarrationScript
     func generateMedia(itemID: String, body: GeneratedMediaRequest) async throws -> GeneratedMediaOperation
@@ -195,6 +225,8 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, CameraRollItem
     func creationBrief(threadID: UUID) async throws -> CreativeBrief
     /// KRI-756: footage-aware suggestion chips. Nil = the server has none to offer (no endpoint, or unreadable).
     func creationSuggestions(threadID: UUID) async throws -> SuggestionSet?
+    /// AI suggestion blocks: tells the server a card was dismissed so it is never offered again. Never throws.
+    func dismissSuggestion(threadID: UUID, setID: String, suggestionID: String) async
     func sendCreationMessage(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
     func creationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int, clientActionID: String) async throws -> CreationThread
     func reserveVisualUpload(itemID: String, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> VisualUploadTarget
@@ -281,6 +313,11 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, CameraRollItem
     func undoDraft(threadID: UUID, expectedRevision: Int, render: Bool) async throws -> DraftSnapshot
     /// KRI-443: Stop on the live plan feed. A 409 `turn_not_cancellable` means the render can no longer be stopped.
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
+    /// Steer now: stop the running turn `turnID` so the message waiting behind it runs now.
+    func steerNow(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
+    /// Steer now's trash and Edit: cancel the waiting message `turnID` only while it still waits. A 409
+    /// `turn_no_longer_queued` means Kria already picked it up; it is never stopped by this call.
+    func removeWaitingMessage(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot
     func retryApprovedRender(threadID: UUID, executionID: UUID, expectedRevision: Int) async throws -> RenderRetryAccepted
     /// `speechCleanupAware` must always be sent `true` from this client build --
@@ -310,6 +347,12 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, CameraRollItem
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, role: CreationMediaRole) async throws -> ProjectUploadReservation
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
+    /// Re-record: the same reservations, naming the attached clip the new take replaces so it does not count against
+    /// the clip limit. Only a server that advertises `media_capabilities.clips.replace` accepts the field.
+    func reserveProjectReplacementUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, replacing mediaID: String) async throws -> ProjectUploadReservation
+    func reserveProjectReplacementProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract, replacing mediaID: String) async throws -> ProjectUploadReservation
+    /// Swaps one attached video for a reserved one in a single server transaction (`POST creation-threads/{id}/media/replace`).
+    func replaceProjectMedia(threadID: UUID, replacedMediaID: String, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread
     /// KRI-189: the same attach, plus when/where the clip was filmed. `capture` is nil when the user turned
     /// the setting off or nothing could be read; a client that does not implement this drops it.
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread
@@ -348,6 +391,7 @@ struct DictationTranscriptResponse: Decodable, Equatable, Sendable {
 }
 
 extension KriaAPIClient {
+    func overlayPlan(itemID: String, body: OverlayPlanRequest) async throws -> OverlayPlan { throw APIError.unsupported }
     func generatedMediaByEvent(itemID: String, clientEventID: String) async throws -> GeneratedMediaOperation { throw APIError.unsupported }
 
     func generatedNarrationScript(itemID: String) async throws -> GeneratedNarrationScript { throw APIError.unsupported }
@@ -385,7 +429,10 @@ extension KriaAPIClient {
 /// implemented by a substitute.
 extension KriaAPIClient {
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
+    func steerNow(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
+    func removeWaitingMessage(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
     func creationSuggestions(threadID: UUID) async throws -> SuggestionSet? { nil }
+    func dismissSuggestion(threadID: UUID, setID: String, suggestionID: String) async {}
     func transcribeDictation(audio: Data, contextTerms: [String]) async throws -> DictationTranscriptResponse { throw APIError.unsupported }
     func planSnapshot(threadID: UUID) async throws -> PlanSnapshot { throw APIError.unsupported }
     func submitScopedTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, scope: [PlanSectionID], manualEdits: [ManualPlanEdit]) async throws -> TurnAccepted { throw APIError.unsupported }
@@ -410,6 +457,9 @@ extension KriaAPIClient {
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws { throw APIError.unsupported }
     func reportRecorderDiagnostic(_ report: RecorderDiagnosticReport) async throws { throw APIError.unsupported }
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation { throw APIError.invalidResponse }
+    func reserveProjectReplacementUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, replacing mediaID: String) async throws -> ProjectUploadReservation { throw APIError.unsupported }
+    func reserveProjectReplacementProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract, replacing mediaID: String) async throws -> ProjectUploadReservation { throw APIError.unsupported }
+    func replaceProjectMedia(threadID: UUID, replacedMediaID: String, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread { throw APIError.unsupported }
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, role: CreationMediaRole) async throws -> ProjectUploadReservation {
         try await reserveProjectUpload(threadID: threadID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size)
     }
@@ -433,6 +483,7 @@ extension KriaAPIClient {
 
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
     func setSongRange(threadID: UUID, range: SongFilmingRange?, expectedRevision: Int, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
+    func setSpeakerBackground(threadID: UUID, clientUploadID: String?, expectedRevision: Int, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
     func deleteProject(_ project: ProjectSummary) async throws { throw APIError.unsupported }
 
     func submitTurn(threadID: UUID, request: SubmitTurnRequest) async throws -> TurnAccepted {
@@ -676,6 +727,21 @@ struct CreationThread: Codable, Identifiable, Sendable {
         )
     }
 
+    /// Reference-only list projections and failed first renders cannot grant recovery.
+    var savedEditorVariant: CreationVariant? {
+        guard runtimeVersion == 2, let activeJobID, let activePlanItemID,
+              let job, job.id == activeJobID,
+              let format = state?["format"]?.stringValue ?? state?["edit_format"]?.stringValue,
+              ["montage", "lipsync", "narrated", "talking_to_camera"].contains(format),
+              !job.variants.contains(where: { $0.variantID == "slides" }) else { return nil }
+        let selectedID = state?["selected_variant_id"]?.stringValue ?? selectedVariantID
+        let selected: CreationVariant?
+        if let selectedID { selected = job.variants.first { $0.variantID == selectedID } }
+        else { selected = job.variants.count == 1 ? job.variants.first : nil }
+        guard let selected, selected.matchesSavedEditor(jobID: activeJobID, itemID: activePlanItemID) else { return nil }
+        return selected
+    }
+
     /// List projections intentionally omit media URLs, but their state and
     /// variant lifecycle still identify the edit the user selected.
     private var selectedVariantID: String? {
@@ -767,6 +833,32 @@ struct CreationVariant: Codable, Sendable {
     /// (`awaiting_device|syncing|published|needs_attention`), or nil for a
     /// cloud job, an older generation, or an older server (KRI-823).
     var deliveryPhase: String? = nil
+    var editorStateVersion: Int? = nil
+    var editorDraftAvailable: Bool? = nil
+    var editorDraft: [String: JSONValue]? = nil
+
+    func matchesSavedEditor(jobID: String, itemID: String) -> Bool {
+        guard editorStateVersion == 2, let variantID, let renderGenerationID, !renderGenerationID.isEmpty,
+              let draft = editorDraft,
+              draft["draft_id"]?.stringValue.flatMap(UUID.init(uuidString:)) != nil,
+              draft["etag"]?.stringValue?.isEmpty == false,
+              draft["created_at"]?.stringValue?.isEmpty == false,
+              draft["can_undo"]?.boolValue != nil,
+              draft["item_id"]?.stringValue == itemID,
+              draft["variant_key"]?.stringValue == variantID,
+              draft["base_job_id"]?.stringValue.flatMap(UUID.init(uuidString:)) == UUID(uuidString: jobID),
+              UUID(uuidString: jobID) != nil,
+              let savedGeneration = draft["base_generation_id"]?.stringValue, !savedGeneration.isEmpty,
+              savedGeneration == renderGenerationID || editorDraftAvailable == true,
+              draft["snapshot_hash"]?.stringValue?.isEmpty == false,
+              let revision = draft["draft_revision"]?.numberValue, revision.isFinite, revision >= 0, revision.rounded() == revision,
+              let snapshot = draft["snapshot"]?.objectValue, snapshot["kind"] == .string("editor"),
+              let payload = snapshot["editor_payload"]?.objectValue,
+              payload["editor_state_version"] == .number(2),
+              payload["base_generation"] == .string(savedGeneration),
+              payload["sections"]?.objectValue != nil else { return false }
+        return true
+    }
 
     var needsDeliveryAttention: Bool {
         deliveryPhase == "needs_attention" || renderStatus?.lowercased() == "needs_attention"
@@ -789,6 +881,9 @@ struct CreationVariant: Codable, Sendable {
         case failureReason = "failure_reason"
         case renderDestination = "render_destination"
         case deliveryPhase = "delivery_phase"
+        case editorStateVersion = "editor_state_version"
+        case editorDraftAvailable = "editor_draft_available"
+        case editorDraft = "editor_draft"
     }
 }
 
@@ -939,6 +1034,13 @@ enum EditorCarouselMomentPatch: Equatable, Sendable {
     case replace([String: JSONValue])
 }
 
+/// The commit's `speaker_background` lane (KRI-1118): omitted = untouched, remove = JSON null, replace = the object.
+enum EditorSpeakerBackgroundPatch: Equatable, Sendable {
+    case omitted
+    case remove
+    case replace([String: JSONValue])
+}
+
 struct EditorCommitRequest: Codable, Sendable {
     // Optionals are intentional: nil means “section omitted/untouched”, while
     // [] means “replace this section with empty”.
@@ -966,6 +1068,8 @@ struct EditorCommitRequest: Codable, Sendable {
     /// KRI-589 freehand drawings lane (`DrawingElement` rows); nil = untouched. Needs client protocol 5.
     var drawings: [JSONValue]?
     var carouselMoment: EditorCarouselMomentPatch
+    /// KRI-1118 Talk-to-camera background lane; needs client protocol 27.
+    var speakerBackground: EditorSpeakerBackgroundPatch
     var title: String?
     var acceptedSuggestionIDs: [String]?
     var copilotReceiptIDs: [UUID]
@@ -976,21 +1080,22 @@ struct EditorCommitRequest: Codable, Sendable {
     var deletions: [EditorDeletion]?
     var baseGeneration: String
 
-    init(timelineSlots: [JSONValue]? = nil, textElements: [JSONValue]? = nil, captionCues: [JSONValue]? = nil, captionMeta: [String: JSONValue]? = nil, mix: [String: JSONValue]? = nil, musicTrackID: String? = nil, removeMusic: Bool = false, musicWindow: EditorCommitMusicWindow? = nil, backgroundMusic: EditorCommitBackgroundMusic? = nil, userSong: EditorCommitUserSong? = nil, lyrics: EditorCommitLyrics? = nil, orientation: String? = nil, landscapeFit: String? = nil, soundEffects: [JSONValue]? = nil, mediaOverlays: [JSONValue]? = nil, visualBlocks: [JSONValue]? = nil, motionScenes: [JSONValue]? = nil, motionRuntimeHash: String? = nil, cameraEffects: [JSONValue]? = nil, drawings: [JSONValue]? = nil, carouselMoment: EditorCarouselMomentPatch = .omitted, title: String? = nil, acceptedSuggestionIDs: [String]? = nil, copilotReceiptIDs: [UUID] = [], guidedRevision: [String: JSONValue]? = nil, guidedRevisionNumber: Int? = nil, retryGuidedRevision: Bool = false, editorStateVersion: Int? = nil, deletions: [EditorDeletion]? = nil, baseGeneration: String) {
-        self.timelineSlots = timelineSlots; self.textElements = textElements; self.captionCues = captionCues; self.captionMeta = captionMeta; self.mix = mix; self.musicTrackID = musicTrackID; self.removeMusic = removeMusic; self.musicWindow = musicWindow; self.backgroundMusic = backgroundMusic; self.userSong = userSong; self.lyrics = lyrics; self.orientation = orientation; self.landscapeFit = landscapeFit; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.motionRuntimeHash = motionRuntimeHash; self.cameraEffects = cameraEffects; self.drawings = drawings; self.carouselMoment = carouselMoment; self.title = title; self.acceptedSuggestionIDs = acceptedSuggestionIDs; self.copilotReceiptIDs = copilotReceiptIDs; self.guidedRevision = guidedRevision; self.guidedRevisionNumber = guidedRevisionNumber; self.retryGuidedRevision = retryGuidedRevision; self.editorStateVersion = editorStateVersion; self.deletions = deletions; self.baseGeneration = baseGeneration
+    init(timelineSlots: [JSONValue]? = nil, textElements: [JSONValue]? = nil, captionCues: [JSONValue]? = nil, captionMeta: [String: JSONValue]? = nil, mix: [String: JSONValue]? = nil, musicTrackID: String? = nil, removeMusic: Bool = false, musicWindow: EditorCommitMusicWindow? = nil, backgroundMusic: EditorCommitBackgroundMusic? = nil, userSong: EditorCommitUserSong? = nil, lyrics: EditorCommitLyrics? = nil, orientation: String? = nil, landscapeFit: String? = nil, soundEffects: [JSONValue]? = nil, mediaOverlays: [JSONValue]? = nil, visualBlocks: [JSONValue]? = nil, motionScenes: [JSONValue]? = nil, motionRuntimeHash: String? = nil, cameraEffects: [JSONValue]? = nil, drawings: [JSONValue]? = nil, carouselMoment: EditorCarouselMomentPatch = .omitted, speakerBackground: EditorSpeakerBackgroundPatch = .omitted, title: String? = nil, acceptedSuggestionIDs: [String]? = nil, copilotReceiptIDs: [UUID] = [], guidedRevision: [String: JSONValue]? = nil, guidedRevisionNumber: Int? = nil, retryGuidedRevision: Bool = false, editorStateVersion: Int? = nil, deletions: [EditorDeletion]? = nil, baseGeneration: String) {
+        self.timelineSlots = timelineSlots; self.textElements = textElements; self.captionCues = captionCues; self.captionMeta = captionMeta; self.mix = mix; self.musicTrackID = musicTrackID; self.removeMusic = removeMusic; self.musicWindow = musicWindow; self.backgroundMusic = backgroundMusic; self.userSong = userSong; self.lyrics = lyrics; self.orientation = orientation; self.landscapeFit = landscapeFit; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.motionRuntimeHash = motionRuntimeHash; self.cameraEffects = cameraEffects; self.drawings = drawings; self.carouselMoment = carouselMoment; self.speakerBackground = speakerBackground; self.title = title; self.acceptedSuggestionIDs = acceptedSuggestionIDs; self.copilotReceiptIDs = copilotReceiptIDs; self.guidedRevision = guidedRevision; self.guidedRevisionNumber = guidedRevisionNumber; self.retryGuidedRevision = retryGuidedRevision; self.editorStateVersion = editorStateVersion; self.deletions = deletions; self.baseGeneration = baseGeneration
     }
 
-    private enum CodingKeys: String, CodingKey { case timelineSlots = "timeline_slots"; case textElements = "text_elements"; case captionCues = "caption_cues"; case captionMeta = "caption_meta"; case mix; case musicTrackID = "music_track_id"; case removeMusic = "remove_music"; case musicWindow = "music_window"; case backgroundMusic = "background_music"; case userSong = "user_song"; case lyrics; case orientation; case landscapeFit = "landscape_fit"; case soundEffects = "sound_effects"; case mediaOverlays = "media_overlays"; case visualBlocks = "visual_blocks"; case motionScenes = "motion_scenes"; case motionRuntimeHash = "motion_runtime_hash"; case cameraEffects = "camera_effects"; case drawings; case carouselMoment = "carousel_moment"; case title; case acceptedSuggestionIDs = "accepted_suggestion_ids"; case copilotReceiptIDs = "copilot_receipt_ids"; case guidedRevision = "guided_revision"; case guidedRevisionNumber = "guided_revision_number"; case retryGuidedRevision = "retry_guided_revision"; case editorStateVersion = "editor_state_version"; case deletions; case baseGeneration = "base_generation" }
+    private enum CodingKeys: String, CodingKey { case timelineSlots = "timeline_slots"; case textElements = "text_elements"; case captionCues = "caption_cues"; case captionMeta = "caption_meta"; case mix; case musicTrackID = "music_track_id"; case removeMusic = "remove_music"; case musicWindow = "music_window"; case backgroundMusic = "background_music"; case userSong = "user_song"; case lyrics; case orientation; case landscapeFit = "landscape_fit"; case soundEffects = "sound_effects"; case mediaOverlays = "media_overlays"; case visualBlocks = "visual_blocks"; case motionScenes = "motion_scenes"; case motionRuntimeHash = "motion_runtime_hash"; case cameraEffects = "camera_effects"; case drawings; case carouselMoment = "carousel_moment"; case speakerBackground = "speaker_background"; case title; case acceptedSuggestionIDs = "accepted_suggestion_ids"; case copilotReceiptIDs = "copilot_receipt_ids"; case guidedRevision = "guided_revision"; case guidedRevisionNumber = "guided_revision_number"; case retryGuidedRevision = "retry_guided_revision"; case editorStateVersion = "editor_state_version"; case deletions; case baseGeneration = "base_generation" }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encodeIfPresent(timelineSlots, forKey: .timelineSlots); try c.encodeIfPresent(textElements, forKey: .textElements); try c.encodeIfPresent(captionCues, forKey: .captionCues); try c.encodeIfPresent(captionMeta, forKey: .captionMeta); try c.encodeIfPresent(mix, forKey: .mix); try c.encodeIfPresent(musicTrackID, forKey: .musicTrackID); try c.encode(removeMusic, forKey: .removeMusic); try c.encodeIfPresent(musicWindow, forKey: .musicWindow); try c.encodeIfPresent(backgroundMusic, forKey: .backgroundMusic); try c.encodeIfPresent(userSong, forKey: .userSong); try c.encodeIfPresent(lyrics, forKey: .lyrics); try c.encodeIfPresent(orientation, forKey: .orientation); try c.encodeIfPresent(landscapeFit, forKey: .landscapeFit); try c.encodeIfPresent(soundEffects, forKey: .soundEffects); try c.encodeIfPresent(mediaOverlays, forKey: .mediaOverlays); try c.encodeIfPresent(visualBlocks, forKey: .visualBlocks); try c.encodeIfPresent(motionScenes, forKey: .motionScenes); try c.encodeIfPresent(motionRuntimeHash, forKey: .motionRuntimeHash); try c.encodeIfPresent(cameraEffects, forKey: .cameraEffects); try c.encodeIfPresent(drawings, forKey: .drawings)
         switch carouselMoment { case .omitted: break; case .remove: try c.encodeNil(forKey: .carouselMoment); case let .replace(value): try c.encode(value, forKey: .carouselMoment) }
+        switch speakerBackground { case .omitted: break; case .remove: try c.encodeNil(forKey: .speakerBackground); case let .replace(value): try c.encode(value, forKey: .speakerBackground) }
         try c.encodeIfPresent(title, forKey: .title)
         try c.encodeIfPresent(acceptedSuggestionIDs, forKey: .acceptedSuggestionIDs); if !copilotReceiptIDs.isEmpty { try c.encode(copilotReceiptIDs, forKey: .copilotReceiptIDs) }; try c.encodeIfPresent(guidedRevision, forKey: .guidedRevision); try c.encodeIfPresent(guidedRevisionNumber, forKey: .guidedRevisionNumber); if retryGuidedRevision { try c.encode(retryGuidedRevision, forKey: .retryGuidedRevision) }; try c.encodeIfPresent(editorStateVersion, forKey: .editorStateVersion); try c.encodeIfPresent(deletions, forKey: .deletions); try c.encode(baseGeneration, forKey: .baseGeneration)
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        timelineSlots = try c.decodeIfPresent([JSONValue].self, forKey: .timelineSlots); textElements = try c.decodeIfPresent([JSONValue].self, forKey: .textElements); captionCues = try c.decodeIfPresent([JSONValue].self, forKey: .captionCues); captionMeta = try c.decodeIfPresent([String: JSONValue].self, forKey: .captionMeta); mix = try c.decodeIfPresent([String: JSONValue].self, forKey: .mix); musicTrackID = try c.decodeIfPresent(String.self, forKey: .musicTrackID); removeMusic = try c.decodeIfPresent(Bool.self, forKey: .removeMusic) ?? false; musicWindow = try c.decodeIfPresent(EditorCommitMusicWindow.self, forKey: .musicWindow); backgroundMusic = try c.decodeIfPresent(EditorCommitBackgroundMusic.self, forKey: .backgroundMusic); userSong = try c.decodeIfPresent(EditorCommitUserSong.self, forKey: .userSong); lyrics = try c.decodeIfPresent(EditorCommitLyrics.self, forKey: .lyrics); orientation = try c.decodeIfPresent(String.self, forKey: .orientation); landscapeFit = try c.decodeIfPresent(String.self, forKey: .landscapeFit); soundEffects = try c.decodeIfPresent([JSONValue].self, forKey: .soundEffects); mediaOverlays = try c.decodeIfPresent([JSONValue].self, forKey: .mediaOverlays); visualBlocks = try c.decodeIfPresent([JSONValue].self, forKey: .visualBlocks); motionScenes = try c.decodeIfPresent([JSONValue].self, forKey: .motionScenes); motionRuntimeHash = try c.decodeIfPresent(String.self, forKey: .motionRuntimeHash); cameraEffects = try c.decodeIfPresent([JSONValue].self, forKey: .cameraEffects); drawings = try c.decodeIfPresent([JSONValue].self, forKey: .drawings); if !c.contains(.carouselMoment) { carouselMoment = .omitted } else if try c.decodeNil(forKey: .carouselMoment) { carouselMoment = .remove } else { carouselMoment = .replace(try c.decode([String: JSONValue].self, forKey: .carouselMoment)) }; title = try c.decodeIfPresent(String.self, forKey: .title); acceptedSuggestionIDs = try c.decodeIfPresent([String].self, forKey: .acceptedSuggestionIDs); copilotReceiptIDs = try c.decodeIfPresent([UUID].self, forKey: .copilotReceiptIDs) ?? []; guidedRevision = try c.decodeIfPresent([String: JSONValue].self, forKey: .guidedRevision); guidedRevisionNumber = try c.decodeIfPresent(Int.self, forKey: .guidedRevisionNumber); retryGuidedRevision = try c.decodeIfPresent(Bool.self, forKey: .retryGuidedRevision) ?? false; editorStateVersion = try c.decodeIfPresent(Int.self, forKey: .editorStateVersion); deletions = try c.decodeIfPresent([EditorDeletion].self, forKey: .deletions); baseGeneration = try c.decodeIfPresent(String.self, forKey: .baseGeneration) ?? ""
+        timelineSlots = try c.decodeIfPresent([JSONValue].self, forKey: .timelineSlots); textElements = try c.decodeIfPresent([JSONValue].self, forKey: .textElements); captionCues = try c.decodeIfPresent([JSONValue].self, forKey: .captionCues); captionMeta = try c.decodeIfPresent([String: JSONValue].self, forKey: .captionMeta); mix = try c.decodeIfPresent([String: JSONValue].self, forKey: .mix); musicTrackID = try c.decodeIfPresent(String.self, forKey: .musicTrackID); removeMusic = try c.decodeIfPresent(Bool.self, forKey: .removeMusic) ?? false; musicWindow = try c.decodeIfPresent(EditorCommitMusicWindow.self, forKey: .musicWindow); backgroundMusic = try c.decodeIfPresent(EditorCommitBackgroundMusic.self, forKey: .backgroundMusic); userSong = try c.decodeIfPresent(EditorCommitUserSong.self, forKey: .userSong); lyrics = try c.decodeIfPresent(EditorCommitLyrics.self, forKey: .lyrics); orientation = try c.decodeIfPresent(String.self, forKey: .orientation); landscapeFit = try c.decodeIfPresent(String.self, forKey: .landscapeFit); soundEffects = try c.decodeIfPresent([JSONValue].self, forKey: .soundEffects); mediaOverlays = try c.decodeIfPresent([JSONValue].self, forKey: .mediaOverlays); visualBlocks = try c.decodeIfPresent([JSONValue].self, forKey: .visualBlocks); motionScenes = try c.decodeIfPresent([JSONValue].self, forKey: .motionScenes); motionRuntimeHash = try c.decodeIfPresent(String.self, forKey: .motionRuntimeHash); cameraEffects = try c.decodeIfPresent([JSONValue].self, forKey: .cameraEffects); drawings = try c.decodeIfPresent([JSONValue].self, forKey: .drawings); if !c.contains(.carouselMoment) { carouselMoment = .omitted } else if try c.decodeNil(forKey: .carouselMoment) { carouselMoment = .remove } else { carouselMoment = .replace(try c.decode([String: JSONValue].self, forKey: .carouselMoment)) }; if !c.contains(.speakerBackground) { speakerBackground = .omitted } else if try c.decodeNil(forKey: .speakerBackground) { speakerBackground = .remove } else { speakerBackground = .replace(try c.decode([String: JSONValue].self, forKey: .speakerBackground)) }; title = try c.decodeIfPresent(String.self, forKey: .title); acceptedSuggestionIDs = try c.decodeIfPresent([String].self, forKey: .acceptedSuggestionIDs); copilotReceiptIDs = try c.decodeIfPresent([UUID].self, forKey: .copilotReceiptIDs) ?? []; guidedRevision = try c.decodeIfPresent([String: JSONValue].self, forKey: .guidedRevision); guidedRevisionNumber = try c.decodeIfPresent(Int.self, forKey: .guidedRevisionNumber); retryGuidedRevision = try c.decodeIfPresent(Bool.self, forKey: .retryGuidedRevision) ?? false; editorStateVersion = try c.decodeIfPresent(Int.self, forKey: .editorStateVersion); deletions = try c.decodeIfPresent([EditorDeletion].self, forKey: .deletions); baseGeneration = try c.decodeIfPresent(String.self, forKey: .baseGeneration) ?? ""
     }
 }
 
@@ -1000,9 +1105,11 @@ struct EditorCommitSections: Codable, Sendable, Equatable {
     var userSong: Bool = false
     /// KRI-589: echoed by servers that know the drawings section; absent = false.
     var drawings: Bool = false
+    /// KRI-1118: echoed by servers that know the speaker_background section; absent = false.
+    var speakerBackground: Bool = false
     init(textElements: Bool, captionMeta: Bool, timeline: Bool, mix: Bool, captionCues: Bool = false, music: Bool = false, backgroundMusic: Bool = false, lyrics: Bool = false, orientation: Bool = false, landscapeFit: Bool = false, soundEffects: Bool = false, mediaOverlays: Bool = false, visualBlocks: Bool = false, motionScenes: Bool = false, cameraEffects: Bool = false, carouselMoment: Bool = false, title: Bool = false) { self.textElements = textElements; self.captionMeta = captionMeta; self.timeline = timeline; self.mix = mix; self.captionCues = captionCues; self.music = music; self.backgroundMusic = backgroundMusic; self.lyrics = lyrics; self.orientation = orientation; self.landscapeFit = landscapeFit; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.cameraEffects = cameraEffects; self.carouselMoment = carouselMoment; self.title = title }
-    private enum CodingKeys: String, CodingKey { case textElements = "text_elements"; case captionMeta = "caption_meta"; case timeline, mix; case captionCues = "caption_cues"; case music; case backgroundMusic = "background_music"; case lyrics, orientation; case landscapeFit = "landscape_fit"; case soundEffects = "sound_effects"; case mediaOverlays = "media_overlays"; case visualBlocks = "visual_blocks"; case motionScenes = "motion_scenes"; case cameraEffects = "camera_effects"; case carouselMoment = "carousel_moment"; case title; case userSong = "user_song"; case drawings }
-    init(from decoder: Decoder) throws { let c = try decoder.container(keyedBy: CodingKeys.self); userSong = try c.decodeIfPresent(Bool.self, forKey: .userSong) ?? false; drawings = try c.decodeIfPresent(Bool.self, forKey: .drawings) ?? false; textElements = try c.decodeIfPresent(Bool.self, forKey: .textElements) ?? false; captionMeta = try c.decodeIfPresent(Bool.self, forKey: .captionMeta) ?? false; timeline = try c.decodeIfPresent(Bool.self, forKey: .timeline) ?? false; mix = try c.decodeIfPresent(Bool.self, forKey: .mix) ?? false; captionCues = try c.decodeIfPresent(Bool.self, forKey: .captionCues) ?? false; music = try c.decodeIfPresent(Bool.self, forKey: .music) ?? false; backgroundMusic = try c.decodeIfPresent(Bool.self, forKey: .backgroundMusic) ?? false; lyrics = try c.decodeIfPresent(Bool.self, forKey: .lyrics) ?? false; orientation = try c.decodeIfPresent(Bool.self, forKey: .orientation) ?? false; landscapeFit = try c.decodeIfPresent(Bool.self, forKey: .landscapeFit) ?? false; soundEffects = try c.decodeIfPresent(Bool.self, forKey: .soundEffects) ?? false; mediaOverlays = try c.decodeIfPresent(Bool.self, forKey: .mediaOverlays) ?? false; visualBlocks = try c.decodeIfPresent(Bool.self, forKey: .visualBlocks) ?? false; motionScenes = try c.decodeIfPresent(Bool.self, forKey: .motionScenes) ?? false; cameraEffects = try c.decodeIfPresent(Bool.self, forKey: .cameraEffects) ?? false; carouselMoment = try c.decodeIfPresent(Bool.self, forKey: .carouselMoment) ?? false; title = try c.decodeIfPresent(Bool.self, forKey: .title) ?? false }
+    private enum CodingKeys: String, CodingKey { case textElements = "text_elements"; case captionMeta = "caption_meta"; case timeline, mix; case captionCues = "caption_cues"; case music; case backgroundMusic = "background_music"; case lyrics, orientation; case landscapeFit = "landscape_fit"; case soundEffects = "sound_effects"; case mediaOverlays = "media_overlays"; case visualBlocks = "visual_blocks"; case motionScenes = "motion_scenes"; case cameraEffects = "camera_effects"; case carouselMoment = "carousel_moment"; case title; case userSong = "user_song"; case drawings; case speakerBackground = "speaker_background" }
+    init(from decoder: Decoder) throws { let c = try decoder.container(keyedBy: CodingKeys.self); userSong = try c.decodeIfPresent(Bool.self, forKey: .userSong) ?? false; drawings = try c.decodeIfPresent(Bool.self, forKey: .drawings) ?? false; speakerBackground = try c.decodeIfPresent(Bool.self, forKey: .speakerBackground) ?? false; textElements = try c.decodeIfPresent(Bool.self, forKey: .textElements) ?? false; captionMeta = try c.decodeIfPresent(Bool.self, forKey: .captionMeta) ?? false; timeline = try c.decodeIfPresent(Bool.self, forKey: .timeline) ?? false; mix = try c.decodeIfPresent(Bool.self, forKey: .mix) ?? false; captionCues = try c.decodeIfPresent(Bool.self, forKey: .captionCues) ?? false; music = try c.decodeIfPresent(Bool.self, forKey: .music) ?? false; backgroundMusic = try c.decodeIfPresent(Bool.self, forKey: .backgroundMusic) ?? false; lyrics = try c.decodeIfPresent(Bool.self, forKey: .lyrics) ?? false; orientation = try c.decodeIfPresent(Bool.self, forKey: .orientation) ?? false; landscapeFit = try c.decodeIfPresent(Bool.self, forKey: .landscapeFit) ?? false; soundEffects = try c.decodeIfPresent(Bool.self, forKey: .soundEffects) ?? false; mediaOverlays = try c.decodeIfPresent(Bool.self, forKey: .mediaOverlays) ?? false; visualBlocks = try c.decodeIfPresent(Bool.self, forKey: .visualBlocks) ?? false; motionScenes = try c.decodeIfPresent(Bool.self, forKey: .motionScenes) ?? false; cameraEffects = try c.decodeIfPresent(Bool.self, forKey: .cameraEffects) ?? false; carouselMoment = try c.decodeIfPresent(Bool.self, forKey: .carouselMoment) ?? false; title = try c.decodeIfPresent(Bool.self, forKey: .title) ?? false }
 }
 struct EditorCommitResponse: Codable, Sendable {
     let ok: Bool
@@ -1188,7 +1295,56 @@ enum KriaClientProtocolContract {
     /// only to this protocol and answers 426 `client_update_required` to an older build whose Save carries
     /// caption phases or replaces captions that hold them, since it would drop them.
     /// 25 preserves per-line caption size and position choices in the shared appearance map.
-    static let version = 25
+    /// 27 (KRI-1115): decodes a recipe's `speaker_background` and the `speakerBackground` capability. This app
+    /// skips 26: the server already uses 26 for `RENDERED_TIMELINE_CLOCK_PROTOCOL`, so 27 is set exactly to match
+    /// the server's `SPEAKER_BACKGROUND_PROTOCOL`. A build declaring 27 also satisfies the server's `>= 26` check.
+    /// 28 (KRI-1134): decodes the `clipTilt` capability and a clip's `backdrop`, and draws a clip turned by
+    /// `transform.rotation_degrees` (clockwise on screen). The server offers tilt only to this protocol (and only
+    /// with `MEDIA_TILT_ENABLED` + `clipTilt` verified) and answers 426 `client_update_required` (`clip_tilt`)
+    /// to an older build polling a recipe that already carries one.
+    /// 30 (KRI-1141): turns a PLACED picture card (a Talking card, a clip with a `visual_placement`) by its clip's
+    /// `transform.rotation_degrees`. Builds 28 and 29 decode `clipTilt` but draw such a card upright, so the server
+    /// answers 426 `client_update_required` (`card_tilt`) to them for a recipe that carries a tilted card, and
+    /// offers `editor_capabilities.media_overlay_tilt` only from here.
+    /// 31 (KRI-1139): decodes a clip backdrop of kind `media` (a Visuals-pool photo or video behind the clip) and the
+    /// `clipBackdropMedia` capability, and draws it. The server offers it only to this protocol (and only with
+    /// `MEDIA_TILT_ENABLED` + `clipBackdropMedia` verified) and answers 426 `client_update_required`
+    /// (`clip_backdrop_media`) to an older build polling a recipe that already carries one.
+    /// 32 (KRI-1162): decodes a recipe's `speaker_background.windows` / `speaker_frame` and the
+    /// `speakerBackgroundWindows` capability, and edits them (Background tool + timeline lane). 29 is unused,
+    /// 30 is the card-tilt build (KRI-1141) and 31 the media-backdrop build (KRI-1139). The server offers timed backgrounds only to this protocol (and only with
+    /// `speakerBackgroundWindows` verified) and answers 426 `client_update_required` (`speaker_background_windows`)
+    /// to an older build polling or saving a recipe that already carries them.
+    /// 33 (KRI-1169): reads and keeps a clip tilt row's `zoom` (`0.5...3`, carried in the recipe's `transform.scale`).
+    /// The server offers `clips.tilt_zoom` only to this protocol and answers 426 `client_update_required`
+    /// (`tilt_zoom`) to an older build whose Save would replace a timeline holding a stored zoom.
+    /// 33 (KRI-1170): decodes and round-trips a tilt's `zoom` (a slide's media scaled 0.5 to 3x before it turns). The server
+    /// offers `slide_post_tilt_zoom` only to this protocol and answers 426 `client_update_required` (`slide_tilt_zoom`) to an
+    /// older build that would save over a zoomed tilt, since it re-encodes the tilt without the key.
+    /// 34 (KRI-1173): decodes and round-trips a solid-colour speaker background (`media_kind: "color"` + `color`) and the
+    /// `speakerBackgroundColor` capability. The server offers `editor_capabilities.speaker_background_color` only to this
+    /// protocol (and only with `speakerBackgroundColor` verified) and answers 426 `client_update_required`
+    /// (`speaker_background_color`) to an older build polling or saving a recipe that already carries one.
+    /// 35 (KRI-1192): bundles Noto Sans KR / Noto Sans Arabic script-fallback faces and draws Greek, Cyrillic, Hangul
+    /// and Arabic captions in one covering face (`scriptFonts`). The server sends a recipe naming those faces only to
+    /// this protocol and answers 426 `client_update_required` (`script_fonts`) to an older build.
+    /// 36 (Qendresa item 12): the editor reads `caption_meta.shape` (`caption_shape`) and draws the creator's typed
+    /// caption box / dimmed-word look exactly like the cloud recipe. The server renders a shaped caption only for this
+    /// protocol (`CAPTION_SHAPE_PROTOCOL`).
+    /// 37-39 are unused (held for items 14, 16 and 18 while they were in review).
+    /// 40 (Qendresa item 15): the editor keeps a picture card marked `caption_clear` in the top or bottom band instead of
+    /// clamping its centre above y 0.62, matching the cloud recipe. The server places such cards only for this protocol.
+    /// 41 (Qendresa item 16): decodes and draws `speaker_background.full_screen_windows` (the speaker's own take full-frame,
+    /// unmasked, with no background or corner frame, for an opening or ending) and the `speakerFrameWindows` capability, and
+    /// round-trips them in the editor. The server offers `editor_capabilities.speaker_full_opening` only to this protocol (and
+    /// only with `speakerFrameWindows` verified) and answers 426 `client_update_required` (`speaker_full_opening`) to an
+    /// older build polling or saving a recipe that already carries them.
+    /// 42 (Qendresa item 18): decodes and draws `speaker_background.focus` and `windows[i].focus` (`{x, y, zoom}`: a photo or
+    /// video background aimed at its text, below cover with black bands) and the `backgroundFocus` capability, and round-trips
+    /// them in the editor. The server offers `editor_capabilities.background_focus` only to this protocol (and only with
+    /// `backgroundFocus` verified) and answers 426 `client_update_required` (`background_focus`) to an older build polling or
+    /// saving a recipe that already carries them.
+    static let version = 42
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1241,8 +1397,9 @@ private actor MobileSessionRefreshCoordinator {
                 throw APIError.sessionExpired
             }
             let refreshed = try JSONDecoder().decode(MobileSession.self, from: data)
-            try tokenStore.write(refreshed)
-            return refreshed
+            let update = try tokenStore.updateSession(refreshed, ifCurrent: current)
+            guard let session = update.current else { throw APIError.sessionExpired }
+            return session
         }
         inFlight = (failedAccessToken, task)
 
@@ -1349,6 +1506,15 @@ struct KriaAPI: KriaAPIClient {
         ]
         return try await request(path: "creation-threads/\(threadID.uuidString)/song-range", method: "PUT", bodyData: try JSONEncoder().encode(body), decode: CreationThread.self)
     }
+    /// KRI-1119: `PUT creation-threads/{id}/speaker-background`. A nil `clientUploadID` clears it: no reference key at all.
+    func setSpeakerBackground(threadID: UUID, clientUploadID: String?, expectedRevision: Int, clientEventID: String) async throws -> CreationThread {
+        var body: [String: JSONValue] = [
+            "client_event_id": .string(clientEventID),
+            "expected_revision": .number(Double(expectedRevision)),
+        ]
+        if let clientUploadID { body["client_upload_id"] = .string(clientUploadID) }
+        return try await request(path: "creation-threads/\(threadID.uuidString)/speaker-background", method: "PUT", bodyData: try JSONEncoder().encode(body), decode: CreationThread.self)
+    }
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread {
         let body: [String: JSONValue] = ["title": .string(title), "expected_revision": .number(Double(project.serverRevision)), "client_event_id": .string(clientEventID)]
         return try await request(path: "creation-threads/\(project.id.uuidString)", method: "PATCH", bodyData: JSONEncoder().encode(body), decode: CreationThread.self)
@@ -1368,6 +1534,9 @@ struct KriaAPI: KriaAPIClient {
         return ProjectPage(projects: result.value.map(\.summary), nextCursor: result.response.value(forHTTPHeaderField: "X-Next-Cursor"))
     }
     func project(threadID: UUID) async throws -> CreationThread { try await request(path: "creation-threads/\(threadID.uuidString)", method: "GET", query: [URLQueryItem(name: "projection", value: "full")], bodyData: nil, decode: CreationThread.self) }
+    func overlayPlan(itemID: String, body: OverlayPlanRequest) async throws -> OverlayPlan {
+        try await request(path: "plan-items/\(itemID)/overlay-plan", method: "POST", bodyData: JSONEncoder().encode(body), decode: OverlayPlan.self)
+    }
     func generatedMediaByEvent(itemID: String, clientEventID: String) async throws -> GeneratedMediaOperation {
         try await request(path: "plan-items/\(itemID)/generated-media/by-event/\(clientEventID)", method: "GET", bodyData: nil, decode: GeneratedMediaOperation.self)
     }
@@ -1574,7 +1743,9 @@ struct KriaAPI: KriaAPIClient {
         throw APIError.conflict
     }
     func editorCommit(itemID: String, variantID: String, request commit: EditorCommitRequest) async throws -> EditorCommitResponse {
-        try await request(path: "plan-items/\(itemID)/variants/\(variantID)/editor-commit", method: "POST", bodyData: try JSONEncoder().encode(commit), decode: EditorCommitResponse.self)
+        try await Perf.measureAsync("talk.save.editorCommit") {
+            try await request(path: "plan-items/\(itemID)/variants/\(variantID)/editor-commit", method: "POST", bodyData: try JSONEncoder().encode(commit), decode: EditorCommitResponse.self)
+        }
     }
     func registerEditorSource(_ target: EditorSourceRegistrationTarget, sourceID: String) async throws -> EditorSourceRegistrationResponse {
         struct Body: Encodable {
@@ -1611,6 +1782,14 @@ struct KriaAPI: KriaAPIClient {
     }
     func undoPlanSection(threadID: UUID, sectionID: PlanSectionID, expectedThreadRevision: Int, expectedBlockRevision: Int, expectedDraftRevision: Int) async throws -> PlanSectionUndoResult {
         try await request(path: "creation-threads/\(threadID.uuidString)/plan/sections/\(sectionID.rawValue)/undo", method: "POST", bodyData: try JSONEncoder().encode(PlanSectionUndoRequest(expectedThreadRevision: expectedThreadRevision, expectedBlockRevision: expectedBlockRevision, expectedDraftRevision: expectedDraftRevision)), decode: PlanSectionUndoResult.self)
+    }
+    func steerNow(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled {
+        try await request(path: "creation-threads/\(threadID.uuidString)/turns/\(turnID)/cancel", method: "POST",
+            bodyData: try JSONEncoder().encode(SteerNowRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)
+    }
+    func removeWaitingMessage(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled {
+        try await request(path: "creation-threads/\(threadID.uuidString)/turns/\(turnID)/cancel", method: "POST",
+            bodyData: try JSONEncoder().encode(RemoveWaitingMessageRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)
     }
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled {
         try await request(path: "creation-threads/\(threadID.uuidString)/turns/\(turnID)/cancel-render", method: "POST", bodyData: try JSONEncoder().encode(CancelRenderRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)
@@ -1669,6 +1848,25 @@ struct KriaAPI: KriaAPIClient {
               reservation.mediaID.hasPrefix("analysis-proxy-") else { throw APIError.invalidResponse }
         return reservation
     }
+    func reserveProjectReplacementUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, replacing mediaID: String) async throws -> ProjectUploadReservation {
+        let body = ProjectUploadReservationRequest(files: [.init(filename: filename, contentType: contentType, fileSizeBytes: size, clientUploadID: clientUploadID, replacesMediaID: mediaID)])
+        let reservations = try await request(path: "creation-threads/\(threadID.uuidString)/upload-urls", method: "POST", bodyData: try JSONEncoder().encode(body), decode: [ProjectUploadReservation].self)
+        guard let reservation = reservations.first, reservations.count == 1 else { throw APIError.invalidResponse }
+        return reservation
+    }
+    func reserveProjectReplacementProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract, replacing mediaID: String) async throws -> ProjectUploadReservation {
+        guard contract.purpose == .analysisProxy, contract.proxy != nil else { throw APIError.invalidResponse }
+        let body = ProjectUploadReservationRequest(files: [.init(filename: filename, contentType: "video/mp4", fileSizeBytes: size, clientUploadID: clientUploadID, uploadContract: contract, replacesMediaID: mediaID)])
+        let reservations = try await request(path: "creation-threads/\(threadID.uuidString)/upload-urls", method: "POST", bodyData: try JSONEncoder().encode(body), decode: [ProjectUploadReservation].self)
+        guard reservations.count == 1, let reservation = reservations.first,
+              reservation.mediaID.hasPrefix("analysis-proxy-") else { throw APIError.invalidResponse }
+        return reservation
+    }
+    func replaceProjectMedia(threadID: UUID, replacedMediaID: String, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread {
+        let media = ProjectMediaInput(mediaID: mediaID, gcsPath: gcsPath, kind: "video", filename: filename, contentType: contentType, capture: capture)
+        let body = ProjectMediaReplacementRequest(replacedMediaID: replacedMediaID, media: media, clientEventID: clientEventID, expectedRevision: expectedRevision)
+        return try await request(path: "creation-threads/\(threadID.uuidString)/media/replace", method: "POST", bodyData: try JSONEncoder().encode(body), decode: CreationThread.self)
+    }
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread {
         try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID, capture: nil)
     }
@@ -1704,12 +1902,12 @@ struct KriaAPI: KriaAPIClient {
         }.joined(separator: ", ")
     }
 
-    func request<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type, requiresAuth: Bool = true, timeoutInterval: TimeInterval? = nil) async throws -> T {
-        try await requestWithResponse(path: path, method: method, query: query, headers: headers, bodyData: bodyData, decode: decode, requiresAuth: requiresAuth, timeoutInterval: timeoutInterval).value
+    func request<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type, requiresAuth: Bool = true, timeoutInterval: TimeInterval? = nil, expectedOwner: String? = nil) async throws -> T {
+        try await requestWithResponse(path: path, method: method, query: query, headers: headers, bodyData: bodyData, decode: decode, requiresAuth: requiresAuth, timeoutInterval: timeoutInterval, expectedOwner: expectedOwner).value
     }
 
     /// `request`, also returning the HTTP response, for the few routes that answer in headers as well as the body.
-    func requestWithResponse<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type, requiresAuth: Bool = true, timeoutInterval: TimeInterval? = nil) async throws -> (value: T, response: HTTPURLResponse) {
+    func requestWithResponse<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type, requiresAuth: Bool = true, timeoutInterval: TimeInterval? = nil, expectedOwner: String? = nil) async throws -> (value: T, response: HTTPURLResponse) {
         var components = URLComponents(url: baseURL.appending(path: path), resolvingAgainstBaseURL: false)
         components?.queryItems = query.isEmpty ? nil : query
         // URLComponents preserves `+` in query-item values, while FastAPI
@@ -1728,18 +1926,20 @@ struct KriaAPI: KriaAPIClient {
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         request.setValue(String(KriaClientProtocolContract.version), forHTTPHeaderField: KriaClientProtocolContract.header)
         var storedSession = requiresAuth ? try tokenStore.read() : nil
+        try validateNotificationOwner(expectedOwner, session: storedSession)
         // A token that is about to expire (or already has) is refreshed BEFORE the request, instead of the request
         // failing with a 401 and being replayed: after any idle period that is two round trips off every launch.
         if requiresAuth, let current = storedSession, Self.isExpiringSoon(current.accessToken) {
-            storedSession = try await refreshAhead(of: current)
+            storedSession = try await refreshAhead(of: current, expectedOwner: expectedOwner)
         }
+        try validateNotificationOwner(expectedOwner, session: storedSession)
         if let token = storedSession?.accessToken { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if let bodyData {
             request.httpBody = bodyData
             // A caller that sets its own Content-Type (multipart dictation upload) keeps it.
             if request.value(forHTTPHeaderField: "Content-Type") == nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         }
-        var (data, response) = try await send(&request, storedSession: storedSession, requiresAuth: requiresAuth)
+        var (data, response) = try await send(&request, storedSession: storedSession, requiresAuth: requiresAuth, expectedOwner: expectedOwner)
         // The server answers a request Postgres aborted as a deadlock victim with
         // `409 {"code": "concurrent_update", "retryable": true}`. It was rolled back, so
         // nothing changed and nothing was saved: send the identical request again (each
@@ -1753,10 +1953,13 @@ struct KriaAPI: KriaAPIClient {
             NativePreviewDiagnostics.record("http-concurrent-update-retry", fields: ["attempt": String(concurrentUpdateRetries)])
             #endif
             try await Task.sleep(for: delay)
-            (data, response) = try await send(&request, storedSession: storedSession, requiresAuth: requiresAuth)
+            (data, response) = try await send(&request, storedSession: storedSession, requiresAuth: requiresAuth, expectedOwner: expectedOwner)
         }
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
-        if requiresAuth, http.statusCode == 401 { clearExpiredSession(); throw APIError.sessionExpired }
+        if requiresAuth, http.statusCode == 401 {
+            try validateNotificationOwner(expectedOwner, session: storedSession)
+            clearExpiredSession(failedAccessToken: request.value(forHTTPHeaderField: "Authorization")?.replacingOccurrences(of: "Bearer ", with: "")); throw APIError.sessionExpired
+        }
         if path.hasPrefix("me/account/delete-") {
             if http.statusCode == 503 { throw AccountDeletionError.unavailable }
             if http.statusCode == 400 { throw AccountDeletionError.invalidConfirmation }
@@ -1809,6 +2012,11 @@ struct KriaAPI: KriaAPIClient {
                 ])
                 throw saveError
             }
+            // KRI-1162: a Save the server holds back for an older build (`client_update_required`, e.g. for
+            // `speaker_background_windows`) reads as a plain sentence, not as a failure with a code.
+            if http.statusCode == 426, path.hasSuffix("/editor-commit"), Self.decodeCodedDetail(from: data)?.code == "client_update_required" {
+                throw EditorSaveError.timeline(code: "client_update_required")
+            }
             #if DEBUG
             NativePreviewDiagnostics.record("http-failure", fields: ["status": String(http.statusCode)])
             #endif
@@ -1840,13 +2048,14 @@ struct KriaAPI: KriaAPIClient {
 
     /// Rotates the session through the same coordinator the 401 path uses, so concurrent callers share one rotation
     /// and the single-use refresh token is never replayed (KRI-119).
-    private func refreshAhead(of current: MobileSession) async throws -> MobileSession {
+    private func refreshAhead(of current: MobileSession, expectedOwner: String? = nil) async throws -> MobileSession {
         do {
             return try await refreshCoordinator.refresh(
                 failedAccessToken: current.accessToken, baseURL: baseURL, tokenStore: tokenStore, session: session
             )
         } catch let error as APIError where error == .sessionExpired {
-            clearExpiredSession()
+            try validateNotificationOwner(expectedOwner, session: current)
+            clearExpiredSession(failedAccessToken: current.accessToken)
             throw error
         } catch {
             // Offline or a server hiccup: send with the token we have; the 401 path retries the refresh if it matters.
@@ -1855,7 +2064,8 @@ struct KriaAPI: KriaAPIClient {
     }
 
     /// Sends `request`, refreshing an expired access token once.
-    private func send(_ request: inout URLRequest, storedSession: MobileSession?, requiresAuth: Bool) async throws -> (Data, URLResponse) {
+    private func send(_ request: inout URLRequest, storedSession: MobileSession?, requiresAuth: Bool, expectedOwner: String? = nil) async throws -> (Data, URLResponse) {
+        try validateNotificationOwner(expectedOwner, session: storedSession)
         let route = Perf.routeTemplate(method: request.httpMethod, path: request.url?.path ?? "")
         let requestID = UUID().uuidString
         Perf.begin("net.request", id: requestID, route)
@@ -1871,6 +2081,7 @@ struct KriaAPI: KriaAPIClient {
         var (data, response) = try await session.data(for: request)
         var retried401 = false
         defer { Perf.end("net.request", id: requestID, "\(route) \((response as? HTTPURLResponse)?.statusCode ?? 0) retried401=\(retried401)") }
+        try validateNotificationOwner(expectedOwner, session: storedSession)
         if requiresAuth, let http = response as? HTTPURLResponse, http.statusCode == 401, let storedSession {
             retried401 = true
             let refreshed: MobileSession
@@ -1882,13 +2093,24 @@ struct KriaAPI: KriaAPIClient {
                     session: session
                 )
             } catch let error as APIError where error == .sessionExpired {
-                clearExpiredSession()
+                try validateNotificationOwner(expectedOwner, session: storedSession)
+                clearExpiredSession(failedAccessToken: storedSession.accessToken)
                 throw error
             }
+            try validateNotificationOwner(expectedOwner, session: refreshed)
             request.setValue("Bearer \(refreshed.accessToken)", forHTTPHeaderField: "Authorization")
             (data, response) = try await session.data(for: request)
         }
+        try validateNotificationOwner(expectedOwner, session: storedSession)
         return (data, response)
+    }
+    private func validateNotificationOwner(_ expectedOwner: String?, session: MobileSession?) throws {
+        guard let expectedOwner else { return }
+        guard mediaLibraryOwner == expectedOwner,
+              MediaLibraryOriginals.owner(accessToken: session?.accessToken) == expectedOwner else {
+            throw APIError.sessionExpired
+        }
+        try Task.checkCancellation()
     }
     /// Resends of one request the server rolled back as a deadlock victim.
     static let concurrentUpdateRetryLimit = 2
@@ -1903,9 +2125,11 @@ struct KriaAPI: KriaAPIClient {
         let advised = response.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init) ?? 0.25
         return .milliseconds(Int(min(max(advised, 0), 2) * 1000) + Int.random(in: 0...250))
     }
-    private func clearExpiredSession() {
-        try? tokenStore.delete()
-        NotificationCenter.default.post(name: .kriaSessionExpired, object: nil)
+    private func clearExpiredSession(failedAccessToken: String?) {
+        guard let failedAccessToken, let current = try? tokenStore.read(),
+              current.accessToken == failedAccessToken,
+              let update = try? tokenStore.updateSession(nil, ifCurrent: current), update.applied else { return }
+        NotificationCenter.default.post(name: .kriaSessionExpired, object: current)
     }
     /// Best-effort decode of the server's `{"detail": "..."}` error-body shape
     /// (FastAPI's default `HTTPException` envelope). Shared by the 409/412
@@ -2017,14 +2241,50 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "GUIDED_REVISION_WIRE_UNSUPPORTED": "Update Kria to save this edit.",
             "LOOK_PRESET_NOT_AVAILABLE": "That clip look isn’t available for this video. Remove it and save again. Your edits are still here.",
             "phone_edit_unsupported": "That clip look can’t be saved on this iPhone yet. Remove it and save again. Your edits are still here.",
+            "TIMELINE_TILT_WITH_LOOK": "A clip with a colour look can’t be tilted. Remove the look or reset the tilt, then save again. Your edits are still here.",
+            "clip_backdrop_media_not_in_pool": "That photo or video isn’t in this video’s Visuals any more. Choose another background or reset the tilt, then save again. Your edits are still here.",
+            "clip_backdrop_media_unavailable": "A photo or video behind a clip isn’t available right now. Choose another background or reset the tilt, then save again. Your edits are still here.",
+            "clip_tilt_unavailable": "Tilt isn’t available right now. Reset the tilt on that clip and save again. Your edits are still here.",
+            "clip_tilt_zoom_unavailable": "Zoom isn’t available right now. Set the zoom back to 1x on that clip and save again. Your edits are still here.",
             "transitions_disabled": "Transitions aren’t available right now. Set the clip to a cut and save again. Your edits are still here.",
             "song_shorter_than_video": "The song is shorter than your video. Pick a longer song or shorten the video, then save again. Your edits are still here.",
             "music_track_unavailable": "That song isn’t available any more. Pick another song and save again. Your edits are still here.",
             "track_duration_unknown": timeline,
             "video_duration_unknown": timeline,
             "guided_story_revision_unavailable": reopen,
+            "speaker_background_unsupported": "A background isn’t available for this edit. Remove it and save again. Your edits are still here.",
+            "speaker_background_disabled": "Backgrounds aren’t available right now. Remove it and save again. Your edits are still here.",
+            "speaker_background_media_not_in_pool": "That photo or video isn’t in this edit’s uploads any more. Pick another background and save again. Your edits are still here.",
+            "speaker_background_media_unavailable": "That background isn’t ready yet. Wait a moment or pick another, then save again. Your edits are still here.",
+            "speaker_background_kind_mismatch": "That background doesn’t match its file. Pick it again and save again. Your edits are still here.",
+            "speaker_background_start_out_of_range": "The background video starts past its end. Pick it again and save again. Your edits are still here.",
+            // Range on a phone Talking edit. The four reasons are the `clips.source_window` leaf's own codes; the
+            // server can also answer a Save with one when the edit changed after the app last looked.
+            "talking_range_multi_clip": EditorSaveError.talkingRangeSaveCopy("talking_range_multi_clip"),
+            "talking_range_word_cuts": EditorSaveError.talkingRangeSaveCopy("talking_range_word_cuts"),
+            "talking_range_processed_audio": EditorSaveError.talkingRangeSaveCopy("talking_range_processed_audio"),
+            "talking_range_cut_mismatch": EditorSaveError.talkingRangeSaveCopy("talking_range_cut_mismatch"),
+            "talking_range_structure_changed": "Only the range of each part can change in this video. Undo your last change and save again. Your edits are still here.",
+            "talking_range_overlap": "A part now reaches into the part next to it. Shorten it and save again. Your edits are still here.",
+            "talking_range_order": "The parts of this video have to stay in their order. Put them back in order and save again. Your edits are still here.",
+            "talking_range_muted": "Range can’t mute a part of this video. Turn the sound back on for it and save again. Your edits are still here.",
+            "talking_range_captions_missing": "Part of your range has no captions yet. Add captions for it, turn captions off, or put the range back, then save again. Your edits are still here.",
+            "speaker_background_color_disabled": "A plain colour behind you isn’t available on this edit yet. Pick a photo or video, or remove the background, then save again. Your edits are still here.",
+            "speaker_background_color_invalid": "That colour can’t be used. Pick a swatch or a solid colour, then save again. Your edits are still here.",
+            "speaker_background_windows_disabled": "Timed backgrounds aren’t available right now. Remove them and save again. Your edits are still here.",
+            "speaker_full_opening_disabled": "Starting full screen isn’t available right now. Remove it and save again. Your edits are still here.",
+            "speaker_full_opening_invalid": "The full-screen opening doesn’t fit this video. Remove it and save again. Your edits are still here.",
+            "background_focus_disabled": "Aiming the background isn’t available for this video yet. Your edits are still here.",
+            "background_focus_invalid": "That background aim isn’t valid. Pick left, centre or right and a zoom between 0.3x and 3x, then save again. Your edits are still here.",
+            "speaker_background_window_invalid": "The timed backgrounds overlap or one is too short. Give each at least half a second without overlap, then save again. Your edits are still here.",
+            // 426 from the editor-commit route: this build is older than the feature the edit uses (see the call site).
+            "client_update_required": "Update Kria to save this edit. Your edits are still here.",
         ]
     }()
+
+    private static func talkingRangeSaveCopy(_ code: String) -> String {
+        NativePhoneTalkingSource.rangeClosedCopy(reason: code) + " Your edits are still here."
+    }
 
     /// A plain-English sentence (not a machine code) short enough to show as is.
     static func isReadableServerMessage(_ text: String) -> Bool {
@@ -2192,7 +2452,7 @@ private struct LibraryPosterRequest: Encodable {
 /// KRI-653: why the in-app recorder produced (or is producing) a silent take. Enumerated labels and
 /// numbers only: no file names, script text, or anything the creator typed or said.
 struct RecorderDiagnosticReport: Encodable, Equatable, Sendable {
-    enum Kind: String, Encodable, Sendable { case takeSilent = "take_silent", liveMicSilent = "live_mic_silent" }
+    enum Kind: String, Encodable, Sendable { case takeSilent = "take_silent", liveMicSilent = "live_mic_silent", takeFinished = "take_finished" }
     let kind: Kind
     let audioCategory: String?
     let audioMode: String?
@@ -2205,11 +2465,24 @@ struct RecorderDiagnosticReport: Encodable, Equatable, Sendable {
     let maxPowerDb: Double?
     let takeDurationS: Double?
     let appBuild: String?
+    /// `TakeStopReason.rawValue` of the take this report describes; nil for a live recording that has not stopped.
+    let stopReason: String?
+    /// `take_finished` only: how long the movie output took to close the file after Stop, and how long everything after
+    /// that (validation, Cinematic bake, level measurement) took before the take reached Review.
+    var finalizeMs: Int? = nil
+    var finishMs: Int? = nil
+    /// What separates the sound hypotheses: the session's sample rate, the active mic mode (standard, wide spectrum,
+    /// voice isolation) and how many audio tracks the finished file holds.
+    var audioSampleRateHz: Double? = nil
+    var microphoneMode: String? = nil
+    var audioTrackCount: Int? = nil
     enum CodingKeys: String, CodingKey {
+        case finalizeMs = "finalize_ms", finishMs = "finish_ms", audioSampleRateHz = "audio_sample_rate_hz"
+        case microphoneMode = "microphone_mode", audioTrackCount = "audio_track_count"
         case kind, audioCategory = "audio_category", audioMode = "audio_mode"
         case routeInputs = "route_inputs", routeOutputs = "route_outputs", otherAudioPlaying = "other_audio_playing"
         case phaseHistory = "phase_history", channelCount = "channel_count", maxPowerDb = "max_power_db"
-        case takeDurationS = "take_duration_s", appBuild = "app_build"
+        case takeDurationS = "take_duration_s", appBuild = "app_build", stopReason = "stop_reason"
     }
 }
 /// Identity of a failed editor player item: numeric AVFoundation codes and domains only, never URLs or error text.
@@ -2222,10 +2495,13 @@ struct PlaybackFailureReport: Encodable, Equatable, Sendable {
     let underlyingCode: Int?
     let sourceState: String
     let appBuild: String?
+    /// Fixed labels and counts describing how a Talk-to-camera background was drawn
+    /// (`SpeakerBackgroundTrace.Snapshot.summary`); absent from the wire when the edit has none.
+    var trace: String? = nil
     enum CodingKeys: String, CodingKey {
         case playerKind = "player_kind", errorDomain = "error_domain", errorCode = "error_code"
         case underlyingDomain = "underlying_domain", underlyingCode = "underlying_code"
-        case sourceState = "source_state", appBuild = "app_build"
+        case sourceState = "source_state", appBuild = "app_build", trace
     }
 }
 private struct PlaybackResponse: Decodable { let videoURL: String; enum CodingKeys: String, CodingKey { case videoURL = "video_url" } }
@@ -2316,7 +2592,15 @@ struct ProjectUploadFileRequest: Encodable {
     var uploadContract: ProjectMediaUploadContract? = nil
     /// KRI-374: `"song"` for a creator-uploaded song; nil (omitted from the JSON) for footage and voiceover.
     var role: String? = nil
-    enum CodingKeys: String, CodingKey { case uploadContract = "upload_contract"; case filename; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes"; case clientUploadID = "client_upload_id"; case role }
+    /// Re-record: the attached clip this file replaces. Omitted for every ordinary reservation.
+    var replacesMediaID: String? = nil
+    enum CodingKeys: String, CodingKey { case uploadContract = "upload_contract"; case filename; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes"; case clientUploadID = "client_upload_id"; case role; case replacesMediaID = "replaces_media_id" }
+}
+/// `reason` is the route's only value today, sent explicitly so a later reason is a new case, not a changed meaning.
+struct ProjectMediaReplacementRequest: Encodable {
+    let replacedMediaID: String; let media: ProjectMediaInput; let clientEventID: String; let expectedRevision: Int
+    var reason = "retake"
+    enum CodingKeys: String, CodingKey { case media, reason; case replacedMediaID = "replaced_media_id"; case clientEventID = "client_event_id"; case expectedRevision = "expected_revision" }
 }
 struct ProjectMediaAttachmentRequest: Encodable { let media: [ProjectMediaInput]; let clientEventID: String; let expectedRevision: Int; enum CodingKeys: String, CodingKey { case media; case clientEventID = "client_event_id"; case expectedRevision = "expected_revision" } }
 /// One attached media item. The three optional filming-context fields (KRI-189) are omitted from the JSON
@@ -2338,6 +2622,19 @@ struct ProjectMediaInput: Encodable {
 }
 private struct CreateThreadRequest: Encodable { let message: String?; let clientEventID: String; let runtimeVersion: Int; enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case runtimeVersion = "runtime_version" } }
 private struct DraftWriteRequest: Encodable { let expectedRevision: Int; let snapshot: [String: JSONValue]; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision"; case snapshot } }
+/// `POST …/turns/{id}/cancel` with `steer: true` (docs/pipelines/steer-now.md).
+private struct SteerNowRequest: Encodable {
+    let expectedThreadRevision: Int
+    var steer = true
+    enum CodingKeys: String, CodingKey { case steer; case expectedThreadRevision = "expected_thread_revision" }
+}
+/// `POST …/turns/{id}/cancel` with `only_if_queued: true`: the server cancels the turn only while it still waits, in the
+/// same statement that locks it, so a retry that raced Kria picking the message up never stops it.
+private struct RemoveWaitingMessageRequest: Encodable {
+    let expectedThreadRevision: Int
+    var onlyIfQueued = true
+    enum CodingKeys: String, CodingKey { case onlyIfQueued = "only_if_queued"; case expectedThreadRevision = "expected_thread_revision" }
+}
 private struct CancelRenderRequest: Encodable { let expectedThreadRevision: Int; enum CodingKeys: String, CodingKey { case expectedThreadRevision = "expected_thread_revision" } }
 private struct DraftUndoRequest: Encodable {
     let expectedRevision: Int
@@ -2693,7 +2990,7 @@ extension DraftSnapshot {
                 "caption_margin_v", "caption_y_frac", "caption_animation_phases",
                 "music_track_id", "music_window", "background_music", "lyrics", "orientation", "landscape_fit",
                 "sound_effects", "media_overlays", "visual_blocks", "motion_scenes",
-                "motion_runtime_hash", "camera_effects", "drawings", "carousel_moment",
+                "motion_runtime_hash", "camera_effects", "drawings", "carousel_moment", "speaker_background",
             ]
             // A chat-authored editor draft (kind `editor`, flat commit-shaped
             // lane keys) carries its edited lanes in `sections`. The rendered
@@ -2710,6 +3007,10 @@ extension DraftSnapshot {
             // must not bring it back.
             if !isIntentionalEmpty, authoritativeVariant["caption_animation_phases"] == nil {
                 sections["caption_animation_phases"] = nil
+            }
+            // Likewise a cleared Talk-to-camera background leaves the key off the variant (KRI-1165).
+            if !isIntentionalEmpty, authoritativeVariant["speaker_background"] == nil {
+                sections["speaker_background"] = nil
             }
             if !isIntentionalEmpty, sections["music_window"] == nil, let start = authoritativeVariant["music_preview_start_s"] {
                 sections["music_window"] = .object(["start_s": start, "alignment": .string("preserve_cuts")])
@@ -2873,6 +3174,7 @@ extension DraftSnapshot {
         ("camera_effects", .cameraEffects, ["camera_effects"]),
         ("drawings", .drawings, ["drawings"]),
         ("carousel_moment", .carouselMoment, ["carousel_moment"]), ("title", .title, ["title"]),
+        ("speaker_background", .speakerBackground, ["speaker_background"]),
     ]
 
     /// Overlay a runtime-v2 chat draft (`draft.apply_editor_ops`, kind `editor`)

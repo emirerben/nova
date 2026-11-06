@@ -38,6 +38,7 @@ from app.agents._schemas.creator_policy import (
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
     USER_SONG_BACKGROUND_NOTICE,
     USER_SONG_CONTRACT_NOTICE,
+    USER_SONG_LIPSYNC_CARD_NOTICE,
     USER_SONG_LIPSYNC_SHAPE_NOTICE,
     USER_SONG_MISSING_CODE,
     USER_SONG_MISSING_MESSAGE,
@@ -56,9 +57,13 @@ from app.pipeline.narrated_title import TITLE_MAX_CHARS
 from app.schemas.clip_intents import ClipIntent
 from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS, PINNED_TEXT_MAX_CHARS
 from app.services.creator_capabilities import (
+    BACKGROUND_FOCUS_NOTICES,
     CAPABILITY_REACTION_BEATS,
     ENDING_CLIP_NOT_ALSO_A_POP_IN_NOTICE,
     ENDING_CLIP_NOTICES,
+    SPEAKER_BACKGROUND_NOT_ALSO_A_POP_IN_NOTICE,
+    SPEAKER_BACKGROUND_NOTICES,
+    SPEAKER_FULL_OPENING_NOTICES,
     TALKING_CLIP_INTENTS_DROPPED_NOTICE,
     CreatorSfxUnavailableError,
     compile_strategy_to_plan,
@@ -177,6 +182,10 @@ _KNOWN_TR: dict[str, str] = {
         "zamanlamıyorum."
     ),
     USER_SONG_BACKGROUND_NOTICE: ("Şarkını bu düzenlemede arka plan müziği olarak kullanacağım."),
+    USER_SONG_LIPSYNC_CARD_NOTICE: (
+        "Dudak senkronu seçtin, o yüzden çekimlerini şarkına senkronluyorum; her birini "
+        "müziğe uyduğu yere koyuyorum."
+    ),
     USER_SONG_LIPSYNC_SHAPE_NOTICE: (
         "Dudak senkronlu düzenleme şarkını izler, o yüzden günlük vlog ya da tek kahraman "
         "kurgusu kullanmıyorum."
@@ -257,6 +266,57 @@ _KNOWN_TR: dict[str, str] = {
     ),
     ENDING_CLIP_NOT_ALSO_A_POP_IN_NOTICE: (
         "Sonda istediğin video sadece orada oynuyor, söylediğin bir kelimede ayrıca çıkmıyor."
+    ),
+    # KRI-1117: a photo or looping video behind the speaker.
+    SPEAKER_BACKGROUND_NOTICES["unavailable"]: (
+        "Bunu arkana koyamadım: fotoğraf ya da video arka planı sadece iPhone'da hazırlanan "
+        "konuşmalı düzenlemelerde çalışıyor ve şu an burada kullanılamıyor."
+    ),
+    SPEAKER_BACKGROUND_NOTICES["not_found"]: (
+        "Arka plan için söylediğin fotoğraf ya da videoyu bulamadım; kendi arka planını bıraktım."
+    ),
+    SPEAKER_BACKGROUND_NOTICES["pick_not_found"]: (
+        "Kamerada seçtiğin arka planı kullanamadım: artık bu düzenlemenin fotoğraf ve "
+        "videoları arasında değil; kendi arka planını bıraktım."
+    ),
+    SPEAKER_BACKGROUND_NOTICES["kind_off"]: (
+        "Bunu arka plan yapamadım: bu iPhone onu henüz arkanda çizemiyor."
+    ),
+    SPEAKER_BACKGROUND_NOTICES["windows_unavailable"]: (
+        "Arka planları değiştirip seni köşede küçük gösteremedim: iPhone uygulaman henüz arka "
+        "plan değiştiremiyor. Bütün video boyunca arkanda tek bir arka plan duruyor."
+    ),
+    SPEAKER_BACKGROUND_NOTICES["sequence_not_found"]: (
+        "Değişen arka plan için söylediğin bazı fotoğraf ya da videoları bulamadım; onları "
+        "çıkardım."
+    ),
+    # Qendresa item 16: the speaker full screen in their own take before the background.
+    SPEAKER_FULL_OPENING_NOTICES["app_too_old"]: (
+        "Arka plandan önce seni tam ekran başlatamadım: iPhone uygulaman bunu henüz yapamıyor. "
+        "Uygulamayı güncelleyip tekrar iste."
+    ),
+    SPEAKER_FULL_OPENING_NOTICES["unavailable"]: (
+        "Arka plandan önce seni tam ekran başlatamadım: bu şu an burada kullanılamıyor."
+    ),
+    # Qendresa item 18: aiming the recordings behind the speaker.
+    BACKGROUND_FOCUS_NOTICES["app_too_old"]: (
+        "Kayıtları istediğin yöne çevirmek için Kria uygulamasının son sürümü gerekiyor; "
+        "şimdilik ortalı duruyorlar."
+    ),
+    BACKGROUND_FOCUS_NOTICES["unavailable"]: (
+        "Kayıtları istediğin yöne çevirmek henüz kullanılamıyor; şimdilik ortalı duruyorlar."
+    ),
+    # KRI-1173: a plain colour.
+    SPEAKER_BACKGROUND_NOTICES["color_unavailable"]: (
+        "Arkana düz bir renk koyamadım: iPhone uygulaman henüz bunu gösteremiyor; kendi arka "
+        "planını bıraktım."
+    ),
+    SPEAKER_BACKGROUND_NOTICES["color_invalid"]: (
+        "Bu rengi arka planın için kullanamadım; kendi arka planını bıraktım. Beyaz, siyah, "
+        "yeşil, mavi, kırmızı, sarı ya da gri dene."
+    ),
+    SPEAKER_BACKGROUND_NOT_ALSO_A_POP_IN_NOTICE: (
+        "Arkandaki fotoğraf ya da video sadece arka plan, söylediğin bir kelimede ayrıca çıkmıyor."
     ),
     (
         "Sound effects can't render on your iPhone yet. Ask for this edit without the sound effect."
@@ -367,7 +427,9 @@ def song_captions_refusal(
     from app.pipeline.song_captions import captions_requested, mentions_lipsync  # noqa: PLC0415
 
     asked = captions_requested([creator_text], strategy.caption_style)
-    if not (asked and mentions_lipsync(creator_text)):
+    # The Lip-sync card is itself the lip-sync ask: its creator need not say the word.
+    lipsync_card = getattr(manifest, "chosen_format", None) == "lipsync"
+    if not (asked and (lipsync_card or mentions_lipsync(creator_text))):
         return None
     if getattr(manifest, "has_user_song", False) or getattr(manifest, "has_voiceover", False):
         return None

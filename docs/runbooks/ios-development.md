@@ -247,6 +247,54 @@ Before release, check a real iPhone for preview framing, saved portrait/mirrorin
 audio sync, text absence from saved pixels, and background/audio interruption
 recovery. Simulator success is not evidence for those hardware behaviors.
 
+#### Cinematic recording (KRI-1160)
+
+The camera's capture controls carry a **Cinematic** switch (off by default,
+remembered per device in `UserDefaults` key `teleprompter.cinematic.enabled`).
+It uses Apple's native Cinematic Video capture API
+(`AVCaptureDeviceInput.isCinematicVideoCaptureEnabled`), which needs:
+
+- **iOS 26 or later.** The app's deployment target stays iOS 18; older iOS shows
+  the switch disabled with "Cinematic needs iOS 26 or later. Your takes record
+  in standard mode."
+- **A front camera with a Cinematic format** (`AVCaptureDevice.Format
+  .isCinematicVideoCaptureSupported`). Apple lists Cinematic mode on iPhone 13
+  and later; the app checks the format, not the model name. Without one the
+  switch is disabled and says the take stays standard.
+
+The teleprompter only records the front camera, so the rear cameras are not
+offered. `TeleprompterCinematic.frontCinematicCamera()` prefers a 1080p, 30 fps,
+8-bit format. With the switch off the capture graph is unchanged (the same
+`.builtInWideAngleCamera` and `configure1080p30IfSupported`). When the camera
+refuses Cinematic, or drops it after a graph change, the switch caption says the
+camera is recording in standard mode.
+
+**Why takes are baked.** A Cinematic movie is a sharp video track plus a
+disparity (depth) track and a Cinematic metadata track. Only Apple's apps draw
+the blur from them; AVPlayer, our upload, Gemini analysis and the KriaMediaEngine
+export all see the sharp source. `CinematicTakeFinisher` therefore renders each
+frame with `CNRenderingSession` (Cinematic framework, the focus decisions the
+camera made while filming) into an ordinary HEVC movie with the source's
+orientation transform, colour tags and passthrough audio, verifies it (one video
+track, the source's audio tracks, same length within 0.25 s, not Cinematic), and
+only then replaces the take in place. Review playback, the Photos copy, intake,
+upload and the phone render all read that baked movie, so none of them changed.
+A failed bake keeps the sharp source without the depth tracks (`.standard` on the
+manifest, "Cinematic couldn't be applied to this take" on Review); a failed copy
+keeps the original. A take cut off before baking (crash) is baked when the screen
+restores it. The movie-level Cinematic intent is dropped, so Photos treats the
+baked copy as an ordinary video (its focus cannot be re-edited there).
+
+Proof: `TeleprompterCinematicTests` (unavailable refusal, persistence, standard
+take byte-identical, old manifests decode), the unavailable-switch assertions in
+`TeleprompterUITests.testScriptIsSavedAndCameraFailureKeepsItEditable`, and the
+physical `TeleprompterHardwareUITests.testPhysicalCinematicTake` (Kria Hardware QA
+scheme, same setup as above). Record each physical run here:
+
+| Date | iPhone | iOS | Result |
+| --- | --- | --- | --- |
+| — | iPhone 14 (Yasin) | — | Owed: switch on, take, Review says "Recorded in Cinematic.", blur visible in Review and in the exported edit |
+
 ## Performance gate
 
 Simulator results prove correctness only. Before enabling a local-render
@@ -670,8 +718,14 @@ Both API-URL build-setting queries use the same cached DerivedData directory as
 compilation. Previously these queries resolved packages through Xcode's default,
 uncached directory before the actual cached build began.
 
-The main push gate seeds the shared cache. CI now saves the compiled build as
+The main push gate seeds the shared cache. `ios.yml` saves the compiled build as
 soon as unit tests pass, before UI execution, so this seed is available earlier.
+PR runs in `ci.yml` only restore it and never save their own: the repo cache is
+capped at 10 GB and was full, and each PR push saved ~0.9 GB that only later
+pushes to the same PR could use. On 2026-11-04..06 that churn evicted main's
+fresh seed within 30-46 minutes; 70 of 97 PR iPhone runs compiled cold
+(compilation 13.1 vs 5.0 min median, first build-settings query 2.8 vs 0.7 min),
+and only 6 of 27 hits came from a PR's own earlier save.
 Cache hit/miss and the restored key are shown in the job summary. The key still
 isolates Xcode, runner architecture and project/package configuration; a cache
 hit never bypasses compilation or selected tests.
@@ -1111,3 +1165,44 @@ covers.
   email sheet, largest Dynamic Type reachability, Reduce Motion
   immediacy, error-message announcement). `scripts/ios/ui-test-groups.json`
   maps these sources and tests into the `projects` UI group.
+
+### What's New guide
+
+Settings opens a "What's New" guide (`Features/WhatsNewView.swift`). Its content is
+the typed catalog in `Core/WhatsNewReleases.swift`; the model, ordering and
+visibility rules are in `Core/WhatsNew.swift`. The guide shows verified dates only,
+never a version number, because the app version (`MARKETING_VERSION`) is unrelated
+to the monorepo `VERSION`.
+
+Adding the next update:
+
+1. Add a `WhatsNewRelease` at the top of `WhatsNewReleases.all`. Take its day from the
+   `## [version] - date` header in `CHANGELOG.md`, never from a commit date.
+2. Include only what an iPhone creator can notice. Server-only fixes belong in
+   "Also improved" and only when the fix is flag-free in production.
+3. Gate anything that is not on for every account with a `WhatsNewRequirement`. Add a
+   new case, and read it from the capability the feature itself uses in
+   `WhatsNewAvailability.init(capabilities:memory:)`. A failed read keeps the gate closed.
+4. Quote button and screen names exactly as the code shows them, keep a benefit to two
+   short sentences and a card to four steps, and leave ticket IDs, PR numbers and flag
+   names out. `WhatsNewTests` fails the build on any of these.
+5. Run `KRIA_IOS_TEST_MODE=unit bash scripts/ios/verify.sh`. A new UI test also goes in
+   `scripts/ios/ui-test-groups.json`.
+
+### Upload place hint (item 24)
+
+`UPLOAD_PLACE_HINT_ENABLED` (default `false`) is advertised to the app as the boolean
+capability `upload_place_hint`. When on, the Add media sheet tells a creator that a screen
+recording placed in Footage next to a talking take belongs in Overlays (the visuals pool),
+with a one-tap move. Detection is local and free: preview shape plus screen-recording
+filenames or the Photos screen-recording subtype. No model call, no upload. The key is
+additive (older builds ignore it), so there is no client protocol bump. The move starts the
+overlay first and only then takes the clip out of Footage; a clip still uploading goes through
+`BackgroundUploadCoordinator.withdraw`, which cancels it, or detaches it if its upload finished
+and attached meanwhile (Photos picks use `deselect`), so the file ends in exactly one place.
+`withdraw` and `deselect` decide only once no attach is queued for the project, including
+one that joined while they waited, and an attach re-checks its record after every wait and
+before every post (the retries after a busy server's 429/503 backoff included), so a clip
+cancelled meanwhile is never attached. Off: the sheet is
+unchanged. Apply or roll back: `fly secrets set UPLOAD_PLACE_HINT_ENABLED=true|false -a nova-video`
+and restart the api (workers do not read it).

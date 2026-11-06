@@ -53,6 +53,16 @@ speech on the same main track, back to back after the first speaker, each
 with its own audio, at full length. The first speaker alone carries any
 cleanup cut (``cut_plan``/``keep_segments``) and the KRI-547 face fill. With
 ``additional_speakers=()`` the output is byte-identical.
+
+Insert clips (parent KRI-1151): ``inserts`` pauses the first speaker's take for another clip of the
+creator's own footage. The insert is one more main-track `TimelineClip` (``insert-<n>``) between
+two pieces of the take, with its own audio at volume 1 (muted, volume 0, when the creator asked
+for it silent); the take resumes at the source second it stopped at, and everything after the
+insert -- the rest of the take, the extra speakers, the ending -- starts later by its length.
+The device already plays a different clip between two clips of the same source, so no new
+primitive is needed. Captions, text, cards, effects and cutaways are expressed on the FINAL
+timeline like everywhere else: `app.pipeline.phone_talking_inserts.warp_for_inserts` moves a
+take-timeline set onto it. With ``inserts=()`` the output is byte-identical.
 """
 
 from __future__ import annotations
@@ -60,19 +70,27 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from app.kria.portable_visual import VisualMediaPlacement
+from app.kria.portable_speaker_background import (
+    SpeakerBackgroundFocus,
+    SpeakerBackgroundLayer,
+    SpeakerBackgroundWindow,
+    SpeakerFrame,
+    SpeakerFullScreenWindow,
+)
+from app.kria.portable_visual import AudioMuteWindow, VisualMediaPlacement
 from app.kria.recipes import (
     AssetFingerprint,
     AudioMixRecipe,
     Canvas,
     MediaAsset,
     MediaSize,
+    MediaTransform,
     TimelineClip,
     TimelineTrack,
 )
-from app.kria.recipes_v2 import EditRecipeV2
+from app.kria.recipes_v2 import MAX_TIMELINE_S, EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest
 from app.pipeline.canvas import LANDSCAPE
 from app.pipeline.phone_captions import (
@@ -82,19 +100,25 @@ from app.pipeline.phone_captions import (
 )
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_recipe_shared import (
+    clip_tilt_fields,
     display_dims,
     face_fill_transform,
     fit_transform,
     landscape_fit_from_recipe,  # noqa: F401 - re-export, moved to phone_recipe_shared (KRI-285)
+    register_backdrop_visuals,
     snap_text_overshoot,
 )
 from app.pipeline.phone_subtitled_lanes import (
     CAPTION_BAND_TOP_FRAC,
+    MIN_BACKGROUND_WINDOW_S,
     PhoneSubtitledLanes,
     ResolvedSoundEffect,
+    SubtitledBackground,
+    SubtitledBackgroundFocus,
     SubtitledEndingClip,
     SubtitledOverlayCard,
     _lane_error,
+    strip_unsupported_background,
 )
 from app.pipeline.silence_cut import CutPlan
 from app.services.phone_sources import (
@@ -166,6 +190,11 @@ _MIN_TEXT_LAYER_S = 1 / 30
 # ``subtitled-overlays`` (same ``order`` range, later track) always draws on
 # top of a cutaway, never under it.
 CUTAWAY_TRACK_ID = "talking-head-cutaways"
+# KRI-1151: the `audio` track that plays a sound cutaway's own file while the speaker is
+# muted under it (the same audio-track-from-a-video-asset shape the speech-excerpt montage
+# uses, so the device needs nothing new).
+CUTAWAY_AUDIO_TRACK_ID = "talking-head-cutaway-audio"
+CUTAWAY_SOUND_CLIP_PREFIX = "cutaway-sound-"
 # Mirrors `talking_head_assembler._MIN_WINDOW_S`: a shorter cutaway reads as
 # a flicker, not a cut.
 _MIN_CUTAWAY_S = 0.5
@@ -175,7 +204,9 @@ class PhoneCutaway(BaseModel):
     """One multi-clip Talking-head cutaway (KRI-136): ``binding``'s picture
     replaces the speaker's between ``start_s`` and ``end_s`` (final timeline
     seconds -- the CUT timeline when a speech-cleanup cut applies), reading
-    the cutaway clip from ``source_start_s``. Its audio is never heard."""
+    the cutaway clip from ``source_start_s``. Its audio is never heard unless ``sound``
+    (KRI-1151): then the cutaway's own file plays for the window and the speaker is muted
+    under it."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
@@ -183,12 +214,38 @@ class PhoneCutaway(BaseModel):
     source_start_s: float = Field(default=0.0, ge=0)
     start_s: float = Field(ge=0, le=1800)
     end_s: float = Field(gt=0, le=1800)
+    sound: bool = False
 
     @model_validator(mode="after")
     def _window(self) -> PhoneCutaway:
         if self.end_s <= self.start_s:
             raise ValueError("cutaway window must have positive duration")
         return self
+
+
+# Parent KRI-1151: the most clips a Talking edit pauses its take for. Not a taste limit: it is the
+# size the planner, the sentence check and the recipe are built and tested for, and it is stated
+# to the creator when an ask goes past it.
+MAX_INSERT_CLIPS = 20
+INSERT_CLIP_PREFIX = "insert-"
+# The microsecond grid drifts by a fraction of a microsecond per segment; a piece shorter than
+# this is that drift, never speech.
+_GRID_TOL_S = 1e-4
+# A speaker clip beside an insert shorter than this (one frame at 30 fps) is not worth playing.
+_MIN_SPEAKER_PIECE_S = 1 / 30
+
+
+class PhoneInsert(BaseModel):
+    """One clip that plays while the first speaker's take is paused (parent KRI-1151):
+    ``binding``'s whole clip, from its start, at ``at_take_s`` on the TAKE timeline -- the
+    first speaker's (possibly cut) seconds, with no insert counted. Its own audio plays at
+    full volume unless ``keep_audio`` is False."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+    binding: PhoneSourceBinding
+    at_take_s: float = Field(ge=0, le=1800)
+    keep_audio: bool = True
 
 
 def compile_phone_subtitled_plan(
@@ -209,8 +266,23 @@ def compile_phone_subtitled_plan(
     speaker_position_x: float | None = None,
     additional_speakers: tuple[PhoneSourceBinding, ...] = (),
     output_orientation: Literal["portrait", "landscape"] = "portrait",
+    clip_tilts: Mapping[str, Any] | None = None,
+    strategy: Mapping[str, Any] | None = None,
+    requirements: Sequence[Any] = (),
+    inserts: tuple[PhoneInsert, ...] = (),
+    background_focus_open: bool | None = None,
 ) -> EditRecipeV2:
     """Compile the subtitled edit format's phone recipe.
+
+    ``strategy`` / ``requirements`` (KRI-1097 wave 2) are the approved plan and the live asks
+    of its brief: the title rows in ``text_elements`` enter the way they ask
+    (`phone_subtitled_title.talking_title_entrances`, behind
+    ``TALKING_HEAD_ROUTE_FOLLOWS_PROMPT_ENABLED``). ``None`` (an editor Save, which compiles the
+    rows as saved) leaves ``text_elements`` as given.
+
+    ``clip_tilts`` (KRI-1136) maps a main-track clip id (``clip-<n>`` for the speaker's
+    kept segments, ``speaker-<n>`` for an extra speaker) to its tilt row value; an id with
+    none compiles upright, byte-identical to before.
 
     ``bindings`` follows the same one-binding-per-clip contract as
     `compile_phone_voiceover_montage_plan`/`compile_phone_guided_plan`, but subtitled is
@@ -260,6 +332,17 @@ def compile_phone_subtitled_plan(
         SAME main video track right after the speaker clip, extending the
         recipe's own duration. Muted (``volume=0``) by default; the creator's
         "with its own sound" ask (KRI-841) sets ``SubtitledEndingClip.volume``.
+      - ``lanes.background`` (KRI-1117): one pinned Visuals-pool photo or video
+        behind the speaker's person mask for the whole edit, compiled into
+        ``EditRecipeV2.speaker_background`` (no timeline clip; the phone composites
+        it). Stripped first while the phone gate is closed
+        (`strip_unsupported_background`), so a closed gate is byte-identical to a
+        request that never asked. A missing or unplayable asset raises
+        ``SubtitledLaneError`` for the ``background`` lane. KRI-1162: its ``windows``
+        pin their own visuals the same way (``visuals`` must hold every one; see
+        `phone_subtitled_lanes.background_media_refs`), are clipped to the compiled edit
+        (a window starting at or past the end is dropped, one overrunning it is
+        shortened), and ``speaker_frame`` is emitted as ``SpeakerBackgroundLayer.speaker_frame``.
 
     ``duck_sfx_under_speech`` (default ``False``, from
     ``settings.phone_sfx_speech_duck_enabled``) scales the volume of every
@@ -362,6 +445,7 @@ def compile_phone_subtitled_plan(
     """
     if output_orientation not in ("portrait", "landscape"):
         raise ValueError(f"unknown output_orientation {output_orientation!r}")
+    lanes = strip_unsupported_background(lanes)
     is_landscape = output_orientation == "landscape"
     canvas = _LANDSCAPE_STORY_CANVAS if is_landscape else _STORY_CANVAS
     if is_landscape:
@@ -423,23 +507,108 @@ def compile_phone_subtitled_plan(
     manifest: dict[str, object] = {asset.id: asset}
     main_clips: list[TimelineClip] = []
     cursor = 0.0
-    for index, (seg_start, seg_end) in enumerate(resolved_keep_segments):
-        seg_duration = seg_end - seg_start
-        if seg_duration <= 0:
-            continue
+    ordered_inserts = _validated_inserts(
+        inserts,
+        speaker_media_id=binding.media_id,
+        extra_media_ids=[extra.media_id for extra in additional_speakers],
+        take_s=sum(max(0.0, end - start) for start, end in resolved_keep_segments),
+        seams=take_seams(resolved_keep_segments),
+    )
+    insert_queue = list(ordered_inserts)
+
+    # With an insert every time on the speaker's track sits on a microsecond grid, so the
+    # recompile of a saved recipe (which reads these numbers back) lands on the same bits.
+    # Without one nothing is rounded: the output stays byte-identical.
+    def grid(value: float) -> float:
+        return round(value, 6) if ordered_inserts else value
+
+    take_cursor = 0.0
+    id_offset = 0
+
+    def _emit_insert(insert: PhoneInsert) -> None:
+        nonlocal cursor
+        insert_original = insert.binding.original
+        insert_asset = insert.binding.render_asset()
+        manifest[insert_asset.id] = insert_asset
+        assets[insert_asset.id] = MediaAsset(
+            id=insert_asset.id,
+            relative_path=insert_asset.id,
+            fingerprint=AssetFingerprint(
+                hex=insert_original.sha256, byte_count=insert_original.byte_count
+            ),
+            duration=insert_original.duration_s,
+            natural_size=MediaSize(width=insert_original.width, height=insert_original.height),
+            orientation_degrees=insert_original.orientation_degrees,
+            is_proxy_available=True,
+        )
+        insert_width, insert_height = _display_dims(insert_original)
+        insert_duration = grid(float(insert_original.duration_s))
         main_clips.append(
             TimelineClip(
-                id=f"clip-{index}",
-                source_asset_id=asset.id,
-                source_start=seg_start,
-                source_duration=seg_duration,
+                id=f"{INSERT_CLIP_PREFIX}{len(ordered_inserts) - len(insert_queue) - 1}",
+                source_asset_id=insert_asset.id,
+                source_start=0.0,
+                source_duration=insert_duration,
                 timeline_start=cursor,
                 rate=1.0,
-                transform=speaker_transform,
+                transform=fit_transform(insert_width, insert_height, canvas, landscape_fit),
+                volume=1 if insert.keep_audio else 0,
             )
         )
-        cursor += seg_duration
-    seen_speakers = {binding.media_id}
+        cursor = grid(cursor + insert_duration)
+
+    for index, (seg_start, seg_end) in enumerate(resolved_keep_segments):
+        seg_start, seg_end = grid(seg_start), grid(seg_end)
+        seg_duration = grid(seg_end - seg_start)
+        if seg_duration <= 0:
+            continue
+        piece_start = seg_start
+        remaining = seg_duration
+        while True:
+            # An insert inside this segment splits it: the take plays up to the insert point,
+            # the insert plays, and the rest of the segment resumes from the second it stopped.
+            if insert_queue and insert_queue[0].at_take_s < take_cursor + remaining - _GRID_TOL_S:
+                before = grid(insert_queue[0].at_take_s - take_cursor)
+                if before > _GRID_TOL_S:
+                    main_clips.append(
+                        _speaker_piece(
+                            f"clip-{index + id_offset}",
+                            asset.id,
+                            piece_start,
+                            before,
+                            cursor,
+                            speaker_transform,
+                            clip_tilts,
+                        )
+                    )
+                    cursor = grid(cursor + before)
+                    take_cursor = grid(take_cursor + before)
+                    piece_start = grid(piece_start + before)
+                    remaining = grid(remaining - before)
+                    id_offset += 1
+                _emit_insert(insert_queue.pop(0))
+                continue
+            main_clips.append(
+                _speaker_piece(
+                    f"clip-{index + id_offset}",
+                    asset.id,
+                    piece_start,
+                    remaining,
+                    cursor,
+                    speaker_transform,
+                    clip_tilts,
+                )
+            )
+            cursor = grid(cursor + remaining)
+            take_cursor = grid(take_cursor + remaining)
+            break
+        while insert_queue and abs(insert_queue[0].at_take_s - take_cursor) <= _GRID_TOL_S:
+            _emit_insert(insert_queue.pop(0))
+    # Whatever is left sits at the end of the take (the validation guarantees no point is past
+    # it): the grid's rounding must never strand one.
+    while insert_queue:
+        _emit_insert(insert_queue.pop(0))
+    seen_speakers = {binding.media_id} | {i.binding.media_id for i in ordered_inserts}
     for extra_index, extra in enumerate(additional_speakers):
         extra_original = extra.original
         if extra.media_id in seen_speakers:
@@ -468,22 +637,41 @@ def compile_phone_subtitled_plan(
         extra_duration = float(extra_original.duration_s)
         if extra_duration <= 0:
             continue
+        extra_id = f"speaker-{extra_index + 1}"
+        extra_transform = fit_transform(extra_width, extra_height, canvas, landscape_fit)
+        tilt_patch, backdrop = clip_tilt_fields(
+            {"tilt": (clip_tilts or {}).get(extra_id)}, fit_scale=extra_transform.scale
+        )
         main_clips.append(
             TimelineClip(
-                id=f"speaker-{extra_index + 1}",
+                id=extra_id,
                 source_asset_id=extra_asset.id,
                 source_start=0.0,
                 source_duration=extra_duration,
                 timeline_start=cursor,
                 rate=1.0,
-                transform=fit_transform(extra_width, extra_height, canvas, landscape_fit),
+                transform=extra_transform.model_copy(update=tilt_patch),
+                backdrop=backdrop,
             )
         )
         cursor += extra_duration
     speaker_end = cursor
-    from app.services.phone_text_styling import register_generation_timeline
+    from app.services.phone_text_styling import (
+        register_generation_background,
+        register_generation_timeline,
+    )
 
     register_generation_timeline(main_clips)
+    # Green 5: what is behind the captions, before their colour is chosen below. Qendresa item 18:
+    # aimed as the recipe will aim it, with the same resolver (the gate is asked once).
+    background_lane = lanes.background if lanes is not None else None
+    focus_resolver = (
+        _FocusResolver(visuals, canvas, open_=background_focus_open)
+        if background_lane is not None
+        else None
+    )
+    register_generation_background(background_lane, canvas=canvas, focus_for=focus_resolver)
+    register_backdrop_visuals(main_clips, visuals=visuals, assets=assets, manifest=manifest)
 
     try:
         layers = compile_caption_layers(
@@ -498,6 +686,7 @@ def compile_phone_subtitled_plan(
         raise
     except Exception as exc:  # noqa: BLE001 - untrusted transcript/edited cue content
         raise UnsupportedPhonePlan(f"unable to compile captions: {exc}") from exc
+    caption_layer_ids = {layer.id for layer in layers}
 
     for font_id, font_asset in caption_font_assets(layers).items():
         manifest[font_id] = font_asset
@@ -515,6 +704,9 @@ def compile_phone_subtitled_plan(
     )
     if any(layer.effect not in {"static", "none"} for layer in layers):
         required_capabilities |= {"animatedText"}
+    if any(not insert.keep_audio for insert in ordered_inserts):
+        # A silent insert is a main-track clip at volume 0; the device derives `audioMix` from it.
+        required_capabilities |= {"audioMix"}
 
     # `timeline_end` grows to include the ending clip, if any, BEFORE the sfx
     # lane is compiled -- an sfx clip is allowed to play under the ending
@@ -537,6 +729,14 @@ def compile_phone_subtitled_plan(
         timeline_end = speaker_end + ending_duration
         required_capabilities |= {"visualVideos", "audioMix"}
 
+    if strategy is not None and text_elements:
+        from app.pipeline.phone_subtitled_title import talking_title_entrances  # noqa: PLC0415
+
+        text_elements = talking_title_entrances(
+            text_elements,
+            title_animation=strategy.get("title_animation"),
+            requirements=requirements,
+        )
     if text_elements:
         text_layers = _compile_text_lane(
             text_elements,
@@ -567,8 +767,10 @@ def compile_phone_subtitled_plan(
 
     tracks = [TimelineTrack(id="subtitled", kind="video", clips=main_clips)]
 
+    mute_windows: list[AudioMuteWindow] = []
+    cutaway_sound = TimelineTrack(id=CUTAWAY_AUDIO_TRACK_ID, kind="audio", clips=[])
     if cutaways:
-        cutaway_track = _compile_cutaway_track(
+        cutaway_track, cutaway_sound = _compile_cutaway_track(
             cutaways,
             speaker_media_ids=frozenset(seen_speakers),
             speaker_end=speaker_end,
@@ -577,6 +779,9 @@ def compile_phone_subtitled_plan(
         )
         if cutaway_track.clips:
             tracks.append(cutaway_track)
+            if cutaway_sound.clips:
+                mute_windows = _cutaway_mute_windows(cutaway_sound, main_clips)
+                layers = _without_muted_captions(layers, caption_layer_ids, mute_windows)
             # Native derives `alphaOverlay` from every non-empty overlay
             # track, including opaque full-frame Talking-head cutaways. Keep
             # the server declaration aligned so a device never routes cloud
@@ -657,15 +862,414 @@ def compile_phone_subtitled_plan(
             tracks.append(sfx_track)
             required_capabilities |= {"soundEffects", "audioMix"}
 
-    return EditRecipeV2(
-        canvas=canvas,
-        assets=list(assets.values()),
-        asset_manifest=RenderAssetManifest(assets=tuple(manifest.values())),
-        tracks=tracks,
-        text_layers=layers,
-        audio=AudioMixRecipe(original_volume=1.0),
-        required_capabilities=required_capabilities,
+    if mute_windows:
+        # After every picture and sfx track, so the visual draw order is the one a
+        # soundless cutaway recipe has.
+        tracks.append(cutaway_sound)
+
+    speaker_background: SpeakerBackgroundLayer | None = None
+    if lanes is not None and lanes.background is not None:
+        try:
+            speaker_background = _compile_background(
+                lanes.background,
+                visuals=visuals,
+                assets=assets,
+                manifest=manifest,
+                timeline_duration_s=timeline_end,
+                canvas=canvas,
+                focus_open=background_focus_open,
+                focus_resolver=focus_resolver,
+            )
+        except UnsupportedPhonePlan:
+            raise
+        except Exception as exc:  # noqa: BLE001 - untrusted lane content
+            raise _lane_error("background", str(exc), capability="speakerBackground") from exc
+
+    try:
+        return EditRecipeV2(
+            canvas=canvas,
+            assets=list(assets.values()),
+            asset_manifest=RenderAssetManifest(assets=tuple(manifest.values())),
+            tracks=tracks,
+            text_layers=layers,
+            audio=AudioMixRecipe(original_volume=1.0, mute_windows=mute_windows),
+            required_capabilities=required_capabilities,
+            # `None` is omitted from the recipe wire, so a recipe without a background
+            # keeps its exact bytes and digest.
+            speaker_background=speaker_background,
+        )
+    except ValidationError as exc:
+        # A recipe the device refuses is a plan defect, said in words: left as a pydantic error
+        # it was read as our bug, retried, and ended as a generic failure nobody explained.
+        if any("time budget" in str(error.get("msg", "")) for error in exc.errors()):
+            end_s = max(
+                (c.timeline_start + c.source_duration / c.rate for t in tracks for c in t.clips),
+                default=0.0,
+            )
+            raise UnsupportedPhonePlan(
+                f"the finished video would be {end_s / 60:.0f} minutes long and the iPhone builds "
+                f"at most {MAX_TIMELINE_S // 60} minutes"
+            ) from exc
+        raise UnsupportedPhonePlan(
+            "the edit is not a recipe the iPhone can build: "
+            + "; ".join(str(error.get("msg", "")) for error in exc.errors()[:3])
+        ) from exc
+
+
+def _speaker_piece(
+    clip_id: str,
+    asset_id: str,
+    source_start: float,
+    duration: float,
+    timeline_start: float,
+    transform: MediaTransform,
+    clip_tilts: Mapping[str, Any] | None,
+) -> TimelineClip:
+    tilt_patch, backdrop = clip_tilt_fields(
+        {"tilt": (clip_tilts or {}).get(clip_id)}, fit_scale=transform.scale
     )
+    return TimelineClip(
+        id=clip_id,
+        source_asset_id=asset_id,
+        source_start=source_start,
+        source_duration=duration,
+        timeline_start=timeline_start,
+        rate=1.0,
+        transform=transform.model_copy(update=tilt_patch),
+        backdrop=backdrop,
+    )
+
+
+def _validated_inserts(
+    inserts: tuple[PhoneInsert, ...],
+    *,
+    speaker_media_id: str,
+    extra_media_ids: Sequence[str],
+    take_s: float,
+    seams: Sequence[float] = (),
+) -> tuple[PhoneInsert, ...]:
+    """``inserts`` in take order, or `UnsupportedPhonePlan` naming what cannot be played.
+
+    Only what the engine cannot play is refused: too many, a clip that plays twice or is not a
+    video or is over five minutes, a point outside the take. A point at the very start or end of
+    the take, next to another insert or at the same instant as one is played as asked (clips
+    at one instant play one after the other, in the order given). A point within
+    `_MIN_SPEAKER_PIECE_S` of a cut seam in the take moves onto the seam: the other way it would
+    leave a speaker clip of a few milliseconds beside the insert."""
+    if not inserts:
+        return ()
+    if len(inserts) > MAX_INSERT_CLIPS:
+        raise UnsupportedPhonePlan(
+            f"a Talking edit can pause its take for at most {MAX_INSERT_CLIPS} clips"
+        )
+    ordered = tuple(sorted(inserts, key=lambda i: i.at_take_s))
+    seen = {speaker_media_id, *extra_media_ids}
+    for insert in ordered:
+        original = insert.binding.original
+        if insert.binding.media_id in seen:
+            raise UnsupportedPhonePlan("a Talking clip cannot play twice")
+        seen.add(insert.binding.media_id)
+        if original.width is None or original.height is None:
+            raise UnsupportedPhonePlan("an inserted Talking clip must be a video")
+        if original.duration_s <= 0 or original.duration_s > _MAX_CLIP_DURATION_S:
+            raise UnsupportedPhonePlan("an inserted Talking clip must be at most 5 minutes")
+        if insert.at_take_s > take_s + _MIN_SPEAKER_PIECE_S:
+            raise UnsupportedPhonePlan("an insert must fall inside the take")
+    # The start and the end of the take are seams too: a point a hair from either leaves no
+    # speaker clip of a few milliseconds before or after the insert.
+    edges = (0.0, *seams, take_s)
+    snapped = [_onto_seam(insert, edges) for insert in ordered]
+    # Two points closer than one frame are one instant (they play one after the other), so
+    # no speaker clip of a few milliseconds sits between them.
+    out: list[PhoneInsert] = []
+    for insert in snapped:
+        if out and 0 < insert.at_take_s - out[-1].at_take_s < _MIN_SPEAKER_PIECE_S:
+            insert = insert.model_copy(update={"at_take_s": out[-1].at_take_s})
+        out.append(insert)
+    return tuple(out)
+
+
+def take_seams(keep_segments: Sequence[tuple[float, float]]) -> list[float]:
+    """Take-timeline seconds where one kept segment ends and the next begins."""
+    seams: list[float] = []
+    total = 0.0
+    for start, end in keep_segments[:-1]:
+        total += max(0.0, end - start)
+        seams.append(total)
+    return seams
+
+
+def _onto_seam(insert: PhoneInsert, seams: Sequence[float]) -> PhoneInsert:
+    near = min(seams, key=lambda seam: abs(seam - insert.at_take_s), default=None)
+    if near is None or abs(near - insert.at_take_s) > _MIN_SPEAKER_PIECE_S:
+        return insert
+    return insert.model_copy(update={"at_take_s": near})
+
+
+def _compile_background(
+    background: SubtitledBackground,
+    *,
+    visuals: tuple[PhoneVisualBinding, ...],
+    assets: dict[str, MediaAsset],
+    manifest: dict[str, object],
+    timeline_duration_s: float | None = None,
+    canvas: Canvas = _STORY_CANVAS,
+    focus_open: bool | None = None,
+    focus_resolver: _FocusResolver | None = None,
+) -> SpeakerBackgroundLayer:
+    """The recipe layer for the background, pinning its visuals (KRI-1117, S9; KRI-1162).
+
+    The fill is held for the whole edit when a photo; a video loops from
+    ``source_start_s``. A video with no playable footage from that start (zero or
+    unreadable duration, or a start at or past the end) fails the lane at compile time
+    instead of mid-render. Every window pins its own visual with the same checks (S30);
+    the same photo may fill and open (one manifest entry). Windows are clipped to
+    ``timeline_duration_s`` (the compiled edit): one starting at or past it is dropped,
+    one overrunning it is shortened (S39). KRI-1173: a colour fill pins nothing and the
+    layer carries ``color`` instead of an asset id; windows over it pin as above (S52).
+
+    Qendresa item 18: the fill and each window may be aimed at the readable text of their
+    recording (`_FocusResolver`); ``canvas`` is the recipe canvas the picture is cover-fitted
+    to. ``focus_open`` is the caller's gate decision for the build that will draw the recipe (the
+    worker passes `background_focus_planned_for(<the approving build's stamped protocol>)`);
+    None asks the rollout gate in this context. ``focus_resolver`` is the compile's shared one (the
+    caption colour already used it, so the gate is not asked again).
+    """
+    focus_for = focus_resolver or _FocusResolver(visuals, canvas, open_=focus_open)
+    # KRI-1173: a colour fill names no pool media -- nothing to pin, no manifest entry.
+    fill_asset_id: str | None = None
+    fill_focus: SpeakerBackgroundFocus | None = None
+    if not background.uses_color:
+        fill_asset_id = _pin_background_visual(
+            media_id=background.media_id,
+            path=background.gcs_path,
+            generation=background.generation,
+            kind=background.kind,
+            source_start_s=background.source_start_s,
+            visuals=visuals,
+            assets=assets,
+            manifest=manifest,
+        )
+        fill_focus = focus_for(background.media_id, background.focus)
+    windows: list[SpeakerBackgroundWindow] = []
+    for window in background.windows:
+        # Pin every window first (a missing/unplayable one fails the lane even when its
+        # span is later clipped away), then clip to the edit.
+        window_asset_id = _pin_background_visual(
+            media_id=window.media_id,
+            path=window.gcs_path,
+            generation=window.generation,
+            kind=window.kind,
+            source_start_s=window.source_start_s,
+            visuals=visuals,
+            assets=assets,
+            manifest=manifest,
+        )
+        start = window.start_s
+        end = window.end_s
+        if timeline_duration_s is not None:
+            if start >= timeline_duration_s - 1e-6:
+                continue
+            end = min(end, timeline_duration_s)
+        if end - start < MIN_BACKGROUND_WINDOW_S - 1e-9:
+            continue
+        windows.append(
+            SpeakerBackgroundWindow(
+                asset_id=window_asset_id,
+                media_kind=window.kind,
+                source_start=window.source_start_s if window.kind == "video" else 0.0,
+                start=start,
+                end=end,
+                focus=focus_for(window.media_id, window.focus),
+            )
+        )
+    asked_fill_focus = not background.uses_color and background.focus is not None
+    asked_windows = sum(1 for window in background.windows if window.focus is not None)
+    if (asked_fill_focus or asked_windows) and not focus_for.is_open():
+        # Qendresa item 18: the lane asked for an aim but the build that will draw this recipe
+        # cannot (or the gate is closed): the aim is dropped here -- say so, once per compile.
+        from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+            BACKGROUND_FOCUS_FALLBACK_EVENT,
+            _trace_background_fallback,
+        )
+
+        _trace_background_fallback(
+            BACKGROUND_FOCUS_FALLBACK_EVENT,
+            {
+                "reason": "focus_gate_closed_for_build",
+                "window_count": asked_windows,
+                "had_fill_focus": asked_fill_focus,
+            },
+        )
+    # Qendresa item 16: the full-screen spans pin nothing; clip them to the edit like windows.
+    full_screen: list[SpeakerFullScreenWindow] = []
+    for span in background.full_screen_windows:
+        start = span.start_s
+        end = span.end_s
+        if timeline_duration_s is not None:
+            if start >= timeline_duration_s - 1e-6:
+                continue
+            end = min(end, timeline_duration_s)
+        if end - start < MIN_BACKGROUND_WINDOW_S - 1e-9:
+            continue
+        full_screen.append(SpeakerFullScreenWindow(start=start, end=end))
+    frame = background.speaker_frame
+    fill: dict[str, Any] = (
+        {"media_kind": "color", "color": background.color}
+        if background.uses_color
+        else {"asset_id": fill_asset_id, "media_kind": background.kind}
+    )
+    return SpeakerBackgroundLayer(
+        **fill,
+        source_start=background.source_start_s if background.kind == "video" else 0.0,
+        windows=windows or None,
+        full_screen_windows=full_screen or None,
+        focus=fill_focus,
+        speaker_frame=(
+            SpeakerFrame(
+                width_fraction=frame.width_fraction,
+                x_fraction=frame.x_fraction,
+                y_fraction=frame.y_fraction,
+            )
+            if frame is not None
+            else None
+        ),
+    )
+
+
+class _FocusResolver:
+    """Qendresa item 18: the recipe focus of one background picture, or None.
+
+    Lane parts win (``x`` / ``zoom``; ``y`` is the lane's); a missing part comes from the
+    measure on the bound visual (``visual.text_column``, set in memory by the bind step, read
+    with ``getattr`` so a binding without it simply has none) via `focus_for_text_column` on
+    the recipe canvas; else today's 0.5 / 1.0. No lane focus and no measure -> None. Exactly
+    today's drawing (0.5, 0.5, 1.0) -> None. The rollout gate is asked at most once per compile
+    and only when there is something to write; closed, the lane's own focus is dropped too so the
+    recipe equals one that never asked.
+
+    The gate must know which app build will draw the recipe (F1: an older build refuses the
+    whole layer). A caller that knows it passes ``open_``; otherwise the gate checks the client
+    whenever this context has one -- an HTTP request, or a worker that bound the sending build --
+    instead of only inside a request.
+    """
+
+    def __init__(
+        self,
+        visuals: tuple[PhoneVisualBinding, ...],
+        canvas: Canvas,
+        *,
+        open_: bool | None = None,
+    ) -> None:
+        self._visuals = {visual.media_id: visual for visual in visuals}
+        self._canvas = canvas
+        self._open: bool | None = open_
+
+    def _gate_open(self) -> bool:
+        if self._open is None:
+            from app.services import phone_rollout  # noqa: PLC0415
+            from app.services.client_protocol import (  # noqa: PLC0415
+                current_client_protocol,
+                in_http_request,
+            )
+
+            require_client = in_http_request() or current_client_protocol() is not None
+            reason = phone_rollout.background_focus_unavailable_reason(
+                require_client=require_client
+            )
+            self._open = reason is None
+        return self._open
+
+    def is_open(self) -> bool:
+        return self._gate_open()
+
+    def __call__(
+        self, media_id: str | None, lane: SubtitledBackgroundFocus | None
+    ) -> SpeakerBackgroundFocus | None:
+        column = getattr(self._visuals.get(media_id or ""), "text_column", None)
+        if lane is None and column is None:
+            return None
+        if not self._gate_open():
+            return None
+        auto = None
+        if column is not None and column.source_width and column.source_height:
+            from app.services.background_text_focus import focus_for_text_column  # noqa: PLC0415
+
+            auto = focus_for_text_column(
+                column,
+                source_w=column.source_width,
+                source_h=column.source_height,
+                canvas_w=self._canvas.width,
+                canvas_h=self._canvas.height,
+            )
+        if lane is None and auto is None:
+            return None
+        x = lane.x if lane is not None and lane.x is not None else (auto.x if auto else 0.5)
+        zoom = (
+            lane.zoom
+            if lane is not None and lane.zoom is not None
+            else (auto.zoom if auto else 1.0)
+        )
+        y = lane.y if lane is not None else (auto.y if auto else 0.5)
+        if (x, y, zoom) == (0.5, 0.5, 1.0):
+            return None
+        return SpeakerBackgroundFocus(x=x, y=y, zoom=zoom)
+
+
+def _pin_background_visual(
+    *,
+    media_id: str,
+    path: str,
+    generation: str,
+    kind: str,
+    source_start_s: float,
+    visuals: tuple[PhoneVisualBinding, ...],
+    assets: dict[str, MediaAsset],
+    manifest: dict[str, object],
+) -> str:
+    """Pin one background visual (fill or window) into the manifest; returns its asset id."""
+    try:
+        visual = require_bound_visual(
+            visuals,
+            media_id=media_id,
+            path=path,
+            generation=generation,
+        )
+    except ValueError as exc:
+        raise _lane_error("background", str(exc), capability="speakerBackground") from exc
+    if visual.kind != kind:
+        raise _lane_error(
+            "background",
+            f"background asks for a {kind} but the pinned visual is a {visual.kind}",
+            capability="speakerBackground",
+        )
+    media_asset: MediaAsset
+    if visual.kind == "video":
+        duration = visual.duration_s or 0.0
+        if duration <= 0 or source_start_s >= duration:
+            raise _lane_error(
+                "background",
+                "no playable footage remains from the background's start",
+                capability="speakerBackground",
+            )
+        media_asset = MediaAsset(
+            id=f"visual-{visual.media_id}",
+            relative_path=f"visual-{visual.media_id}",
+            fingerprint=AssetFingerprint(hex=visual.sha256, byte_count=visual.byte_count),
+            duration=duration if duration <= 1800 else None,
+            natural_size=MediaSize(width=visual.width or 1, height=visual.height or 1),
+            orientation_degrees=visual.orientation_degrees,
+        )
+    else:
+        media_asset = MediaAsset(
+            id=f"visual-{visual.media_id}",
+            relative_path=f"visual-{visual.media_id}",
+            fingerprint=AssetFingerprint(hex=visual.sha256, byte_count=visual.byte_count),
+        )
+    render_asset = visual.render_asset()
+    manifest[render_asset.id] = render_asset
+    assets[render_asset.id] = media_asset
+    return render_asset.id
 
 
 def _compile_text_lane(
@@ -834,7 +1438,8 @@ def _card_placement(
     canvas: Canvas,
 ) -> tuple[float, float, float]:
     """``(width_fraction, x_fraction, y_fraction)`` for a pip card."""
-    y_frac = min(card.y_frac, CAPTION_BAND_TOP_FRAC)
+    # Item 15: a card the layout placed clear of the drawn captions keeps its own y.
+    y_frac = card.y_frac if card.caption_clear else min(card.y_frac, CAPTION_BAND_TOP_FRAC)
     if canvas.width <= canvas.height:
         return card.scale, card.x_frac, y_frac
     return _contain_card_in_canvas(
@@ -920,6 +1525,7 @@ def _compile_overlay_track(
                 source_duration=window_end - window_start,
                 timeline_start=window_start,
                 rate=1,
+                transform=MediaTransform(rotation_degrees=card.rotation_deg),
                 volume=0,
                 visual_placement=VisualMediaPlacement(
                     order=order,
@@ -1097,6 +1703,7 @@ def _compile_video_overlay_clip(
         source_duration=source_duration,
         timeline_start=window_start,
         rate=1,
+        transform=MediaTransform(rotation_degrees=card.rotation_deg),
         volume=0,
         visual_placement=VisualMediaPlacement(
             order=order,
@@ -1118,9 +1725,10 @@ def _compile_cutaway_track(
     speaker_end: float,
     assets: dict[str, MediaAsset],
     manifest: dict[str, object],
-) -> TimelineTrack:
+) -> tuple[TimelineTrack, TimelineTrack]:
     """Compile KRI-136 cutaways onto the muted, full-frame `CUTAWAY_TRACK_ID`
-    overlay track.
+    overlay track, and (KRI-1151) every ``sound`` cutaway's own audio onto the
+    `CUTAWAY_AUDIO_TRACK_ID` audio track (empty when none asks for sound).
 
     Each window is clamped to the speaker's own timeline (a cutaway never
     extends the video -- the speech is the spine), and shortened to the
@@ -1128,9 +1736,11 @@ def _compile_cutaway_track(
     freezes a clip; the speaker simply shows through again, like the cloud
     `eof_action=pass`). A window left shorter than `_MIN_CUTAWAY_S` is
     dropped. Rejects (`UnsupportedPhonePlan`) a cutaway over the speaker clip
-    itself, a non-video cutaway, or two overlapping windows.
+    itself, a non-video cutaway, a sound cutaway whose file has no audio, or two
+    overlapping windows.
     """
     clips: list[TimelineClip] = []
+    sound_clips: list[TimelineClip] = []
     previous_end = 0.0
     for index, cutaway in enumerate(sorted(cutaways, key=lambda c: (c.start_s, c.end_s))):
         cut_binding = cutaway.binding
@@ -1141,6 +1751,8 @@ def _compile_cutaway_track(
             raise UnsupportedPhonePlan("a Talking-head cutaway requires a video clip")
         if cutaway.start_s < previous_end - 1e-6:
             raise UnsupportedPhonePlan("Talking-head cutaways must not overlap")
+        if cutaway.sound and original.has_audio is False:
+            raise UnsupportedPhonePlan("a Talking-head cutaway with no sound has none to play")
         window_start = cutaway.start_s
         window_end = min(cutaway.end_s, speaker_end)
         available = float(original.duration_s) - cutaway.source_start_s
@@ -1174,8 +1786,59 @@ def _compile_cutaway_track(
                 ),
             )
         )
+        if cutaway.sound:
+            sound_clips.append(
+                TimelineClip(
+                    id=f"{CUTAWAY_SOUND_CLIP_PREFIX}{index}",
+                    source_asset_id=asset.id,
+                    source_start=cutaway.source_start_s,
+                    source_duration=window_end - window_start,
+                    timeline_start=window_start,
+                    rate=1,
+                )
+            )
         previous_end = window_end
-    return TimelineTrack(id=CUTAWAY_TRACK_ID, kind="overlay", clips=clips)
+    return (
+        TimelineTrack(id=CUTAWAY_TRACK_ID, kind="overlay", clips=clips),
+        TimelineTrack(id=CUTAWAY_AUDIO_TRACK_ID, kind="audio", clips=sound_clips),
+    )
+
+
+def _cutaway_mute_windows(
+    sound: TimelineTrack, main_clips: list[TimelineClip]
+) -> list[AudioMuteWindow]:
+    """One speaker mute window per sound cutaway, over every main-track clip it overlaps."""
+    windows: list[AudioMuteWindow] = []
+    for clip in sound.clips:
+        start = clip.timeline_start
+        end = start + clip.source_duration
+        covered = [
+            main.id
+            for main in main_clips
+            if main.timeline_start < end - 1e-6
+            and main.timeline_start + main.source_duration / main.rate > start + 1e-6
+        ]
+        if covered:
+            windows.append(AudioMuteWindow(clip_ids=covered, start=start, end=end))
+    return windows
+
+
+def _without_muted_captions(
+    layers: list[Any], caption_layer_ids: set[str], mute_windows: list[AudioMuteWindow]
+) -> list[Any]:
+    """Drop each caption whose words the viewer cannot hear: more than half of it sits inside a
+    speaker mute window. Titles and other text stay."""
+
+    def muted_s(layer: Any) -> float:
+        return sum(
+            max(0.0, min(layer.end, w.end) - max(layer.start, w.start)) for w in mute_windows
+        )
+
+    return [
+        layer
+        for layer in layers
+        if layer.id not in caption_layer_ids or muted_s(layer) * 2 <= layer.end - layer.start
+    ]
 
 
 def cutaways_from_recipe(
@@ -1190,6 +1853,11 @@ def cutaways_from_recipe(
     if track is None:
         return ()
     by_media_id = {b.media_id: b for b in bindings}
+    sound_track = next((t for t in recipe.tracks if t.id == CUTAWAY_AUDIO_TRACK_ID), None)
+    with_sound = {
+        clip.id.removeprefix(CUTAWAY_SOUND_CLIP_PREFIX)
+        for clip in (sound_track.clips if sound_track else [])
+    }
     cutaways: list[PhoneCutaway] = []
     for clip in track.clips:
         cut_binding = by_media_id.get(clip.source_asset_id)
@@ -1201,6 +1869,7 @@ def cutaways_from_recipe(
                 source_start_s=clip.source_start,
                 start_s=clip.timeline_start,
                 end_s=clip.timeline_start + clip.source_duration,
+                sound=clip.id.removeprefix("cutaway-") in with_sound,
             )
         )
     return tuple(cutaways)
@@ -1224,6 +1893,8 @@ def additional_speakers_from_recipe(
     by_media_id = {b.media_id: b for b in bindings}
     ordered: list[PhoneSourceBinding] = []
     for clip in sorted(main_track.clips, key=lambda c: c.timeline_start):
+        if clip.id.startswith(INSERT_CLIP_PREFIX):
+            continue  # an inserted clip pauses the take; it is not a speaker
         speaker = by_media_id.get(clip.source_asset_id)
         if speaker is not None and speaker not in ordered:
             ordered.append(speaker)
@@ -1244,6 +1915,8 @@ def speaker_binding_from_recipe(
     main_track = next((t for t in recipe.tracks if t.id == "subtitled"), None)
     by_media_id = {b.media_id: b for b in bindings}
     for clip in sorted(main_track.clips if main_track else [], key=lambda c: c.timeline_start):
+        if clip.id.startswith(INSERT_CLIP_PREFIX):
+            continue
         speaker = by_media_id.get(clip.source_asset_id)
         if speaker is not None:
             return speaker

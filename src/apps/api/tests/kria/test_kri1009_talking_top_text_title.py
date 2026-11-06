@@ -380,19 +380,9 @@ def _receipt(reply: CreationThreadEvent, requirement_id: str) -> dict[str, Any] 
 
 @pytest.mark.parametrize(
     "readiness",
-    [
-        False,
-        pytest.param(
-            True,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "Known gap, readiness off in prod: approval readiness can't check a title's "
-                    "position fact before render (evidence_missing), so it still holds the draft."
-                ),
-            ),
-        ),
-    ],
+    # KRI-1113 closed the readiness-on gap: a title whose words the draft carries and whose
+    # position only the finished video shows is approved as `unverified`, not held.
+    [False, True],
     ids=["readiness_off", "readiness_on"],
 )
 @pytest.mark.asyncio

@@ -9,6 +9,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ios"))
+import render_evidence
 import ui_tests
 
 SUITES = ("api", "ios", "ios_ui", "shared_motion")
@@ -65,6 +66,8 @@ JOURNEY_POLICY_PATHS = (
     "scripts/ci/journey-manifest.json",
     "scripts/ci/test_journey_gate.py",
     "scripts/ci/test_select_tests.py",
+    "scripts/ci/wait-for-jobs.py",
+    "scripts/ios/render_evidence.py",
 )
 
 
@@ -76,6 +79,13 @@ JOURNEY_POLICY_PATHS = (
 # missing here has no workflow step of its own and is proven by its named
 # unit tests on the unit leg. test_ci_throughput.py keeps this map and the
 # workflow's step conditions in agreement.
+#
+# Pull requests start only `unit`. Three Macs per iOS PR (~70 Mac minutes)
+# saturated the account's five concurrent macOS runners: from 2026-10-27 the
+# median PR waited 10-19 min for a Mac (p90 ~85) and took 67-87 min overall.
+# The creation and screens legs run in the nightly CI schedule and on manual
+# CI dispatch (run it on a branch for pre-merge native render evidence).
+PR_NATIVE_LEGS = ("unit",)
 LEG_JOURNEYS = {
     "creation": (
         "kri-524-creation",
@@ -93,14 +103,20 @@ LEG_JOURNEYS = {
 }
 
 
-def native_legs(ids):
-    """Matrix legs to start: `unit`, plus each leg owning a selected journey."""
+def native_legs(ids, event=None):
+    """Matrix legs to start: `unit`, plus each leg owning a selected journey.
+
+    Pull requests stop at PR_NATIVE_LEGS; nightly and manual runs start every
+    leg that owns a selected journey."""
     selected = set(ids)
     known = {journey["id"] for journey in JOURNEYS}
     if selected - known:
         raise ValueError(f"Unknown journey ids: {sorted(selected - known)}")
     return ["unit"] + [
-        leg for leg, journeys in LEG_JOURNEYS.items() if selected & set(journeys)
+        leg
+        for leg, journeys in LEG_JOURNEYS.items()
+        if selected & set(journeys)
+        and (event != "pull_request" or leg in PR_NATIVE_LEGS)
     ]
 
 
@@ -410,6 +426,23 @@ def selection_details(event, base, head):
         )
 
 
+def render_evidence_selection(event, base, head):
+    """PRs run the slow export/OCR unit proofs only when their code changed.
+
+    Everything except a pull request with a readable diff runs them, so main
+    pushes, nightly and manual runs keep the whole unit suite (fail closed).
+    """
+    if event != "pull_request":
+        return True
+    try:
+        ancestor = git("merge-base", base, head).decode().strip()
+        raw = git("diff", "--no-renames", "--name-only", "-z", ancestor, head)
+        paths = [p.decode("utf-8") for p in raw.split(b"\0") if p]
+    except (subprocess.CalledProcessError, UnicodeError, OSError):
+        return True
+    return not paths or render_evidence.triggered(paths)
+
+
 def journey_selection(event, base, head):
     """Select the expensive offline journey, fail closed when diff data is absent."""
     return journey_details(event, base, head)[0]
@@ -454,6 +487,22 @@ def validate_journey_mapping(coverage, ids):
     return selected
 
 
+def journey_mapped(journey, coverage, ids):
+    """Whether iPhone validation may start without waiting for journey-mapping.
+
+    The same check the journey-mapping job runs, computed by the selector so the
+    Mac job can queue straight after selection (KRI-604 still holds: an unmapped
+    selection never allocates a Mac). journey-mapping stays the visible failure.
+    """
+    if not journey:
+        return True
+    try:
+        validate_journey_mapping(coverage, ids)
+    except ValueError:
+        return False
+    return True
+
+
 def gate_journey(needs, event):
     required = {
         "changes",
@@ -484,6 +533,13 @@ def gate_journey(needs, event):
         or outputs["journey_needs_native"] != "false"
     ):
         raise ValueError("Inconsistent unselected journey")
+    # journey-native queues on this output instead of the journey-mapping job;
+    # a mapped (or unselected) journey is the only state that may emit "true".
+    mapped = journey_mapped(
+        journey, outputs.get("journey_coverage"), outputs.get("journey_ids")
+    )
+    if outputs.get("journey_mapped") != str(mapped).lower():
+        raise ValueError("Missing or inconsistent journey_mapped")
     native = native_validation(
         event,
         {"ios"} if outputs["ios"] == "true" else set(),
@@ -655,12 +711,18 @@ def main():
     )
     selected_ids = journey_ids.split(",") if journey_ids else ()
     native = journey_native_for_ids(selected_ids)
-    legs = native_legs(selected_ids)
+    legs = native_legs(selected_ids, event)
     output += (
         f"native_validation={str(native_validation(event, suites, native)).lower()}\n"
     )
     output += f"ios_ui_groups={groups}\nios_ui_shards={shards}\njourney={str(journey).lower()}\njourney_coverage={coverage}\njourney_ids={journey_ids}\njourney_needs_native={str(native).lower()}\n"
     output += f"native_legs={json.dumps(legs)}\n"
+    mapped = journey_mapped(journey, coverage, journey_ids)
+    output += f"journey_mapped={str(mapped).lower()}\n"
+    render = render_evidence_selection(
+        event, os.environ.get("CI_BASE", ""), os.environ.get("CI_HEAD", "")
+    )
+    output += f"ios_render_evidence={str(render).lower()}\n"
     print(reason + "\n" + output)
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
@@ -671,6 +733,7 @@ def main():
                 f"## CI selection\n\n{reason}\n\niOS UI groups: {groups}"
                 f" ({shards} native leg{'s' if shards > 1 else ''})\n\n"
                 f"iPhone validation legs: {', '.join(legs)}\n\n"
+                f"Export/OCR unit proofs: {'run' if render else 'skipped (no render code changed; main runs them)'}\n\n"
                 + "\n".join(
                     f"- {s}: {'run' if s in suites else 'not applicable'}"
                     for s in SUITES

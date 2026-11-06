@@ -19,7 +19,7 @@ import XCTest
 
     func testStopRecordingBeforeAStartedTakeIsAStateNoOp() {
         let camera = TeleprompterCamera()
-        camera.stopRecording(interrupted: true)
+        camera.stopRecording(reason: .backgrounded)
         XCTAssertEqual(camera.phase, .idle)
         XCTAssertFalse(camera.interrupted, "a stop request cannot invent an interrupted take")
     }

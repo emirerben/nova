@@ -1,6 +1,7 @@
 // Safe local defaults. Secrets belong in the developer's environment, never git.
 API_BASE_URL = http:/$()/localhost:8000
 AUTH_MODE = dev
+KRIA_APS_ENVIRONMENT = development
 KRIA_MEDIA_ENGINE = local
 KRIA_PRODUCT_BUNDLE_IDENTIFIER = com.kria.app.dev
 KRIA_GOOGLE_CLIENT_ID = 600393007296-ed1km1cdcteq54iui01rkv7tuuiu3g9m.apps.googleusercontent.com

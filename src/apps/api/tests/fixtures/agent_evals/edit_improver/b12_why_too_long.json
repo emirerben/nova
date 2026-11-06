@@ -1,0 +1,87 @@
+{
+  "id": "b12_why_too_long",
+  "why_bad": "why is 55 characters",
+  "expect": "fail",
+  "expect_failures": [
+    "why_length"
+  ],
+  "input": {
+    "state": "ready",
+    "language": "en",
+    "creator_request": "",
+    "issued": [
+      {
+        "kind": "mute_clip",
+        "targets": [
+          {
+            "id": "c3",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "duplicates",
+        "targets": [
+          {
+            "id": "c2",
+            "evidence": [
+              "e2"
+            ]
+          },
+          {
+            "id": "c5",
+            "evidence": [
+              "e2"
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "sfx",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e3"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e1": {
+        "signal": "audio_quality",
+        "fact": "wind rumble in clip 3, low band dominates"
+      },
+      "e2": {
+        "signal": "near_dup",
+        "fact": "clips 2 and 5 are near-identical shots"
+      },
+      "e3": {
+        "signal": "silence",
+        "fact": "6 seconds of silent b-roll between speech"
+      }
+    },
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": [
+      "so yeah um the wind is crazy out here",
+      "Day 4 at the lake"
+    ]
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "mute_clip",
+        "target_ids": [
+          "c3"
+        ],
+        "why": "Wind noise in clip 3 that really spoils the whole thing",
+        "copy": null,
+        "rank": 1
+      }
+    ]
+  }
+}

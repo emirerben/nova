@@ -20,6 +20,11 @@ def account_lifecycle_lock_key(user_id: uuid.UUID) -> str:
     return f"account-lifecycle:{user_id}"
 
 
+def mobile_session_family_lock_statement(family_id: uuid.UUID):
+    key = f"native-auth:session-family:{family_id}"
+    return select(func.pg_advisory_xact_lock(func.hashtextextended(key, 0)))
+
+
 async def acquire_auth_locks(db: AsyncSession, *keys: str) -> None:
     for key in sorted(set(keys)):
         await db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(key, 0))))

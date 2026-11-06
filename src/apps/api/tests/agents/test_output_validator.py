@@ -20,8 +20,12 @@ from app.agents.output_validator import (
 def _ok_input() -> OutputValidatorInput:
     return OutputValidatorInput(
         probe=ProbeData(
-            width=1080, height=1920, duration_s=15.0,
-            video_codec="h264", audio_codec="aac", fps=30.0,
+            width=1080,
+            height=1920,
+            duration_s=15.0,
+            video_codec="h264",
+            audio_codec="aac",
+            fps=30.0,
         ),
         hook_text="You won't believe what happens next",
         platform_copy=CopySummary(
@@ -166,9 +170,7 @@ def test_warns_on_hook_equals_caption(agent: OutputValidatorAgent) -> None:
 
 def test_warns_on_empty_overlay_text(agent: OutputValidatorAgent) -> None:
     inp = _ok_input()
-    inp.text_overlays = [
-        TextOverlaySummary(sample_text="", role="label", start_s=0.0, end_s=2.0)
-    ]
+    inp.text_overlays = [TextOverlaySummary(sample_text="", role="label", start_s=0.0, end_s=2.0)]
     out = agent.run(inp)
     assert out.pass_ is True  # warning only
     assert any(i.code == "empty_overlay_text" for i in out.issues)

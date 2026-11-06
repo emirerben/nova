@@ -39,6 +39,7 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
+from collections.abc import Iterable
 from typing import Literal
 
 import regex
@@ -51,7 +52,19 @@ from app.schemas.clip_understanding import ClipUnderstanding
 # keeps a clip for it only at ``LABEL_MIN_CONFIDENCE`` (a wrong drop removes footage the
 # creator wanted) and never asks the creator about it. Always accepted here, so a
 # strategy persisted while CLIP_INTENT_EXCLUDE_ENABLED was on still loads after it is off.
-ClipIntentOp = Literal["label", "group", "order", "include", "caption", "exclude"]
+# Leverkusen M2 (2026-10-30): ``hide_part`` keeps ONE clip in the edit but never shows a part
+# at its start or end ("the kids at the start of the second goal clip are another family's
+# children, so don't show them"). A separate op, never a field on ``exclude``: every
+# whole-file consumer of ``exclude`` (scope, picker, ties, receipts) would read a partial
+# exclusion as "drop this file" and lose the rest of the clip, and one that forgot the field
+# would show the part. Membership only for the resolver; the seconds are the creator's
+# (``part_s``) and the window is enforced at planning and on the pinned recipe
+# (``app.pipeline.hidden_parts``).
+ClipIntentOp = Literal["label", "group", "order", "include", "caption", "exclude", "hide_part"]
+# Which end of the clip a ``hide_part`` part sits at.
+HiddenPartEdge = Literal["start", "end"]
+# The longest part a creator can hide by seconds (same bound as ``under_s``).
+MAX_HIDDEN_PART_S = 600.0
 ClipOrderPosition = Literal["first", "last"]
 # KRI-189: a fact-based ORDER over EVERY clip (not a first/last placement of a
 # described subset): "in the order I filmed them" -> capture_time, "along my
@@ -68,8 +81,11 @@ ResolutionStatus = Literal["resolved", "needs_creator"]
 
 # A word-for-word story edit is one caption per chapter plus its orders and
 # include: a 6-chapter request is 8+ operations on its own, 16 with a group per
-# chapter. Same bound as the Creative Brief's per-clip text lane.
-MAX_CLIP_INTENTS = 16
+# chapter. KRI-1122 (Leverkusen M4): a 10-beat story with labels, one skip, one
+# keep and one sound rule is ~18 operations, and at 16 every "restate just those"
+# re-read the same request and hit the cap again. 40 holds a 10-beat story with a
+# label, an order and a group per beat.
+MAX_CLIP_INTENTS = 40
 INTENT_ID_MAX_CHARS = 40
 # KRI-282: the generic stand-in printed on every clip a "placeholder" label
 # targets. System-chosen on purpose: the fence's invariant is that model or
@@ -298,6 +314,21 @@ class ClipIntent(BaseModel):
             raise ValueError("by_length requires op=exclude")
         if self.under_s is not None and self.by_length is None:
             raise ValueError("under_s requires by_length")
+        if self.op == "hide_part":
+            if (
+                self.creator_text is not None
+                or self.caption_attribute is not None
+                or self.position is not None
+                or self.placeholder
+            ):
+                # Nothing is printed or placed for a hidden part.
+                raise ValueError(
+                    "hide_part carries no creator_text, caption_attribute, position or placeholder"
+                )
+        elif (
+            self.part_edge is not None or self.part_s is not None or self.part_attribute is not None
+        ):
+            raise ValueError("part_edge, part_s and part_attribute require op=hide_part")
         return self
 
     # Exact creator-written copy for this intent ("post match pub"), if any. A
@@ -343,6 +374,22 @@ class ClipIntent(BaseModel):
     under_s: float | None = Field(
         default=None, gt=0, le=600, exclude_if=lambda value: value is None
     )
+    # Leverkusen M2: for op="hide_part" only. Where the part sits in the clip ``attribute``
+    # names ("start" / "end"); None when the creator placed it in the middle, which the
+    # server cannot keep out and asks about instead. Omitted from dumps when unset, so every
+    # intent persisted before these fields re-dumps byte-identically.
+    part_edge: HiddenPartEdge | None = Field(default=None, exclude_if=lambda value: value is None)
+    # How many seconds from that edge are never shown: the creator's own number ("the first
+    # 3 seconds" -> 3, "start it after about 2.5 seconds" -> 2.5). None until the creator
+    # says one; a resolved hide_part always carries it (`app.kria.hidden_parts`).
+    part_s: float | None = Field(
+        default=None, gt=0, le=MAX_HIDDEN_PART_S, exclude_if=lambda value: value is None
+    )
+    # What the part shows, in the creator's words ("the kids"), for the question asking for
+    # the seconds. Never on-screen text.
+    part_attribute: str | None = Field(
+        default=None, max_length=160, exclude_if=lambda value: value is None
+    )
 
     @field_validator("intent_id", mode="before")
     @classmethod
@@ -369,6 +416,11 @@ class ClipIntent(BaseModel):
     @classmethod
     def _requirement_id(cls, v: object) -> str | None:
         return _clean(v, 24) or None
+
+    @field_validator("part_attribute", mode="before")
+    @classmethod
+    def _part_attribute(cls, v: object) -> str | None:
+        return _clean(v, 160) or None
 
 
 class ClipAssignment(BaseModel):
@@ -724,6 +776,111 @@ def vision_evidence_text(record: ClipUnderstanding) -> str:
     parts.extend(record.props)
     parts.extend(record.actions)
     return " ".join(p for p in parts if p)
+
+
+# KRI-1108: the words of a first/last ask that place a clip or say it is one, never what it
+# shows ("End on the trophy celebration clip": only "trophy celebration" is footage), and
+# the words that never name anything at all.
+_PIN_FRAME_WORDS = frozenset(
+    "clip clips video videos footage shot shots moment moments part parts scene scenes photo "
+    "photos image images picture pictures thing things end ending start starting beginning "
+    "opening opener closing closer intro outro finale first last final finally whole entire "
+    "rest order sequence montage".split()
+)
+_PIN_STOP_WORDS = frozenset(
+    "the a an my our your their his her its this that these those of to in on at by for with "
+    "from and or but into onto over under after before during while as is are was were be it "
+    "them me us you we they he she who which what when where how all any each every some no "
+    "not only just very more most other another such then than so too also up down out off "
+    "about one ones".split()
+)
+# A word of the ask is one a record says when both have the same root: the word without its
+# English ending, cut to ``_ROOT_CHARS`` letters (``spoken_quotes`` stems alike). Longest
+# ending first; the root keeps at least three letters.
+_WORD_ENDINGS = (
+    ("ations", ""),
+    ("ation", ""),
+    ("ings", ""),
+    ("ing", ""),
+    ("ions", ""),
+    ("ion", ""),
+    ("ies", "i"),
+    ("ers", ""),
+    ("er", ""),
+    ("es", ""),
+    ("ed", ""),
+    ("s", ""),
+    ("e", ""),
+    ("y", "i"),
+)
+# "cutting" / "cuts", "hugging" / "hug"; never "fall", "glass", "staff".
+_UNDOUBLED = frozenset("bdgmnprt")
+_ROOT_CHARS = 5
+
+
+def _word_root(word: str) -> str:
+    """One root for "smiling" / "smiles" / "smile", "trophies" / "trophy", "celebrating" /
+    "celebration" and "cutting" / "cuts"."""
+    for ending, replacement in _WORD_ENDINGS:
+        stem = word[: -len(ending)]
+        if not word.endswith(ending) or len(stem) < 3:
+            continue
+        if (ending == "s" and stem.endswith("s")) or (ending == "y" and stem[-1] in "aeiou"):
+            break  # "glass", "play"
+        doubled = stem[-1] == stem[-2] and stem[-1] in _UNDOUBLED
+        if doubled and ending in ("ing", "ings", "ed", "er", "ers"):
+            stem = stem[:-1]
+        word = stem + replacement
+        break
+    return word[:_ROOT_CHARS]
+
+
+def _record_roots(record: ClipUnderstanding) -> set[str]:
+    """What a clip's record says, as word roots: the vision model's own words, the text and
+    brands it read in the frame, and what is said in the clip."""
+    text = " ".join(
+        [
+            vision_evidence_text(record),
+            record.on_screen_text,
+            *record.brands,
+            record.speech.transcript,
+        ]
+    )
+    return {_word_root(word) for word in _word_list(text)}
+
+
+def pin_subject_unfound(
+    attribute: str,
+    matched: Iterable[ClipUnderstanding],
+    records: Iterable[ClipUnderstanding],
+) -> bool:
+    """True when no record of the clips ``matched`` to a first/last ask says any word of it,
+    part of it is in no record of ``records`` (the whole batch), and another record says the
+    rest of it.
+
+    KRI-1108 (Leverkusen M3): "End on the trophy celebration" was matched to the Nürnberg
+    players thanking their fans at confidence 0.9. No record says "trophy"; another clip's
+    record says "celebrating", and the matched one says neither. A real ending said in other
+    words ("the Nürnberg players thanking their fans") shares a word with its clip
+    ("players"); one matched clip that says it vouches for the others ("Taha celebrating in
+    both goal clips": only one record says "celebrating"); an ask whose words are all
+    somewhere in the batch is a choice between clips, not something missing. An ask no record
+    says any word of ("the final whistle", a person's name, an ask in another language) is
+    beyond what words can judge, so it is never held here. Words only: what the ask means is
+    never judged. File names and numbers are not footage words.
+    """
+    wanted = {
+        _word_root(word)
+        for word in _word_list(attribute)
+        if len(word) >= 3
+        and not any(char.isdigit() for char in word)
+        and word not in _PIN_STOP_WORDS
+        and word not in _PIN_FRAME_WORDS
+    }
+    if not wanted or any(wanted & _record_roots(record) for record in matched):
+        return False
+    said = set().union(*(_record_roots(other) for other in records))
+    return bool(wanted - said) and bool(wanted & said)
 
 
 # KRI-612: "explain the footages", "a short summary on each clip", "say what's happening

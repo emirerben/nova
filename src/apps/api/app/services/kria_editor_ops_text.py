@@ -378,6 +378,18 @@ def classify(bars: list[dict[str, Any]]) -> dict[str, str]:
     }
 
 
+def title_bar_ids(snapshot: dict[str, Any]) -> frozenset[str]:
+    """Ids of the snapshot bars the editor resolves as "the title" (``group: "title"``).
+
+    THE one definition of a title for anything that offers or runs a title-targeted edit:
+    the chip suggester asks this before offering "Animate the title", and ``resolve_selector``
+    uses the same ``classify``, so a chip is never offered for a title the editor cannot
+    address (Assos: first text at 2.27 s is a body caption, not a title).
+    """
+    bars = bars_from_snapshot(snapshot)
+    return frozenset(bar_id for bar_id, kind in classify(bars).items() if kind == "title")
+
+
 def resolve_selector(bars: list[dict[str, Any]], selector: dict[str, Any]) -> list[str]:
     """Ids of the live bars matching every criterion in a NORMALIZED selector."""
     kinds = classify(bars)

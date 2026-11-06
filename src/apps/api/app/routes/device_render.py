@@ -97,12 +97,24 @@ from app.services.guided_speech_cleanup import (
     require_guided_cleanup_binding,
 )
 from app.services.job_storage_paths import project_media_reference_lock_key
+from app.services.native_activity import record_native_activity
 from app.services.phone_rollout import (
+    background_focus_client_supported,
+    card_tilt_client_supported,
+    clip_backdrop_media_client_supported,
+    clip_tilt_client_supported,
     freehand_drawing_client_supported,
     freeze_frame_client_supported,
+    recipe_has_clip_backdrop_media,
+    recipe_has_clip_tilt,
     recipe_has_freeze_frame,
     recipe_has_single_word_text,
+    recipe_has_tilted_card,
     single_word_text_client_supported,
+    speaker_background_client_supported,
+    speaker_background_color_client_supported,
+    speaker_background_windows_client_supported,
+    speaker_full_opening_client_supported,
     text_behind_subject_phone_client_supported,
     text_bend_client_supported,
 )
@@ -274,8 +286,53 @@ async def _refuse_publication(
         )
     except (KeyError, ValueError):
         pass  # already terminal (published / needs_attention): the decline is enough
+    await record_native_activity(db, job, refusal.variant_id)
     await db.commit()
     await asyncio.to_thread(_nudge_kria_observer, job.id)
+
+
+def _export_text_notes(job: Job, verification_report: dict | None) -> list[str]:
+    """A creator-facing note when the export's on-screen text could not be confirmed.
+
+    The phone's export check can reject a text layer (the OCR read too few of its words)
+    while the finished video still ships. That stays advisory: nothing is withheld or
+    retried, but the creator is told instead of left to find it. Says "couldn't confirm",
+    never "is wrong" (the check reads pixels, it does not see the video). No failed text
+    check, or the switch off => no note.
+    """
+    if not settings.export_text_note_enabled or not isinstance(verification_report, dict):
+        return []
+    if verification_report.get("status") not in {"rejected", "partial"}:
+        return []
+    times = [
+        float(row["at_s"])
+        for row in verification_report.get("checks", [])
+        if isinstance(row, dict)
+        and row.get("kind") == "text"
+        and row.get("status") == "failed"
+        and row.get("expected_visible") is True
+        and isinstance(row.get("at_s"), int | float)
+    ]
+    if not times:
+        return []
+    from app.kria.reply_language import reply_language_for, say  # noqa: PLC0415
+
+    language = (job.assembly_plan or {}).get("creator_reply_language")
+    at = min(times)
+    with reply_language_for(language if isinstance(language, str) else None):
+        return [
+            say(
+                en=(
+                    f"I couldn't confirm all the on-screen text in the finished video was "
+                    f"readable (around {at:.0f}s). If a line looks off, tell me and I'll fix it."
+                ),
+                tr=(
+                    f"Bitmiş videodaki ekran yazılarının hepsinin okunaklı olduğunu "
+                    f"doğrulayamadım (yaklaşık {at:.0f}. saniye). Bir satır yanlış görünüyorsa "
+                    f"söyle, düzelteyim."
+                ),
+            )
+        ]
 
 
 def _record_export_advisory(
@@ -408,6 +465,7 @@ async def _expire_repair_permission(
             "review it in chat to continue."
         ),
     )
+    await record_native_activity(db, job, status.request.identity.variant_id)
     await db.commit()
     return True
 
@@ -539,6 +597,12 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "feature": "drawing",
             "minimum_client_protocol": settings.freehand_drawing_min_client_protocol,
         }
+    from app.services.phone_rollout import script_fonts_update_detail  # noqa: PLC0415
+
+    script_fonts = script_fonts_update_detail(recipe)
+    if script_fonts is not None:
+        # KRI-1192: a build below protocol 35 has no Noto Sans KR / Arabic file to draw it.
+        return script_fonts
     if not text_bend_client_supported() and any(
         layer.bend for layer in getattr(recipe, "text_layers", None) or []
     ):
@@ -558,6 +622,96 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "code": "client_update_required",
             "feature": "text_behind_subject",
             "minimum_client_protocol": settings.text_behind_subject_phone_min_client_protocol,
+        }
+    if (
+        getattr(recipe, "speaker_background", None) is not None
+        and not speaker_background_client_supported()
+    ):
+        # KRI-1117: an older build rejects `speaker_background` as an unknown recipe key and
+        # would FAIL the job. Compile strips the lane for a build below the minimum, so this
+        # covers a recipe a newer build or the worker pinned before this build read it.
+        return {
+            "code": "client_update_required",
+            "feature": "speaker_background",
+            "minimum_client_protocol": settings.speaker_background_min_client_protocol,
+        }
+    if (
+        getattr(recipe, "speaker_background", None) is not None
+        and recipe.speaker_background.uses_windows
+        and not speaker_background_windows_client_supported()
+    ):
+        # KRI-1162 (S32): an older build rejects `windows` / `speaker_frame` as unknown keys (and
+        # the `speakerBackgroundWindows` token) and would FAIL the job. Compile strips both for
+        # such a build; this covers a recipe a newer build or the worker pinned before.
+        return {
+            "code": "client_update_required",
+            "feature": "speaker_background_windows",
+            "minimum_client_protocol": settings.speaker_background_windows_min_client_protocol,
+        }
+    if (
+        getattr(recipe, "speaker_background", None) is not None
+        and recipe.speaker_background.uses_full_screen
+        and not speaker_full_opening_client_supported()
+    ):
+        # Qendresa item 16 (S77): an older build rejects `full_screen_windows` (and the
+        # `speakerFrameWindows` token) and would FAIL the job. Compile strips the opening for
+        # such a build; this covers a recipe a newer build or the worker pinned before.
+        return {
+            "code": "client_update_required",
+            "feature": "speaker_full_opening",
+            "minimum_client_protocol": settings.speaker_full_opening_min_client_protocol,
+        }
+    if (
+        getattr(recipe, "speaker_background", None) is not None
+        and getattr(recipe.speaker_background, "uses_focus", False)
+        and not background_focus_client_supported()
+    ):
+        # Qendresa item 18: an older build rejects `focus` (and the `backgroundFocus` token) and
+        # would FAIL the job. Compile strips every focus for such a build; this covers a recipe a
+        # newer build or the worker pinned before.
+        return {
+            "code": "client_update_required",
+            "feature": "background_focus",
+            "minimum_client_protocol": settings.background_focus_min_client_protocol,
+        }
+    if (
+        getattr(recipe, "speaker_background", None) is not None
+        and recipe.speaker_background.uses_color
+        and not speaker_background_color_client_supported()
+    ):
+        # KRI-1173 (S49): an older build rejects `media_kind: "color"` / `color` (and the
+        # `speakerBackgroundColor` token) and would FAIL the job. Compile strips a colour for
+        # such a build; this covers a recipe a newer build or the worker pinned before.
+        return {
+            "code": "client_update_required",
+            "feature": "speaker_background_color",
+            "minimum_client_protocol": settings.speaker_background_color_min_client_protocol,
+        }
+    if not card_tilt_client_supported() and recipe_has_tilted_card(recipe):
+        # KRI-1141: a build below protocol 30 decodes the `clipTilt` token a tilted card carries
+        # but draws the card upright. Checked before the clip gate so the answer names the newer
+        # of the two minimums.
+        return {
+            "code": "client_update_required",
+            "feature": "card_tilt",
+            "minimum_client_protocol": settings.media_card_tilt_min_client_protocol,
+        }
+    if not clip_tilt_client_supported() and recipe_has_clip_tilt(recipe):
+        # KRI-1134: an older build cannot decode the `clipTilt` capability token, so the whole
+        # recipe would fail instead of rendering untilted. Tell it to update.
+        return {
+            "code": "client_update_required",
+            "feature": "clip_tilt",
+            "minimum_client_protocol": settings.media_tilt_min_client_protocol,
+        }
+    if not clip_backdrop_media_client_supported() and recipe_has_clip_backdrop_media(recipe):
+        # KRI-1139: a build below protocol 31 cannot decode a media backdrop (the
+        # `clipBackdropMedia` token and the backdrop's `asset_id`), so the whole recipe would
+        # fail instead of rendering the clip without its photo or video.
+        return {
+            "code": "client_update_required",
+            "feature": "clip_backdrop_media",
+            "minimum_client_protocol": settings.media_backdrop_min_client_protocol,
         }
     if not freeze_frame_client_supported() and recipe_has_freeze_frame(recipe):
         # KRI-828: the worker planned a creator's freeze (a main-track hold, capability
@@ -1374,6 +1528,7 @@ async def report_device_failure(
         apply_device_failure_variant_update(
             job, body.identity.variant_id, reason_code=body.reason_code, detail=body.detail
         )
+    await record_native_activity(db, job, body.identity.variant_id)
     await db.commit()
     await asyncio.to_thread(_nudge_kria_observer, job_id)
     return DeviceRenderFailureOut(
@@ -1471,6 +1626,26 @@ class _ExportIntegrityError(ValueError):
     """The stored bytes are not the reserved upload: the only file defect that withholds."""
 
 
+class _ExportReadError(RuntimeError):
+    """Reserved bytes could not be read, so publication must wait."""
+
+
+def _download_reserved_export(
+    path: str, local: Path, generation: str, expected_size: int, expected_sha256: str
+) -> None:
+    try:
+        storage.download_generation_to_file(path, str(local), generation=generation)
+        size = local.stat().st_size
+        with local.open("rb") as source:
+            digest = hashlib.file_digest(source, "sha256").hexdigest()
+    except Exception as exc:
+        raise _ExportReadError("export bytes unavailable") from exc
+    if size != expected_size:
+        raise _ExportIntegrityError("export size mismatch")
+    if digest != expected_sha256:
+        raise _ExportIntegrityError("export checksum mismatch")
+
+
 def _verify_export(
     path: str,
     generation: str,
@@ -1497,12 +1672,7 @@ def _verify_export(
     """
     with tempfile.TemporaryDirectory(prefix="kria_device_export_") as directory:
         local = Path(directory) / "export.mp4"
-        storage.download_generation_to_file(path, str(local), generation=generation)
-        if local.stat().st_size != expected_size:
-            raise _ExportIntegrityError("export size mismatch")
-        with local.open("rb") as source:
-            if hashlib.file_digest(source, "sha256").hexdigest() != expected_sha256:
-                raise _ExportIntegrityError("export checksum mismatch")
+        _download_reserved_export(path, local, generation, expected_size, expected_sha256)
         result = subprocess.run(
             [
                 "ffprobe",
@@ -1642,14 +1812,13 @@ def _export_poster(local: Path, path: str, job_id: uuid.UUID) -> str | None:
         return None
 
 
-def _poster_of_unmeasured_export(path: str, generation: str, job_id: uuid.UUID) -> str | None:
-    """The poster of bytes whose measurement failed: the video still publishes."""
+def _poster_of_unmeasured_export(
+    path: str, generation: str, job_id: uuid.UUID, expected_size: int, expected_sha256: str
+) -> str | None:
+    """Check reserved bytes even when quality measurements are unavailable."""
     with tempfile.TemporaryDirectory(prefix="kria_device_poster_") as directory:
         local = Path(directory) / "export.mp4"
-        try:
-            storage.download_generation_to_file(path, str(local), generation=generation)
-        except Exception:  # noqa: BLE001 - poster is fail-open by contract
-            return None
+        _download_reserved_export(path, local, generation, expected_size, expected_sha256)
         return _export_poster(local, path, job_id)
 
 
@@ -1794,7 +1963,12 @@ async def _complete_device_export(
             )
             verification_report["status"] = "partial"
             poster_path = await asyncio.to_thread(
-                _poster_of_unmeasured_export, attempt["path"], str(metadata.generation), job_id
+                _poster_of_unmeasured_export,
+                attempt["path"],
+                str(metadata.generation),
+                job_id,
+                attempt["size"],
+                attempt["sha256"],
             )
         else:
             poster_path = await asyncio.to_thread(
@@ -1809,8 +1983,8 @@ async def _complete_device_export(
                 advisories=advisories,
                 **verify_kwargs,
             )
-    except FileNotFoundError as exc:
-        raise HTTPException(409, "Export upload has not finished") from exc
+    except (FileNotFoundError, _ExportReadError) as exc:
+        raise HTTPException(409, "Export upload bytes are unavailable") from exc
     except _ExportIntegrityError as exc:
         integrity_failure = exc
     except (ValueError, KeyError, subprocess.SubprocessError) as exc:
@@ -1827,9 +2001,19 @@ async def _complete_device_export(
                     else type(exc).__name__,
                 }
             )
-            poster_path = await asyncio.to_thread(
-                _poster_of_unmeasured_export, attempt["path"], str(metadata.generation), job_id
-            )
+            try:
+                poster_path = await asyncio.to_thread(
+                    _poster_of_unmeasured_export,
+                    attempt["path"],
+                    str(metadata.generation),
+                    job_id,
+                    attempt["size"],
+                    attempt["sha256"],
+                )
+            except _ExportReadError as read_error:
+                raise HTTPException(409, "Export upload bytes are unavailable") from read_error
+            except _ExportIntegrityError as byte_error:
+                integrity_failure = byte_error
     if integrity_failure is not None:
         if verification_report is not None:
             verification_report.update(
@@ -1860,6 +2044,14 @@ async def _complete_device_export(
         return DeviceExportCompleteOut(identity=body.identity)
     if status.phase != "syncing":
         raise HTTPException(409, "Render no longer accepts completion")
+    if record.get("actual_export_policy") != policy:
+        raise HTTPException(409, "Export verification authority changed")
+    current_attempt = record["attempts"].get(attempt_id)
+    if current_attempt is None or any(
+        current_attempt.get(key) != attempt.get(key)
+        for key in ("path", "size", "sha256", "brand_tail")
+    ):
+        raise HTTPException(409, "Upload reservation changed")
     if verification_token is not None:
         if await _expire_repair_permission(db, job, record, status):
             raise HTTPException(409, "Automatic repair permission expired")
@@ -1968,6 +2160,16 @@ async def _complete_device_export(
         or cleanup.retention_expires_at <= datetime.now(UTC)
     ):
         raise HTTPException(409, "Upload reservation expired")
+    record["attempts"][attempt_id]["publication_proof"] = {
+        "version": 1,
+        "artifact_path": attempt["path"],
+        "storage_generation": str(metadata.generation),
+        "file_size_bytes": attempt["size"],
+        "sha256": attempt["sha256"],
+        "identity": status.request.identity.model_dump(mode="json"),
+        "source_receipts_digest": sources_digest,
+    }
+    export_text_notes = _export_text_notes(job, verification_report)
     status.phase = "published"
     record.update(
         status=status.model_dump(mode="json"),
@@ -1979,7 +2181,13 @@ async def _complete_device_export(
     assembly["variants"] = [
         {
             # Cloud evidence describes the cloud file this export replaces.
-            **{key: value for key, value in v.items() if key != "cloud_evidence"},
+            **{
+                key: value
+                for key, value in v.items()
+                # A note from an earlier export must not outlive a clean re-export.
+                if key not in ("cloud_evidence", "export_check_notes")
+            },
+            **({"export_check_notes": export_text_notes} if export_text_notes else {}),
             "ok": True,
             "render_status": "ready",
             "render_generation_id": attempt_id,
@@ -2022,6 +2230,7 @@ async def _complete_device_export(
     from app.services.finished_style_learning import record_finished_style_edit
 
     await record_finished_style_edit(db, user_id, job, body.identity.variant_id, status)
+    await record_native_activity(db, job, body.identity.variant_id, kind="video_ready")
     await db.commit()
     if quality_warning is not None:
         # After the commit: the trace write opens its own connection to the Job row.

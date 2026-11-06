@@ -1,0 +1,115 @@
+{
+ "thread_id": "6fa36e51-80a1-4a78-8373-65a9fba04dbf",
+ "request": "Show the talks when I mention in full screen and use their audio. Place the stadium full screen when I talk but keep my audio",
+ "strategy": {
+  "edit_format": "subtitled",
+  "audio_strategy": "original_audio",
+  "overlay_display": "fullscreen"
+ },
+ "stadium_media_id": "analysis-proxy-ios-134CDBD9-2781-4407-921B-57D663D2B33B.mp4",
+ "requirements": [
+  {
+   "id": "r1",
+   "kind": "style",
+   "facts": {
+    "display_mode": "fullscreen"
+   },
+   "scope": "global",
+   "description": "Show the talks full screen when mentioned"
+  },
+  {
+   "id": "r2",
+   "kind": "audio",
+   "facts": {
+    "clip_sound": "on"
+   },
+   "scope": "global",
+   "description": "Use the audio of the talk clips when they are shown"
+  },
+  {
+   "id": "r3",
+   "kind": "style",
+   "facts": {
+    "display_mode": "fullscreen"
+   },
+   "scope": "clip:analysis-proxy-ios-134CDBD9-2781-4407-921B-57D663D2B33B.mp4",
+   "description": "Place the stadium full screen when I talk"
+  },
+  {
+   "id": "r4",
+   "kind": "audio",
+   "facts": {
+    "clip_sound": "off"
+   },
+   "scope": "clip:analysis-proxy-ios-134CDBD9-2781-4407-921B-57D663D2B33B.mp4",
+   "description": "Keep my audio while the stadium is shown"
+  }
+ ],
+ "clip_assignments": [
+  {
+   "kind": "video",
+   "media_id": "analysis-proxy-ios-8F66E4F4-87E5-4B4D-B608-E37E79D9C07B.mp4",
+   "has_audio": true,
+   "duration_s": 57.966667,
+   "analysis": {
+    "understanding": {
+     "speech": {
+      "has_speech": true
+     }
+    }
+   }
+  },
+  {
+   "kind": "video",
+   "media_id": "analysis-proxy-ios-93211221-EEFC-4475-BF34-7D23F63894F6.mp4",
+   "has_audio": true,
+   "duration_s": 15.0,
+   "analysis": {
+    "understanding": {
+     "speech": {
+      "has_speech": true
+     }
+    }
+   }
+  },
+  {
+   "kind": "video",
+   "media_id": "analysis-proxy-ios-05866D5C-5C1D-4E1F-B1EF-3C341AE14577.mp4",
+   "has_audio": true,
+   "duration_s": 15.0,
+   "analysis": {
+    "understanding": {
+     "speech": {
+      "has_speech": true
+     }
+    }
+   }
+  },
+  {
+   "kind": "video",
+   "media_id": "analysis-proxy-ios-AF8BF2A5-B06D-4089-A8CA-C55BF924F243.mp4",
+   "has_audio": true,
+   "duration_s": 13.0,
+   "analysis": {
+    "understanding": {
+     "speech": {
+      "has_speech": true
+     }
+    }
+   }
+  },
+  {
+   "kind": "video",
+   "media_id": "analysis-proxy-ios-134CDBD9-2781-4407-921B-57D663D2B33B.mp4",
+   "has_audio": true,
+   "duration_s": 10.0,
+   "analysis": {
+    "understanding": {
+     "speech": {
+      "has_speech": false
+     }
+    }
+   }
+  }
+ ]
+}

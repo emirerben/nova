@@ -96,9 +96,29 @@ _LEXICON_WORDS: dict[str, str] = {
         allo noi voi loro oggi dove sempre""",
     "pt": """não são você vocês obrigado obrigada olá muito também isso isto então ainda nós ele
         ela eles pelo pela estou tenho tem mais bom boa""",
+    # KRI-1192 (Greek, Korean, Arabic and Serbian Cyrillic are named by their script below).
+    "da": """og det ikke jeg hvad også hvor havde hun noget ville skulle denne dette meget nogle
+        blive bliver været hvordan hvorfor nej tak godt mellem uden hendes deres efter""",
+    "sr": """za od što šta kao ili ali iz koji koja koje biti bio bila bilo smo ste sam kod jer
+        već još samo ovo ono nije nisu može treba kada gde kako zašto ima nema sve svi""",
 }
 # Letters that name a language by themselves (checked on the word as written, not folded).
-_MARK_CHARS: dict[str, str] = {"tr": "ğşı", "es": "ñ", "de": "ßä", "fr": "ûœëï", "pt": "ãõ"}
+_MARK_CHARS: dict[str, str] = {
+    "tr": "ğşı",
+    "es": "ñ",
+    "de": "ßä",
+    "fr": "ûœëï",
+    "pt": "ãõ",
+    "da": "æø",
+    "sr": "ćđčšž",
+}
+# KRI-1192: a word written mostly in one of these scripts names its language.
+_SCRIPT_LANGUAGES: tuple[tuple[str, str], ...] = (
+    ("GREEK", "el"),
+    ("HANGUL", "ko"),
+    ("ARABIC", "ar"),
+    ("CYRILLIC", "sr"),
+)
 
 
 def _fold_word(word: str) -> str:
@@ -136,6 +156,12 @@ def _sentence_hits(sentence: str) -> dict[str, int]:
                 hits[language] += 1
     if "¿" in sentence or "¡" in sentence:
         hits["es"] += 2
+    for raw in _WORD_RE.findall(text):
+        letters = [unicodedata.name(ch, "") for ch in raw if ch.isalpha()]
+        for script, language in _SCRIPT_LANGUAGES:
+            if 2 * sum(1 for name in letters if name.startswith(script)) >= len(letters) > 0:
+                hits[language] += 1
+                break
     return hits
 
 

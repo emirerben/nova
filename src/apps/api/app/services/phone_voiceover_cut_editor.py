@@ -227,6 +227,9 @@ def resolve_phone_voiceover_slots(job: Any, variant: dict, slots: list[Any]) -> 
         if "source_crop" in slot.model_fields_set:
             # Omitted keeps the pinned crop; an explicit null clears it (KRI-44).
             row["source_crop"] = slot.source_crop
+        if "tilt" in slot.model_fields_set:
+            # Same rule for the tilt (KRI-1136): omitted keeps the pinned one.
+            row["tilt"] = slot.tilt
         if slot.parent_segment_id:
             row["parent_segment_id"] = slot.parent_segment_id
         resolved.append(row)

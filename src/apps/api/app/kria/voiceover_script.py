@@ -43,10 +43,12 @@ from app.agents.voiceover_script_writer import (
 )
 from app.config import settings
 from app.kria.contracts import KriaTurnPlan
+from app.kria.paid_call_scope import paid_call_request_id
 from app.kria.reply_language import current_reply_language, say
 from app.models import CreationThreadEvent
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_understanding import clip_record
+from app.services.turn_checkpoint import timed_step
 
 log = structlog.get_logger()
 
@@ -295,7 +297,7 @@ async def draft_script(
         return VoiceoverScriptWriterAgent(_writer_client()).run(
             agent_input,
             ctx=RunContext(
-                request_id=str(thread_id),
+                request_id=paid_call_request_id(thread_id),
                 creator_id=str(creator_id),
                 plan_item_id=str(item_id),
                 deadline_monotonic=deadline_monotonic,
@@ -303,7 +305,8 @@ async def draft_script(
         )
 
     try:
-        output = await asyncio.to_thread(_run)
+        with timed_step("voiceover_script_writer"):
+            output = await asyncio.to_thread(_run)
     except ProviderOutcomeUnknownError:
         raise
     except Exception as exc:  # noqa: BLE001 - any writer failure is the honest fallback

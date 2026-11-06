@@ -21,6 +21,7 @@ from app.models import (
     CreatorMemoryOperation,
     Persona,
 )
+from app.pipeline.phone_text_style import text_style_defaults
 from app.services.creator_direction import (
     CreatorDirectionResolver,
     CreatorDirectionService,
@@ -303,11 +304,12 @@ async def get_memory(user: CurrentUser, db: AsyncSession = Depends(get_db)) -> d
             .limit(1)
         )
     ).scalar_one_or_none()
-    return {
+    text_preferences_available = bool(
+        settings.creator_memory_enabled and settings.phone_text_styling_enabled
+    )
+    response = {
         "feature_available": bool(settings.creator_memory_enabled),
-        "text_preferences_available": bool(
-            settings.creator_memory_enabled and settings.phone_text_styling_enabled
-        ),
+        "text_preferences_available": text_preferences_available,
         "edit_learning": {
             "available": learning_available(user.id),
             "enabled": bool(user.creator_edit_learning_enabled),
@@ -323,6 +325,9 @@ async def get_memory(user: CurrentUser, db: AsyncSession = Depends(get_db)) -> d
             persona, replaced_keys=replaced_compatibility_keys
         ),
     }
+    if text_preferences_available:
+        response["text_style_defaults"] = text_style_defaults()
+    return response
 
 
 @router.patch("/memory")

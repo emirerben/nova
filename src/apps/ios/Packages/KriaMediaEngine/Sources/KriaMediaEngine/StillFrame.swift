@@ -30,8 +30,9 @@ public enum StillFrame {
     /// The guided `supporting_card`: the whole photo fitted inside a black card
     /// 82% of the canvas wide and 72% tall, centered over a blurred cover of the
     /// same photo. Rendered once to a canvas-sized bitmap so the blur never runs
-    /// per frame. `image` is upright with its origin at zero.
-    public static func supportingCard(_ image: CIImage, canvas: CGSize) throws -> CIImage {
+    /// per frame. `image` is upright with its origin at zero. `rotationDegrees`
+    /// (clockwise) turns the card about its centre; the blurred cover stays upright.
+    public static func supportingCard(_ image: CIImage, canvas: CGSize, rotationDegrees: Double = 0) throws -> CIImage {
         let frame = CGRect(origin: .zero, size: canvas)
         let size = image.extent.size
         guard size.width > 0, size.height > 0, canvas.width > 0, canvas.height > 0 else { throw MediaEngineError.exportUnavailable }
@@ -48,7 +49,14 @@ public enum StillFrame {
         let left = CGFloat(Int((canvas.width - cardSize.width) / 2) & ~1), top = CGFloat(Int((canvas.height - cardSize.height) / 2) & ~1)
         let card = CGRect(x: left, y: canvas.height - top - cardSize.height, width: cardSize.width, height: cardSize.height)
         let photo = placed(scale: min(card.width / size.width, card.height / size.height), in: card).cropped(to: card)
-        let composed = photo.composited(over: CIImage(color: .black).cropped(to: card)).composited(over: background)
+        var cardImage = photo.composited(over: CIImage(color: .black).cropped(to: card))
+        if rotationDegrees != 0 {
+            cardImage = cardImage
+                .transformed(by: CGAffineTransform(translationX: -card.midX, y: -card.midY))
+                .transformed(by: CGAffineTransform(rotationAngle: -rotationDegrees * .pi / 180))
+                .transformed(by: CGAffineTransform(translationX: card.midX, y: card.midY))
+        }
+        let composed = cardImage.composited(over: background)
         // Blur and blend on encoded values, as FFmpeg does.
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
               let rendered = CIContext(options: [.workingColorSpace: space]).createCGImage(composed, from: frame, format: .RGBA8, colorSpace: space) else {

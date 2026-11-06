@@ -696,14 +696,20 @@
         "src/apps/api/app/pipeline/phone_subtitled_plan.py",
         "src/apps/api/app/pipeline/phone_subtitled_title.py",
         "src/apps/api/app/services/phone_editor.py",
-        "src/apps/api/app/kria/strategy_policy.py"
+        "src/apps/api/app/kria/strategy_policy.py",
+        "src/apps/api/app/pipeline/phone_cta_ending.py",
+        "src/apps/api/app/pipeline/phone_cta_text.py"
       ],
       "regression_tests": [
         "tests/pipeline/test_phone_subtitled_title.py",
         "tests/routes/test_phone_subtitled_title_editor.py",
         "tests/tasks/test_phone_subtitled_title_worker.py",
         "tests/tasks/test_phone_subtitled_closing_title_worker.py",
-        "tests/kria/test_strategy_policy.py"
+        "tests/kria/test_strategy_policy.py",
+        "tests/tasks/test_phone_cta_ending_worker.py",
+        "tests/tasks/test_phone_cta_ending_inserts.py",
+        "tests/kria/test_cta_ending_receipt.py",
+        "tests/services/test_contract_imports_without_skia.py"
       ],
       "harness": "real_compiler",
       "kill_switch": "phone_subtitled_title_enabled",
@@ -3512,6 +3518,52 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-1125-pick-collision",
+      "tickets": [
+        "KRI-1125",
+        "KRI-1121"
+      ],
+      "symptom": "Leverkusen M4 run 1 (thread eeac2d3b, 2026-10-31): the creator tapped the team-bus photo for \"the warm-up\" in the clip picker by mistake, then corrected it in words (\"the warm-up is the photo of the players on the pitch, not the team bus\"). Picker taps settle a beat before the resolver and no typed message replaces one, so the warm-up stayed on the bus; the bus photo sat on two ordered beats with nothing saying so (the second row is contained) and the real warm-up photo played 9th.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1125",
+      "paths": [
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/services/clip_pick_collisions.py",
+        "src/apps/api/app/services/clip_selection.py",
+        "src/apps/api/tests/fixtures/kri1125_m4_warmup_pick.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri1125_pick_collision_replay.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The real M4 thread (picker question, the creator's tap, every typed message up to the correction) and the 11 intents the t5 resolver was sent, through the real _plan_turn_clip_intents, thread fold, selection match, collision check and picker builder; only the clip-intent planner and resolver answers are replayed. Red on base d7ee70f5f: R1/R1b/R2/R2b/R4/R5 fail (the bus photo stays on the warm-up and the bus beat, no question, a typed correction never replaces the tap); R3/R6/R7 controls pass. Green with the fix; six deliberate breaks each turn at least one test red.",
+        "live_model": "Not run; no paid calls. A typed correction inside a collision costs one extra planner and resolver pass.",
+        "native_output": "n/a: server-only planner change; the iPhone shows the same clip picker card.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "the picked beat is asked again with the contested photo left out of its candidates",
+        "a typed line newer than the tap that names the beat drops the tap and the resolver re-reads it",
+        "the resolver still answers the same photo or finds nothing: the picker asks again, never the stale tap",
+        "a tap nobody contradicts sticks across typed messages, even one that names the beat",
+        "a typed line that does not name the beat is no correction",
+        "two taps on one photo: the older tap is asked again, the newer answer stands",
+        "a video on two beats and a multi-clip group that contains the photo are not clashes"
+      ],
+      "neighbours_gap": [
+        "Two beats only the resolver matched onto one photo are still left to the sequence rule (KRI-1109 / PR #1995).",
+        "A clash asked in a picker the resolver already built pre-ticks nothing for the tapped beat: the resolver never read it.",
+        "The planner's own t5 answer is redacted in the trace; its inventory is rebuilt from the resolver's input and the t3 picker rows."
+      ],
+      "follow_ups": [
+        "Leverkusen M4 iPhone re-send after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-1067-filming-order-end-picker",
       "tickets": [
         "KRI-1067",
@@ -3764,6 +3816,106 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-1124-withdrawn-labels",
+      "tickets": [
+        "KRI-1124",
+        "KRI-1121"
+      ],
+      "symptom": "Leverkusen M4 run 1 (job 98eac78f, thread eeac2d3b, 2026-10-31): after \"Skip that part\" and \"Make it without these\" the brief superseded the \"Arrival\", \"GOAL\" and \"Full time\" texts, but the strategy's label intents (re-derived from the whole thread every turn, no requirement_id) still reached the plan, which printed them as creator labels and locked them as confirmed copy. The creation-text pass, told the brief asks for no text, removed them and the render failed as creation_text_failed (\"Text composition changed confirmed copy\"); a composer that changed nothing would have printed the dropped labels.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1124",
+      "journey": "kri-1124-withdrawn-labels",
+      "paths": [
+        "src/apps/api/app/pipeline/unified_montage.py",
+        "src/apps/api/tests/fixtures/m4_leverkusen_withdrawn_labels.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri1124_withdrawn_labels_replay.py",
+        "tests/services/test_creation_text_copy_guard.py"
+      ],
+      "harness": "real_pipeline",
+      "evidence": {
+        "offline_replay": "The job's brief v8, strategy and render-contract order exactly as stored, through the real plan_unified_montage, snapshot_copy_constraints and compose_creation_text; only the copilot model call is replaced. Before the fix 13 of 17 checks fail: the planner prints Arrival/GOAL/Full time, a composer that follows the brief raises \"Text composition changed confirmed copy\", one that changes nothing prints all three. After: no label is planned or locked; a live label stays locked (a composer that removes it still fails), a re-opened or re-asked label is kept, KRI-767 moves still pass, and an over-eager prune is caught by six controls.",
+        "live_model": "Not run; no paid calls. No prompt or model change.",
+        "native_output": "unknown; planner and copy lock only, no renderer or overlay layout touched.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "labels, described-shot captions and chapter captions the creator took back, in strategy.clip_intents and resolved_clip_intents",
+        "the clarification gate's title lookup (title_source_exists) reads the same labels the render prints",
+        "a text a live requirement still carries, a re-opened one, a different text sharing a word, case/accent/punctuation spellings",
+        "no bound brief: nothing is withdrawn",
+        "a positional shot_labels list withdrawn in full"
+      ],
+      "neighbours_gap": [
+        "The clip-intent planner still re-derives the withdrawn label intents every turn; this fix leaves them out where the plan reads them (clip_intent_planning is KRI-1123's).",
+        "A positional shot_labels list withdrawn only in part is left as written: its rows sit on clips by index.",
+        "A new ask for the same words as a dropped label cannot be told from the stale intent (label intents carry no requirement_id): both keep.",
+        "The creation-text model call still runs when the live brief has no text requirement."
+      ],
+      "follow_ups": [
+        "Skip the paid creation-text call when the live brief has no text requirement",
+        "Leverkusen M4 iPhone re-send after deploy (needs KRI-1123 and KRI-1125 for a video)"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "rendered-editor-original-clock",
+      "tickets": [
+        "KRI-1060"
+      ],
+      "symptom": "A successful native original window1.920s reopens as1.933333s after editor frame normalization and fails source bounds.",
+      "boundary": "persistence",
+      "status": "open_pr",
+      "owner": "https://github.com/emirerben/nova/pull/1946",
+      "journey": "rendered-editor-original-clock",
+      "paths": [
+        "src/apps/api/app/schemas/guided_edit_revision.py",
+        "src/apps/api/app/services/guided_timeline.py",
+        "src/apps/api/app/routes/generative_jobs.py",
+        "src/apps/ios/Kria/Core/NativeEditorInteraction.swift",
+        "src/apps/ios/Kria/Features/NativeEditorRetiming.swift",
+        "src/apps/api/app/services/client_protocol.py",
+        "src/apps/api/app/services/public_assembly_plan.py"
+      ],
+      "regression_tests": [
+        "tests/routes/test_phone_editor_rendered_clock.py",
+        "tests/routes/test_phone_editor_rendered_clock_receipts.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "514 current-main backend cases passed, including unchanged legacy/hash, source overrun, private-marker fallback, saved-state refusal and old-client mutation controls. No production opt-in is emitted.",
+        "live_model": "Not run; no provider or prompt change.",
+        "native_output": "Current reader-first compatibility:118 iOS26.5 simulator tests passed, including protocol25 header, generated1.920s source preview/export and strict original-source overrun controls. Duration measured in export; pixels inspected in preview only. Native tree d25dfadf07e284362ae258f8e22bd5e2152986a2. No original-phone acceptance.",
+        "production": "Reader-first only; no activation, project migration or deployment. Future API/worker readers and protocol26 app admission are required."
+      },
+      "neighbours_covered": [
+        "Legacy frozen hashes",
+        "original and Visuals receipts",
+        "text-only Save/reopen",
+        "old/missing/current protocol",
+        "actual source overrun",
+        "rate and transition reflow",
+        "Legacy private plan without modern identity state",
+        "Present-but-empty modern state refuses missing originals"
+      ],
+      "neighbours_gap": [
+        "original physical-phone stack/local binding duration",
+        "original request word/order and export fidelity",
+        "native manual rate setter with crossfade interaction"
+      ],
+      "follow_ups": [
+        "KRI-1060"
+      ],
+      "red_control": "not_applicable",
+      "fix_prs": [
+        1946
+      ],
+      "gap_reason": "Reader deployment, future explicit admission and original-phone acceptance remain pending under KRI-1060."
+    },
+    {
       "id": "kri-1068-stuck-pin-withdrawal",
       "tickets": [
         "KRI-1068",
@@ -3812,6 +3964,473 @@
         "Leverkusen M1 iPhone re-send after deploy (needs KRI-1067 and KRI-1069 too for a video)"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1112-names-said-earlier-bind",
+      "tickets": [
+        "KRI-1112",
+        "KRI-614",
+        "KRI-522"
+      ],
+      "symptom": "Leverkusen M3 run 1 (thread 83f2dcaa, 2026-10-31): 13:22 \"The goals are IMG_1037 and IMG_1039.\" did not settle the planner's later \"the two goal clips\" TOR! caption (apply_file_name_references reads only an intent's own words; the resolver never sees names), so at 13:30 Kria asked \"I couldn't tell which of your clips show \\\"the two goal clips\\\"\". At 13:38 \"Use exactly this order: IMG_1028, ... IMG_1043. This replaces my earlier order and ending requests\" became r1 key exact_sequence, but brief v5 kept the sticky first_clip \"my ticket\" and the old last_clip, which held the complete list back.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1112",
+      "paths": [
+        "src/apps/api/app/services/clip_file_names.py",
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/app/kria/brief.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_m3_kri1112_names_bind.py",
+        "tests/kria/test_kri1068_pin_withdrawal.py",
+        "tests/services/test_request_following_kri522.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The 13:30 turn's clip-intent planning with the planner's rows replayed through its real parser and the resolver recorded (name-blind), over the recorded clips and creator request; the 13:38 order change through the real brief merge over the recorded brief v4 (its other rows equal v5). On origin/main d7ee70f5f 5 of 16 fail, 11 guards pass; on the fix all 16 pass.",
+        "live_model": "Not run (no paid calls); no prompt change.",
+        "native_output": "Not applicable: clip-intent planning and brief merge only; no render path changed.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "case/extension and iOS upload-UUID spellings of the names bind",
+        "a stem two clips share, an unknown stem, bare numbers bind nothing",
+        "a name tied to another subject, a wider subject, two subjects in one sentence, or a later correcting sentence bind nothing",
+        "same-basis rewording keeps first/last (KRI-522, KRI-1068 F9); a pin-only ask given its first basis keeps the opening; a new basis keeps the ends it restates"
+      ],
+      "neighbours_gap": [
+        "A correction (two sentences tying the same subject to names) is left to the resolver or picker instead of taking the newer one.",
+        "Turkish plural/possessive forms beyond -ler/-lar (\"gollerim\") never bind.",
+        "The recorded brief v5 still holds the stale ends; its approval also needs the listed-order credit (KRI-1112 part 1, session B)."
+      ],
+      "follow_ups": [
+        "Leverkusen M3 iPhone re-send after deploy (with KRI-1108..1113)"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "lev-m1-run2-skip-inside-first-group",
+      "tickets": [
+        "Leverkusen M1 run 2 #5",
+        "KRI-1076",
+        "KRI-761"
+      ],
+      "symptom": "Leverkusen M1 run 2 (thread 1a2189cc, turn 78855290, 2026-10-30): \"Put everything in the order I filmed it, starting with the train ride ... Skip the photo of the empty train seat\". The skip matched no clip (KRI-1076), and its clip picker offered 7 videos and 3 photos but not the seat photo IMG_1001, the train-display photo or the train video: \"the train ride\" matched all three and pinned_clips pinned every clip of a first/last ask. The creator could only answer None and the seat photo stayed in the edit. A matched skip hit the same rule: asked with the photo hidden, then kept because the group named it.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "Leverkusen M1 run 2 #5",
+      "journey": "kri-761-look-alike-exclusions",
+      "paths": [
+        "src/apps/api/app/kria/clip_exclusions.py",
+        "src/apps/api/app/kria/clip_scope.py",
+        "src/apps/api/tests/fixtures/leverkusen_m1_run2_skip_picker.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_lev_m1_skip_inside_first_group.py",
+        "tests/kria/test_kri761_look_alike_exclusions.py",
+        "tests/kria/test_kri807_unmatched_exclusion_picker.py",
+        "tests/kria/test_kri1026_plaza_exclusions.py",
+        "tests/kria/test_kri667_clip_exclusions.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": "kria_clip_selection_questions_enabled",
+      "evidence": {
+        "offline_replay": "The turn's 13 items (prod ids, kinds, lengths, photo records and capture times) through the real clip-intent planner and resolver agents (two resolver shards, as prod logged) and the real runtime-v2 planner; only the provider transport answers, with prod's four intents and a reconstructed train-ride match (IMG_0995, IMG_1001, IMG_1002). The real functions over those intents reproduce prod's 10 picker candidates exactly. Red before the fix (seat photo not offered; a matched skip asks with it hidden), green after: 12 offered (only the montage-audio train video held back), tap -> next turn drafts without IMG_1001 with the display photo and train video still opening; a matched skip leaves it with no question.",
+        "live_model": "Not run; no paid calls. No prompt or model change.",
+        "native_output": "unknown; the picker card is the existing KRI-761 exclude category, not device-checked for this ask.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "unmatched skip inside a first group: every clip but the strategy's sound source offered, nothing pre-ticked",
+        "tap -> left out, no second ask; None keeps every clip",
+        "matched skip inside a first group: applied without a question, the rest of the group still opens",
+        "a skip naming every clip of the group keeps them and says \"I couldn't leave out\"; the creator's tap still wins",
+        "a one-clip first/last ask is still a pin (KRI-761 Merope tray clip): never offered, never dropped by a resolver match, a matching skip asks",
+        "montage-audio source never offered or dropped",
+        "look-alike skips still ask; a capture-time order never pins (KRI-1026)"
+      ],
+      "neighbours_gap": [
+        "The resolver's train-ride matches are reconstructed (resolver I/O is not stored); run 1 matched one clip and offered every photo.",
+        "An op=group ask (\"keep the kitchen clips together\") still keeps a clip a matched skip names (KRI-667 rule, unchanged): said with the KRI-1026 notice.",
+        "The skip itself still matches nothing for the seat photo (KRI-1076, resolver)."
+      ],
+      "follow_ups": [
+        "KRI-1076"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1102-visual-photo-label",
+      "tickets": [
+        "KRI-1102"
+      ],
+      "symptom": "Leverkusen M2 run 3 (job 3d28fa04, 2026-10-31): \"Label the selfie 'Taha \ud83e\udd1d me'\" on a Visuals photo. The plan drew the label over the selfie's shot, yet every render failed after approval with TextPlacementError on shot_labels[] (\"This edit put confirmed text in the wrong place.\"): verify_phone_recipe looked for a labelled shot among camera-roll clips only, so a VisualRenderAsset never matched.",
+      "boundary": "verifier",
+      "status": "open_pr",
+      "owner": "KRI-1102",
+      "paths": [
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/tests/fixtures/kri1102_m2_selfie_label.json"
+      ],
+      "regression_tests": [
+        "tests/services/test_kri1102_visual_photo_label.py",
+        "tests/services/test_kri1069_photo_chronology.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The prod job's pinned contract and length policy (kri1102_m2_selfie_label.json) against a recipe from the real contract builder, montage planner, guided + phone compilers over the same media ids: the label sits inside the selfie's shot and the verifier passes; on the pre-fix tree it raises the prod TextPlacementError. A scratch replay of the job's own approved guided_edit gives the same verdicts.",
+        "live_model": "n/a: no model or prompt involved.",
+        "native_output": "Not run on a device. The label's fixed spot (y 1497 of 1920) checked against the kit selfie: on the shirts, under all three faces.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "label moved to the other photo or onto a clip (same words and length) is refused",
+        "a label on the scoreboard photo passes there and is refused on the selfie",
+        "one caption shared by a photo and the clip after it passes; covering only the clip is refused",
+        "a label on a camera-roll clip is unchanged",
+        "the photo order (KRI-1069) is still checked"
+      ],
+      "neighbours_gap": [
+        "Phone labels use a fixed height with no face detection (KRI-116 gap); a photo with a face low in the frame can still be covered.",
+        "The cloud verifier names Visuals by the bare id in its picture timeline; not changed (iPhone is the product path).",
+        "The pre-render receipt for a photo label says \"I can't verify text for that target clip in this draft.\" (brief_checks clip ids are bare)."
+      ],
+      "follow_ups": [
+        "Leverkusen M2 iPhone re-send with the selfie label after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1109-order-pin-beats-group",
+      "tickets": [
+        "KRI-1109",
+        "KRI-764"
+      ],
+      "symptom": "Leverkusen M3 run 1 (thread 83f2dcaa, 13:24 + 13:35, 2026-10-31): \"in the order I filmed them, ending on IMG_1043\" was held with \"You asked for the same clip in two places: ... (IMG_1043) (last). I kept the first place you named.\" The clip-intent planner wrote the filming order as a positionless order group over all five videos, listed before a last pin on IMG_1043; the sequence rule gave each clip to the first row naming it, so the group seated IMG_1043 at 'then' and the pin read as a conflict (listed the other way round, no conflict). The approved 13:41 job (one row per file + the same pin) came back code=conflict while its cut ended on IMG_1043, and 'filming order, but end on <another clip>' ignored the ending.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1109",
+      "paths": [
+        "src/apps/api/app/services/clip_order_sequence.py",
+        "src/apps/api/app/pipeline/unified_montage.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_m3_kri1109_repro.py",
+        "tests/services/test_kri1109_pin_beats_group.py",
+        "tests/services/test_order_pin_repeats.py"
+      ],
+      "harness": "real_contract",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The run's recorded briefs v3/v4 (prod DB), both turns' recorded clip-intent planner output and resolver output (proposal trace) and the media snapshot approval pinned for job 3c415e0e (media digest a496e95d..., the 13:35 turn's) through the real answered_brief, brief_order_fields, plan_facts_from_strategy, assess_readiness and render contract; the replayed briefs have the turns' recorded brief_digest. Red on main (13:35, 13:24, listed-order dependence); green after. The caf\u00e9 world (12 dated clips) drives the real planner, contract, phone recipe verifier and receipts for the group + pin shapes.",
+        "live_model": "Not run; no paid calls. No prompt or model change.",
+        "native_output": "unknown; no iPhone re-send yet. The planner order equals the contract order_ids and verify_phone_recipe passes offline.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "group over every clip + last pin on the last clip filmed: no conflict, filming order, receipt met",
+        "group over every clip + last pin on another clip: that clip plays last, contract agrees, group and pin both landed",
+        "the two intents listed either way round: same cut, contract and verdict",
+        "one positionless row per file + an agreeing last pin (the 13:41 job): emptied row contained, pin landed",
+        "one clip asked first AND last: still 'two places', the earlier pin keeps it, wherever a group listing it sits",
+        "a last pin restated by file name after a group: repeat"
+      ],
+      "neighbours_gap": [
+        "A pin that contradicts an explicitly listed one-clip order (\"A, B, C, D in this order\" + \"end on B\") now seats B last without a word, as it always did when the pin was listed first.",
+        "generative_build._narrated_creator_clip_labels and content_plan_build.order_paths_by_resolved_intents keep their own first-row-wins copies of the seating rule (narrated pins and the native pre-order the montage planner re-seats); not changed here."
+      ],
+      "follow_ups": [],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1108-unfound-order-pin",
+      "tickets": [
+        "KRI-1108"
+      ],
+      "symptom": "Leverkusen M3 run 1 (thread 83f2dcaa, 2026-10-31): \"End on the trophy celebration.\" was seated on IMG_1043 (the N\u00fcrnberg players thanking their fans) at 13:21 (resolver confidence 0.8) and 13:24 (0.9). No clip record mentions a trophy; that clip's record misreads the safety net as \"confetti falls from stands\". Order membership kept any match at 0.6, so the ask resolved silently and the creator had to say \"There is no trophy in my footage\".",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1108",
+      "paths": [
+        "src/apps/api/app/services/clip_intent_resolution.py",
+        "src/apps/api/app/schemas/clip_intents.py",
+        "src/apps/api/tests/kria/m3_kri1108_resolver.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_m3_kri1108_repro.py",
+        "tests/kria/test_kri991_picker_suggestions.py",
+        "tests/kria/test_leverkusen_m2_missing_shot.py",
+        "tests/kria/test_kri1067_filming_order_end_picker.py",
+        "tests/kria/test_kri802_question_batch.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The recorded clip_request_resolver input (6 clip records, intents, creator request) and raw output of the 13:21, 13:24 and 13:35 turns (proposal trace) through the real resolve_clip_intents_for_turn; the replayed prompt is checked against the recorded input. On main the trophy pin resolves on IMG_1043 in both turns (4 tests red); with the fix it asks with the clip picker, nothing ticked, \"I couldn't find ...\", None allowed, while \"my ticket\", the real ending on IMG_1043 and a Turkish first-clip ask still resolve.",
+        "live_model": "Not run; no paid calls. No prompt changed.",
+        "native_output": "n/a: server-only resolution change; the iPhone shows the existing picker card with no pre-tick (KRI-991) and the KRI-1025 None answer.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "trophy ending, both recorded turns",
+        "real ending said in other words (players thanking their fans, IMG_1043)",
+        "my ticket on the ticket photo",
+        "Turkish first-clip ask against English records (KRI-845 golden)",
+        "one matched clip says it, the other does not (Taha celebrating in both goal clips)",
+        "word endings: friend smiling vs a record that says smiles (KRI-991)",
+        "an ask no record says any word of stays the resolver's (the final whistle, KRI-1067 F10/F11; the red cap, KRI-802)",
+        "text-only question when the picker is off"
+      ],
+      "neighbours_gap": [
+        "Base rate over 159 recorded resolver assignments (32 runs, 17 first/last): catches 2/2 invented first/last matches, asks about 0/15 real ones.",
+        "An ask no record says any word of is never held: \"End on the trophy\" (one word, in no record) would still resolve silently. A vision yes/no check is the tool for that class.",
+        "A Turkish ask is never judged by its words (records are English).",
+        "Only first/last order pins are held; an include/group/caption match to a subject no record shows is unchanged.",
+        "A matched clip that says one ask word vouches for the whole ask (\"the trophy celebration\" on a goal-celebration clip would still resolve)."
+      ],
+      "follow_ups": [
+        "iPhone re-send of Leverkusen M3 after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1112-resolver-cited-file-names",
+      "tickets": [
+        "KRI-1112"
+      ],
+      "symptom": "Leverkusen M3 run 1 (thread 83f2dcaa, 13:49:15): the clip-request resolver, never sent a file name, matched \"the match from kick-off to the end\" to m001..m005 in alias order at confidence 1.0 with evidence \"explicitly selected by creator in the order 'IMG_10xx'\" quoting the creator's file-name list. Three of five cited another clip (IMG_1039 as 'IMG_1028', IMG_1028 as 'IMG_1036', IMG_1036 as 'IMG_1039') and all five were kept.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1112",
+      "paths": [
+        "src/apps/api/app/services/clip_intent_resolution.py",
+        "src/apps/api/tests/kria/m3_kri1112_cited_names.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_m3_kri1112_cited_names.py",
+        "tests/kria/test_kri614_file_name_clips.py",
+        "tests/kria/test_kri763_file_name_pins.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The recorded 13:49 resolver row (clip records, creator request, intent, raw output) and each upload's staged file name through the real clip-intent planner parse and resolve_clip_intents_for_turn. On main all five are kept, three citing another clip's name (2 tests red); with the fix the three are dropped and the ask is asked with only the two correctly cited clips ticked, and the same answer citing each clip's own name (typed variants included) still resolves with no question.",
+        "live_model": "Not run; no paid calls. No prompt changed.",
+        "native_output": "n/a: server-only resolution change; the iPhone shows the existing picker card.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "evidence citing another clip's name (incident)",
+        "evidence citing its own name: exact, lower case with extension, iOS upload-prefixed name",
+        "file-name step (KRI-614/763) unchanged"
+      ],
+      "neighbours_gap": [
+        "Base rate: of 159 recorded resolver assignments, only the 5 of this 13:49 turn quote a file name (3 cite another clip); the guard does not touch any other recorded assignment.",
+        "A name two clips share names neither, so a miscitation between duplicates is not caught.",
+        "The planner re-introducing a replaced order (\"the match from kick-off to the end\" at 13:49) is KRI-1112 part 3 / KRI-1111; the pre-render credit for a complete listed order is part 1."
+      ],
+      "follow_ups": [
+        "iPhone re-send of Leverkusen M3 after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "leverkusen-m2-run3-moment-window",
+      "tickets": [
+        "Leverkusen M2 run 3",
+        "KRI-1106",
+        "KRI-1107"
+      ],
+      "symptom": "Leverkusen M2 run 3 (thread d1ac7437, job ad2587a7, 2026-10-31, prod 355a33dae): \"Order: our selfie, the 0:0 scoreboard, the \\\"TOR\\\" on the big screen, then only the moments where Taha is celebrating in both goal clips\" (clip 2 tapped for the TOR) and \"put Taha's scream at the end of clip 2 in slow motion\". Clip 2 played its first 5.6 s (analysis_fallback: its record had no moments), no TOR, no scream; the review said \"Done: Order\". The slow motion was not_grounded (\"which clip?\") although clip 2 was named, and with approval readiness on the card said \"have a look\"; only the finished video said \"Couldn't\".",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "Leverkusen M2 run 3",
+      "journey": "leverkusen-m2-run3-moment-window",
+      "paths": [
+        "src/apps/api/app/services/named_moments.py",
+        "src/apps/api/app/kria/speed_ask.py",
+        "src/apps/api/tests/kria/leverkusen_m2_run3.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_leverkusen_m2_run3_moment_window.py",
+        "tests/kria/test_kri689_clip_speed_ask.py",
+        "tests/kria/test_kri775_phone_montage_preflight.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Prod's approved brief v3, strategy and media snapshot (clip records + length plan) through the real planner length step, approval readiness and the worker's own phone montage plan (preflight_montage_plan); no model call. Red on the base commit (r1 met, r3 not_grounded 'which clip?', readiness r3 unverified), green after: r1 partial naming the TOR in clip 2, r3 'couldn't find that moment in clip 2' held back before the card under readiness and without it. Right-content cases put the kit answer key's times into clip 2's record: the TOR seats the window and the order is met; the same times described as a pan stay partial (wrong-content control); the scream slows only a cut that shows it.",
+        "live_model": "Not run; no paid calls. No prompt or model change.",
+        "native_output": "unknown; no device export (receipt/plan change; the recipe for a placed speed is KRI-689's).",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "photo rows (selfie, scoreboard) stay met",
+        "a row the resolver matched from the clip record keeps its clip-level verdict",
+        "a clip that plays whole shows any moment in it",
+        "two moments of one clip under reuse once: never both met",
+        "\"put clip 2 in slow motion\" lands on clip 2's cut; readiness unchanged there (approval re-check digest equal)",
+        "no verified variableSpeed stays a readiness note, not a hold-back",
+        "Turkish receipts and notice; \"2. klip\", \"klip 2\"; \"2 clips\" / \"2 klip\" / \"2x\" / seconds never read as clip 2"
+      ],
+      "neighbours_gap": [
+        "No model localizes a moment the clip record omits (IMG_1039 had best_moments: []); the creator cannot point at a moment inside one of several clips (KRI-723's card is one-take only).",
+        "A slowed moment window is not budgeted in the length plan: 0.5x on an approved window grows the output.",
+        "KRI-775 order/length blockers still skip approval readiness; only speed asks are folded in."
+      ],
+      "follow_ups": [
+        "KRI-1106",
+        "KRI-1107"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1111-withdrawn-asks-come-back",
+      "tickets": [
+        "KRI-1111",
+        "KRI-1067",
+        "KRI-522"
+      ],
+      "symptom": "Leverkusen M3 run 1 (thread 83f2dcaa, 2026-10-31): \"Start with my ticket\" and \"Label each goal clip with who scored and in which minute\" were withdrawn (13:20 \"Then leave the ticket out.\", 13:22 \"Leave the names and minutes out\", 13:26 \"Leave the ticket out completely.\"). All 8 brief versions kept r1 first_clip \"my ticket\" (a change that omits a sticky fact carries it back), the clip planner wrote only a leave-out of \"the ticket\" (13:21, 13:27), and with_brief_anchors re-added the opening as a picker row pre-ticking IMG_1028 (a light-show video). The superseded r5 scorer/minute labels, re-read by the planner from every message and replayed by KRI-950 reuse, were asked 3 more times (\"I couldn't find any clips for \\\"who scored\\\"\").",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1111",
+      "paths": [
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/app/services/anchor_exclusions.py",
+        "src/apps/api/app/kria/planner.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_m3_kri1111_repro.py",
+        "tests/kria/test_kri1067_filming_order_end_picker.py",
+        "tests/kria/test_kri1068_pin_withdrawal.py",
+        "tests/services/test_request_following_kri522.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The 13:26:57 turn through the real runtime-v2 planner (_plan_from_creator_output) over the recorded brief v4: real clip-intent planning, resolver plumbing, question builder and exclusion picker; the planner inventory, resolver answer and vision answer are replayed. The brief withdrawal runs over the recorded brief v3 and the Main Creator's 13:26:57 batch reconstructed from v3 -> v4 (row-for-row equal to v4). On origin/main d7ee70f5f 8 of 14 fail (the bug), 6 guards pass; on the fix all 14 pass.",
+        "live_model": "Not run (no paid calls); no prompt change.",
+        "native_output": "Not applicable: chat, picker and brief only; no render path changed.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "the model's r1 change omitted first_clip or repeated it: both end without it, the model's new ending kept",
+        "start with X and no leave-out of X keeps the opening (KRI-1067, KRI-522)",
+        "a leave-out of something else (the blurry clip) or a near miss (the ticket stub) keeps the opening",
+        "same thing with case and my / your / the aside (My Ticket, your ticket)",
+        "a live authored-label ask, or none ever recorded, keeps the planner's labels; the creator's own words (TOR!) always stay"
+      ],
+      "neighbours_gap": [
+        "A withdrawal with no leave-out (\"don't open on the ticket\") still relies on the Main Creator writing first_clip: null; the prompt does not teach it yet.",
+        "Turkish possessive suffixes (biletim / bileti) never count as the same thing: the opening stays (no false withdrawal).",
+        "Authored labels are dropped only when every authored-text ask was withdrawn; with one still live, a superseded one the planner re-reads is still asked.",
+        "The exclusion picker still asks which clips to leave out for \"the ticket\" though brief r10 already scopes the ticket photo (the resolver matched nothing)."
+      ],
+      "follow_ups": [
+        "Leverkusen M3 iPhone re-send after deploy (with KRI-1108..1113)"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1151-planner-refuses-cutaway-lane",
+      "tickets": [
+        "KRI-1151"
+      ],
+      "symptom": "Prod thread 6fa36e51, turn 7aa16b1a (2026-11-02): \"Show the talks when I talk about them. Place them in between my speech. Show the talks in full screen and use their audio. Place the stadium full screen when I talk but keep my audio\", five minutes after the Talking cutaway flags went true. The Main Creator (v108) answered ask_user with the invented reason_code unsupported_audio_intercut (\"I still can't intercut those videos with their own audio ... silent full-screen videos, or switch to a Montage?\") for an ask the render worker builds; no draft, no job. The prompt taught ending_clip / reaction_beats only, and the two cutaway gates are read after a draft exists.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1151",
+      "journey": "kri-1151-talking-cutaway-sound",
+      "paths": [
+        "src/apps/api/app/kria/ask_refusals.py",
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/services/creator_capabilities.py",
+        "src/apps/api/app/kria/planner.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_planner_knows_talking_cutaways.py",
+        "tests/evals/test_main_creator_evals.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": "phone_talking_mention_cutaways_enabled",
+      "evidence": {
+        "offline_replay": "The real _plan_from_creator_output over the thread's captured clip list, first-draft reply and brief (tests/fixtures/kri1151_thread_6fa36e51.json) with the Main Creator call mocked: the refusal-shaped answer is re-run once with a server note, a second refusal becomes the plain unmet reply, a failed or skipped re-run keeps the first answer, no transaction is open at the call, and refusals about inserts, pauses, footage or hooks are left alone. The prompt section is rendered for each gate combination (mention only, sound only, both, neither) with the scheduler's own constants; the golden and Turkish eval fixtures open the gates with a fixture-level settings override and assert the rendered prompt carries the section.",
+        "live_model": "Not run (no paid calls). The golden answers are hand-authored, so the real model's answer to the incident request is still unobserved.",
+        "native_output": "Not applicable: chat planner and receipt wording only; no render path changed.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "mention gate only, sound gate only, both, neither: the prompt promises only what the open gates build",
+        "an insert / pause ask is answered honestly, never turned into a voice-muting overlay",
+        "Turkish phrasing of the request (prompt example phrases, refusal text read as tokens, TR golden)",
+        "a sound-on ask that played no cutaway keeps the plain receipt (no voice-muted claim)"
+      ],
+      "neighbours_gap": [
+        "No paid eval has run the real model on the incident request; replay proves the prompt and parse, not the live answer.",
+        "A creator who says \"when I mention them\" without a full-screen word still gets the spread (brief extractor needs a prompt bump and live evals).",
+        "PR #2058 (insert clip) reconciles the prompt wording after this lands."
+      ],
+      "follow_ups": [
+        "KRI-1151 live eval of the incident request after approval; iPhone re-send after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "continued-turn-repays-planner-calls",
+      "tickets": [
+        "KRI-709"
+      ],
+      "symptom": "Prod thread b61b7673 (2026-11-02): turns cc841fbf (133 s) and b84c92a3 (144 s) failed runtime_provider_outcome_unknown (\"paid call 07ddbdc5f695 already settled\"). A Kria-generated image was never analysed so every run waited out the 45 s clip-understanding wait and was continued (KRI-709); lease epoch 2 re-sent the identical Main Creator prompt under the identical paid-call key and the ledger refused it.",
+      "boundary": "model_budget",
+      "status": "open_pr",
+      "owner": "KRI-709",
+      "paths": [
+        "src/apps/api/app/config.py",
+        "src/apps/api/app/kria/paid_call_scope.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/kria/voiceover_script.py",
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/app/services/clip_understanding.py",
+        "src/apps/api/app/services/turn_checkpoint.py",
+        "src/apps/api/app/tasks/kria_runtime.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_continuation_paid_call_postgres.py",
+        "tests/kria/test_generated_image_understanding.py",
+        "tests/kria/test_continuation_checkpoint_postgres.py",
+        "tests/kria/test_continuation_record_postgres.py",
+        "tests/kria/test_continuation_trace_postgres.py",
+        "tests/services/test_turn_checkpoint.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": "kria_turn_checkpoint_enabled",
+      "evidence": {
+        "offline_replay": "Real Postgres reservation ledger, real MainCreatorAgent and the turn task's own _plan_with_live_agent epoch hand-off with a fake model client: epoch 2 of the same prompt is a new paid call, a same-epoch replay is still refused, epoch 1 keys are unchanged; a generated image no longer holds the 45 s wait. Checkpoint: a continued run takes the first run's Main Creator, brief-extractor and clip-intent answers for the same input (red with the turn id unset or the store read removed), and misses on a changed request, thinking level, output mode, schema or release; a drifted stored answer logs no creator text; a finished turn deletes its checkpoint; planning_runs records every run (continued, exhausted, completed, failed) with the real calls, waits and steps.",
+        "live_model": "Not run (no paid calls).",
+        "native_output": "Not applicable: planning-stage only.",
+        "production": "Not deployed. Rollback: fly secret KRIA_TURN_CHECKPOINT_ENABLED=false (api + worker) stops the reuse; KRIA_TURN_AUTO_CONTINUE_MAX_RUNS=1 stops continuation itself."
+      },
+      "neighbours_covered": [
+        "brief extractor and its retry id, epoch 1 and 2",
+        "same-epoch replay still refused by the ledger",
+        "blank or probe-only uploaded images still wait for analysis",
+        "checkpoint reuse for Main Creator, brief extractor and clip-intent planner",
+        "checkpoint switch off pays again exactly as before"
+      ],
+      "neighbours_gap": [
+        "voiceover-script writer shares the request-id helper but is not checkpointed (a continued run re-writes the script)",
+        "the vision resolver inside clip-intent resolution is not checkpointed (timed in planning_runs only)",
+        "a late write from an older run overwrites a newer one (last writer wins; the answers are for the same input)"
+      ],
+      "follow_ups": [
+        "KRI-709 voiceover-script and vision-resolver checkpoints, if their cost shows up in planning_runs"
+      ],
+      "red_control": "not_applicable",
+      "journey": "kria-continued-turn-paid-calls"
     }
   ]
 }

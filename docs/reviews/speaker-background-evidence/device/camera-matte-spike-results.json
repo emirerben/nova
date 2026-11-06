@@ -1,0 +1,1676 @@
+{
+  "A" : {
+    "complete" : true,
+    "exports" : {
+      "accurate_15hz" : {
+        "avg_fps" : 19.800000000000001,
+        "by_decile" : [
+          {
+            "fps" : 19.5,
+            "frames" : "0-179",
+            "mean_ms_per_frame" : 51.219999999999999
+          },
+          {
+            "fps" : 19.5,
+            "frames" : "180-359",
+            "mean_ms_per_frame" : 51.189999999999998
+          },
+          {
+            "fps" : 19.5,
+            "frames" : "360-539",
+            "mean_ms_per_frame" : 51.329999999999998
+          },
+          {
+            "fps" : 19.399999999999999,
+            "frames" : "540-719",
+            "mean_ms_per_frame" : 51.640000000000001
+          },
+          {
+            "fps" : 19.5,
+            "frames" : "720-899",
+            "mean_ms_per_frame" : 51.380000000000003
+          },
+          {
+            "fps" : 19.600000000000001,
+            "frames" : "900-1079",
+            "mean_ms_per_frame" : 51.079999999999998
+          },
+          {
+            "fps" : 20,
+            "frames" : "1080-1259",
+            "mean_ms_per_frame" : 49.990000000000002
+          },
+          {
+            "fps" : 20.800000000000001,
+            "frames" : "1260-1439",
+            "mean_ms_per_frame" : 48.119999999999997
+          },
+          {
+            "fps" : 20.199999999999999,
+            "frames" : "1440-1619",
+            "mean_ms_per_frame" : 49.469999999999999
+          },
+          {
+            "fps" : 20,
+            "frames" : "1620-1799",
+            "mean_ms_per_frame" : 49.890000000000001
+          }
+        ],
+        "config" : {
+          "float_array_readback" : false,
+          "quality" : "accurate",
+          "vision_every_n_frames" : 2,
+          "vision_input" : "1080x1920"
+        },
+        "footprint_mb_start" : 77.400000000000006,
+        "frames" : 1800,
+        "mask_dims" : "1512x2016",
+        "ms_composite_render" : {
+          "max" : 5.3300000000000001,
+          "mean" : 3.6000000000000001,
+          "min" : 1.3600000000000001,
+          "n" : 1800,
+          "p50" : 3.5600000000000001,
+          "p95" : 4.71,
+          "p99" : 5.0199999999999996
+        },
+        "ms_downscale_for_vision" : {
+          "n" : 0
+        },
+        "ms_encode_append_incl_wait" : {
+          "max" : 0.72999999999999998,
+          "mean" : 0.44,
+          "min" : 0.11,
+          "n" : 1800,
+          "p50" : 0.45000000000000001,
+          "p95" : 0.55000000000000004,
+          "p99" : 0.63
+        },
+        "ms_mask_readback" : {
+          "max" : 0.01,
+          "mean" : 0,
+          "min" : 0,
+          "n" : 900,
+          "p50" : 0,
+          "p95" : 0,
+          "p99" : 0.01
+        },
+        "ms_read" : {
+          "max" : 41.810000000000002,
+          "mean" : 0.87,
+          "min" : 0.23000000000000001,
+          "n" : 1800,
+          "p50" : 0.81999999999999995,
+          "p95" : 0.96999999999999997,
+          "p99" : 1.0800000000000001
+        },
+        "ms_render_canvas" : {
+          "max" : 3.7799999999999998,
+          "mean" : 2.3199999999999998,
+          "min" : 1.0600000000000001,
+          "n" : 1800,
+          "p50" : 2.46,
+          "p95" : 2.79,
+          "p99" : 2.8799999999999999
+        },
+        "ms_total_per_frame" : {
+          "max" : 156.33000000000001,
+          "mean" : 50.530000000000001,
+          "min" : 2.8999999999999999,
+          "n" : 1800,
+          "p50" : 77.790000000000006,
+          "p95" : 99.219999999999999,
+          "p99" : 101.72
+        },
+        "ms_vision" : {
+          "max" : 124.15000000000001,
+          "mean" : 86.349999999999994,
+          "min" : 72.420000000000002,
+          "n" : 900,
+          "p50" : 86.370000000000005,
+          "p95" : 91.719999999999999,
+          "p99" : 93.739999999999995
+        },
+        "output_mb" : 70.299999999999997,
+        "peak_footprint_mb" : 170.90000000000001,
+        "source_loops" : 2,
+        "thermal_changes" : [
+          "0.0s: fair"
+        ],
+        "thermal_end" : "fair",
+        "thermal_max" : "fair",
+        "thermal_start" : "fair",
+        "wall_fits_120s" : true,
+        "wall_s" : 91.099999999999994,
+        "writer_finish_ms" : 25.239999999999998,
+        "writer_status" : 2
+      },
+      "accurate_30hz_float_readback" : {
+        "avg_fps" : 10.300000000000001,
+        "by_decile" : [
+          {
+            "fps" : 10.4,
+            "frames" : "0-179",
+            "mean_ms_per_frame" : 95.709999999999994
+          },
+          {
+            "fps" : 10.5,
+            "frames" : "180-359",
+            "mean_ms_per_frame" : 94.980000000000004
+          },
+          {
+            "fps" : 10.5,
+            "frames" : "360-539",
+            "mean_ms_per_frame" : 95.459999999999994
+          },
+          {
+            "fps" : 10.5,
+            "frames" : "540-719",
+            "mean_ms_per_frame" : 95.609999999999999
+          },
+          {
+            "fps" : 10.5,
+            "frames" : "720-899",
+            "mean_ms_per_frame" : 95.579999999999998
+          },
+          {
+            "fps" : 10.5,
+            "frames" : "900-1079",
+            "mean_ms_per_frame" : 95.489999999999995
+          },
+          {
+            "fps" : 10.5,
+            "frames" : "1080-1259",
+            "mean_ms_per_frame" : 95.670000000000002
+          },
+          {
+            "fps" : 10.4,
+            "frames" : "1260-1439",
+            "mean_ms_per_frame" : 96.150000000000006
+          },
+          {
+            "fps" : 9,
+            "frames" : "1440-1619",
+            "mean_ms_per_frame" : 110.70999999999999
+          },
+          {
+            "fps" : 10.300000000000001,
+            "frames" : "1620-1799",
+            "mean_ms_per_frame" : 96.689999999999998
+          }
+        ],
+        "config" : {
+          "float_array_readback" : true,
+          "quality" : "accurate",
+          "vision_every_n_frames" : 1,
+          "vision_input" : "1080x1920"
+        },
+        "footprint_mb_start" : 77.900000000000006,
+        "frames" : 1800,
+        "mask_dims" : "1512x2016",
+        "ms_composite_render" : {
+          "max" : 515.65999999999997,
+          "mean" : 3.8100000000000001,
+          "min" : 1.8100000000000001,
+          "n" : 1800,
+          "p50" : 3.6800000000000002,
+          "p95" : 4.2699999999999996,
+          "p99" : 4.6500000000000004
+        },
+        "ms_downscale_for_vision" : {
+          "n" : 0
+        },
+        "ms_encode_append_incl_wait" : {
+          "max" : 18.329999999999998,
+          "mean" : 0.26000000000000001,
+          "min" : 0,
+          "n" : 1800,
+          "p50" : 0.23999999999999999,
+          "p95" : 0.42999999999999999,
+          "p99" : 0.46999999999999997
+        },
+        "ms_mask_readback" : {
+          "max" : 18.239999999999998,
+          "mean" : 6.4800000000000004,
+          "min" : 2.4399999999999999,
+          "n" : 1800,
+          "p50" : 6.4000000000000004,
+          "p95" : 7.1500000000000004,
+          "p99" : 7.6299999999999999
+        },
+        "ms_read" : {
+          "max" : 59.109999999999999,
+          "mean" : 0.62,
+          "min" : 0.23999999999999999,
+          "n" : 1800,
+          "p50" : 0.46000000000000002,
+          "p95" : 0.79000000000000004,
+          "p99" : 0.93000000000000005
+        },
+        "ms_render_canvas" : {
+          "max" : 27.199999999999999,
+          "mean" : 1.96,
+          "min" : 0.89000000000000001,
+          "n" : 1800,
+          "p50" : 2.0099999999999998,
+          "p95" : 2.6099999999999999,
+          "p99" : 2.8399999999999999
+        },
+        "ms_total_per_frame" : {
+          "max" : 2189.0900000000001,
+          "mean" : 97.200000000000003,
+          "min" : 61.340000000000003,
+          "n" : 1800,
+          "p50" : 95.760000000000005,
+          "p95" : 100.12,
+          "p99" : 108.81999999999999
+        },
+        "ms_vision" : {
+          "max" : 2149.5900000000001,
+          "mean" : 83.900000000000006,
+          "min" : 54.57,
+          "n" : 1800,
+          "p50" : 83.030000000000001,
+          "p95" : 86.030000000000001,
+          "p99" : 90.799999999999997
+        },
+        "output_mb" : 62,
+        "peak_footprint_mb" : 183.19999999999999,
+        "source_loops" : 3,
+        "thermal_changes" : [
+          "0.0s: fair"
+        ],
+        "thermal_end" : "fair",
+        "thermal_max" : "fair",
+        "thermal_start" : "fair",
+        "wall_fits_120s" : false,
+        "wall_s" : 175.03999999999999,
+        "writer_finish_ms" : 0.01,
+        "writer_status" : 3
+      },
+      "accurate_30hz_run1" : {
+        "avg_fps" : 10.5,
+        "by_decile" : [
+          {
+            "fps" : 11.1,
+            "frames" : "0-179",
+            "mean_ms_per_frame" : 89.790000000000006
+          },
+          {
+            "fps" : 11,
+            "frames" : "180-359",
+            "mean_ms_per_frame" : 90.670000000000002
+          },
+          {
+            "fps" : 10.5,
+            "frames" : "360-539",
+            "mean_ms_per_frame" : 95.109999999999999
+          },
+          {
+            "fps" : 10.4,
+            "frames" : "540-719",
+            "mean_ms_per_frame" : 96.489999999999995
+          },
+          {
+            "fps" : 10.4,
+            "frames" : "720-899",
+            "mean_ms_per_frame" : 96.310000000000002
+          },
+          {
+            "fps" : 10.4,
+            "frames" : "900-1079",
+            "mean_ms_per_frame" : 95.950000000000003
+          },
+          {
+            "fps" : 10.4,
+            "frames" : "1080-1259",
+            "mean_ms_per_frame" : 95.859999999999999
+          },
+          {
+            "fps" : 10.4,
+            "frames" : "1260-1439",
+            "mean_ms_per_frame" : 95.870000000000005
+          },
+          {
+            "fps" : 10.4,
+            "frames" : "1440-1619",
+            "mean_ms_per_frame" : 96.409999999999997
+          },
+          {
+            "fps" : 10.4,
+            "frames" : "1620-1799",
+            "mean_ms_per_frame" : 96.069999999999993
+          }
+        ],
+        "config" : {
+          "float_array_readback" : false,
+          "quality" : "accurate",
+          "vision_every_n_frames" : 1,
+          "vision_input" : "1080x1920"
+        },
+        "footprint_mb_start" : 236.5,
+        "frames" : 1800,
+        "mask_dims" : "1512x2016",
+        "ms_composite_render" : {
+          "max" : 29.609999999999999,
+          "mean" : 4.0599999999999996,
+          "min" : 1.3300000000000001,
+          "n" : 1800,
+          "p50" : 4.3200000000000003,
+          "p95" : 4.9699999999999998,
+          "p99" : 5.1299999999999999
+        },
+        "ms_downscale_for_vision" : {
+          "n" : 0
+        },
+        "ms_encode_append_incl_wait" : {
+          "max" : 0.87,
+          "mean" : 0.5,
+          "min" : 0.14999999999999999,
+          "n" : 1800,
+          "p50" : 0.48999999999999999,
+          "p95" : 0.65000000000000002,
+          "p99" : 0.69999999999999996
+        },
+        "ms_mask_readback" : {
+          "max" : 0.02,
+          "mean" : 0,
+          "min" : 0,
+          "n" : 1800,
+          "p50" : 0,
+          "p95" : 0,
+          "p99" : 0
+        },
+        "ms_read" : {
+          "max" : 42.409999999999997,
+          "mean" : 0.91000000000000003,
+          "min" : 0.27000000000000002,
+          "n" : 1800,
+          "p50" : 0.84999999999999998,
+          "p95" : 1.0700000000000001,
+          "p99" : 1.1299999999999999
+        },
+        "ms_render_canvas" : {
+          "max" : 4.79,
+          "mean" : 2.3999999999999999,
+          "min" : 0.96999999999999997,
+          "n" : 1800,
+          "p50" : 2.5299999999999998,
+          "p95" : 2.8500000000000001,
+          "p99" : 3.0099999999999998
+        },
+        "ms_total_per_frame" : {
+          "max" : 116.48999999999999,
+          "mean" : 94.849999999999994,
+          "min" : 55.289999999999999,
+          "n" : 1800,
+          "p50" : 95.329999999999998,
+          "p95" : 101.34999999999999,
+          "p99" : 103.48
+        },
+        "ms_vision" : {
+          "max" : 101.15000000000001,
+          "mean" : 86.75,
+          "min" : 51.939999999999998,
+          "n" : 1800,
+          "p50" : 87.530000000000001,
+          "p95" : 92.760000000000005,
+          "p99" : 94.5
+        },
+        "output_mb" : 70.400000000000006,
+        "peak_footprint_mb" : 244.5,
+        "source_loops" : 2,
+        "thermal_changes" : [
+          "0.0s: nominal",
+          "34.2s: fair"
+        ],
+        "thermal_end" : "fair",
+        "thermal_max" : "fair",
+        "thermal_start" : "nominal",
+        "wall_fits_120s" : false,
+        "wall_s" : 170.88,
+        "writer_finish_ms" : 18.82,
+        "writer_status" : 2
+      },
+      "accurate_30hz_run2" : {
+        "avg_fps" : 10.4,
+        "by_decile" : [
+          {
+            "fps" : 10.5,
+            "frames" : "0-179",
+            "mean_ms_per_frame" : 95.390000000000001
+          },
+          {
+            "fps" : 10.4,
+            "frames" : "180-359",
+            "mean_ms_per_frame" : 96.340000000000003
+          },
+          {
+            "fps" : 10.4,
+            "frames" : "360-539",
+            "mean_ms_per_frame" : 96.450000000000003
+          },
+          {
+            "fps" : 10.4,
+            "frames" : "540-719",
+            "mean_ms_per_frame" : 96.370000000000005
+          },
+          {
+            "fps" : 10.4,
+            "frames" : "720-899",
+            "mean_ms_per_frame" : 95.859999999999999
+          },
+          {
+            "fps" : 10.4,
+            "frames" : "900-1079",
+            "mean_ms_per_frame" : 95.950000000000003
+          },
+          {
+            "fps" : 10.5,
+            "frames" : "1080-1259",
+            "mean_ms_per_frame" : 95.359999999999999
+          },
+          {
+            "fps" : 10.5,
+            "frames" : "1260-1439",
+            "mean_ms_per_frame" : 95.650000000000006
+          },
+          {
+            "fps" : 10.4,
+            "frames" : "1440-1619",
+            "mean_ms_per_frame" : 96.170000000000002
+          },
+          {
+            "fps" : 10.4,
+            "frames" : "1620-1799",
+            "mean_ms_per_frame" : 95.909999999999997
+          }
+        ],
+        "config" : {
+          "float_array_readback" : false,
+          "quality" : "accurate",
+          "vision_every_n_frames" : 1,
+          "vision_input" : "1080x1920"
+        },
+        "footprint_mb_start" : 93.799999999999997,
+        "frames" : 1800,
+        "mask_dims" : "1512x2016",
+        "ms_composite_render" : {
+          "max" : 6.7800000000000002,
+          "mean" : 4.0300000000000002,
+          "min" : 1.97,
+          "n" : 1800,
+          "p50" : 4.2599999999999998,
+          "p95" : 4.9400000000000004,
+          "p99" : 5.0999999999999996
+        },
+        "ms_downscale_for_vision" : {
+          "n" : 0
+        },
+        "ms_encode_append_incl_wait" : {
+          "max" : 0.88,
+          "mean" : 0.51000000000000001,
+          "min" : 0.17999999999999999,
+          "n" : 1800,
+          "p50" : 0.5,
+          "p95" : 0.64000000000000001,
+          "p99" : 0.69999999999999996
+        },
+        "ms_mask_readback" : {
+          "max" : 0.02,
+          "mean" : 0,
+          "min" : 0,
+          "n" : 1800,
+          "p50" : 0,
+          "p95" : 0,
+          "p99" : 0.01
+        },
+        "ms_read" : {
+          "max" : 40.149999999999999,
+          "mean" : 0.93000000000000005,
+          "min" : 0.26000000000000001,
+          "n" : 1800,
+          "p50" : 0.87,
+          "p95" : 1.0800000000000001,
+          "p99" : 1.1599999999999999
+        },
+        "ms_render_canvas" : {
+          "max" : 4.3799999999999999,
+          "mean" : 2.3799999999999999,
+          "min" : 1.05,
+          "n" : 1800,
+          "p50" : 2.52,
+          "p95" : 2.8399999999999999,
+          "p99" : 2.96
+        },
+        "ms_total_per_frame" : {
+          "max" : 121.04000000000001,
+          "mean" : 95.939999999999998,
+          "min" : 67.340000000000003,
+          "n" : 1800,
+          "p50" : 95.900000000000006,
+          "p95" : 101.58,
+          "p99" : 104.13
+        },
+        "ms_vision" : {
+          "max" : 111.81999999999999,
+          "mean" : 87.849999999999994,
+          "min" : 59.270000000000003,
+          "n" : 1800,
+          "p50" : 87.959999999999994,
+          "p95" : 92.969999999999999,
+          "p99" : 94.969999999999999
+        },
+        "output_mb" : 70.400000000000006,
+        "peak_footprint_mb" : 163,
+        "source_loops" : 2,
+        "thermal_changes" : [
+          "0.0s: fair"
+        ],
+        "thermal_end" : "fair",
+        "thermal_max" : "fair",
+        "thermal_start" : "fair",
+        "wall_fits_120s" : false,
+        "wall_s" : 172.84999999999999,
+        "writer_finish_ms" : 21.460000000000001,
+        "writer_status" : 2
+      },
+      "balanced_15hz" : {
+        "avg_fps" : 55.899999999999999,
+        "by_decile" : [
+          {
+            "fps" : 59.200000000000003,
+            "frames" : "0-179",
+            "mean_ms_per_frame" : 16.899999999999999
+          },
+          {
+            "fps" : 55.600000000000001,
+            "frames" : "180-359",
+            "mean_ms_per_frame" : 18
+          },
+          {
+            "fps" : 56.600000000000001,
+            "frames" : "360-539",
+            "mean_ms_per_frame" : 17.66
+          },
+          {
+            "fps" : 55,
+            "frames" : "540-719",
+            "mean_ms_per_frame" : 18.18
+          },
+          {
+            "fps" : 55.799999999999997,
+            "frames" : "720-899",
+            "mean_ms_per_frame" : 17.93
+          },
+          {
+            "fps" : 55.799999999999997,
+            "frames" : "900-1079",
+            "mean_ms_per_frame" : 17.940000000000001
+          },
+          {
+            "fps" : 57.200000000000003,
+            "frames" : "1080-1259",
+            "mean_ms_per_frame" : 17.469999999999999
+          },
+          {
+            "fps" : 55.5,
+            "frames" : "1260-1439",
+            "mean_ms_per_frame" : 18.010000000000002
+          },
+          {
+            "fps" : 55.299999999999997,
+            "frames" : "1440-1619",
+            "mean_ms_per_frame" : 18.079999999999998
+          },
+          {
+            "fps" : 55.399999999999999,
+            "frames" : "1620-1799",
+            "mean_ms_per_frame" : 18.039999999999999
+          }
+        ],
+        "config" : {
+          "float_array_readback" : false,
+          "quality" : "balanced",
+          "vision_every_n_frames" : 2,
+          "vision_input" : "1080x1920"
+        },
+        "footprint_mb_start" : 77.5,
+        "frames" : 1800,
+        "mask_dims" : "384x512",
+        "ms_composite_render" : {
+          "max" : 9.8100000000000005,
+          "mean" : 3.5899999999999999,
+          "min" : 1.73,
+          "n" : 1800,
+          "p50" : 3.6299999999999999,
+          "p95" : 4.04,
+          "p99" : 5.8700000000000001
+        },
+        "ms_downscale_for_vision" : {
+          "n" : 0
+        },
+        "ms_encode_append_incl_wait" : {
+          "max" : 8.6199999999999992,
+          "mean" : 0.45000000000000001,
+          "min" : 0.13,
+          "n" : 1800,
+          "p50" : 0.45000000000000001,
+          "p95" : 0.57999999999999996,
+          "p99" : 0.68000000000000005
+        },
+        "ms_mask_readback" : {
+          "max" : 0.01,
+          "mean" : 0,
+          "min" : 0,
+          "n" : 900,
+          "p50" : 0,
+          "p95" : 0,
+          "p99" : 0
+        },
+        "ms_read" : {
+          "max" : 41.719999999999999,
+          "mean" : 0.87,
+          "min" : 0.20999999999999999,
+          "n" : 1800,
+          "p50" : 0.81000000000000005,
+          "p95" : 1.02,
+          "p99" : 1.29
+        },
+        "ms_render_canvas" : {
+          "max" : 12.19,
+          "mean" : 2.5899999999999999,
+          "min" : 1.22,
+          "n" : 1800,
+          "p50" : 2.5800000000000001,
+          "p95" : 2.9300000000000002,
+          "p99" : 5.3499999999999996
+        },
+        "ms_total_per_frame" : {
+          "max" : 74.150000000000006,
+          "mean" : 17.82,
+          "min" : 3.73,
+          "n" : 1800,
+          "p50" : 16.600000000000001,
+          "p95" : 30.16,
+          "p99" : 31.350000000000001
+        },
+        "ms_vision" : {
+          "max" : 42.93,
+          "mean" : 20.550000000000001,
+          "min" : 10.19,
+          "n" : 900,
+          "p50" : 20.989999999999998,
+          "p95" : 22.34,
+          "p99" : 23.059999999999999
+        },
+        "output_mb" : 70.200000000000003,
+        "peak_footprint_mb" : 187.40000000000001,
+        "source_loops" : 2,
+        "thermal_changes" : [
+          "0.0s: fair"
+        ],
+        "thermal_end" : "fair",
+        "thermal_max" : "fair",
+        "thermal_start" : "fair",
+        "wall_fits_120s" : true,
+        "wall_s" : 32.219999999999999,
+        "writer_finish_ms" : 23.379999999999999,
+        "writer_status" : 2
+      },
+      "balanced_30hz" : {
+        "avg_fps" : 34.299999999999997,
+        "by_decile" : [
+          {
+            "fps" : 34,
+            "frames" : "0-179",
+            "mean_ms_per_frame" : 29.370000000000001
+          },
+          {
+            "fps" : 34.5,
+            "frames" : "180-359",
+            "mean_ms_per_frame" : 28.98
+          },
+          {
+            "fps" : 35,
+            "frames" : "360-539",
+            "mean_ms_per_frame" : 28.600000000000001
+          },
+          {
+            "fps" : 34,
+            "frames" : "540-719",
+            "mean_ms_per_frame" : 29.41
+          },
+          {
+            "fps" : 35.399999999999999,
+            "frames" : "720-899",
+            "mean_ms_per_frame" : 28.25
+          },
+          {
+            "fps" : 34,
+            "frames" : "900-1079",
+            "mean_ms_per_frame" : 29.41
+          },
+          {
+            "fps" : 34.399999999999999,
+            "frames" : "1080-1259",
+            "mean_ms_per_frame" : 29.09
+          },
+          {
+            "fps" : 34.299999999999997,
+            "frames" : "1260-1439",
+            "mean_ms_per_frame" : 29.190000000000001
+          },
+          {
+            "fps" : 34.399999999999999,
+            "frames" : "1440-1619",
+            "mean_ms_per_frame" : 29.030000000000001
+          },
+          {
+            "fps" : 34.299999999999997,
+            "frames" : "1620-1799",
+            "mean_ms_per_frame" : 29.129999999999999
+          }
+        ],
+        "config" : {
+          "float_array_readback" : false,
+          "quality" : "balanced",
+          "vision_every_n_frames" : 1,
+          "vision_input" : "1080x1920"
+        },
+        "footprint_mb_start" : 77.200000000000003,
+        "frames" : 1800,
+        "mask_dims" : "384x512",
+        "ms_composite_render" : {
+          "max" : 5.0800000000000001,
+          "mean" : 3.6699999999999999,
+          "min" : 1.5900000000000001,
+          "n" : 1800,
+          "p50" : 3.8100000000000001,
+          "p95" : 4.0199999999999996,
+          "p99" : 4.3200000000000003
+        },
+        "ms_downscale_for_vision" : {
+          "n" : 0
+        },
+        "ms_encode_append_incl_wait" : {
+          "max" : 1.52,
+          "mean" : 0.53000000000000003,
+          "min" : 0.17000000000000001,
+          "n" : 1800,
+          "p50" : 0.54000000000000004,
+          "p95" : 0.63,
+          "p99" : 0.76000000000000001
+        },
+        "ms_mask_readback" : {
+          "max" : 0.01,
+          "mean" : 0,
+          "min" : 0,
+          "n" : 1800,
+          "p50" : 0,
+          "p95" : 0,
+          "p99" : 0
+        },
+        "ms_read" : {
+          "max" : 45.219999999999999,
+          "mean" : 0.94999999999999996,
+          "min" : 0.29999999999999999,
+          "n" : 1800,
+          "p50" : 0.92000000000000004,
+          "p95" : 1.03,
+          "p99" : 1.25
+        },
+        "ms_render_canvas" : {
+          "max" : 4.1100000000000003,
+          "mean" : 2.5899999999999999,
+          "min" : 1.2,
+          "n" : 1800,
+          "p50" : 2.6600000000000001,
+          "p95" : 2.8900000000000001,
+          "p99" : 3.0800000000000001
+        },
+        "ms_total_per_frame" : {
+          "max" : 78.939999999999998,
+          "mean" : 29.050000000000001,
+          "min" : 16.59,
+          "n" : 1800,
+          "p50" : 29.23,
+          "p95" : 30.949999999999999,
+          "p99" : 31.800000000000001
+        },
+        "ms_vision" : {
+          "max" : 47.270000000000003,
+          "mean" : 21.210000000000001,
+          "min" : 11.609999999999999,
+          "n" : 1800,
+          "p50" : 21.300000000000001,
+          "p95" : 22.620000000000001,
+          "p99" : 23.329999999999998
+        },
+        "output_mb" : 70.200000000000003,
+        "peak_footprint_mb" : 196.5,
+        "source_loops" : 2,
+        "thermal_changes" : [
+          "0.0s: fair"
+        ],
+        "thermal_end" : "fair",
+        "thermal_max" : "fair",
+        "thermal_start" : "fair",
+        "wall_fits_120s" : true,
+        "wall_s" : 52.43,
+        "writer_finish_ms" : 17.170000000000002,
+        "writer_status" : 2
+      },
+      "production_style_balanced_30hz_480side_float" : {
+        "avg_fps" : 34.399999999999999,
+        "by_decile" : [
+          {
+            "fps" : 34.5,
+            "frames" : "0-179",
+            "mean_ms_per_frame" : 29.010000000000002
+          },
+          {
+            "fps" : 34.700000000000003,
+            "frames" : "180-359",
+            "mean_ms_per_frame" : 28.82
+          },
+          {
+            "fps" : 34.5,
+            "frames" : "360-539",
+            "mean_ms_per_frame" : 29.02
+          },
+          {
+            "fps" : 34.200000000000003,
+            "frames" : "540-719",
+            "mean_ms_per_frame" : 29.27
+          },
+          {
+            "fps" : 34.899999999999999,
+            "frames" : "720-899",
+            "mean_ms_per_frame" : 28.649999999999999
+          },
+          {
+            "fps" : 34.200000000000003,
+            "frames" : "900-1079",
+            "mean_ms_per_frame" : 29.260000000000002
+          },
+          {
+            "fps" : 34.700000000000003,
+            "frames" : "1080-1259",
+            "mean_ms_per_frame" : 28.82
+          },
+          {
+            "fps" : 34.5,
+            "frames" : "1260-1439",
+            "mean_ms_per_frame" : 28.989999999999998
+          },
+          {
+            "fps" : 34.700000000000003,
+            "frames" : "1440-1619",
+            "mean_ms_per_frame" : 28.809999999999999
+          },
+          {
+            "fps" : 34.5,
+            "frames" : "1620-1799",
+            "mean_ms_per_frame" : 29.010000000000002
+          }
+        ],
+        "config" : {
+          "float_array_readback" : true,
+          "quality" : "balanced",
+          "vision_every_n_frames" : 1,
+          "vision_input" : "270x480"
+        },
+        "footprint_mb_start" : 78.099999999999994,
+        "frames" : 1800,
+        "mask_dims" : "384x512",
+        "ms_composite_render" : {
+          "max" : 4.6699999999999999,
+          "mean" : 3.5899999999999999,
+          "min" : 1.7,
+          "n" : 1800,
+          "p50" : 3.6400000000000001,
+          "p95" : 3.98,
+          "p99" : 4.1200000000000001
+        },
+        "ms_downscale_for_vision" : {
+          "max" : 2.04,
+          "mean" : 1.26,
+          "min" : 0.53000000000000003,
+          "n" : 1800,
+          "p50" : 1.25,
+          "p95" : 1.47,
+          "p99" : 1.5700000000000001
+        },
+        "ms_encode_append_incl_wait" : {
+          "max" : 0.81999999999999995,
+          "mean" : 0.48999999999999999,
+          "min" : 0.12,
+          "n" : 1800,
+          "p50" : 0.47999999999999998,
+          "p95" : 0.58999999999999997,
+          "p99" : 0.64000000000000001
+        },
+        "ms_mask_readback" : {
+          "max" : 0.92000000000000004,
+          "mean" : 0.54000000000000004,
+          "min" : 0.16,
+          "n" : 1800,
+          "p50" : 0.5,
+          "p95" : 0.64000000000000001,
+          "p99" : 0.67000000000000004
+        },
+        "ms_read" : {
+          "max" : 38.939999999999998,
+          "mean" : 0.85999999999999999,
+          "min" : 0.25,
+          "n" : 1800,
+          "p50" : 0.78000000000000003,
+          "p95" : 0.96999999999999997,
+          "p99" : 1.05
+        },
+        "ms_render_canvas" : {
+          "max" : 3.4300000000000002,
+          "mean" : 2.5,
+          "min" : 1.3,
+          "n" : 1800,
+          "p50" : 2.5,
+          "p95" : 2.7999999999999998,
+          "p99" : 2.9199999999999999
+        },
+        "ms_total_per_frame" : {
+          "max" : 80.560000000000002,
+          "mean" : 28.969999999999999,
+          "min" : 15.619999999999999,
+          "n" : 1800,
+          "p50" : 28.989999999999998,
+          "p95" : 30.920000000000002,
+          "p99" : 32.049999999999997
+        },
+        "ms_vision" : {
+          "max" : 45.539999999999999,
+          "mean" : 19.640000000000001,
+          "min" : 10.029999999999999,
+          "n" : 1800,
+          "p50" : 19.66,
+          "p95" : 20.969999999999999,
+          "p99" : 21.699999999999999
+        },
+        "output_mb" : 70.299999999999997,
+        "peak_footprint_mb" : 198.80000000000001,
+        "source_loops" : 2,
+        "thermal_changes" : [
+          "0.0s: fair"
+        ],
+        "thermal_end" : "fair",
+        "thermal_max" : "fair",
+        "thermal_start" : "fair",
+        "wall_fits_120s" : true,
+        "wall_s" : 52.280000000000001,
+        "writer_finish_ms" : 23.59,
+        "writer_status" : 2
+      }
+    },
+    "micro" : {
+      "accurate_270x480" : {
+        "footprint_mb_before" : 318.39999999999998,
+        "mask_dims" : "1512x2016",
+        "mask_pixel_format_fourcc_int" : "1278226488",
+        "mask_to_CIImage_wrap_ms" : "~0 (CIImage(cvPixelBuffer:) holds a reference, no copy)",
+        "mask_to_float_array_ms" : {
+          "max" : 7.6200000000000001,
+          "mean" : 5.7999999999999998,
+          "min" : 4.29,
+          "n" : 50,
+          "p50" : 5.7000000000000002,
+          "p95" : 6.8200000000000003,
+          "p99" : 7.6200000000000001
+        },
+        "peak_footprint_mb" : 323.69999999999999,
+        "thermal_max" : "nominal",
+        "vision_ms" : {
+          "max" : 82.280000000000001,
+          "mean" : 75.829999999999998,
+          "min" : 63.759999999999998,
+          "n" : 100,
+          "p50" : 77.049999999999997,
+          "p95" : 80.920000000000002,
+          "p99" : 81.890000000000001
+        }
+      },
+      "accurate_1080x1920" : {
+        "footprint_mb_before" : 260.80000000000001,
+        "mask_dims" : "1512x2016",
+        "mask_pixel_format_fourcc_int" : "1278226488",
+        "mask_to_CIImage_wrap_ms" : "~0 (CIImage(cvPixelBuffer:) holds a reference, no copy)",
+        "mask_to_float_array_ms" : {
+          "max" : 9.4299999999999997,
+          "mean" : 6.4199999999999999,
+          "min" : 4.9500000000000002,
+          "n" : 50,
+          "p50" : 6.2300000000000004,
+          "p95" : 7.8700000000000001,
+          "p99" : 9.4299999999999997
+        },
+        "peak_footprint_mb" : 270.5,
+        "thermal_max" : "nominal",
+        "vision_ms" : {
+          "max" : 94.579999999999998,
+          "mean" : 84.290000000000006,
+          "min" : 62.689999999999998,
+          "n" : 100,
+          "p50" : 85.590000000000003,
+          "p95" : 93.209999999999994,
+          "p99" : 94.269999999999996
+        }
+      },
+      "balanced_270x480" : {
+        "footprint_mb_before" : 226.09999999999999,
+        "mask_dims" : "384x512",
+        "mask_pixel_format_fourcc_int" : "1278226488",
+        "mask_to_CIImage_wrap_ms" : "~0 (CIImage(cvPixelBuffer:) holds a reference, no copy)",
+        "mask_to_float_array_ms" : {
+          "max" : 0.76000000000000001,
+          "mean" : 0.40999999999999998,
+          "min" : 0.22,
+          "n" : 50,
+          "p50" : 0.39000000000000001,
+          "p95" : 0.67000000000000004,
+          "p99" : 0.76000000000000001
+        },
+        "peak_footprint_mb" : 355.60000000000002,
+        "thermal_max" : "nominal",
+        "vision_ms" : {
+          "max" : 28.789999999999999,
+          "mean" : 15.859999999999999,
+          "min" : 11.949999999999999,
+          "n" : 100,
+          "p50" : 15.91,
+          "p95" : 19.199999999999999,
+          "p99" : 26.030000000000001
+        }
+      },
+      "balanced_1080x1920" : {
+        "footprint_mb_before" : 148.30000000000001,
+        "mask_dims" : "384x512",
+        "mask_pixel_format_fourcc_int" : "1278226488",
+        "mask_to_CIImage_wrap_ms" : "~0 (CIImage(cvPixelBuffer:) holds a reference, no copy)",
+        "mask_to_float_array_ms" : {
+          "max" : 0.41999999999999998,
+          "mean" : 0.34999999999999998,
+          "min" : 0.17999999999999999,
+          "n" : 50,
+          "p50" : 0.38,
+          "p95" : 0.40000000000000002,
+          "p99" : 0.41999999999999998
+        },
+        "peak_footprint_mb" : 306.5,
+        "thermal_max" : "nominal",
+        "vision_ms" : {
+          "max" : 23.969999999999999,
+          "mean" : 15.279999999999999,
+          "min" : 7.9100000000000001,
+          "n" : 100,
+          "p50" : 16.25,
+          "p95" : 17.710000000000001,
+          "p99" : 19.850000000000001
+        }
+      }
+    },
+    "source" : {
+      "duration_s" : 23.100000000000001,
+      "natural_size" : "640x1138",
+      "nominal_fps" : 30,
+      "preferred_transform" : "CGAffineTransform(a: 1.0, b: 0.0, c: 0.0, d: 1.0, tx: 0.0, ty: 0.0)"
+    }
+  },
+  "B" : {
+    "complete" : true,
+    "permissions" : {
+      "audio" : 3,
+      "video" : 3
+    },
+    "runs" : {
+      "accurate" : {
+        "camera" : {
+          "active_format" : "1920x1080",
+          "binned" : false,
+          "hdr_format" : true,
+          "max_frame_duration_ms" : 33.329999999999998,
+          "min_frame_duration_ms" : 33.329999999999998,
+          "movie_codec_candidates" : [
+            "hvc1",
+            "avc1",
+            "jpeg"
+          ],
+          "pixel_format_fourcc" : "420v",
+          "session_preset_after_format" : "AVCaptureSessionPresetInputPriority"
+        },
+        "data_output" : {
+          "attached" : true,
+          "buffer_dims" : "frame 1080x1920 mask 1512x2016",
+          "delivered_fps_in_window" : 10.199999999999999,
+          "dropped_in_window_by_reason" : {
+            "FrameWasLate" : 198
+          },
+          "dropped_total_by_reason" : {
+            "FrameWasLate" : 229
+          },
+          "frames_delivered_in_window" : 103,
+          "frames_delivered_total" : 122,
+          "frames_expected" : 300,
+          "pts_gap_over_50ms_count" : 102,
+          "pts_max_gap_ms" : 100.02
+        },
+        "delegate_callback_total_ms" : {
+          "max" : 161.69999999999999,
+          "mean" : 96.319999999999993,
+          "min" : 68.120000000000005,
+          "n" : 121,
+          "p50" : 97.450000000000003,
+          "p95" : 102.93000000000001,
+          "p99" : 104.06
+        },
+        "draw_cpu_ms" : {
+          "max" : 0.40000000000000002,
+          "mean" : 0.29999999999999999,
+          "min" : 0.19,
+          "n" : 121,
+          "p50" : 0.29999999999999999,
+          "p95" : 0.34999999999999998,
+          "p99" : 0.38
+        },
+        "events" : [
+          "313 ms: session did start running"
+        ],
+        "file" : {
+          "asset_duration_s" : 10.098000000000001,
+          "audio" : {
+            "channels" : 1,
+            "clipped_samples" : 0,
+            "max_half_second_rms_dbfs" : -33.969999999999999,
+            "min_half_second_rms_dbfs" : -54.920000000000002,
+            "peak_abs_int16" : 1836,
+            "peak_dbfs" : -25.030000000000001,
+            "present" : true,
+            "rms_dbfs" : -37.539999999999999,
+            "rms_dbfs_per_half_second" : [
+              -37.799999999999997,
+              -35.100000000000001,
+              -37.5,
+              -41.100000000000001,
+              -34,
+              -34.799999999999997,
+              -34.899999999999999,
+              -36.399999999999999,
+              -39.200000000000003,
+              -41.600000000000001,
+              -43.899999999999999,
+              -54.299999999999997,
+              -39.600000000000001,
+              -34.899999999999999,
+              -35.399999999999999,
+              -35.899999999999999,
+              -39,
+              -39.5,
+              -40.399999999999999,
+              -54.899999999999999
+            ],
+            "sample_rate" : 48000,
+            "samples" : 484720,
+            "silent_fraction_below_-60dbfs" : 0.13900000000000001,
+            "track_duration_s" : 10.098000000000001
+          },
+          "exists" : true,
+          "playable" : true,
+          "size_mb" : 14.35,
+          "video" : {
+            "codec" : "hvc1",
+            "effective_fps" : 30.300000000000001,
+            "frame_count" : 307,
+            "frame_gap_ms" : {
+              "max" : 0,
+              "mean" : 0,
+              "min" : 0,
+              "n" : 306,
+              "p50" : 33.329999999999998,
+              "p95" : 33.329999999999998,
+              "p99" : 33.329999999999998
+            },
+            "gaps_over_40ms" : 0,
+            "gaps_over_50ms" : 0,
+            "natural_size" : "1920x1080",
+            "nominal_fps" : 30,
+            "preferred_transform" : "a=0.0 b=1.0 c=-1.0 d=0.0",
+            "present" : true,
+            "pts_span_s" : 10.098000000000001,
+            "track_duration_s" : 10.098000000000001
+          }
+        },
+        "mode" : "accurate",
+        "movie_error" : "none",
+        "movie_successfully_finished_flag" : true,
+        "peak_footprint_mb" : 176.80000000000001,
+        "preview_presented_fps_in_window" : 10.199999999999999,
+        "recording_finished_callback" : true,
+        "recording_started" : true,
+        "session_started" : true,
+        "thermal_changes" : [
+          "0.0s: nominal"
+        ],
+        "thermal_end" : "nominal",
+        "thermal_max" : "nominal",
+        "thermal_start" : "nominal",
+        "vision_ms_live" : {
+          "max" : 161.38,
+          "mean" : 96.019999999999996,
+          "min" : 67.930000000000007,
+          "n" : 121,
+          "p50" : 97.170000000000002,
+          "p95" : 102.62,
+          "p99" : 103.73
+        },
+        "window_s" : 10.050000000000001
+      },
+      "balanced" : {
+        "camera" : {
+          "active_format" : "1920x1080",
+          "binned" : false,
+          "hdr_format" : true,
+          "max_frame_duration_ms" : 33.329999999999998,
+          "min_frame_duration_ms" : 33.329999999999998,
+          "movie_codec_candidates" : [
+            "hvc1",
+            "avc1",
+            "jpeg"
+          ],
+          "pixel_format_fourcc" : "420v",
+          "session_preset_after_format" : "AVCaptureSessionPresetInputPriority"
+        },
+        "data_output" : {
+          "attached" : true,
+          "buffer_dims" : "frame 1080x1920 mask 384x512",
+          "delivered_fps_in_window" : 30,
+          "dropped_in_window_by_reason" : {
+
+          },
+          "dropped_total_by_reason" : {
+            "FrameWasLate" : 3
+          },
+          "frames_delivered_in_window" : 301,
+          "frames_delivered_total" : 350,
+          "frames_expected" : 300,
+          "pts_gap_over_50ms_count" : 0,
+          "pts_max_gap_ms" : 33.359999999999999
+        },
+        "delegate_callback_total_ms" : {
+          "max" : 138.25999999999999,
+          "mean" : 26.34,
+          "min" : 10.609999999999999,
+          "n" : 349,
+          "p50" : 26.210000000000001,
+          "p95" : 28.600000000000001,
+          "p99" : 32.619999999999997
+        },
+        "draw_cpu_ms" : {
+          "max" : 10.050000000000001,
+          "mean" : 0.76000000000000001,
+          "min" : 0.12,
+          "n" : 349,
+          "p50" : 0.68000000000000005,
+          "p95" : 1.05,
+          "p99" : 2.1200000000000001
+        },
+        "events" : [
+          "308 ms: session did start running"
+        ],
+        "file" : {
+          "asset_duration_s" : 10.098000000000001,
+          "audio" : {
+            "channels" : 1,
+            "clipped_samples" : 0,
+            "max_half_second_rms_dbfs" : -30.149999999999999,
+            "min_half_second_rms_dbfs" : -54.969999999999999,
+            "peak_abs_int16" : 2912,
+            "peak_dbfs" : -21.030000000000001,
+            "present" : true,
+            "rms_dbfs" : -35.960000000000001,
+            "rms_dbfs_per_half_second" : [
+              -36.600000000000001,
+              -42.700000000000003,
+              -43,
+              -45.200000000000003,
+              -45.100000000000001,
+              -55,
+              -44.600000000000001,
+              -36.200000000000003,
+              -32.799999999999997,
+              -34.5,
+              -34.399999999999999,
+              -34.600000000000001,
+              -34.399999999999999,
+              -41.5,
+              -42,
+              -32.399999999999999,
+              -34.100000000000001,
+              -35.700000000000003,
+              -42.200000000000003,
+              -30.100000000000001
+            ],
+            "sample_rate" : 48000,
+            "samples" : 484720,
+            "silent_fraction_below_-60dbfs" : 0.16700000000000001,
+            "track_duration_s" : 10.098000000000001
+          },
+          "exists" : true,
+          "playable" : true,
+          "size_mb" : 14.390000000000001,
+          "video" : {
+            "codec" : "hvc1",
+            "effective_fps" : 30.300000000000001,
+            "frame_count" : 307,
+            "frame_gap_ms" : {
+              "max" : 0,
+              "mean" : 0,
+              "min" : 0,
+              "n" : 306,
+              "p50" : 33.329999999999998,
+              "p95" : 33.329999999999998,
+              "p99" : 33.329999999999998
+            },
+            "gaps_over_40ms" : 0,
+            "gaps_over_50ms" : 0,
+            "natural_size" : "1920x1080",
+            "nominal_fps" : 30,
+            "preferred_transform" : "a=0.0 b=1.0 c=-1.0 d=0.0",
+            "present" : true,
+            "pts_span_s" : 10.098000000000001,
+            "track_duration_s" : 10.098000000000001
+          }
+        },
+        "mode" : "balanced",
+        "movie_error" : "none",
+        "movie_successfully_finished_flag" : true,
+        "peak_footprint_mb" : 133.5,
+        "preview_presented_fps_in_window" : 30,
+        "recording_finished_callback" : true,
+        "recording_started" : true,
+        "session_started" : true,
+        "thermal_changes" : [
+          "0.0s: nominal"
+        ],
+        "thermal_end" : "nominal",
+        "thermal_max" : "nominal",
+        "thermal_start" : "nominal",
+        "vision_ms_live" : {
+          "max" : 130.41999999999999,
+          "mean" : 25.57,
+          "min" : 10.369999999999999,
+          "n" : 349,
+          "p50" : 25.48,
+          "p95" : 27.77,
+          "p99" : 31.91
+        },
+        "window_s" : 10.050000000000001
+      },
+      "control" : {
+        "camera" : {
+          "active_format" : "1920x1080",
+          "binned" : false,
+          "hdr_format" : true,
+          "max_frame_duration_ms" : 33.329999999999998,
+          "min_frame_duration_ms" : 33.329999999999998,
+          "movie_codec_candidates" : [
+            "hvc1",
+            "avc1",
+            "jpeg"
+          ],
+          "pixel_format_fourcc" : "420v",
+          "session_preset_after_format" : "AVCaptureSessionPresetInputPriority"
+        },
+        "data_output" : {
+          "attached" : false,
+          "buffer_dims" : "",
+          "delivered_fps_in_window" : 0,
+          "dropped_in_window_by_reason" : {
+
+          },
+          "dropped_total_by_reason" : {
+
+          },
+          "frames_delivered_in_window" : 0,
+          "frames_delivered_total" : 0,
+          "frames_expected" : 300,
+          "pts_gap_over_50ms_count" : 0,
+          "pts_max_gap_ms" : 0
+        },
+        "delegate_callback_total_ms" : {
+          "n" : 0
+        },
+        "draw_cpu_ms" : {
+          "n" : 0
+        },
+        "events" : [
+          "502 ms: session did start running"
+        ],
+        "file" : {
+          "asset_duration_s" : 10.1,
+          "audio" : {
+            "channels" : 1,
+            "clipped_samples" : 0,
+            "max_half_second_rms_dbfs" : -33.789999999999999,
+            "min_half_second_rms_dbfs" : -48.890000000000001,
+            "peak_abs_int16" : 5018,
+            "peak_dbfs" : -16.300000000000001,
+            "present" : true,
+            "rms_dbfs" : -40.18,
+            "rms_dbfs_per_half_second" : [
+              -33.799999999999997,
+              -38.399999999999999,
+              -42.5,
+              -37,
+              -42.100000000000001,
+              -42.399999999999999,
+              -44.600000000000001,
+              -42.700000000000003,
+              -42.899999999999999,
+              -44,
+              -48.899999999999999,
+              -35.600000000000001,
+              -43.799999999999997,
+              -40.399999999999999,
+              -46.100000000000001,
+              -37.399999999999999,
+              -42.700000000000003,
+              -45,
+              -46,
+              -41.399999999999999
+            ],
+            "sample_rate" : 48000,
+            "samples" : 484720,
+            "silent_fraction_below_-60dbfs" : 0.29299999999999998,
+            "track_duration_s" : 10.098000000000001
+          },
+          "exists" : true,
+          "playable" : true,
+          "size_mb" : 14.34,
+          "video" : {
+            "codec" : "hvc1",
+            "effective_fps" : 30.300000000000001,
+            "frame_count" : 307,
+            "frame_gap_ms" : {
+              "max" : 0,
+              "mean" : 0,
+              "min" : 0,
+              "n" : 306,
+              "p50" : 33.329999999999998,
+              "p95" : 33.329999999999998,
+              "p99" : 33.329999999999998
+            },
+            "gaps_over_40ms" : 0,
+            "gaps_over_50ms" : 0,
+            "natural_size" : "1920x1080",
+            "nominal_fps" : 30,
+            "preferred_transform" : "a=0.0 b=1.0 c=-1.0 d=0.0",
+            "present" : true,
+            "pts_span_s" : 10.1,
+            "track_duration_s" : 10.1
+          }
+        },
+        "mode" : "control",
+        "movie_error" : "none",
+        "movie_successfully_finished_flag" : true,
+        "peak_footprint_mb" : 15.6,
+        "preview_presented_fps_in_window" : "n\/a (AVCaptureVideoPreviewLayer, not measured)",
+        "recording_finished_callback" : true,
+        "recording_started" : true,
+        "session_started" : true,
+        "thermal_changes" : [
+          "0.0s: nominal"
+        ],
+        "thermal_end" : "nominal",
+        "thermal_max" : "nominal",
+        "thermal_start" : "nominal",
+        "vision_ms_live" : {
+          "n" : 0
+        },
+        "window_s" : 10.029999999999999
+      },
+      "dataOnly" : {
+        "camera" : {
+          "active_format" : "1920x1080",
+          "binned" : false,
+          "hdr_format" : true,
+          "max_frame_duration_ms" : 33.329999999999998,
+          "min_frame_duration_ms" : 33.329999999999998,
+          "movie_codec_candidates" : [
+            "hvc1",
+            "avc1",
+            "jpeg"
+          ],
+          "pixel_format_fourcc" : "420v",
+          "session_preset_after_format" : "AVCaptureSessionPresetInputPriority"
+        },
+        "data_output" : {
+          "attached" : true,
+          "buffer_dims" : "",
+          "delivered_fps_in_window" : 30,
+          "dropped_in_window_by_reason" : {
+
+          },
+          "dropped_total_by_reason" : {
+
+          },
+          "frames_delivered_in_window" : 301,
+          "frames_delivered_total" : 353,
+          "frames_expected" : 300,
+          "pts_gap_over_50ms_count" : 0,
+          "pts_max_gap_ms" : 33.350000000000001
+        },
+        "delegate_callback_total_ms" : {
+          "n" : 0
+        },
+        "draw_cpu_ms" : {
+          "n" : 0
+        },
+        "events" : [
+          "308 ms: session did start running"
+        ],
+        "file" : {
+          "asset_duration_s" : 10.098000000000001,
+          "audio" : {
+            "channels" : 1,
+            "clipped_samples" : 0,
+            "max_half_second_rms_dbfs" : -42.899999999999999,
+            "min_half_second_rms_dbfs" : -66.230000000000004,
+            "peak_abs_int16" : 821,
+            "peak_dbfs" : -32.020000000000003,
+            "present" : true,
+            "rms_dbfs" : -53.140000000000001,
+            "rms_dbfs_per_half_second" : [
+              -66.200000000000003,
+              -64.900000000000006,
+              -66.099999999999994,
+              -66.099999999999994,
+              -64.799999999999997,
+              -65.599999999999994,
+              -65.5,
+              -64.700000000000003,
+              -66,
+              -66,
+              -65.5,
+              -63.799999999999997,
+              -66,
+              -65.700000000000003,
+              -66,
+              -64.900000000000006,
+              -65.5,
+              -54.299999999999997,
+              -45,
+              -42.899999999999999
+            ],
+            "sample_rate" : 48000,
+            "samples" : 484720,
+            "silent_fraction_below_-60dbfs" : 0.84299999999999997,
+            "track_duration_s" : 10.098000000000001
+          },
+          "exists" : true,
+          "playable" : true,
+          "size_mb" : 14.289999999999999,
+          "video" : {
+            "codec" : "hvc1",
+            "effective_fps" : 30.300000000000001,
+            "frame_count" : 307,
+            "frame_gap_ms" : {
+              "max" : 0,
+              "mean" : 0,
+              "min" : 0,
+              "n" : 306,
+              "p50" : 33.329999999999998,
+              "p95" : 33.329999999999998,
+              "p99" : 33.329999999999998
+            },
+            "gaps_over_40ms" : 0,
+            "gaps_over_50ms" : 0,
+            "natural_size" : "1920x1080",
+            "nominal_fps" : 30,
+            "preferred_transform" : "a=0.0 b=1.0 c=-1.0 d=0.0",
+            "present" : true,
+            "pts_span_s" : 10.098000000000001,
+            "track_duration_s" : 10.098000000000001
+          }
+        },
+        "mode" : "dataOnly",
+        "movie_error" : "none",
+        "movie_successfully_finished_flag" : true,
+        "peak_footprint_mb" : 22.899999999999999,
+        "preview_presented_fps_in_window" : 0,
+        "recording_finished_callback" : true,
+        "recording_started" : true,
+        "session_started" : true,
+        "thermal_changes" : [
+          "0.0s: nominal"
+        ],
+        "thermal_end" : "nominal",
+        "thermal_max" : "nominal",
+        "thermal_start" : "nominal",
+        "vision_ms_live" : {
+          "n" : 0
+        },
+        "window_s" : 10.039999999999999
+      }
+    }
+  },
+  "device" : {
+    "battery_level" : 1,
+    "battery_state" : 2,
+    "cores" : 6,
+    "ios" : "27.0.1",
+    "low_power_mode" : false,
+    "machine" : "iPhone14,2",
+    "physical_memory_mb" : 5666,
+    "thermal_at_launch" : "nominal"
+  },
+  "done_A" : "2026-10-31 15:07:42 +0000",
+  "done_B" : "2026-10-31 15:24:26 +0000"
+}

@@ -25,7 +25,10 @@ struct DeviceRenderPanel: View {
                 // A fresh runtime export goes through chat approval only when the
                 // server really needs a new attempt; a phone-local failure (server
                 // still awaiting this iPhone) is retried right here (S1-k).
-                if let retryApproved, sessions.retryNeedsApproval(key), sessions.presentations[key]?.phase != .localReady {
+                if sessions.presentations[key]?.phase == .cancelled,
+                   sessions.presentations[key]?.reasonCode == DeviceRenderSessions.pausedReason {
+                    await sessions.resumeFromUser(key)
+                } else if let retryApproved, sessions.retryNeedsApproval(key), sessions.presentations[key]?.phase != .localReady {
                     await retryApproved()
                 } else { await retry() }
             } },
@@ -33,7 +36,7 @@ struct DeviceRenderPanel: View {
             retryNeedsAttention: {
                 if let retryApproved { await retryApproved() }
                 else {
-                    let ok = await sessions.retryNeedsAttention(key)
+                    let ok = await sessions.retryNeedsAttentionFromUser(key)
                     if ok { await retry() }
                 }
             },
@@ -83,7 +86,7 @@ private struct DeviceSourceRecoveryView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Find your originals").font(KriaFont.display(26))
+                Text("Find your originals").font(KriaFont.headline(26))
                 Text("Choose the original files used for this project. Kria checks that they match and keeps them on this iPhone.")
                     .font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
                 if loading { ProgressView().accessibilityLabel("Checking original files") }
@@ -408,9 +411,9 @@ struct DeviceRenderStatusCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(KriaColor.paper)
+        .background(KriaColor.fill)
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(KriaColor.border, lineWidth: 1))
+        .environment(\.kriaOnFill, true)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("device-render-status")
         .sheet(item: $playback) { local in LocalExportPlayback(file: local.url) }

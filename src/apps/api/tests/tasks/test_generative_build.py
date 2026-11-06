@@ -264,7 +264,7 @@ def test_ingest_cache_miss_persists_legacy_and_indexed_metadata_envelopes(
     monkeypatch.setattr(
         template_orchestrate,
         "_analyze_clips_parallel_indexed",
-        lambda *_a, **_k: ([(1, meta_b), (0, meta_a)], []),
+        lambda *_a, **_k: ([(0, meta_a), (1, meta_b)], []),
     )
     monkeypatch.setattr(
         gb,
@@ -276,13 +276,13 @@ def test_ingest_cache_miss_persists_legacy_and_indexed_metadata_envelopes(
 
     assert result["clip_id_to_gcs"] == {"clip-a": paths[0], "clip-b": paths[1]}
     assert [meta["clip_id"] for meta in stored["clip_metadata_cache"]["clip_metas"]] == [
-        "clip-b",
         "clip-a",
+        "clip-b",
     ]
     records = stored[CLIP_METADATA_IDENTITY_INDEX_KEY]["records"]
     assert [(record["source_slot"], record["clip_id"]) for record in records] == [
-        (1, "clip-b"),
         (0, "clip-a"),
+        (1, "clip-b"),
     ]
 
 

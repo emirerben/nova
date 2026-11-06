@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
-import re
 from copy import deepcopy
 from typing import Any
 
-_SENTENCE_END_RE = re.compile(r"[.!?]+[\"'’”)\]]*$")
+from app.pipeline.captions import caption_display_width, text_ends_sentence
+
+# A legacy word group closes on a bare terminal mark (no closing quote, unlike
+# `text_ends_sentence`): "." "!" "?" plus KRI-1192's Arabic "؟" and Greek U+037E.
+_LEGACY_SENTENCE_MARKS = (".", "!", "?", "؟", "\u037e")
+
+
+def _legacy_sentence_end(text: str) -> bool:
+    if text.endswith(_LEGACY_SENTENCE_MARKS):
+        return True
+    # A ";" closing a Greek word is the Greek question mark (never an English/Turkish ";").
+    return text.endswith(";") and text_ends_sentence(text)
 
 
 def _sentence_groups(captions: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
@@ -23,7 +33,7 @@ def _sentence_groups(captions: list[dict[str, Any]]) -> list[list[dict[str, Any]
             continue
         current.append(row)
         # A lyric line ends here even without punctuation (KRI-569).
-        if _SENTENCE_END_RE.search(text) or row.get("caption_line_end") is True:
+        if text_ends_sentence(text) or row.get("caption_line_end") is True:
             groups.append(current)
             current = []
     if current:
@@ -42,10 +52,11 @@ def _legacy_groups(captions: list[dict[str, Any]]) -> list[list[dict[str, Any]]]
         combined = " ".join([*(str(item["text"]).strip() for item in group), text])
         if not group or (
             float(row["start_s"]) - float(group[-1]["end_s"]) > 0.35
-            or str(group[-1]["text"]).rstrip().endswith((".", "!", "?"))
+            or _legacy_sentence_end(str(group[-1]["text"]).rstrip())
             or group[-1].get("caption_line_end") is True
             or len(combined.split()) > 6
-            or len(combined) > 42
+            # A Hangul syllable is two letters wide (KRI-1192, `caption_display_width`).
+            or caption_display_width(combined) > 42
         ):
             groups.append([row])
         else:

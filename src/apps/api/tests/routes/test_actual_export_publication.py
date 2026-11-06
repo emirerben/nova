@@ -355,3 +355,75 @@ def test_pinned_verifier_counts_as_verified_only_for_its_own_or_a_later_verifier
     stored = device_record(fixture.job, "first")
     assert stored["status"]["phase"] == "published"
     assert stored["published_attempt"] == attempt
+
+
+@pytest.mark.parametrize("failure", ["checksum", "size", "unreadable"])
+@pytest.mark.parametrize("unverified", [False, True])
+def test_unverified_publication_still_requires_reserved_bytes(
+    fixture, monkeypatch, failure, unverified
+):
+    from pathlib import Path
+
+    mock_storage(fixture, monkeypatch)
+    attempt, _ = prepared(fixture)
+    record = device_record(fixture.job, "first")
+    record["actual_export_policy"] = {
+        "version": 1,
+        "source_receipts_digest": export_source_digest(
+            approved_export_sources(fixture.job, fixture.request)
+        ),
+    }
+    save_device_record(fixture.job, "first", record)
+    fixture.db.execute.return_value = scalar(
+        SimpleNamespace(
+            user_id=fixture.user.id,
+            status="reserved",
+            retention_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+
+    def download(_path, target, **_kwargs):
+        if failure == "unreadable":
+            raise ValueError("storage read unavailable")
+        Path(target).write_bytes(b"x" * (12 if failure == "checksum" else 13))
+
+    monkeypatch.setattr(routes.storage, "download_generation_to_file", download)
+    monkeypatch.setattr(routes, "upload_video_poster", lambda *a, **kw: None)
+    response = checked_completion(fixture, body(fixture, attempt), unverified=unverified)
+    assert response.status_code == (409 if failure == "unreadable" else 422), response.text
+    record = device_record(fixture.job, "first")
+    assert record["status"]["phase"] != "published"
+    assert "publication_proof" not in record["attempts"][attempt]
+    assert "video_path" not in fixture.job.assembly_plan["variants"][0]
+
+
+@pytest.mark.parametrize("changed", ["path", "size", "sha256", "policy"])
+def test_publication_revalidates_upload_and_policy_after_download(fixture, monkeypatch, changed):
+    import copy
+
+    mock_storage(fixture, monkeypatch)
+    attempt, _ = prepared(fixture)
+    fixture.db.execute.return_value = scalar(
+        SimpleNamespace(
+            user_id=fixture.user.id,
+            status="reserved",
+            retention_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+
+    def verify(*args, **kwargs):
+        record = copy.deepcopy(device_record(fixture.job, "first"))
+        if changed == "policy":
+            record["actual_export_policy"] = {"version": 1, "source_receipts_digest": "new"}
+        else:
+            record["attempts"][attempt][changed] = 13 if changed == "size" else "changed"
+        save_device_record(fixture.job, "first", record)
+
+    monkeypatch.setattr(routes, "_verify_export", verify)
+    response = fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/complete", json=body(fixture, attempt)
+    )
+    assert response.status_code == 409, response.text
+    record = device_record(fixture.job, "first")
+    assert record["status"]["phase"] == "syncing"
+    assert "publication_proof" not in record["attempts"][attempt]

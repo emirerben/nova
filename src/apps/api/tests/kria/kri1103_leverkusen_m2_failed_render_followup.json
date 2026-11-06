@@ -1,0 +1,29 @@
+{
+  "source": {
+    "issue": "KRI-1103 (Leverkusen M2 run 3, bug H)",
+    "run": "Leverkusen M2 montage chat 'Taha 2', iPhone, 2026-10-31",
+    "thread": "d1ac7437-7395-4228-8c62-faf503846734",
+    "server": "Fly v1967 = 355a33dae, KRIA_COMPOSE_UNMET_WITH_OPS_ENABLED on",
+    "client": "iOS build 1819, protocol 25",
+    "recorded": [
+      "failed render (turn 48e2956c, job 3d28fa04-37eb-4254-b0b3-3d050a6ae49c): status, assembly_plan keys, failure card",
+      "head draft 489f8938 written by draft.apply_strategy (kind strategy, never rendered)",
+      "follow-up (turn b2b5089b, 12:59:06Z): creator message verbatim, planner log, reply verbatim"
+    ]
+  },
+  "failed_render": {
+    "job_status": "processing_failed",
+    "error": {"code": "phone_plan_unsupported", "field_path": "shot_labels[]", "decline_reason": "evidence_missing"},
+    "assembly_plan_has_variants_key": false,
+    "card": "This edit put confirmed text in the wrong place. I can rebuild the edit so it shows this, or you can relax the requirement.",
+    "head_draft_kind": "strategy"
+  },
+  "follow_up": {
+    "creator_message": "Skip the selfie label. Put Taha’s scream at the end of clip 2 in slow motion",
+    "prod_log": "kria_editor_target_unavailable reason=no_render job_status=processing_failed",
+    "prod_reply": "There isn't a current editable draft for this failed render. Your saved request is unchanged. No new render was started. Ask for a new version using your saved request.",
+    "prod_turn_value": "recovery",
+    "workaround_that_worked": "Make a new version: no label on the selfie, and put Taha's scream at the end of clip 2 in slow motion (turn bf4330c4: new draft + approval card, label gone)"
+  },
+  "expected": "The change re-plans the draft (planner reached, new draft offered for approval) instead of the editor-path refusal; nothing is staged on the editor and no render starts on its own."
+}

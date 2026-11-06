@@ -1,0 +1,86 @@
+{
+  "id": "g07_en_request_wins",
+  "description": "Creator asked to keep sound and no captions: only the duplicate card survives.",
+  "expect": "pass",
+  "input": {
+    "state": "ready",
+    "language": "en",
+    "creator_request": "Keep the original sound and no captions please",
+    "issued": [
+      {
+        "kind": "mute_clip",
+        "targets": [
+          {
+            "id": "c3",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "captions",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e4"
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "duplicates",
+        "targets": [
+          {
+            "id": "c2",
+            "evidence": [
+              "e2"
+            ]
+          },
+          {
+            "id": "c5",
+            "evidence": [
+              "e2"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e1": {
+        "signal": "audio_quality",
+        "fact": "wind rumble in clip 3, low band dominates"
+      },
+      "e2": {
+        "signal": "near_dup",
+        "fact": "clips 2 and 5 are near-identical shots"
+      },
+      "e3": {
+        "signal": "silence",
+        "fact": "6 seconds of silent b-roll between speech"
+      },
+      "e4": {
+        "signal": "speech",
+        "fact": "creator talks to camera in clip 1"
+      }
+    },
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": []
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "duplicates",
+        "target_ids": [
+          "c2",
+          "c5"
+        ],
+        "why": "Clips 2 and 5 are near-identical",
+        "copy": null,
+        "rank": 1
+      }
+    ]
+  }
+}

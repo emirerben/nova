@@ -96,6 +96,38 @@ class NormalizedSourceCrop(_RecipeModel):
         return self
 
 
+class ClipBackdrop(_RecipeModel):
+    """What shows behind a main-track clip where the clip does not cover the canvas.
+
+    Mirrors ``KriaMediaEngine.ClipBackdrop``: ``{"kind": "blank" | "color" | "blur" | "media",
+    "color": "#RRGGBB", "asset_id": "<pool visual id>"}`` with ``color`` present for ``color``
+    only and ``asset_id`` for ``media`` only. ``blank`` is black (drawn as nothing); ``blur``
+    is a blurred cover-fit copy of the same clip frame; ``media`` is a Visuals-pool photo (held)
+    or video (looping, muted) cover-fit to the canvas. ``asset_id`` is the pool visual id
+    (``VisualRenderAsset.visual_id``), the same value a clip row's ``tilt`` carries.
+    """
+
+    kind: Literal["blank", "color", "blur", "media"]
+    color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    asset_id: str | None = Field(default=None, min_length=1, max_length=160, pattern=r"^\S+$")
+
+    @model_validator(mode="after")
+    def _fields_match_kind(self) -> ClipBackdrop:
+        if (self.kind == "color") != (self.color is not None):
+            raise ValueError("a backdrop carries a color if and only if its kind is color")
+        if (self.kind == "media") != (self.asset_id is not None):
+            raise ValueError("a backdrop carries an asset_id if and only if its kind is media")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _omit_unused_fields(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        result = handler(self)
+        for key in ("color", "asset_id"):
+            if result.get(key) is None:
+                result.pop(key, None)
+        return result
+
+
 class TimelineClip(_RecipeModel):
     id: str = Field(min_length=1, max_length=160)
     source_asset_id: str = Field(min_length=1, max_length=160)
@@ -120,6 +152,10 @@ class TimelineClip(_RecipeModel):
     # cover-fits it to the canvas (cloud: ``reframe`` ``source_crop``).
     # Requires the ``sourceCrop`` capability.
     source_crop: NormalizedSourceCrop | None = None
+    # Drawn under a main-track clip: the corners a tilt (``transform.rotation_degrees``,
+    # clockwise on screen) uncovers, or the bars around a letterboxed clip.
+    # Requires the ``clipTilt`` capability.
+    backdrop: ClipBackdrop | None = None
     volume: float = Field(default=1, ge=0, le=2)
     # Seconds of linear gain ramp at this clip's audio start/end (KRI-139).
     # Replaces the device's ~25ms declick edge when longer: the music bed's
@@ -142,6 +178,7 @@ class TimelineClip(_RecipeModel):
             "overlay_preserve_alpha",
             "still_layout",
             "source_crop",
+            "backdrop",
             "audio_fade_in",
             "audio_fade_out",
         ):
@@ -233,6 +270,31 @@ MediaCapability = Literal[
     # Text behind people: `text_layers[].behind_subject`, occluded on device by a Vision
     # person mask (`KriaMediaEngine.NativeSubjectMatte`).
     "behindSubject",
+    # Talk-to-camera green screen: `speaker_background` (V2 recipe), a photo or looping
+    # video composited behind the speaker clip's Vision person mask on device.
+    "speakerBackground",
+    # KRI-1162: the same lane with timed `windows` and/or a `speaker_frame` (the matted
+    # speaker scaled into a corner). Derived from the layer; gated by its own verified token.
+    "speakerBackgroundWindows",
+    # KRI-1173: the same lane with a solid-colour FILL (`media_kind: "color"` + `color`), one flat
+    # layer under the speaker. Derived from the layer; gated by its own verified token.
+    "speakerBackgroundColor",
+    # Qendresa item 16: `speaker_background.full_screen_windows` -- the speaker's own take drawn
+    # full-frame and untouched for the opening span(s) (no mask, no background, no corner).
+    # Derived from the layer; gated by its own verified token and protocol 41.
+    "speakerFrameWindows",
+    # Qendresa item 18: `speaker_background.focus` / `.windows[].focus` -- a background picture
+    # aimed at its readable text ({x, y, zoom}). Derived from the layer; own verified token.
+    "backgroundFocus",
+    # A tilted clip (`transform.rotation_degrees != 0`) and/or a `backdrop` under a main-track
+    # clip, drawn on device by `KriaMediaEngine`'s compositor (KRI-1134).
+    "clipTilt",
+    # A clip's `backdrop` of kind `media`: a Visuals-pool photo or looping video drawn under the
+    # clip (KRI-1139). Always accompanies `clipTilt`.
+    "clipBackdropMedia",
+    # KRI-1192: a text run drawn in a script-fallback face (Noto Sans KR / Noto Sans Arabic),
+    # bundled in the app from protocol 35. Derived from the run's font asset file.
+    "scriptFonts",
     # Vocabulary for lanes the V2 recipe schema has no fields for yet — see
     # docs/reviews/kri-29/capability-matrix.md. Naming these does not enable
     # them: `phone_guided_plan.compile_phone_guided_plan` still rejects the
@@ -293,9 +355,20 @@ class EditRecipeV1(_RecipeModel):
                     or clip.rate != 1
                     or clip.look is not None
                     or clip.hold_duration is not None
-                    or clip.transform != MediaTransform()
+                    or clip.transform
+                    != MediaTransform(rotation_degrees=clip.transform.rotation_degrees)
                 ):
                     raise ValueError("a still card requires a plain V2 main-track clip")
+                if clip.backdrop is not None and (
+                    track.kind != "video" or clip.visual_placement is not None
+                ):
+                    raise ValueError("a backdrop requires a main-track clip without a placement")
+                if clip.transform.rotation_degrees != 0 or clip.backdrop is not None:
+                    self.required_capabilities |= {"clipTilt"}
+                if clip.backdrop is not None and clip.backdrop.kind == "media":
+                    if self.schema_version != 2:
+                        raise ValueError("a media backdrop requires a V2 recipe")
+                    self.required_capabilities |= {"clipBackdropMedia"}
                 if clip.source_crop is not None:
                     if clip.still_layout is not None or clip.visual_placement is not None:
                         raise ValueError(

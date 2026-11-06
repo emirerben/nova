@@ -38,6 +38,7 @@ def _agent() -> StyleObservationAgent:
 
 # ── Coercion helpers ──────────────────────────────────────────────────────────
 
+
 class TestCoercionHelpers:
     def test_coerce_font_feel_valid(self):
         for ff in _FONT_FEELS:
@@ -82,6 +83,7 @@ class TestCoercionHelpers:
 
 # ── parse() — happy paths ─────────────────────────────────────────────────────
 
+
 class TestStyleObservationParse:
     def test_no_text(self):
         """A video with no on-screen text returns early with defaults."""
@@ -94,18 +96,20 @@ class TestStyleObservationParse:
 
     def test_full_observation(self):
         """All fields present — all coerced correctly."""
-        raw = json.dumps({
-            "has_on_screen_text": True,
-            "font_feel": "serif_editorial",
-            "text_color_hex": "#FFFFFF",
-            "highlight_color_hex": "#FFD24A",
-            "position": "center",
-            "size_class": "medium",
-            "layout": "linear",
-            "stroke": "none",
-            "text_anchor": "center",
-            "confidence": 0.9,
-        })
+        raw = json.dumps(
+            {
+                "has_on_screen_text": True,
+                "font_feel": "serif_editorial",
+                "text_color_hex": "#FFFFFF",
+                "highlight_color_hex": "#FFD24A",
+                "position": "center",
+                "size_class": "medium",
+                "layout": "linear",
+                "stroke": "none",
+                "text_anchor": "center",
+                "confidence": 0.9,
+            }
+        )
         out = _agent().parse(raw, _make_input())
         assert out.has_on_screen_text is True
         assert out.font_feel == "serif_editorial"
@@ -125,33 +129,41 @@ class TestStyleObservationParse:
         assert out.font_feel == "none"
 
     def test_unknown_position_coerced_to_none(self):
-        raw = json.dumps({
-            "has_on_screen_text": True, "position": "middle", "font_feel": "clean_sans",
-        })
+        raw = json.dumps(
+            {
+                "has_on_screen_text": True,
+                "position": "middle",
+                "font_feel": "clean_sans",
+            }
+        )
         out = _agent().parse(raw, _make_input())
         assert out.position is None
 
     def test_invalid_hex_color_coerced_to_none(self):
-        raw = json.dumps({
-            "has_on_screen_text": True,
-            "font_feel": "bold_display",
-            "text_color_hex": "yellow",
-            "highlight_color_hex": "rgb(255,0,0)",
-        })
+        raw = json.dumps(
+            {
+                "has_on_screen_text": True,
+                "font_feel": "bold_display",
+                "text_color_hex": "yellow",
+                "highlight_color_hex": "rgb(255,0,0)",
+            }
+        )
         out = _agent().parse(raw, _make_input())
         assert out.text_color_hex is None
         assert out.highlight_color_hex is None
 
     def test_no_text_ignores_other_fields(self):
         """When has_on_screen_text=False, other fields should not be surfaced."""
-        raw = json.dumps({
-            "has_on_screen_text": False,
-            "font_feel": "bold_display",   # present but should be ignored
-            "text_color_hex": "#ff0000",
-        })
+        raw = json.dumps(
+            {
+                "has_on_screen_text": False,
+                "font_feel": "bold_display",  # present but should be ignored
+                "text_color_hex": "#ff0000",
+            }
+        )
         out = _agent().parse(raw, _make_input())
         assert out.has_on_screen_text is False
-        assert out.font_feel == "none"      # reset to 'none', not 'bold_display'
+        assert out.font_feel == "none"  # reset to 'none', not 'bold_display'
         assert out.text_color_hex is None
 
     def test_partial_fields_ok(self):
@@ -171,18 +183,21 @@ class TestStyleObservationParse:
         assert out.confidence == pytest.approx(1.0)
 
     def test_cluster_layout(self):
-        raw = json.dumps({
-            "has_on_screen_text": True,
-            "font_feel": "bold_display",
-            "layout": "cluster",
-            "size_class": "large",
-        })
+        raw = json.dumps(
+            {
+                "has_on_screen_text": True,
+                "font_feel": "bold_display",
+                "layout": "cluster",
+                "size_class": "large",
+            }
+        )
         out = _agent().parse(raw, _make_input())
         assert out.layout == "cluster"
         assert out.size_class == "large"
 
 
 # ── parse() — error paths ─────────────────────────────────────────────────────
+
 
 class TestStyleObservationParseErrors:
     def test_invalid_json(self):
@@ -216,14 +231,17 @@ class TestStyleObservationParseErrors:
 
 # ── StyleObservationInput validation ──────────────────────────────────────────
 
+
 class TestStyleObservationInputValidation:
     def test_view_index_nan_rejected(self):
         import math
+
         with pytest.raises(Exception):
             StyleObservationInput(file_uri="files/x", view_index=math.nan)
 
     def test_view_index_inf_rejected(self):
         import math
+
         with pytest.raises(Exception):
             StyleObservationInput(file_uri="files/x", view_index=math.inf)
 
@@ -241,6 +259,7 @@ class TestStyleObservationInputValidation:
 
 
 # ── Vocabulary exhaustiveness ──────────────────────────────────────────────────
+
 
 class TestVocabularyExhaustiveness:
     """Guard: every value in the Literal vocabulary must survive a parse round-trip."""
@@ -285,14 +304,15 @@ class TestVocabularyExhaustiveness:
 # ── Input schema ──────────────────────────────────────────────────────────────
 
 
-
 # ── render_prompt edge cases ───────────────────────────────────────────────────
+
 
 class TestStyleObservationRenderPrompt:
     """Unit-test the branches in render_prompt() without hitting Gemini."""
 
     def _make_agent(self) -> StyleObservationAgent:
         from unittest.mock import MagicMock
+
         return StyleObservationAgent(model_client=MagicMock())
 
     def _render(self, **kwargs) -> str:
@@ -340,6 +360,7 @@ class TestMediaMimeFallback:
     def test_media_mime_empty_string_falls_back(self):
         """file_mime="" → media_mime() returns 'video/mp4'."""
         from unittest.mock import MagicMock
+
         agent = StyleObservationAgent(model_client=MagicMock())
         inp = StyleObservationInput(file_uri="files/test", file_mime="")
         assert agent.media_mime(inp) == "video/mp4"

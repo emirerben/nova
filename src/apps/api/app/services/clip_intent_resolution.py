@@ -31,7 +31,7 @@ import re
 import tempfile
 import threading
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
@@ -59,7 +59,7 @@ from app.agents.clip_request_resolver import (
     ResolverIntentOut,
 )
 from app.config import settings
-from app.kria.reply_language import current_reply_language, say
+from app.kria.reply_language import current_reply_language, detect_chat_language, say
 from app.schemas.clip_intents import (
     EXCLUDE_MIN_CONFIDENCE,
     LABEL_MIN_CONFIDENCE,
@@ -78,9 +78,11 @@ from app.schemas.clip_intents import (
     ground_label,
     ground_placeholder_label,
     is_clip_description_label,
+    pin_subject_unfound,
 )
 from app.schemas.clip_understanding import ClipUnderstanding
 from app.services.clip_facts import order_by_capture_time
+from app.services.clip_file_names import ClipNameIndex
 from app.services.clip_selection import (
     MAX_QUESTION_CLIPS,
     answered_rows,
@@ -281,6 +283,24 @@ def _invented_selection(evidence: object, alias: str, resolver_request: str) -> 
     )
 
 
+def _miscites_file_name(evidence: object, media_id: str, names: ClipNameIndex) -> bool:
+    """True when the resolver's evidence for ``media_id`` quotes the file name of another clip
+    (KRI-1112).
+
+    File names are never sent to the resolver (``IntentClip.file_name``), so a name in its
+    evidence comes from the creator's words, and the clip it pinned under that name is a
+    guess. Leverkusen M3 (13:49): the creator listed "IMG_1028, IMG_1036, IMG_1037,
+    IMG_1039, IMG_1043" and the resolver matched them to m001..m005 in alias order at
+    confidence 1.0, so IMG_1039 was kept as 'IMG_1028'. Names are read as the file-name step
+    reads them (``ClipNameIndex``: case, extension and the iOS upload prefix folded); a name
+    two clips share names neither. Structural only: it compares names, never meaning.
+    """
+    if not isinstance(evidence, str) or not names:
+        return False
+    references, _others = names.references(evidence)
+    return any(ref.media_id is not None and ref.media_id != media_id for ref in references)
+
+
 def _replace_known_media_ids_with_aliases(
     creator_request: str,
     alias_to_media: dict[str, str],
@@ -381,9 +401,15 @@ class _IntentWork:
     # "no" to. See `_settle_named_label_guesses`.
     named_guesses: dict[str, float] = field(default_factory=dict)
     vision_no_media_ids: set[str] = field(default_factory=set)
+    # KRI-1112: clips whose resolver evidence quotes another clip's file name
+    # (`_miscites_file_name`). Never kept, never a pre-tick, and the ask is asked.
+    miscited_media_ids: set[str] = field(default_factory=set)
     # KRI-779: every clip the resolver put forward for this intent (an assignment at any
     # confidence, or a vision check), whatever the check said after.
     considered_media_ids: set[str] = field(default_factory=set)
+    # KRI-1108: clips the resolver matched to a first/last ask whose subject no record shows
+    # (`_unfound_pin`). Never kept, and never a picker pre-tick.
+    unfound_media_ids: set[str] = field(default_factory=set)
 
 
 def _cached_answer(clip: IntentClip, question_norm: str) -> dict[str, Any] | None:
@@ -822,6 +848,80 @@ def _build_question(work_items: list[_IntentWork], position_by_media: dict[str, 
     return f"{joined}{suffix}"
 
 
+# Leverkusen M2: the asks a confident match settles although checks on other clips were
+# unsure. An allowlist, so an ask added later (one that hides footage) never settles by default.
+_FOUND_SETTLES_OPS = frozenset({"group", "order", "include", "label", "caption"})
+
+
+def _found_rows_text(labels: list[str]) -> str:
+    """The question for picker rows that come with the clips already found ticked."""
+    shown = ", ".join(f'"{label}"' for label in labels[:4])
+    more = say(
+        en=f" and {len(labels) - 4} more" if len(labels) > 4 else "",
+        tr=f" ve {len(labels) - 4} tane daha" if len(labels) > 4 else "",
+    )
+    return say(
+        en=(
+            f"I ticked the clips I found for {shown}{more}. "
+            "Tap any others that show it too, or untick one that doesn't."
+        ),
+        tr=(
+            f"{shown}{more} için bulduğum klipleri işaretledim. "
+            "Bunu gösteren başka klip varsa ona da dokun, göstermeyenin işaretini kaldır."
+        ),
+    )
+
+
+def _unfound_rows_text(labels: list[str]) -> str:
+    """KRI-1108: the question for picker rows whose subject no clip's record shows."""
+    shown = ", ".join(f'"{label}"' for label in labels[:4])
+    if len(labels) == 1:
+        return say(
+            en=(
+                f"I couldn't find {shown} in your clips. "
+                "Tap the clip that shows it, or tell me there isn't one."
+            ),
+            tr=f"{shown} kliplerinde bulamadım. Onu gösteren klibe dokun ya da olmadığını söyle.",
+        )
+    more = say(
+        en=f" and {len(labels) - 4} more" if len(labels) > 4 else "",
+        tr=f" ve {len(labels) - 4} tane daha" if len(labels) > 4 else "",
+    )
+    return say(
+        en=(
+            f"I couldn't find {shown}{more} in your clips. "
+            "Tap the clip for each one, or mark the ones that aren't there."
+        ),
+        tr=(
+            f"Şunları kliplerinde bulamadım: {shown}{more}. "
+            "Her biri için klibe dokun ya da olmayanları işaretle."
+        ),
+    )
+
+
+def _unfound_pin(
+    intent: ClipIntent,
+    matched: list[ClipUnderstanding],
+    records: Iterable[ClipUnderstanding],
+) -> bool:
+    """KRI-1108: a first/last ask the resolver matched only to clips that do not show it.
+
+    Leverkusen M3: "End on the trophy celebration" was seated on the Nürnberg players
+    thanking their fans at confidence 0.9, and the creator was never told there is no trophy
+    shot. Membership confidence is the resolver's own word, so the ask's words are checked
+    against the records (``pin_subject_unfound``). The records are written in English, so an
+    ask written in Turkish is never judged by its words. A pin decides where the edit starts
+    or ends, so only those are held: a flagged match is asked about, never rejected.
+    """
+    return (
+        intent.op == "order"
+        and intent.position is not None
+        and bool(matched)
+        and detect_chat_language(intent.attribute) != "tr"
+        and pin_subject_unfound(intent.attribute, matched, records)
+    )
+
+
 def picker_eligible(intent: ClipIntent) -> bool:
     """True when the creator tapping clips fully answers this intent.
 
@@ -831,7 +931,7 @@ def picker_eligible(intent: ClipIntent) -> bool:
     resolver, so it is never in ``creator_work``; but the clips a creator taps (or names by
     file name) fully answer it, so it settles like the other membership ops (KRI-761).
     """
-    if intent.op in {"group", "include", "order", "exclude"}:
+    if intent.op in {"group", "include", "order", "exclude", "hide_part"}:
         return True
     if intent.op == "label":
         if intent.placeholder:
@@ -841,6 +941,21 @@ def picker_eligible(intent: ClipIntent) -> bool:
     if intent.op == "caption":
         return bool(intent.creator_text)
     return False
+
+
+def _hidden_part_fields(intent: ClipIntent) -> dict[str, Any]:
+    """A ``hide_part``'s edge, seconds and content, carried onto its resolved row.
+
+    Leverkusen M2 run 2: the resolver settles WHICH clip, never the part. Rebuilt without
+    these, every hidden part reached the turn empty and "at the start, the first 3 seconds"
+    was asked "start or end?" again, forever. Unset on every other op, and omitted from
+    dumps when unset, so their rows stay byte-identical.
+    """
+    return {
+        "part_edge": intent.part_edge,
+        "part_s": intent.part_s,
+        "part_attribute": intent.part_attribute,
+    }
 
 
 def _only_video(clips: list[IntentClip]) -> IntentClip | None:
@@ -962,9 +1077,13 @@ def _build_clip_question(
     skipped here and stay in the text part of the question (KRI-282: one such intent used
     to drop the picker for every other intent).
 
-    Candidates are every clip not already confirmed for the intent (the creator may know
-    a clip the analysis never named, so we do not narrow to what the model considered);
-    low-confidence matches the resolver could not settle are pre-ticked as suggestions.
+    Candidates are every clip the intent accepts (the creator may know a clip the analysis
+    never named, so we do not narrow to what the model considered). A tap replaces the
+    resolver's answer, so the clips already found come ticked (Leverkusen M2: the TOR clip
+    vision had found was left out of its own row). Low-confidence matches the resolver
+    could not settle are pre-ticked as suggestions only when nothing was found; beside a
+    found clip they are offered un-ticked, unless the intent is an "only about X" scope
+    (an un-ticked clip leaves the edit) or not one of ``_FOUND_SETTLES_OPS``.
     KRI-779: in a project with one video, a photo is offered only while it could still
     answer the intent (``_live_photo_ids``); with several videos nothing is narrowed.
     """
@@ -975,20 +1094,28 @@ def _build_clip_question(
     narrow_photos = records_by_id is not None and _only_video(clips) is not None
     categories: list[dict[str, Any]] = []
     for work in creator_work:
-        confirmed = {a.media_id for a in work.kept}
+        found = {a.media_id for a in work.kept}
         # KRI-991: the clips the resolver put forward below the bar, or a check could not
         # settle, are the picker's pre-ticks. A clip a check confidently ruled out is not.
         # Suggestions only: nothing is applied without the creator's tap.
-        near_misses = (work.failed_media_ids | work.considered_media_ids) - (
-            work.vision_no_media_ids - work.failed_media_ids
+        # KRI-1112: a clip pinned by a file name it does not carry is no suggestion either.
+        near_misses = (
+            (work.failed_media_ids | work.considered_media_ids)
+            - work.miscited_media_ids
+            - (work.vision_no_media_ids - work.failed_media_ids)
         )
+        # KRI-1108: a clip matched to a subject no record shows is no suggestion.
+        near_misses -= work.unfound_media_ids
+        if found and work.intent.op in _FOUND_SETTLES_OPS and not work.intent.exclusive:
+            near_misses = set()
         live = _live_photo_ids(work, clips, records_by_id) if narrow_photos else set()
         candidates = [
             c.media_id
             for c in clips
             if work.intent.accepts_source_kind(c.kind)
-            and c.media_id not in confirmed
-            and (not narrow_photos or c.kind != "image" or c.media_id in live)
+            and (
+                c.media_id in found or not narrow_photos or c.kind != "image" or c.media_id in live
+            )
         ]
         categories.append(
             {
@@ -1001,7 +1128,7 @@ def _build_clip_question(
                 "creator_text": work.intent.creator_text,
                 "candidate_media_ids": candidates[:MAX_QUESTION_CLIPS],
                 "suggested_media_ids": sorted(
-                    (m for m in near_misses if m in candidates),
+                    (m for m in found | near_misses if m in candidates),
                     key=order.__getitem__,
                 ),
             }
@@ -1162,8 +1289,9 @@ def _build_resolver_input(
             # KRI-282: a placeholder label is membership-only for the resolver ("which
             # clips are <attribute>"); it must never author text for it. KRI-667: so is
             # an exclude ("which clips are the quad bike clip"); the resolver has no
-            # exclude op, and leaving the matched clips out is the server's step.
-            op="include" if i.placeholder or i.op == "exclude" else i.op,
+            # exclude op, and leaving the matched clips out is the server's step. Leverkusen
+            # M2: so is a hidden part ("which clip is the second goal clip").
+            op="include" if i.placeholder or i.op in {"exclude", "hide_part"} else i.op,
             attribute=i.attribute,
             creator_text=i.creator_text,
             caption_attribute=i.caption_attribute,
@@ -1279,6 +1407,7 @@ async def resolve_clip_intents_for_turn(
         return IntentResolution(intents=[], question=None, vision_answers={})
 
     clip_by_id = {c.media_id: c for c in clips}
+    file_names = ClipNameIndex({c.media_id: c.file_name for c in clips})
     records_by_id = {c.media_id: clip_record(c.analysis, kind=c.kind) for c in clips}
     position_by_media = {c.media_id: idx + 1 for idx, c in enumerate(clips)}
 
@@ -1358,6 +1487,7 @@ async def resolve_clip_intents_for_turn(
                     ordered_members=i.ordered_members,
                     exclusive=i.exclusive,
                     requirement_id=i.requirement_id,
+                    **_hidden_part_fields(i),
                     status="needs_creator",
                     assignments=[],
                     question=_generic_question(),
@@ -1439,6 +1569,18 @@ async def resolve_clip_intents_for_turn(
         }
         vision_media = {nv.media: nv.question for nv in resolved.needs_vision}
         work.had_any_candidate = bool(assignment_by_media or vision_media)
+        for alias, assignment in list(assignment_by_media.items()):
+            media_id = alias_to_media.get(alias)
+            if (
+                media_id is not None
+                and intent.accepts_source_kind(clip_by_id[media_id].kind)
+                and _miscites_file_name(assignment.evidence, media_id, file_names)
+            ):
+                # KRI-1112: matched by a name it was never given. Unsettled, so the
+                # creator is asked; never a pre-tick.
+                del assignment_by_media[alias]
+                work.miscited_media_ids.add(media_id)
+                work.failed_media_ids.add(media_id)
         if intent.op == "caption" and not intent.creator_text:
             # The resolver's ONE authored phrase for the whole chapter — text
             # authoring against the FINAL member set happens after membership
@@ -1447,6 +1589,18 @@ async def resolve_clip_intents_for_turn(
 
         candidate_media = list(dict.fromkeys([*assignment_by_media, *vision_media]))
         soft_low: list[tuple[float, str]] = []
+        matched = [
+            alias_to_media[alias] for alias in assignment_by_media if alias in alias_to_media
+        ]
+        unfound_pin = _unfound_pin(
+            intent,
+            [
+                records_by_id[media_id]
+                for media_id in matched
+                if intent.accepts_source_kind(clip_by_id[media_id].kind)
+            ],
+            records_by_id.values(),
+        )
         for alias in candidate_media:
             media_id = alias_to_media.get(alias)
             if media_id is None or not intent.accepts_source_kind(clip_by_id[media_id].kind):
@@ -1654,6 +1808,28 @@ async def resolve_clip_intents_for_turn(
                     )
                     continue
                 if assignment is None:
+                    continue
+                if unfound_pin:
+                    # KRI-1108: never seated, at any confidence; the creator is asked, with
+                    # nothing ticked.
+                    work.unfound_media_ids.add(media_id)
+                    continue
+                # Leverkusen M2: a hidden part on the wrong clip shows what the creator hid on
+                # the right one, so its clip is held to the label bar; below it the vision
+                # model confirms, else the creator taps it.
+                bar = LABEL_MIN_CONFIDENCE if intent.op == "hide_part" else None
+                if bar is not None and assignment.confidence < bar:
+                    vision_candidates.append(
+                        _VisionCandidate(
+                            media_id=media_id,
+                            intent_id=intent.intent_id,
+                            op=intent.op,
+                            attribute=intent.attribute,
+                            question=_fallback_question(intent),
+                            fallback_value=None,
+                            creator_text=None,
+                        )
+                    )
                     continue
                 if assignment.confidence >= MEMBERSHIP_MIN_CONFIDENCE:
                     work.kept.append(
@@ -2153,6 +2329,7 @@ async def resolve_clip_intents_for_turn(
     named_guesses_settled = _settle_named_label_guesses(
         work_by_id, records_by_id=records_by_id, creator_request=creator_request
     )
+    miscited = sum(len(w.miscited_media_ids) for w in work_by_id.values())
 
     # ── Assemble the result ──────────────────────────────────────────────────
     resolved_intents: list[ResolvedClipIntent] = []
@@ -2160,6 +2337,7 @@ async def resolve_clip_intents_for_turn(
     creator_work: list[_IntentWork] = []
     only_video = _only_video(clips)
     single_take_settled = 0
+    found_settled = 0
     for intent in intents:
         work = work_by_id[intent.intent_id]
         # KRI-667: an exclude is settled by whatever the resolver confidently matched,
@@ -2187,6 +2365,23 @@ async def resolve_clip_intents_for_turn(
             )
         ):
             single_take_settled += 1
+        # Leverkusen M2: an ask a clip confidently matched is answered by that match. Unsure
+        # checks on OTHER clips beside it no longer hold it open: the picker asked "which
+        # clips show the TOR" with the TOR clip vision had found left out and the unsure
+        # ones pre-ticked. Only for asks that place, add or print on clips: an "only about X"
+        # scope still asks (settling it would cut those unsure clips from the edit), and so
+        # does any ask that hides footage (an unsure clip may show what must not be seen).
+        found_settles = (
+            bool(work.kept)
+            and bool(work.failed_media_ids)
+            and not work.intent_question
+            and not intent.exclusive
+            and intent.op in _FOUND_SETTLES_OPS
+            and picker_eligible(intent)
+            # KRI-1112: a clip matched by a file name it does not carry was guessed, so the
+            # right citations beside it settle nothing.
+            and not work.miscited_media_ids
+        )
         # Technical/provider/media failures must not be turned into a creator
         # question. The caller can retry the preparation/resolution attempt;
         # only settled ambiguity or a genuinely empty result belongs in
@@ -2194,8 +2389,14 @@ async def resolve_clip_intents_for_turn(
         is_creator_unresolved = (
             not settles_itself
             and not has_non_creator_failure
-            and (bool(work.intent_question) or bool(work.failed_media_ids) or not work.kept)
+            and (
+                bool(work.intent_question)
+                or (bool(work.failed_media_ids) and not found_settles)
+                or not work.kept
+            )
         )
+        if found_settles and not settles_itself and not has_non_creator_failure:
+            found_settled += 1
         is_unresolved = is_creator_unresolved or has_non_creator_failure
         if is_unresolved:
             unresolved_work.append(work)
@@ -2214,6 +2415,7 @@ async def resolve_clip_intents_for_turn(
                     ordered_members=intent.ordered_members,
                     exclusive=intent.exclusive,
                     requirement_id=intent.requirement_id,
+                    **_hidden_part_fields(intent),
                     status="needs_creator",
                     assignments=work.kept,
                     question=None,  # set on the turn-level question below
@@ -2235,6 +2437,7 @@ async def resolve_clip_intents_for_turn(
                     ordered_members=intent.ordered_members,
                     exclusive=intent.exclusive,
                     requirement_id=intent.requirement_id,
+                    **_hidden_part_fields(intent),
                     status="resolved",
                     assignments=work.kept,
                     caption_text=work.caption_text,
@@ -2242,6 +2445,7 @@ async def resolve_clip_intents_for_turn(
                 )
             )
 
+    unfound_pins = sum(len(w.unfound_media_ids) for w in work_by_id.values())
     redacted_counts = {
         # Redacted counts only (no creator text / model output).
         "resolver_question_intents": question_intents,
@@ -2256,8 +2460,12 @@ async def resolve_clip_intents_for_turn(
         "vision_multi_question_clips": sum(1 for q in questions_by_clip.values() if len(q) > 1),
         "named_guesses_settled": named_guesses_settled,
         "single_take_settled": single_take_settled,
+        "found_settled": found_settled,
+        # KRI-1112: omitted when no evidence quoted another clip's file name.
+        **({"miscited_file_names": miscited} if miscited else {}),
         # Omitted when nothing failed, so every other turn's diagnostics are unchanged.
         **({"vision_error_types": vision_errors[:8]} if vision_errors else {}),
+        **({"unfound_pins": unfound_pins} if unfound_pins else {}),
     }
     clip_order = {clip.media_id: index for index, clip in enumerate(clips)}
     exclusion_suspects = {
@@ -2325,13 +2533,49 @@ async def resolve_clip_intents_for_turn(
             creator_work, clips, creator_words, records_by_id=records_by_id
         )
         if clip_question is not None:
+            # Leverkusen M2: a row that already has its clips ticked never says "I couldn't
+            # tell which of your clips show it".
+            found_keys = {intent_key(w.intent) for w in creator_work if w.kept}
+            found_rows = [
+                c
+                for c in clip_question["categories"]
+                if found_keys & {r["key"] for r in answered_rows(c)}
+            ]
+            # KRI-1108: a row whose subject no clip shows says so, never "I couldn't tell which".
+            unfound_keys = {
+                intent_key(w.intent) for w in creator_work if w.unfound_media_ids and not w.kept
+            }
+            unfound_rows = [
+                c
+                for c in clip_question["categories"]
+                if c not in found_rows
+                and not c["suggested_media_ids"]
+                and unfound_keys & {r["key"] for r in answered_rows(c)}
+            ]
+            open_rows = [
+                c
+                for c in clip_question["categories"]
+                if c not in found_rows and c not in unfound_rows
+            ]
             # KRI-779: a picker whose only candidate is the one video asks whether the
             # moment is in it at all, in plain words, never "which of your clips".
-            in_the_video = only_video is not None and all(
-                c["candidate_media_ids"] == [only_video.media_id]
-                for c in clip_question["categories"]
+            in_the_video = (
+                not found_rows
+                and only_video is not None
+                and all(
+                    c["candidate_media_ids"] == [only_video.media_id]
+                    for c in clip_question["categories"]
+                )
             )
-            turn_question = clip_question_text(clip_question["categories"], only_video=in_the_video)
+            turn_question = " ".join(
+                part
+                for part in (
+                    _found_rows_text([c["label"] for c in found_rows]) if found_rows else "",
+                    _unfound_rows_text([c["label"] for c in unfound_rows]) if unfound_rows else "",
+                    clip_question_text(open_rows, only_video=in_the_video) if open_rows else "",
+                )
+                if part
+            )
             if in_the_video:
                 clip_question = None
             leftover = [w for w in creator_work if not picker_eligible(w.intent)]

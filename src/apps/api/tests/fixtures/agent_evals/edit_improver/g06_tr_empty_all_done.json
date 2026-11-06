@@ -1,0 +1,54 @@
+{
+  "id": "g06_tr_empty_all_done",
+  "description": "Everything issued is already in the edit or dismissed.",
+  "expect": "pass",
+  "input": {
+    "state": "ready",
+    "language": "tr",
+    "creator_request": "",
+    "issued": [
+      {
+        "kind": "captions",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "hook",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e2"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e1": {
+        "signal": "speech",
+        "fact": "klipte konuşma var"
+      },
+      "e2": {
+        "signal": "visual",
+        "fact": "elleri hamur yoğuruyor"
+      }
+    },
+    "already_in_edit": [
+      "captions"
+    ],
+    "dismissed": [
+      "hook"
+    ],
+    "untrusted_texts": []
+  },
+  "output": {
+    "ranked": []
+  }
+}

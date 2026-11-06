@@ -1,0 +1,2674 @@
+{
+  "fixture_id": "assos",
+  "schema_version": 1,
+  "source": {
+    "what": "Prod Kria thread 'Why Visit Assos, Turkey? (Animated)': one creation turn and one chip follow-up. Code under audit: origin/main 9c5a453b0.",
+    "captured": "2026-10-31 via read-only admin GETs (saved copies, no network now)",
+    "recorded": [
+      "creator message and Creative Brief v1 (exact, except r1 facts.animation: see reconstructed)",
+      "post-parse strategy of the planner (turns plan intents[0].arguments.strategy), including the frozen song section",
+      "16 clip analyses (job assembly_plan.creator_brief_binding.media_snapshot)",
+      "approval card text, requirement receipts, plan-block look chips, render_shape",
+      "the recipe prod produced (cut lengths, text effects, fonts, length owners)",
+      "turn 2 chip text, assistant reply, brief_coverage and the copilot run outcome"
+    ],
+    "reconstructed": [
+      "Creative Brief v1 r1 facts.animation = \"any\": prod ran planner prompt v105 and recorded facts={}; planner prompt v106 (prompt fidelity, animation) records an unnamed animation ask there. The model leg is not replayed offline; the structured round trip is pinned by tests/kria/test_text_animation_ask.py",
+      "nova.creator.main raw_text: prod redacts model I/O; the parsed strategy is recorded exactly, but the raw model JSON is not replayed through MainCreatorAgent.parse",
+      "phone source bindings: synthetic proxy paths, synthetic content hashes, and sizes from the recorded upload contract",
+      "capability manifest and the approval request body (render_shape echo vs pick is inferred from the iOS code, not recorded)",
+      "the approval card is assembled from the real pure functions (_strategy_changes, reply_from_receipts); the DB-bound turn body is not run"
+    ],
+    "redacted": [
+      "user ids",
+      "storage paths",
+      "signed URLs",
+      "library ids",
+      "file names",
+      "content hashes",
+      "media ids (now analysis-proxy-assos-NN)",
+      "thread, item, job and turn ids"
+    ],
+    "see": "tests/fixtures/kria_replay/assos/README.md"
+  },
+  "message": "With animations, explain why people should visit Assos, Turkey",
+  "client_protocol": 25,
+  "brief": {
+    "version": 1,
+    "requirements": [
+      {
+        "id": "r1",
+        "kind": "text",
+        "facts": {
+          "animation": "any"
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "animated on-screen text explaining why people should visit Assos, Turkey",
+        "source_turn_id": "synthetic-turn-1"
+      }
+    ]
+  },
+  "planner_summary": "I'll create an explainer montage that highlights the best of Assos. We'll use animated on-screen text to guide viewers through the location, the ancient ruins, and the amazing Aegean views.",
+  "strategy": {
+    "pacing": "balanced",
+    "direction": "text_explainer",
+    "rationale": "A text explainer format is ideal for highlighting the main reasons to visit Assos. The selected footage covers the coastal setting, ancient ruins, and stunning sea views to visually support the animated explanations on screen.",
+    "intro_hook": "Why you need to visit Assos",
+    "edit_format": "montage",
+    "media_scope": "selected",
+    "caption_style": "auto",
+    "audio_strategy": "licensed_music",
+    "render_program": "guided",
+    "story_structure": [
+      "Introduce Assos and its beautiful coastal setting",
+      "Showcase the ancient ruins and history",
+      "End on the stunning Aegean views and peaceful vibe"
+    ],
+    "target_duration_s": 20,
+    "selected_media_ids": [],
+    "video_reuse_policy": "once",
+    "optional_treatments": [],
+    "selected_music_section": {
+      "end_s": 148.0,
+      "title": "Instant Crush (Official Video) ft. Julian Casablancas",
+      "artist": "Daft Punk",
+      "status": "selected",
+      "start_s": 130.0,
+      "track_id": "synthetic-catalog-track",
+      "beat_timestamps_s": [
+        3.024979,
+        3.576979,
+        4.128979,
+        4.680979,
+        5.208979,
+        5.760979,
+        6.312979,
+        6.864979,
+        7.392979,
+        7.944979,
+        8.496979,
+        9.048979,
+        9.576979,
+        10.128979,
+        10.680979,
+        11.232979,
+        11.760979,
+        12.312979,
+        12.864979,
+        13.392979,
+        13.944979,
+        14.496979,
+        15.048979,
+        15.600979,
+        16.128979,
+        16.680979,
+        17.232979,
+        17.784979,
+        18.312979,
+        18.864979,
+        19.416979,
+        19.944979,
+        20.496979,
+        21.048979,
+        21.600979,
+        22.128979,
+        22.680979,
+        23.232979,
+        23.760979,
+        24.312979,
+        24.864979,
+        25.416979,
+        25.944979,
+        26.496979,
+        27.048979,
+        27.600979,
+        28.128979,
+        28.680979,
+        29.232979,
+        29.784979,
+        30.312979,
+        30.864979,
+        31.416979,
+        31.968979,
+        32.496979,
+        33.048979,
+        33.600979,
+        34.128979,
+        34.680979,
+        35.232979,
+        35.784979,
+        36.312979,
+        36.864979,
+        37.416979,
+        37.968979,
+        38.496979,
+        39.048979,
+        39.600979,
+        40.152979,
+        40.680979,
+        41.232979,
+        41.784979,
+        42.336979,
+        42.864979,
+        43.416979,
+        43.968979,
+        44.496979,
+        45.048979,
+        45.600979,
+        46.152979,
+        46.680979,
+        47.232979,
+        47.784979,
+        48.336979,
+        48.864979,
+        49.416979,
+        49.968979,
+        50.520979,
+        51.048979,
+        51.600979,
+        52.152979,
+        52.704979,
+        53.232979,
+        53.784979,
+        54.336979,
+        54.888979,
+        55.416979,
+        55.968979,
+        56.520979,
+        57.072979,
+        57.600979,
+        58.152979,
+        58.704979,
+        59.232979,
+        59.784979,
+        60.336979,
+        60.888979,
+        61.416979,
+        61.968979,
+        62.520979,
+        63.072979,
+        63.600979,
+        64.152979,
+        64.704979,
+        65.232979,
+        65.784979,
+        66.336979,
+        66.888979,
+        67.440979,
+        67.968979,
+        68.520979,
+        69.072979,
+        69.600979,
+        70.152979,
+        70.704979,
+        71.256979,
+        71.784979,
+        72.336979,
+        72.888979,
+        73.440979,
+        73.968979,
+        74.520979,
+        75.072979,
+        75.600979,
+        76.152979,
+        76.704979,
+        77.256979,
+        77.808979,
+        78.336979,
+        78.888979,
+        79.440979,
+        79.968979,
+        80.520979,
+        81.072979,
+        81.624979,
+        82.152979,
+        82.704979,
+        83.256979,
+        83.544979,
+        83.784979,
+        84.336979,
+        84.888979,
+        85.440979,
+        85.992979,
+        86.520979,
+        87.072979,
+        87.624979,
+        88.152979,
+        88.704979,
+        89.256979,
+        89.808979,
+        90.360979,
+        90.576979,
+        90.744979,
+        90.960979,
+        91.176979,
+        91.440979,
+        91.872979,
+        92.040979,
+        92.280979,
+        92.520979,
+        92.880979,
+        93.072979,
+        93.504979,
+        93.672979,
+        94.056979,
+        94.224979,
+        94.464979,
+        94.704979,
+        95.064979,
+        95.256979,
+        95.544979,
+        95.808979,
+        96.240979,
+        96.408979,
+        96.624979,
+        96.792979,
+        97.176979,
+        97.440979,
+        97.992979,
+        98.160979,
+        98.328979,
+        98.544979,
+        98.712979,
+        98.952979,
+        99.216979,
+        99.480979,
+        99.672979,
+        99.912979,
+        100.176979,
+        100.368979,
+        100.608979,
+        100.776979,
+        100.992979,
+        101.184979,
+        101.496979,
+        101.664979,
+        102.096979,
+        102.360979,
+        102.528979,
+        102.792979,
+        102.960979,
+        103.176979,
+        103.392979,
+        103.992979,
+        104.256979,
+        104.424979,
+        104.616979,
+        104.808979,
+        105.000979,
+        105.384979,
+        105.624979,
+        106.176979,
+        106.704979,
+        106.992979,
+        107.184979,
+        107.400979,
+        107.688979,
+        107.904979,
+        108.072979,
+        108.288979,
+        108.624979,
+        108.888979,
+        109.080979,
+        109.344979,
+        109.512979,
+        109.728979,
+        109.920979,
+        110.112979,
+        110.544979,
+        110.976979,
+        111.144979,
+        111.480979,
+        111.696979,
+        111.912979,
+        112.176979,
+        112.368979,
+        112.584979,
+        113.016979,
+        113.280979,
+        113.688979,
+        114.096979,
+        114.264979,
+        114.624979,
+        114.912979,
+        115.272979,
+        115.440979,
+        115.608979,
+        115.776979,
+        115.992979,
+        116.400979,
+        116.592979,
+        116.832979,
+        117.072979,
+        117.360979,
+        117.648979,
+        117.816979,
+        118.056979,
+        118.464979,
+        118.632979,
+        118.944979,
+        119.136979,
+        119.544979,
+        119.808979,
+        119.976979,
+        120.240979,
+        120.432979,
+        120.624979,
+        120.816979,
+        121.032979,
+        121.464979,
+        121.728979,
+        121.992979,
+        122.160979,
+        122.448979,
+        122.832979,
+        123.000979,
+        123.624979,
+        124.176979,
+        124.608979,
+        124.800979,
+        124.968979,
+        125.280979,
+        125.808979,
+        126.360979,
+        126.912979,
+        127.464979,
+        127.992979,
+        128.544979,
+        129.096979,
+        129.648979,
+        130.176979,
+        130.728979,
+        131.280979,
+        131.808979,
+        132.360979,
+        132.912979,
+        133.464979,
+        133.992979,
+        134.544979,
+        135.096979,
+        135.648979,
+        136.176979,
+        136.728979,
+        137.280979,
+        137.832979,
+        138.360979,
+        138.912979,
+        139.464979,
+        140.016979,
+        140.544979,
+        141.096979,
+        141.648979,
+        142.200979,
+        142.728979,
+        143.280979,
+        143.832979,
+        144.384979,
+        144.912979,
+        145.464979,
+        146.016979,
+        146.544979,
+        147.096979,
+        147.648979,
+        148.200979,
+        148.728979,
+        149.280979,
+        149.832979,
+        150.384979,
+        150.912979,
+        151.464979,
+        152.016979,
+        152.568979,
+        153.096979,
+        153.648979,
+        154.200979,
+        154.752979,
+        155.280979,
+        155.832979,
+        156.384979,
+        156.912979,
+        157.464979,
+        158.016979,
+        158.568979,
+        159.096979,
+        159.648979,
+        160.200979,
+        160.752979,
+        161.280979,
+        161.832979,
+        162.384979,
+        162.936979,
+        163.464979,
+        164.016979,
+        164.568979,
+        165.120979,
+        165.648979,
+        166.200979,
+        166.752979,
+        167.280979,
+        167.832979,
+        168.384979,
+        168.936979,
+        169.464979,
+        170.016979,
+        170.568979,
+        171.120979,
+        171.672979,
+        172.200979,
+        172.752979,
+        173.304979,
+        173.832979,
+        174.384979,
+        174.936979,
+        175.488979,
+        176.016979,
+        176.568979,
+        176.832979,
+        177.120979,
+        177.336979,
+        177.648979,
+        178.200979,
+        178.752979,
+        179.304979,
+        179.832979,
+        180.384979,
+        180.936979,
+        181.488979,
+        182.016979,
+        182.568979,
+        183.120979,
+        183.672979,
+        184.200979,
+        184.752979,
+        185.304979,
+        185.856979,
+        186.120979,
+        186.384979,
+        186.936979,
+        187.488979,
+        188.016979,
+        188.568979,
+        189.120979,
+        189.672979,
+        190.200979,
+        190.752979,
+        191.304979,
+        191.856979,
+        192.384979,
+        192.936979,
+        193.488979,
+        194.040979,
+        194.304979,
+        194.568979,
+        194.784979,
+        195.120979,
+        195.672979,
+        196.224979,
+        196.752979,
+        197.304979,
+        197.856979,
+        198.384979,
+        198.936979,
+        199.488979,
+        200.040979,
+        200.568979,
+        201.120979,
+        201.672979,
+        202.224979,
+        202.752979,
+        203.304979,
+        203.856979,
+        204.408979,
+        204.936979,
+        205.488979,
+        205.776979,
+        206.040979,
+        206.592979,
+        207.120979,
+        207.672979,
+        208.224979,
+        208.776979,
+        209.304979,
+        209.592979,
+        209.856979,
+        210.408979,
+        210.936979,
+        211.488979,
+        212.040979,
+        212.592979,
+        213.000979,
+        213.192979,
+        213.408979,
+        213.672979,
+        214.104979,
+        214.296979,
+        214.512979,
+        214.752979,
+        215.064979,
+        215.304979,
+        215.592979,
+        215.856979,
+        216.168979,
+        216.336979,
+        216.696979,
+        216.936979,
+        217.344979,
+        217.776979,
+        218.040979,
+        218.256979,
+        218.472979,
+        218.640979,
+        218.880979,
+        219.072979,
+        219.408979,
+        219.672979,
+        220.128979,
+        220.296979,
+        220.536979,
+        220.776979,
+        221.184979,
+        221.376979,
+        221.592979,
+        221.856979,
+        222.144979,
+        222.408979,
+        222.840979,
+        223.224979,
+        223.416979,
+        223.632979,
+        223.920979,
+        224.328979,
+        224.592979,
+        224.784979,
+        225.024979,
+        225.192979,
+        225.432979,
+        225.672979,
+        225.864979,
+        226.104979,
+        226.272979,
+        226.512979,
+        226.776979,
+        226.968979,
+        227.208979,
+        227.592979,
+        227.760979,
+        228.408979,
+        228.624979,
+        228.864979,
+        229.080979,
+        229.272979,
+        229.512979,
+        229.680979,
+        229.920979,
+        230.112979,
+        230.448979,
+        230.664979,
+        230.880979,
+        231.144979,
+        231.576979,
+        231.744979,
+        231.960979,
+        232.176979,
+        232.344979,
+        232.584979,
+        232.776979,
+        233.208979,
+        233.376979,
+        233.592979,
+        233.784979,
+        234.168979,
+        234.408979,
+        234.816979,
+        235.248979,
+        235.512979,
+        235.944979,
+        236.112979,
+        236.328979,
+        236.496979,
+        236.880979,
+        237.144979,
+        237.696979,
+        237.984979,
+        238.248979,
+        238.512979,
+        238.776979,
+        238.968979,
+        239.184979,
+        239.400979,
+        239.592979,
+        239.880979,
+        240.312979,
+        240.696979,
+        240.888979,
+        241.080979,
+        241.296979,
+        241.512979,
+        241.776979,
+        242.064979,
+        242.472979,
+        242.664979,
+        242.880979,
+        243.048979,
+        243.216979,
+        243.408979,
+        243.696979,
+        243.960979,
+        244.224979,
+        244.392979,
+        244.656979,
+        245.064979,
+        245.232979,
+        245.592979,
+        245.880979,
+        246.048979,
+        246.336979,
+        246.600979,
+        246.768979,
+        246.960979,
+        247.152979,
+        247.368979,
+        247.584979,
+        247.968979,
+        248.352979,
+        248.592979,
+        249.024979,
+        249.432979,
+        249.648979,
+        249.864979,
+        250.248979,
+        250.512979,
+        250.800979,
+        251.088979,
+        251.256979,
+        251.616979,
+        251.784979,
+        251.952979,
+        252.168979,
+        252.432979,
+        252.720979,
+        252.960979,
+        253.296979,
+        253.512979,
+        253.776979,
+        253.944979,
+        254.616979,
+        254.880979,
+        255.144979,
+        255.600979,
+        255.840979,
+        256.248979,
+        256.776979,
+        257.064979,
+        257.328979,
+        257.568979,
+        257.760979,
+        258.168979,
+        258.360979,
+        258.840979,
+        259.248979,
+        259.512979,
+        259.944979,
+        260.136979,
+        260.328979,
+        260.496979,
+        260.664979,
+        261.168979,
+        261.432979,
+        261.696979,
+        261.864979,
+        262.152979,
+        262.536979,
+        262.704979,
+        263.328979,
+        263.880979,
+        264.312979,
+        264.504979,
+        272.664979,
+        272.952979,
+        273.240979,
+        277.368979,
+        277.800979,
+        278.976979,
+        279.984979,
+        281.880979,
+        282.432979,
+        282.624979,
+        282.888979,
+        283.056979,
+        283.296979,
+        283.536979,
+        283.728979,
+        283.944979,
+        284.352979,
+        284.520979,
+        284.688979,
+        285.168979,
+        285.432979,
+        285.720979,
+        285.984979,
+        286.176979,
+        286.536979,
+        286.728979,
+        287.088979,
+        287.352979,
+        287.640979,
+        287.904979,
+        288.312979,
+        288.504979,
+        288.696979,
+        288.912979,
+        289.536979,
+        289.800979,
+        289.968979,
+        290.136979,
+        290.304979,
+        290.544979,
+        290.760979,
+        290.952979,
+        291.168979,
+        291.576979,
+        291.984979,
+        292.272979,
+        292.680979,
+        293.088979,
+        293.304979,
+        293.568979,
+        293.760979,
+        293.952979,
+        294.168979,
+        294.336979,
+        294.576979,
+        294.888979,
+        295.056979,
+        295.272979,
+        295.440979,
+        295.608979,
+        296.088979,
+        296.352979,
+        296.640979,
+        296.832979,
+        297.048979,
+        297.456979,
+        297.648979,
+        298.272979,
+        298.800979,
+        298.992979,
+        299.208979,
+        299.424979,
+        299.784979,
+        300.192979,
+        300.456979,
+        300.720979,
+        301.008979,
+        301.416979,
+        301.824979,
+        302.088979,
+        302.640979,
+        303.168979,
+        303.600979,
+        304.008979,
+        304.272979,
+        304.800979,
+        305.352979,
+        305.784979,
+        306.192979,
+        306.456979,
+        306.720979,
+        306.984979,
+        307.536979,
+        308.088979,
+        308.640979,
+        309.048979,
+        309.240979,
+        309.456979,
+        309.720979,
+        310.152979,
+        310.560979,
+        310.800979,
+        311.352979,
+        311.640979,
+        311.904979,
+        312.456979,
+        312.744979,
+        312.984979,
+        313.536979,
+        314.088979,
+        314.520979,
+        315.168979,
+        315.720979,
+        316.272979,
+        316.824979,
+        317.352979,
+        317.904979,
+        318.456979,
+        319.008979,
+        320.088979,
+        320.640979
+      ],
+      "catalog_duration_s": 339.792
+    }
+  },
+  "render_shape": {
+    "output_orientation": "landscape",
+    "landscape_fit": "fill"
+  },
+  "phone_text_style_policy": {
+    "version": 1,
+    "requested": {},
+    "preferences": {
+      "pinned": {
+        "position": "bottom_left"
+      },
+      "all_text": {
+        "position": "bottom_left",
+        "stroke_width": 0.0,
+        "automatic_font": true,
+        "excluded_fonts": [
+          "Fraunces"
+        ],
+        "favorite_fonts": [
+          "Big Curls",
+          "Inter",
+          "Montserrat"
+        ],
+        "shadow_enabled": false
+      }
+    }
+  },
+  "clips": [
+    {
+      "id": "analysis-proxy-assos-01",
+      "kind": "video",
+      "duration_s": 12.533333,
+      "has_audio": true,
+      "source_filename": "clip-01.mp4",
+      "analysis": {
+        "width": 320,
+        "aspect": 0.5634,
+        "brands": [],
+        "height": 568,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "man spraying cleaner",
+        "exposure": {
+          "frames": 13,
+          "version": 1,
+          "mean_luma": 85.7,
+          "near_black_share": 0.0
+        },
+        "duration_s": 12.533333,
+        "transcript": "Ah! Ah! Bro.",
+        "description": "man sprays washing machine frantically man walks into kitchen spraying bottle man stands by sink looking around man looks down and up by sink",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 1.1,
+            "energy": 7.0,
+            "start_s": 0.0,
+            "description": "man sprays washing machine frantically"
+          },
+          {
+            "end_s": 4.1,
+            "energy": 6.0,
+            "start_s": 2.1,
+            "description": "man walks into kitchen spraying bottle"
+          },
+          {
+            "end_s": 9.0,
+            "energy": 4.0,
+            "start_s": 5.0,
+            "description": "man stands by sink looking around"
+          },
+          {
+            "end_s": 12.83,
+            "energy": 3.0,
+            "start_s": 10.0,
+            "description": "man looks down and up by sink"
+          }
+        ],
+        "display_width": 320,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "white washing machine",
+            "grey spray bottle",
+            "white dryer",
+            "silver kitchen faucet",
+            "silver kitchen sink"
+          ],
+          "brands": [],
+          "people": {
+            "note": "a man in a blue shirt and white face covering",
+            "count": 1,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "Ah! Ah! Bro."
+          },
+          "actions": [
+            "man sprays bottle on washing machine",
+            "man walks out of laundry area",
+            "man walks into kitchen",
+            "man stands by kitchen sink"
+          ],
+          "setting": "modern apartment interior, laundry area and kitchen",
+          "subject": "man spraying cleaner",
+          "summary": "A man wearing a makeshift mask and gloves sprays a cleaning product on a washing machine and then walks into a kitchen, continuing to look around with the spray bottle.",
+          "activity": "man spraying cleaning product and looking distressed",
+          "audio_type": "mixed",
+          "content_type": "action",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 1.1,
+              "start_s": 0.0,
+              "description": "man sprays washing machine frantically"
+            },
+            {
+              "end_s": 4.1,
+              "start_s": 2.1,
+              "description": "man walks into kitchen spraying bottle"
+            },
+            {
+              "end_s": 9.0,
+              "start_s": 5.0,
+              "description": "man stands by sink looking around"
+            },
+            {
+              "end_s": 12.83,
+              "start_s": 10.0,
+              "description": "man looks down and up by sink"
+            }
+          ]
+        },
+        "display_height": 568,
+        "on_screen_text": "Ah! Ah! Bro.",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      },
+      "original": {
+        "width": 1920,
+        "height": 1080,
+        "orientation_degrees": 90,
+        "duration_s": 12.533333333333333,
+        "has_audio": true,
+        "byte_count": 17454650,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
+      },
+      "proxy": {
+        "width": 320,
+        "height": 568,
+        "frame_rate": 30.0,
+        "duration_s": 12.533333333333333
+      }
+    },
+    {
+      "id": "analysis-proxy-assos-02",
+      "kind": "video",
+      "duration_s": 4.333333,
+      "has_audio": true,
+      "source_filename": "clip-02.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "building covered in vines",
+        "exposure": {
+          "frames": 9,
+          "version": 1,
+          "mean_luma": 103.9,
+          "near_black_share": 0.0
+        },
+        "duration_s": 4.333333,
+        "transcript": "",
+        "description": "establishing shot of vine-covered building",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 4.0,
+            "energy": 3.0,
+            "start_s": 0.0,
+            "description": "establishing shot of vine-covered building"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "brands": [],
+          "people": {
+            "note": "",
+            "count": null,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "setting": "outdoor, possibly a garden or rural area",
+          "subject": "building covered in vines",
+          "summary": "The clip shows a building partially covered in green and red vines, surrounded by various trees and plants under a clear blue sky.",
+          "activity": "",
+          "audio_type": "ambient",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 4.0,
+              "start_s": 0.0,
+              "description": "establishing shot of vine-covered building"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      },
+      "original": {
+        "width": 1920,
+        "height": 1080,
+        "orientation_degrees": 0,
+        "duration_s": 4.32,
+        "has_audio": true,
+        "byte_count": 16815269,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2"
+      },
+      "proxy": {
+        "width": 568,
+        "height": 320,
+        "frame_rate": 30.0,
+        "duration_s": 4.333333333333333
+      }
+    },
+    {
+      "id": "analysis-proxy-assos-03",
+      "kind": "video",
+      "duration_s": 1.933333,
+      "has_audio": true,
+      "source_filename": "clip-03.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "two men looking at rugs",
+        "exposure": {
+          "frames": 4,
+          "version": 1,
+          "mean_luma": 95.0,
+          "near_black_share": 0.0
+        },
+        "duration_s": 1.933333,
+        "transcript": "So",
+        "description": "two men standing in front of patterned rugs",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 1.96,
+            "energy": 3.0,
+            "start_s": 0.0,
+            "description": "two men standing in front of patterned rugs"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "multiple colorful patterned rugs"
+          ],
+          "brands": [],
+          "people": {
+            "note": "two young men, one in a dark long-sleeve shirt and one in a light grey t-shirt",
+            "count": 2,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "So"
+          },
+          "actions": [
+            "two men stand looking at rugs"
+          ],
+          "setting": "outdoor market or stall",
+          "subject": "two men looking at rugs",
+          "summary": "Two men stand in an outdoor area, looking at a display of colorful patterned rugs hanging on a line.",
+          "activity": "browsing rugs",
+          "audio_type": "dialogue",
+          "content_type": "broll",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 1.96,
+              "start_s": 0.0,
+              "description": "two men standing in front of patterned rugs"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "So",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      },
+      "original": {
+        "width": 3840,
+        "height": 2160,
+        "orientation_degrees": 0,
+        "duration_s": 1.92,
+        "has_audio": true,
+        "byte_count": 16814540,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3"
+      },
+      "proxy": {
+        "width": 568,
+        "height": 320,
+        "frame_rate": 30.0,
+        "duration_s": 1.9333333333333333
+      }
+    },
+    {
+      "id": "analysis-proxy-assos-04",
+      "kind": "video",
+      "duration_s": 6.238345,
+      "has_audio": true,
+      "source_filename": "clip-04.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "rocky hillside with ancient ruins",
+        "exposure": {
+          "frames": 12,
+          "version": 1,
+          "mean_luma": 113.1,
+          "near_black_share": 0.0
+        },
+        "duration_s": 6.238345,
+        "transcript": "",
+        "description": "camera pans across rocky hillside camera pans to distant ruins",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 4.0,
+            "energy": 4.0,
+            "start_s": 0.0,
+            "description": "camera pans across rocky hillside"
+          },
+          {
+            "end_s": 7.0,
+            "energy": 3.0,
+            "start_s": 4.0,
+            "description": "camera pans to distant ruins"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "brands": [],
+          "people": {
+            "note": "",
+            "count": null,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "setting": "dry, rocky hillside at an archaeological site",
+          "subject": "rocky hillside with ancient ruins",
+          "summary": "The camera slowly pans across a dry, rocky hillside dotted with green trees, revealing ancient stone ruins against a clear blue sky.",
+          "activity": "",
+          "audio_type": "ambient",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "slow pan, stays sharp",
+          "notable_moments": [
+            {
+              "end_s": 4.0,
+              "start_s": 0.0,
+              "description": "camera pans across rocky hillside"
+            },
+            {
+              "end_s": 7.0,
+              "start_s": 4.0,
+              "description": "camera pans to distant ruins"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "unusable_spans": [
+          {
+            "end_s": 8.0,
+            "reason": "blurry and out of focus",
+            "start_s": 7.0
+          }
+        ],
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      },
+      "original": {
+        "width": 3840,
+        "height": 2160,
+        "orientation_degrees": 0,
+        "duration_s": 6.24,
+        "has_audio": true,
+        "byte_count": 54564605,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa4"
+      },
+      "proxy": {
+        "width": 568,
+        "height": 320,
+        "frame_rate": 30.0,
+        "duration_s": 6.238333333333333
+      }
+    },
+    {
+      "id": "analysis-proxy-assos-05",
+      "kind": "video",
+      "duration_s": 1.44,
+      "has_audio": true,
+      "source_filename": "clip-05.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "ancient stone ruins",
+        "exposure": {
+          "frames": 3,
+          "version": 1,
+          "mean_luma": 112.6,
+          "near_black_share": 0.0
+        },
+        "duration_s": 1.44,
+        "transcript": "",
+        "description": "wide shot of ruins and landscape man observing ruins panoramic view of distant hills",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 2.0,
+            "energy": 4.0,
+            "start_s": 0.0,
+            "description": "wide shot of ruins and landscape"
+          },
+          {
+            "end_s": 4.5,
+            "energy": 4.5,
+            "start_s": 2.5,
+            "description": "man observing ruins"
+          },
+          {
+            "end_s": 7.5,
+            "energy": 4.0,
+            "start_s": 5.0,
+            "description": "panoramic view of distant hills"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "dark grey stone ruins",
+            "white information boards"
+          ],
+          "brands": [],
+          "people": {
+            "note": "a man in a dark top and glasses",
+            "count": 1,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "actions": [
+            "man stands observing"
+          ],
+          "setting": "hilltop archaeological site outdoors",
+          "subject": "ancient stone ruins",
+          "summary": "The clip features ancient stone ruins situated on a hilltop, offering a panoramic view of distant rolling hills and trees under a clear blue sky.",
+          "activity": "observing ruins and landscape",
+          "audio_type": "ambient",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 2.0,
+              "start_s": 0.0,
+              "description": "wide shot of ruins and landscape"
+            },
+            {
+              "end_s": 4.5,
+              "start_s": 2.5,
+              "description": "man observing ruins"
+            },
+            {
+              "end_s": 7.5,
+              "start_s": 5.0,
+              "description": "panoramic view of distant hills"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      },
+      "original": {
+        "width": 3840,
+        "height": 2160,
+        "orientation_degrees": 0,
+        "duration_s": 1.44,
+        "has_audio": true,
+        "byte_count": 12620268,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa5"
+      },
+      "proxy": {
+        "width": 568,
+        "height": 320,
+        "frame_rate": 30.0,
+        "duration_s": 1.44
+      }
+    },
+    {
+      "id": "analysis-proxy-assos-06",
+      "kind": "video",
+      "duration_s": 16.8,
+      "has_audio": true,
+      "source_filename": "clip-06.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "panoramic landscape view with ancient ruins",
+        "exposure": {
+          "frames": 18,
+          "version": 1,
+          "mean_luma": 113.0,
+          "near_black_share": 0.0
+        },
+        "duration_s": 16.8,
+        "transcript": "",
+        "description": "sunlight reflecting on water camera panning over distant town camera revealing ancient ruins and trees camera moving past ancient stone structures",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 3.0,
+            "energy": 4.0,
+            "start_s": 0.0,
+            "description": "sunlight reflecting on water"
+          },
+          {
+            "end_s": 7.0,
+            "energy": 5.0,
+            "start_s": 3.0,
+            "description": "camera panning over distant town"
+          },
+          {
+            "end_s": 12.0,
+            "energy": 6.0,
+            "start_s": 9.0,
+            "description": "camera revealing ancient ruins and trees"
+          },
+          {
+            "end_s": 17.0,
+            "energy": 7.0,
+            "start_s": 12.0,
+            "description": "camera moving past ancient stone structures"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "ancient stone ruins",
+            "green leafy trees"
+          ],
+          "brands": [],
+          "people": {
+            "note": "",
+            "count": null,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "actions": [
+            "camera pans right across a landscape"
+          ],
+          "setting": "hilltop overlooking a large body of water and a town, at an ancient ruin site",
+          "subject": "panoramic landscape view with ancient ruins",
+          "summary": "A camera pans slowly across a stunning landscape, revealing a large body of water, distant hills, a small town, and ancient ruins on a hilltop under a bright, clear sky.",
+          "activity": "panning a camera across a scenic landscape",
+          "audio_type": "ambient",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "gradual pan, initially blurry then sharpens",
+          "notable_moments": [
+            {
+              "end_s": 3.0,
+              "start_s": 0.0,
+              "description": "sunlight reflecting on water"
+            },
+            {
+              "end_s": 7.0,
+              "start_s": 3.0,
+              "description": "camera panning over distant town"
+            },
+            {
+              "end_s": 12.0,
+              "start_s": 9.0,
+              "description": "camera revealing ancient ruins and trees"
+            },
+            {
+              "end_s": 17.0,
+              "start_s": 12.0,
+              "description": "camera moving past ancient stone structures"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      },
+      "original": {
+        "width": 3840,
+        "height": 2160,
+        "orientation_degrees": 0,
+        "duration_s": 16.8,
+        "has_audio": true,
+        "byte_count": 134259153,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa6"
+      },
+      "proxy": {
+        "width": 568,
+        "height": 320,
+        "frame_rate": 30.0,
+        "duration_s": 16.8
+      }
+    },
+    {
+      "id": "analysis-proxy-assos-07",
+      "kind": "video",
+      "duration_s": 3.366667,
+      "has_audio": true,
+      "source_filename": "clip-07.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "Turkish flag on a rocky hill",
+        "exposure": {
+          "frames": 7,
+          "version": 1,
+          "mean_luma": 100.7,
+          "near_black_share": 0.0
+        },
+        "duration_s": 3.366667,
+        "transcript": "",
+        "description": "Turkish flag waving on hilltop",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 3.9,
+            "energy": 4.0,
+            "start_s": 0.0,
+            "description": "Turkish flag waving on hilltop"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "red Turkish flag",
+            "rocky hill"
+          ],
+          "brands": [],
+          "people": {
+            "note": "",
+            "count": null,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "setting": "outdoor, rocky hill with ancient ruins",
+          "subject": "Turkish flag on a rocky hill",
+          "summary": "A Turkish flag waves on a flagpole atop a rocky hill, with clear blue sky in the background and ancient stone ruins visible to the right.",
+          "activity": "flag waving in the wind",
+          "audio_type": "ambient",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 3.9,
+              "start_s": 0.0,
+              "description": "Turkish flag waving on hilltop"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      },
+      "original": {
+        "width": 3840,
+        "height": 2160,
+        "orientation_degrees": 0,
+        "duration_s": 3.36,
+        "has_audio": true,
+        "byte_count": 29397988,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7"
+      },
+      "proxy": {
+        "width": 568,
+        "height": 320,
+        "frame_rate": 30.0,
+        "duration_s": 3.3666666666666667
+      }
+    },
+    {
+      "id": "analysis-proxy-assos-08",
+      "kind": "video",
+      "duration_s": 8.166667,
+      "has_audio": true,
+      "source_filename": "clip-08.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "Aegean Sea and coastal mountains",
+        "exposure": {
+          "frames": 9,
+          "version": 1,
+          "mean_luma": 134.1,
+          "near_black_share": 0.0
+        },
+        "duration_s": 8.166667,
+        "transcript": "",
+        "description": "drone shot overlooking dry hillside pan to calm blue sea and distant mountains view of tranquil sea reflecting sky",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 4.0,
+            "energy": 4.0,
+            "start_s": 0.0,
+            "description": "drone shot overlooking dry hillside"
+          },
+          {
+            "end_s": 10.0,
+            "energy": 6.0,
+            "start_s": 4.1,
+            "description": "pan to calm blue sea and distant mountains"
+          },
+          {
+            "end_s": 15.9,
+            "energy": 5.0,
+            "start_s": 10.1,
+            "description": "view of tranquil sea reflecting sky"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "brands": [],
+          "people": {
+            "note": "",
+            "count": null,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "setting": "Coastal hillside overlooking the Aegean Sea, possibly near ancient ruins",
+          "subject": "Aegean Sea and coastal mountains",
+          "summary": "The video shows an aerial view of a dry, hilly landscape with ancient ruins, panning over to reveal a vast, calm blue sea and distant hazy mountains under a clear sky.",
+          "activity": "showcasing a scenic landscape",
+          "audio_type": "ambient",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "smooth drone pan, stays sharp",
+          "notable_moments": [
+            {
+              "end_s": 4.0,
+              "start_s": 0.0,
+              "description": "drone shot overlooking dry hillside"
+            },
+            {
+              "end_s": 10.0,
+              "start_s": 4.1,
+              "description": "pan to calm blue sea and distant mountains"
+            },
+            {
+              "end_s": 15.9,
+              "start_s": 10.1,
+              "description": "view of tranquil sea reflecting sky"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      },
+      "original": {
+        "width": 3840,
+        "height": 2160,
+        "orientation_degrees": 0,
+        "duration_s": 8.16,
+        "has_audio": true,
+        "byte_count": 67148021,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa8"
+      },
+      "proxy": {
+        "width": 568,
+        "height": 320,
+        "frame_rate": 30.0,
+        "duration_s": 8.166666666666666
+      }
+    },
+    {
+      "id": "analysis-proxy-assos-09",
+      "kind": "video",
+      "duration_s": 2.9,
+      "has_audio": true,
+      "source_filename": "clip-09.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "ancient ruins",
+        "exposure": {
+          "frames": 6,
+          "version": 1,
+          "mean_luma": 109.6,
+          "near_black_share": 0.0
+        },
+        "duration_s": 2.9,
+        "transcript": "",
+        "description": "establishing shot of column ruins wide view of ancient site",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 3.0,
+            "energy": 3.0,
+            "start_s": 0.0,
+            "description": "establishing shot of column ruins"
+          },
+          {
+            "end_s": 8.0,
+            "energy": 2.0,
+            "start_s": 4.0,
+            "description": "wide view of ancient site"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "two tall gray stone columns",
+            "three short gray stone column bases",
+            "red Turkish flag on pole",
+            "green olive tree"
+          ],
+          "brands": [],
+          "people": {
+            "note": "",
+            "count": null,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "setting": "outdoor ancient ruins on a hilltop",
+          "subject": "ancient ruins",
+          "summary": "The clip shows a wide shot of ancient column ruins on a hilltop, with a Turkish flag visible in the distance and a clear blue sky above.",
+          "activity": "displaying ancient architecture and a national flag",
+          "audio_type": "ambient",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 3.0,
+              "start_s": 0.0,
+              "description": "establishing shot of column ruins"
+            },
+            {
+              "end_s": 8.0,
+              "start_s": 4.0,
+              "description": "wide view of ancient site"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      },
+      "original": {
+        "width": 3840,
+        "height": 2160,
+        "orientation_degrees": 0,
+        "duration_s": 2.88,
+        "has_audio": true,
+        "byte_count": 25203556,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa9"
+      },
+      "proxy": {
+        "width": 568,
+        "height": 320,
+        "frame_rate": 30.0,
+        "duration_s": 2.9
+      }
+    },
+    {
+      "id": "analysis-proxy-assos-10",
+      "kind": "video",
+      "duration_s": 3.838345,
+      "has_audio": true,
+      "source_filename": "clip-10.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "person overlooking ancient ruins",
+        "exposure": {
+          "frames": 8,
+          "version": 1,
+          "mean_luma": 83.9,
+          "near_black_share": 0.0
+        },
+        "duration_s": 3.838345,
+        "transcript": "",
+        "description": "person stands before ancient columns sunlight flares behind stone columns",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 2.0,
+            "energy": 5.0,
+            "start_s": 0.0,
+            "description": "person stands before ancient columns"
+          },
+          {
+            "end_s": 4.0,
+            "energy": 6.0,
+            "start_s": 2.0,
+            "description": "sunlight flares behind stone columns"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "three stone columns",
+            "ancient stone structures"
+          ],
+          "brands": [],
+          "people": {
+            "note": "a person with light hair, seen from behind",
+            "count": 1,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "setting": "ancient ruins overlooking the sea, outdoors during daytime",
+          "subject": "person overlooking ancient ruins",
+          "summary": "A person stands with their back to the camera, silhouetted against a bright sky, looking out at ancient stone columns and a body of water in the distance.",
+          "activity": "observing the view",
+          "audio_type": "ambient",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 2.0,
+              "start_s": 0.0,
+              "description": "person stands before ancient columns"
+            },
+            {
+              "end_s": 4.0,
+              "start_s": 2.0,
+              "description": "sunlight flares behind stone columns"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      },
+      "original": {
+        "width": 3840,
+        "height": 2160,
+        "orientation_degrees": 0,
+        "duration_s": 3.84,
+        "has_audio": true,
+        "byte_count": 29398147,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "proxy": {
+        "width": 568,
+        "height": 320,
+        "frame_rate": 30.0,
+        "duration_s": 3.8383333333333334
+      }
+    },
+    {
+      "id": "analysis-proxy-assos-11",
+      "kind": "video",
+      "duration_s": 2.9,
+      "has_audio": true,
+      "source_filename": "clip-11.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "wish tree overlooking the sea",
+        "exposure": {
+          "frames": 6,
+          "version": 1,
+          "mean_luma": 125.0,
+          "near_black_share": 0.0
+        },
+        "duration_s": 2.9,
+        "transcript": "",
+        "description": "men observe ribbon-adorned tree and sea",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 2.0,
+            "energy": 5.0,
+            "start_s": 0.0,
+            "description": "men observe ribbon-adorned tree and sea"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "tree with white ribbons"
+          ],
+          "brands": [],
+          "people": {
+            "note": "two men",
+            "count": 2,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "setting": "cliffside overlooking the Aegean Sea, with a tree adorned with white ribbons",
+          "subject": "wish tree overlooking the sea",
+          "summary": "Two men stand on a cliffside, observing a tree adorned with white ribbons and the vast sea stretching to the horizon under a clear sky.",
+          "activity": "observing the scenery",
+          "audio_type": "ambient",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 2.0,
+              "start_s": 0.0,
+              "description": "men observe ribbon-adorned tree and sea"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      },
+      "original": {
+        "width": 3840,
+        "height": 2160,
+        "orientation_degrees": 0,
+        "duration_s": 2.88,
+        "has_audio": true,
+        "byte_count": 25203488,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"
+      },
+      "proxy": {
+        "width": 568,
+        "height": 320,
+        "frame_rate": 30.0,
+        "duration_s": 2.9
+      }
+    },
+    {
+      "id": "analysis-proxy-assos-12",
+      "kind": "video",
+      "duration_s": 3.366667,
+      "has_audio": true,
+      "source_filename": "clip-12.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "coastal landscape",
+        "exposure": {
+          "frames": 7,
+          "version": 1,
+          "mean_luma": 122.6,
+          "near_black_share": 0.0
+        },
+        "duration_s": 3.366667,
+        "transcript": "",
+        "description": "wide shot of sea and coastline",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 3.44,
+            "energy": 3.0,
+            "start_s": 0.0,
+            "description": "wide shot of sea and coastline"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "dry, thorny tree"
+          ],
+          "brands": [],
+          "people": {
+            "note": "",
+            "count": null,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "setting": "coastal hillside overlooking the sea",
+          "subject": "coastal landscape",
+          "summary": "The video provides a high-angle, panoramic view of a deep blue sea meeting a coastline with some structures. A barren tree in the foreground frames the shot.",
+          "activity": "observing a scenic view",
+          "audio_type": "ambient",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 3.44,
+              "start_s": 0.0,
+              "description": "wide shot of sea and coastline"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      },
+      "original": {
+        "width": 3840,
+        "height": 2160,
+        "orientation_degrees": 0,
+        "duration_s": 3.36,
+        "has_audio": true,
+        "byte_count": 29397920,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac"
+      },
+      "proxy": {
+        "width": 568,
+        "height": 320,
+        "frame_rate": 30.0,
+        "duration_s": 3.3666666666666667
+      }
+    },
+    {
+      "id": "analysis-proxy-assos-13",
+      "kind": "video",
+      "duration_s": 3.366667,
+      "has_audio": true,
+      "source_filename": "clip-13.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "coastal landscape",
+        "exposure": {
+          "frames": 7,
+          "version": 1,
+          "mean_luma": 115.4,
+          "near_black_share": 0.0
+        },
+        "duration_s": 3.366667,
+        "transcript": "to be really honest, I think I would drive a go.",
+        "description": "panoramic view of green hills and sea steady shot of distant coastline clouds moving over the landscape clear view of coastal settlements",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 3.0,
+            "energy": 5.0,
+            "start_s": 0.0,
+            "description": "panoramic view of green hills and sea"
+          },
+          {
+            "end_s": 6.0,
+            "energy": 5.0,
+            "start_s": 3.0,
+            "description": "steady shot of distant coastline"
+          },
+          {
+            "end_s": 10.0,
+            "energy": 6.0,
+            "start_s": 6.0,
+            "description": "clouds moving over the landscape"
+          },
+          {
+            "end_s": 13.0,
+            "energy": 5.0,
+            "start_s": 10.0,
+            "description": "clear view of coastal settlements"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "brands": [],
+          "people": {
+            "note": "",
+            "count": null,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "language": "en",
+            "segments": [
+              {
+                "text": "I think I'd rather go to the beach.",
+                "end_s": 3.1,
+                "start_s": 1.4
+              }
+            ],
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "to be really honest, I think I would drive a go."
+          },
+          "setting": "coastal mountainous region overlooking the sea",
+          "subject": "coastal landscape",
+          "summary": "The clip features a wide, steady aerial view of a coastal landscape under a bright blue sky with scattered clouds. Green hills covered in trees lead down to a body of water, with some coastal settlements visible along the shore.",
+          "activity": "observing a landscape",
+          "audio_type": "ambient",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 3.0,
+              "start_s": 0.0,
+              "description": "panoramic view of green hills and sea"
+            },
+            {
+              "end_s": 6.0,
+              "start_s": 3.0,
+              "description": "steady shot of distant coastline"
+            },
+            {
+              "end_s": 10.0,
+              "start_s": 6.0,
+              "description": "clouds moving over the landscape"
+            },
+            {
+              "end_s": 13.0,
+              "start_s": 10.0,
+              "description": "clear view of coastal settlements"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "to be really honest, I think I would drive a go.",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      },
+      "original": {
+        "width": 3840,
+        "height": 2160,
+        "orientation_degrees": 0,
+        "duration_s": 3.36,
+        "has_audio": true,
+        "byte_count": 29398023,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad"
+      },
+      "proxy": {
+        "width": 568,
+        "height": 320,
+        "frame_rate": 30.0,
+        "duration_s": 3.3666666666666667
+      }
+    },
+    {
+      "id": "analysis-proxy-assos-14",
+      "kind": "video",
+      "duration_s": 3.366667,
+      "has_audio": true,
+      "source_filename": "clip-14.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "tourists at ancient ruins overlooking sea",
+        "exposure": {
+          "frames": 7,
+          "version": 1,
+          "mean_luma": 121.5,
+          "near_black_share": 0.0
+        },
+        "duration_s": 3.366667,
+        "transcript": "",
+        "description": "camera follows person walking towards sea person walking past ancient stone column",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 1.5,
+            "energy": 4.0,
+            "start_s": 0.0,
+            "description": "camera follows person walking towards sea"
+          },
+          {
+            "end_s": 3.7,
+            "energy": 3.0,
+            "start_s": 2.0,
+            "description": "person walking past ancient stone column"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "large grey stone blocks",
+            "green tree with white ribbons"
+          ],
+          "brands": [],
+          "people": {
+            "note": "three adults exploring ruins",
+            "count": 3,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "actions": [
+            "person walks forward on dirt path",
+            "camera follows person walking"
+          ],
+          "setting": "ancient ruins on a coastal hillside",
+          "subject": "tourists at ancient ruins overlooking sea",
+          "summary": "The clip shows people walking among ancient ruins on a hillside, with a vast blue sea visible in the background under a clear sky.",
+          "activity": "walking and exploring an archaeological site",
+          "audio_type": "ambient",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady camera follow",
+          "notable_moments": [
+            {
+              "end_s": 1.5,
+              "start_s": 0.0,
+              "description": "camera follows person walking towards sea"
+            },
+            {
+              "end_s": 3.7,
+              "start_s": 2.0,
+              "description": "person walking past ancient stone column"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      },
+      "original": {
+        "width": 3840,
+        "height": 2160,
+        "orientation_degrees": 0,
+        "duration_s": 3.36,
+        "has_audio": true,
+        "byte_count": 29397988,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaae"
+      },
+      "proxy": {
+        "width": 568,
+        "height": 320,
+        "frame_rate": 30.0,
+        "duration_s": 3.3666666666666667
+      }
+    },
+    {
+      "id": "analysis-proxy-assos-15",
+      "kind": "video",
+      "duration_s": 2.9,
+      "has_audio": true,
+      "source_filename": "clip-15.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "ancient stone columns",
+        "exposure": {
+          "frames": 6,
+          "version": 1,
+          "mean_luma": 102.6,
+          "near_black_share": 0.0
+        },
+        "duration_s": 2.9,
+        "transcript": "",
+        "description": "viewing silhouetted ancient columns",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 9.929,
+            "energy": 3.0,
+            "start_s": 0.0,
+            "description": "viewing silhouetted ancient columns"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "two ancient stone columns"
+          ],
+          "brands": [],
+          "people": {
+            "note": "",
+            "count": null,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "to_camera": false,
+            "has_speech": false,
+            "transcript": ""
+          },
+          "setting": "ancient ruins under a clear blue sky",
+          "subject": "ancient stone columns",
+          "summary": "The clip features a low-angle shot of two ancient stone columns silhouetted against a bright blue sky, with the sun's glare visible behind one of them.",
+          "activity": "viewing ancient architecture",
+          "audio_type": "ambient",
+          "content_type": "ambience",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 9.929,
+              "start_s": 0.0,
+              "description": "viewing silhouetted ancient columns"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      },
+      "original": {
+        "width": 3840,
+        "height": 2160,
+        "orientation_degrees": 0,
+        "duration_s": 2.88,
+        "has_audio": true,
+        "byte_count": 21009287,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf"
+      },
+      "proxy": {
+        "width": 568,
+        "height": 320,
+        "frame_rate": 30.0,
+        "duration_s": 2.9
+      }
+    },
+    {
+      "id": "analysis-proxy-assos-16",
+      "kind": "video",
+      "duration_s": 10.566667,
+      "has_audio": true,
+      "source_filename": "clip-16.mp4",
+      "analysis": {
+        "width": 568,
+        "aspect": 1.775,
+        "brands": [],
+        "height": 320,
+        "source": "clip_metadata",
+        "pix_fmt": "yuv420p",
+        "subject": "man walking on a rocky hill",
+        "exposure": {
+          "frames": 11,
+          "version": 1,
+          "mean_luma": 105.8,
+          "near_black_share": 0.0
+        },
+        "duration_s": 10.566667,
+        "transcript": "It's good. Where is three-way?",
+        "description": "man looks towards camera man speaks to camera man asks question and gestures",
+        "video_codec": "h264",
+        "best_moments": [
+          {
+            "end_s": 2.83,
+            "energy": 4.0,
+            "start_s": 1.5,
+            "description": "man looks towards camera"
+          },
+          {
+            "end_s": 6.0,
+            "energy": 5.0,
+            "start_s": 4.83,
+            "description": "man speaks to camera"
+          },
+          {
+            "end_s": 9.5,
+            "energy": 6.0,
+            "start_s": 8.0,
+            "description": "man asks question and gestures"
+          }
+        ],
+        "display_width": 568,
+        "understanding": {
+          "kind": "video",
+          "props": [
+            "red Turkish flag",
+            "clear blue water bottle"
+          ],
+          "brands": [],
+          "people": {
+            "note": "a man wearing glasses and a dark sweater",
+            "count": 1,
+            "speaks_to_camera": true
+          },
+          "speech": {
+            "language": "en",
+            "segments": [
+              {
+                "text": "Let's go.",
+                "end_s": 5.72,
+                "start_s": 4.42
+              },
+              {
+                "text": "Where is it?",
+                "end_s": 8.16,
+                "start_s": 7.48
+              },
+              {
+                "text": "Anyway.",
+                "end_s": 8.5,
+                "start_s": 8.16
+              }
+            ],
+            "to_camera": true,
+            "has_speech": true,
+            "transcript": "It's good. Where is three-way?"
+          },
+          "actions": [
+            "man walks towards camera",
+            "man stops and looks at camera",
+            "man speaks to camera",
+            "man gestures with hand"
+          ],
+          "setting": "rocky, arid hilltop under a clear blue sky",
+          "subject": "man walking on a rocky hill",
+          "summary": "A man walks towards the camera on a rocky hilltop, then stops and speaks, asking a question while gesturing with his hand.",
+          "activity": "walking and speaking to camera",
+          "audio_type": "dialogue",
+          "content_type": "talking_head",
+          "on_screen_text": "",
+          "visual_quality": "sharp and steady",
+          "notable_moments": [
+            {
+              "end_s": 2.83,
+              "start_s": 1.5,
+              "description": "man looks towards camera"
+            },
+            {
+              "end_s": 6.0,
+              "start_s": 4.83,
+              "description": "man speaks to camera"
+            },
+            {
+              "end_s": 9.5,
+              "start_s": 8.0,
+              "description": "man asks question and gestures"
+            }
+          ]
+        },
+        "display_height": 320,
+        "on_screen_text": "It's good. Where is three-way?",
+        "analysis_version": 8,
+        "rotation_degrees": 0
+      },
+      "original": {
+        "width": 3840,
+        "height": 2160,
+        "orientation_degrees": 0,
+        "duration_s": 10.56,
+        "has_audio": true,
+        "byte_count": 88120362,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa10"
+      },
+      "proxy": {
+        "width": 568,
+        "height": 320,
+        "frame_rate": 30.0,
+        "duration_s": 10.566666666666666
+      }
+    }
+  ],
+  "prod_outcome": {
+    "recorded_from": "job assembly_plan.variants[0], guided_story_execution_plan, events",
+    "recipe": {
+      "duration_s": 18.005,
+      "cut_lengths_s": [
+        1.1,
+        1.127,
+        1.127,
+        1.127,
+        1.127,
+        1.127,
+        1.127,
+        1.127,
+        1.127,
+        1.127,
+        1.127,
+        1.127,
+        1.127,
+        1.127,
+        1.127,
+        1.127
+      ],
+      "direction": "fast_montage",
+      "pace": "fast",
+      "output_orientation": "landscape",
+      "output_orientation_reason": "The creator selected this output format.",
+      "typography_font_in_plan": "Alte Haas Grotesk",
+      "music_track_id": null,
+      "music_playback_mode": "reference_only",
+      "source_audio_preserved": true,
+      "exported_duration_s": 18.599995000000007,
+      "editor_save_duration_s": 16.999995000000006,
+      "brand_tail_s": 1.6,
+      "burned_font": "Montserrat",
+      "text_elements": [
+        {
+          "text": "Assos: Settled since the Bronze Age",
+          "start_s": 2.266667,
+          "end_s": 5.633333,
+          "effect": "static",
+          "animation_phases": null,
+          "font_family": "Montserrat"
+        },
+        {
+          "text": "Assos: Home to Aristotle's school",
+          "start_s": 5.633333,
+          "end_s": 9.0,
+          "effect": "static",
+          "animation_phases": null,
+          "font_family": "Montserrat"
+        },
+        {
+          "text": "Assos: Perched on a volcanic hill",
+          "start_s": 9.0,
+          "end_s": 12.4,
+          "effect": "static",
+          "animation_phases": null,
+          "font_family": "Montserrat"
+        },
+        {
+          "text": "Assos: Anatolia's only Doric temple",
+          "start_s": 12.4,
+          "end_s": 15.766666,
+          "effect": "static",
+          "animation_phases": null,
+          "font_family": "Montserrat"
+        }
+      ]
+    },
+    "approval_card": {
+      "draft_applied_content": "Have a look at these in the video:\n- animated on-screen text explaining why people should visit Assos, Turkey",
+      "changes": [
+        "Balanced pacing",
+        "Montage format"
+      ],
+      "requirement_receipts": [
+        {
+          "stage": "understood",
+          "reason": "I can't verify this one automatically yet.",
+          "status": "partial",
+          "inferred": [],
+          "verification": "unchecked",
+          "brief_version": 1,
+          "generation_id": null,
+          "requirement_id": "r1",
+          "inferred_labels": [],
+          "target_media_ids": []
+        }
+      ],
+      "consequence_summary": "Render this draft: Have a look at these in the video:\n- animated on-screen text explaining why people should visit Assos, Turkey",
+      "cost_summary": "One render",
+      "research_preview_present": false
+    },
+    "plan_blocks": {
+      "look_chips": [
+        "Guided story v2",
+        "Alte haas grotesk titles"
+      ],
+      "clips_summary": "16 clips · 18s"
+    },
+    "length_owners": {
+      "planner_target_duration_s": 20,
+      "first_generation": {
+        "owner": "song",
+        "requested_duration_s": null
+      },
+      "after_editor_save": {
+        "owner": "creator",
+        "requested_duration_s": 17.0
+      }
+    },
+    "export_verification": {
+      "status": "rejected",
+      "reason": "copy_words_missing on authored-text-2",
+      "advisory_only": true
+    },
+    "turn2": {
+      "user_message": "Animate the title",
+      "chip_kind": "title_animation",
+      "reply": "I couldn't reliably read every requested change. Your complete request is saved and your draft is unchanged. Which clip or part of the edit should I work on first?",
+      "brief_coverage": {
+        "cause": {
+          "stage": "followup_extraction",
+          "cause_type": "TerminalError",
+          "error_type": "RuntimeError"
+        },
+        "stage": "planning",
+        "reason": "request_extraction_failed",
+        "enforced_ids": [],
+        "retrieved_ids": [],
+        "applicable_ids": [
+          "r1"
+        ],
+        "unresolved_ids": [
+          "r1"
+        ]
+      },
+      "copilot_run": {
+        "agent_name": "nova.edit.copilot",
+        "outcome": "terminal_transient",
+        "attempts": 2,
+        "tokens_in": 0,
+        "error_message": "sensitive_agent_error"
+      },
+      "suggester_chip_label": "Animate the title"
+    }
+  }
+}

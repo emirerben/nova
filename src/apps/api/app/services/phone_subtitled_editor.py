@@ -39,15 +39,21 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.agents._schemas.visual_editor import VisualAnimation, VisualEditorStyle
+from app.kria.clip_tilt import wrap_degrees
 from app.kria.device_render import DeviceRenderStatus
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import LibraryRenderAsset, VisualRenderAsset
 from app.pipeline.phone_subtitled_lanes import (
+    CAPTION_BAND_TOP_FRAC,
     PhoneSubtitledLanes,
     ResolvedSoundEffect,
+    SubtitledBackground,
+    SubtitledBackgroundWindow,
     SubtitledEndingClip,
     SubtitledOverlayCard,
     SubtitledSoundEffect,
+    SubtitledSpeakerFrame,
     sfx_path_is_playable,
 )
 from app.pipeline.phone_subtitled_plan import SFX_DUCK_RECEIPT_FIELD
@@ -90,6 +96,159 @@ def is_phone_subtitled_editor_variant(variant: dict) -> bool:
         isinstance(variant, dict)
         and variant.get("render_destination") == "device"
         and variant.get("resolved_archetype") == "subtitled"
+    )
+
+
+def variant_carries_speaker_background(assembly_plan: dict, variant: dict) -> bool:
+    """Does this variant already hold a Talk-to-camera background (KRI-1117)?
+
+    Any of the three places that can: the projected ``speaker_background`` row, the lane
+    state a phone-editor Save persisted, or the pinned device recipe. PURE.
+    """
+    if not isinstance(assembly_plan, dict) or not isinstance(variant, dict):
+        return False
+    if variant.get("speaker_background"):
+        return True
+    persisted = variant.get(PHONE_SUBTITLED_EDITOR_LANES_FIELD)
+    if isinstance(persisted, dict):
+        lanes = persisted.get("lanes")
+        if isinstance(lanes, dict) and lanes.get("background"):
+            return True
+    variant_id = variant.get("variant_id")
+    if not isinstance(variant_id, str) or not variant_id:
+        return False
+    recipe = _pinned_recipe(assembly_plan, variant_id)
+    return recipe is not None and recipe.speaker_background is not None
+
+
+def variant_carries_speaker_background_windows(assembly_plan: dict, variant: dict) -> bool:
+    """Does this variant already hold background ``windows`` or a ``speaker_frame`` (KRI-1162)?
+
+    The same three places as `variant_carries_speaker_background`: the projected document
+    row, the persisted lane state, and the pinned device recipe. PURE. Decides whether a Save
+    from a build below the windows protocol must be refused (S32): such a build would drop
+    them silently.
+    """
+    if not isinstance(assembly_plan, dict) or not isinstance(variant, dict):
+        return False
+
+    def uses(value: object) -> bool:
+        return isinstance(value, dict) and bool(value.get("windows") or value.get("speaker_frame"))
+
+    if uses(variant.get("speaker_background")):
+        return True
+    persisted = variant.get(PHONE_SUBTITLED_EDITOR_LANES_FIELD)
+    if isinstance(persisted, dict):
+        lanes = persisted.get("lanes")
+        if isinstance(lanes, dict) and uses(lanes.get("background")):
+            return True
+    variant_id = variant.get("variant_id")
+    if not isinstance(variant_id, str) or not variant_id:
+        return False
+    recipe = _pinned_recipe(assembly_plan, variant_id)
+    return (
+        recipe is not None
+        and recipe.speaker_background is not None
+        and recipe.speaker_background.uses_windows
+    )
+
+
+def variant_carries_speaker_full_opening(assembly_plan: dict, variant: dict) -> bool:
+    """Does this variant already hold ``full_screen_windows`` (Qendresa item 16, S76)?
+
+    The same three places as `variant_carries_speaker_background`. PURE. Decides whether a Save
+    or a poll from a build below the full-opening protocol must be refused: such a build would
+    drop the opening silently (or cannot decode the recipe at all).
+    """
+    if not isinstance(assembly_plan, dict) or not isinstance(variant, dict):
+        return False
+
+    def uses(value: object) -> bool:
+        return isinstance(value, dict) and bool(value.get("full_screen_windows"))
+
+    if uses(variant.get("speaker_background")):
+        return True
+    persisted = variant.get(PHONE_SUBTITLED_EDITOR_LANES_FIELD)
+    if isinstance(persisted, dict):
+        lanes = persisted.get("lanes")
+        if isinstance(lanes, dict) and uses(lanes.get("background")):
+            return True
+    variant_id = variant.get("variant_id")
+    if not isinstance(variant_id, str) or not variant_id:
+        return False
+    recipe = _pinned_recipe(assembly_plan, variant_id)
+    return (
+        recipe is not None
+        and recipe.speaker_background is not None
+        and recipe.speaker_background.uses_full_screen
+    )
+
+
+def variant_carries_background_focus(assembly_plan: dict, variant: dict) -> bool:
+    """Does this variant already hold a background ``focus`` on the fill or any window
+    (Qendresa item 18, F1)?
+
+    The same three places as `variant_carries_speaker_full_opening`. PURE. Decides whether a Save
+    from a build below the focus protocol must be refused: such a build would drop the focus
+    silently (or cannot decode the recipe at all).
+    """
+    if not isinstance(assembly_plan, dict) or not isinstance(variant, dict):
+        return False
+
+    def uses(value: object) -> bool:
+        if not isinstance(value, dict):
+            return False
+        return bool(value.get("focus")) or any(
+            isinstance(window, dict) and window.get("focus")
+            for window in value.get("windows") or ()
+        )
+
+    if uses(variant.get("speaker_background")):
+        return True
+    persisted = variant.get(PHONE_SUBTITLED_EDITOR_LANES_FIELD)
+    if isinstance(persisted, dict):
+        lanes = persisted.get("lanes")
+        if isinstance(lanes, dict) and uses(lanes.get("background")):
+            return True
+    variant_id = variant.get("variant_id")
+    if not isinstance(variant_id, str) or not variant_id:
+        return False
+    recipe = _pinned_recipe(assembly_plan, variant_id)
+    return (
+        recipe is not None
+        and recipe.speaker_background is not None
+        and recipe.speaker_background.uses_focus
+    )
+
+
+def variant_carries_speaker_background_color(assembly_plan: dict, variant: dict) -> bool:
+    """Does this variant already hold a solid-colour background fill (KRI-1173)?
+
+    The same three places as `variant_carries_speaker_background`. PURE. Decides whether a Save
+    or a poll from a build below the colour protocol must be refused (S49): such a build cannot
+    decode ``media_kind: "color"``.
+    """
+    if not isinstance(assembly_plan, dict) or not isinstance(variant, dict):
+        return False
+
+    def is_color(value: object) -> bool:
+        return isinstance(value, dict) and value.get("kind") == "color"
+
+    if is_color(variant.get("speaker_background")):
+        return True
+    persisted = variant.get(PHONE_SUBTITLED_EDITOR_LANES_FIELD)
+    if isinstance(persisted, dict):
+        lanes = persisted.get("lanes")
+        if isinstance(lanes, dict) and is_color(lanes.get("background")):
+            return True
+    variant_id = variant.get("variant_id")
+    if not isinstance(variant_id, str) or not variant_id:
+        return False
+    recipe = _pinned_recipe(assembly_plan, variant_id)
+    return (
+        recipe is not None
+        and recipe.speaker_background is not None
+        and recipe.speaker_background.uses_color
     )
 
 
@@ -146,6 +305,8 @@ def lanes_from_editor_sections(
     media_overlays: list[dict] | None,
     visuals: tuple[PhoneVisualBinding, ...],
     inspect: Any = None,
+    background_touched: bool = False,
+    background: SubtitledBackground | None = None,
 ) -> PhoneSubtitledLanes:
     """Rebuild the lanes to compile from a committed editor Save.
 
@@ -172,6 +333,10 @@ def lanes_from_editor_sections(
     The ending clip is never editable in this step -- it always carries
     forward from ``previous`` verbatim.
 
+    ``background_touched`` says the Save carried the ``speaker_background`` section
+    (KRI-1117): ``background`` is then the new value (``None`` clears it). Untouched, the
+    previous background carries over verbatim, like every other lane.
+
     Raises ``ValueError`` (never silently drops content) when: a committed
     sound effect doesn't reference the catalog, its audio format/path is
     unplayable/invalid, or its trim window is empty; a committed overlay
@@ -187,6 +352,11 @@ def lanes_from_editor_sections(
             sound_effects, previous=previous, inspect=inspect or inspect_library_asset
         ),
         ending_clip=previous.ending_clip if previous is not None else None,
+        background=(
+            background
+            if background_touched
+            else (previous.background if previous is not None else None)
+        ),
     )
 
 
@@ -262,12 +432,90 @@ def sections_from_lanes(
                 "start_s": card.start_s,
                 "end_s": card.end_s,
                 "z": card.z,
+                # Qendresa item 15: only a card the server laid out against the measured
+                # caption band carries the mark, so an unmarked card's section is unchanged.
+                **(
+                    {"caption_clear": True}
+                    if card.caption_clear and card.display_mode == "pip"
+                    else {}
+                ),
                 "entrance_token": entrance_token,
                 "exit_token": exit_token,
+                # KRI-1141: only a tilted card carries a style, so an untilted card's section is
+                # byte-identical. The editor writes the same `editor_style.rotation_deg`.
+                **(
+                    {"editor_style": VisualEditorStyle(rotation_deg=card.rotation_deg).model_dump()}
+                    if card.rotation_deg
+                    else {}
+                ),
                 "source": "phone_lane",
             }
         )
-    return {"sound_effects": sound_effects, "media_overlays": media_overlays}
+    sections: dict[str, Any] = {"sound_effects": sound_effects, "media_overlays": media_overlays}
+    if lanes.background is not None:
+        # Present only while a background exists, so every other projection keeps its shape.
+        sections["speaker_background"] = speaker_background_document(lanes.background)
+    return sections
+
+
+def _focus_document(focus: Any) -> dict[str, float]:
+    """A lane focus as the editor document's complete ``{x, y, zoom}`` (Qendresa item 18): an unset
+    part is today's 0.5 / 1.0."""
+    return {
+        "x": 0.5 if focus.x is None else focus.x,
+        "y": focus.y,
+        "zoom": 1.0 if focus.zoom is None else focus.zoom,
+    }
+
+
+def speaker_background_document(background: SubtitledBackground) -> dict[str, Any]:
+    """The editor document's ``speaker_background`` value (a fixed shared interface):
+    ``{"media_id", "kind", "source_start_s"}``. The path and generation stay server-side.
+    KRI-1173: a solid-colour fill is ``{"kind": "color", "color": "#RRGGBB"}`` (no media id,
+    no source start).
+
+    KRI-1162: ``windows`` (``[{media_id, kind, source_start_s, start_s, end_s}]``) and
+    ``speaker_frame`` (``{width_fraction, x_fraction, y_fraction}``) are added ONLY while
+    present, so every existing document is byte-identical. Qendresa item 16:
+    ``full_screen_windows`` (``[{start_s, end_s}]``, cut-timeline seconds) likewise.
+    """
+    document: dict[str, Any]
+    if background.uses_color:
+        # KRI-1173: a colour names no pool media and has no source start.
+        document = {"kind": "color", "color": background.color}
+    else:
+        document = {
+            "media_id": background.media_id,
+            "kind": background.kind,
+            "source_start_s": background.source_start_s,
+        }
+        if background.focus is not None:
+            document["focus"] = _focus_document(background.focus)
+    if background.windows:
+        document["windows"] = [
+            {
+                "media_id": window.media_id,
+                "kind": window.kind,
+                "source_start_s": window.source_start_s,
+                "start_s": window.start_s,
+                "end_s": window.end_s,
+                **({"focus": _focus_document(window.focus)} if window.focus is not None else {}),
+            }
+            for window in background.windows
+        ]
+    if background.speaker_frame is not None:
+        document["speaker_frame"] = {
+            "width_fraction": background.speaker_frame.width_fraction,
+            "x_fraction": background.speaker_frame.x_fraction,
+            "y_fraction": background.speaker_frame.y_fraction,
+        }
+    if background.full_screen_windows:
+        # Qendresa item 16: spans of the cut timeline where the speaker's own take is full-frame.
+        document["full_screen_windows"] = [
+            {"start_s": span.start_s, "end_s": span.end_s}
+            for span in background.full_screen_windows
+        ]
+    return document
 
 
 def lanes_from_recipe(
@@ -371,12 +619,22 @@ def lanes_from_recipe(
                         scale=placement.width_fraction,
                         fade=bool(placement.fade_in or placement.fade_out),
                         z=max(placement.order - 1, 0),
+                        rotation_deg=wrap_degrees(float(clip.transform.rotation_degrees)),
                         # KRI-183: a video card compiled from a video visual
                         # keeps its kind + source start; deriving it as a
                         # photo card would make every later Save fail the
                         # compiler's kind check.
                         kind="video" if visual.kind == "video" else "image",
                         source_start_s=clip.source_start if visual.kind == "video" else 0.0,
+                        # Qendresa item 15: no compiled pip card sat below the caption band
+                        # before the server's card layout, so a card below it was laid out
+                        # against the measured captions; keep it there on a later Save.
+                        **(
+                            {"caption_clear": True}
+                            if recipe.canvas.height > recipe.canvas.width
+                            and placement.y_fraction > CAPTION_BAND_TOP_FRAC + 1e-9
+                            else {}
+                        ),
                     )
                 )
         elif track.id == "sfx":
@@ -404,9 +662,138 @@ def lanes_from_recipe(
                     )
                 )
 
+    background: SubtitledBackground | None = None
+    if recipe.speaker_background is not None:
+        layer = recipe.speaker_background
+        if layer.uses_color:
+            # KRI-1173: a colour fill pins no visual; rebuild it (never silently drop it).
+            background = SubtitledBackground(
+                kind="color",
+                color=layer.color,
+                windows=tuple(_windows_from_layer(layer, visual_for)),
+                speaker_frame=(
+                    SubtitledSpeakerFrame(**layer.speaker_frame.model_dump())
+                    if layer.speaker_frame is not None
+                    else None
+                ),
+                full_screen_windows=_full_screen_from_layer(layer),
+            )
+        elif (visual := visual_for(layer.asset_id)) is not None:
+            background = SubtitledBackground(
+                media_id=visual.media_id,
+                gcs_path=visual.gcs_path,
+                generation=visual.generation,
+                kind="video" if visual.kind == "video" else "image",
+                source_start_s=layer.source_start if visual.kind == "video" else 0.0,
+                focus=_focus_lane(layer.focus),
+                # KRI-1162: the recipe's windows are already in the compiled (cut) timeline,
+                # like the overlay cards derived above. A window whose visual cannot be
+                # matched is dropped rather than guessed.
+                windows=tuple(_windows_from_layer(layer, visual_for)),
+                speaker_frame=(
+                    SubtitledSpeakerFrame(**layer.speaker_frame.model_dump())
+                    if layer.speaker_frame is not None
+                    else None
+                ),
+                full_screen_windows=_full_screen_from_layer(layer),
+            )
+
     return PhoneSubtitledLanes(
-        overlays=overlays, sound_effects=sound_effects, ending_clip=ending_clip
+        overlays=overlays,
+        sound_effects=sound_effects,
+        ending_clip=ending_clip,
+        background=background,
     )
+
+
+def lanes_with_recipe_focus(
+    previous: PhoneSubtitledLanes | None,
+    recipe: EditRecipeV2,
+    *,
+    visuals: tuple[PhoneVisualBinding, ...],
+) -> PhoneSubtitledLanes | None:
+    """``previous`` with the background focus the pinned recipe holds (Qendresa item 18, F12/F14).
+
+    The first render writes a MEASURED focus into the recipe only; the persisted lanes (the
+    worker's or an earlier Save's) never held it, and a later recompile rebuilds its bindings
+    from receipts that carry no measure. So a Save that leaves the background untouched would
+    lose it. A focus the lane already holds always wins; the recipe fills only the gaps, matched
+    by media id (the fill) and by position and media id (the windows).
+    """
+    if (
+        previous is None
+        or previous.background is None
+        or recipe.speaker_background is None
+        or not recipe.speaker_background.uses_focus
+    ):
+        return previous
+    derived = lanes_from_recipe(recipe, visuals=visuals).background
+    if derived is None:
+        return previous
+    background = previous.background
+    updates: dict[str, Any] = {}
+    if (
+        background.focus is None
+        and derived.focus is not None
+        and not background.uses_color
+        and background.media_id == derived.media_id
+    ):
+        updates["focus"] = derived.focus
+    if len(background.windows) == len(derived.windows) and any(
+        window.focus is None and fresh.focus is not None and window.media_id == fresh.media_id
+        for window, fresh in zip(background.windows, derived.windows, strict=True)
+    ):
+        updates["windows"] = tuple(
+            window.model_copy(update={"focus": fresh.focus})
+            if window.focus is None
+            and fresh.focus is not None
+            and window.media_id == fresh.media_id
+            else window
+            for window, fresh in zip(background.windows, derived.windows, strict=True)
+        )
+    if not updates:
+        return previous
+    return previous.model_copy(update={"background": background.model_copy(update=updates)})
+
+
+def _focus_lane(focus: Any) -> Any:
+    """A recipe focus as a lane focus (Qendresa item 18), or None."""
+    from app.pipeline.phone_subtitled_lanes import SubtitledBackgroundFocus  # noqa: PLC0415
+
+    if focus is None:
+        return None
+    return SubtitledBackgroundFocus(x=focus.x, y=focus.y, zoom=focus.zoom)
+
+
+def _full_screen_from_layer(layer: Any) -> tuple[Any, ...]:
+    """The recipe's full-screen spans as lane spans (already in compiled cut time)."""
+    from app.pipeline.phone_subtitled_lanes import SubtitledFullScreenWindow  # noqa: PLC0415
+
+    return tuple(
+        SubtitledFullScreenWindow(start_s=span.start, end_s=span.end)
+        for span in layer.full_screen_windows or ()
+    )
+
+
+def _windows_from_layer(layer: Any, visual_for: Any) -> list[SubtitledBackgroundWindow]:
+    windows: list[SubtitledBackgroundWindow] = []
+    for window in layer.windows or ():
+        window_visual = visual_for(window.asset_id)
+        if window_visual is None:
+            continue
+        windows.append(
+            SubtitledBackgroundWindow(
+                media_id=window_visual.media_id,
+                gcs_path=window_visual.gcs_path,
+                generation=window_visual.generation,
+                kind="video" if window_visual.kind == "video" else "image",
+                source_start_s=window.source_start if window_visual.kind == "video" else 0.0,
+                start_s=window.start,
+                end_s=window.end,
+                focus=_focus_lane(window.focus),
+            )
+        )
+    return windows
 
 
 def _unducked_volume(request_id: str, volume: float, duck_receipt: object) -> float:
@@ -445,6 +832,12 @@ def _pinned_recipe(assembly_plan: dict, variant_id: str) -> EditRecipeV2 | None:
     return recipe if isinstance(recipe, EditRecipeV2) else None
 
 
+def pinned_visual(assembly_plan: dict, media_id: str) -> PhoneVisualBinding | None:
+    """The job's pinned `PhoneVisualBinding` for ``media_id`` (None when it was never bound)."""
+    matches = [v for v in _visual_bindings(assembly_plan) if v.media_id == media_id]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _visual_bindings(assembly_plan: dict) -> tuple[PhoneVisualBinding, ...]:
     rows = assembly_plan.get(PHONE_VISUALS_FIELD)
     if not isinstance(rows, list):
@@ -458,6 +851,33 @@ def _visual_bindings(assembly_plan: dict) -> tuple[PhoneVisualBinding, ...]:
         except ValidationError:
             continue
     return tuple(bindings)
+
+
+def _card_rotation(item: dict, display_mode: str) -> float:
+    """The tilt a committed card's ``editor_style`` asks for (KRI-1141), wrapped to (-180, 180].
+
+    A phone Talking card keeps ONE style field, the angle. Any other part of the style (fit, zoom,
+    animation) has no home in the pinned recipe, so a Save that sets one is refused instead of
+    silently dropped, and so is an angle on a full-screen cutaway, which has nothing to turn.
+    """
+    raw = item.get("editor_style")
+    if raw is None:
+        return 0.0
+    try:
+        style = VisualEditorStyle.model_validate(raw)
+    except ValidationError as exc:
+        raise ValueError("a picture card's style is invalid") from exc
+    if style.fit_mode != "cover" or style.zoom != 1 or style.animation != VisualAnimation():
+        raise ValueError(
+            "a picture card on a Talking edit can only be tilted -- its fit, zoom and "
+            "animation can't be changed here yet"
+        )
+    rotation = wrap_degrees(style.rotation_deg)
+    if rotation and display_mode == "fullscreen":
+        raise ValueError(
+            "a full-screen picture can't be tilted -- put it on top of the video first"
+        )
+    return rotation
 
 
 def _overlays_from_sections(
@@ -546,9 +966,19 @@ def _overlays_from_sections(
                 scale=item.get("scale", 0.35),
                 fade=fade,
                 z=max(int(item.get("z") or 0), 0),
+                rotation_deg=_card_rotation(item, display_mode),
                 kind="video" if binding.kind == "video" else "image",
                 source_start_s=source_start_s,
                 **({"display_mode": "fullscreen"} if display_mode == "fullscreen" else {}),
+                # Qendresa item 15: the mark is the server's, never the client's -- it only
+                # survives on a pip card the previous lanes already marked.
+                **(
+                    {"caption_clear": True}
+                    if display_mode == "pip"
+                    and previous_card is not None
+                    and previous_card.caption_clear
+                    else {}
+                ),
             )
         )
     return cards

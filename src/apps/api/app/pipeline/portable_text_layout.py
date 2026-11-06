@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import unicodedata
 
 import skia
 
@@ -26,9 +27,46 @@ def _unresolved(font: skia.Font, text: str) -> str:
     return f"{len(text)} characters but {len(font.textToGlyphs(text))} glyphs in {text[:40]!r}"
 
 
+# Bidi classes of letters that only read right when shaped: Arabic-script letters
+# (joining forms) and Hebrew/Arabic text that runs right to left, plus Arabic-Indic
+# digits, whose order follows the right-to-left run around them.
+_SHAPED_BIDI_CLASSES = frozenset({"R", "AL", "AN"})
+
+
+def needs_text_shaping(text: str) -> bool:
+    """True when ``text`` cannot be drawn one cmap glyph per character, left to right.
+
+    Arabic letters join (each takes an initial/medial/final form) and right-to-left
+    text is ordered by the bidi algorithm, so the unshaped model draws them as
+    isolated letters in the wrong order even when the face maps every one
+    (KRI-1192 F7). Left-to-right scripts (Latin, Greek, Cyrillic, Hangul syllables)
+    never need it.
+    """
+    if text.isascii():
+        return False
+    return any(unicodedata.bidirectional(ch) in _SHAPED_BIDI_CLASSES for ch in text)
+
+
+def first_strong_rtl(text: str) -> bool:
+    """The paragraph direction the Unicode bidi algorithm gives ``text`` (rule P2)."""
+    for ch in text:
+        direction = unicodedata.bidirectional(ch)
+        if direction in ("R", "AL"):
+            return True
+        if direction == "L":
+            return False
+    return False
+
+
 def legacy_glyphs_resolvable(font: skia.Font, text: str) -> bool:
-    """True when every character maps to exactly one glyph (the unshaped model's premise)."""
+    """True when every character maps to exactly one glyph (the unshaped model's premise).
+
+    KRI-1192: text that must be shaped (`needs_text_shaping`) never is, even when
+    the face maps every character.
+    """
     flat = text.replace("\n", "")
+    if needs_text_shaping(flat):
+        return False
     glyphs = font.textToGlyphs(flat)
     return len(glyphs) == len(flat) and all(glyph != 0 for glyph in glyphs)
 
@@ -39,6 +77,8 @@ def resolve_legacy_glyphs(font: skia.Font, text: str, spacing_px: float) -> list
     Exact glyph IDs are meaningful only with the recipe's fingerprint-bound font.
     The phone must not apply kerning or shaping again to these positions.
     """
+    if needs_text_shaping(text):
+        raise ValueError(f"right-to-left or joining text must be shaped ({text[:40]!r})")
     glyph_ids = font.textToGlyphs(text)
     if len(glyph_ids) != len(text) or any(glyph == 0 for glyph in glyph_ids):
         raise ValueError(f"font cannot resolve every legacy text glyph ({_unresolved(font, text)})")
@@ -53,6 +93,38 @@ def resolve_legacy_glyphs(font: skia.Font, text: str, spacing_px: float) -> list
 
 class UnsupportedPortableText(ValueError):
     """The caller must keep the recipe gated instead of dropping a treatment."""
+
+
+def phone_script_face_allowed(registry_name: str | None) -> bool:
+    """May a phone recipe name ``registry_name`` (KRI-1192 F16)?
+
+    The script-fallback faces (``script_fallback`` in font-registry.json: Noto Sans KR,
+    Noto Sans Arabic) ship only in app builds from ``script_fonts_min_client_protocol``
+    on, and a recipe naming one needs ``scriptFonts`` verified on device (the recipe
+    validate gate). The phone compile knows no build stamp, so it reads the request's
+    build (`script_fonts_client_supported`, open in a worker; the device download
+    answers an older build 426). Otherwise the caller keeps today's honest decline.
+    Every other face (TikTok Sans draws Greek and Cyrillic) is always allowed.
+    """
+    from app.pipeline.font_coverage import _registry  # noqa: PLC0415
+
+    entry = _registry().get("fonts", {}).get(registry_name or "")
+    if not entry or entry.get("script_fallback") is not True:
+        return True
+    from app.config import settings  # noqa: PLC0415
+    from app.services.phone_rollout import script_fonts_client_supported  # noqa: PLC0415
+
+    return (
+        "scriptFonts" in set(settings.phone_render_verified_features)
+        and script_fonts_client_supported()
+    )
+
+
+def _require_phone_face(resolved) -> None:  # noqa: ANN001 - a TypefaceResolution
+    if not phone_script_face_allowed(resolved.name):
+        raise UnsupportedPortableText(
+            f"{resolved.name} (needed for this text's letters) requires a newer app build"
+        )
 
 
 def _outline_ink(overlay: dict):
@@ -395,6 +467,7 @@ def _compile_text_overlay(
         effect == "smooth-type" or bool(overlay.get("shape_text"))
     )
     resolved = cloud._resolve_typeface_for_overlay(overlay)
+    _require_phone_face(resolved)
     if not shaped and not legacy_glyphs_resolvable(skia.Font(resolved.typeface, 40), text):
         # A character the font has no glyph for (emoji, an unusual symbol, a combining
         # sequence) cannot be pinned to legacy glyph ids. Saving must never fail on a
@@ -558,6 +631,11 @@ def _compile_text_overlay(
 
         width = max(block["widths"])
         color = cloud._skia_color_from_hex(overlay["background_color"], 255)
+        # Optional box geometry (the caption box, Qendresa item 12); absent keeps today's
+        # 8 / 4 padding and radius 4 for every other caller.
+        pad_x = cloud._finite_float(overlay.get("background_padding_x_px"), 8)
+        pad_y = cloud._finite_float(overlay.get("background_padding_y_px"), 4)
+        radius = cloud._finite_float(overlay.get("background_radius_px"), 4)
         background = TextBackground(
             color=TextInk(
                 red=skia.ColorGetR(color) / 255,
@@ -565,11 +643,11 @@ def _compile_text_overlay(
                 blue=skia.ColorGetB(color) / 255,
                 alpha=1,
             ),
-            left=cloud._anchored_left_x(anchor, cx, width) - 8,
-            top=top - 4,
-            width=width + 16,
-            height=block["block_h"] + 8,
-            radius=4,
+            left=cloud._anchored_left_x(anchor, cx, width) - pad_x,
+            top=top - pad_y,
+            width=width + 2 * pad_x,
+            height=block["block_h"] + 2 * pad_y,
+            radius=radius,
         )
     return PortableTextLayer(
         id=layer_id,
@@ -675,6 +753,10 @@ def _compile_handwriting_overlay(overlay: dict, *, layer_id: str, canvas, motion
 def _compile_staggered_content(overlay, *, text, canvas, font, size, font_asset, spacing):
     from app.kria.portable_text import PositionedTextRun, StaggeredContent, StaggeredGlyph
     from app.pipeline import text_overlay_skia as cloud
+
+    if needs_text_shaping(text):
+        # One positioned glyph per letter cannot join Arabic or order it right to left.
+        raise UnsupportedPortableText("staggered slice cannot animate right-to-left text")
 
     max_width = cloud._overlay_max_width_px(overlay, canvas)
     rows = [
@@ -803,22 +885,35 @@ def _compile_karaoke_overlay(overlay: dict, *, layer_id: str, canvas):
             {**overlay, "effect": "static", "display_text": None}, layer_id=layer_id, canvas=canvas
         )
     resolved = cloud._resolve_typeface_for_overlay(overlay)
+    _require_phone_face(resolved)
     cloud.assert_lyric_glyphs(resolved.typeface, " ".join(words))
     asset = bundled_font_asset(resolved.file, asset_id="font-" + resolved.file)
     size = cloud._resolve_font_size_px(overlay)
     font = skia.Font(resolved.typeface, size)
     font.setSubpixel(True)
     spacing = cloud._overlay_letter_spacing_px(overlay, size)
+    # KRI-1192 F7: an Arabic cue is sent as one shaped TEXT run per word (the phone
+    # joins and orders each word with CoreText) and its words are placed right to
+    # left (`karaoke_word_lefts`, shared with the cloud Skia karaoke). Every other
+    # cue keeps its positioned glyphs byte-for-byte.
+    shaped = needs_text_shaping(" ".join(words))
     rows = _forced_word_rows(overlay.get("karaoke_row_sizes"), len(words)) or (
-        cloud._wrap_word_indices(words, font, cloud._overlay_max_width_px(overlay, canvas), spacing)
+        cloud._wrap_word_indices(
+            words,
+            font,
+            cloud._overlay_max_width_px(overlay, canvas),
+            spacing,
+            shape_text=shaped,
+        )
     )
-    widths = [cloud._measure_line(font, word, spacing) for word in words]
+    widths = [cloud._measure_line(font, word, spacing, shape_text=shaped) for word in words]
     gap = font.measureText(" ") + 2 * spacing
     block = cloud._measure_block(
         font,
         [" ".join(words[i] for i in row) for row in rows],
         line_spacing=cloud.resolve_line_spacing(overlay.get("line_spacing")),
         letter_spacing_px=spacing,
+        shape_text=shaped,
     )
     cx, cy = cloud._resolve_anchor(overlay, canvas)
     top = cloud._vertical_block_top(cloud._resolve_vertical_anchor(overlay), cy, block["block_h"])
@@ -832,22 +927,29 @@ def _compile_karaoke_overlay(overlay: dict, *, layer_id: str, canvas):
         left=0,
         top=0,
     )
+    # The spoken word lights up on its own when the run is shaped (today) or the overlay asks
+    # for it (`karaoke_active_only`: the dimmed-word caption look).
+    active_only = bool(shaped or overlay.get("karaoke_active_only"))
     runs, ordered_starts = [], []
+    rtl = shaped and first_strong_rtl(" ".join(words))
     for row_index, row in enumerate(rows):
         width = sum(widths[i] for i in row) + gap * max(0, len(row) - 1)
         x = cloud._anchored_left_x(cloud._resolve_text_anchor(overlay), cx, width)
-        for i in row:
+        lefts = cloud.karaoke_word_lefts(
+            [words[i] for i in row], [widths[i] for i in row], gap, x, rtl=rtl
+        )
+        for left, i in zip(lefts, row, strict=True):
             runs.append(
                 PositionedTextRun(
                     text=words[i],
                     font_asset_id=asset.id,
                     font_variations=resolved_font_variations(font),
                     font_size=size,
-                    x=x,
+                    x=left,
                     baseline_y=top + block["ascent_offset"] + row_index * block["line_step"],
                     letter_spacing=spacing,
-                    shaped=False,
-                    glyphs=resolve_legacy_glyphs(font, words[i], spacing),
+                    shaped=shaped,
+                    glyphs=None if shaped else resolve_legacy_glyphs(font, words[i], spacing),
                     fill=fill,
                     stroke=_outline_ink(overlay),
                     stroke_width=max(
@@ -857,7 +959,6 @@ def _compile_karaoke_overlay(overlay: dict, *, layer_id: str, canvas):
                 )
             )
             ordered_starts.append(starts[i])
-            x += widths[i] + gap
     return PortableTextLayer(
         id=layer_id,
         start=overlay["start_s"],
@@ -868,8 +969,24 @@ def _compile_karaoke_overlay(overlay: dict, *, layer_id: str, canvas):
         runs=runs,
         effect="karaoke-line",
         animation_phases=overlay.get("animation_phases"),
-        karaoke=KaraokeContent(starts=ordered_starts, highlight=highlight),
+        karaoke=KaraokeContent(
+            # The recipe contract (Python + Swift `KaraokeContent.validate`) accepts shaped
+            # runs only in active-word mode: the spoken word lights up, as in the cloud
+            # word-pop burn, and its ordered starts. Positioned-glyph cues keep the
+            # cumulative sweep unchanged.
+            starts=_non_decreasing(ordered_starts) if active_only else ordered_starts,
+            highlight=highlight,
+            **({"active_only": True} if active_only else {}),
+        ),
     ), asset
+
+
+def _non_decreasing(starts: list[float]) -> list[float]:
+    """Active-word starts must be ordered; a regressed word time holds the previous one."""
+    out: list[float] = []
+    for start in starts:
+        out.append(max(start, out[-1]) if out else start)
+    return out
 
 
 def _compile_fade_envelope(overlay: dict):
@@ -905,9 +1022,11 @@ def _compile_pop_suffix_overlay(overlay: dict, *, layer_id: str, canvas):
 
     text = cloud._overlay_text(overlay)
     suffix = overlay.get("pop_animated_suffix") or ""
-    if not suffix or not text.endswith(suffix):
+    if not suffix or not text.endswith(suffix) or needs_text_shaping(text):
+        # Right-to-left text cannot be split into positioned prefix/suffix glyph runs.
         return None
     resolved = cloud._resolve_typeface_for_overlay(overlay)
+    _require_phone_face(resolved)
     cloud.assert_lyric_glyphs(resolved.typeface, text)
     size = cloud._resolve_font_size_px(overlay)
     width = cloud._overlay_max_width_px(overlay, canvas)

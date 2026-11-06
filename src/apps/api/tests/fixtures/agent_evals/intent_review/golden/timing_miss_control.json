@@ -1,0 +1,157 @@
+{
+  "agent": "nova.kria.intent_review",
+  "prompt_version": "intent_review_v3",
+  "input": {
+    "original_request": "Full creator request (chronological):\nMake a reel of my bakery trip. Title: \"Fresh Bread\". Start with the croissants coming out of the oven.",
+    "catalog": {
+      "digest": "a4c4726bc50223e123292fc7ef59babb4bfcab180b98d817bbd63f2be54964de",
+      "frames": [
+        {
+          "frame_id": "f0",
+          "t_ms": 500,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "w": 360,
+          "h": 640,
+          "anchor_ref": "text-0"
+        },
+        {
+          "frame_id": "f1",
+          "t_ms": 2500,
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "w": 360,
+          "h": 640,
+          "anchor_ref": null
+        },
+        {
+          "frame_id": "f2",
+          "t_ms": 4500,
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "w": 360,
+          "h": 640,
+          "anchor_ref": null
+        },
+        {
+          "frame_id": "f3",
+          "t_ms": 6500,
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+          "w": 360,
+          "h": 640,
+          "anchor_ref": null
+        }
+      ],
+      "requirements": [
+        {
+          "requirement_id": "R1",
+          "brief_id": "b1",
+          "kind": "text",
+          "label": "Title (\"Fresh Bread\")",
+          "literal": "Fresh Bread",
+          "element_refs": [
+            "title"
+          ],
+          "draft_matches_authority": true
+        },
+        {
+          "requirement_id": "R2",
+          "brief_id": "b2",
+          "kind": "select",
+          "label": "Start with the croissants coming out of the oven",
+          "literal": null,
+          "element_refs": [],
+          "draft_matches_authority": null
+        }
+      ],
+      "withheld": [],
+      "candidates": [
+        {
+          "candidate_id": "8d6aec73ddd882ae",
+          "kind": "fit_text_to_duration",
+          "requirement_ids": [
+            "R1"
+          ],
+          "defect_kinds": [
+            "text_cut_off"
+          ],
+          "element_ref": "title",
+          "role": "title",
+          "allowed_paths": [
+            "editor_payload.text_elements[0].start_s",
+            "editor_payload.text_elements[0].end_s"
+          ],
+          "target": {
+            "start_s": 0.5,
+            "end_s": 7.7
+          },
+          "auto": true
+        },
+        {
+          "candidate_id": "20378264e8604201",
+          "kind": "move_text_to_safe_anchor",
+          "requirement_ids": [
+            "R1"
+          ],
+          "defect_kinds": [
+            "text_obstructed"
+          ],
+          "element_ref": "title",
+          "role": "title",
+          "allowed_paths": [
+            "editor_payload.text_elements[0].position",
+            "editor_payload.text_elements[0].x_frac",
+            "editor_payload.text_elements[0].y_frac"
+          ],
+          "target": {
+            "anchor": "top"
+          },
+          "auto": false
+        }
+      ]
+    }
+  },
+  "raw_text": "{\"schema_version\":1,\"findings\":[{\"requirement_id\":\"R1\",\"verdict\":\"unmet\",\"defect_kind\":\"text_cut_off\",\"evidence_frame_ids\":[\"f3\"],\"confidence\":\"high\"},{\"requirement_id\":\"R2\",\"verdict\":\"met\",\"defect_kind\":null,\"evidence_frame_ids\":[\"f1\"],\"confidence\":\"high\"}]}",
+  "output": {
+    "schema_version": 1,
+    "findings": [
+      {
+        "requirement_id": "R1",
+        "verdict": "unmet",
+        "defect_kind": "text_cut_off",
+        "evidence_frame_ids": [
+          "f3"
+        ],
+        "confidence": "high"
+      },
+      {
+        "requirement_id": "R2",
+        "verdict": "met",
+        "defect_kind": null,
+        "evidence_frame_ids": [
+          "f1"
+        ],
+        "confidence": "high"
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "raw_text": "hand_written_pending_live_qualification",
+    "case": "timing miss: the title is approved past the end of an 8 s video",
+    "expect": {
+      "review": {
+        "status": "suggestion",
+        "why": [
+          "tier_review"
+        ],
+        "candidate_kinds": [
+          "fit_text_to_duration"
+        ]
+      },
+      "repair": {
+        "status": "repair_staged",
+        "candidate_kinds": [
+          "fit_text_to_duration"
+        ]
+      }
+    }
+  }
+}

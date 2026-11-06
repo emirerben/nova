@@ -715,6 +715,23 @@ def test_declared_cloud_declines_match_preflight_and_publication(adapter):
             None,
         ),
         "require_voiceover": ({"audio_strategy": "voiceover"}, None),
+        # Leverkusen M2: a part of a clip the creator asked never to show.
+        "hidden_parts": (
+            {
+                "resolved_clip_intents": [
+                    {
+                        "intent_id": "hide_kids",
+                        "op": "hide_part",
+                        "attribute": "the second goal clip",
+                        "part_edge": "start",
+                        "part_s": 2.5,
+                        "status": "resolved",
+                        "assignments": [{"media_id": "a", "confidence": 1.0}],
+                    }
+                ]
+            },
+            None,
+        ),
     }
     for requirement, decline in declaration.declines.items():
         if requirement == "unresolved":

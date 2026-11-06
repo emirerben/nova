@@ -33,14 +33,40 @@ from typing import Any
 from app.agents.prompt_vocab import render_vocab_tokens
 
 EDITOR_OPS_VERSION = 2
-LANES: tuple[str, ...] = ("text", "timeline", "audio", "slides", "overlays")
+LANES: tuple[str, ...] = ("text", "timeline", "audio", "slides", "overlays", "background")
 # Lanes whose prompt fragment is appended ONLY on the named surface, so video
 # prompts stay byte-identical (KRI-301).
 SURFACE_ONLY_LANES: dict[str, str] = {"slides": "slide_post"}
 # Lanes whose prompt fragment (`<name>.txt` under prompts/edit_copilot_ops/) is appended only when
 # the snapshot actually offers the lane's op family, so every other prompt stays byte-identical
 # (KRI-661). Keyed by the family in `snapshot["allowed_op_families"]`.
-FAMILY_FRAGMENTS: dict[str, str] = {"overlay": "overlay_cards.txt", "caption": "captions.txt"}
+FAMILY_FRAGMENTS: dict[str, str] = {
+    "overlay": "overlay_cards.txt",
+    "caption": "captions.txt",
+    # KRI-1117: only while the snapshot offers the background family (the capability is open).
+    "background": "speaker_background.txt",
+    # KRI-1162: timed backgrounds + the speaker frame, only while the windows gate is open.
+    "background_windows": "speaker_background_windows.txt",
+    # Qendresa item 18: aim / zoom the recordings, only while the focus gate is open.
+    "background_focus": "speaker_background_focus.txt",
+}
+# KRI-1137: fragments appended only while `snapshot["timeline_patch_capabilities"]` opens the named
+# patch_slots field (and the `clip` family is offered), so a closed gate leaves every prompt
+# byte-identical.
+FIELD_FRAGMENTS: dict[str, str] = {
+    "tilt": "clip_tilt.txt",
+    # KRI-1139: appended after `clip_tilt.txt` only while the pool-photo backdrop is open too, so
+    # a tilt-open edit without it keeps its exact prompt.
+    "tilt_backdrop_media": "clip_tilt_media.txt",
+    # KRI-1169: appended last, only while the zoom is open too.
+    "tilt_zoom": "clip_tilt_zoom.txt",
+}
+# KRI-1141: appended only while the `overlay` family is offered AND `snapshot["overlays"]["tilt"]`
+# is true (`editor_capabilities.media_overlay_tilt`), so a closed gate leaves the prompt identical.
+OVERLAY_TILT_FRAGMENT = "overlay_tilt.txt"
+# KRI-1170: appended only on a slide post whose `post.tilt_zoom_enabled` is true (MEDIA_TILT_ENABLED
+# and a protocol-33 build), so a closed gate leaves the slide prompt identical.
+SLIDE_TILT_ZOOM_FRAGMENT = "slide_tilt_zoom.txt"
 _FRAGMENT_DIR = Path(__file__).resolve().parents[3] / "prompts" / "edit_copilot_ops"
 
 
@@ -144,10 +170,18 @@ def family_fragments(snapshot: object) -> str:
     allowed = snapshot.get("allowed_op_families") if isinstance(snapshot, dict) else None
     if not isinstance(allowed, list):
         return ""
+    fields = snapshot.get("timeline_patch_capabilities") if "clip" in allowed else None
+    names = [name for family, name in FAMILY_FRAGMENTS.items() if family in allowed]
+    if isinstance(fields, dict):
+        names += [name for key, name in FIELD_FRAGMENTS.items() if fields.get(key) is True]
+    overlays = snapshot.get("overlays") if "overlay" in allowed else None
+    if isinstance(overlays, dict) and overlays.get("tilt") is True:
+        names.append(OVERLAY_TILT_FRAGMENT)
+    post = snapshot.get("post") if surface_of(snapshot) == "slide_post" else None
+    if isinstance(post, dict) and post.get("tilt_zoom_enabled") is True:
+        names.append(SLIDE_TILT_ZOOM_FRAGMENT)
     parts: list[str] = []
-    for family, name in FAMILY_FRAGMENTS.items():
-        if family not in allowed:
-            continue
+    for name in names:
         try:
             text = read_fragment(name)
         except OSError:
@@ -183,6 +217,7 @@ __all__ = [
     "REGISTRY",
     "SURFACE_ONLY_LANES",
     "FAMILY_FRAGMENTS",
+    "FIELD_FRAGMENTS",
     "CoerceFn",
     "MergedRegistry",
     "OpSpec",

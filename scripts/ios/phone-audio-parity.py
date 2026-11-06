@@ -70,6 +70,17 @@ is in OUT.
    stops_early` (the voice clip cut to half), `voice_behind_footage_wrapped` (a picture clip
    shown twice, another dropped). Command: `prepare OUT --cases voice_behind_footage`.
 
+5. A Talking footage cutaway plays its own sound under a muted speaker (KRI-1151).
+   `talking_cutaway_sound`: the recipe comes from the REAL `compile_phone_subtitled_plan` with
+   a `PhoneCutaway(sound=True)`. The speaker is a green clip carrying a 300 Hz tone, the
+   cutaway a red clip carrying a 700 Hz tone, so the EXPORT must hold: the speaker tone before
+   and after the window, the cutaway tone inside the window and nowhere else, the speaker tone
+   silent inside it, red picture in the window and green outside, the length within one frame
+   of the plan. NEGATIVE CONTROLS (compare requires each to fail its named check):
+   `talking_cutaway_sound_no_mute` (speaker still plays under the cutaway),
+   `talking_cutaway_sound_no_audio` (cutaway picture with no sound). Command:
+   `prepare OUT --cases talking_cutaway_sound`; no `say` needed.
+
 On a simulator, run the package scheme instead of `swift test`:
     TEST_RUNNER_KRIA_AUDIO_PARITY_DIR=OUT xcodebuild test -scheme KriaMediaEngine \
       -destination "platform=iOS Simulator,name=<iPhone>" \
@@ -529,6 +540,8 @@ def compare(out: Path) -> int:
                 continue  # only a reference frame source for its parent case
             if proof["kind"] == "audio_levels":
                 row, failed = _compare_audio_levels(directory, proof)
+            elif proof["kind"] == "talking_cutaway_sound":
+                row, failed = _compare_talking_cutaway_sound(directory, proof)
             elif proof["kind"] == "voice_behind_footage":
                 row, failed = _compare_voice_behind_footage(out, directory, proof)
             else:
@@ -543,6 +556,9 @@ def compare(out: Path) -> int:
     sheet = out / "cases" / "user_song" / "montage.png"
     if sheet.exists():
         shutil.copyfile(sheet, out / "montage.png")
+    talking = out / "cases" / "talking_cutaway_sound" / "montage.png"
+    if talking.exists():
+        shutil.copyfile(talking, out / "montage_talking_cutaway_sound.png")
     return 1 if failures else 0
 
 
@@ -1796,8 +1812,171 @@ def _compare_voice_behind_footage(out: Path, directory: Path, proof: dict) -> tu
     return row, bool(failed_checks)
 
 
+# -------------------------------------------- Talking cutaway sound (KRI-1151)
+
+TALKING_SPEAKER_HZ = 300.0
+TALKING_CUTAWAY_HZ = 700.0
+TALKING_SPEAKER_S = 12.0
+TALKING_CUTAWAY_S = 6.0
+TALKING_WINDOW = (4.0, 7.0)
+TALKING_COLOURS = {"speaker": (40, 180, 60), "cutaway": (220, 40, 40)}
+
+
+def prepare_talking_cutaway_sound(out: Path) -> None:
+    from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
+        CUTAWAY_AUDIO_TRACK_ID,
+        PhoneCutaway,
+        compile_phone_subtitled_plan,
+    )
+
+    inputs = out / "inputs_talking"
+    inputs.mkdir(parents=True, exist_ok=True)
+    speaker = inputs / "speaker.mp4"
+    cutaway = inputs / "cutaway.mp4"
+    _write_tone_clip(speaker, TALKING_COLOURS["speaker"], TALKING_SPEAKER_HZ, TALKING_SPEAKER_S)
+    _write_tone_clip(cutaway, TALKING_COLOURS["cutaway"], TALKING_CUTAWAY_HZ, TALKING_CUTAWAY_S)
+    files = {"speaker": speaker, "cutaway": cutaway}
+    recipe = compile_phone_subtitled_plan(
+        (_binding_for("speaker", speaker),),
+        caption_cues=[],
+        cutaways=(
+            PhoneCutaway(
+                binding=_binding_for("cutaway", cutaway),
+                start_s=TALKING_WINDOW[0],
+                end_s=TALKING_WINDOW[1],
+                sound=True,
+            ),
+        ),
+    )
+    proof = {
+        "kind": "talking_cutaway_sound",
+        "duration_s": recipe.duration,
+        "window_s": list(TALKING_WINDOW),
+        "speaker_hz": TALKING_SPEAKER_HZ,
+        "cutaway_hz": TALKING_CUTAWAY_HZ,
+        "colours": {k: list(v) for k, v in TALKING_COLOURS.items()},
+        "source_speaker_amp": _tone_amp(speaker, TALKING_SPEAKER_HZ),
+        "source_cutaway_amp": _tone_amp(cutaway, TALKING_CUTAWAY_HZ, at_s=2.5),
+    }
+
+    def case(name: str, built, expect: list[str] | None = None) -> None:  # noqa: ANN001
+        extra = {"expect_failure": expect, "allowed_failures": expect} if expect else {}
+        _write_voice_case(out, name, built, files, {**proof, **extra})
+
+    case("talking_cutaway_sound", recipe)
+    case(
+        "talking_cutaway_sound_no_mute",
+        recipe.model_copy(
+            update={"audio": recipe.audio.model_copy(update={"mute_windows": []})}
+        ),
+        ["speaker_muted_under_cutaway"],
+    )
+    case(
+        "talking_cutaway_sound_no_audio",
+        recipe.model_copy(
+            update={
+                "tracks": [t for t in recipe.tracks if t.id != CUTAWAY_AUDIO_TRACK_ID],
+                "audio": recipe.audio.model_copy(update={"mute_windows": []}),
+            }
+        ),
+        ["cutaway_sound_plays", "speaker_muted_under_cutaway"],
+    )
+    print(
+        f"prepared talking_cutaway_sound cases in {out} (window {TALKING_WINDOW},"
+        f" {recipe.duration:.2f}s)"
+    )
+
+
+def _compare_talking_cutaway_sound(directory: Path, proof: dict) -> tuple[dict, bool]:
+    name = directory.name
+    phone = directory / "phone.mp4"
+    row: dict = {"case": name, "kind": proof["kind"]}
+    if not phone.exists():
+        row["error"] = "phone.mp4 missing: run the package test first"
+        return row, True
+    rate = 48000
+    pcm = _pcm(phone)
+    start, end = proof["window_s"]
+    inside = (start + 0.5, end - 0.5)
+    outside = [(1.0, start - 0.5), (end + 0.5, proof["duration_s"] - 0.5)]
+    spk, cut = proof["speaker_hz"], proof["cutaway_hz"]
+    spk_ref, cut_ref = proof["source_speaker_amp"], proof["source_cutaway_amp"]
+
+    def amp(hz: float, a: float, b: float) -> float:
+        mid, half = (a + b) / 2, (b - a) / 2
+        return _goertzel(pcm, rate, mid, half, hz)
+
+    def db_vs(value: float, ref: float) -> float:
+        return round(_amp_db(value) - _amp_db(ref), 1)
+
+    checks: dict[str, dict] = {}
+    around = [db_vs(amp(spk, a, b), spk_ref) for a, b in outside]
+    checks["speaker_plays_outside"] = {
+        "level_vs_source_db": around,
+        "within_db": LEVEL_TOLERANCE_DB,
+        "ok": all(abs(v) <= LEVEL_TOLERANCE_DB for v in around),
+    }
+    in_cut = db_vs(amp(cut, *inside), cut_ref)
+    checks["cutaway_sound_plays"] = {
+        "level_vs_source_db": in_cut,
+        "within_db": LEVEL_TOLERANCE_DB,
+        "ok": abs(in_cut) <= LEVEL_TOLERANCE_DB,
+    }
+    in_spk = db_vs(amp(spk, *inside), spk_ref)
+    checks["speaker_muted_under_cutaway"] = {
+        "speaker_vs_source_db": in_spk,
+        "max_db": LEAK_MAX_DB,
+        "ok": in_spk <= LEAK_MAX_DB,
+    }
+    leak = [db_vs(amp(cut, a, b), cut_ref) for a, b in outside]
+    checks["cutaway_sound_only_in_window"] = {
+        "cutaway_tone_outside_vs_source_db": leak,
+        "max_db": LEAK_MAX_DB,
+        "ok": all(v <= LEAK_MAX_DB for v in leak),
+    }
+    tiles_at = [start / 2, (start + end) / 2, (end + proof["duration_s"]) / 2]
+    expected = ["speaker", "cutaway", "speaker"]
+    palette = {k: v for k, v in proof["colours"].items()}
+    seen = [_nearest_colour(_frame_rgb(phone, t).mean(axis=(0, 1)), palette) for t in tiles_at]
+    checks["picture_order"] = {"at_s": tiles_at, "seen": seen, "expected": expected,
+                               "ok": seen == expected}  # fmt: skip
+    exported = _duration(phone)
+    checks["length"] = {
+        "exported_s": round(exported, 3),
+        "planned_s": round(proof["duration_s"], 3),
+        "ok": abs(exported - proof["duration_s"]) <= 1 / 30 + 0.02,
+    }
+    row["checks"] = checks
+    try:
+        from PIL import Image  # noqa: PLC0415
+
+        tiles = [Image.fromarray(_frame_rgb(phone, t).astype("uint8")) for t in tiles_at]
+        sheet = Image.new("RGB", (90 * len(tiles), 160))
+        for position, tile in enumerate(tiles):
+            sheet.paste(tile, (90 * position, 0))
+        sheet.save(directory / "montage.png")
+        row["montage"] = str(directory / "montage.png")
+    except ImportError:
+        row["montage"] = None
+
+    failed = sorted(k for k, v in checks.items() if not v["ok"])
+    row["failed_checks"] = failed
+    expect = proof.get("expect_failure")
+    if expect:
+        allowed = set(proof.get("allowed_failures") or expect)
+        caught = set(expect) <= set(failed) <= allowed
+        row["expect_failure"] = expect
+        row["negative_control_detected"] = caught
+        print(f"{name}: negative control {'DETECTED' if caught else 'MISSED'} ({failed})")
+        return row, not caught
+    row["passed"] = not failed
+    print(f"{name}: {'PASS' if row['passed'] else 'FAIL'} {failed}")
+    return row, bool(failed)
+
+
 CASES = {
     "all",
+    "talking_cutaway_sound",
     "parity",
     "user_song",
     "voiceover_music_authored",
@@ -1817,6 +1996,8 @@ def prepare(out: Path, cases: str = "all") -> None:
         prepare_speech_music(out)
     if cases in {"all", "voice_behind_footage"}:
         prepare_voice_behind_footage(out)
+    if cases in {"all", "talking_cutaway_sound"}:
+        prepare_talking_cutaway_sound(out)
 
 
 if __name__ == "__main__":

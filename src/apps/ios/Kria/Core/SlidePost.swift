@@ -160,10 +160,13 @@ struct SlidePostEdits: Codable, Equatable, Sendable {
     var drawing: SlidePostDrawing? = nil
     /// KRI-460: pictures pasted onto the slide, bottom to top (the last one is on top). nil = none.
     var stickers: [SlidePostSticker]? = nil
-    enum CodingKeys: String, CodingKey { case text, texts, framing, fit, drawing, stickers; case lookPreset = "look_preset" }
+    /// KRI-1138: the photo or video turned to any angle over a backdrop. nil = upright (and, on save, "clear any stored tilt").
+    var tilt: SlidePostTilt? = nil
+    enum CodingKeys: String, CodingKey { case text, texts, framing, fit, drawing, stickers, tilt; case lookPreset = "look_preset" }
     init(text: SlidePostText? = nil, lookPreset: String = "none", texts: [SlidePostTextElement]? = nil, framing: SlidePostFraming? = nil, fit: SlidePostFit? = nil,
-         drawing: SlidePostDrawing? = nil, stickers: [SlidePostSticker]? = nil) {
+         drawing: SlidePostDrawing? = nil, stickers: [SlidePostSticker]? = nil, tilt: SlidePostTilt? = nil) {
         self.text = text; self.lookPreset = lookPreset; self.texts = texts; self.framing = framing; self.fit = fit; self.drawing = drawing; self.stickers = stickers
+        self.tilt = tilt
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -178,11 +181,13 @@ struct SlidePostEdits: Codable, Equatable, Sendable {
         drawing = try c.decodeIfPresent(SlidePostDrawing.self, forKey: .drawing)
         // Strict for the same reason: a sticker this build cannot read must not silently vanish from the next save.
         stickers = try c.decodeIfPresent([SlidePostSticker].self, forKey: .stickers)
+        // Strict as well (KRI-1138): a turn this build cannot read must not silently vanish from the next save.
+        tilt = try c.decodeIfPresent(SlidePostTilt.self, forKey: .tilt)
     }
     /// An empty list means the same as none, so a sticker that was added and removed again is not an unsaved change.
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.text == rhs.text && lhs.lookPreset == rhs.lookPreset && lhs.texts == rhs.texts && lhs.framing == rhs.framing
-            && lhs.fit == rhs.fit && lhs.drawing == rhs.drawing && lhs.effectiveStickers == rhs.effectiveStickers
+            && lhs.fit == rhs.fit && lhs.drawing == rhs.drawing && lhs.effectiveStickers == rhs.effectiveStickers && lhs.tilt == rhs.tilt
     }
     /// Writes both shapes: `texts`, and the legacy `text` mirroring `texts[0]` (the server's own rule).
     func encode(to encoder: Encoder) throws {
@@ -207,6 +212,9 @@ struct SlidePostEdits: Codable, Equatable, Sendable {
         // clears them (the creator removed the last one), and no key at all keeps what the server stored. A draft that
         // never had a sticker therefore stays byte-identical to before this feature.
         if let stickers { try c.encode(stickers, forKey: .stickers) }
+        // And for the tilt (KRI-1138, protocol 28): a value sets it, `null` clears it, a missing key (a build below 28)
+        // keeps what the server stored.
+        if let tilt { try c.encode(tilt, forKey: .tilt) } else { try c.encodeNil(forKey: .tilt) }
     }
     /// What the editor shows: `texts`, or the legacy text lifted into one boxed element.
     var effectiveTexts: [SlidePostTextElement] {
@@ -698,6 +706,10 @@ private struct SlidePostItemResponse: Decodable {
     /// slides' photos, so without this it would be appended to the post as a NEW SLIDE the moment it is ready (and again
     /// after a relaunch or a refresh). Names come from the picture's bytes and are never removed.
     private(set) var stickerUploadNames: Set<String> = []
+    /// KRI-1142: true while the Generate picture sheet is open. A generated picture is a ready pool asset the moment
+    /// it exists, before the creator accepts it, so while this is set (and when it ends) nothing new in the pool is
+    /// appended as a slide: it either becomes a sticker or is abandoned.
+    @Published private(set) var isGeneratingPicture = false
     /// Why some freshly imported media did not become a slide (limit / photos-only). Cleared by the user.
     @Published var autoAppendNotice: String?
     /// Pool assets the session has already decided about (in the draft, removed, or skipped). Only an
@@ -1164,6 +1176,10 @@ private struct SlidePostItemResponse: Decodable {
     /// re-adds an asset the user removed. Returns the number of slides added.
     @discardableResult
     func appendNewlyReadyAssets() -> Int {
+        if isGeneratingPicture {
+            markPoolSeen()
+            return 0
+        }
         guard !isBusy, !isChatting, proposal == nil, state != nil, let current = draft else { return 0 }
         let plan = SlidePostAutoAppend.plan(draft: current, ready: readyAssets, seen: seenAssetIDs)
         guard plan.seen != seenAssetIDs || !plan.toAppend.isEmpty else { return 0 }
@@ -1176,6 +1192,32 @@ private struct SlidePostItemResponse: Decodable {
         value.slides.append(contentsOf: plan.toAppend.map { SlidePostSlide(id: UUID().uuidString, assetID: $0.id, kind: $0.kind) })
         stageDraft(value)
         return plan.toAppend.count
+    }
+    /// Opens a Generate picture session: until `endPictureGeneration`, new pool assets are decided as "not a slide".
+    func beginPictureGeneration() {
+        isGeneratingPicture = true
+        markPoolSeen()
+    }
+    /// Closes the session. Whatever was generated and not placed stays in the pool but is never offered as a slide,
+    /// including after a refresh.
+    func endPictureGeneration() {
+        markPoolSeen()
+        isGeneratingPicture = false
+    }
+    /// Places an accepted generated picture on the slide as a sticker (centre, 40% wide, on top, selected). Nil when the
+    /// slide is gone or already holds the maximum, in which case the picture is simply not added.
+    @discardableResult
+    func placeGeneratedPicture(slideID: String, assetID: String) -> String? {
+        seenAssetIDs = (seenAssetIDs ?? []).union([assetID])
+        persist()
+        return addSticker(slideID: slideID, assetID: assetID)
+    }
+    private func markPoolSeen() {
+        guard let ids = state?.assets.map(\.id) else { return }
+        let merged = (seenAssetIDs ?? []).union(ids)
+        guard merged != seenAssetIDs else { return }
+        seenAssetIDs = merged
+        persist()
     }
     func addAsset(id: String) {
         guard var value = draft,
@@ -1398,6 +1440,18 @@ private struct SlidePostItemResponse: Decodable {
         }
         stageDraft(value)
         return reset
+    }
+    /// KRI-1138: turns the slide's photo or video to `tilt.rotationDeg` (and zooms it to `tilt.zoom`, KRI-1170) over its
+    /// backdrop; nil (or a neutral turn: 0 degrees at zoom 1) puts it back. Photos and videos both turn. One undo step
+    /// (a dial or zoom drag passes one `coalescing` key so its many changes are one); a no-op change stages nothing.
+    func setTilt(slideID: String, _ tilt: SlidePostTilt?, coalescing key: String? = nil) {
+        guard var value = draft, let index = value.slides.firstIndex(where: { $0.id == slideID }) else { return }
+        let next = tilt.flatMap { $0.isNeutral ? nil : $0 }
+        var edits = value.slides[index].edits ?? SlidePostEdits()
+        guard edits.tilt != next else { return }
+        edits.tilt = next
+        value.slides[index].edits = edits
+        stageDraft(value, coalescing: key)
     }
     /// KRI-606: shows the photo whole with bars (or fills the frame again with nil). Photos only.
     func setFit(slideID: String, _ fit: SlidePostFit?) {

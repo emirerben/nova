@@ -1,0 +1,486 @@
+{
+ "agent": "nova.creator.main",
+ "prompt_version": "2026-10-31-v106",
+ "input": {
+  "user_message": "Just use the song as background music, cut to the beat",
+  "creator_request": "Just use the song as background music, cut to the beat",
+  "creator_context": "Casual creator; short, energetic edits.",
+  "creator_direction": "",
+  "item_context": "",
+  "media_context": [
+   {
+    "media_id": "analysis-proxy-ios-822B0DD4-5F89-424C-976C-31AAA9A185B2.mp4",
+    "kind": "video",
+    "duration_s": 22.6,
+    "filename": "IMG_6717",
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "subject": "man wearing glasses and a hoodie",
+     "setting": "indoor, likely a room with a plain white wall",
+     "people": {
+      "speaks_to_camera": true
+     },
+     "speech": {
+      "has_speech": true,
+      "to_camera": true
+     },
+     "notable_moments": [
+      {
+       "start_s": 0.0,
+       "end_s": 0.0,
+       "description": "man singing with expressive mouth movements"
+      },
+      {
+       "start_s": 0.0,
+       "end_s": 0.0,
+       "description": "man singing with eyes closed and open"
+      },
+      {
+       "start_s": 0.0,
+       "end_s": 0.0,
+       "description": "man singing and nodding head slightly"
+      }
+     ]
+    }
+   },
+   {
+    "media_id": "analysis-proxy-ios-D3D31BB3-D910-472E-AFDF-E5A3F7B1E94F.mp4",
+    "kind": "video",
+    "duration_s": 8.3,
+    "filename": "IMG_6718",
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "subject": "man singing",
+     "setting": "indoors, room with light colored wall",
+     "people": {
+      "speaks_to_camera": true
+     },
+     "speech": {
+      "has_speech": true,
+      "to_camera": true
+     },
+     "notable_moments": [
+      {
+       "start_s": 0.0,
+       "end_s": 0.0,
+       "description": "man starts singing"
+      },
+      {
+       "start_s": 0.0,
+       "end_s": 0.0,
+       "description": "man continues singing with expressive face"
+      },
+      {
+       "start_s": 0.0,
+       "end_s": 0.0,
+       "description": "man sustains vocal note"
+      }
+     ]
+    }
+   },
+   {
+    "media_id": "analysis-proxy-ios-F2DB35CE-EB2C-4EEA-86FD-2AC927D19B7B.mp4",
+    "kind": "video",
+    "duration_s": 20.7667,
+    "filename": "IMG_6719",
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "subject": "man in hoodie",
+     "setting": "indoor room with white walls",
+     "people": {
+      "speaks_to_camera": true
+     },
+     "speech": {
+      "has_speech": true,
+      "to_camera": true
+     },
+     "notable_moments": [
+      {
+       "start_s": 0.0,
+       "end_s": 0.0,
+       "description": "man sings a line of song"
+      },
+      {
+       "start_s": 0.0,
+       "end_s": 0.0,
+       "description": "man sings with head tilt"
+      },
+      {
+       "start_s": 0.0,
+       "end_s": 0.0,
+       "description": "man passionately sings a verse"
+      }
+     ]
+    }
+   },
+   {
+    "media_id": "analysis-proxy-ios-C96D49C8-404E-4741-9A73-07353D2206F7.mp4",
+    "kind": "video",
+    "duration_s": 7.9667,
+    "filename": "IMG_6720",
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "subject": "man with glasses",
+     "setting": "room interior with white walls",
+     "people": {
+      "speaks_to_camera": true
+     },
+     "speech": {
+      "has_speech": true,
+      "to_camera": true
+     },
+     "notable_moments": [
+      {
+       "start_s": 0.0,
+       "end_s": 0.0,
+       "description": "man singing with expressive face"
+      },
+      {
+       "start_s": 0.0,
+       "end_s": 0.0,
+       "description": "man singing and nodding head"
+      },
+      {
+       "start_s": 0.0,
+       "end_s": 0.0,
+       "description": "man singing and smiling slightly"
+      }
+     ]
+    }
+   }
+  ],
+  "conversation": [],
+  "capability_manifest": {
+   "schema_version": 1,
+   "item_id": "item-kri1093_card_background_words",
+   "edit_format": "montage",
+   "render_program": "guided",
+   "has_voiceover": false,
+   "has_user_song": true,
+   "user_song": {
+    "duration_s": 271.26,
+    "has_lyrics": true
+   },
+   "narration": null,
+   "current_edit": null,
+   "media": [
+    {
+     "media_id": "analysis-proxy-ios-822B0DD4-5F89-424C-976C-31AAA9A185B2.mp4",
+     "kind": "video",
+     "duration_s": 22.6
+    },
+    {
+     "media_id": "analysis-proxy-ios-D3D31BB3-D910-472E-AFDF-E5A3F7B1E94F.mp4",
+     "kind": "video",
+     "duration_s": 8.3
+    },
+    {
+     "media_id": "analysis-proxy-ios-F2DB35CE-EB2C-4EEA-86FD-2AC927D19B7B.mp4",
+     "kind": "video",
+     "duration_s": 20.7667
+    },
+    {
+     "media_id": "analysis-proxy-ios-C96D49C8-404E-4741-9A73-07353D2206F7.mp4",
+     "kind": "video",
+     "duration_s": 7.9667
+    }
+   ],
+   "catalog": [
+    {
+     "catalog_id": "music-track-1",
+     "kind": "music",
+     "label": "Warm travel beat"
+    }
+   ],
+   "capabilities": {
+    "set_item_intent": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "guided_story": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "native_render": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "draft_guided_proposal": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "dispatch_render": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "select_ready_variant": {
+     "available": false,
+     "reason_code": "no_ready_variant",
+     "reason": "a ready variant is required before selection"
+    },
+    "caption_style": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "automatic_cut": {
+     "available": false,
+     "reason_code": "disabled_by_setting",
+     "reason": "automatic speech cuts are disabled by the server"
+    },
+    "guided_voiceover": {
+     "available": false,
+     "reason_code": "unsupported_phone_audio",
+     "reason": "phone rendering does not support recorded voiceover"
+    },
+    "main_creator_agent": {
+     "available": false,
+     "reason_code": "rollout_disabled",
+     "reason": "main creator agent rollout is set to zero"
+    },
+    "execution": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "review": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "auto_iteration": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "guided_conversation": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "guided_direction_confirmation": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "guided_auto_design": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "transitions": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "wide_looks": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "wide_looks cannot render on the iPhone yet"
+    },
+    "media_overlays": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "media_overlays cannot render on the iPhone yet"
+    },
+    "visual_blocks": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "visual_blocks cannot render on the iPhone yet"
+    },
+    "motion_scenes": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "motion_scenes cannot render on the iPhone yet"
+    },
+    "sound_effects": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "sound_effects cannot render on the iPhone yet"
+    },
+    "phone_source_audio": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format_pending_voiceover:narrated_ready": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "narrated_ready does not render on this iPhone yet"
+    },
+    "phone_format_pending_voiceover:narrated": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "narrated does not render on this iPhone yet"
+    },
+    "phone_format_pending_voiceover:narrated_planned": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "narrated_planned does not render on this iPhone yet"
+    },
+    "phone_format:montage": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format:talking_head": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "talking_head does not render on this iPhone yet"
+    },
+    "phone_format:day_vlog": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format:single_hero": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format:subtitled": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "talking-to-camera rendering on this iPhone requires exactly one clip and no recorded voiceover"
+    },
+    "phone_format:narrated": {
+     "available": false,
+     "reason_code": "self_narration_multi_clip",
+     "reason": "Narrating across several clips isn't on iPhone yet. Record a voiceover, or keep one clip for talking-to-camera."
+    },
+    "phone_format:narrated_planned": {
+     "available": false,
+     "reason_code": "self_narration_multi_clip",
+     "reason": "Narrating across several clips isn't on iPhone yet. Record a voiceover, or keep one clip for talking-to-camera."
+    },
+    "phone_format:narrated_ready": {
+     "available": false,
+     "reason_code": "self_narration_multi_clip",
+     "reason": "Narrating across several clips isn't on iPhone yet. Record a voiceover, or keep one clip for talking-to-camera."
+    },
+    "phone_format:slides": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "slides does not render on this iPhone yet"
+    },
+    "reaction_beats": {
+     "available": false,
+     "reason_code": "phone_talking_only",
+     "reason": "reaction beats are only available on an iPhone talking-to-camera edit"
+    },
+    "user_song": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "edit_format:montage": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "edit_format:talking_head": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "talking_head is disabled or has no production renderer for this media snapshot"
+    },
+    "edit_format:day_vlog": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "edit_format:single_hero": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "edit_format:subtitled": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "subtitled is disabled or has no production renderer for this media snapshot"
+    },
+    "edit_format:narrated": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "narrated is disabled or has no production renderer for this media snapshot"
+    },
+    "edit_format:narrated_planned": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "narrated_planned is disabled or has no production renderer for this media snapshot"
+    },
+    "edit_format:narrated_ready": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "narrated_ready is disabled or has no production renderer for this media snapshot"
+    },
+    "edit_format:slides": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "slides is disabled or has no production renderer for this media snapshot"
+    }
+   },
+   "limits": {
+    "max_media_refs": 50,
+    "max_catalog_refs": 50,
+    "max_commands": 4,
+    "max_output_duration_s": 120.0
+   },
+   "chosen_format": "lipsync",
+   "context_hash": "3d450c96545d432f410cb7ef741dc70ab79f9e0fc7b37c446f9497303d553b19",
+   "manifest_hash": "88fc76aa7c3b7b297a41a1e53d2112b494f6aa7ef874956f398bfd3656b0f422"
+  }
+ },
+ "raw_text": "{\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"audio_strategy\": \"user_song\",\n      \"song_sync\": \"background\",\n      \"story_structure\": [\n        \"Opening shot establishing the creator\",\n        \"Rhythmic and dynamic cuts timed to the beat of the song\",\n        \"Closing sequence\"\n      ],\n      \"pacing\": \"fast\",\n      \"target_duration_s\": 15,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"rationale\": \"The creator explicitly requested to use their attached track as a background music bed instead of lip-syncing to it. The pacing is set to fast to deliver the requested beat-driven cuts.\"\n    },\n    \"summary\": \"I'll use your song as the background music and cut to its beat.\"\n  }\n}",
+ "output": {
+  "action": {
+   "kind": "propose_strategy",
+   "strategy": {
+    "direction": "fast_montage",
+    "edit_format": "montage",
+    "archetype": null,
+    "hero_media_id": null,
+    "audio_strategy": "user_song",
+    "execution_contract": null,
+    "media_scope": null,
+    "story_structure": [
+     "Opening shot establishing the creator",
+     "Rhythmic and dynamic cuts timed to the beat of the song",
+     "Closing sequence"
+    ],
+    "caption_style": "auto",
+    "intro_hook": null,
+    "opening_title": null,
+    "font_family": null,
+    "text_color": null,
+    "song_sync": "background",
+    "image_layout": null,
+    "pacing": "fast",
+    "target_duration_s": 15,
+    "render_program": "guided",
+    "selected_media_ids": [],
+    "optional_treatments": [],
+    "licensed_sfx": null,
+    "mixed_media_timing": null,
+    "montage_audio": null,
+    "video_reuse_policy": "once",
+    "rationale": "The creator explicitly requested to use their attached track as a background music bed instead of lip-syncing to it. The pacing is set to fast to deliver the requested beat-driven cuts."
+   },
+   "summary": "I'll use your song as the background music and cut to its beat."
+  }
+ },
+ "meta": {
+  "source": "provider_smoke_capture",
+  "kri1093_card": {
+   "chosen_format": "lipsync",
+   "expect_final_song_sync": "background",
+   "expect_model_song_sync": "background"
+  },
+  "notes": "KRI-1093: facts mirror prod thread 03563a75 (4 singing takes IMG_6717..6720, 271.26 s Turkish song, user_song lane on, phone montage). raw_text is a LIVE capture (gemini-3.1-pro-preview, prompt v106) from run kri1093-20261031-r1; expectations are in meta.kri1093_card.",
+  "test_run_id": "kri1093-20261031-r1"
+ }
+}

@@ -66,12 +66,19 @@ def test_parse_args_rejects_bad_combinations(argv) -> None:  # noqa: ANN001
         parse_args(argv)
 
 
-def test_battery_file_is_the_44_ask_set() -> None:
+def test_battery_file_is_the_45_ask_set() -> None:
     cases = load_battery(BATTERY)
-    assert len(cases) == 44
-    assert len({c.id for c in cases}) == 44
+    assert len(cases) == 45
+    assert len({c.id for c in cases}) == 45
     assert {op for c in cases for op in c.expect_ops} <= V2_OPS
     assert any("ö" in c.ask or "ı" in c.ask for c in cases)  # Turkish present
+
+
+def test_tilt_battery_asks_are_patch_slots_with_a_turkish_phrasing() -> None:
+    cases = load_battery(BATTERY.with_name("tilt_asks.yaml"))
+    assert {op for c in cases for op in c.expect_ops} == {"patch_slots"}
+    assert any("ö" in c.ask or "ı" in c.ask for c in cases)
+    assert [c for c in cases if c.id == "tilt-a-bit-more"][0].turns
 
 
 def test_evaluate_case_rules() -> None:

@@ -1,0 +1,62 @@
+{
+ "agent": "nova.plan.clip_intent_planner",
+ "prompt_version": "2026-10-30-hide-part",
+ "meta": {
+  "source": "hand-authored for prompt 2026-10-30-hide-part from the Leverkusen M2 run 1 messages (prod eed794157, thread d048973b); no paid run. Re-capture live when a paid run is approved.",
+  "case": "Leverkusen M2 bug 3: 'From that clip, don't show the first 3 seconds where the kids are' (after 'keep that clip, just start it after the kids (after about 2.5 seconds)') is ONE `hide_part` at the clip's start with the creator's 3 s, never an `exclude` of the whole goal clip (it holds the TOR and Taha's scream) and never an invented op that loops into 'please restate'.",
+  "expect_intents": [
+   {
+    "op": "hide_part",
+    "source_quote_keywords": [
+     "first 3 seconds"
+    ]
+   },
+   {
+    "op": "order",
+    "source_quote_keywords": [
+     "our selfie"
+    ],
+    "position": "first"
+   }
+  ],
+  "expect_absent_ops": [
+   "exclude",
+   "include"
+  ],
+  "expect_any": true,
+  "expect_question": false
+ },
+ "input": {
+  "creator_request": "Quick reaction edit about my friend Taha. He's the one with brown hair, round glasses and the dark zip sweater (on the left in our selfie). Order: our selfie, the 0:0 scoreboard, the \"TOR\" on the big screen, then only the moments where Taha is celebrating in both goal clips. The kids at the start of the second goal clip are another family's children, so don't show them. Put Taha's scream in slow motion. Keep the stadium cheering on the goal clips. Label the selfie \"Taha 🤝 me\". Make it 12 seconds.\n\nIt's already there, in the goal clip with the kids at the start, about 6 seconds in. The big screen shows TOR.\n\nNeither. The TOR is in the other goal clip, the one with the kids, about 6 seconds in. Keep that clip, just start it after the kids (after about 2.5 seconds).\n\nTaha's scream is the close-up of Taha shouting near the end of the goal clip with the kids, play it in slow motion. From that clip, don't show the first 3 seconds where the kids are.",
+  "latest_user_message": "Taha's scream is the close-up of Taha shouting near the end of the goal clip with the kids, play it in slow motion. From that clip, don't show the first 3 seconds where the kids are.",
+  "clip_exclusions": true
+ },
+ "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"order_selfie_first\",\n      \"op\": \"order\",\n      \"attribute\": \"our selfie\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": \"first\",\n      \"placeholder\": false,\n      \"source_quote\": \"Order: our selfie, the 0:0 scoreboard\"\n    },\n    {\n      \"intent_id\": \"hide_kids_start\",\n      \"op\": \"hide_part\",\n      \"attribute\": \"the goal clip with the kids\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"part_edge\": \"start\",\n      \"part_s\": 3,\n      \"part_attribute\": \"the kids\",\n      \"source_quote\": \"From that clip, don't show the first 3 seconds where the kids are.\"\n    }\n  ],\n  \"question\": null\n}",
+ "output": {
+  "intents": [
+   {
+    "intent_id": "order_selfie_first",
+    "op": "order",
+    "attribute": "our selfie",
+    "creator_text": null,
+    "caption_attribute": null,
+    "position": "first",
+    "source_quote": "Order: our selfie, the 0:0 scoreboard"
+   },
+   {
+    "intent_id": "hide_kids_start",
+    "op": "hide_part",
+    "attribute": "the goal clip with the kids",
+    "source_kind": "video",
+    "creator_text": null,
+    "caption_attribute": null,
+    "position": null,
+    "part_edge": "start",
+    "part_s": 3.0,
+    "part_attribute": "the kids",
+    "source_quote": "From that clip, don't show the first 3 seconds where the kids are."
+   }
+  ],
+  "question": null
+ }
+}

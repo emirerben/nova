@@ -33,7 +33,7 @@ MAX_INSPECTIONS = 3
 CROP_VERSION = "targeted-interval-640-v1"
 
 
-def inspect_interval(source, moment, question, *, ctx):
+def inspect_interval(source, moment, question, *, ctx, agent_factory=None):
     """Keep temporary bytes and provider work in one thread, even if the caller disconnects."""
 
     with tempfile.TemporaryDirectory(prefix="moment-inspection-") as directory:
@@ -93,7 +93,7 @@ def inspect_interval(source, moment, question, *, ctx):
             raise TimeoutError("Inspection deadline expired")
         client, ref = _upload_interval(str(sample), deadline=ctx.deadline_monotonic)
         try:
-            agent = ClipQuestionAgent(default_client())
+            agent = (agent_factory or ClipQuestionAgent)(default_client())
             agent.spec = replace(
                 agent.spec, max_attempts=1, enable_clarification_retries=False, sensitive_io=True
             )

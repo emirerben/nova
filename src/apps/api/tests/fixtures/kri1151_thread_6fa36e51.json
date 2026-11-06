@@ -1,0 +1,67 @@
+{
+ "thread_id": "6fa36e51-80a1-4a78-8373-65a9fba04dbf",
+ "job_id": "07efa44c-051f-43c2-99d9-ed567408034e",
+ "creator_request": "Show the talks when I mention in full screen and use their audio. Place the stadium full screen when I talk but keep my audio",
+ "clip_media_ids": [
+  "8F66E4F4-87E5-4B4D-B608-E37E79D9C07B.mp4",
+  "93211221-EEFC-4475-BF34-7D23F63894F6.mp4",
+  "05866D5C-5C1D-4E1F-B1EF-3C341AE14577.mp4",
+  "AF8BF2A5-B06D-4089-A8CA-C55BF924F243.mp4",
+  "134CDBD9-2781-4407-921B-57D663D2B33B.mp4"
+ ],
+ "stadium_media_id": "134CDBD9-2781-4407-921B-57D663D2B33B.mp4",
+ "brief": {
+  "version": 2,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "style",
+    "facts": {
+     "display_mode": "fullscreen"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Show the talks full screen when mentioned",
+    "source_turn_id": "2f971f6b-d8aa-46e3-a428-1aa438585328"
+   },
+   {
+    "id": "r2",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "on"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Use the audio of the talk clips when they are shown",
+    "source_turn_id": "2f971f6b-d8aa-46e3-a428-1aa438585328"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "facts": {
+     "display_mode": "fullscreen"
+    },
+    "scope": "clip:134CDBD9-2781-4407-921B-57D663D2B33B.mp4",
+    "status": "open",
+    "literal": null,
+    "description": "Place the stadium full screen when I talk",
+    "source_turn_id": "2f971f6b-d8aa-46e3-a428-1aa438585328"
+   },
+   {
+    "id": "r4",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "off"
+    },
+    "scope": "clip:134CDBD9-2781-4407-921B-57D663D2B33B.mp4",
+    "status": "open",
+    "literal": null,
+    "description": "Keep my audio while the stadium is shown",
+    "source_turn_id": "2f971f6b-d8aa-46e3-a428-1aa438585328"
+   }
+  ]
+ },
+ "first_draft_response": "I can't make this yet:\n- Use the audio of the talk clips when they are shown: Turning clip sound on or off by clip or by seconds works on a montage made on your iPhone, not in this edit\n- Keep my audio while the stadium is shown: Turning clip sound on or off by clip or by seconds works on a montage made on your iPhone, not in this edit\nI held this first draft back. The simpler version leaves out: Use the audio of the talk clips when they are shown; Keep my audio while the stadium is shown. Should I make it without these, or do you want to change your request?"
+}

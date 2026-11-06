@@ -22,7 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.db_locks import CONTENT_PLAN_LOCK
+from app.db_locks import CONTENT_PLAN_LOCK, acquire_key_share_rows
 from app.kria.api_schemas import (
     ApprovalDecisionBody,
     ApprovalDecisionOut,
@@ -43,9 +43,13 @@ from app.kria.contracts import (
     KriaTurnPlan,
     RequirementReceipt,
 )
-from app.kria.duplicate_send import duplicate_reply, find_duplicate_send
+from app.kria.duplicate_send import duplicate_reply, find_duplicate_send, refused_card_tap
+from app.kria.intent_review_copy import INTENT_REVIEW_TURN_VALUE
 from app.kria.language import is_help_question, is_status_question
+from app.kria.removed_messages import REMOVED_WHILE_WAITING
 from app.kria.reply_language import (
+    creator_typed_language,
+    needs_typed_history,
     remember_reply_language,
     reply_language_for,
     resolve_reply_language,
@@ -174,7 +178,15 @@ def request_digest(body: SubmitTurnBody) -> str:
     # different request) but is excluded when absent so pre-existing digests hold.
     excluded = (
         # KRI-756: which chip a message came from is telemetry, never part of the request.
-        {"editor_state", "suggestion", "outcome_context"}
+        # Under KRIA_SUGGESTION_PINNED_TAPS_ENABLED the pin decides what the turn runs, so a
+        # present pin joins the digest (a different pin under one client_event_id is a different
+        # request); an absent pin, or the flag off, leaves every existing digest unchanged.
+        {"editor_state", "outcome_context"}
+        | (
+            {"suggestion"}
+            if body.suggestion is None or not settings.kria_suggestion_pinned_taps_enabled
+            else set()
+        )
         | ({"clip_selection"} if body.clip_selection is None else set())
         | ({"choice_selection"} if body.choice_selection is None else set())
         | ({"song_order"} if body.song_order is None else set())  # KRI-374: additive digest
@@ -193,6 +205,35 @@ def request_digest(body: SubmitTurnBody) -> str:
         separators=(",", ":"),
     )
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _pinned_suggestion_stamp(thread: CreationThread, body: SubmitTurnBody) -> dict[str, Any]:
+    """``{"pinned_suggestion": {...}}`` for a tapped v2 suggestion card, else ``{}``.
+
+    Checked against this thread's own offered-set ring (``services/suggestions/pinned``): a tap
+    whose card the thread was never offered is stamped ``unresolved``, so the worker answers "no
+    longer fits" instead of letting the planner read the card's words. A tap whose message is not
+    the card's prompt is the creator's own request and stays unpinned.
+    """
+    if (
+        body.suggestion is None
+        or not settings.kria_suggestion_pinned_taps_enabled
+        or not settings.suggestion_chips_for(thread.creator_id)
+    ):
+        return {}
+    from app.services.suggestions import pinned  # noqa: PLC0415
+
+    tap = body.suggestion.model_dump()
+    try:
+        stamp = pinned.stamp_pin(thread.state, tap, body.message)
+    except Exception:  # noqa: BLE001 - never plan a tapped card as free text
+        log.warning("suggestion_pin.stamp_failed", thread_id=str(thread.id), exc_info=True)
+        stamp = (
+            {"set_id": tap["set_id"], "id": tap["chip_id"], "unresolved": True}
+            if pinned.is_pin_id(tap["chip_id"])
+            else None
+        )
+    return {pinned.PIN_KEY: stamp} if stamp else {}
 
 
 def approval_fingerprint(approval: CreatorAgentApproval) -> str:
@@ -573,6 +614,48 @@ async def _free_text_choice_selection(
     return selection, False, True
 
 
+async def _free_text_clip_skip(
+    db: AsyncSession, thread: CreationThread, message: str
+) -> ClipSelectionIn | None:
+    """KRI-1066: "skip that" typed right after the ending picker is that picker's Skip.
+
+    The same server-owned answer a tap sends, so the draft ends on the last clip filmed and
+    says so (KRI-1025). Deterministic and exact (``typed_picker_skip``); anything else returns
+    ``None`` and goes to the Creator agent like any message. The thread is read only for a
+    message that looks like a withdrawal at all.
+    """
+    from app.services.pin_withdrawal import typed_picker_skip, withdrawal_candidate  # noqa: PLC0415
+
+    if not settings.kria_clip_selection_questions_enabled or not withdrawal_candidate(message):
+        return None
+    rows = (
+        await db.execute(
+            select(
+                CreationThreadEvent.role,
+                CreationThreadEvent.payload,
+                CreationThreadEvent.event_type,
+                CreationThreadEvent.content,
+            )
+            .where(
+                CreationThreadEvent.thread_id == thread.id,
+                CreationThreadEvent.role.in_({"user", "assistant"}),
+            )
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    events = [
+        tag_event(role, payload, event_type, content) for role, payload, event_type, content in rows
+    ]
+    skip = typed_picker_skip(await load_latest_brief(db, thread.id), events, message)
+    if skip is None:
+        return None
+    try:
+        await _validate_clip_selection(db, thread, skip)
+    except RuntimeFailure:
+        return None  # a typed message must never become a hard error: let the planner read it
+    return skip
+
+
 async def _owned_thread(
     db: AsyncSession,
     *,
@@ -807,14 +890,21 @@ async def submit_turn(
         replay_turn_id = str(existing.id)
         replay_revision = int(thread.revision)
         replay_status = existing.status
+        replay_plan = getattr(existing, "plan_json", None)
         should_publish = replay_status == "pending"
         await db.rollback()
+        replayed_refusal = (
+            (replay_plan or {}).get("diagnostics", {}).get("suggestion_pin", {}).get("outcome")
+            if isinstance(replay_plan, dict) and isinstance(replay_plan.get("diagnostics"), dict)
+            else None
+        )
         return (
             TurnAccepted(
                 turn_id=replay_turn_id,
                 thread_revision=replay_revision,
                 status=replay_status,
                 replayed=True,
+                suggestion_outcome="refused" if replayed_refusal == "refused" else None,
             ),
             should_publish,
         )
@@ -866,6 +956,20 @@ async def submit_turn(
         derived = await _free_text_choice_selection(db, thread, body.message)
         if derived is not None:
             choice_selection, choice_delegated, choice_reanswer = derived
+    # KRI-1066: like the choice above, a typed answer to the clip picker is stored as the
+    # selection it is (already validated by the helper); an explicit tap in the same send
+    # always wins.
+    clip_selection = body.clip_selection
+    if (
+        clip_selection is None
+        and choice_selection is None
+        and body.song_order is None
+        and body.song_range is None
+        and body.moment_order is None
+        and body.protected_region is None
+        and scope is None
+    ):
+        clip_selection = await _free_text_clip_skip(db, thread, body.message)
     if body.clip_selection is not None and settings.kria_clip_selection_questions_enabled:
         await _validate_clip_selection(db, thread, body.clip_selection)
     if body.song_order is not None and settings.user_song_montage_enabled:
@@ -952,7 +1056,7 @@ async def submit_turn(
         settings.kria_duplicate_resend_enabled
         and scope is None
         and choice_selection is None
-        and body.clip_selection is None
+        and clip_selection is None
         and body.song_order is None
         and body.song_range is None
         and body.moment_order is None
@@ -960,8 +1064,16 @@ async def submit_turn(
         duplicate = await find_duplicate_send(db, thread, body.message)
     # KRI-520: the chat's reply language after this message, stored on the locked
     # thread row (committed with the event below; rolled back with a refusal).
+    previous_language = thread_reply_language(thread)
+    # Green 5: a chat that has not told yet and a message that does not say (a chip tap)
+    # takes the language the creator types in their other chats before the device's.
+    typed_elsewhere = (
+        await creator_typed_language(db, creator_id=creator_id, exclude_thread_id=thread.id)
+        if needs_typed_history(body.message, previous_language)
+        else None
+    )
     reply_language = resolve_reply_language(
-        body.message, previous=thread_reply_language(thread), locale=locale
+        body.message, previous=previous_language, locale=locale, typed_elsewhere=typed_elsewhere
     )
     remember_reply_language(thread, reply_language)
     inert_response: tuple[Literal["progress", "question"], str] | None = None
@@ -1024,6 +1136,20 @@ async def submit_turn(
         # revision fence and the planner's reads skip them, so a copy never disturbs the turn
         # it repeats.
         copy_of = {"duplicate_of": str(duplicate.turn_id)} if duplicate is not None else {}
+        pin_stamp = _pinned_suggestion_stamp(thread, body) if duplicate is not None else {}
+        # A tap on a card whose first tap is still in flight gets the typed record every other
+        # refusal carries; the copy answer above stays the reply text.
+        refusal = (
+            refused_card_tap(duplicate, pin_stamp.get("pinned_suggestion"))
+            if duplicate is not None
+            else None
+        )
+        if refusal is not None:
+            from app.services.suggestions import pinned  # noqa: PLC0415
+
+            marked = pinned.mark_refused(thread.state, refusal["set_id"], refusal["id"], turn_id)
+            if marked:
+                thread.state = marked
         source = await _append_event(
             db,
             thread,
@@ -1054,9 +1180,15 @@ async def submit_turn(
                 "next_actions": [],
                 "schema_version": 2,
                 **copy_of,
+                **({"suggestion_pin": refusal} if refusal is not None else {}),
             },
         )
-        plan = KriaTurnPlan(mode="respond", turn_value=turn_value, response=message)
+        plan = KriaTurnPlan(
+            mode="respond",
+            turn_value=turn_value,
+            response=message,
+            **({"diagnostics": {"suggestion_pin": refusal}} if refusal is not None else {}),
+        )
         db.add(
             CreatorAgentTurn(
                 id=turn_id,
@@ -1073,11 +1205,19 @@ async def submit_turn(
         )
         await db.flush()
         await db.commit()
+        if refusal is not None:
+            from app.services.suggestion_serve import enqueue_for_thread  # noqa: PLC0415
+
+            # Fresh cards, as for every refused tap (flag-checked, enqueue-only, after the commit).
+            await asyncio.to_thread(
+                enqueue_for_thread, thread.id, trigger="pinned_stale", creator_id=creator_id
+            )
         return (
             TurnAccepted(
                 turn_id=str(turn_id),
                 thread_revision=int(thread.revision),
                 status="completed",
+                suggestion_outcome="refused" if refusal is not None else None,
             ),
             False,
         )
@@ -1118,6 +1258,7 @@ async def submit_turn(
     outcome_payload = await request_outcome_payload(
         db, thread_id=thread.id, turn_id=turn_id, context=body.outcome_context
     )
+    pin_stamp = _pinned_suggestion_stamp(thread, body)
     event = await _append_event(
         db,
         thread,
@@ -1129,13 +1270,19 @@ async def submit_turn(
             "runtime_version": 2,
             "turn_id": str(turn_id),
             "turn_status": turn_status,
+            # Steer now: the turn this message waits behind, so the app can offer Steer now and
+            # hide it once that turn's video is being made. Flag off: nothing stored.
+            **(
+                {"queued_behind_turn_id": str(queued_replaces_turn_id)}
+                if queued_replaces_turn_id is not None and settings.steer_now_for(creator_id)
+                else {}
+            ),
             **outcome_payload,
             # Flag off: dropped silently, nothing stored (byte-identical to old clients).
             **({"camera_roll_story": _camera_roll_story} if _camera_roll_story else {}),
             **(
-                {"clip_selection": body.clip_selection.model_dump(mode="json")}
-                if body.clip_selection is not None
-                and settings.kria_clip_selection_questions_enabled
+                {"clip_selection": clip_selection.model_dump(mode="json")}
+                if clip_selection is not None and settings.kria_clip_selection_questions_enabled
                 else {}
             ),
             # KRI-374: flag off -> dropped silently, nothing stored.
@@ -1211,6 +1358,9 @@ async def submit_turn(
                     suggestion=body.suggestion.model_dump() if body.suggestion else None,
                 )
             ),
+            # Suggestion blocks: a tapped v2 card is pinned to the action the thread was offered.
+            # Flag off => nothing stored (existing payloads byte-identical).
+            **pin_stamp,
         },
         client_event_id=body.client_event_id,
     )
@@ -1242,6 +1392,10 @@ async def submit_turn(
             turn_id=str(turn.id),
             thread_revision=int(thread.revision),
             status=turn.status,
+            # A card the thread was never offered is refused for certain: say so now.
+            suggestion_outcome=(
+                "refused" if (pin_stamp.get("pinned_suggestion") or {}).get("unresolved") else None
+            ),
         ),
         turn_status == "pending",
     )
@@ -1330,16 +1484,75 @@ async def cancel_turn(
     turn_id: uuid.UUID,
     creator_id: uuid.UUID,
     expected_thread_revision: int,
+    steer: bool = False,
+    only_if_queued: bool = False,
+    _plan_item: PlanItem | None = None,
+    _item_locked: bool = False,
 ) -> tuple[TurnCancelled, str | None]:
+    """Cancel a turn that has not committed work; promote the queued message, if any.
+
+    ``steer`` (Steer now, docs/pipelines/steer-now.md): the creator stops the running turn
+    so the message waiting behind it runs now. Refused unless a message waits behind this
+    very turn (a late tap never stops what it was meant to start) and while its video can
+    still be stopped: an approved approval is consent to render, and the render claim would
+    otherwise revive the turn after this cancel. It also closes the stopped card in the
+    chat (``approval_cancelled``) and says what happened in the chat's language. Without
+    ``steer`` this is byte-identical to before.
+
+    ``only_if_queued`` (Steer now's trash / Edit): remove the message only while it still
+    waits. Once Kria has picked it up (the turn it waited behind finished), the answer is
+    409 ``turn_no_longer_queued`` and nothing changes; without it, a retry that raced the
+    promotion was a plain cancel of the turn Kria now runs.
+    """
+    if steer and not settings.steer_now_for(creator_id):
+        raise RuntimeFailure(404, "steer_now_unavailable", "Steer now is unavailable.")
+    if steer:
+        # A Steer writes several events, and every second UPDATE of the thread row in one
+        # transaction re-checks its foreign keys (FOR KEY SHARE on each parent, taken late).
+        # An Approve tapped at the same moment holds PlanItem/Session FOR UPDATE while it
+        # waits for this Turn, so take those key-shares first, in canonical order.
+        parents = (
+            await db.execute(
+                select(
+                    CreationThread.active_plan_item_id,
+                    CreationThread.active_job_id,
+                    CreationThread.active_creator_agent_session_id,
+                ).where(CreationThread.id == thread_id, CreationThread.creator_id == creator_id)
+            )
+        ).first()
+        if parents is not None:
+            await acquire_key_share_rows(
+                db,
+                {
+                    PlanItem: parents.active_plan_item_id,
+                    Job: parents.active_job_id,
+                    CreatorAgentSession: parents.active_creator_agent_session_id,
+                },
+            )
     # Lock Turn before CreationThread per the global runtime lock order. This
-    # transaction does not touch PlanItem/Job and cannot cancel a render.
-    turn = (
-        await db.execute(
-            select(CreatorAgentTurn)
-            .where(CreatorAgentTurn.id == turn_id, CreatorAgentTurn.thread_id == thread_id)
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
+    # transaction does not touch PlanItem/Job and cannot cancel a render, except to take back
+    # the item setting a staged suggestion tap flipped (below, behind a re-entry that locks the
+    # plan item first).
+    this_turn = (CreatorAgentTurn.id == turn_id, CreatorAgentTurn.thread_id == thread_id)
+    lookup = select(CreatorAgentTurn).where(*this_turn)
+    if only_if_queued:
+        # The condition is part of the locking statement, not a read before it: Postgres
+        # re-checks the WHERE on the newest row version after waiting out a promotion that
+        # holds the row, and once locked no other transaction can change the status before
+        # this one ends. `cancelled` stays readable so a repeated tap (its first answer
+        # lost) gets the same answer as before.
+        lookup = lookup.where(CreatorAgentTurn.status.in_(("queued", "cancelled")))
+    turn = (await db.execute(lookup.with_for_update())).scalar_one_or_none()
+    if turn is None and only_if_queued:
+        if (await db.execute(select(CreatorAgentTurn.id).where(*this_turn))).first() is not None:
+            thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=False)
+            raise RuntimeFailure(
+                409,
+                "turn_no_longer_queued",
+                "Kria already started on this message.",
+                recovery="refresh_replan",
+                current_revision=int(thread.revision),
+            )
     if turn is None:
         raise RuntimeFailure(404, "turn_not_found", "Kria turn not found")
     thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=True)
@@ -1373,6 +1586,11 @@ async def cancel_turn(
             recovery="manual",
             current_revision=int(thread.revision),
         )
+    steered_to = await _steer_target(db, thread=thread, turn=turn) if steer else None
+    # Steer now: the trash / Edit on a waiting message. Marked so planning never reads it.
+    removed_while_waiting = (
+        not steer and turn.status == "queued" and settings.steer_now_for(creator_id)
+    )
 
     now = datetime.now(UTC)
     approval_ids: list[str] = []
@@ -1391,20 +1609,72 @@ async def cancel_turn(
             .scalars()
             .all()
         )
+        if not _item_locked:
+            for approval in approvals:
+                if await _staged_tap_writes_item(db, approval):
+                    # The plan item is locked ahead of Turn and Thread: release these locks and
+                    # come back holding it (the order `_expire_blocking_approval` takes).
+                    session_id = turn.session_id
+                    await db.rollback()
+                    locked_item = await _lock_strategy_plan_item(
+                        db, session_id=session_id, creator_id=creator_id
+                    )
+                    return await cancel_turn(
+                        db,
+                        thread_id=thread_id,
+                        turn_id=turn_id,
+                        creator_id=creator_id,
+                        expected_thread_revision=expected_thread_revision,
+                        steer=steer,
+                        only_if_queued=only_if_queued,
+                        _plan_item=locked_item,
+                        _item_locked=True,
+                    )
         for approval in approvals:
             approval.status = "cancelled"
             approval_ids.append(str(approval.id))
+            await _withdraw_staged_tap(db, approval=approval, item=_plan_item, thread=thread)
     turn.cancel_requested_at = now
     turn.status = "cancelled"
     turn.completed_at = now
+    if steered_to is not None:
+        # Both clients close a card only on an approval_* event naming it.
+        for approval_id in approval_ids:
+            await _append_event(
+                db,
+                thread,
+                role="system",
+                event_type="approval_cancelled",
+                content=None,
+                payload={"approval_id": approval_id, "turn_id": str(turn.id)},
+            )
     await _append_event(
         db,
         thread,
         role="system",
         event_type="turn_cancelled",
         content=None,
-        payload={"turn_id": str(turn.id), "approval_ids": approval_ids},
+        payload={
+            "turn_id": str(turn.id),
+            "approval_ids": approval_ids,
+            **({"steered_to_turn_id": steered_to} if steered_to is not None else {}),
+            **({REMOVED_WHILE_WAITING: True} if removed_while_waiting else {}),
+        },
     )
+    if steered_to is not None:
+        with reply_language_for(thread_reply_language(thread)):
+            stopped_line = say(
+                en="Stopped. Working on your newer message instead.",
+                tr="Durdurdum. Bunun yerine yeni mesajın üzerinde çalışıyorum.",
+            )
+        await _append_event(
+            db,
+            thread,
+            role="assistant",
+            event_type="status_update",
+            content=stopped_line,
+            payload={"turn_id": str(turn.id), "steered_to_turn_id": steered_to},
+        )
     await db.commit()
     # Read before the promotion: its rollback (nothing queued) expires every loaded row,
     # and an async session cannot lazy-load them afterwards (MissingGreenlet -> 500).
@@ -1420,6 +1690,45 @@ async def cancel_turn(
     # B, whose valid order is Turn B -> Thread.
     successor_id = await _promote_queued_successor(db, thread_id=thread_id)
     return cancelled, successor_id
+
+
+async def _steer_target(db: AsyncSession, *, thread: CreationThread, turn: CreatorAgentTurn) -> str:
+    """The queued message a Steer hands over to; refuses a Steer that cannot happen."""
+    waiting = (
+        await db.execute(
+            select(CreatorAgentTurn.id, CreatorAgentTurn.queued_replaces_turn_id).where(
+                CreatorAgentTurn.thread_id == thread.id,
+                CreatorAgentTurn.status == "queued",
+            )
+        )
+    ).first()
+    if turn.status == "queued" or waiting is None or waiting.queued_replaces_turn_id != turn.id:
+        raise RuntimeFailure(
+            409,
+            "nothing_to_steer_to",
+            "No message is waiting behind this one.",
+            recovery="refresh_replan",
+            current_revision=int(thread.revision),
+        )
+    decided = (
+        await db.execute(
+            select(CreatorAgentApproval.id)
+            .where(
+                CreatorAgentApproval.turn_id == turn.id,
+                CreatorAgentApproval.status.in_(("approved", "consumed")),
+            )
+            .limit(1)
+        )
+    ).first()
+    if decided is not None:
+        raise RuntimeFailure(
+            409,
+            "turn_not_cancellable",
+            "Your video is already being made.",
+            recovery="manual",
+            current_revision=int(thread.revision),
+        )
+    return str(waiting.id)
 
 
 async def cancel_render(
@@ -1990,6 +2299,32 @@ async def _apply_strategy_approval_media(
     )
 
 
+async def _withdraw_staged_tap(
+    db: AsyncSession,
+    *,
+    approval: CreatorAgentApproval,
+    item: PlanItem | None,
+    thread: CreationThread,
+) -> None:
+    """A staged approval that will never render takes back the suggestion tap that staged it.
+
+    Lazy import: ``kria/drafts`` imports this module. A no-op for every approval a card did not
+    stage, so a flag-off thread is untouched.
+    """
+    from app.kria.drafts import withdraw_staged_tap  # noqa: PLC0415
+
+    await withdraw_staged_tap(db, approval=approval, item=item, thread=thread)
+
+
+async def _staged_tap_writes_item(db: AsyncSession, approval: CreatorAgentApproval) -> bool:
+    """Whether the tap behind ``approval`` flipped an item setting, so closing it must lock the
+    plan item ahead of the session (an unlocked peek: the record never changes after minting)."""
+    from app.kria.drafts import staged_tap_footprint  # noqa: PLC0415
+
+    record = await staged_tap_footprint(db, approval)
+    return bool(record and record.get("setting"))
+
+
 async def _close_pending_approval(
     db: AsyncSession,
     *,
@@ -2025,6 +2360,7 @@ async def _close_pending_approval(
     preflight_analysis_id = await _restore_strategy_media_snapshot_if_present(
         db, item=plan_item, execution=execution
     )
+    await _withdraw_staged_tap(db, approval=approval, item=plan_item, thread=thread)
     await _append_event(
         db,
         thread,
@@ -2097,25 +2433,30 @@ _APPROVAL_STALE_COPY = (
 )
 
 
-async def _expire_blocking_approval(
+@dataclass
+class _LockedApproval:
+    """One pending approval with its rows locked in canonical order (see the helper)."""
+
+    thread: CreationThread
+    session: CreatorAgentSession | None
+    turn: CreatorAgentTurn | None
+    approval: CreatorAgentApproval | None
+    execution: CreatorAgentExecution | None
+    plan_item: PlanItem | None
+
+
+async def _lock_approval_chain(
     db: AsyncSession,
     *,
     thread_id: uuid.UUID,
     creator_id: uuid.UUID,
     approval_id: uuid.UUID,
-) -> int | None:
-    """Lazily expire an overdue pending approval that blocks `submit_turn` (KRI-295).
+) -> _LockedApproval | None:
+    """Lock an approval and everything `_close_pending_approval` touches, or None if unknown.
 
-    Returns the thread revision after expiry, or None when nothing was expired
-    (decided/extended meanwhile). An approval someone else expired after `submit_turn`
-    saw it pending (the reconcile sweep, between that rollback and these locks) counts
-    as expired here too: its notice is the bump the creator could not have seen, exactly
-    as when this call writes it. The caller must hold NO locks: this re-acquires
-    them in canonical order (PlanItem -> Session -> Turn -> Approval -> Execution
-    -> Thread), exactly like `decide_approval`. `submit_turn` therefore rolls back
-    (releasing its Thread lock) before calling this, rather than locking Thread
-    first and then Session/Turn, which would invert the order and can deadlock
-    with a concurrent decide/cancel/sweeper.
+    The caller must hold NO locks: rows are taken in canonical order (PlanItem -> Session ->
+    Turn -> Approval -> Execution -> Thread), exactly like `decide_approval`. The caller
+    re-checks the approval's state under the locks and rolls back if it bails.
     """
     approval_ref = (
         await db.execute(
@@ -2148,7 +2489,7 @@ async def _expire_blocking_approval(
         await _lock_strategy_plan_item(
             db, session_id=approval_ref.session_id, creator_id=creator_id
         )
-        if has_stash
+        if has_stash or await _staged_tap_writes_item(db, approval_ref)
         else None
     )
     # populate_existing on every row read above without a lock (`approval_ref`, the
@@ -2194,6 +2535,42 @@ async def _expire_blocking_approval(
             )
         ).scalar_one_or_none()
     thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=True)
+    return _LockedApproval(
+        thread=thread,
+        session=session,
+        turn=turn,
+        approval=approval,
+        execution=execution,
+        plan_item=plan_item,
+    )
+
+
+async def _expire_blocking_approval(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    approval_id: uuid.UUID,
+) -> int | None:
+    """Lazily expire an overdue pending approval that blocks `submit_turn` (KRI-295).
+
+    Returns the thread revision after expiry, or None when nothing was expired
+    (decided/extended meanwhile). An approval someone else expired after `submit_turn`
+    saw it pending (the reconcile sweep, between that rollback and these locks) counts
+    as expired here too: its notice is the bump the creator could not have seen, exactly
+    as when this call writes it. The caller must hold NO locks: this re-acquires
+    them in canonical order (PlanItem -> Session -> Turn -> Approval -> Execution
+    -> Thread), exactly like `decide_approval`. `submit_turn` therefore rolls back
+    (releasing its Thread lock) before calling this, rather than locking Thread
+    first and then Session/Turn, which would invert the order and can deadlock
+    with a concurrent decide/cancel/sweeper.
+    """
+    locked = await _lock_approval_chain(
+        db, thread_id=thread_id, creator_id=creator_id, approval_id=approval_id
+    )
+    if locked is None:
+        return None
+    thread, session, turn, approval = locked.thread, locked.session, locked.turn, locked.approval
     if approval is not None and approval.status == "expired":  # expired by the sweep meanwhile
         revision = int(thread.revision)
         await db.rollback()
@@ -2213,8 +2590,8 @@ async def _expire_blocking_approval(
         session=session,
         turn=turn,
         approval=approval,
-        execution=execution,
-        plan_item=plan_item,
+        execution=locked.execution,
+        plan_item=locked.plan_item,
         code="approval_expired",
         message=_thread_say(
             thread,
@@ -2229,6 +2606,126 @@ async def _expire_blocking_approval(
         ),
         approval_status="expired",
     )
+
+
+SOURCE_REPLACED_CODE = "source_replaced"
+
+
+async def _approvals_made_for_replaced_source(
+    db: AsyncSession, *, thread_id: uuid.UUID, creator_id: uuid.UUID
+) -> list[uuid.UUID]:
+    """Pending approvals prepared against a take the creator has since replaced.
+
+    An approval is stale when the media identity its draft was bound to no longer matches the
+    item, or (a draft with no binding) when it was made before the swap. One made AFTER the
+    swap binds the new identity and is left alone, so a replayed retirement can never cancel a
+    fresh plan. Its target Job is no signal: a fresh strategy approval still pins the old Job
+    until the new one is minted.
+    """
+    from app.kria.brief_binding import media_identity, snapshot_media  # noqa: PLC0415
+    from app.services.source_replacement import SourceReplacement  # noqa: PLC0415
+
+    thread = (
+        await db.execute(
+            select(CreationThread).where(
+                CreationThread.id == thread_id, CreationThread.creator_id == creator_id
+            )
+        )
+    ).scalar_one_or_none()
+    replacement = SourceReplacement.from_state(getattr(thread, "state", None))
+    if thread is None or replacement is None or thread.active_plan_item_id is None:
+        return []
+    item = await db.get(PlanItem, thread.active_plan_item_id)
+    replaced_at = (
+        await db.execute(
+            select(func.max(CreationThreadEvent.created_at)).where(
+                CreationThreadEvent.thread_id == thread_id,
+                CreationThreadEvent.event_type == "media_replaced",
+            )
+        )
+    ).scalar_one_or_none()
+    current_identity = media_identity(snapshot_media(item)) if item is not None else None
+    approvals = (
+        (
+            await db.execute(
+                select(CreatorAgentApproval).where(
+                    CreatorAgentApproval.thread_id == thread_id,
+                    CreatorAgentApproval.creator_id == creator_id,
+                    CreatorAgentApproval.status == "pending",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    stale: list[uuid.UUID] = []
+    for approval in approvals:
+        draft = await db.get(CreatorEditDraft, approval.draft_id) if approval.draft_id else None
+        document = _parse_draft_document(getattr(draft, "snapshot_json", None))
+        binding = getattr(document, "brief_binding", None)
+        if binding is not None and current_identity is not None:
+            if media_identity(binding.media_snapshot) != current_identity:
+                stale.append(approval.id)
+        elif replaced_at is not None and approval.created_at <= replaced_at:
+            stale.append(approval.id)
+    return stale
+
+
+async def retire_pending_approvals_for_source_change(
+    db: AsyncSession, *, thread_id: uuid.UUID, creator_id: uuid.UUID
+) -> int:
+    """Close the approvals a take swap made stale so the creator's next message plans fresh.
+
+    Without this a pending approval keeps the thread's turn slot, and the creator's next
+    message queues behind a card they can no longer meaningfully decide. Stale approvals are
+    already refused at decide and claim time (`thread_revision_stale`, the media-identity
+    fences); this only removes the blocker. The caller must hold NO locks: each approval is
+    re-locked in canonical order and closed by `_close_pending_approval`, which commits.
+    Idempotent, so a retried replace can run it again.
+    """
+    closed = 0
+    for approval_id in await _approvals_made_for_replaced_source(
+        db, thread_id=thread_id, creator_id=creator_id
+    ):
+        await db.rollback()
+        locked = await _lock_approval_chain(
+            db, thread_id=thread_id, creator_id=creator_id, approval_id=approval_id
+        )
+        if (
+            locked is None
+            or locked.session is None
+            or locked.turn is None
+            or locked.approval is None
+            or locked.approval.status != "pending"
+        ):
+            await db.rollback()
+            continue
+        await _close_pending_approval(
+            db,
+            thread=locked.thread,
+            session=locked.session,
+            turn=locked.turn,
+            approval=locked.approval,
+            execution=locked.execution,
+            plan_item=locked.plan_item,
+            code=SOURCE_REPLACED_CODE,
+            message=_thread_say(
+                locked.thread,
+                en=(
+                    "You swapped in a new take, so I cancelled the plan I had prepared for the "
+                    "old one. Nothing was rendered. Tell me what you want and I'll plan it "
+                    "again with your new take."
+                ),
+                tr=(
+                    "Yeni çekimini ekledin, o yüzden eski çekim için hazırladığım planı iptal "
+                    "ettim. Hiçbir video oluşturulmadı. Ne istediğini söyle, yeni çekiminle "
+                    "yeniden planlayayım."
+                ),
+            ),
+        )
+        closed += 1
+    await db.rollback()
+    return closed
 
 
 async def _validated_render_shape(
@@ -2281,7 +2778,8 @@ async def _validated_render_shape(
             phase="approval",
             recovery="ask_user",
         )
-    return chosen
+    # An echoed server default is not a creator pick: record which it was.
+    return render_shape.stamp_origin(offer, chosen, body.render_shape_origin)
 
 
 async def _mint_prepared_execution(
@@ -2476,6 +2974,7 @@ async def decide_approval(
         is_strategy_approval
         or deny_restore_pending
         or (decision == "approve" and body.automatic_repair_attempts > 0)
+        or (decision == "deny" and await _staged_tap_writes_item(db, approval_ref))
     )
     plan_item = (
         await _lock_strategy_plan_item(
@@ -2964,6 +3463,8 @@ async def decide_approval(
         preflight_analysis_id_to_publish = await _restore_strategy_media_snapshot_if_present(
             db, item=plan_item, execution=execution
         )
+        # A card's tap that staged this render is taken back with it: the denial is final.
+        await _withdraw_staged_tap(db, approval=approval, item=plan_item, thread=thread)
 
     if decision == "approve" and body.automatic_repair_attempts:
         if execution is None:
@@ -3172,6 +3673,10 @@ async def read_creative_brief(
     }
     newest: dict[str, RequirementReceipt] = {}
     for event in events:
+        if (event.payload or {}).get("turn_value") == INTENT_REVIEW_TURN_VALUE:
+            # The reviewer's receipts are advisory chat rows; the deterministic ledger alone
+            # decides what a requirement shows.
+            continue
         for raw in (event.payload or {}).get("requirement_receipts") or []:
             try:
                 receipt = RequirementReceipt.model_validate(raw)

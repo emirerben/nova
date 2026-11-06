@@ -20,6 +20,40 @@ from contextvars import ContextVar, Token
 # (read back by `_claim_approval_dispatch`, stamped on the Job as `creator_client_protocol`).
 APPROVAL_CLIENT_PROTOCOL_FIELD = "approval_client_protocol"
 CAPTION_STYLE_SCOPE_PROTOCOL = 25
+RENDERED_TIMELINE_CLOCK_PROTOCOL = 26
+# The app build skipped 26 and went straight to 27: the first build that decodes
+# `speaker_background`.
+SPEAKER_BACKGROUND_PROTOCOL = 27
+# The first build that decodes the `clipTilt` capability (`TimelineClip.backdrop`).
+CLIP_TILT_PROTOCOL = 28
+# The first build whose compositor turns a placed picture card by its clip's rotation (KRI-1141).
+CARD_TILT_PROTOCOL = 30
+
+# The first build that decodes a clip backdrop of kind `media` (the `clipBackdropMedia`
+# capability).
+CLIP_BACKDROP_MEDIA_PROTOCOL = 31
+
+# The first build that decodes a clip tilt row's `zoom` (KRI-1169). An older build reads the
+# row's unknown key as no tilt and would erase the zoom on its next Save.
+# The first build that decodes and round-trips a tilt's `zoom` (KRI-1170). Below it the key is
+# an unknown field a build drops on its next save.
+TILT_ZOOM_PROTOCOL = 33
+
+# Qendresa item 12: the first build whose editor reads `caption_meta.shape` (a caption box and
+# the dimmed not-yet-spoken word), so its preview and editor export match the rendered captions.
+CAPTION_SHAPE_PROTOCOL = 36
+
+# Qendresa item 15: the first build whose editor keeps a card marked `caption_clear` below y 0.62
+# (older editors pull every card centre up to 0.62, onto the Q1 captions).
+CARD_LAYOUT_PROTOCOL = 40
+
+# Qendresa item 16: the first build that decodes `speaker_background.full_screen_windows` (the
+# `speakerFrameWindows` capability: the speaker full screen in their own take, then the corner).
+SPEAKER_FULL_OPENING_PROTOCOL = 41
+
+# Qendresa item 18: the first build that decodes `speaker_background.focus` /
+# `windows[i].focus` (the `backgroundFocus` capability: the picture aimed at its text column).
+BACKGROUND_FOCUS_PROTOCOL = 42
 
 
 def caption_style_scope_supported() -> bool:

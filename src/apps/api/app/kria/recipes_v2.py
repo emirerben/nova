@@ -9,10 +9,14 @@ from pydantic import Field, model_serializer, model_validator
 from app.kria.portable_camera import CameraPulse
 from app.kria.portable_drawing import PortableDrawingLayer
 from app.kria.portable_motion import MotionSceneProgram
+from app.kria.portable_speaker_background import SpeakerBackgroundLayer
 from app.kria.portable_text import PortableTextLayer
 from app.kria.portable_visual import VisualCanvasFill
 from app.kria.recipes import EditRecipeV1
 from app.kria.render_assets import RenderAssetManifest, VisualRenderAsset
+
+# The longest timeline the device engine builds (seconds): `EditRecipeV2` refuses a longer one.
+MAX_TIMELINE_S = 1800
 
 
 class EditRecipeV2(EditRecipeV1):
@@ -31,6 +35,7 @@ class EditRecipeV2(EditRecipeV1):
     camera_pulses: list[CameraPulse] = Field(default_factory=list, max_length=100)
     text_layers: list[PortableTextLayer] = Field(default_factory=list, max_length=500)
     drawing_layers: list[PortableDrawingLayer] = Field(default_factory=list, max_length=12)
+    speaker_background: SpeakerBackgroundLayer | None = None
 
     @model_serializer(mode="wrap")
     def preserve_legacy_camera_shape(self, handler):
@@ -43,12 +48,14 @@ class EditRecipeV2(EditRecipeV1):
             payload.pop("camera_pulses", None)
         if not self.drawing_layers:
             payload.pop("drawing_layers", None)
+        if self.speaker_background is None:
+            payload.pop("speaker_background", None)
         return payload
 
     @model_validator(mode="after")
     def validate_asset_manifest(self) -> EditRecipeV2:
-        if self.duration > 1800 or any(
-            clip.source_start > 1800 for track in self.tracks for clip in track.clips
+        if self.duration > MAX_TIMELINE_S or any(
+            clip.source_start > MAX_TIMELINE_S for track in self.tracks for clip in track.clips
         ):
             raise ValueError("portable timeline exceeds the device time budget")
         if len({fill.id for fill in self.visual_fills}) != len(self.visual_fills) or any(
@@ -78,8 +85,53 @@ class EditRecipeV2(EditRecipeV1):
         ):
             self.required_capabilities |= {"singleWordText"}
         manifest = {asset.id: asset for asset in self.asset_manifest.assets}
+        if self.speaker_background is not None:
+            if self.speaker_background.uses_color:
+                # KRI-1173: a flat colour names no asset and downloads nothing; it has its own
+                # capability (the new drawing), beside the base one.
+                self.required_capabilities |= {"speakerBackground", "speakerBackgroundColor"}
+            else:
+                source = manifest.get(self.speaker_background.asset_id)
+                if (
+                    not isinstance(source, VisualRenderAsset)
+                    or source.media_kind != self.speaker_background.media_kind
+                ):
+                    raise ValueError("a speaker background requires a matching Visuals asset")
+                self.required_capabilities |= {"speakerBackground"}
+            # KRI-1162: every timed window names its own Visuals asset of the same kind and
+            # ends inside the timeline; windows or a speaker frame add their own capability.
+            for window in self.speaker_background.windows or ():
+                window_source = manifest.get(window.asset_id)
+                if (
+                    not isinstance(window_source, VisualRenderAsset)
+                    or window_source.media_kind != window.media_kind
+                ):
+                    raise ValueError("a background window requires a matching Visuals asset")
+                if window.end > self.duration + 1e-6:
+                    raise ValueError("a background window exceeds the timeline")
+            if self.speaker_background.uses_windows:
+                self.required_capabilities |= {"speakerBackgroundWindows"}
+            # Qendresa item 16: the speaker full screen in their own take, then the corner.
+            for span in self.speaker_background.full_screen_windows or ():
+                if span.end > self.duration + 1e-6:
+                    raise ValueError("a full-screen window exceeds the timeline")
+            if self.speaker_background.uses_full_screen:
+                self.required_capabilities |= {"speakerFrameWindows"}
+            # Qendresa item 18: a background picture aimed at its readable text.
+            if self.speaker_background.uses_focus:
+                self.required_capabilities |= {"backgroundFocus"}
         if set(manifest) != {asset.id for asset in self.assets}:
             raise ValueError("recipe and manifest must name exactly the same assets")
+        # KRI-1192: a run drawn in a script-fallback face needs a build that bundles it.
+        from app.pipeline.font_coverage import script_fallback_files  # noqa: PLC0415
+
+        script_files = script_fallback_files()
+        if any(
+            getattr(manifest.get(run.font_asset_id), "catalog_id", None) in script_files
+            for layer in self.text_layers
+            for run in layer.runs
+        ):
+            self.required_capabilities |= {"scriptFonts"}
         # Mirrors `EditRecipe.effectiveCapabilities`: a device that has not
         # verified Visuals-pool downloads of a kind must never receive one.
         for asset in manifest.values():
@@ -94,6 +146,14 @@ class EditRecipeV2(EditRecipeV1):
                     isinstance(source, VisualRenderAsset) and source.media_kind == "image"
                 ):
                     raise ValueError("a still card requires a Visuals photo")
+                if clip.backdrop is not None and clip.backdrop.kind == "media":
+                    pool_ids = {
+                        asset.visual_id
+                        for asset in manifest.values()
+                        if isinstance(asset, VisualRenderAsset)
+                    }
+                    if clip.backdrop.asset_id not in pool_ids:
+                        raise ValueError("a media backdrop requires a matching Visuals asset")
         if self.motion_scenes is not None:
             program = self.motion_scenes
             program.validated_instances(int(self.duration * self.frame_rate))

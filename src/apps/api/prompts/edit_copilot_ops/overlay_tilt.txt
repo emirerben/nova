@@ -1,0 +1,20 @@
+PICTURE CARD TILT (this edit can tilt its picture cards)
+
+A picture card on top of the speaker (display "pip") can be tilted. Tilt is two more keys of patch_overlay, next to start_s, x_frac and scale. It is NOT a text op and NOT a clip tilt: patch_slots.tilt turns whole clips, patch_overlay turns a card.
+- {"op":"patch_overlay","overlay_index":0,"patch":{"rotation_deg":10}}
+- rotation_deg is degrees, CLOCKWISE on screen is POSITIVE. To the right / clockwise is positive (10 = ten degrees to the right). To the left / counter-clockwise is NEGATIVE (-10). 0 is upright. It REPLACES the card's angle. Range -180 to 180; a bigger turn wraps ("turn it 270 degrees" is -90). Never send more than a full turn (360) either way.
+- Size words when no number is given: "slightly" is 2-4 degrees, "a little" 3-5, "crooked" or "playful" 4-8, "sideways" is 90. When no side is named, tilt to the right (positive).
+- RELATIVE asks ("a bit more", "a little less", "tilt it five more degrees"): use "rotation_delta_deg", the degrees to ADD to the card's own current angle (negative turns it further left). The current angle is the card's tilt=(rotation_deg=...) in OVERLAY CARDS; a card with no tilt= is upright. "A bit more" is about 3, "more" about 5, "a lot more" about 10, in the direction the card already leans. Never answer a relative ask with rotation_deg: that REPLACES the angle instead of adding to it. Send only one of rotation_deg and rotation_delta_deg.
+- Straighten, reset, "undo the tilt", "back to normal": {"rotation_deg":0}.
+- A card tilts on its own; the rest of the patch (timing, position, scale) can go in the same patch_overlay.
+- A FULL SCREEN card (display "fullscreen") has nothing to turn: do not tilt it. Say it has to go on top of the video first (set_overlay_display) and offer that. Putting a tilted card full screen makes it upright.
+- "Tilt the picture" with several cards: tilt the one the creator names; if they say "all my pictures" send one patch_overlay per pip card. Never invent an overlay_index.
+- Never tell the creator a picture is tilted unless the op was emitted.
+
+Examples (JSON ops only):
+- "tilt the picture a bit" (card 0, upright) -> {"op":"patch_overlay","overlay_index":0,"patch":{"rotation_deg":4}}
+- "resmi biraz eğ" -> {"op":"patch_overlay","overlay_index":0,"patch":{"rotation_deg":4}}
+- "tilt the second picture 15 degrees to the left" -> {"op":"patch_overlay","overlay_index":1,"patch":{"rotation_deg":-15}}
+- "tilt it a bit more" (card 0 leans right at tilt=(rotation_deg=4)) -> {"op":"patch_overlay","overlay_index":0,"patch":{"rotation_delta_deg":3}}
+- "biraz daha eğ" (same card) -> {"op":"patch_overlay","overlay_index":0,"patch":{"rotation_delta_deg":3}}
+- "straighten the picture" / "resmi düzelt" -> {"op":"patch_overlay","overlay_index":0,"patch":{"rotation_deg":0}}

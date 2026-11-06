@@ -1,0 +1,437 @@
+{
+ "source": "Leverkusen M4 run 1, thread eeac2d3b, 2026-10-31 (KRI-1123). Real: prompt, brief facts, media ids and capture times, planner list shape (16 instructions, no position), resolver matches (ptrace_t5), job_final snapshot. Reconstructed: the per-media `shows` snippets and the planner's source quotes.",
+ "prompt": "Tell the evening as a story, in this order: the stadium from outside, the entrance gate, the Nürnberg team bus, my selfie with Taha, the warm-up, the light show, the 0:0 with the pyro, the Nürnberg fans, the first goal, and the Nürnberg players thanking their fans at the end. Skip the photo that's too dark to see anything. Keep the light show even though it's dark, that's the show. Short labels: \"Arrival\" on the stadium, \"Warm-up\", \"Kick-off\" on the 0:0, \"Away end\" on the Nürnberg fans, \"GOAL\" on the goal and \"Full time\" on the last one. Only the goal keeps its sound. Make it 20 seconds.",
+ "brief": {
+  "version": 8,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "order",
+    "facts": {
+     "key": "capture_time",
+     "first_clip": "the stadium from outside",
+     "last_clip": "the Nürnberg players thanking their fans at the end"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Ordered: exterior stadium, entrance turnstiles, Nürnberg bus, Taha selfie, warm-up with screen, light show, 0:0 pyro, fans, goal, players thanking fans.",
+    "source_turn_id": "9ffcdd7f-a3f0-4c6c-9426-fd1b9c052dee"
+   },
+   {
+    "id": "r2",
+    "kind": "select",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Skip the photo that's too dark to see anything",
+    "source_turn_id": "08c9b87e-97f3-4717-afdb-710802fb04d9"
+   },
+   {
+    "id": "r3",
+    "kind": "select",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Keep the light show even though it's dark, that's the show",
+    "source_turn_id": "08c9b87e-97f3-4717-afdb-710802fb04d9"
+   },
+   {
+    "id": "r4",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "open",
+    "literal": "Arrival",
+    "description": "the night photo of the whole stadium lit up in red",
+    "source_turn_id": "28ccef40-a9f4-4ecf-923d-1abfa49096c0"
+   },
+   {
+    "id": "r5",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "superseded",
+    "literal": "Warm-up",
+    "description": "the warm-up photo",
+    "source_turn_id": "bc46a7c4-9725-425e-b4cc-e81a12dd0756"
+   },
+   {
+    "id": "r6",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "open",
+    "literal": "Kick-off",
+    "description": "on the 0:0",
+    "source_turn_id": "08c9b87e-97f3-4717-afdb-710802fb04d9"
+   },
+   {
+    "id": "r7",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "superseded",
+    "literal": "Away end",
+    "description": "on the Nürnberg fans",
+    "source_turn_id": "08c9b87e-97f3-4717-afdb-710802fb04d9"
+   },
+   {
+    "id": "r8",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "open",
+    "literal": "GOAL",
+    "description": "on the goal",
+    "source_turn_id": "08c9b87e-97f3-4717-afdb-710802fb04d9"
+   },
+   {
+    "id": "r9",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "open",
+    "literal": "Full time",
+    "description": "the last photo, the Nürnberg players thanking their fans",
+    "source_turn_id": "bc46a7c4-9725-425e-b4cc-e81a12dd0756"
+   },
+   {
+    "id": "r10",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 20
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make it 20 seconds",
+    "source_turn_id": "08c9b87e-97f3-4717-afdb-710802fb04d9"
+   },
+   {
+    "id": "r11",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "off",
+     "sound_except": [
+      {
+       "sound_media": "the goal"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Only the goal keeps its sound",
+    "source_turn_id": "08c9b87e-97f3-4717-afdb-710802fb04d9"
+   }
+  ]
+ },
+ "brief_t8_first": "the night photo of the whole stadium lit up in red",
+ "inventory": [
+  {
+   "intent_id": "order_stadium_outside",
+   "op": "order",
+   "attribute": "the stadium from outside",
+   "source_quote": "the stadium from outside"
+  },
+  {
+   "intent_id": "order_entrance_gate",
+   "op": "order",
+   "attribute": "the entrance gate",
+   "source_quote": "the entrance gate"
+  },
+  {
+   "intent_id": "order_nurnberg_bus",
+   "op": "order",
+   "attribute": "the Nürnberg team bus",
+   "source_quote": "the Nürnberg team bus"
+  },
+  {
+   "intent_id": "order_selfie_taha",
+   "op": "order",
+   "attribute": "my selfie with Taha",
+   "source_quote": "my selfie with Taha"
+  },
+  {
+   "intent_id": "order_warm_up",
+   "op": "order",
+   "attribute": "the warm-up",
+   "source_quote": "the warm-up"
+  },
+  {
+   "intent_id": "order_light_show",
+   "op": "order",
+   "attribute": "the light show",
+   "source_quote": "the light show"
+  },
+  {
+   "intent_id": "order_0_0_pyro",
+   "op": "order",
+   "attribute": "the 0:0 with the pyro",
+   "source_quote": "the 0:0 with the pyro"
+  },
+  {
+   "intent_id": "order_nurnberg_fans",
+   "op": "order",
+   "attribute": "the Nürnberg fans",
+   "source_quote": "the Nürnberg fans"
+  },
+  {
+   "intent_id": "order_first_goal",
+   "op": "order",
+   "attribute": "the first goal",
+   "source_quote": "the first goal"
+  },
+  {
+   "intent_id": "order_nurnberg_players_thanking",
+   "op": "order",
+   "attribute": "the Nürnberg players thanking their fans at the end",
+   "source_quote": "the Nürnberg players thanking their fans at the end"
+  },
+  {
+   "intent_id": "exclude_dark_photo",
+   "op": "exclude",
+   "attribute": "the photo that's too dark to see anything",
+   "source_quote": "Skip the photo that's too dark to see anything."
+  },
+  {
+   "intent_id": "include_light_show_dark",
+   "op": "include",
+   "attribute": "the light show",
+   "source_quote": "Keep the light show even though it's dark"
+  },
+  {
+   "intent_id": "label_stadium_arrival",
+   "op": "label",
+   "attribute": "the stadium",
+   "source_quote": "\"Arrival\" on the stadium",
+   "creator_text": "Arrival"
+  },
+  {
+   "intent_id": "label_0_0_kickoff",
+   "op": "label",
+   "attribute": "the 0:0",
+   "source_quote": "\"Kick-off\" on the 0:0",
+   "creator_text": "Kick-off"
+  },
+  {
+   "intent_id": "label_goal_goal",
+   "op": "label",
+   "attribute": "the goal",
+   "source_quote": "\"GOAL\" on the goal",
+   "creator_text": "GOAL"
+  },
+  {
+   "intent_id": "label_full_time",
+   "op": "label",
+   "attribute": "the last one",
+   "source_quote": "\"Full time\" on the last one",
+   "creator_text": "Full time"
+  }
+ ],
+ "resolutions": {
+  "order_stadium_outside": "asset-76654025-b1b1-4353-986b-c2e716ddde3e",
+  "order_entrance_gate": "asset-70501f3d-cbd6-46bb-bfc4-2f572de09c15",
+  "order_nurnberg_bus": "asset-bc5abc8d-6c3c-472c-ae1a-c3f39e200ca8",
+  "order_selfie_taha": "asset-0697fe1b-5e07-4a6c-ac66-5df8e27827f3",
+  "order_warm_up": "asset-f04e1cda-1233-4c43-8b06-d7d2ca807b98",
+  "order_light_show": "analysis-proxy-ios-75AB1D95-024C-4CBA-8AF8-D84F7D18CC60.mp4",
+  "order_0_0_pyro": "asset-7b4f1c9f-7b3c-467d-9a44-20317ae9f696",
+  "order_nurnberg_fans": "asset-a8bbb7a0-95be-4e37-9689-7c05aac1e190",
+  "order_first_goal": "analysis-proxy-ios-67E18328-733F-46AB-99D0-4959F9ADBBBC.mp4",
+  "order_nurnberg_players_thanking": "asset-da156baf-ff35-49a0-83c7-76df249e830e",
+  "exclude_dark_photo": "asset-2edcb0db-e659-4ab6-b480-09d260ff394e",
+  "include_light_show_dark": "analysis-proxy-ios-75AB1D95-024C-4CBA-8AF8-D84F7D18CC60.mp4",
+  "label_stadium_arrival": "asset-76654025-b1b1-4353-986b-c2e716ddde3e",
+  "label_0_0_kickoff": "asset-7b4f1c9f-7b3c-467d-9a44-20317ae9f696",
+  "label_goal_goal": "analysis-proxy-ios-67E18328-733F-46AB-99D0-4959F9ADBBBC.mp4",
+  "label_full_time": "asset-da156baf-ff35-49a0-83c7-76df249e830e"
+ },
+ "media": [
+  {
+   "media_id": "analysis-proxy-ios-67E18328-733F-46AB-99D0-4959F9ADBBBC.mp4",
+   "kind": "video",
+   "duration_s": 9.866667,
+   "capture_time": "2026-10-28T20:25:46Z",
+   "file_name": "F9ADBBBC",
+   "shows": "goal video: high-angle view of the match, Taha celebrates"
+  },
+  {
+   "media_id": "analysis-proxy-ios-75AB1D95-024C-4CBA-8AF8-D84F7D18CC60.mp4",
+   "kind": "video",
+   "duration_s": 11.066667,
+   "capture_time": "2026-10-28T19:36:41Z",
+   "file_name": "7D18CC60",
+   "shows": "light show video: overhead stadium night lights changing colour"
+  },
+  {
+   "media_id": "asset-0697fe1b-5e07-4a6c-ac66-5df8e27827f3",
+   "kind": "image",
+   "duration_s": null,
+   "capture_time": "2026-10-30T12:29:12Z",
+   "file_name": "B7E-M2_03_visual.jpg",
+   "shows": "selfie photo: three men, two with glasses"
+  },
+  {
+   "media_id": "asset-7b4f1c9f-7b3c-467d-9a44-20317ae9f696",
+   "kind": "image",
+   "duration_s": null,
+   "capture_time": "2026-10-30T12:29:12Z",
+   "file_name": "999-M2_04_visual.jpg",
+   "shows": "pyro photo: scoreboard 0:0 with dense smoke"
+  },
+  {
+   "media_id": "asset-a8bbb7a0-95be-4e37-9689-7c05aac1e190",
+   "kind": "image",
+   "duration_s": null,
+   "capture_time": "2026-10-30T12:29:12Z",
+   "file_name": "809-M4_09_visual.jpg",
+   "shows": "fans photo: Nürnberg banners in the stand"
+  },
+  {
+   "media_id": "asset-70501f3d-cbd6-46bb-bfc4-2f572de09c15",
+   "kind": "image",
+   "duration_s": null,
+   "capture_time": "2026-10-30T12:29:12Z",
+   "file_name": "2FA-M4_05_visual.jpg",
+   "shows": "gate photo: stadium entrance with turnstiles"
+  },
+  {
+   "media_id": "asset-2edcb0db-e659-4ab6-b480-09d260ff394e",
+   "kind": "image",
+   "duration_s": null,
+   "capture_time": "2026-10-30T12:29:12Z",
+   "file_name": "9B0-M4_04_visual.jpg",
+   "shows": "dark photo: person in a hoodie making a peace sign"
+  },
+  {
+   "media_id": "asset-76654025-b1b1-4353-986b-c2e716ddde3e",
+   "kind": "image",
+   "duration_s": null,
+   "capture_time": "2026-10-30T12:29:12Z",
+   "file_name": "4DF-M4_10_visual.jpg",
+   "shows": "outside photo: stadium exterior at night lit in red"
+  },
+  {
+   "media_id": "asset-bc5abc8d-6c3c-472c-ae1a-c3f39e200ca8",
+   "kind": "image",
+   "duration_s": null,
+   "capture_time": "2026-10-30T12:29:12Z",
+   "file_name": "4D9-M4_08_visual.jpg",
+   "shows": "bus photo: black and red team bus with 1. FCN logo"
+  },
+  {
+   "media_id": "asset-da156baf-ff35-49a0-83c7-76df249e830e",
+   "kind": "image",
+   "duration_s": null,
+   "capture_time": "2026-10-30T12:29:12Z",
+   "file_name": "F32-M4_03_visual.jpg",
+   "shows": "players photo: Nürnberg players thanking their fans"
+  },
+  {
+   "media_id": "asset-f04e1cda-1233-4c43-8b06-d7d2ca807b98",
+   "kind": "image",
+   "duration_s": null,
+   "capture_time": "2026-10-30T12:29:12Z",
+   "file_name": "7E2-M4_11_visual.jpg",
+   "shows": "warm-up photo: players on the pitch under the big screen"
+  }
+ ],
+ "snapshot": {
+  "clip_assignments": [
+   {
+    "media_id": "analysis-proxy-ios-67E18328-733F-46AB-99D0-4959F9ADBBBC.mp4",
+    "kind": "video",
+    "duration_s": 9.866667,
+    "capture": {
+     "capture_time": "2026-10-28T20:25:46Z"
+    }
+   },
+   {
+    "media_id": "analysis-proxy-ios-75AB1D95-024C-4CBA-8AF8-D84F7D18CC60.mp4",
+    "kind": "video",
+    "duration_s": 11.066667,
+    "capture": {
+     "capture_time": "2026-10-28T19:36:41Z"
+    }
+   }
+  ],
+  "visuals": [
+   {
+    "kind": "image",
+    "capture": {
+     "capture_time": "2026-10-30T12:29:12Z"
+    },
+    "media_id": "asset-0697fe1b-5e07-4a6c-ac66-5df8e27827f3",
+    "source_filename": "28631062-6F7F-48DA-AD4D-A3147411AB7E-M2_03_visual.jpg"
+   },
+   {
+    "kind": "image",
+    "capture": {
+     "capture_time": "2026-10-30T12:29:12Z"
+    },
+    "media_id": "asset-7b4f1c9f-7b3c-467d-9a44-20317ae9f696",
+    "source_filename": "64B16F6A-E1CD-4AD0-903A-F93613809999-M2_04_visual.jpg"
+   },
+   {
+    "kind": "image",
+    "capture": {
+     "capture_time": "2026-10-30T12:29:12Z"
+    },
+    "media_id": "asset-a8bbb7a0-95be-4e37-9689-7c05aac1e190",
+    "source_filename": "461C355F-B428-42CB-8A0F-C8B2E8147809-M4_09_visual.jpg"
+   },
+   {
+    "kind": "image",
+    "capture": {
+     "capture_time": "2026-10-30T12:29:12Z"
+    },
+    "media_id": "asset-70501f3d-cbd6-46bb-bfc4-2f572de09c15",
+    "source_filename": "45594403-C729-44AC-8E95-CFC662C452FA-M4_05_visual.jpg"
+   },
+   {
+    "kind": "image",
+    "capture": {
+     "capture_time": "2026-10-30T12:29:12Z"
+    },
+    "media_id": "asset-2edcb0db-e659-4ab6-b480-09d260ff394e",
+    "source_filename": "9A8CB0B7-E2EA-48A3-9213-78DBC9E039B0-M4_04_visual.jpg"
+   },
+   {
+    "kind": "image",
+    "capture": {
+     "capture_time": "2026-10-30T12:29:12Z"
+    },
+    "media_id": "asset-76654025-b1b1-4353-986b-c2e716ddde3e",
+    "source_filename": "AD18A5AA-36D2-4785-B57A-4ABA5D07F4DF-M4_10_visual.jpg"
+   },
+   {
+    "kind": "image",
+    "capture": {
+     "capture_time": "2026-10-30T12:29:12Z"
+    },
+    "media_id": "asset-bc5abc8d-6c3c-472c-ae1a-c3f39e200ca8",
+    "source_filename": "F9D472E3-F899-498B-819E-3EA63FAD24D9-M4_08_visual.jpg"
+   },
+   {
+    "kind": "image",
+    "capture": {
+     "capture_time": "2026-10-30T12:29:12Z"
+    },
+    "media_id": "asset-da156baf-ff35-49a0-83c7-76df249e830e",
+    "source_filename": "77997FD7-7F24-4493-8108-877C92C07F32-M4_03_visual.jpg"
+   },
+   {
+    "kind": "image",
+    "capture": {
+     "capture_time": "2026-10-30T12:29:12Z"
+    },
+    "media_id": "asset-f04e1cda-1233-4c43-8b06-d7d2ca807b98",
+    "source_filename": "D4F77715-2BAB-49D3-8074-68B5432617E2-M4_11_visual.jpg"
+   }
+  ]
+ }
+}

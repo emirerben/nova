@@ -22,7 +22,9 @@ Ways this can fail, written before the code (each is pinned below):
  F5 "None" (KRI-1025) or skipping the picker dead-ends instead of drafting on the last clip
     filmed and saying so.
  F6 the planner did pin that spot (other words, a file name): a second ending is added.
- F7 the planner wrote a plain sequence row with the same words: a conflicting pin is added.
+ F7 the planner wrote a plain sequence row with the same words: a conflicting pin is added
+    (KRI-1123: that row takes the spot instead, so the contract has a seated ending; it was left
+    unpinned and the contract refused by name).
  F8 no filming order (a pin-only "end on X", upload order): anything changes. Out of scope;
     KRI-762's path stays as it is.
  F9 no stated ending, or no brief: anything changes.
@@ -511,28 +513,22 @@ async def test_f5_none_or_a_skip_drafts_on_the_last_filmed_clip_and_says_so(
 # -- F6-F9: nothing changes where the ending is already handled or not ours --------------
 
 
-@pytest.mark.parametrize(
-    "row",
-    [
-        {  # F6: the planner pinned the spot in other words
-            "intent_id": "order_last_end",
-            "op": "order",
-            "position": "last",
-            "attribute": "the end of the match",
-            "source_quote": "to the final whistle",
-        },
-        {  # F7: a plain sequence row with the same words
-            "intent_id": "order_then_whistle",
-            "op": "order",
-            "attribute": "the final whistle",
-            "source_quote": "to the final whistle",
-        },
-    ],
-    ids=["f6_spot_pinned", "f7_same_words_unpinned"],
-)
-async def test_f6_f7_an_ending_the_planner_already_wrote_is_not_added_again(
-    monkeypatch, row
-) -> None:
+_WHISTLE_ROW = {  # F7: a plain sequence row with the same words
+    "intent_id": "order_then_whistle",
+    "op": "order",
+    "attribute": "the final whistle",
+    "source_quote": "to the final whistle",
+}
+
+
+async def test_f6_an_ending_the_planner_already_pinned_is_not_added_again(monkeypatch) -> None:
+    row = {  # the planner pinned the spot in other words
+        "intent_id": "order_last_end",
+        "op": "order",
+        "position": "last",
+        "attribute": "the end of the match",
+        "source_quote": "to the final whistle",
+    }
     provider = _provider(monkeypatch, inventory=[*INVENTORY, row])
 
     await _turn(monkeypatch, brief=_brief())
@@ -540,6 +536,53 @@ async def test_f6_f7_an_ending_the_planner_already_wrote_is_not_added_again(
     assert sorted(r[0] for r in provider.resolved) == sorted(
         ["order_first_lineup", row["intent_id"]]
     )
+
+
+async def test_f7_a_plain_row_with_the_stated_ending_words_takes_the_last_spot(monkeypatch) -> None:
+    """KRI-1123: no second row (it would argue with the planner's), and the planner's own row is
+    seated at last, so the contract no longer refuses the ending by name."""
+    provider = _provider(
+        monkeypatch, inventory=[*INVENTORY, _WHISTLE_ROW], ending=(LAST_FILMED, 0.9)
+    )
+
+    result = await _turn(monkeypatch, brief=_brief())
+
+    assert sorted(r[0] for r in provider.resolved) == sorted(
+        ["order_first_lineup", "order_then_whistle"]
+    )
+    strategy = _strategy(result)
+    spots = {
+        r["intent_id"]: r.get("position")
+        for r in strategy["resolved_clip_intents"]
+        if r["op"] == "order"
+    }
+    assert (spots["order_first_lineup"], spots["order_then_whistle"]) == ("first", "last")
+    assert list(spots.values()).count("last") == 1  # no second ending row
+    contract = _contract(strategy, _brief())
+    assert contract is not None and not contract.unresolved
+    assert contract.order_ids[-1] == LAST_FILMED
+
+
+async def test_f7_an_unmatched_plain_row_asks_with_the_picker_and_a_tap_seats_it(
+    monkeypatch,
+) -> None:
+    """The same row when the resolver finds nothing: the picker asks for it (the row's own ask,
+    nothing is ticked for a row the planner wrote), and the tap reaches a draft whose contract
+    has the ending."""
+    _provider(monkeypatch, inventory=[*INVENTORY, _WHISTLE_ROW])
+    asked = await _turn(monkeypatch, brief=_brief())
+    [category] = asked.plan.clip_question["categories"]
+    assert (category["key"], category["label"]) == (ENDING_KEY, ENDING)
+    events = _answer(asked, media_ids=[LAST_FILMED])
+
+    tapped = await _turn(monkeypatch, brief=_brief(), events=events, message=ANSWER)
+    gated = await _gate(monkeypatch, tapped, rows=_rows(), brief=_brief(), events=tuple(events))
+    strategy = _strategy(gated)
+
+    assert _backstop(strategy, _brief(), events) is None
+    contract = _contract(strategy, _brief())
+    assert contract is not None and not contract.unresolved
+    assert contract.order_ids[-1] == LAST_FILMED
 
 
 @pytest.mark.parametrize(

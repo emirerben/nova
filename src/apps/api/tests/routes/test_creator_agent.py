@@ -7018,7 +7018,12 @@ async def test_guided_confirm_returns_rendering_after_rollback_expires_loaded_ro
         assert session.active_plan["guided_generation_attempt_id"] == generation_attempt_id
         # KRI-306: the creator's shape rides the attempt (the proposal task dispatches
         # the render after this request returns); an unchosen shape clears the key.
-        assert session.active_plan["guided_render_shape"] == (
+        stored_shape = session.active_plan["guided_render_shape"]
+        if stored_shape is not None:
+            # The `origin` stamp (creator pick vs echoed default) is asserted in
+            # tests/services/test_render_shape.py; here only the shape itself.
+            stored_shape = {k: v for k, v in stored_shape.items() if k != "origin"}
+        assert stored_shape == (
             None
             if shape_choice is None
             else {"output_orientation": shape_choice[0], "landscape_fit": shape_choice[1]}

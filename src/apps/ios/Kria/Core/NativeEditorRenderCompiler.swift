@@ -34,7 +34,9 @@ enum NativeEditorRenderError: Error, Equatable {
     static let songSourceKey = "user_song"
     private static let songTrackID = NativeEditorSongBed.trackID
     /// Mirrors `CAPTION_BAND_TOP_FRAC` (app/pipeline/phone_subtitled_lanes.py): a PiP card's centre never goes
-    /// below it, so a card stays out of the caption band.
+    /// below it, so a card stays out of the caption band. Exception (Qendresa item 15): a card the server marked
+    /// `caption_clear` (`SubtitledOverlayCard.caption_clear`, editor media-overlay JSON `"caption_clear": true`) was
+    /// deliberately placed in the top or bottom band and keeps its own y.
     static let deviceCardMaxYFraction = 0.62
     /// The engine's text-layer cap (`EditRecipe.validate`). A recipe over it is refused whole.
     static let maxTextLayers = KriaMediaEngine.EditRecipe.maxTextLayers
@@ -88,6 +90,7 @@ enum NativeEditorRenderError: Error, Equatable {
         }
         for (name, populated) in [
             ("carousel", document.carouselMoment != nil),
+            ("speaker background", document.unreadableSpeakerBackground),
         ] where populated { throw NativeEditorRenderError.unsupportedLane(name) }
         guard document.opaqueRecords.values.allSatisfy(\.isEmpty) else {
             #if DEBUG
@@ -136,6 +139,10 @@ enum NativeEditorRenderError: Error, Equatable {
                                                    source: .original(mediaID: source.mediaID))
             urls[id] = source.url
             let authoredSlot = slot(for: clip, index: index)
+            if let authoredSlot, !NativeLegacySourceWindow.hasNoEndpoint(authoredSlot) {
+                guard let end = authoredSlot.raw["source_end_s"]?.numberValue,
+                      end.isFinite, end > authoredSlot.inS else { throw RecipeError.invalidTimeline }
+            }
             guard authoredSlot?.raw["layout"]?.stringValue != "supporting_card" else {
                 throw NativeEditorRenderError.unsupportedLane("supporting card")
             }
@@ -209,7 +216,7 @@ enum NativeEditorRenderError: Error, Equatable {
             // shorter moving span plus a hold. Only an unchanged authored
             // source window uses the duration-preserving render projection.
             let isAuthoredWindow = authoredSlot?.raw["native_source_span_s"] == nil
-                && authoredSlot?.raw["source_end_s"] == nil
+                && authoredSlot.map(NativeLegacySourceWindow.hasNoEndpoint) == true
                 && abs(outputDuration - authoredMovingDuration) < 0.000_001
                 && abs(sourceStart - (authoredSlot?.inS ?? sourceStart)) < 0.000_001
             if isAuthoredWindow, !freezes, let authoredSlot,
@@ -223,12 +230,28 @@ enum NativeEditorRenderError: Error, Equatable {
                 // surrounding microsecond geometry checks without admitting a
                 // genuinely longer source window.
                 let sourceWindowToleranceS = 0.000_001
-                if authoredSlot.inS + requestedSpan > available + sourceWindowToleranceS {
-                    guard requestedSpan <= available + sourceWindowToleranceS,
-                          authoredSlot.raw["source_start_locked"] != .bool(true) else { throw RecipeError.invalidTimeline }
+                if source.asset.duration != nil {
+                    // A stale catalog hint may have shortened EditorClip.trimOut.
+                    // The bound original, not that projection, owns source fit.
                     requestedRate = authoredRate
                     sourceSpan = requestedSpan
-                    sourceStart = max(0, available - requestedSpan)
+                }
+                if authoredSlot.inS + requestedSpan > available + sourceWindowToleranceS {
+                    if requestedSpan <= available + sourceWindowToleranceS,
+                       authoredSlot.raw["source_start_locked"] != .bool(true) {
+                        requestedRate = authoredRate
+                        sourceSpan = requestedSpan
+                        sourceStart = max(0, available - requestedSpan)
+                    } else if let originalDuration = source.asset.duration,
+                              let span = NativeLegacySourceWindow.sourceSpan(
+                        start: authoredSlot.inS, duration: authoredMovingDuration,
+                        rate: authoredRate, sourceDuration: originalDuration
+                    ) {
+                        requestedRate = authoredRate
+                        sourceSpan = span
+                    } else {
+                        throw RecipeError.invalidTimeline
+                    }
                 }
             }
             guard NarratedRateGate.acceptsDerived(requestedRate, sourceSpan: sourceSpan, slot: authoredSlot),
@@ -273,6 +296,15 @@ enum NativeEditorRenderError: Error, Equatable {
             if document.previewLetterboxesSidewaysClips, canvas.height > canvas.width, (guidedStory || holdDuration <= 0),
                authoredSlot?.lookPreset != "golden_hour", video[video.count - 1].sourceCrop == nil {
                 video[video.count - 1].transform = Self.fitTransform(display: source.asset.naturalSize, canvas: canvas, landscapeFit: "fit")
+            }
+            // KRI-1136: the creator's tilt turns the clip about the canvas centre AFTER the letterbox scale, so a
+            // tilted sideways clip keeps its bars. A graded clip stays upright, like the server's refusal.
+            // KRI-1169: the zoom multiplies that letterbox scale (never replaces it).
+            if video[video.count - 1].look == nil, let tilt = try Self.clipTilt(authoredSlot?.raw["tilt"]) {
+                video[video.count - 1].transform.rotationDegrees = tilt.recipeRotationDegrees
+                video[video.count - 1].backdrop = tilt.recipeBackdrop
+                let framing = video[video.count - 1].transform.scale
+                video[video.count - 1].transform.scale = tilt.recipeScale(framing: framing)
             }
         }
         // The video track is the composition's clock. Without it text and
@@ -481,7 +513,9 @@ enum NativeEditorRenderError: Error, Equatable {
             let x = overlay.raw["x_frac"]?.numberValue ?? 0.5
             let rawY = overlay.raw["y_frac"]?.numberValue ?? fallbackY
             // Server: `y_frac = min(card.y_frac, CAPTION_BAND_TOP_FRAC)` for PiP cards (full-screen has no geometry).
-            let y = cardsFollowDeviceRecipe && !fullscreen ? min(rawY, Self.deviceCardMaxYFraction) : rawY
+            // Qendresa item 15: a `caption_clear` card (JSON true only) is exempt from the clamp.
+            let captionClear = overlay.raw["caption_clear"] == .bool(true)
+            let y = cardsFollowDeviceRecipe && !fullscreen && !captionClear ? min(rawY, Self.deviceCardMaxYFraction) : rawY
             let transform: MediaTransform = fullscreen ? .identity : MediaTransform(scale: cardWidth / coverWidth,
                 positionX: (x * width).rounded(.toNearestOrEven) - width / 2,
                 positionY: (y * height).rounded(.toNearestOrEven) - height / 2)
@@ -667,7 +701,18 @@ enum NativeEditorRenderError: Error, Equatable {
             let talkingCaptionFrame = document.editFormat == "subtitled" || deviceCaptions
             let captionFont = ["Inter": "Inter-Bold", "Fraunces": "Fraunces-Bold", "Space Grotesk": "SpaceGrotesk-Bold"]
             let family = meta["font"]?.stringValue ?? "TikTok Sans"
-            let font = try resolveFont(captionFont[family] ?? family)
+            // KRI-1192: like the cloud's `glyph_safe_overlays`, each requested family draws in ONE face that covers
+            // the union of its cues' texts (`NativeGlyphFallback`: Greek, Cyrillic, Hangul and Arabic go to a
+            // covering script face), so no letter borrows a system face and the face never flips cue by cue.
+            var cueTexts: [String: [String]] = [:]
+            for cue in document.captionCues where !cue.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                cueTexts[cue.raw["font_family"]?.stringValue ?? family, default: []].append(cue.text)
+            }
+            let captionFaces = cueTexts.reduce(into: [String: String]()) { faces, entry in
+                faces[entry.key] = glyphFallback.family(entry.key, for: entry.value.joined(separator: " "))
+            }
+            let defaultFace = captionFaces[family] ?? family
+            let font = try resolveFont(captionFont[defaultFace] ?? defaultFace)
             let fontID = try registerFont(font)
             let wordStyle = meta["style"]?.stringValue == "word"
             let appearance = meta["appearance"]?.objectValue ?? [:]
@@ -679,10 +724,17 @@ enum NativeEditorRenderError: Error, Equatable {
                 alignment: captionAlignment,
                 color: try ink(meta["color"], fallback: "#FFFFFF"), stroke: try ink(appearance["stroke_color"], fallback: "#000000"), strokeWidth: meta["stroke_width"]?.numberValue ?? 4,
                 shadows: meta["shadow_enabled"] == .bool(false) ? [] : [TextBlurLayer(color: try ink(appearance["shadow_color"], fallback: "#000000", alpha: appearance["shadow_opacity"]?.numberValue ?? 0.5), sigma: 0, dx: 1, dy: 1)],
-                bottomAligned: appearance["position_y_frac"] == nil, fontVariations: fontInstances[family] ?? [:])
+                bottomAligned: appearance["position_y_frac"] == nil, fontVariations: fontInstances[defaultFace] ?? [:])
             // KRI-1007: a cue's own phases win over the all-captions default (`phone_captions.compile_caption_layers`).
             let defaultCaptionPhases = Self.captionPhases(meta["animation_phases"])
             var previousWordEnd = 0.0
+            let shape = meta["shape"]?.objectValue ?? [:]
+            let shapeBox: String? = {
+                guard let hex = shape["box"]?.stringValue, hex.count == 7, hex.first == "#",
+                      UInt32(hex.dropFirst(), radix: 16) != nil else { return nil }
+                return hex
+            }()
+            let shapeDim = shapeBox == nil && shape["dim"]?.boolValue == true
             // KRI-202: two caption_cues rows can reach the client already
             // overlapping in time (the cloud's own de-overlap guard,
             // `phone_captions._prepare_cues`, runs on a compiled copy the
@@ -702,7 +754,8 @@ enum NativeEditorRenderError: Error, Equatable {
             for cue in document.captionCues where !cue.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 let own = appearance["line_overrides"]?.objectValue?[cue.id]?.objectValue ?? [:]
                 var captionStyle = defaultCaptionStyle
-                let cueFamily = cue.raw["font_family"]?.stringValue ?? family
+                let requested = cue.raw["font_family"]?.stringValue ?? family
+                let cueFamily = captionFaces[requested] ?? requested
                 let font = try resolveFont(captionFont[cueFamily] ?? cueFamily)
                 captionStyle.fontAssetID = try registerFont(font)
                 captionStyle.fontVariations = fontInstances[cueFamily] ?? [:]
@@ -724,7 +777,23 @@ enum NativeEditorRenderError: Error, Equatable {
                 let cueEnd = min(item.end, clampedCueEnd[cue.id] ?? item.end)
                 if cueEnd <= item.start { continue }
                 let phases = Self.captionPhases(cue.raw["animation_phases"]) ?? defaultCaptionPhases
-                if wordStyle || explicitHighlight == true {
+                // Qendresa item 12: `caption_meta.shape` is the creator's typed caption shape. A box draws each
+                // 1-2-word cue as one static layer on a rounded box; a karaoke layer would paint the box per word.
+                if let boxHex = shapeBox {
+                    captionStyle.background = try ink(.string(boxHex), fallback: boxHex)
+                    captionStyle.backgroundPaddingX = Self.captionBoxPadXEm * captionStyle.size
+                    captionStyle.backgroundPaddingY = Self.captionBoxPadYEm * captionStyle.size
+                    captionStyle.backgroundRadius = Self.captionBoxRadiusEm * captionStyle.size
+                }
+                // `dim`: only the spoken word takes the highlight; the rest is the caption colour dimmed. The
+                // creator's own "highlight spoken word" choice wins, so this applies only while it is unset.
+                var dimmedStyle = captionStyle
+                if shapeDim, explicitHighlight == nil {
+                    let base = captionStyle.color
+                    dimmedStyle.color = TextInk(red: base.red * Self.captionDimFactor, green: base.green * Self.captionDimFactor,
+                                                blue: base.blue * Self.captionDimFactor, alpha: base.alpha)
+                }
+                if shapeBox == nil && (wordStyle || explicitHighlight == true) {
                     let tokens = cue.text.split(whereSeparator: \.isWhitespace).map(String.init)
                     let wordValues: [JSONValue]
                     if case .array(let values) = cue.raw["words"] { wordValues = values } else { wordValues = [] }
@@ -770,7 +839,7 @@ enum NativeEditorRenderError: Error, Equatable {
                     text.append(Self.layer(try AuthoredTextLayout.compileHighlightedWords(id: "caption-" + cue.id, text: cue.text,
                         start: first, end: min(total, explicitHighlight == nil ? previousWordEnd : min(cueEnd, previousWordEnd)), starts: starts.map { $0 - first },
                         highlight: explicitHighlight == false ? captionStyle.color : try ink(meta["highlight_color"], fallback: "#C5F82A"),
-                        style: captionStyle, fontURL: font, canvas: canvas), phases: phases))
+                        style: dimmedStyle, fontURL: font, canvas: canvas), phases: phases))
                 } else if let phases {
                     text.append(try AuthoredTextLayout.compile(id: "caption-" + cue.id, text: cue.text,
                         start: item.start, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas, phases: phases))
@@ -783,7 +852,7 @@ enum NativeEditorRenderError: Error, Equatable {
                     if captionPhases != nil { text.append(layout); continue }
                     text.append(PortableTextLayer(id: layout.id, start: layout.start, end: layout.end,
                         anchorX: layout.anchorX, anchorY: layout.anchorY, rotationDegrees: 0, runs: layout.runs,
-                        effect: appearance["position_y_frac"] != nil ? .popIn : talkingCaptionFrame ? .captionPop : .none))
+                        effect: appearance["position_y_frac"] != nil ? .popIn : talkingCaptionFrame ? .captionPop : .none, background: layout.background))
                 }
             }
         }
@@ -903,12 +972,47 @@ enum NativeEditorRenderError: Error, Equatable {
             let under = video.filter { $0.volume > 0 && $0.timelineStart < window.end && $0.timelineStart + $0.duration > window.start }.map(\.id)
             if !under.isEmpty, muteWindows.count < 100 { muteWindows.append(AudioMuteWindow(start: window.start, end: window.end, clipIDs: under)) }
         }
+        // KRI-1118: the Talk-to-camera background is one engine layer plus a pinned pool-visual asset. The engine cuts
+        // out only the clips of the track the layer names (`subjectTrackID`), so the speaker track below carries
+        // that name; under any other name the preview drew the room with no background and no error.
+        var speakerBackground: SpeakerBackgroundLayer?
+        if let background = document.speakerBackground {
+            let layer = background.layer
+            // KRI-1162: the fill and every window visual are pinned pool assets (one entry per media id, however
+            // many windows reuse it).
+            // KRI-1173: a solid-colour fill has no pool visual, so `mediaRequirements` lists only the windows and the
+            // layer carries the colour itself; `recipe.validate()` skips the manifest check for it.
+            for requirement in background.mediaRequirements {
+                let assetID = EditorSpeakerBackground.assetID(forMediaID: requirement.mediaID)
+                guard let source = mediaSources[EditorSpeakerBackground.sourceKey(forMediaID: requirement.mediaID)],
+                      let fingerprint = source.asset.fingerprint else { throw MediaEngineError.missingAsset(assetID) }
+                assets[assetID] = MediaAsset(id: assetID, relativePath: assetID, fingerprint: fingerprint)
+                references[assetID] = RenderAssetReference(id: assetID, fingerprint: try RenderFingerprint(fingerprint),
+                    source: .visual(visualID: requirement.mediaID, generation: source.visualGeneration ?? "0", mediaKind: requirement.kind))
+                urls[assetID] = source.url
+            }
+            speakerBackground = layer
+        }
+        // KRI-1139: a clip's media backdrop is one pinned pool-visual asset. A photo or video the session could not
+        // read (deleted, or still preparing) drops that backdrop from the PREVIEW only; the row and Save keep it.
+        for poolID in Self.mediaBackdropPoolIDs(in: video) {
+            let assetID = EditorSpeakerBackground.assetID(forMediaID: poolID)
+            guard let source = mediaSources[Self.tiltBackdropSourceKey(forPoolID: poolID)], let fingerprint = source.asset.fingerprint,
+                  let kind = source.visualKind else {
+                for index in video.indices where video[index].backdrop == .media(poolID) { video[index].backdrop = nil }
+                continue
+            }
+            assets[assetID] = MediaAsset(id: assetID, relativePath: assetID, fingerprint: fingerprint)
+            references[assetID] = RenderAssetReference(id: assetID, fingerprint: try RenderFingerprint(fingerprint),
+                source: .visual(visualID: poolID, generation: source.visualGeneration ?? "0", mediaKind: kind))
+            urls[assetID] = source.url
+        }
         // Past the cap `recipe.validate()` would throw a bare `invalidTimeline`, which reads as a transient failure.
         guard text.count <= Self.maxTextLayers else { throw NativeEditorRenderError.tooManyTextLayers }
         var recipe = KriaMediaEngine.EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: canvas,
-            assets: assets.values.sorted { $0.id < $1.id }, tracks: [TimelineTrack(id: "video", kind: .video, clips: video)] + (overlays.isEmpty ? [] : [TimelineTrack(id: "overlays", kind: .overlay, clips: overlays)]) + audioTracks,
+            assets: assets.values.sorted { $0.id < $1.id }, tracks: [TimelineTrack(id: speakerBackground?.subjectTrackID ?? "video", kind: .video, clips: video)] + (overlays.isEmpty ? [] : [TimelineTrack(id: "overlays", kind: .overlay, clips: overlays)]) + audioTracks,
             audio: AudioMixRecipe(originalVolume: originalGain, muteWindows: muteWindows),
-            assetManifest: RenderAssetManifest(assets: references.values.sorted { $0.id < $1.id }), textLayers: text, cameraPulses: cameraPulses, motionScenes: motionProgram, visualFills: visualFills)
+            assetManifest: RenderAssetManifest(assets: references.values.sorted { $0.id < $1.id }), textLayers: text, cameraPulses: cameraPulses, motionScenes: motionProgram, visualFills: visualFills, speakerBackground: speakerBackground)
         // KRI-589: drawings follow the timeline the cuts left them (the projected window), then take the
         // same clamp the server's `compile_drawing_layers` applies; both are pinned by compile_v1.json.
         recipe.drawingLayers = NativeDrawingCompile.layers(document.drawings.map { drawing in
@@ -940,6 +1044,20 @@ enum NativeEditorRenderError: Error, Equatable {
         let contain = min(canvasWidth / display.width, canvasHeight / display.height)
         let cover = max(canvasWidth / display.width, canvasHeight / display.height)
         return MediaTransform(scale: contain / cover)
+    }
+
+    /// The `mediaSources` key under which the session resolves a media tilt backdrop's bytes for this compiler.
+    static func tiltBackdropSourceKey(forPoolID id: String) -> String { "tilt_backdrop:" + id }
+
+    /// Every distinct pool visual id the clips' `.media` backdrops name, in a stable order.
+    static func mediaBackdropPoolIDs(in clips: [TimelineClip]) -> [String] {
+        var ids = Set<String>()
+        for clip in clips { if case .media(let id)? = clip.backdrop { ids.insert(id) } }
+        return ids.sorted()
+    }
+
+    static func clipTilt(_ raw: JSONValue?) throws -> ClipTilt? {
+        do { return try ClipTilt(row: raw) } catch { throw RecipeError.invalidTimeline }
     }
 
     static func sourceCrop(_ raw: JSONValue?) throws -> NormalizedSourceRect? {
@@ -1136,6 +1254,13 @@ enum NativeEditorRenderError: Error, Equatable {
         return try? JSONDecoder().decode(TextAnimationPhases.self, from: data)
     }
 
+    /// Mirror the server constants `_CAPTION_BOX_PAD_X_EM`, `_CAPTION_BOX_PAD_Y_EM`, `_CAPTION_BOX_RADIUS_EM` and
+    /// `_CAPTION_DIM_FACTOR` in `src/apps/api/app/pipeline/phone_captions.py` (em = the caption font size).
+    static let captionBoxPadXEm = 0.40
+    static let captionBoxPadYEm = 0.18
+    static let captionBoxRadiusEm = 0.35
+    static let captionDimFactor = 0.65
+
     private static func layer(_ layer: PortableTextLayer, phases: TextAnimationPhases?) -> PortableTextLayer {
         var layer = layer
         if let phases { layer.animationPhases = phases }
@@ -1289,7 +1414,8 @@ enum NativeEditorRenderError: Error, Equatable {
 /// casing in app/text_fold.py) and `applyTextCase` (web src/lib/overlay-layout.ts); shared fixture
 /// tests/fixtures/text-element-parity/text_case.json. KRI-781: Turkish i rules ("istanbul" -> "İSTANBUL",
 /// "IŞIK" -> "ışık") apply to the whole text when the language is Turkish, otherwise only to words
-/// with a Turkish-only letter (ı İ ğ Ğ ş Ş); every other word is cased exactly as before.
+/// with a Turkish-only letter (ı İ ğ Ğ ş Ş); every other word is cased exactly as before. KRI-1192: a word
+/// with a Greek letter upper-cases with the Greek rule (no accents in all caps).
 enum KriaTextCase {
     private static let turkishOnlyLetters: Set<Character> = ["ı", "İ", "ğ", "Ğ", "ş", "Ş"]
     private static let nonSpaceRun = try! NSRegularExpression(pattern: #"\S+"#)
@@ -1322,6 +1448,28 @@ enum KriaTextCase {
             .lowercased()
     }
 
+    /// KRI-1192: Greek and Coptic + Greek Extended, `_GREEK_LETTER` in app/text_fold.py and `GREEK_LETTER` on the web.
+    private static func hasGreekLetter(_ text: String) -> Bool {
+        text.unicodeScalars.contains { (0x0370...0x03FF).contains($0.value) || (0x1F00...0x1FFF).contains($0.value) }
+    }
+
+    private static let greek = Locale(identifier: "el")
+
+    /// `uppercased()`, except that a word with a Greek letter takes ICU's Greek rule like the server and the web
+    /// (`toLocaleUpperCase("el")`): accents and breathings drop, a dialytika is kept or added ("ρολόι" -> "ΡΟΛΟΪ"),
+    /// the one-letter word ή keeps its accent. Text without Greek is cased exactly as before.
+    private static func upperWithGreek(_ text: String) -> String {
+        guard hasGreekLetter(text) else { return text.uppercased() }
+        return mapWords(text) { hasGreekLetter($0) ? $0.uppercased(with: greek) : $0.uppercased() }
+    }
+
+    /// `lowercased()`, except that a Greek word ends in ς like Python's `str.lower` and JS `toLowerCase`
+    /// (Swift's locale-free `lowercased()` leaves a final σ: "ΟΔΟΣ" -> "οδοσ").
+    private static func lowerWithGreek(_ text: String) -> String {
+        guard hasGreekLetter(text) else { return text.lowercased() }
+        return mapWords(text) { hasGreekLetter($0) ? $0.lowercased(with: greek) : $0.lowercased() }
+    }
+
     /// Each whitespace-delimited run replaced by `transform(word)`.
     private static func mapWords(_ text: String, _ transform: (String) -> String) -> String {
         var output = text
@@ -1342,18 +1490,21 @@ enum KriaTextCase {
     }
 
     static func upper(_ text: String, language: String? = nil) -> String {
-        perWord(text, language, turkish: trUpper, english: { $0.uppercased() })
+        perWord(text, language, turkish: trUpper, english: upperWithGreek)
     }
 
     static func lower(_ text: String, language: String? = nil) -> String {
-        perWord(text, language, turkish: trLower, english: { $0.lowercased() })
+        perWord(text, language, turkish: trLower, english: lowerWithGreek)
     }
 
     /// First character of each whitespace-delimited run upper, the rest lower (never after apostrophes).
+    /// A Greek capital keeps its accent there ("όπως" -> "Όπως"); only all caps drops it.
     static func title(_ text: String, language: String? = nil) -> String {
         mapWords(text) { word in
             let lang: String? = usesTurkishCase(word, language: language) ? "tr" : nil
-            return upper(String(word.prefix(1)), language: lang) + lower(String(word.dropFirst()), language: lang)
+            let initial = String(word.prefix(1))
+            return (hasGreekLetter(initial) ? initial.uppercased() : upper(initial, language: lang))
+                + lower(String(word.dropFirst()), language: lang)
         }
     }
 

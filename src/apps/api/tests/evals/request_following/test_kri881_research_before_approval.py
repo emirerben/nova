@@ -254,11 +254,20 @@ class _Recorded(ModelClient):
         *,
         search_delay_s: float = 0.0,
         search_failures: int = 0,
+        copy_unmet: list[str] | None = None,
+        review_demands_style: bool = False,
+        copy_truncations: int = 0,
+        review_rejections: int = 0,
     ) -> None:
         self.calls = calls
         self.grounding = grounding
         self.search_delay_s = search_delay_s
         self.search_failures = search_failures
+        self.copy_unmet = copy_unmet or []
+        self.review_demands_style = review_demands_style
+        self.copy_truncations = copy_truncations
+        self.review_rejections = review_rejections
+        self.corrections: list[str] = []
 
     def invoke(self, *, model: str, prompt: str, **_: object) -> ModelInvocation:  # noqa: ARG002
         if prompt.startswith("Research this public topic"):
@@ -277,7 +286,11 @@ class _Recorded(ModelClient):
             return ModelInvocation(raw_text=raw)
         if prompt.startswith("Write SHORT researched"):
             self.calls["copy"] += 1
+            if self.calls["copy"] <= self.copy_truncations:
+                # The model spent its whole output budget thinking (finish_reason MAX_TOKENS).
+                return ModelInvocation(raw_text="", finish_status="truncated")
             data = json.loads(prompt.split("Data:\n", 1)[1])
+            self.corrections.append(data.get("correction", ""))
             windows = data["snapshot"]["research_windows"]
             captions = []
             for keyword, label, text, fact, quote in (
@@ -302,9 +315,34 @@ class _Recorded(ModelClient):
                         "identity_quote": "",
                     }
                 )
-            return ModelInvocation(raw_text=json.dumps({"captions": captions}))
+            return ModelInvocation(
+                raw_text=json.dumps({"captions": captions, "unmet_requests": self.copy_unmet})
+            )
         if prompt.startswith("Review proposed on-screen captions"):
             self.calls["review"] += 1
+            context = json.loads(prompt.split("Data:\n", 1)[1])["context"]
+            if self.calls["review"] <= self.review_rejections:
+                return ModelInvocation(
+                    raw_text=json.dumps(
+                        {"approved": False, "reason": "Two explanations overlap the same footage."}
+                    )
+                )
+            if (
+                self.review_demands_style
+                and "animation" in context["request"].lower()
+                and "animation" not in context.get("handled_elsewhere", [])
+            ):
+                # Prod 2026-11-01 07:05: the reviewer held the request's animation ask against
+                # research the moment the data did not say another step applies it.
+                return ModelInvocation(
+                    raw_text=json.dumps(
+                        {
+                            "approved": False,
+                            "reason": "The request explicitly asked to include animations, "
+                            "but there are no animations requested or provided in the output.",
+                        }
+                    )
+                )
             return ModelInvocation(
                 raw_text=json.dumps({"approved": True, "reason": "Each claim is cited."})
             )
@@ -328,12 +366,16 @@ class _Recorded(ModelClient):
         raise AssertionError("unexpected model call: " + prompt[:80])
 
 
+_LAST_CLIENT: dict[str, _Recorded] = {}
+
+
 def _record(monkeypatch, grounding, **behaviour) -> dict[str, int]:  # noqa: ANN001, ANN003
     calls = {"search": 0, "copy": 0, "review": 0, "composer": 0}
     client = _Recorded(calls, grounding, **behaviour)
     monkeypatch.setattr(researched_text, "GroundedGeminiClient", lambda: client)
     monkeypatch.setattr(researched_text, "default_client", lambda: client)
     monkeypatch.setattr(text_lane, "default_client", lambda: client)
+    _LAST_CLIENT["client"] = client
     return calls
 
 
@@ -428,10 +470,32 @@ def _reworded(planned, run: int):  # noqa: ANN001, ANN202
     return replace(planned, plan=plan)
 
 
-async def _turn(monkeypatch, *, reword_each_run: bool = False):  # noqa: ANN001, ANN202
+async def _turn(  # noqa: ANN202
+    monkeypatch,  # noqa: ANN001
+    *,
+    reword_each_run: bool = False,
+    animated: bool = False,
+    updates: tuple[BriefUpdate, ...] | None = None,
+    message: str | None = None,
+    through_readiness: bool = False,
+):
     render = _render()
     user_id, thread_id = _seed(render)
-    stamped = apply_updates(None, UPDATES, source_turn_id=None, creator_text=MESSAGE)
+    updates = updates if updates is not None else UPDATES
+    message = message if message is not None else MESSAGE
+    if animated:
+        # "... With animations.": the brief carries an animation fact (the animation_ask lane).
+        message = MESSAGE + " With animations."
+        updates = (
+            *UPDATES,
+            BriefUpdate(
+                kind="text",
+                scope="global",
+                description="animated on-screen text",
+                facts={"animation": "any"},
+            ),
+        )
+    stamped = apply_updates(None, updates, source_turn_id=None, creator_text=message)
     brief = CreativeBrief(version=len(stamped.requirements), requirements=stamped.requirements)
     gated = await run_gate(monkeypatch, render, brief=brief)
     runs: list[int] = []
@@ -440,7 +504,7 @@ async def _turn(monkeypatch, *, reword_each_run: bool = False):  # noqa: ANN001,
         runs.append(len(runs) + 1)
         planned = replace(
             gated,
-            brief_updates=UPDATES,
+            brief_updates=updates,
             brief_route="replan",
             brief_clip_ids=tuple(
                 row["media_id"] for row in render["media_snapshot"]["clip_assignments"]
@@ -448,8 +512,15 @@ async def _turn(monkeypatch, *, reword_each_run: bool = False):  # noqa: ANN001,
         )
         return _reworded(planned, len(runs)) if reword_each_run else planned
 
-    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planned)
-    accepted = await _submit(user_id, thread_id, MESSAGE, 2)
+    # Stub one level lower for the readiness arms: `_plan_with_live_agent` then still resolves
+    # the draft's renderer manifest, the input of the approval-readiness gate.
+    monkeypatch.setattr(
+        "app.tasks.kria_runtime.plan_live_turn"
+        if through_readiness
+        else "app.tasks.kria_runtime._plan_with_live_agent",
+        _planned,
+    )
+    accepted = await _submit(user_id, thread_id, message, 2)
     result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
     return result, accepted, thread_id
 
@@ -636,6 +707,249 @@ async def test_t06_sourced_wording_is_shown_before_approval_and_rendered_as_appr
 def _draft_snapshot(draft_id: uuid.UUID) -> dict:
     with sync_session() as db:
         return dict(db.get(CreatorEditDraft, draft_id).snapshot_json)
+
+
+@pytest.mark.asyncio
+async def test_an_ask_the_writer_cannot_source_never_holds_back_a_sourced_draft(
+    monkeypatch,
+) -> None:
+    """Prod 2026-11-01, "With animations, explain why people should visit Assos, Turkey":
+    the copy writer listed "animations" under unmet_requests next to four sourced captions,
+    and the whole draft was held back with "I can't make this yet". A part of the ask the
+    research step cannot do is disclosed; it never blocks the sourced wording."""
+    calls = _record(monkeypatch, INSTITUTIONAL, copy_unmet=["animations"])
+    result, accepted, thread_id = await _turn(monkeypatch)
+
+    assert result["status"] == "awaiting_approval", result
+    assert (calls["search"], calls["copy"], calls["review"]) == (1, 1, 1)
+    approvals, binding = _approved_binding(accepted.turn_id)
+    assert len(approvals) == 1
+    content = str(_reply(thread_id).content)
+    assert "Sourced on-screen explanations" in content
+    assert "Sources could not be confirmed" not in content
+    assert binding is not None and binding.prepared_research is not None
+    assert binding.prepared_research["status"] == "ready"
+    assert len(binding.prepared_research["texts"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_reviewer_is_told_which_asks_another_step_applies(monkeypatch) -> None:
+    """Prod 2026-11-01 07:05, the same Assos prompt after the unmet-list fix: the claim reviewer
+    rejected the sourced captions with "The request explicitly asked to include animations".
+    The research agents read the whole request, so they must be told the animation ask is
+    applied elsewhere, as data, not left to the model's reading of the prompt."""
+    calls = _record(monkeypatch, INSTITUTIONAL, review_demands_style=True)
+    result, accepted, thread_id = await _turn(monkeypatch, animated=True)
+
+    assert result["status"] == "awaiting_approval", result
+    assert (calls["search"], calls["copy"], calls["review"]) == (1, 1, 1)
+    approvals, binding = _approved_binding(accepted.turn_id)
+    assert len(approvals) == 1
+    content = str(_reply(thread_id).content)
+    assert "Sources could not be confirmed" not in content
+    assert binding is not None and binding.prepared_research is not None
+    assert binding.prepared_research["status"] == "ready"
+
+
+ASSOS_LIVE = json.loads(
+    (
+        Path(__file__).resolve().parents[2] / "fixtures" / "kria_replay" / "assos" / "live_r1.json"
+    ).read_text()
+)
+
+
+def _assos_live_updates(**extra_facts: object) -> tuple[BriefUpdate, ...]:
+    """r1 exactly as the live Main Creator wrote it for the Assos prompt (one requirement
+    with the research fact AND the animation fact), optionally with more look facts."""
+    recorded = ASSOS_LIVE["brief_update"]
+    return (
+        BriefUpdate(
+            kind=recorded["kind"],
+            scope=recorded["scope"],
+            literal=recorded["literal"],
+            description=recorded["description"],
+            facts={**recorded["facts"], **extra_facts},
+        ),
+    )
+
+
+def _readiness_rows(approval_turn_id: str) -> list[dict]:
+    approvals, _binding = _approved_binding(approval_turn_id)
+    document = KriaDraftDocument.model_validate(_draft_snapshot(approvals[0].draft_id))
+    return list(((document.brief_coverage or {}).get("approval_readiness") or {})["requirements"])
+
+
+@pytest.fixture
+def readiness_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The approval-readiness gate is ON in prod (code default off): without it this file
+    never exercised the gate that held the Assos draft three times."""
+    monkeypatch.setattr(settings, "kria_approval_readiness_enabled", True)
+    from tests._prod_profile import PROD_VERIFIED_FEATURES  # noqa: PLC0415
+
+    monkeypatch.setattr(settings, "phone_render_verified_features", list(PROD_VERIFIED_FEATURES))
+
+
+@pytest.mark.asyncio
+async def test_a_researched_ask_with_animations_is_approved_when_its_research_is_proven(
+    monkeypatch, readiness_on
+) -> None:
+    """Prod 2026-11-01 07:54, third refusal of "With animations, explain why people should
+    visit Assos, Turkey": "I can't make this yet: ... I can't confirm this draft does it
+    yet". The live Main Creator writes ONE requirement carrying the research fact and the
+    animation fact (`live_r1.json`, recorded). Research passed and its sourced wording was
+    ready, but the readiness gate saw a research requirement whose receipt was not checked
+    (the animation is judged on the finished video) and held the draft. The animation part
+    is named as judged after render; the sourced wording is still shown before approval."""
+    assert ASSOS_LIVE["observed_hold"]["readiness_row"]["disposition"] == "evidence_missing"
+    calls = _record(monkeypatch, INSTITUTIONAL)
+    result, accepted, thread_id = await _turn(
+        monkeypatch,
+        updates=_assos_live_updates(),
+        message=ASSOS_LIVE["message"],
+        through_readiness=True,
+    )
+
+    assert result["status"] == "awaiting_approval", result
+    assert (calls["search"], calls["copy"], calls["review"]) == (1, 1, 1)
+    content = str(_reply(thread_id).content)
+    assert "I can't make this yet" not in content
+    assert "Sourced on-screen explanations" in content
+    assert "whc.unesco.org" in content and "muze.ktb.gov.tr" in content
+    assert "the text will animate in as it appears" in content
+    rows = _readiness_rows(accepted.turn_id)
+    assert [(row["requirement_id"], row["disposition"]) for row in rows] == [("r1", "unverified")]
+    _approvals, binding = _approved_binding(accepted.turn_id)
+    assert binding is not None and binding.prepared_research is not None
+    assert binding.prepared_research["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_off_holds_the_researched_animation_ask_as_before(
+    monkeypatch, readiness_on
+) -> None:
+    monkeypatch.setattr(settings, "kria_researched_look_after_render_enabled", False)
+    _record(monkeypatch, INSTITUTIONAL)
+    result, accepted, thread_id = await _turn(
+        monkeypatch,
+        updates=_assos_live_updates(),
+        message=ASSOS_LIVE["message"],
+        through_readiness=True,
+    )
+
+    assert result["status"] == "completed", result
+    assert _approved_binding(accepted.turn_id)[0] == []
+    assert str(_reply(thread_id).content) == ASSOS_LIVE["observed_hold"]["reply"]
+
+
+@pytest.mark.asyncio
+async def test_unproven_research_still_holds_a_researched_animation_ask(
+    monkeypatch, readiness_on
+) -> None:
+    """The fix never weakens research: with no institutional source there is no proof, so the
+    precise limit and the choice come first, animation ask or not."""
+    _record(monkeypatch, BLOG_ONLY)
+    result, accepted, thread_id = await _turn(
+        monkeypatch,
+        updates=_assos_live_updates(),
+        message=ASSOS_LIVE["message"],
+        through_readiness=True,
+    )
+
+    assert result["status"] == "completed", result
+    assert _approved_binding(accepted.turn_id)[0] == []
+    content = str(_reply(thread_id).content)
+    assert "Sources could not be confirmed before approval" in content
+    assert "Sourced on-screen explanations" not in content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "look",
+    [
+        {"animation": "fade"},
+        {"position": "top_right"},
+        {"font_family": "Playfair Display"},
+        {"text_color": "#ff0000"},
+        {"animation": "any", "position": "top_right", "text_color": "#ff0000"},
+    ],
+    ids=["named-animation", "position", "font", "colour", "animation-position-colour"],
+)
+async def test_research_with_any_look_fact_is_never_held_once_the_research_is_proven(
+    monkeypatch, readiness_on, look: dict
+) -> None:
+    """The same class as Assos: a research fact beside a look fact on one requirement. Whatever
+    the look is, proven research plus a look only the finished video shows is approvable."""
+    recorded = ASSOS_LIVE["brief_update"]["facts"]
+    update = _assos_live_updates()[0]
+    update = update.model_copy(update={"facts": {"research": recorded["research"], **look}})
+    calls = _record(monkeypatch, INSTITUTIONAL)
+    result, accepted, thread_id = await _turn(
+        monkeypatch,
+        updates=(update,),
+        message=ASSOS_LIVE["message"],
+        through_readiness=True,
+    )
+
+    assert result["status"] == "awaiting_approval", (look, result)
+    assert calls["search"] == 1
+    content = str(_reply(thread_id).content)
+    assert "I can't make this yet" not in content
+    assert "Sourced on-screen explanations" in content
+
+
+@pytest.mark.asyncio
+async def test_a_writer_that_runs_out_of_output_budget_is_retried_not_refused(monkeypatch) -> None:
+    """Live local run on main 2026-11-01 (the Assos prompt): the copy writer thought past its
+    output budget (finish_reason MAX_TOKENS), had no retry, and the preview reported "no usable
+    cited facts from institutional sources" and held the draft back. A truncation is the
+    model's budget, not a fact about the sources: the runtime's retry at low thinking runs."""
+    calls = _record(monkeypatch, INSTITUTIONAL, copy_truncations=1)
+    result, accepted, thread_id = await _turn(monkeypatch)
+
+    assert result["status"] == "awaiting_approval", result
+    assert calls["copy"] == 2  # the truncated call, then the retry
+    approvals, binding = _approved_binding(accepted.turn_id)
+    assert len(approvals) == 1
+    assert "no usable cited facts" not in str(_reply(thread_id).content)
+    assert binding is not None and binding.prepared_research["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_draft_is_corrected_once_before_the_draft_is_held_back(
+    monkeypatch,
+) -> None:
+    """Live local run on main 2026-11-01: "Research explanations overlap" / the reviewer asking
+    for a correction ended the turn in "I can't make this yet" on the first miss, though the
+    writer was never told what to fix. One correction round, with the reason, before giving up."""
+    calls = _record(monkeypatch, INSTITUTIONAL, review_rejections=1)
+    result, accepted, thread_id = await _turn(monkeypatch)
+
+    assert result["status"] == "awaiting_approval", result
+    assert (calls["copy"], calls["review"]) == (2, 2)
+    corrections = _LAST_CLIENT["client"].corrections
+    assert corrections[0] == "" and "overlap" in corrections[1]
+    approvals, binding = _approved_binding(accepted.turn_id)
+    assert len(approvals) == 1
+    assert binding is not None and binding.prepared_research["status"] == "ready"
+
+
+def test_a_truncated_model_answer_is_never_filed_as_a_source_limit() -> None:
+    """A truncation cannot be cached for an hour as "no institutional source": it says nothing
+    about the sources. A malformed answer still is that limit."""
+    from app.agents._runtime import (
+        SchemaError,
+        TerminalOutputTruncatedError,
+        TerminalSchemaError,
+        _OutputTruncatedError,
+    )
+    from app.kria import research_preview
+
+    truncated = TerminalOutputTruncatedError("writer: output truncated")
+    truncated.__cause__ = _OutputTruncatedError("model truncated output")
+    assert research_preview._schema_failure(truncated) is None
+    malformed = TerminalSchemaError("writer: schema")
+    malformed.__cause__ = SchemaError("not well formed")
+    assert research_preview._schema_failure(malformed) is not None
 
 
 @pytest.mark.asyncio

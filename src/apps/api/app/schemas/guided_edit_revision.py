@@ -15,6 +15,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.kria.clip_tilt_row import canonical_row_tilt
 from app.pipeline.look_presets import normalize_look_adjustments, normalize_look_preset
 from app.schemas.edit_proposal import MAX_EDIT_PROPOSAL_MEDIA, MAX_PROPOSAL_DURATION_S
 from app.schemas.editor_window import EDITOR_MIN_CLIP_S, below_editor_minimum
@@ -94,6 +95,9 @@ class GuidedEditorSegment(BaseModel):
     source_crop: GuidedEditorSourceCrop | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    # KRI-1136: the creator's tilt, ``{rotation_deg, backdrop}`` (`app.kria.clip_tilt.ClipTilt`).
+    # Omitted when upright with a blank backdrop so every revision keeps its state hash.
+    tilt: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: not value)
     playback_rate: float | None = Field(
         default=None, ge=0.25, le=4.0, exclude_if=lambda value: value is None
     )
@@ -143,6 +147,9 @@ class GuidedEditorSegment(BaseModel):
         object.__setattr__(self, "look_adjustments", controls.model_dump() if controls else None)
         if self.source_end_s is not None and self.source_end_s <= self.source_start_s:
             raise ValueError("source window must be ordered")
+        object.__setattr__(self, "tilt", canonical_row_tilt(self.tilt))
+        if self.tilt is not None and preset != "none":
+            raise ValueError("a tilted segment cannot carry a look")
         return self
 
 
@@ -214,6 +221,9 @@ class GuidedEditorRevision(BaseModel):
     state_hash: str = Field(default="", min_length=0, max_length=64)
     renderer_version: str = GUIDED_EDITOR_RENDERER_VERSION
     effect_schema_version: str = "custom-effects-v1"
+    timing_mode: Literal["rendered"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     base_generation: str = ""
     orientation: Literal["portrait", "landscape"] = "portrait"
     sources: list[GuidedEditorSource] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
@@ -244,6 +254,12 @@ class GuidedEditorRevision(BaseModel):
     user_song: GuidedEditorUserSong | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    # Omission is intentional (KRI-1117): absent while there is no Talk-to-camera
+    # background, so every existing revision keeps its dump, `lane_hashes` and `state_hash`.
+    # The shared editor shape: `{media_id, kind, source_start_s}`.
+    speaker_background: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     lane_hashes: dict[str, str] = Field(default_factory=dict)
     tombstones: list[dict[str, Any]] = Field(
         default_factory=list, max_length=MAX_GUIDED_EDITOR_TOMBSTONES
@@ -265,6 +281,21 @@ class GuidedEditorRevision(BaseModel):
             raise ValueError("guided editor segment IDs must be unique")
         if any(segment.media_id not in source_ids for segment in self.segments):
             raise ValueError("guided editor segment references an unapproved source")
+        if self.timing_mode == "rendered":
+            sources = {source.media_id: source for source in self.sources}
+            for segment in self.segments:
+                source = sources[segment.media_id]
+                end = segment.source_end_s
+                if end is None:
+                    end = segment.source_start_s + segment.duration_s * float(
+                        segment.playback_rate or 1
+                    )
+                if (
+                    source.kind == "video"
+                    and source.duration_s is not None
+                    and end > source.duration_s + 1e-6
+                ):
+                    raise ValueError("rendered editor source window exceeds original duration")
         if any(
             (
                 segment.source_end_s
@@ -446,6 +477,8 @@ def normalize_guided_editor_revision(
     normalized = revision.model_dump(mode="json", exclude_none=False)
 
     def frame(value: float) -> float:
+        if revision.timing_mode == "rendered":
+            return float(value)
         return round(round(float(value) * GUIDED_EDITOR_FPS) / GUIDED_EDITOR_FPS, 6)
 
     cursor = 0.0
@@ -559,6 +592,12 @@ def normalize_guided_editor_revision(
                 "utf-8"
             )
         ).hexdigest()
+    if normalized.get("speaker_background") is not None:
+        normalized["lane_hashes"]["speaker_background"] = hashlib.sha256(
+            json.dumps(
+                normalized["speaker_background"], sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
     if normalized.get("caption_meta") is not None:
         normalized["lane_hashes"]["caption_meta"] = hashlib.sha256(
             json.dumps(normalized["caption_meta"], sort_keys=True, separators=(",", ":")).encode(
@@ -587,6 +626,7 @@ def guided_editor_revision_from_approval(
     snapshot: dict[str, Any],
     execution_plan: dict[str, Any],
     base_generation: str = "",
+    rendered_source_durations: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Create the initial editable projection without mutating approval."""
 
@@ -597,7 +637,9 @@ def guided_editor_revision_from_approval(
             gcs_path=str(row["gcs_path"]),
             generation=str(row["generation"]),
             kind=str(row["kind"]),
-            duration_s=row.get("duration_s"),
+            duration_s=(rendered_source_durations or {}).get(
+                str(row["media_id"]), row.get("duration_s")
+            ),
         )
         for row in snapshot.get("media") or []
     ]
@@ -685,6 +727,7 @@ def guided_editor_revision_from_approval(
             approval_proposal_version=proposal_version,
             approval_media_digest=media_digest,
             revision_number=1,
+            timing_mode="rendered" if rendered_source_durations is not None else None,
             base_generation=base_generation,
             orientation=execution_plan.get("output_orientation", "portrait"),
             sources=sources,

@@ -1,5 +1,38 @@
 {
   "$defs": {
+    "HiddenPartRequirement": {
+      "additionalProperties": false,
+      "description": "Leverkusen M2: ``seconds`` at the ``edge`` of clip ``media_id`` never play.\n\n``media_id`` is the manifest id: an original's ``media_id`` or ``asset-<visual id>``.",
+      "properties": {
+        "edge": {
+          "enum": [
+            "start",
+            "end"
+          ],
+          "title": "Edge",
+          "type": "string"
+        },
+        "media_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Media Id",
+          "type": "string"
+        },
+        "seconds": {
+          "exclusiveMinimum": 0,
+          "maximum": 600.0,
+          "title": "Seconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "media_id",
+        "edge",
+        "seconds"
+      ],
+      "title": "HiddenPartRequirement",
+      "type": "object"
+    },
     "TextRequirement": {
       "additionalProperties": false,
       "properties": {
@@ -118,6 +151,14 @@
       "minLength": 1,
       "title": "Generation Id",
       "type": "string"
+    },
+    "hidden_parts": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/HiddenPartRequirement"
+      },
+      "title": "Hidden Parts",
+      "type": "array"
     },
     "order_basis": {
       "anyOf": [

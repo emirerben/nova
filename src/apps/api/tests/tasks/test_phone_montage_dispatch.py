@@ -467,7 +467,9 @@ def test_voiceover_with_matched_track_falls_back_to_voiceover_only_without_music
     that needs the `musicBed` capability. Until the device verifies it, the
     worker must drop the matched track and fall back to `voiceover_only`
     instead of compiling (and only then, in `validate_phone_pilot_recipe`,
-    discarding) a plan the device cannot play."""
+    discarding) a plan the device cannot play. (Song rule off: this is the legacy
+    matched-track branch, reachable only with the kill switch.)"""
+    monkeypatch.setattr(gb.settings, "creator_jobs_never_auto_match_catalog_song_enabled", False)
     job, snapshot, candidates, cloud = _voiceover_with_track_setup(
         monkeypatch,
         verified_features=[
@@ -491,7 +493,9 @@ def test_voiceover_with_matched_track_keeps_voiceover_music_when_music_bed_verif
     monkeypatch,
 ):
     """Control: with `musicBed` verified, the matched track is kept and the
-    normal `voiceover_music` variant compiles exactly as before."""
+    normal `voiceover_music` variant compiles exactly as before. Song rule off
+    (`CREATOR_JOBS_NEVER_AUTO_MATCH_CATALOG_SONG_ENABLED=false`) is byte-identical."""
+    monkeypatch.setattr(gb.settings, "creator_jobs_never_auto_match_catalog_song_enabled", False)
     job, snapshot, candidates, cloud = _voiceover_with_track_setup(
         monkeypatch,
         verified_features=[
@@ -509,6 +513,35 @@ def test_voiceover_with_matched_track_keeps_voiceover_music_when_music_bed_verif
     variant = job.assembly_plan["variants"][0]
     assert variant["variant_id"] == "voiceover_music"
     assert variant["music_track_id"] == "track1"
+    cloud.assert_not_called()
+
+
+def test_phone_voiceover_job_never_plays_a_catalog_song(monkeypatch):
+    """Song rule (legal): only a creator-uploaded song ever plays. With `musicBed` verified
+    and a track the matcher would rank first, the phone voiceover writer does not even ask the
+    matcher, and renders the voice alone."""
+    job, snapshot, candidates, cloud = _voiceover_with_track_setup(
+        monkeypatch,
+        verified_features=[
+            "basicComposition",
+            "local1080Export",
+            "crossfade",
+            "audioMix",
+            "narrationAudio",
+            "musicBed",
+        ],
+    )
+    asked = []
+    monkeypatch.setattr(
+        gb, "_match_best_track", lambda *a, **k: asked.append(1) or _track("track1"), raising=False
+    )
+
+    gb._run_phone_voiceover_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
+
+    variant = job.assembly_plan["variants"][0]
+    assert asked == []
+    assert variant["variant_id"] == "voiceover_only"
+    assert variant["music_track_id"] is None
     cloud.assert_not_called()
 
 

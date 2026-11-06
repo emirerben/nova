@@ -55,7 +55,10 @@ _MIN_PROVIDER_BUDGET_S = 1.0
 # code in app/routes/admin_jobs.py — keep this set as the single source of
 # truth so adding a new success outcome doesn't silently miscount.
 SUCCESS_OUTCOMES: frozenset[str] = frozenset({"ok", "ok_fallback"})
-_SENSITIVE_INPUT_KEYS = frozenset({"creator_direction", "creator_direction_prompt"})
+# `generation_prompt`: the model-written prompt behind a creator-generated image (placement input).
+_SENSITIVE_INPUT_KEYS = frozenset(
+    {"creator_direction", "creator_direction_prompt", "generation_prompt"}
+)
 
 
 def _project_sensitive_input(value: Any) -> Any:
@@ -77,6 +80,38 @@ def _project_sensitive_input(value: Any) -> Any:
     if isinstance(value, list):
         return [_project_sensitive_input(item) for item in value]
     return value
+
+
+_CLASS_NAME_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+
+
+def _exception_class_tag(exc: BaseException) -> str | None:
+    """``transient_error:server_error`` for a sensitive agent's log, or None (switch off).
+
+    Only the snake-cased CLASS NAMES of the exception and up to two ``__cause__`` links, in the
+    ``[a-z_:]`` vocabulary ``_safe_error`` already allows. Never a message, an argument or any
+    user text. Kill switch ``KRIA_ERROR_HONESTY_ENABLED``.
+    """
+    from app.config import settings  # noqa: PLC0415 - the runtime module stays import-light
+
+    if not settings.kria_error_honesty_enabled:
+        return None
+    names: list[str] = []
+    link: BaseException | None = exc
+    for _ in range(3):
+        if link is None:
+            break
+        name = re.sub(r"[^a-z_]", "", _CLASS_NAME_BOUNDARY.sub("_", type(link).__name__).lower())
+        if name and (not names or names[-1] != name):
+            names.append(name)
+        link = link.__cause__
+    tag = ""
+    for name in names:
+        candidate = f"{tag}:{name}" if tag else name
+        if len(candidate) > 80:
+            break
+        tag = candidate
+    return tag or None
 
 
 # ── Errors ────────────────────────────────────────────────────────────────────
@@ -627,7 +662,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     fallback_used=fallback_used,
                     latency_ms=int((time.monotonic() - start) * 1000),
                     ctx=ctx,
-                    error=str(exc),
+                    error=self._safe_error(exc),
                     input_dict=input_dump,
                 )
                 raise TerminalError(self._terminal_message("refusal", exc)) from exc
@@ -709,7 +744,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     fallback_used=fallback_used,
                     latency_ms=int((time.monotonic() - start) * 1000),
                     ctx=ctx,
-                    error=str(exc),
+                    error=self._safe_error(exc),
                     input_dict=input_dump,
                 )
                 if isinstance(exc, ProviderQuotaExceededError):
@@ -870,9 +905,6 @@ class Agent(ABC, Generic[InputT, OutputT]):
                         feature=(
                             "edit_director"
                             if self.spec.name == "nova.edit.director"
-                            # KRI-756: a literal feature name the per-user daily cap keys on.
-                            else "chip_suggester"
-                            if self.spec.name == "nova.chat.suggester"
                             else self.spec.name
                         ),
                         model=model,
@@ -1147,6 +1179,12 @@ class Agent(ABC, Generic[InputT, OutputT]):
             error_class = getattr(exc, "error_class", None)
             if isinstance(error_class, str) and re.fullmatch(r"[a-z_:,]{1,80}", error_class):
                 return f"sensitive_agent_error:{error_class}"
+            # Prompt fidelity (errors unit): an untagged failure still keeps the exception
+            # CLASS chain (code identifiers only, never ``str(exc)``), so a provider fault
+            # ("transient_error:server_error") is told apart from a schema one after the fact.
+            tag = _exception_class_tag(exc)
+            if tag is not None:
+                return f"sensitive_agent_error:{tag}"
             return "sensitive_agent_error"
         return str(exc)
 

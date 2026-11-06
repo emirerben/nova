@@ -5,8 +5,10 @@ import SwiftUI
 enum ClipSelectionCardMode {
     /// The latest unanswered question: interactive. `submit` receives the structured answer and its readable message.
     case active(isSending: Bool, submit: (ClipSelectionSubmission, String) -> Void)
-    /// Already answered (or superseded): read-only, collapsed. `summary` is nil after a relaunch.
+    /// Already answered: read-only, collapsed. `summary` is nil after a relaunch.
     case answered(summary: String?)
+    /// A newer question replaced this one before it was answered.
+    case superseded
 }
 
 /// The clip question under the assistant's text: a compact summary card whose "Choose clips" button opens a
@@ -55,15 +57,10 @@ struct ClipSelectionCard: View {
     @ViewBuilder private var content: some View {
         switch mode {
         case .answered(let summary):
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(KriaColor.success)
-                Text(summary ?? "Clips chosen")
-                    .font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(minHeight: 44, alignment: .leading)
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("clip-card-answered")
+            KriaAnsweredReceipt(text: summary ?? "Clips chosen")
+                .accessibilityIdentifier("clip-card-answered")
+        case .superseded:
+            KriaSupersededLine().accessibilityIdentifier("clip-card-superseded")
         case .active(let isSending, let submit):
             activeCard(isSending: isSending, submit: submit)
         }
@@ -73,54 +70,78 @@ struct ClipSelectionCard: View {
         question.categories.count == 1 ? "Which clips show \(question.categories[0].label)?" : "Which clips are which?"
     }
 
+    /// The chosen clips, up to four, so the choice is visible on the card; "+N" counts the rest.
+    private var chosenMedia: [CreationAttachedMedia] {
+        let ids = question.categories.flatMap { category in
+            category.candidateMediaIDs.filter { state.isSelected($0, in: category.key) }
+        }
+        var seen = Set<String>()
+        return ids.filter { seen.insert($0).inserted }.compactMap { id in media.first { $0.id == id } }
+    }
+
+    private var chosenStrip: some View {
+        let chosen = chosenMedia
+        return HStack(spacing: 8) {
+            ForEach(chosen.prefix(4), id: \.id) { item in
+                // A paper tile with the glyph centred when there is no poster yet, so the strip never looks empty.
+                CreationAttachmentThumbnail(media: item)
+                    .foregroundStyle(KriaColor.mutedInk)
+                    .dynamicTypeSize(.large)
+                    .background(KriaColor.paper)
+                    .scaleEffect(0.8125)
+                    .frame(width: 40, height: 52)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            if chosen.count > 4 {
+                Text("+\(chosen.count - 4)").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityHidden(true)
+    }
+
     private func activeCard(isSending: Bool, submit: @escaping (ClipSelectionSubmission, String) -> Void) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
+        KriaQuestionCard {
+            HStack(alignment: .center, spacing: 12) {
                 Image(systemName: "film.stack")
-                    .font(.system(size: 18, weight: .semibold)).foregroundStyle(KriaColor.ink)
+                    .font(.system(size: 20, weight: .medium)).foregroundStyle(KriaColor.ink)
                     .frame(width: 40, height: 40)
-                    .background(KriaColor.butter, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(KriaColor.paper, in: Circle())
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(KriaFont.body(16).weight(.semibold)).foregroundStyle(KriaColor.ink)
+                        .kriaType(.button).foregroundStyle(KriaColor.ink)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityAddTraits(.isHeader)
                     ForEach(question.categories) { category in
                         Text(progressLine(category))
-                            .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                            .accessibilityIdentifier("clip-progress-\(category.key)")
-                    }
-                    if let note {
-                        Text(note)
-                            .font(KriaFont.body(13)).foregroundStyle(KriaColor.ink)
+                            .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
                             .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityIdentifier("clip-batch-note")
+                            .accessibilityIdentifier("clip-progress-\(category.key)")
                     }
                 }
             }
-            VStack(spacing: 8) {
-                Button { showsPicker = true } label: {
-                    Text(state.canSend ? "Review clips" : "Choose clips").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(KriaPrimaryButtonStyle(minHeight: 48))
-                .disabled(isSending)
-                .accessibilityIdentifier("clip-choose")
-                Button("Skip, decide for me") {
+            if state.canSend, !chosenMedia.isEmpty { chosenStrip }
+            if let note {
+                Text(note)
+                    .kriaType(.label).foregroundStyle(KriaColor.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("clip-batch-note")
+            }
+            VStack(spacing: 4) {
+                Button(state.canSend ? "Review clips" : "Choose clips") { showsPicker = true }
+                    .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true, onFill: true))
+                    .disabled(isSending)
+                    .accessibilityIdentifier("clip-choose")
+                Button("Let Kria decide") {
                     let submission = ClipSelectionSubmission.skip(question)
                     submit(submission, submission.message(question: question, positions: positions, language: language))
                 }
-                .font(KriaFont.body(14).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .contentShape(Rectangle())
-                .buttonStyle(.plain)
+                .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium, fullWidth: true))
                 .disabled(isSending)
                 .accessibilityIdentifier("clip-skip")
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("clip-card")
     }
@@ -137,7 +158,8 @@ struct ClipSelectionCard: View {
 
 /// Full-height grid of 9:16 clip tiles with number badges. A tap opens the clip (`ClipPreviewPager`); the circle on a
 /// tile, or a slide across tiles, selects. A sticky bar carries the count, "None of these" and the main button:
-/// "Next" while another group still needs an answer, then "Done", which sends every group's answer at once.
+/// "Next" while another group is unseen or unanswered (a pre-ticked one included), then "Done", which sends every
+/// group's answer at once.
 struct ClipPickerSheet: View {
     let question: ClipQuestion
     @Binding var state: ClipSelectionState
@@ -213,6 +235,9 @@ struct ClipPickerSheet: View {
         .sensoryFeedback(.selection, trigger: state.selectedCount)
         .sensoryFeedback(.selection, trigger: categoryKey)
         .sensoryFeedback(.success, trigger: doneToken)
+        // Next and the group tabs both change `categoryKey`; either way the creator has now seen that group.
+        .onAppear { state.markShown(categoryKey) }
+        .onChange(of: categoryKey) { _, key in state.markShown(key) }
         .sheet(item: $previewing) { target in
             ClipPreviewPager(
                 ids: category.candidateMediaIDs, startIndex: target.index, state: $state, categoryKey: category.key,
@@ -361,10 +386,10 @@ struct ClipPickerSheet: View {
                             Image(systemName: none ? "checkmark.circle.fill" : "circle")
                             Text("None of these")
                         }
-                        .font(KriaFont.body(14).weight(.medium)).foregroundStyle(KriaColor.ink)
+                        .font(KriaFont.body(14).weight(.medium)).foregroundStyle(none ? KriaColor.paper : KriaColor.ink)
                         .padding(.horizontal, 12).frame(minHeight: 44)
-                        .background(none ? KriaColor.selectionSoft : KriaColor.paper, in: Capsule())
-                        .overlay(Capsule().stroke(none ? KriaColor.ink : KriaColor.line, lineWidth: none ? 1.5 : 1))
+                        // A fill, not a stroke: ink when chosen (the selected look everywhere), fill otherwise.
+                        .background(none ? KriaColor.ink : KriaColor.fill, in: Capsule())
                         .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
@@ -374,7 +399,7 @@ struct ClipPickerSheet: View {
                 }
             }
             let answered = state.isAnswered(category.key)
-            let next = answered ? state.nextUnanswered(after: category.key) : nil
+            let next = answered ? state.nextPending(after: category.key) : nil
             Button {
                 if let next {
                     categoryKey = next.key
@@ -394,7 +419,6 @@ struct ClipPickerSheet: View {
         }
         .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 10)
         .background(.regularMaterial)
-        .overlay(alignment: .top) { Divider() }
     }
 }
 

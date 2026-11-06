@@ -18,6 +18,10 @@ different message is left to the planner, so a later rewording still keeps the c
 When the same stuck reply would go out twice in a row, it names the ways forward instead
 (``unrepeated_reply``).
 
+The same words typed right after the clip picker that asks about the ending (KRI-1067) are that
+picker's Skip (``typed_picker_skip``): the server answers it exactly as a tap would, so the
+draft ends on the last clip filmed and says so (KRI-1025) instead of asking again.
+
 Pure functions over the brief, the thread's events and the creator's text: no I/O.
 """
 
@@ -40,6 +44,7 @@ from app.services.clip_none_answers import (
     _without_pins,
 )
 from app.services.clip_order_sequence import ANCHOR_FACTS
+from app.services.clip_selection import ClipSelectionIn, attribute_key
 
 BLOCKED_PINS_KEY = "blocked_pins"
 _POSITIONS = frozenset(_FACT_OF)
@@ -181,6 +186,18 @@ def _positions(message: str, stuck: Iterable[Mapping[str, Any]] = ()) -> frozens
 def withdrawal_positions(message: str) -> frozenset[str] | None:
     """The spots a reply like "skip it" / "forget the ending" withdraws (``None``: not one)."""
     return _positions(message)
+
+
+def withdrawal_candidate(message: str) -> bool:
+    """Cheap syntax filter only: every clause is a withdrawal or starts or ends with a drop
+    verb. A named object ("forget the final whistle") still has to match the picker's clip."""
+    clauses = [_unpadded(loose_reply(c)) for c in _CLAUSE_BREAK.split(str(message or ""))]
+    clauses = [clause for clause in clauses if clause]
+    return bool(clauses) and all(
+        _clause_positions(clause, ()) is not None
+        or any(clause.startswith(verb + " ") or clause.endswith(" " + verb) for verb in _VERBS)
+        for clause in clauses
+    )
 
 
 def _pin_sentences(words: str) -> tuple[str, ...]:
@@ -372,3 +389,83 @@ def unrepeated_reply(reply: str, previous: str | None, brief: Any) -> str:
             ),
         )
     )
+
+
+# Questions that share a reply with the clip picker; a typed word could answer any of them.
+_OTHER_QUESTIONS = (
+    "choice_question",
+    "song_order_question",
+    "song_range_question",
+    "moment_order_question",
+    "protected_region_question",
+)
+
+
+def _ending_picker(events: list[tuple[str, Any]]) -> tuple[Mapping[str, Any], str, int] | None:
+    """The picker the creator is answering: ``(question, category key, its event index)``.
+
+    Only the reply right before this message counts, and only a picker that asks about one
+    first / last clip and nothing else.
+    """
+    for index in range(len(events) - 1, -1, -1):
+        role, payload = events[index]
+        if role == "user":
+            return None  # the reply was already answered, or another message came in between
+        if role != "assistant" or not isinstance(payload, Mapping):
+            continue
+        if not _closes_open_question(payload):
+            continue  # a render finishing or a memory write is not the question
+        question = payload.get("clip_question")
+        if any(payload.get(key) for key in _OTHER_QUESTIONS) or not isinstance(question, Mapping):
+            return None
+        categories = question.get("categories") or []
+        if not question.get("question_id") or len(categories) != 1:
+            return None
+        category = categories[0]
+        if category.get("op") != "order" or category.get("also_answers"):
+            return None
+        return question, str(category.get("key") or ""), index
+    return None
+
+
+def typed_picker_skip(
+    brief: CreativeBrief | None, events: Iterable[tuple[str, Any]], message: str
+) -> ClipSelectionIn | None:
+    """KRI-1066: a whole typed withdrawal right after the ending picker is that picker's Skip.
+
+    ``events`` are the thread's ``(role, payload)`` before this message. The picker must ask
+    about exactly one brief first / last clip, every clause of the message must be a
+    withdrawal that covers that spot, and the brief's clip must have been stated before the
+    picker asked. The result is the same ``ClipSelectionIn`` a tap on Skip sends, so
+    everything after it is the tap's path. The message itself still reaches the planner as
+    usual: another spot it also drops ("skip that, forget the opening") is read there.
+    """
+    if brief is None or not withdrawal_candidate(message):
+        return None
+    events = list(events)
+    picker = _ending_picker(events)
+    if picker is None:
+        return None
+    question, key, picker_index = picker
+    pins = [
+        (req, position, words)
+        for req in brief.live()
+        if req.kind == "order"
+        for fact, position in ANCHOR_FACTS
+        if (words := _nfc((req.facts or {}).get(fact))) and attribute_key("order", words) == key
+    ]
+    if len(pins) != 1:
+        return None
+    req, position, words = pins[0]
+    if position not in (_positions(message, [{"position": position, "words": words}]) or ()):
+        return None
+    stated_before = any(
+        role == "user"
+        and isinstance(payload, Mapping)
+        and req.source_turn_id
+        and payload.get("turn_id") == req.source_turn_id
+        for role, payload in events[:picker_index]
+    )
+    if not stated_before:
+        return None
+    return ClipSelectionIn(question_id=str(question["question_id"]), skipped=True)

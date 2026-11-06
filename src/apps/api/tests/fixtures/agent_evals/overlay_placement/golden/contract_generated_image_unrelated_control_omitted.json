@@ -1,0 +1,96 @@
+{
+  "agent": "nova.compose.overlay_placement",
+  "prompt_version": "1.4.0",
+  "input": {
+    "words": [
+      {
+        "word": "Bugün",
+        "start_s": 1.0,
+        "end_s": 1.35
+      },
+      {
+        "word": "size",
+        "start_s": 1.4,
+        "end_s": 1.75
+      },
+      {
+        "word": "yeni",
+        "start_s": 1.8,
+        "end_s": 2.15
+      },
+      {
+        "word": "telefonumun",
+        "start_s": 2.2,
+        "end_s": 2.55
+      },
+      {
+        "word": "kamerasını",
+        "start_s": 2.6,
+        "end_s": 2.95
+      },
+      {
+        "word": "göstereceğim",
+        "start_s": 3.0,
+        "end_s": 3.35
+      },
+      {
+        "word": "ve",
+        "start_s": 3.4,
+        "end_s": 3.75
+      },
+      {
+        "word": "gerçekten",
+        "start_s": 3.8,
+        "end_s": 4.15
+      },
+      {
+        "word": "çok",
+        "start_s": 4.2,
+        "end_s": 4.55
+      },
+      {
+        "word": "memnun",
+        "start_s": 4.6,
+        "end_s": 4.95
+      },
+      {
+        "word": "kaldım",
+        "start_s": 5.0,
+        "end_s": 5.35
+      }
+    ],
+    "occupied": [],
+    "duration_s": 40.0,
+    "archetype": "talking_head",
+    "spoken_language": "tr",
+    "assets": [
+      {
+        "asset_id": "asset_sunset",
+        "kind": "image",
+        "origin": "generated",
+        "user_context": "Sunset over the sea",
+        "subject": "Sunset over the sea",
+        "description": "Sunset over the sea",
+        "on_screen_text": "",
+        "duration_s": null,
+        "aspect": 0.6667,
+        "width": 1024,
+        "height": 1536
+      }
+    ]
+  },
+  "raw_text": "{\"placements\": [], \"wishlist\": [\"Add a photo of the phone camera you show\"]}",
+  "output": {
+    "placements": [],
+    "wishlist": [
+      "Add a photo of the phone camera you show"
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_contract",
+    "kind": "contract",
+    "pins": "the output contract (a correct answer parses and has this shape) and the prompt content, not model behaviour",
+    "case": "An unrelated generated image stays unplaced.",
+    "unproven": "Recorded-response contract. The transcript and timings are synthetic. Whether the real model follows prompt 1.4.0 on this input is NOT measured here; only a live run measures it."
+  }
+}

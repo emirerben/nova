@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Collection, Mapping, Sequence
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -13,19 +14,30 @@ from app.pipeline.best_parts import (
     BestPartsConflict,
     BestPartsResult,
     edit_cap_s,
+    is_fixed_moment,
     select_best_parts,
     select_moment_windows,
     select_pinned_moment_windows,
+)
+from app.pipeline.hidden_parts import (
+    HiddenPart,
+    hidden_parts_from_strategy,
+    keep_out,
+    parts_by_media,
+    shows_hidden,
+    usable_s,
 )
 from app.schemas.edit_proposal import (
     MIN_PROPOSAL_DURATION_S,
     MixedMediaTimingProfile,
     mixed_media_hold_bounds,
+    pace_selection_limits,
     uses_quick_photo_long_video_timing,
 )
 from app.services.length_policy import (
     DurationBound,
     creator_duration_satisfied,
+    effective_pace,
     length_owner,
     natural_length_owner,
 )
@@ -63,6 +75,9 @@ DESCRIBED_MOMENT_FLOOR_MAX_S = 4.0
 # KRI-585: a quiet stretch (``spoken_roles.quiet_window``) is its clip's window and its
 # ceiling, and keeps at least a readable shot when lengths are shared.
 QUIET_MOMENT_FLOOR_S = 1.2
+# Qendresa case 2: a take the creator asked to keep whole (``whole_take_ids``) is one window,
+# start to end, above every other moment, and that whole length is its floor.
+WHOLE_TAKE_ENERGY = 1000.0
 
 
 def _number(value: object) -> float | None:
@@ -84,6 +99,7 @@ def _sources(
     quiet_moments: Mapping[str, tuple[float, float]] | None = None,
     still_holds: Mapping[str, float] | None = None,
     kept_windows: Mapping[str, float] | None = None,
+    whole_take_ids: Collection[str] = (),
 ) -> list[dict[str, Any]]:
     selected = set(selected_ids)
     still_holds = still_holds or {}
@@ -160,6 +176,13 @@ def _sources(
             # KRI-1028: a clip kept audible for a line the creator named keeps its whole
             # sentence when lengths are shared, past the 4 s cap: the silent clips give way.
             spoken_floor_s = round(kept_windows[row["media_id"]], 3)
+        if kind == "video" and duration_s and row["media_id"] in whole_take_ids:
+            # Qendresa case 2: "keep the whole clip, don't cut it" plays it start to end; the
+            # pace or a story direction never trims it back to a moment.
+            analysis["best_moments"] = [
+                {"start_s": 0.0, "end_s": duration_s, "energy": WHOLE_TAKE_ENERGY}
+            ]
+            spoken_floor_s = round(duration_s, 3)
         sources.append(
             {
                 "media_id": row["media_id"],
@@ -264,6 +287,93 @@ def _editorial_reading_floors(
     return conflicts
 
 
+def _field(source: Any, name: str) -> Any:
+    return source.get(name) if isinstance(source, Mapping) else getattr(source, name, None)
+
+
+PACE_MIN_HEADROOM_S = 0.1
+
+
+def paced_selection(
+    sources: Sequence[Any],
+    pace: str | None,
+    *,
+    budget: float | None,
+    extend_budget: bool,
+    cap_s: float,
+    minimums: Mapping[str, float],
+    maximums: Mapping[str, float],
+    story_floor_s: float | None = None,
+) -> BestPartsResult | None:
+    """The source windows with the planner's pace applied, or None to keep the plain ones.
+
+    Used by approval-time planning and by the render, so a pre-approval plan and the worker's
+    plan follow one rule (``schemas.edit_proposal.pace_selection_limits``). Pace is a
+    preference, never a reason to fail: it changes how long each VIDEO clip is held (photos
+    keep their own hold rules), never drops a clip, and the result is used only when the
+    selector reports no conflict and the video is still long enough. The one place the total
+    may move is a relaxed pace over a catalog song section (``extend_budget``): that section
+    is a default nobody stated, so the clips' longer holds extend it by the least they need
+    rather than dropping a clip or ignoring the pace.
+
+    ``story_floor_s`` (text-explainer unit) is the shortest hold a story direction gives a clip
+    (``length_policy.story_hold_floor_s``); it rides the same rule, with ``pace`` None when the
+    planner said nothing about pace.
+    """
+
+    floor_s, ceiling_s = (
+        pace_selection_limits(pace, total_free=budget is None) if pace is not None else (None, None)
+    )
+    if story_floor_s is not None:
+        floor_s = max(floor_s or 0.0, story_floor_s)
+    if floor_s is None and ceiling_s is None:
+        return None
+    paced_min: dict[str, float] = dict(minimums)
+    paced_max: dict[str, float] = dict(maximums)
+    videos = [source for source in sources if _field(source, "kind") != "image"]
+    for source in videos:
+        media_id = str(_field(source, "media_id"))
+        if floor_s is not None:
+            paced_min[media_id] = max(paced_min.get(media_id, 0.0), floor_s)
+        if ceiling_s is not None:
+            # Never below a floor another rule set (a quoted sentence, a reading time).
+            current = paced_max.get(media_id)
+            ceiling = ceiling_s if current is None else min(current, ceiling_s)
+            paced_max[media_id] = max(ceiling, paced_min.get(media_id, 0.0))
+    paced_budget = budget
+    if budget is not None and extend_budget and floor_s is not None:
+        needed = round(
+            sum(
+                min(paced_min[str(_field(s, "media_id"))], float(_field(s, "duration_s") or 0.0))
+                for s in videos
+            )
+            + sum(
+                paced_min.get(str(_field(s, "media_id")), 0.0)
+                for s in sources
+                if _field(s, "kind") == "image"
+            ),
+            3,
+        )
+        if budget < needed <= cap_s:
+            paced_budget = needed
+    result = select_best_parts(
+        list(sources),
+        target_duration_s=paced_budget,
+        minimum_total_duration_s=MIN_PROPOSAL_DURATION_S if paced_budget is None else None,
+        minimum_duration_s=paced_min,
+        maximum_duration_s=paced_max,
+        cap_duration_s=cap_s,
+    )
+    if result.conflicts or result.duration_s < MIN_PROPOSAL_DURATION_S:
+        return None
+    if paced_budget is None and result.duration_s < MIN_PROPOSAL_DURATION_S + PACE_MIN_HEADROOM_S:
+        # A free total that lands exactly on the minimum is 2.967 s after whole-frame rounding
+        # and the montage is refused (KRI-993 steak edit): keep the plain windows. Here, not in
+        # the render alone, so the approval-time plan and the worker's follow one rule.
+        return None
+    return result
+
+
 def build_length_plan(
     strategy: Mapping[str, Any],
     media_snapshot: Mapping[str, Any],
@@ -286,6 +396,9 @@ def build_length_plan(
     pinned_moments: Sequence[Mapping[str, Any]] | None = None,
     skipped_moments: Sequence[Mapping[str, Any]] | None = None,
     attached_visual_ids: Collection[str] = (),
+    visual_budget_s: float = 0.0,
+    story_floor_s: float | None = None,
+    whole_take_ids: Collection[str] = (),
 ) -> dict[str, Any]:
     """Build the approved, serializable source-window plan.
 
@@ -293,6 +406,9 @@ def build_length_plan(
     places beside the footage: attached, not source rows, never missing. Their seconds stay
     with ``asset_holds.visual_budget`` (already off the creator's target), so they are neither
     sources nor counted twice; an id in neither the clip rows nor this set is truly gone.
+    ``visual_budget_s`` is that budget's total, recorded on the plan as ``visual_budget_s``
+    so a reader of its length counts the Visuals too (the windows alone ran a 25 s montage
+    with three photos as 21.4 s, Leverkusen M1 run 2); a plan with no placed Visual omits it.
 
     KRI-723: ``pinned_moments`` (``named_moments.Pin.json()``, the creator's final order) are
     the named moments of the edit's one take with their authority: the creator's own pointed
@@ -334,6 +450,17 @@ def build_length_plan(
     what is left, and a floor the creator's length can't hold shrinks to what fits (the receipt
     then says the sentence isn't whole). Each record rides on the plan as ``kept_lines`` with
     ``held`` true when its clip's window holds the sentence.
+
+    ``story_floor_s`` (text-explainer unit, ``length_policy.story_hold_floor_s``): the planner's
+    direction is a story and nothing the creator asked keeps it a fast montage, so every video
+    clip is held at least this long. It rides the pace rule: with no creator length a catalog
+    song section nobody stated is extended by the least the holds need; a creator's length is
+    never moved (when the holds do not fit it the plain windows stand and the render cuts a fast
+    montage and says so). Recorded as ``story`` only when it changed the windows.
+
+    ``whole_take_ids`` (Qendresa case 2, ``planner._whole_take_ids``): video clips the creator
+    asked to keep whole, uncut. Each one's window is the clip, start to end, and that length is
+    its floor, so neither the pace nor a story direction cuts it back to one moment.
     """
 
     natural_owner = natural_length_owner(strategy)
@@ -352,15 +479,29 @@ def build_length_plan(
         quiet_moments,
         still_holds,
         kept_windows,
+        whole_take_ids,
     )
     by_id = {source["media_id"]: source for source in sources}
     if len(by_id) != len(sources):
         raise ValueError("duplicate length plan source")
+    # Leverkusen M2: a clip with a part the creator hid offers only what it may still show.
+    hidden = {
+        media_id: parts
+        for media_id, parts in parts_by_media(hidden_parts_from_strategy(strategy)).items()
+        if media_id in by_id and by_id[media_id]["kind"] == "video"
+    }
+    for media_id, parts in hidden.items():
+        source = by_id[media_id]
+        room = usable_s(source["duration_s"], parts)
+        current = source["maximum_duration_s"]
+        source["maximum_duration_s"] = room if current is None else min(current, room)
     ordered_sources = [
         by_id[media_id] for media_id in dict.fromkeys(order_ids) if media_id in by_id
     ]
     ordered_sources.extend(source for source in sources if source not in ordered_sources)
     result: BestPartsResult | None = None
+    pace_record: dict[str, Any] | None = None
+    story_record: dict[str, Any] | None = None
     audio = strategy.get("audio_strategy")
     section = strategy.get("selected_music_section")
     section_duration = None
@@ -566,22 +707,64 @@ def build_length_plan(
         coverage_floor = round(sum(source["minimum_duration_s"] for source in ordered_sources), 3)
         if budget is not None and budget < coverage_floor <= budget * 1.1:
             budget = coverage_floor
+        minimums = {source["media_id"]: source["minimum_duration_s"] for source in ordered_sources}
+        maximums = {
+            source["media_id"]: source["maximum_duration_s"]
+            if source["maximum_duration_s"] is not None
+            else source["quiet_ceiling_s"]
+            for source in ordered_sources
+            if source["maximum_duration_s"] is not None or source["quiet_ceiling_s"] is not None
+        }
         result = select_best_parts(
             ordered_sources,
             target_duration_s=budget,
             minimum_total_duration_s=3 if budget is None else None,
-            minimum_duration_s={
-                source["media_id"]: source["minimum_duration_s"] for source in ordered_sources
-            },
-            maximum_duration_s={
-                source["media_id"]: source["maximum_duration_s"]
-                if source["maximum_duration_s"] is not None
-                else source["quiet_ceiling_s"]
-                for source in ordered_sources
-                if source["maximum_duration_s"] is not None or source["quiet_ceiling_s"] is not None
-            },
+            minimum_duration_s=minimums,
+            maximum_duration_s=maximums,
             cap_duration_s=cap_s,
         )
+        # A creator-stated length always wins over pace; without one, the planner's pace sets
+        # how long each clip is held (``pace_selection_limits``).
+        pace = effective_pace(strategy) if creator_target_s is None else None
+        if pace is not None or story_floor_s is not None:
+            paced = paced_selection(
+                ordered_sources,
+                pace,
+                budget=budget,
+                extend_budget=natural_owner == "song" and creator_target_s is None,
+                cap_s=cap_s,
+                minimums=minimums,
+                maximums=maximums,
+                story_floor_s=story_floor_s,
+            )
+            if paced is not None and (paced.duration_s, paced.parts) != (
+                result.duration_s,
+                result.parts,
+            ):
+                result = paced
+                moved = {
+                    "total_s": paced.duration_s,
+                    **(
+                        {"natural_duration_s": round(budget, 3)}
+                        if budget is not None and paced.duration_s > budget + 0.001
+                        else {}
+                    ),
+                }
+                if pace is not None:
+                    pace_record = {"pace": pace, **moved}
+                if story_floor_s is not None:
+                    story_record = {"floor_s": story_floor_s, **moved}
+    if hidden and result is not None:
+        result, unplaceable = _kept_out_of_hidden(result, by_id, hidden)
+        if unplaceable:
+            pre_conflicts.append(
+                BestPartsConflict(
+                    HIDDEN_PART_UNPLACEABLE,
+                    float(len(unplaceable)),
+                    0.0,
+                    "A window cannot leave out the part of its clip the creator hid.",
+                )
+            )
     windows = result.receipt() if result is not None else []
     conflicts = [
         {
@@ -712,6 +895,14 @@ def build_length_plan(
         "windows": windows,
         "conflicts": conflicts,
     }
+    if visual_budget_s > 0:
+        plan["visual_budget_s"] = round(float(visual_budget_s), 3)
+    if pace_record is not None:
+        # Present only when pace changed the windows, so every other plan is unchanged.
+        plan["pace"] = pace_record
+    if story_record is not None:
+        # Likewise for a story direction's minimum hold.
+        plan["story"] = story_record
     if missing_ids:
         # KRI-989: the ids that are genuinely gone, so the question can offer to leave them out.
         plan["missing_source_ids"] = sorted(missing_ids)
@@ -748,6 +939,51 @@ def build_length_plan(
     elif isinstance(strategy.get("licensed_music_selection"), Mapping):
         plan["licensed_music"] = dict(strategy["licensed_music_selection"])
     return plan
+
+
+# Leverkusen M2: the code of the conflict a window that cannot leave out a hidden part raises.
+HIDDEN_PART_UNPLACEABLE = "hidden_part_unplaceable"
+# Windows the creator or their words pinned to an exact interval: never slid out of a part.
+_PINNED_WINDOW_REASONS = frozenset({"creator_answer", "closing_quote", "grounded_moment"})
+
+
+def _kept_out_of_hidden(
+    result: BestPartsResult,
+    by_id: Mapping[str, Mapping[str, Any]],
+    hidden: Mapping[str, Sequence[HiddenPart]],
+) -> tuple[BestPartsResult, list[str]]:
+    """``result`` with every window slid out of its clip's hidden parts (same length).
+
+    A window pinned to the creator's interval, one with no room left, or one that would land
+    on another window of its clip is not moved and is returned by media id: the plan then
+    carries a conflict, so no approval card offers it."""
+    parts = list(result.parts)
+    unplaceable: list[str] = []
+    for index, part in enumerate(parts):
+        own = hidden.get(part.media_id)
+        duration = float(by_id[part.media_id]["duration_s"]) if own else 0.0
+        if not own or not shows_hidden(part.source_start_s, part.source_end_s, duration, own):
+            continue
+        moved = (
+            keep_out(part.source_start_s, part.source_end_s, duration, own)
+            if part.reason not in _PINNED_WINDOW_REASONS
+            else None
+        )
+        if moved is not None and any(
+            other is not part
+            and other.media_id == part.media_id
+            and moved[0] < other.source_end_s - 0.001
+            and moved[1] > other.source_start_s + 0.001
+            for other in parts
+        ):
+            moved = None
+        if moved is None:
+            unplaceable.append(part.media_id)
+            continue
+        parts[index] = BestPart(
+            part.media_id, round(moved[0], 3), round(moved[1], 3), part.score, part.reason
+        )
+    return replace(result, parts=tuple(parts)), unplaceable
 
 
 def _moment_or_quote_windows(
@@ -859,9 +1095,9 @@ def _pinned_moment_windows(
     fixed = sum(
         (_number(pin.get("source_end_s")) or 0.0) - (_number(pin.get("source_start_s")) or 0.0)
         for pin in pins
-        if pin.get("origin") == "creator_answer"
+        if is_fixed_moment(pin)
     )
-    flexible = sum(1 for pin in pins if pin.get("origin") != "creator_answer")
+    flexible = sum(1 for pin in pins if not is_fixed_moment(pin))
     # The creator's own length for each moment wins; else what the total leaves.
     width = each_s or DEFAULT_MOMENT_S
     if each_s is None and target_s is not None and flexible and target_s - fixed > 0:
@@ -913,8 +1149,8 @@ def _moments_record(
         if window.get("reason") not in _MOMENT_WINDOW_REASONS.get(str(pin.get("origin")), ()):
             return None
         row = {**dict(pin), "media_id": window["media_id"], "window_index": index}
-        if pin.get("origin") == "creator_answer":
-            # The window that plays IS the creator's interval (ends at the take's end).
+        if is_fixed_moment(pin):
+            # The played window keeps the fixed source interval.
             row["source_start_s"] = window["source_start_s"]
             row["source_end_s"] = window["source_end_s"]
         out.append(row)
@@ -948,7 +1184,7 @@ def _check_moments(envelope: Mapping[str, Any], windows: Sequence[Any]) -> None:
             raise ValueError("length plan moment window changed")
         if window.get("reason") not in _MOMENT_WINDOW_REASONS[str(moment["origin"])]:
             raise ValueError("length plan moment window changed")
-        if moment["origin"] == "creator_answer":
+        if is_fixed_moment(moment):
             for key in ("source_start_s", "source_end_s"):
                 got, want = _number(window.get(key)), _number(moment.get(key))
                 if got is None or want is None or abs(got - want) > 0.001:

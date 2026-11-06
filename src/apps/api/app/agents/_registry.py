@@ -52,6 +52,9 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
         "OverlayFormatMatcherAgent",
     ),
     ("nova.compose.intro_writer", "app.agents.intro_writer", "IntroTextWriterAgent"),
+    # KRI-1171: frame review of a finished generation against the creator's request. Sent
+    # through the bounded image transport, never the dispatcher; see app/agents/intent_review.py.
+    ("nova.kria.intent_review", "app.agents.intent_review", "IntentReviewAgent"),
     (
         "nova.compose.visual_treatment_planner",
         "app.agents.visual_treatment_planner",
@@ -141,6 +144,11 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
         "ClipRequestResolverAgent",
     ),
     ("nova.video.clip_question", "app.agents.clip_question", "ClipQuestionAgent"),
+    (
+        "nova.video.source_moment_location",
+        "app.agents.source_moment_location",
+        "SourceMomentLocationAgent",
+    ),
     # KRI-282: choose spoken excerpts + lay out speech/montage sections
     # (behind SPEECH_EXCERPT_MONTAGE_ENABLED).
     (
@@ -150,9 +158,9 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
     ),
     # KRI-189: best-guess landmark for a clip from frames + place (provenance: inferred).
     ("nova.video.landmark_guess", "app.agents.landmark_guess", "LandmarkGuessAgent"),
-    # KRI-756: rank + word the suggestion chips the deterministic generator allowed
-    # (behind KRIA_SUGGESTION_CHIPS_ENABLED; text-only, off the request path).
-    ("nova.chat.suggester", "app.agents.chip_suggester", "ChipSuggesterAgent"),
+    # KRI-756 + AI suggestion blocks: pick which improvement cards to offer; the server builds
+    # and proves each action (behind KRIA_SUGGESTION_CHIPS_ENABLED; off the request path).
+    ("nova.chat.suggestion_agent", "app.agents.suggestion_agent", "SuggestionAgent"),
 )
 
 

@@ -334,15 +334,15 @@ def test_still_card_requires_a_visuals_photo():
         {"hold_duration": 1.0},
         {"hold_duration": 0.0},
         {"transform": {"scale": 1.2}},
-        {"transform": {"rotation_degrees": 90.0}},
         {"transform": {"position_x": 10.0}},
         {"transform": {"position_y": -10.0}},
     ],
-    ids=["rate", "look", "hold", "zero-hold", "scale", "rotation", "x", "y"],
+    ids=["rate", "look", "hold", "zero-hold", "scale", "x", "y"],
 )
 def test_still_card_must_be_a_plain_clip(clip):
     # The native card is composed once from the photo alone; any of these
-    # would be silently ignored on device.
+    # would be silently ignored on device. A rotation is the exception: the
+    # card turns inside itself (`clipTilt`).
     EditRecipeV2.model_validate(card_document())
     with pytest.raises(ValidationError, match="plain V2 main-track clip"):
         EditRecipeV2.model_validate(card_document(**clip))

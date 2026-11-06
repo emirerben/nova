@@ -30,6 +30,45 @@ message. This PR's local evidence is bounded in
 not replace the original-output and device acceptance gates in
 [`kri-829-original-output-acceptance.md`](../reviews/kri-829-original-output-acceptance.md).
 
+KRI-1176 chose this path for "cut the sentence I restarted" (Green 3, job `9bad2d75`). Before
+setting the flag:
+
+1. Paid precision run (needs the owner's explicit approval; about 28 Gemini 2.5 Flash calls,
+   a few cents, hard cap $2). From `src/apps/api`:
+   `NOVA_EVAL_MODE=live GEMINI_API_KEY=… AI_COST_CONTROL_ENABLED=true AI_USAGE_ENVIRONMENT=development .venv/bin/python -m pytest tests/evals/test_retake_detector_evals.py -v --eval-mode=live --usage-purpose=live_eval --test-run-id=retake-precision-<date> --max-cost-usd=2 --approve-reservation`.
+   Pass = every negative (real takes with no restart) returns no span, and
+   `test_positive_fixtures_cut_only_the_abandoned_take` passes on Green 3 and N3: no span
+   touches a kept word. Any failure blocks the flag.
+   **Run 2026-11-03 (`retake-precision-2026-11-03-r5`): PASS.** 8/8 restart-free real takes
+   returned no span in both calls each; Green 3 cut only words 44..53, N3 only 28..31. 28 calls,
+   $0.047 actual. One sample per take: rerun after any change to `prompts/retake_detector.txt`.
+2. Land KRI-1189 (the `cut_restarts` brief fact; child of KRI-1174, related to KRI-1176) first. The
+   brief model records an unquoted restart ask as `cut_restarts: true` (Main Creator v119, brief
+   extractor v54) and receipts key on it: before render "Clean up speech also cuts a sentence you
+   restarted if it finds one" (detection on, approvable via `_cleanup_deferred`) or "... stays in"
+   (off, held); after render a `retake` row is "Done", none is "didn't find" (on) or "stays in"
+   (off). Briefs written before it carry no fact and keep "may still be in your video".
+3. `fly secrets set SPEECH_CLEANUP_RETAKES_ENABLED=true --app nova-video` and restart api and
+   worker (every ready analysis is retired once and consent is asked again), then the canary
+   above on an iPhone: the Green 3 take (`IMG_7231.MOV`) as the retake-positive source and one
+   take with no restart.
+
+## Tight pauses add-on (Qendresa 13)
+
+`TIGHT_PAUSE_CUT_ENABLED` (default off; off is byte-identical) adds extra pause cuts to a
+consented phone Talking render when the approved brief records `pauses: "tight"` ("cut out all
+my pauses so it's tight"; Main Creator v121). It needs consented cleanup (`required_v1`), one
+clip, and a take whose room floor is at or below -45 dBFS; the render writes
+`variant["tight_pauses"]` and the receipt reports the measured longest pause (0.35 s limit). The
+thread projection also marks a recorded cleanup ask (`requested_in_chat`, `pause_style`) so new
+iPhone builds show Clean up speech already on; older builds ignore the fields. Design, limits
+and evidence: `docs/reviews/qendresa-13-tight-pauses.md`.
+
+1. Before enabling: a listening check of a before/after pair (`scripts/ios/qendresa-13-tight-pauses-e2e.py`)
+   on the creator's own take, plus one take with background noise (expect no tight cuts).
+2. `fly secrets set TIGHT_PAUSE_CUT_ENABLED=true --app nova-video`, restart api and worker.
+3. Kill switch: the same secret `=false` + restart; renders already pinned keep their cuts.
+
 ## Gates and sequence
 
 Deploy migration, API, web, Beat, and the dedicated `speech_analysis` Fly process

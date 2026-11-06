@@ -1,0 +1,374 @@
+{
+ "source": {
+  "bug": "KRI-1108 (Leverkusen M3 run 1, F1): 'End on the trophy celebration.' seated on IMG_1043, no trophy filmed",
+  "thread": "83f2dcaa-9a05-42bc-a5f2-fa898d243e17",
+  "plan_item": "b04e62bd-0607-4720-ba81-86eb4f285cef",
+  "server": "Fly main 7b5504165, TestFlight 1819 (protocol 25), 2026-10-31 13:14-13:52Z",
+  "resolver": "nova.plan.clip_request_resolver prompt 2026-10-27-order-certainty, gemini-2.5-flash",
+  "evidence": "~/Downloads/kria-leverkusen-test/M3_things_kria_cannot_know_montage/runs/2026-10-31_run1/ptrace_all.json"
+ },
+ "recorded": "clips[].record, turns[].creator_request / resolver_intents / raw_text are copied verbatim from the proposal trace's clip_request_resolver rows (input_json + raw_text). The clip records are identical in every resolver run of the thread.",
+ "reconstructed": "media_id / file_name per alias come from EVIDENCE.md (upload order = alias). planner_op: the planner's output is redacted in the trace, so each intent's ClipIntent op is the resolver op, except ids named exclude_* (the service sends an exclude to the resolver as 'include'). footage_truth is the tester's own look at the clip (EVIDENCE.md, NOTES.md F1), not model output.",
+ "footage_truth": {
+  "m005": "IMG_1043, 7.5 s: Nürnberg players in white at the away end thanking their fans, stewards in front. No trophy, no confetti.",
+  "trophy_anywhere": false
+ },
+ "clips": [
+  {
+   "alias": "m001",
+   "kind": "video",
+   "media_id": "analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4",
+   "file_name": "IMG_1039",
+   "record": {
+    "props": [
+     "black and red striped scarf"
+    ],
+    "people": {
+     "note": "football fans of all ages cheering",
+     "count": 99,
+     "speaks_to_camera": false
+    },
+    "actions": [
+     "people waving scarves",
+     "stadium crowd cheering"
+    ],
+    "setting": "indoor football stadium",
+    "subject": "football stadium crowd and pitch",
+    "summary": "The video captures the excitement of a football match from a stadium box, showing fans cheering, waving scarves, and a wide view of the pitch and the packed stadium with red lights flashing after a goal.",
+    "activity": "watching a football match and celebrating a goal",
+    "audio_type": "ambient",
+    "visibility": "normal brightness (measured mean brightness 116/255, 0% of sampled frames near-black)",
+    "content_type": "action",
+    "visual_quality": "shaky handheld, stays sharp"
+   }
+  },
+  {
+   "alias": "m002",
+   "kind": "video",
+   "media_id": "analysis-proxy-ios-9617BC94-1129-4B21-AD4C-93A9566830D5.mp4",
+   "file_name": "IMG_1028",
+   "record": {
+    "people": {
+     "note": "a large crowd of spectators and a few players on the pitch",
+     "count": 99,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "to_camera": false,
+     "has_speech": true,
+     "transcript": "Es war Nummer 28. Janek. Mit der Nummer 2 spielt Facundo."
+    },
+    "setting": "football stadium at night",
+    "subject": "stadium crowd and football pitch",
+    "summary": "The video shows a wide shot of a football stadium at night, with red lights illuminating the stands and the crowd cheering. An announcer introduces players by their numbers and names.",
+    "activity": "attending a football match, watching player introductions",
+    "audio_type": "mixed",
+    "visibility": "normal brightness (measured mean brightness 89/255, 0% of sampled frames near-black)",
+    "content_type": "ambience",
+    "visual_quality": "sharp and steady",
+    "notable_moments": [
+     {
+      "end_s": 3.0,
+      "start_s": 0.0,
+      "description": "stadium lights illuminate crowd in red"
+     },
+     {
+      "end_s": 7.5,
+      "start_s": 4.5,
+      "description": "crowd cheers as red lights flash"
+     },
+     {
+      "end_s": 11.5,
+      "start_s": 8.5,
+      "description": "stadium lights illuminate pitch and crowd"
+     }
+    ]
+   }
+  },
+  {
+   "alias": "m003",
+   "kind": "video",
+   "media_id": "analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4",
+   "file_name": "IMG_1037",
+   "record": {
+    "props": [
+     "dark patterned scarf"
+    ],
+    "people": {
+     "note": "large crowd of spectators and football players",
+     "count": 99,
+     "speaks_to_camera": false
+    },
+    "actions": [
+     "camera pans across stadium",
+     "person waves scarf"
+    ],
+    "setting": "indoor football stadium at night",
+    "subject": "football stadium crowd and match",
+    "summary": "The video shows a wide view of a football stadium during a match, with spectators in the stands. One person in the foreground waves a scarf, cheering for their team.",
+    "activity": "watching a football match, cheering for a team",
+    "audio_type": "ambient",
+    "visibility": "normal brightness (measured mean brightness 112/255, 0% of sampled frames near-black)",
+    "content_type": "action",
+    "visual_quality": "shaky handheld, stays sharp",
+    "notable_moments": [
+     {
+      "end_s": 1.9,
+      "start_s": 0.82,
+      "description": "stadium view with ongoing match"
+     },
+     {
+      "end_s": 9.94,
+      "start_s": 7.25,
+      "description": "person waves scarf and cheers"
+     }
+    ]
+   }
+  },
+  {
+   "alias": "m004",
+   "kind": "video",
+   "media_id": "analysis-proxy-ios-81B16330-7F84-4D6C-9AB9-F2986EBBA672.mp4",
+   "file_name": "IMG_1036",
+   "record": {
+    "props": [
+     "red and black flags",
+     "large banner with text 'DEINER VEREIN SEIT 1900'"
+    ],
+    "people": {
+     "note": "large crowd of fans in a stadium",
+     "count": 99,
+     "speaks_to_camera": false
+    },
+    "actions": [
+     "crowd members wave flags"
+    ],
+    "setting": "indoor sports stadium",
+    "subject": "stadium crowd",
+    "summary": "The clip shows a large crowd of football fans inside a stadium, waving flags and cheering. A large banner is displayed across a section of the upper stands, and the stadium lights glow red.",
+    "activity": "football fans cheering and waving flags",
+    "audio_type": "ambient",
+    "visibility": "normal brightness (measured mean brightness 105/255, 0% of sampled frames near-black)",
+    "content_type": "ambience",
+    "visual_quality": "sharp and steady",
+    "notable_moments": [
+     {
+      "end_s": 5.0,
+      "start_s": 0.0,
+      "description": "crowd chanting and waving flags"
+     },
+     {
+      "end_s": 9.5,
+      "start_s": 6.5,
+      "description": "stadium lights glow red as crowd waves flags"
+     }
+    ]
+   }
+  },
+  {
+   "alias": "m005",
+   "kind": "video",
+   "media_id": "analysis-proxy-ios-89880A9A-738E-4DAF-9A77-84CEF5605386.mp4",
+   "file_name": "IMG_1043",
+   "record": {
+    "props": [
+     "red stadium seats",
+     "white football net",
+     "green football pitch"
+    ],
+    "people": {
+     "note": "large crowd of fans in the stands, football players and staff on the pitch, security personnel along the sideline",
+     "count": 99,
+     "speaks_to_camera": false
+    },
+    "actions": [
+     "crowd cheers",
+     "confetti falls from stands",
+     "football players gather on pitch",
+     "security personnel walk along sideline"
+    ],
+    "setting": "indoor football stadium",
+    "subject": "stadium crowd and football players",
+    "summary": "A large crowd in a football stadium cheers while players gather on the pitch after a match. Confetti or similar debris is thrown from the stands.",
+    "activity": "crowd cheering, players gathering",
+    "audio_type": "ambient",
+    "visibility": "normal brightness (measured mean brightness 113/255, 0% of sampled frames near-black)",
+    "content_type": "ambience",
+    "visual_quality": "sharp and steady",
+    "notable_moments": [
+     {
+      "end_s": 2.5,
+      "start_s": 0.0,
+      "description": "crowd cheers loudly as confetti falls"
+     },
+     {
+      "end_s": 7.0,
+      "start_s": 3.0,
+      "description": "players gather on pitch while crowd continues cheering"
+     }
+    ]
+   }
+  },
+  {
+   "alias": "m006",
+   "kind": "image",
+   "media_id": "asset-18868513-34e4-4336-a0cb-428f4709c6c5",
+   "file_name": "M3_06_visual.webp",
+   "record": {
+    "brands": [
+     "Bayer 04 Leverkusen",
+     "1. FC Nürnberg",
+     "DFB Pokal",
+     "Pure Energy GmbH",
+     "BayArena",
+     "Bundesliga",
+     "Barmenia Gothaer",
+     "new balance",
+     "WERKSELF",
+     "Rheinland Tarif"
+    ],
+    "subject": "Bayer Leverkusen DFB Pokal ticket",
+    "summary": "The image displays a digital football ticket for a DFB Pokal match between Bayer 04 Leverkusen and 1. FC Nürnberg at BayArena, showing seat details, match schedule, and stadium map.",
+    "on_screen_text": "Bayer 04 Leverkusen vs 1. FC Nürnberg DFB Pokal 2026/27 Tribüne VIP SÜD Block Loge 10 Pure Energy GmbH Reihe 1 Platz 2 Ticketcode: D623AD Datum 28.10.2026*"
+   }
+  }
+ ],
+ "turns": {
+  "t2_1321": {
+   "resolver_run": "7464162d-3f6e-4ba1-9e9b-2222d65c6314",
+   "created_at": "2026-10-31T13:21:02.247052Z",
+   "creator_turn": "fea9a92c (13:20:20 'Then leave the ticket out ...')",
+   "creator_request": "Montage of the match from kick-off to the end, all vertical. Start with my ticket, but blur the QR code. Title it with the final score. Label each goal clip with who scored and in which minute. End on the trophy celebration. Mute everything except the two goals. Make it 15 seconds.\nThen leave the ticket out. 5:2 for Leverkusen. Title: “Leverkusen 5:2 Nürnberg”",
+   "reply_language": "en",
+   "resolver_intents": [
+    {
+     "op": "order",
+     "position": null,
+     "attribute": "the match from kick-off to the end",
+     "intent_id": "order_match_chronological",
+     "creator_text": null,
+     "ordered_members": null,
+     "caption_attribute": null
+    },
+    {
+     "op": "label",
+     "position": null,
+     "attribute": "who scored and in which minute",
+     "intent_id": "label_goal_details",
+     "creator_text": null,
+     "ordered_members": null,
+     "caption_attribute": null
+    },
+    {
+     "op": "order",
+     "position": "last",
+     "attribute": "the trophy celebration",
+     "intent_id": "order_trophy_last",
+     "creator_text": null,
+     "ordered_members": null,
+     "caption_attribute": null
+    },
+    {
+     "op": "include",
+     "position": null,
+     "attribute": "the ticket",
+     "intent_id": "exclude_ticket",
+     "creator_text": null,
+     "ordered_members": null,
+     "caption_attribute": null
+    },
+    {
+     "op": "order",
+     "position": "first",
+     "attribute": "my ticket",
+     "intent_id": "order-first-my-ticket",
+     "creator_text": null,
+     "ordered_members": null,
+     "caption_attribute": null
+    }
+   ],
+   "planner_op": {
+    "order_match_chronological": "order",
+    "label_goal_details": "label",
+    "order_trophy_last": "order",
+    "exclude_ticket": "exclude",
+    "order-first-my-ticket": "order"
+   },
+   "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"order_match_chronological\",\n      \"assignments\": [\n        {\n          \"media\": \"m002\",\n          \"value\": \"\",\n          \"evidence\": \"player introductions, stadium crowd and football pitch\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m003\",\n          \"value\": \"\",\n          \"evidence\": \"football stadium crowd and match, watching a football match\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m001\",\n          \"value\": \"\",\n          \"evidence\": \"football stadium crowd and pitch, celebrating a goal\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m004\",\n          \"value\": \"\",\n          \"evidence\": \"stadium crowd, football fans cheering and waving flags\",\n          \"confidence\": 0.8\n        },\n        {\n          \"media\": \"m005\",\n          \"value\": \"\",\n          \"evidence\": \"players gather on the pitch after a match, crowd cheering\",\n          \"confidence\": 0.9\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"label_goal_details\",\n      \"assignments\": [],\n      \"needs_vision\": [],\n      \"question\": \"Which clips show a goal being scored and say who scored and in which minute?\",\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"order_trophy_last\",\n      \"assignments\": [\n        {\n          \"media\": \"m005\",\n          \"value\": \"\",\n          \"evidence\": \"players gather on the pitch after a match, crowd cheering, confetti falls\",\n          \"confidence\": 0.8\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"exclude_ticket\",\n      \"assignments\": [\n        {\n          \"media\": \"m006\",\n          \"value\": \"\",\n          \"evidence\": \"image displays a digital football ticket\",\n          \"confidence\": 0.9\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"order-first-my-ticket\",\n      \"assignments\": [\n        {\n          \"media\": \"m006\",\n          \"value\": \"\",\n          \"evidence\": \"image displays a digital football ticket\",\n          \"confidence\": 0.9\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    }\n  ]\n}"
+  },
+  "t3_1324": {
+   "resolver_run": "b2fdc738-66e1-45f7-887e-9a37126c4763",
+   "created_at": "2026-10-31T13:24:00.308257Z",
+   "creator_turn": "f2db16e9 (13:22:58 'Leave the names and minutes out ...')",
+   "creator_request": "Montage of the match from kick-off to the end, all vertical. Start with my ticket, but blur the QR code. Title it with the final score. Label each goal clip with who scored and in which minute. End on the trophy celebration. Mute everything except the two goals. Make it 15 seconds.\nThen leave the ticket out. 5:2 for Leverkusen. Title: “Leverkusen 5:2 Nürnberg”\nLeave the names and minutes out, just write “TOR!” on both goal clips. The goals are IMG_1037 and IMG_1039.",
+   "reply_language": "en",
+   "resolver_intents": [
+    {
+     "op": "order",
+     "position": null,
+     "attribute": "Montage of the match",
+     "intent_id": "order_match_chrono",
+     "creator_text": null,
+     "ordered_members": null,
+     "caption_attribute": null
+    },
+    {
+     "op": "order",
+     "position": "first",
+     "attribute": "my ticket",
+     "intent_id": "order_ticket_first",
+     "creator_text": null,
+     "ordered_members": null,
+     "caption_attribute": null
+    },
+    {
+     "op": "order",
+     "position": "last",
+     "attribute": "the trophy celebration",
+     "intent_id": "order_celebration_last",
+     "creator_text": null,
+     "ordered_members": null,
+     "caption_attribute": null
+    }
+   ],
+   "planner_op": {
+    "order_match_chrono": "order",
+    "order_ticket_first": "order",
+    "order_celebration_last": "order"
+   },
+   "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"order_match_chrono\",\n      \"assignments\": [\n        {\n          \"media\": \"m001\",\n          \"value\": \"\",\n          \"evidence\": \"football stadium crowd and pitch\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m002\",\n          \"value\": \"\",\n          \"evidence\": \"stadium crowd and football pitch\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m003\",\n          \"value\": \"\",\n          \"evidence\": \"football stadium crowd and match\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m004\",\n          \"value\": \"\",\n          \"evidence\": \"stadium crowd\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m005\",\n          \"value\": \"\",\n          \"evidence\": \"stadium crowd and football players\",\n          \"confidence\": 0.9\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"order_ticket_first\",\n      \"assignments\": [\n        {\n          \"media\": \"m006\",\n          \"value\": \"\",\n          \"evidence\": \"Bayer Leverkusen DFB Pokal ticket\",\n          \"confidence\": 1.0\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"order_celebration_last\",\n      \"assignments\": [\n        {\n          \"media\": \"m005\",\n          \"value\": \"\",\n          \"evidence\": \"players gather on the pitch after a match. Confetti or similar debris is thrown from the stands.\",\n          \"confidence\": 0.9\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    }\n  ]\n}"
+  },
+  "t6_1335": {
+   "resolver_run": "4b7137a4-ce58-4b79-a4c4-d89dff87e90b",
+   "created_at": "2026-10-31T13:35:05.176464Z",
+   "creator_turn": "13:34:20 'No names, no minutes ...' (control: real ending on IMG_1043)",
+   "creator_request": "Montage of the match from kick-off to the end, all vertical. Start with my ticket, but blur the QR code. Title it with the final score. Label each goal clip with who scored and in which minute. End on the trophy celebration. Mute everything except the two goals. Make it 15 seconds.\nThen leave the ticket out. 5:2 for Leverkusen. Title: “Leverkusen 5:2 Nürnberg”\nLeave the names and minutes out, just write “TOR!” on both goal clips. The goals are IMG_1037 and IMG_1039.\nThere is no trophy in my footage. End on the Nürnberg players thanking their fans (IMG_1043). Leave the ticket out completely. Keep “TOR!” only on the two goal clips.\nI tapped the clips you asked about.\nI tapped the clips you asked about.\nNo names, no minutes. only ‘TOR!” On the two goal clips",
+   "reply_language": "en",
+   "resolver_intents": [
+    {
+     "op": "order",
+     "position": null,
+     "attribute": "the match from kick-off to the end",
+     "intent_id": "order_chrono_match",
+     "creator_text": null,
+     "ordered_members": null,
+     "caption_attribute": null
+    },
+    {
+     "op": "order",
+     "position": "last",
+     "attribute": "the Nürnberg players thanking their fans (IMG_1043)",
+     "intent_id": "order_nuremberg_fans_last",
+     "creator_text": null,
+     "ordered_members": null,
+     "caption_attribute": null
+    }
+   ],
+   "planner_op": {
+    "order_chrono_match": "order",
+    "order_nuremberg_fans_last": "order"
+   },
+   "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"order_chrono_match\",\n      \"assignments\": [\n        {\n          \"media\": \"m002\",\n          \"value\": \"\",\n          \"evidence\": \"watching player introductions\",\n          \"confidence\": 0.8\n        },\n        {\n          \"media\": \"m003\",\n          \"value\": \"\",\n          \"evidence\": \"during a match, cheering for a team\",\n          \"confidence\": 0.8\n        },\n        {\n          \"media\": \"m001\",\n          \"value\": \"\",\n          \"evidence\": \"watching a football match and celebrating a goal\",\n          \"confidence\": 0.8\n        },\n        {\n          \"media\": \"m004\",\n          \"value\": \"\",\n          \"evidence\": \"football fans cheering and waving flags\",\n          \"confidence\": 0.7\n        },\n        {\n          \"media\": \"m005\",\n          \"value\": \"\",\n          \"evidence\": \"players gather on the pitch after a match\",\n          \"confidence\": 0.7\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"order_nuremberg_fans_last\",\n      \"assignments\": [\n        {\n          \"media\": \"m005\",\n          \"value\": \"\",\n          \"evidence\": \"players gather on the pitch after a match\",\n          \"confidence\": 0.8\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    }\n  ]\n}"
+  }
+ }
+}

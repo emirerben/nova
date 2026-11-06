@@ -10,8 +10,8 @@
 - [ ] .env.example updated if new env vars were added
 - [ ] VIDEO_CONTEXT.md consulted for any video processing changes
 - [ ] Applied release labels when needed: `release:major` or `release:minor`, plus one changelog category (`release:added`, `release:fixed`, `release:changed`, `release:deprecated`, `release:removed`, or `release:security`). No label means a patch-level `Changed` entry.
-- [ ] If a Kria creation or edit journey is affected, the author linked the CI journey artifact for this HEAD, named the request and expected output, and recorded native render, model/prompt, cost, and any gaps. See `docs/reviews/kri-559-journey-verification.md`.
-- [ ] Reviewer checked the journey case matches this change, required stages and native evidence passed on this HEAD, and any live-model result is labelled separately from offline replay.
+- [ ] If a Kria creation or edit journey is affected, the author linked the PR CI journey artifact for this HEAD (offline replay plus the iPhone unit leg), named the request and expected output, and recorded model/prompt, cost, and any gaps. PR CI no longer renders fixture journeys on the iPhone simulator: when this PR needs native render evidence, run CI manually on this branch (Actions → CI → Run workflow) and link that run; otherwise the nightly CI run is the first native render. See `docs/reviews/kri-559-journey-verification.md`.
+- [ ] Reviewer checked the journey case matches this change, required stages passed on this HEAD, native render evidence comes from a manual CI run on this HEAD when the change needs it, and any live-model result is labelled separately from offline replay.
 - [ ] For prompt, model, or provider changes, link the applicable free replay checks. Any separately approved live evaluation names its exact revision and settled cost; paid calls are not required by this checklist.
 
 ## Reliability gates (KRI-577; required when a Kria chat, render, receipt or device path changes)

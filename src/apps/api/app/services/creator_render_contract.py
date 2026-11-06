@@ -33,9 +33,16 @@ from app.kria.render_assets import (
 )
 from app.kria.reply_language import say
 from app.kria.spoken_text_ask import requirement_spoken_text
+from app.pipeline.hidden_parts import (
+    HiddenPart,
+    hidden_parts_from_strategy,
+    shows_hidden,
+    unsettled_hidden_parts,
+)
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_recipe_shared import voice_tail_slack_s
 from app.pipeline.sequence_text_evidence import text_matches
+from app.schemas.clip_intents import MAX_HIDDEN_PART_S
 from app.services.choice_questions import (
     ATTACHMENT_ORDER_KEY,
     CAPTURE_ORDER_KEYS,
@@ -52,6 +59,7 @@ from app.services.choice_questions import (
 )
 from app.services.clip_file_names import clip_display_name
 from app.services.clip_order_sequence import (
+    SequenceRow,
     apply_sequence,
     sequence_rows,
     stated_anchors,
@@ -334,6 +342,9 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "selection_reconciliation.rejected_selections[].intent.op",
         "selection_reconciliation.rejected_selections[].intent.order_by",
         "selection_reconciliation.rejected_selections[].intent.ordered_members",
+        "selection_reconciliation.rejected_selections[].intent.part_attribute",
+        "selection_reconciliation.rejected_selections[].intent.part_edge",
+        "selection_reconciliation.rejected_selections[].intent.part_s",
         "selection_reconciliation.rejected_selections[].intent.placeholder",
         "selection_reconciliation.rejected_selections[].intent.position",
         "selection_reconciliation.rejected_selections[].intent.requirement_id",
@@ -369,6 +380,12 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "editorial_plan.beats[].purpose",
         "editorial_plan.beats[].text_goal",
         note="Writing purposes accompany footage windows; compiled text is pinned for replay.",
+    ),
+    **_rules(
+        "upstream_resolved",
+        "pace_policy:provenance",
+        "pacing_requested",
+        note="server-owned: the creator's own words named a pace (cut-length pace unit)",
     ),
     # Hard requirements projected by build_render_contract.
     **_rules(
@@ -440,6 +457,15 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         note=(
             "KRI-669: the pinned-text compiler resolves hierarchy, grouping and explicit size "
             "into measured rows; brief checks verify their size and spatial relationships"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
+        "render_contract:text",
+        "pinned_texts[].look",
+        note=(
+            "the pinned-text compiler resolves the look into the row's font, colour, size and "
+            "shadow; the contract still verifies the pin's exact text"
         ),
     ),
     **_rules(
@@ -571,12 +597,26 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         note="enforced while planning; the contract does not re-verify cadence or reuse",
     ),
     **_rules(
+        "supported",
+        "creator_render_contract.hidden_parts",
+        "resolved_clip_intents[].part_edge",
+        "resolved_clip_intents[].part_s",
+        note="Leverkusen M2: pinned as hidden_parts; the phone recipe check refuses any clip "
+        "window inside the part and every cloud adapter declines it.",
+    ),
+    **_rules(
         "upstream_resolved",
         "clip_intent_resolver",
         "clip_intents[]",
         *(f"clip_intents[].{leaf}" for leaf in _CLIP_INTENT_LEAVES),
+        # Leverkusen M2: the planner's raw hidden part, settled by the resolver and the turn.
+        "clip_intents[].part_edge",
+        "clip_intents[].part_s",
+        "clip_intents[].part_attribute",
         "resolved_clip_intents[]",
         *(f"resolved_clip_intents[].{leaf}" for leaf in _CLIP_INTENT_LEAVES),
+        # Only worded into the question asking for the seconds; never pinned.
+        "resolved_clip_intents[].part_attribute",
         "resolved_clip_intents[].status",
         "resolved_clip_intents[].assignments[]",
         "resolved_clip_intents[].assignments[].media_id",
@@ -613,6 +653,7 @@ FIELD_MATRIX: dict[str, FieldRule] = {
                 "following_clip_id",
                 "sound",
                 "hold_s",
+                "anchor",
             )
         ),
         "closing_media",
@@ -655,6 +696,48 @@ FIELD_MATRIX: dict[str, FieldRule] = {
             "KRI-841: kept or dropped by creator_capabilities.repair_creator_ending_clip; the "
             "phone Talking worker appends it and records variant['phone_ending_clip'], which "
             "the brief receipts judge. The contract itself does not verify it"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
+        "insert_clips_repair",
+        "insert_clips[]",
+        "insert_clips[].media_id",
+        "insert_clips[].at_phrase",
+        "insert_clips[].at_s",
+        "insert_clips[].keep_audio",
+        note=(
+            "Parent KRI-1151: kept or dropped by creator_capabilities.repair_creator_insert_clips "
+            "(a row with no at_phrase and no at_s is placed at the end of the sentence about the "
+            "clip, chosen by meaning); "
+            "the phone Talking worker pauses the take for each clip "
+            "(app.pipeline.phone_talking_inserts) and records variant['phone_insert_clips'], "
+            "which the brief receipts judge. The contract itself does not verify placement"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
+        "speaker_background_repair",
+        "background_media",
+        "background_media.media_id",
+        "background_media.color",
+        "background_media.source_start_s",
+        "background_media.sequence[]",
+        "background_media.sequence[].media_id",
+        "background_media.sequence[].source_start_s",
+        "background_media.sequence[].spoken_phrase",
+        "background_media.sequence[].hold_s",
+        "background_media.cadence_s",
+        "background_media.full_screen_opening",
+        "background_media.full_screen_opening_s",
+        "background_media.focus",
+        "background_media.focus_zoom",
+        "background_media.speaker_frame",
+        note=(
+            "KRI-1117: kept, filled from the creator's camera pick, or dropped by "
+            "creator_capabilities.repair_creator_speaker_background; the phone Talking worker "
+            "resolves it into the lane request's background and records the drop in "
+            "phone_lane_receipt. The contract itself does not verify it"
         ),
     ),
     **_rules(
@@ -735,6 +818,8 @@ CONTRACT_REQUIREMENTS: tuple[str, ...] = (
     "original_audio",
     "exact_texts",
     "order_required",
+    # Leverkusen M2: the parts of clips the creator asked never to show.
+    "hidden_parts",
     "unresolved",
 )
 
@@ -748,6 +833,7 @@ REQUIREMENT_FIELD_PATHS: dict[str, str | None] = {
     "original_audio": "montage_audio.preserve_source_audio",
     "exact_texts": None,
     "order_required": "ordering_choice",
+    "hidden_parts": "resolved_clip_intents[].part_s",
     "unresolved": None,
 }
 
@@ -805,6 +891,11 @@ PHONE_VERIFIER_DECLINES: dict[str, Decline] = {
     "original_audio": Decline("evidence_missing", _PHONE_REPAIR),
     "exact_texts": Decline("evidence_missing", _PHONE_REPAIR),
     "order_required": Decline("evidence_missing", _PHONE_REPAIR),
+    # Never relaxed into showing the part: rebuilt without it, or the clip is left out.
+    "hidden_parts": Decline(
+        "evidence_missing",
+        "I can rebuild the edit without that part of the clip, or leave the clip out.",
+    ),
 }
 _UNRESOLVED_DECLINE = Decline("needs_choice", _ASK_FOR_CHOICE)
 # The mix would play one source twice (a track clip and the separate music bed).
@@ -850,7 +941,8 @@ ADAPTER_DECLARATIONS: dict[str, AdapterDeclaration] = {
         # _run_phone_unified_montage_job -> _run_phone_guided_job.
         # Keep the exact source-id requirement. The shared phone verifier
         # refuses a compiled recipe that cannot prove the required sources.
-        _phone("phone_guided_unified_montage", set()),
+        # Leverkusen M2: its planner keeps every window out of a hidden part.
+        _phone("phone_guided_unified_montage", {"hidden_parts"}),
         # _run_phone_voiceover_montage_job: routed to when the contract needs the voice.
         _phone(
             "phone_voiceover_montage",
@@ -877,6 +969,17 @@ class TextRequirement(BaseModel):
     duration_s: float | None = Field(default=None, gt=0)
 
 
+class HiddenPartRequirement(BaseModel):
+    """Leverkusen M2: ``seconds`` at the ``edge`` of clip ``media_id`` never play.
+
+    ``media_id`` is the manifest id: an original's ``media_id`` or ``asset-<visual id>``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+    media_id: str = Field(min_length=1, max_length=200)
+    edge: Literal["start", "end"]
+    seconds: float = Field(gt=0, le=MAX_HIDDEN_PART_S)
+
+
 class CreatorRenderContract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
     version: Literal[1] = 1
@@ -892,6 +995,12 @@ class CreatorRenderContract(BaseModel):
     order_required: bool = False
     order_basis: str | None = None
     unresolved: tuple[str, ...] = ()
+    # Leverkusen M2. Omitted from dumps when empty, so every other contract (and its digest)
+    # stays byte-identical and an older worker, which forbids unknown keys, keeps reading
+    # it; one that carries a part is refused by that older worker (fails closed).
+    hidden_parts: tuple[HiddenPartRequirement, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
     digest: str = ""
 
     def rebind(self, **changes: object) -> CreatorRenderContract:
@@ -987,7 +1096,7 @@ def _hash(value: object) -> str:
 # stored contract readable (``read_render_contract`` would otherwise reject
 # in-flight jobs with "requirements changed").  A field is added here in the
 # same change that adds it to the model, and never removed.
-_POST_V1_FIELD_DEFAULTS: dict[str, Any] = {}
+_POST_V1_FIELD_DEFAULTS: dict[str, Any] = {"hidden_parts": []}
 
 
 def _digest(data: Mapping[str, Any]) -> str:
@@ -999,6 +1108,29 @@ def _digest(data: Mapping[str, Any]) -> str:
             and not (key in _POST_V1_FIELD_DEFAULTS and value == _POST_V1_FIELD_DEFAULTS[key])
         }
     )
+
+
+def _talking_list_label(requirement: Any, raw: Mapping[str, Any]) -> bool:
+    """Item 19: flag on and the Talking worker would read this whole-video text as a list label."""
+    from app.pipeline.phone_list_labels import is_list_label_candidate  # noqa: PLC0415
+    from app.services.phone_rollout import phone_list_labels_supported  # noqa: PLC0415
+
+    if requirement.scope != "global" or not phone_list_labels_supported():
+        return False
+    from app.config import settings  # noqa: PLC0415
+
+    # Like the worker (`_phone_list_label_follow`): a label follows a recording only with item
+    # 17's windows; without them only a marked label is one.
+    background = raw.get("background_media") if settings.background_follows_talk_enabled else None
+    sequence = background.get("sequence") if isinstance(background, Mapping) else None
+    phrases = tuple(
+        entry["spoken_phrase"].strip()
+        for entry in sequence or ()
+        if isinstance(entry, Mapping)
+        and isinstance(entry.get("spoken_phrase"), str)
+        and entry["spoken_phrase"].strip()
+    )
+    return is_list_label_candidate(requirement, phrases)
 
 
 def _strategy(raw: Mapping[str, Any] | None) -> CreativeStrategy | None:
@@ -1017,6 +1149,34 @@ _SEQUENCE_BASES = frozenset({"capture_time", "attachment_order"})
 _SEQUENCE_UNRESOLVED = (
     "I couldn't tell which clips you want first or last, so I can't confirm their order."
 )
+
+
+# KRI-1112: the order a creator listed clip by clip ("Use exactly this order: IMG_1028, ..."),
+# when the list states every shown item's place (`_creator_listed_order`).
+CREATOR_LIST_ORDER_BASIS = "creator_list"
+
+
+def _creator_listed_order(
+    sequence: Sequence[SequenceRow], shown: Sequence[str], stated: Mapping[str, str]
+) -> tuple[str, ...]:
+    """KRI-1112: the whole order a creator listed one clip at a time, else ``()``.
+
+    Every item the edit shows sits in exactly one resolved single-clip row of the stated
+    sequence and no row names anything else, so the montage writer's own seating
+    (`apply_sequence`) leaves nothing to a basis order: the list is the order. A first / last
+    clip the brief still states that no row seats is not that list (it is asked about).
+    """
+    if (
+        not shown
+        or len(set(shown)) != len(shown)
+        or any(status != "resolved" or len(members) != 1 for _p, _n, members, status in sequence)
+        or not set(stated) <= {position for position, _n, _m, _s in sequence}
+    ):
+        return ()
+    named = [members[0] for _p, _n, members, _s in sequence]
+    if len(set(named)) != len(named) or set(named) != set(shown):
+        return ()
+    return tuple(apply_sequence(list(shown), sequence))
 
 
 def _pin_not_found(words: str) -> str:
@@ -1321,6 +1481,18 @@ def _one_unkeyed_clip(
     return len(selected) == 1 and len(rows) == 1 and not rows[0].get("media_id")
 
 
+def creator_mutes_whole_video(brief: CreativeBrief | None) -> bool:
+    """The brief silences every clip's own sound and ``CREATOR_MUTE_WINS_ENABLED`` is on.
+
+    Typed facts only (`clip_sound_toggle_ask.brief_mutes_whole_video`, KRI-667): a partial mute
+    or any "on" ask keeps whatever camera audio the contract pins.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.kria.clip_sound_toggle_ask import brief_mutes_whole_video  # noqa: PLC0415
+
+    return bool(settings.creator_mute_wins_enabled) and brief_mutes_whole_video(brief)
+
+
 def build_render_contract(
     strategy: Mapping[str, Any] | None,
     *,
@@ -1423,7 +1595,22 @@ def build_render_contract(
         str(item) for item in clip_order if str(item).strip() and str(item) not in hidden_ids
     )
     order_basis = "confirmed" if order_ids else None
+    placed_rule = False
     unresolved: list[str] = []
+    # Leverkusen M2: parts of clips the creator asked never to show. `strategy` is already
+    # collapsed onto the kept copy of a byte-identical upload. One nobody settled (no clip,
+    # edge or seconds) is never rendered around.
+    hidden_parts = tuple(
+        HiddenPartRequirement(media_id=part.media_id, edge=part.edge, seconds=part.seconds)
+        for part in hidden_parts_from_strategy(raw)
+    )
+    unresolved.extend(
+        say(
+            en=f"I still need to know which part of {name} to leave out.",
+            tr=f"{name} içinde hangi bölümü göstermeyeceğimi hâlâ bilmem gerekiyor.",
+        )
+        for name in unsettled_hidden_parts(raw)
+    )
     song_time_owns_order = bool(
         typed
         and typed.audio_strategy == "user_song"
@@ -1498,6 +1685,12 @@ def build_render_contract(
                     # take says it (`phone_spoken_text`). Its own receipt answers it ("not
                     # heard" / "can't"), so pinning it would refuse an honest render.
                     # KRI-791: so does one whose word the ask doesn't name ("which word?").
+                    continue
+                if talking_edit and _talking_list_label(requirement, raw):
+                    # Item 19: a Talking edit draws a numbered list label (or the name of a
+                    # planned recording) only where its item's part starts
+                    # (`phone_list_labels`). An item never heard gets no label and its own
+                    # receipt says so, so pinning it would refuse an honest render.
                     continue
                 shot_index = None
                 if requirement.is_shot_text:
@@ -1601,7 +1794,9 @@ def build_render_contract(
                     # strict model takes no new field (old workers must read every
                     # contract): the brief receipt proves where each described group
                     # landed (`brief_checks._check_order`), and a checked receipt that is
-                    # not met blocks the unified montage before anything renders.
+                    # not met blocks the unified montage before anything renders. A list that
+                    # places every shown clip is pinned below (KRI-1112).
+                    placed_rule = True
                     continue
                 if (
                     one_clip
@@ -1725,6 +1920,21 @@ def build_render_contract(
                 else tuple(sorted(shown, key=lambda media_id: dates[media_id]))
             )
             order_basis = "capture_time"
+    if placed_rule and not order_required:
+        # KRI-1112 (prod thread 83f2dcaa, 13:39): "Use exactly this order: IMG_1028, IMG_1036,
+        # IMG_1037, IMG_1039, IMG_1043" placed every clip by its file name, but a rule with no
+        # basis pinned nothing, so approval could never confirm it. A complete list is the
+        # whole order: pin it, so the phone verifier refuses a render that plays another.
+        listed = _creator_listed_order(
+            sequence,
+            [
+                *(str(row.get("media_id") or "") for row in edit_rows if isinstance(row, Mapping)),
+                *(str(row["media_id"]) for row in _edit_visuals(media_snapshot, raw, hidden_ids)),
+            ],
+            stated_anchors(brief),
+        )
+        if listed:
+            order_required, order_ids, order_basis = True, listed, CREATOR_LIST_ORDER_BASIS
     if (
         order_required
         and order_ids
@@ -1813,6 +2023,11 @@ def build_render_contract(
             tuple(str(value) for value in ids) if typed.montage_audio.preserve_source_audio else ()
         )
         original_audio = "require" if typed.montage_audio.preserve_source_audio else "forbid"
+    if (original_audio == "require" or source_ids) and creator_mutes_whole_video(brief):
+        # Qendresa case 4: the creator's typed whole-video mute outranks the strategy's camera
+        # audio (`original_audio` is the planner's pick when no song fits). Pinning it would
+        # refuse the muted recipe the draft already promised; "forbid" already agrees.
+        original_audio, source_ids = None, ()
     data: dict[str, Any] = dict(
         version=1,
         generation_id=generation_id,
@@ -1828,6 +2043,8 @@ def build_render_contract(
         order_basis=order_basis,
         unresolved=tuple(unresolved),
     )
+    if hidden_parts:
+        data["hidden_parts"] = hidden_parts
     return CreatorRenderContract(**data).rebind()
 
 
@@ -2368,6 +2585,61 @@ def creator_length_note(
     return f"The video runs about {actual} seconds; you asked for {requested:g}"
 
 
+def _contract_media_id(asset: object) -> str | None:
+    """The contract's id for a recipe source: an original's media id, or ``asset-<id>`` for
+    a Visuals photo or video (KRI-1069, KRI-1102). ``None`` for anything else."""
+    if isinstance(asset, OriginalRenderAsset):
+        return asset.media_id
+    if isinstance(asset, VisualRenderAsset):
+        return f"asset-{asset.visual_id}"
+    return None
+
+
+def _verify_hidden_parts(
+    contract: CreatorRenderContract, recipe: EditRecipeV2, manifest: Mapping[str, Any]
+) -> None:
+    """Leverkusen M2: no clip of the recipe reads a second of a part the creator hid.
+
+    Every track (picture, sound, overlay) of every original or Visuals video is checked by
+    its own source window: a crossfade overlaps two clips on the timeline, never reads
+    outside either window (`KriaMediaEngine` ClipTransitionTiming), and a held frame is the
+    window's last one. An end part needs the file's length; a clip without one is refused.
+    """
+    by_media: dict[str, list[HiddenPart]] = {}
+    for row in contract.hidden_parts:
+        part = HiddenPart(row.media_id, row.edge, row.seconds)
+        by_media.setdefault(row.media_id, []).append(part)
+    lengths = {asset.id: asset.duration for asset in recipe.assets}
+    for track in recipe.tracks:
+        for clip in track.clips:
+            media_id = _contract_media_id(manifest.get(clip.source_asset_id))
+            if media_id is None:
+                continue
+            parts = by_media.get(media_id)
+            if not parts:
+                continue
+            length = lengths.get(clip.source_asset_id)
+            if length is None and any(part.edge == "end" for part in parts):
+                raise _phone_decline(
+                    "hidden_parts", "I couldn't check that this edit leaves out the part you hid."
+                )
+            if shows_hidden(
+                clip.source_start,
+                clip.source_start + clip.source_duration,
+                float(length) if length is not None else float("inf"),
+                parts,
+            ):
+                raise _phone_decline(
+                    "hidden_parts", "This edit would show a part of a clip you asked me to hide."
+                )
+
+
+def _text_layer_index(layer_id: str) -> int | None:
+    """N of a compiled `text-N` layer id (None for any other id)."""
+    head, _, tail = layer_id.rpartition("-")
+    return int(tail) if head == "text" and tail.isdigit() else None
+
+
 def verify_phone_recipe(
     contract: CreatorRenderContract,
     recipe: EditRecipeV2,
@@ -2388,6 +2660,8 @@ def verify_phone_recipe(
     if contract.unresolved:
         raise unresolved_decline(contract.unresolved[0])
     manifest = {asset.id: asset for asset in recipe.asset_manifest.assets}
+    if contract.hidden_parts:
+        _verify_hidden_parts(contract, recipe, manifest)
     receipts: list[dict[str, Any]] = []
     observation = check_recipe_duration(
         contract,
@@ -2524,9 +2798,9 @@ def verify_phone_recipe(
                 lines[-1].append(text)
         return "\n".join("".join(line) for line in lines)
 
-    def text_layers() -> list[tuple[str, str, float, float]]:
+    def text_layers() -> list[tuple[str, str, float, float, float]]:
         return [
-            (layer.id, _normal(_layer_text(layer)), layer.start, layer.end)
+            (layer.id, _normal(_layer_text(layer)), layer.start, layer.end, layer.anchor_y)
             for layer in recipe.text_layers
             if layer.runs
             and all(
@@ -2543,9 +2817,47 @@ def verify_phone_recipe(
 
     rendered = text_layers()
     rendered_evidence = [
-        {"element_id": layer_id, "text": text, "start_s": start, "end_s": end}
-        for layer_id, text, start, end in rendered
+        {
+            "element_id": layer_id,
+            "text": text,
+            "start_s": start,
+            "end_s": end,
+            "anchor_y": anchor_y,
+        }
+        for layer_id, text, start, end, anchor_y in rendered
     ]
+    # Item 14: Qendresa's "comment READ" ending is drawn as two layers (a small "comment"
+    # over a big keyword) in the same window, so the confirmed closing text is never ONE
+    # layer. A recipe carries only `text-<index>` layer ids (no element ids), so the pair is
+    # recognised structurally: two visible layers that follow each other in the text lane,
+    # share a window (within a frame), and read "comment <keyword>". One joined row is added.
+    from app.pipeline.phone_cta_text import cta_ending_parts  # noqa: PLC0415
+
+    # Each rendered layer also carries its `anchor_y` (item 20's stacked-title check reads it).
+    for (lead_id, lead_text, lead_start, lead_end, lead_y), (
+        key_id,
+        key_text,
+        key_start,
+        key_end,
+        _key_y,
+    ) in zip(rendered, rendered[1:], strict=False):
+        lead_index = _text_layer_index(lead_id)
+        if (
+            lead_index is not None  # `text-0` is a real layer: never `or` the index
+            and _text_layer_index(key_id) == lead_index + 1
+            and abs(lead_start - key_start) <= frame
+            and abs(lead_end - key_end) <= frame
+            and cta_ending_parts(f"{lead_text} {key_text}") == (lead_text, key_text)
+        ):
+            rendered_evidence.append(
+                {
+                    "element_id": f"{lead_id}+{key_id}",
+                    "text": _normal(f"{lead_text} {key_text}"),
+                    "start_s": lead_start,
+                    "end_s": lead_end,
+                    "anchor_y": lead_y,
+                }
+            )
     for requirement in contract.exact_texts:
         matches = text_matches(
             rendered_evidence,
@@ -2553,6 +2865,11 @@ def verify_phone_recipe(
             role=requirement.role,
             tolerance_s=frame,
         )
+        if not matches and requirement.role == "opening":
+            # Item 20: a " / " title drawn as one row per line, stacked top to bottom.
+            from app.pipeline.phone_title_look import stacked_title_matches  # noqa: PLC0415
+
+            matches = stacked_title_matches(rendered_evidence, requirement.text, tolerance_s=frame)
         if (
             not matches
             and requirement.role == "any"
@@ -2596,11 +2913,12 @@ def verify_phone_recipe(
             if requirement.shot_index is not None:
                 targets = picture[requirement.shot_index : requirement.shot_index + 1]
             elif requirement.media_id:
+                # KRI-1102: a label on a Visuals photo is looked for on that photo's shot.
                 targets = [
                     clip
                     for clip in picture
-                    if isinstance(manifest.get(clip.source_asset_id), OriginalRenderAsset)
-                    and manifest[clip.source_asset_id].media_id == requirement.media_id
+                    if _contract_media_id(manifest.get(clip.source_asset_id))
+                    == requirement.media_id
                 ]
             group = text_source_group(contract.exact_texts, requirement)
             if group:
@@ -2610,14 +2928,15 @@ def verify_phone_recipe(
                     media_id=requirement.media_id or "",
                     spans=[
                         (
-                            manifest[clip.source_asset_id].media_id,
+                            source,
                             clip.timeline_start,
                             clip.timeline_start
                             + clip.source_duration / clip.rate
                             + (clip.hold_duration or 0),
                         )
                         for clip in picture
-                        if isinstance(manifest.get(clip.source_asset_id), OriginalRenderAsset)
+                        if (source := _contract_media_id(manifest.get(clip.source_asset_id)))
+                        is not None
                     ],
                     tolerance_s=frame,
                     minimum_overlap_s=frame,
@@ -2644,13 +2963,9 @@ def verify_phone_recipe(
     if contract.order_required:
         actual: list[str] = []
         for clip in picture:
-            asset = manifest.get(clip.source_asset_id)
-            if isinstance(asset, OriginalRenderAsset):
-                media_id = asset.media_id
-            elif isinstance(asset, VisualRenderAsset):
-                # KRI-1069: a Visuals photo or video sits in the order under its manifest id.
-                media_id = f"asset-{asset.visual_id}"
-            else:
+            # KRI-1069: a Visuals photo or video sits in the order under its manifest id.
+            media_id = _contract_media_id(manifest.get(clip.source_asset_id))
+            if media_id is None:
                 raise _phone_decline(
                     "order_required",
                     "This edit has an unverified picture source in the confirmed order.",

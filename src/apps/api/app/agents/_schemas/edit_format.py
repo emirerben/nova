@@ -68,6 +68,10 @@ SLIDES_DRAWING_RENDERER_VERSION = 4
 # Same for pasted image stickers (KRI-647): a post with any slide sticker is stamped 5 by
 # a worker that composites them, and a stickered draft rendered by an older worker is stale.
 SLIDES_STICKER_RENDERER_VERSION = 5
+# Same for a tilted slide (KRI-1138): a post with any slide tilt is stamped 6 by a worker that
+# turns the media (and, being newest, also paints drawings and stickers); a tilted draft rendered
+# by an older worker would export it upright, so it is stale, never "current".
+SLIDES_TILT_RENDERER_VERSION = 6
 
 EDIT_FORMATS: tuple[str, ...] = get_args(EditFormat)
 

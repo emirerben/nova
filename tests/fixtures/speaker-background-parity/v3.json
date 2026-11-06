@@ -1,0 +1,230 @@
+{
+ "description": "Speaker-background layer wire contract, KRI-1173 extension (a solid-colour FILL: `media_kind: \"color\"` + `color: \"#RRGGBB\"`, no `asset_id`). Every `valid` layer must decode (Python SpeakerBackgroundLayer, Swift SpeakerBackgroundLayer) and equal its `normalized` form; every `invalid` entry must be rejected by both. v1.json and v2.json still apply unchanged: a media fill serialises exactly as there (`color` never written for it; `asset_id` never written for a colour). The colour is exactly `#` + six UPPERCASE hex digits on this wire; normalisation of case or names happens before it.",
+ "valid": [
+  {
+   "name": "white-fill",
+   "layer": {
+    "media_kind": "color",
+    "color": "#FFFFFF"
+   },
+   "normalized": {
+    "media_kind": "color",
+    "color": "#FFFFFF",
+    "source_start": 0.0,
+    "loop": true,
+    "subject_track_id": "subtitled"
+   }
+  },
+  {
+   "name": "green-fill-explicit-defaults",
+   "layer": {
+    "media_kind": "color",
+    "color": "#00FF00",
+    "source_start": 0,
+    "loop": true,
+    "subject_track_id": "subtitled"
+   },
+   "normalized": {
+    "media_kind": "color",
+    "color": "#00FF00",
+    "source_start": 0.0,
+    "loop": true,
+    "subject_track_id": "subtitled"
+   }
+  },
+  {
+   "name": "colour-fill-under-photo-windows-and-a-corner-speaker",
+   "layer": {
+    "media_kind": "color",
+    "color": "#1A2B3C",
+    "windows": [
+     {
+      "asset_id": "visual-a",
+      "media_kind": "image",
+      "start": 0,
+      "end": 4
+     },
+     {
+      "asset_id": "visual-v",
+      "media_kind": "video",
+      "source_start": 1.5,
+      "start": 6,
+      "end": 9
+     }
+    ],
+    "speaker_frame": {
+     "width_fraction": 0.42,
+     "x_fraction": 0.76,
+     "y_fraction": 0.8
+    }
+   },
+   "normalized": {
+    "media_kind": "color",
+    "color": "#1A2B3C",
+    "source_start": 0.0,
+    "loop": true,
+    "subject_track_id": "subtitled",
+    "windows": [
+     {
+      "asset_id": "visual-a",
+      "media_kind": "image",
+      "source_start": 0.0,
+      "start": 0.0,
+      "end": 4.0
+     },
+     {
+      "asset_id": "visual-v",
+      "media_kind": "video",
+      "source_start": 1.5,
+      "start": 6.0,
+      "end": 9.0
+     }
+    ],
+    "speaker_frame": {
+     "width_fraction": 0.42,
+     "x_fraction": 0.76,
+     "y_fraction": 0.8
+    }
+   }
+  },
+  {
+   "name": "media-fill-still-has-no-color-key",
+   "layer": {
+    "asset_id": "visual-fill",
+    "media_kind": "image"
+   },
+   "normalized": {
+    "asset_id": "visual-fill",
+    "media_kind": "image",
+    "source_start": 0.0,
+    "loop": true,
+    "subject_track_id": "subtitled"
+   }
+  }
+ ],
+ "invalid": [
+  {
+   "name": "colour-missing-the-color-key",
+   "layer": {
+    "media_kind": "color"
+   }
+  },
+  {
+   "name": "colour-with-an-asset-id",
+   "layer": {
+    "asset_id": "visual-fill",
+    "media_kind": "color",
+    "color": "#FFFFFF"
+   }
+  },
+  {
+   "name": "colour-with-a-null-asset-id",
+   "layer": {
+    "asset_id": null,
+    "media_kind": "color",
+    "color": "#FFFFFF"
+   }
+  },
+  {
+   "name": "photo-fill-with-a-color-key",
+   "layer": {
+    "asset_id": "visual-fill",
+    "media_kind": "image",
+    "color": "#FFFFFF"
+   }
+  },
+  {
+   "name": "video-fill-with-a-color-key",
+   "layer": {
+    "asset_id": "visual-fill",
+    "media_kind": "video",
+    "color": "#FFFFFF"
+   }
+  },
+  {
+   "name": "colour-lowercase-hex",
+   "layer": {
+    "media_kind": "color",
+    "color": "#ffffff"
+   }
+  },
+  {
+   "name": "colour-short-hex",
+   "layer": {
+    "media_kind": "color",
+    "color": "#FFF"
+   }
+  },
+  {
+   "name": "colour-with-alpha",
+   "layer": {
+    "media_kind": "color",
+    "color": "#FFFFFF80"
+   }
+  },
+  {
+   "name": "colour-without-the-hash",
+   "layer": {
+    "media_kind": "color",
+    "color": "FFFFFF"
+   }
+  },
+  {
+   "name": "colour-named",
+   "layer": {
+    "media_kind": "color",
+    "color": "white"
+   }
+  },
+  {
+   "name": "colour-empty",
+   "layer": {
+    "media_kind": "color",
+    "color": ""
+   }
+  },
+  {
+   "name": "colour-null",
+   "layer": {
+    "media_kind": "color",
+    "color": null
+   }
+  },
+  {
+   "name": "colour-with-a-source-start",
+   "layer": {
+    "media_kind": "color",
+    "color": "#FFFFFF",
+    "source_start": 2
+   }
+  },
+  {
+   "name": "colour-window-is-not-allowed",
+   "layer": {
+    "media_kind": "color",
+    "color": "#FFFFFF",
+    "windows": [
+     {
+      "media_kind": "color",
+      "color": "#000000",
+      "start": 0,
+      "end": 4
+     }
+    ]
+   }
+  },
+  {
+   "name": "media-fill-without-an-asset-id",
+   "layer": {
+    "media_kind": "image"
+   }
+  },
+  {
+   "name": "unknown-media-kind",
+   "layer": {
+    "media_kind": "colour",
+    "color": "#FFFFFF"
+   }
+  }
+ ]
+}

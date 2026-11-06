@@ -23,13 +23,30 @@ struct RecipeVideoLayer: @unchecked Sendable {
     var overlayPreserveAlpha: Bool? = nil
     var overlayCenter: CGPoint = .zero
     var visualPlacement: VisualMediaPlacement? = nil
+    /// Clockwise degrees a PLACED card (a clip with a `visualPlacement`) is turned about its centre: the clip's
+    /// `transform.rotationDegrees`, which the placement path otherwise ignores. See `TimelineClip.placementTiltDegrees`.
+    var placementTilt: Double = 0
     var visualOrder: Int = 0
     var overlayDissolve: NativeDissolveRenderer? = nil
     var sourceCrop: NormalizedSourceRect? = nil
+    var backdrop: ClipBackdrop? = nil
+    /// Set only on a layer that exists to be a clip's `.media` backdrop: the pool visual id it draws. Such a layer
+    /// is never composed onto the canvas itself; `composeVideoLayer` reads it under the clips that name it.
+    var backdropAssetID: String? = nil
     /// Set only for an overlay clip with `overlayFadeIn`/`overlayFadeOut`.
     /// It scales opacity alone; positioning keeps using `transform`.
     var overlayFade: OverlayFadeWindow? = nil
+    /// Set only when the recipe has a `speakerBackground` (KRI-1116).
+    var speakerRole: SpeakerBackgroundRole? = nil
+    /// A timed speaker-background window (KRI-1162); the fill background leaves this false.
+    var speakerBackgroundWindow: Bool = false
+    /// Paint the canvas the fitted source leaves uncovered with the source's own edge pixels. Only the Kria
+    /// outro sets it: a flat paper card fitted to a non-9:16 canvas, whose edges ARE the paper (KRI-1154).
+    var extendsEdgesToCanvas: Bool = false
 }
+
+/// The two layers the speaker matte composes: the background replaces the speaker's room.
+enum SpeakerBackgroundRole: Sendable { case background, speaker }
 
 /// An overlay clip's fade across the window its layer actually occupies,
 /// evaluated with the same curve as `VisualMediaPlacement` (see `fadeEnvelope`).
@@ -126,6 +143,20 @@ enum RecipeInstructionTiming {
     }
 }
 
+/// Which part of a Talk-to-camera scene an instruction paints. The editor moves or resizes the framed speaker
+/// by hand over three stills of the SAME instruction: everything under the speaker, the framed cut-out alone, and
+/// everything above it (`docs/reviews/speaker-frame-direct-manipulation-failure-modes.md`, SF4). Only `.whole`
+/// is ever played or exported.
+enum SpeakerSlice: Sendable {
+    case whole
+    /// Layers sorted below the speaker and the background, opaque. No speaker, nothing above it.
+    case belowSpeaker
+    /// The framed speaker alone on a clear canvas, through the same matte branch as `.whole` (SF7, SF8).
+    case speakerOnly
+    /// Everything drawn after the speaker (cards, fills, motion, text, above-text media, drawings) on a clear canvas.
+    case aboveSpeaker
+}
+
 final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProtocol, @unchecked Sendable {
     let timeRange: CMTimeRange
     let enablePostProcessing = true
@@ -142,20 +173,56 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
     /// Text behind people: one per composition (shared across the compositor instances the player,
     /// exporter and image generator each create), present only when a text layer is flagged.
     let subjectMatte: NativeSubjectMatte?
+    /// Talk-to-camera green screen: one per composition, present only when the recipe has a background.
+    let speakerMatte: SpeakerMatte?
+    /// Where the matted speaker is drawn (KRI-1162); nil draws it full-frame, as before.
+    let speakerFrame: SpeakerFrame?
+    /// Qendresa item 16: spans (edit seconds) where the speaker's own take is drawn full-frame, unmasked, with no background. Decided
+    /// per frame by `time` in `composeBelowText`, never by this instruction's range, so the edges are frame-exact (S81).
+    let fullScreenWindows: [SpeakerFullScreenWindow]
+    /// `.whole` everywhere except the editor's speaker-manipulation stills.
+    let speakerSlice: SpeakerSlice
     let canvas: CGRect
     let transparentBackground: Bool
-    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, drawings: NativeDrawingStore? = nil, transparentBackground: Bool = false, subjectMatte: NativeSubjectMatte? = nil) {
+    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, drawings: NativeDrawingStore? = nil, transparentBackground: Bool = false, subjectMatte: NativeSubjectMatte? = nil, speakerMatte: SpeakerMatte? = nil, speakerFrame: SpeakerFrame? = nil, fullScreenWindows: [SpeakerFullScreenWindow] = [], speakerSlice: SpeakerSlice = .whole) {
+        self.speakerSlice = speakerSlice
         self.transparentBackground = transparentBackground
         self.drawings = drawings
         self.subjectMatte = subjectMatte
+        self.speakerMatte = speakerMatte
+        self.speakerFrame = speakerFrame
+        self.fullScreenWindows = fullScreenWindows
         self.cameraPulses = cameraPulses
         self.motionScenes = motionScenes
         self.timeRange = timeRange
+        // A window layer in this range covers all of it (the ranges are tiled on every layer boundary), so the
+        // fill shows nowhere here: leave its track out so a video fill is not decoded behind a window (S31).
+        let layers = layers.contains(where: \.speakerBackgroundWindow)
+            ? layers.filter { $0.speakerRole != .background || $0.speakerBackgroundWindow } : layers
         self.layers = layers.enumerated().sorted { a, b in a.element.visualOrder == b.element.visualOrder ? a.offset < b.offset : a.element.visualOrder < b.element.visualOrder }.map(\.element)
         self.text = text
         self.textStore = textStore
         self.canvas = CGRect(origin: .zero, size: canvas)
         self.requiredSourceTrackIDs = layers.compactMap(\.trackID).map { NSNumber(value: $0) }
+    }
+    /// This instruction painting only `part` of the scene around the framed speaker. The speaker slice and the
+    /// part above it draw on a clear canvas; the part above drops the text-behind-subject matte, whose mask would be
+    /// read from a scene without the speaker (the dragged scene paints such text plain while the finger is down).
+    func slicedAroundSpeaker(_ part: SpeakerSlice) -> RecipeVideoInstruction {
+        RecipeVideoInstruction(timeRange: timeRange, layers: layers, text: text, canvas: canvas.size,
+            cameraPulses: cameraPulses, motionScenes: motionScenes, textStore: textStore, drawings: drawings,
+            transparentBackground: part == .speakerOnly || part == .aboveSpeaker,
+            subjectMatte: part == .aboveSpeaker ? nil : subjectMatte, speakerMatte: speakerMatte,
+            speakerFrame: speakerFrame, fullScreenWindows: fullScreenWindows, speakerSlice: part)
+    }
+    /// The framed speaker is on screen at `time`: a frame is set and one of this range's speaker clips is active
+    /// (an ending clip on the speaker track, or a stretch with no speaker clip, has nothing to select; SF2).
+    /// Inside a full-screen window (Qendresa item 16) the speaker fills the canvas, so there is no framed speaker to select.
+    func showsFramedSpeaker(at time: Double) -> Bool {
+        speakerFrame != nil && speakerMatte != nil
+            && !SpeakerBackgroundLayer.fullScreen(fullScreenWindows, at: time)
+            && layers.contains { $0.speakerRole == .speaker && time >= $0.start && time < $0.end }
+            && layers.contains { $0.speakerRole == .background && time >= $0.start && time < $0.end }
     }
     func activeText(at time: Double) throws -> [RecipeTextLayer] {
         guard let textStore else { return text.filter { time >= $0.start && time < $0.end } }
@@ -196,9 +263,15 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                 }
                 let time = request.compositionTime.seconds
                 var frame = CIImage(color: instruction.transparentBackground ? .clear : .black).cropped(to: instruction.canvas)
-                for layer in instruction.layers where time >= layer.start && time < layer.end && !layer.overlayAboveText {
-                    do { frame = try composeVideoLayer(layer, onto: frame, instruction: instruction, request: request, time: time) }
-                    catch { request.finish(with: error); return }
+                let belowText = instruction.layers.filter { time >= $0.start && time < $0.end && !$0.overlayAboveText }
+                do { frame = try composeBelowText(belowText, onto: frame, instruction: instruction, request: request, time: time) }
+                catch { request.finish(with: error); return }
+                // The stills under the speaker and of the speaker alone end here: motion, text, above-text media and
+                // drawings all sit above the speaker and belong to `.aboveSpeaker`.
+                if instruction.speakerSlice == .belowSpeaker || instruction.speakerSlice == .speakerOnly {
+                    context.render(frame, to: output, bounds: instruction.canvas, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+                    request.finish(withComposedVideoFrame: output)
+                    return
                 }
                 if let motion = instruction.motionScenes {
                     do { frame = try motion.image(at: time).composited(over: frame) }
@@ -221,11 +294,92 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             }
         }
     }
-    private func composeVideoLayer(_ layer: RecipeVideoLayer, onto background: CIImage,
-                                   instruction: RecipeVideoInstruction, request: AVAsynchronousVideoCompositionRequest,
-                                   time: Double) throws -> CIImage {
-        var frame = background
-        let source: CIImage
+    /// The layers under the text. With a speaker background the order is: layers sorted below the first
+    /// speaker layer, the background, the speaker layer(s) times the person mask, then every other layer
+    /// (cutaways, fullscreen and overlay cards, fills) exactly as without a background, so nothing above the
+    /// speaker is ever matted (S8). The background shows only under an active speaker clip, so an ending
+    /// clip on the same track is untouched.
+    private func composeBelowText(_ candidates: [RecipeVideoLayer], onto canvas: CIImage, instruction: RecipeVideoInstruction,
+                                  request: AVAsynchronousVideoCompositionRequest, time: Double) throws -> CIImage {
+        let layers = candidates.filter { $0.backdropAssetID == nil }
+        var frame = canvas
+        func compose(_ layer: RecipeVideoLayer) throws { frame = try composeVideoLayer(layer, onto: frame, instruction: instruction, request: request, time: time) }
+        // `layers` holds only what is active at `time`: the one window covering it (windows are disjoint), else the fill (S28).
+        let backgrounds = layers.filter { $0.speakerRole == .background }
+        let slice = instruction.speakerSlice
+        // Qendresa item 16: inside a full-screen window the speaker's own take is drawn untouched. No matte is asked (so a
+        // failed or slow mask can never show here), no background and no frame; every other layer draws as usual. The
+        // editor never slices here (`showsFramedSpeaker` is false inside a window), so only the whole scene or the part
+        // "below" paints anything.
+        if !instruction.fullScreenWindows.isEmpty, SpeakerBackgroundLayer.fullScreen(instruction.fullScreenWindows, at: time) {
+            guard slice == .whole || slice == .belowSpeaker else { return frame }
+            instruction.speakerMatte?.trace.record(.fullScreen, at: time)
+            for layer in layers where layer.speakerRole != .background { try compose(layer) }
+            return frame
+        }
+        guard let matte = instruction.speakerMatte,
+              let background = backgrounds.first(where: \.speakerBackgroundWindow) ?? backgrounds.first,
+              let first = layers.firstIndex(where: { $0.speakerRole == .speaker }) else {
+            // The editor slices only where the framed speaker shows (`showsFramedSpeaker`); anywhere else the whole
+            // scene is "below" and there is no speaker and nothing above it.
+            guard slice == .whole || slice == .belowSpeaker else { return frame }
+            // A background is part of the edit but no clip can ever be cut out of it: say so instead of drawing the room
+            // silently. A speaker-less stretch of an edit that does have speaker clips (the ending clip) is not this.
+            if slice == .whole, let matte = instruction.speakerMatte, !backgrounds.isEmpty, matte.trace.hasNoSpeakerClips {
+                matte.trace.record(.noSpeakerLayer, at: time)
+            }
+            for layer in layers where layer.speakerRole != .background { try compose(layer) }
+            return frame
+        }
+        if slice == .aboveSpeaker {
+            for layer in layers[first...] where layer.speakerRole == nil { try compose(layer) }
+            return frame
+        }
+        if slice != .speakerOnly { for layer in layers[..<first] where layer.speakerRole == nil { try compose(layer) } }
+        if slice == .belowSpeaker, instruction.speakerFrame != nil {
+            // With a frame every matte answer draws the background under the speaker (S27, S27b), so the still
+            // under the speaker needs no segmentation.
+            try compose(background)
+            return frame
+        }
+        let speakers = layers[first...].filter { $0.speakerRole == .speaker }
+        var speaker = CIImage(color: .clear).cropped(to: instruction.canvas)
+        for layer in speakers { speaker = try composeVideoLayer(layer, onto: speaker, instruction: instruction, request: request, time: time) }
+        let key = speakers.map { $0.clipID ?? String($0.trackID ?? -1) }.joined(separator: "|")
+        switch matte.answer(for: speaker, at: time, canvas: instruction.canvas, clipKey: key, backgroundStaysDrawn: instruction.speakerFrame != nil) {
+        case .cutout(let mask):
+            if slice != .speakerOnly { try compose(background) }
+            // The mask was computed on the full-size speaker layer; only then is the cut-out moved into its frame (S27).
+            var cut = SpeakerMatte.cutOut(speaker, mask: mask, canvas: instruction.canvas, config: matte.config) ?? speaker
+            if let speakerFrame = instruction.speakerFrame { cut = Self.framed(cut, in: speakerFrame, canvas: instruction.canvas) }
+            if slice != .belowSpeaker { frame = cut.composited(over: frame).cropped(to: instruction.canvas) }
+        case .backgroundOnly:
+            if slice != .speakerOnly { try compose(background) }
+        case .original:
+            if let speakerFrame = instruction.speakerFrame {
+                // No reliable mask: the plain speaker layer sits small in its frame over the background.
+                if slice != .speakerOnly { try compose(background) }
+                frame = Self.framed(speaker, in: speakerFrame, canvas: instruction.canvas).composited(over: frame).cropped(to: instruction.canvas)
+            } else if slice != .belowSpeaker {
+                for layer in speakers { try compose(layer) }
+            }
+        }
+        if slice == .whole { for layer in layers[first...] where layer.speakerRole == nil { try compose(layer) } }
+        return frame
+    }
+
+    /// `image` (a canvas-sized speaker layer) scaled uniformly so its width is `widthFraction` of the canvas
+    /// width, centred at (`xFraction`, `yFraction`). Fractions use the top-left origin of
+    /// `VisualMediaPlacement`; Core Image's origin is bottom-left, so the centre sits at `height * (1 - yFraction)`.
+    static func framed(_ image: CIImage, in frame: SpeakerFrame, canvas: CGRect) -> CIImage {
+        image.transformed(by: CGAffineTransform(translationX: -canvas.midX, y: -canvas.midY)
+            .concatenating(CGAffineTransform(scaleX: frame.widthFraction, y: frame.widthFraction))
+            .concatenating(CGAffineTransform(translationX: canvas.minX + canvas.width * frame.xFraction,
+                                             y: canvas.minY + canvas.height * (1 - frame.yFraction))))
+    }
+
+    /// The layer's own picture for this request: its track's frame (graded when it carries a look) or its image.
+    private func sourceImage(of layer: RecipeVideoLayer, request: AVAsynchronousVideoCompositionRequest) throws -> CIImage? {
         if let trackID = layer.trackID {
             guard let buffer = request.sourceFrame(byTrackID: trackID) else {
                 throw MediaEngineError.missingAsset(String(trackID))
@@ -235,18 +389,41 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             // otherwise Core Image converts the Rec.709 transfer curve
             // again and visibly brightens the source before any effect.
             // The buffer's YCbCr matrix still controls YUV decoding.
-            do {
-                let graded = layer.look == .goldenHour ? try GoldenHourGrade.apply(to: buffer) : buffer
-                source = CIImage(cvPixelBuffer: graded, options: [.colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
-            } catch {
-                throw error
-            }
-        } else if let image = layer.image {
-            source = image
-        } else { return frame }
+            let graded = layer.look == .goldenHour ? try GoldenHourGrade.apply(to: buffer) : buffer
+            return CIImage(cvPixelBuffer: graded, options: [.colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
+        }
+        return layer.image
+    }
+
+    /// The canvas-sized pool photo or video a clip's `.media` backdrop shows, cover-fit like a fullscreen cutaway.
+    /// nil (nothing drawn) when no backdrop layer carries `poolID`, which a built composition never lacks.
+    private func mediaBackdropImage(_ poolID: String, instruction: RecipeVideoInstruction,
+                                    request: AVAsynchronousVideoCompositionRequest, time: Double) throws -> CIImage? {
+        guard let backdropLayer = instruction.layers.first(where: { $0.backdropAssetID == poolID }),
+              let source = try sourceImage(of: backdropLayer, request: request) else { return nil }
+        return Self.positionedSource(source, layer: backdropLayer, canvas: instruction.canvas, time: time).cropped(to: instruction.canvas)
+    }
+
+    private func composeVideoLayer(_ layer: RecipeVideoLayer, onto background: CIImage,
+                                   instruction: RecipeVideoInstruction, request: AVAsynchronousVideoCompositionRequest,
+                                   time: Double) throws -> CIImage {
+        var frame = background
+        guard var source = try sourceImage(of: layer, request: request) else { return frame }
+        // Clamped BEFORE the transform, on the decoded frame's whole-pixel extent: clamping after it would
+        // repeat the resampled, partly transparent edge column and leave grey bars over the black canvas.
+        if layer.extendsEdgesToCanvas { source = source.clampedToExtent() }
         var alpha = layer.visualPlacement?.alpha(at: time) ?? (layer.fadeIn > 0 ? min(1, max(0, (time - layer.start) / layer.fadeIn)) : 1)
         if layer.visualPlacement == nil, let fade = layer.overlayFade { alpha *= fade.alpha(at: time) }
         var positioned = Self.positionedSource(source, layer: layer, canvas: instruction.canvas, time: time)
+        if let backdrop = layer.backdrop {
+            let under: CIImage?
+            if case .media(let poolID) = backdrop {
+                under = try mediaBackdropImage(poolID, instruction: instruction, request: request, time: time)
+            } else {
+                under = Self.backdropImage(backdrop, source: source, layer: layer, canvas: instruction.canvas, time: time)
+            }
+            if let under { positioned = positioned.composited(over: under).cropped(to: instruction.canvas) }
+        }
         if layer.overlayPopIn {
             let scale = 0.82 + 0.18 * min(1, max(0, (time - layer.start) / 0.18))
             positioned = positioned.transformed(by: CGAffineTransform(translationX: -layer.overlayCenter.x, y: -layer.overlayCenter.y))
@@ -384,8 +561,19 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                 "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 1)
             ]).cropped(to: image.extent)
         }
-        return layer.visualPlacement?.position(image, preferred: layer.preferredTransform, canvas: canvas,
-            time: time, clipStart: layer.start, clipEnd: layer.end) ?? image.transformed(by: transform)
+        guard let placement = layer.visualPlacement else { return image.transformed(by: transform) }
+        let placed = placement.position(image, preferred: layer.preferredTransform, canvas: canvas,
+            time: time, clipStart: layer.start, clipEnd: layer.end)
+        return layer.placementTilt == 0 ? placed : turned(placed, clockwiseDegrees: layer.placementTilt)
+    }
+
+    /// `degrees` is clockwise on screen; Core Image's y axis points up, so its positive angle is counter-clockwise
+    /// and the angle is negated, exactly as `AVPlayerPreviewComposer.transform` does for a main-track tilt.
+    static func turned(_ image: CIImage, clockwiseDegrees degrees: Double) -> CIImage {
+        let centre = CGPoint(x: image.extent.midX, y: image.extent.midY)
+        return image.transformed(by: CGAffineTransform(translationX: -centre.x, y: -centre.y)
+            .concatenating(CGAffineTransform(rotationAngle: -degrees * .pi / 180))
+            .concatenating(CGAffineTransform(translationX: centre.x, y: centre.y)))
     }
 
     /// Converts a normalized, top-left-origin crop in upright space into a Core Image

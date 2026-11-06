@@ -1,0 +1,50 @@
+{
+  "notes": [
+    "strategy.title_animation = \"pop\" and brief r6 (style, global, facts.animation = \"pop\", \"animate the big text in\") are NOT in the recording. They give the fixture an animation ask, the render target of the Talking lane (L2); the recorded request asked for a big \"1810\" without naming motion."
+  ],
+  "strategy": {
+    "title_animation": "pop"
+  },
+  "requirements": [
+    {
+      "id": "r6",
+      "kind": "style",
+      "scope": "global",
+      "literal": null,
+      "description": "animate the big text in",
+      "facts": {
+        "animation": "pop"
+      },
+      "source_turn_id": "synthetic-turn",
+      "status": "open"
+    }
+  ],
+  "checks": {
+    "fields": [
+      "direction",
+      "pacing",
+      "story_structure",
+      "title_animation"
+    ],
+    "asks": [
+      "r6"
+    ],
+    "honored": {
+      "fields": [
+        "title_animation"
+      ],
+      "asks": [
+        "r6"
+      ]
+    },
+    "not_graded": {
+      "r1": "start/end at spoken lines: judged by the Talking writer's cut receipts at render (prod: end_cut not_found, the take ran to the end); not a strategy field the route table owns",
+      "r2": "keep every language as spoken: judged by the render's caption-language receipt (prod captioned the English in Turkish); outside the route registry",
+      "r3": "big 1810 text at the spoken word: a spoken-text cue the Talking writer places at render (prod placed it at 18.975 s)",
+      "r4": "Casa Rosada photo full screen at a spoken phrase: offline the reconstructed manifest has no reaction_beats capability or library photo, so the draft check declines it ('pop-ins aren't available'); prod showed Done and the render dropped it (never_heard). A replay artifact either way, and not a route-table field",
+      "r5": "vertical with his face in frame: judged by the render's speaker framing (prod letterboxed, no_face); outside the route registry",
+      "caption_style": "auto, the schema default: the planner chose no caption style",
+      "target_duration_s": "40 s is the planner's own target; the creator stated no length"
+    }
+  }
+}

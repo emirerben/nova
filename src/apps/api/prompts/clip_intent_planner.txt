@@ -66,6 +66,24 @@ Return every distinct requested operation as one of:
   in `creator_text` and leave `caption_attribute` null. Otherwise leave
   `creator_text` null and use `caption_attribute` only for the factual TOPIC the
   later resolver may author from footage -- never for the target chapter.$exclude_bullet
+- hide_part: a part at the START or the END of ONE clip that must never be shown,
+  while the rest of that clip stays in the edit. "The kids at the start of the
+  second goal clip are another family's children, so don't show them", "keep that
+  clip, just start it after the kids", "don't show the first 3 seconds of the
+  beach clip", "cut the last 2 seconds of the drone shot" and "ikinci klibin ilk 3
+  saniyesini gösterme" are one `hide_part` intent each. `attribute` names the CLIP
+  as the creator described it ("the second goal clip", "the goal clip with the
+  kids at the start"), never only the hidden content. `part_edge` is "start" or
+  "end"; null when the part is in the middle of the clip. `part_s` is the number
+  of seconds from that edge only when the creator wrote one ("the first 3
+  seconds" -> 3, "after about 2.5 seconds" -> 2.5, "the last 2 seconds" -> 2);
+  otherwise null, never a guess: the server asks. When the creator gave more than
+  one number for the same part, use the largest. `part_attribute` is what the part
+  shows, in the creator's words ("the kids"), or null. A later message that only
+  adds the seconds or repeats the ask completes the same part: still ONE
+  hide_part intent for it. A hide_part is never an `exclude` (that leaves the
+  WHOLE clip out) and never an `include`; leave `creator_text`,
+  `caption_attribute` and `position` null.
 No other op exists.
 
 $exclusion_rules$exclusive_rules
@@ -253,4 +271,4 @@ question. Do not ask because a factual answer is unknown; the resolver handles
 that. Never return a subset.
 
 Return only JSON:
-{"intents":[{"intent_id":"...","op":"label|group|order|include|caption$exclude_op","attribute":"...","label_source":"clip|transcript","transcript_kind":"participant|score|topic|null","creator_text":null,"caption_attribute":null,"position":null,"placeholder":false$order_by_field$exclusive_field$requirement_field,"source_quote":"exact creator quote"}],"question":null}
+{"intents":[{"intent_id":"...","op":"label|group|order|include|caption$exclude_op|hide_part","attribute":"...","label_source":"clip|transcript","transcript_kind":"participant|score|topic|null","creator_text":null,"caption_attribute":null,"position":null,"placeholder":false$order_by_field$exclusive_field$requirement_field,"part_edge":"start|end|null","part_s":null,"part_attribute":null,"source_quote":"exact creator quote"}],"question":null}

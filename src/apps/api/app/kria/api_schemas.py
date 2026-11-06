@@ -236,10 +236,23 @@ class TurnAccepted(BaseModel):
     recoverable_held_turn_id: str | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    # A tapped suggestion card this turn is known to refuse: "refused" when the thread was never
+    # offered the card (known at submit) or when a replay finds the turn already refused it.
+    # Every refusal the worker makes later carries the same record on its assistant event
+    # (`payload.suggestion_pin`). Omitted otherwise, so an old build sees the ack it always did.
+    suggestion_outcome: Literal["refused"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class TurnCancelBody(_StrictBody):
     expected_thread_revision: int = Field(ge=0)
+    # Steer now: stop this running turn so the message waiting behind it runs now
+    # (docs/pipelines/steer-now.md). Default false = the plain cancel, unchanged.
+    steer: bool = False
+    # Steer now's trash / Edit: cancel only while the turn still waits (409
+    # `turn_no_longer_queued` once Kria picked it up). Default false = unchanged.
+    only_if_queued: bool = False
 
 
 class RenderRetryBody(_StrictBody):
@@ -286,6 +299,11 @@ class ApprovalDecisionBody(_StrictBody):
     # direction, so changing it must never invalidate the approval.
     output_orientation: Literal["portrait", "landscape"] | None = None
     landscape_fit: Literal["fit", "fill"] | None = None
+    # Who made the shape above: "explicit_pick" = the creator touched the picker,
+    # "preselected" = the app is echoing the server's default back. Newer clients send it;
+    # absent (older clients), the server infers from the value (an echoed default equals
+    # the offered one). Not part of `approval_fingerprint()`.
+    render_shape_origin: Literal["explicit_pick", "preselected"] | None = None
 
     @field_validator("expected_approval_fingerprint")
     @classmethod

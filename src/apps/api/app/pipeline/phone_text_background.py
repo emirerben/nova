@@ -7,13 +7,34 @@ import subprocess
 WIDTH, HEIGHT = 108, 192
 
 
-def sample_background(path: str, at_s: float, *, crop=None, canvas=None) -> bytes | None:
+def sample_background(
+    path: str, at_s: float | None, *, crop=None, canvas=None, focus=None
+) -> bytes | None:
+    """One gray frame of ``path`` at ``at_s``, cover-fit to the analysis grid. ``at_s`` None reads
+    the first frame without seeking: a still photo (Green 5 backgrounds), where an input seek,
+    even to 0, yields no frame.
+
+    ``focus`` (Qendresa item 18, ``{"x", "y", "zoom"}``): the picture placed the way the phone
+    places an aimed background (`VisualMediaPlacement`): scaled by cover x zoom but never below
+    contain, offset by (canvas - picture) x focal, black where it does not reach the frame."""
     filters = []
     if crop is not None:
         filters.append(f"crop=iw*{crop['width']}:ih*{crop['height']}:iw*{crop['x']}:ih*{crop['y']}")
     target_width, target_height = (
         (HEIGHT, WIDTH) if canvas and canvas.width > canvas.height else (WIDTH, HEIGHT)
     )
+    if focus is not None:
+        x, y, zoom = float(focus["x"]), float(focus["y"]), float(focus["zoom"])
+        tw, th = target_width, target_height
+        scale = f"max(max({tw}/iw,{th}/ih)*{zoom},min({tw}/iw,{th}/ih))"
+        filters.extend(
+            [
+                "format=gray",
+                f"scale=w='iw*{scale}+0.5':h='ih*{scale}+0.5'",
+                f"crop=w='min(iw,{tw})':h='min(ih,{th})':x='(iw-ow)*{x}':y='(ih-oh)*{y}'",
+                f"pad=w={tw}:h={th}:x='(ow-iw)*{x}':y='(oh-ih)*{y}':color=black",
+            ]
+        )
     filters.extend(
         [
             f"scale={target_width}:{target_height}:force_original_aspect_ratio=increase",
@@ -28,8 +49,7 @@ def sample_background(path: str, at_s: float, *, crop=None, canvas=None) -> byte
                 "ffmpeg",
                 "-v",
                 "error",
-                "-ss",
-                str(max(0, at_s)),
+                *(() if at_s is None else ("-ss", str(max(0, at_s)))),
                 "-i",
                 path,
                 "-vf",

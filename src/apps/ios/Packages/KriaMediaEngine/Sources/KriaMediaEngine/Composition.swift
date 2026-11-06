@@ -28,6 +28,8 @@ public struct PreviewComposition: @unchecked Sendable {
     /// Playback stays at the mixed level (AVAudioMix cannot boost).
     var loudnessTargetLUFS: Double?
     public let playerItem: AVPlayerItem
+    /// How this composition drew its Talk-to-camera background; nil when the recipe has none.
+    public internal(set) var speakerTrace: SpeakerBackgroundTrace?
     public init(description: CompositionDescription, playerItem: AVPlayerItem) { self.description = description; self.playerItem = playerItem }
 #else
     public init(description: CompositionDescription) { self.description = description }
@@ -106,6 +108,7 @@ public struct PreviewComposition: @unchecked Sendable {
             audioParameters.append(parameter)
         }
         let overlayOrders = Self.overlayOrders(in: recipe)
+        let speakerClipIDs = Self.speakerClipIDs(in: recipe)
         for recipeTrack in recipe.tracks {
             // A track per cut can exhaust hardware decoders on long phone
             // timelines. Reuse tracks once their previous segment has ended;
@@ -301,6 +304,8 @@ public struct PreviewComposition: @unchecked Sendable {
                         overlayCenter: CGPoint(x: canvas.width / 2 + clip.transform.positionX, y: canvas.height / 2 - clip.transform.positionY),
                         visualPlacement: clip.visualPlacement, visualOrder: overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
                     layers[layers.count - 1].sourceCrop = clip.sourceCrop
+                    layers[layers.count - 1].placementTilt = clip.placementTiltDegrees
+                    layers[layers.count - 1].backdrop = clip.backdrop
                     layers[layers.count - 1].overlayFade = OverlayFadeWindow(clip: clip, start: clip.timelineStart, end: layerEnd)
                     if clip.visualPlacement == nil && (recipeTrack.kind == .video || clip.overlayPreserveAlpha == nil) {
                         try await addAudio(asset: asset, clip: clip, gain: recipeTrack.kind == .video ? recipe.audio.originalVolume : 1, originalGain: recipeTrack.kind == .video)
@@ -316,7 +321,9 @@ public struct PreviewComposition: @unchecked Sendable {
                     let drawn = recipeTrack.kind == .video ? try StillFrame.flattened(image) : image
                     let oriented = CIImage(cgImage: drawn).oriented(forExifOrientation: orientation)
                     var normalized = oriented.transformed(by: CGAffineTransform(translationX: -oriented.extent.minX, y: -oriented.extent.minY))
-                    if clip.stillLayout == .supportingCard { normalized = try StillFrame.supportingCard(normalized, canvas: canvas) }
+                    if clip.stillLayout == .supportingCard {
+                        normalized = try StillFrame.supportingCard(normalized, canvas: canvas, rotationDegrees: clip.transform.rotationDegrees)
+                    }
                     layers.append(RecipeVideoLayer(trackID: nil, image: normalized,
                         transform: Self.transform(naturalSize: normalized.extent.size, preferred: .identity, canvas: canvas, clip: clip),
                         start: clip.timelineStart, end: end, fadeIn: fadeIn, transitionKind: clip.transition?.kind ?? .crossfade, isPrimary: recipeTrack.kind == .video,
@@ -325,11 +332,14 @@ public struct PreviewComposition: @unchecked Sendable {
                         overlayCenter: CGPoint(x: canvas.width / 2 + clip.transform.positionX, y: canvas.height / 2 - clip.transform.positionY),
                         visualPlacement: clip.visualPlacement, visualOrder: overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
                     layers[layers.count - 1].sourceCrop = clip.sourceCrop
+                    layers[layers.count - 1].placementTilt = clip.placementTiltDegrees
+                    if clip.stillLayout == nil { layers[layers.count - 1].backdrop = clip.backdrop }
                     layers[layers.count - 1].overlayFade = OverlayFadeWindow(clip: clip, start: clip.timelineStart, end: end)
                 }
                 if let seed = clip.overlayDissolveSeed {
                     layers[layers.count - 1].overlayDissolve = try NativeDissolveRenderer(width: recipe.canvas.width, height: recipe.canvas.height, seed: seed, maxBitmapBytes: 64 * 1024 * 1024, preset: .media)
                 }
+                if speakerClipIDs.contains(clip.id) { layers[layers.count - 1].speakerRole = .speaker }
                 if let text = clip.text { textLayers.append(try RecipeTextLayer.make(text, start: clip.timelineStart, end: end, canvas: canvas)) }
             }
         }
@@ -379,6 +389,14 @@ public struct PreviewComposition: @unchecked Sendable {
                                           transform: CGAffineTransform(scaleX: canvas.width / 16, y: canvas.height / 16),
                                           start: 0, end: total, fadeIn: 0), at: 0)
             StillClockLifetime.retain(clock, on: composition)
+        }
+        if let background = recipe.speakerBackground {
+            layers += try await Self.speakerBackgroundLayers(background, assetURLs: assetURLs, composition: composition, canvas: canvas, duration: total)
+        }
+        for backdrop in Self.mediaBackdrops(in: recipe) {
+            guard let url = assetURLs[backdrop.assetID] else { throw MediaEngineError.missingAsset(backdrop.assetID) }
+            layers.append(try await Self.mediaBackdropLayer(poolID: backdrop.poolID, assetID: backdrop.assetID, kind: backdrop.kind,
+                                                            url: url, composition: composition, canvas: canvas, duration: total))
         }
         try Task.checkCancellation()
         if let musicID = recipe.audio.musicAssetID {
@@ -440,9 +458,10 @@ public struct PreviewComposition: @unchecked Sendable {
             let end = total + cached.duration.seconds
             layers.append(RecipeVideoLayer(
                 trackID: track.trackID, image: nil,
-                transform: KriaBranding.coverTransform(naturalSize: cached.naturalSize, preferred: cached.preferredTransform, canvas: canvas),
+                transform: KriaBranding.fitTransform(naturalSize: cached.naturalSize, preferred: cached.preferredTransform, canvas: canvas),
                 start: total, end: end, fadeIn: 0, isPrimary: false, clipID: "kria-outro",
-                naturalSize: cached.naturalSize, preferredTransform: cached.preferredTransform, visualOrder: 9_001))
+                naturalSize: cached.naturalSize, preferredTransform: cached.preferredTransform, visualOrder: 9_001,
+                extendsEdgesToCanvas: true))
             brandedTotal = end
         }
 
@@ -452,12 +471,17 @@ public struct PreviewComposition: @unchecked Sendable {
         let drawings = recipe.drawingLayers.isEmpty ? nil : NativeDrawingStore(layers: recipe.drawingLayers, canvas: canvas)
         // Text behind people: one segmenter per composition, only when a layer asks for it (F7).
         let subjectMatte = recipe.textLayers.contains(where: { $0.behindSubject == true }) ? NativeSubjectMatte() : nil
+        // Speaker background: one matte per composition, shared by the player and the exporter (S15).
+        let speakerMatte = recipe.speakerBackground == nil ? nil : SpeakerMatte()
+        speakerMatte?.trace.noteBuilt(speakerClips: speakerClipIDs.count)
         // Instructions must span the whole asset: when the asset outlasts them AVPlayer renders no
         // video at all (audio over black, no error), while scrubbing and export stay correct.
         let covered = max(brandedTotal, composition.duration.seconds)
         videoComposition.instructions = RecipeInstructionTiming.tiledRanges(total: covered, layers: layers).map { range, active in
             RecipeVideoInstruction(timeRange: range, layers: active, text: textLayers, canvas: canvas,
-                cameraPulses: recipe.cameraPulses, motionScenes: motion, textStore: textStore, drawings: drawings, subjectMatte: subjectMatte)
+                cameraPulses: recipe.cameraPulses, motionScenes: motion, textStore: textStore, drawings: drawings, subjectMatte: subjectMatte,
+                speakerMatte: speakerMatte, speakerFrame: recipe.speakerBackground?.speakerFrame,
+                fullScreenWindows: recipe.speakerBackground?.fullScreenWindows ?? [])
         }
         let audioMix = AVMutableAudioMix()
         audioMix.inputParameters = audioParameters
@@ -469,6 +493,7 @@ public struct PreviewComposition: @unchecked Sendable {
         item.audioMix = audioMix
         var result = PreviewComposition(description: CompositionDescription(duration: brandedTotal, canvas: recipe.canvas, hasVideo: true, hasAudio: !audioParameters.isEmpty), playerItem: item)
         result.loudnessTargetLUFS = recipe.audio.targetLUFS
+        result.speakerTrace = speakerMatte?.trace
         return result
     }
 
@@ -519,15 +544,21 @@ public struct PreviewComposition: @unchecked Sendable {
     }
 
     static func transform(naturalSize: CGSize, preferred: CGAffineTransform, canvas: CGSize, clip: TimelineClip) -> CGAffineTransform {
+        transform(naturalSize: naturalSize, preferred: preferred, canvas: canvas, media: clip.layerTransform)
+    }
+
+    /// `media.rotationDegrees` is clockwise on screen. Core Image's y axis points up, so its
+    /// positive angle is counter-clockwise and the angle is negated here.
+    nonisolated static func transform(naturalSize: CGSize, preferred: CGAffineTransform, canvas: CGSize, media: MediaTransform) -> CGAffineTransform {
         let rect = CGRect(origin: .zero, size: naturalSize).applying(preferred)
         let scale = max(canvas.width / max(abs(rect.width), 1), canvas.height / max(abs(rect.height), 1))
         return preferred
             .concatenating(CGAffineTransform(translationX: -rect.minX, y: -rect.minY))
             .concatenating(CGAffineTransform(scaleX: scale, y: scale))
             .concatenating(CGAffineTransform(translationX: -abs(rect.width) * scale / 2, y: -abs(rect.height) * scale / 2))
-            .concatenating(CGAffineTransform(scaleX: clip.transform.scale, y: clip.transform.scale))
-            .concatenating(CGAffineTransform(rotationAngle: clip.transform.rotationDegrees * .pi / 180))
-            .concatenating(CGAffineTransform(translationX: canvas.width / 2 + clip.transform.positionX, y: canvas.height / 2 - clip.transform.positionY))
+            .concatenating(CGAffineTransform(scaleX: media.scale, y: media.scale))
+            .concatenating(CGAffineTransform(rotationAngle: -media.rotationDegrees * .pi / 180))
+            .concatenating(CGAffineTransform(translationX: canvas.width / 2 + media.positionX, y: canvas.height / 2 - media.positionY))
     }
 }
 

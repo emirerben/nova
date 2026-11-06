@@ -53,6 +53,7 @@ LANGUAGE_NEUTRAL: dict[str, str] = {
     "agents/creative_direction.py::CreativeDirectionAgent": "template analysis",
     "agents/detect_plan_relevance.py::DetectPlanRelevanceAgent": "relevance verdict",
     "agents/image_metadata.py::ImageMetadataAgent": "machine metadata, never on-screen text",
+    "agents/intent_review.py::IntentReviewAgent": "closed enums and aliases only; no prose",
     "agents/lyric_style_selector.py::LyricStyleSelectorAgent": "picks a style id",
     "agents/lyrics.py::LyricsExtractionAgent": "transcribes lyrics in the song's language",
     "agents/media_moment_relevance.py::MomentRelevanceAgent": "returns moment ids",
@@ -64,6 +65,9 @@ LANGUAGE_NEUTRAL: dict[str, str] = {
     "agents/shot_ranker.py::ShotRankerAgent": "ranks moments",
     "agents/song_classifier.py::SongClassifierAgent": "labels from a fixed vocabulary",
     "agents/song_sections.py::SongSectionsAgent": "song section timing",
+    "agents/source_moment_location.py::SourceMomentLocationAgent": (
+        "source timestamps and internal evidence; creator labels copy request words"
+    ),
     "agents/style_observation.py::StyleObservationAgent": "semantic style vocabulary",
     "agents/template_recipe.py::TemplateRecipeAgent": "template analysis",
     "agents/template_text.py::TemplateTextAgent": "reads template text as written",

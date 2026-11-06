@@ -294,6 +294,30 @@ final class NativeEditorInteractionTests: XCTestCase {
         XCTAssertEqual(projection.totalDuration, 57.0 / 30.0, accuracy: 0.000_001)
     }
 
+    func testRenderedOriginalWindowDoesNotExpandOntoProxyFrameClock() {
+        let rendered = EditorTimelineSlot(
+            id: "retained-native", clipIndex: 0, inS: 0, durationS: 1.92,
+            raw: ["timing_mode": .string("rendered")]
+        )
+        let following = EditorTimelineSlot(
+            id: "following", clipIndex: 1, inS: 0, durationS: 1.500123,
+            raw: ["timing_mode": .string("rendered")]
+        )
+        let projection = NativeEditorInteraction.timelineProjection(slots: [rendered, following], carousel: nil)
+        XCTAssertEqual(projection.baseClipWindows[0].end, 1.92, accuracy: 0.000000001)
+        XCTAssertEqual(projection.baseClipWindows[1].start, 1.92, accuracy: 0.000000001)
+        XCTAssertEqual(projection.totalDuration, 3.420123, accuracy: 0.000000001)
+    }
+
+    func testRenderedSpeedWindowRetainsExactSourceConsumption() {
+        let slot = EditorTimelineSlot(
+            id: "retimed", clipIndex: 0, inS: 0, durationS: 0.96,
+            raw: ["timing_mode": .string("rendered"), "source_end_s": .number(1.92), "playback_rate": .number(2)]
+        )
+        let projection = NativeEditorInteraction.timelineProjection(slots: [slot], carousel: nil)
+        XCTAssertEqual(projection.totalDuration, 0.96, accuracy: 0.000000001)
+    }
+
     func testRemovedMarkedSpeedSlotDoesNotPutLegacySurvivorsOnFrameClock() {
         let removedMarked = EditorTimelineSlot(
             id: "removed", clipIndex: 0, inS: 0, durationS: 0.75, removed: true,

@@ -598,6 +598,7 @@ _PINNED_STRATEGY_FIELDS_ON_REFRESH: tuple[str, ...] = (
     "direction",
     "render_program",
     "pacing",
+    "pacing_requested",
     "target_duration_s",
     "opening_title",
     "closing_title",
@@ -1573,6 +1574,10 @@ def _apply_explicit_render_intent(
         updates["pacing"] = "balanced"
     elif turkish_pace := turkish_pacing(request):
         updates["pacing"] = turkish_pace
+    if "pacing" in updates:
+        # The creator's own words named a pace: a plain "balanced" is then a choice, not the
+        # default (``length_policy.effective_pace``).
+        updates["pacing_requested"] = True
 
     # The aggregate request is useful for recovering a scheduling target, but
     # only the current creator message can prove a duration requirement.  In
@@ -2527,6 +2532,8 @@ def _model_strategy_hygiene(strategy: CreativeStrategy) -> CreativeStrategy:
         # the same in `_apply_explicit_render_intent`.
         "target_duration_requested": None,
         "creator_duration_s": None,
+        # Pace provenance is server-owned the same way (re-stamped from the creator's words).
+        "pacing_requested": None,
         # KRI-476: conflict answers are written only by the Kria planner gate.
         "choice_answers": None,
     }
@@ -4735,7 +4742,9 @@ async def _confirm_render_shape(
         db, item, edit_plan.strategy, user_id, creator_request=creator_request
     )
     try:
-        return render_shape.resolve_choice(offer, body.output_orientation, body.landscape_fit)
+        chosen = render_shape.resolve_choice(offer, body.output_orientation, body.landscape_fit)
+        # An echoed server default is not a creator pick: record which it was.
+        return render_shape.stamp_origin(offer, chosen, None) if chosen is not None else None
     except render_shape.RenderShapeError as exc:
         if not strict:
             return None

@@ -215,15 +215,16 @@ final class BrandingTests: XCTestCase {
         return count
     }
 
-    @MainActor private func blackPhotoRecipe(in directory: URL) throws -> (EditRecipe, [String: URL]) {
-        let canvas = CGRect(x: 0, y: 0, width: 1080, height: 1920)
+    @MainActor private func blackPhotoRecipe(in directory: URL, width: Int = 1080,
+                                             height: Int = 1920) throws -> (EditRecipe, [String: URL]) {
+        let canvas = CGRect(x: 0, y: 0, width: width, height: height)
         let picture = CIImage(color: .black).cropped(to: canvas)
         let photo = directory.appendingPathComponent("black.png")
         try CIContext().writePNGRepresentation(of: picture, to: photo, format: .RGBA8,
                                                colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
         let fingerprint = try SHA256Fingerprinter().fingerprint(file: photo)
         let recipe = EditRecipe(
-            schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: Canvas(width: 1080, height: 1920),
+            schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: Canvas(width: width, height: height),
             assets: [MediaAsset(id: "photo", relativePath: "photo", fingerprint: fingerprint)],
             tracks: [TimelineTrack(id: "v", kind: .video,
                                    clips: [TimelineClip(id: "c", sourceAssetID: "photo", sourceDuration: 2)])],
@@ -271,6 +272,83 @@ final class BrandingTests: XCTestCase {
         let tail = try await generator.image(at: CMTime(seconds: duration - 0.2, preferredTimescale: 600)).image
         let bright = brightPixels(in: tail, rect: canvas, canvas: canvas, context: context)
         XCTAssertGreaterThan(bright, Int(canvas.width * canvas.height) / 2, "the export should end on the outro")
+    }
+
+    /// KRI-1154: the outro is authored 9:16, and filling a wide or square canvas with it blew the wordmark up
+    /// to ~40% of a landscape frame's height. On every canvas the card must instead keep the portrait card's
+    /// proportions -- the wordmark the same fraction of the frame's height, centred -- with the rest of the
+    /// frame the card's own paper.
+    ///
+    /// Ways this goes wrong, each with the check that catches it:
+    /// - the card still cover-fills a wider canvas, so the wordmark is oversized: its ink height fraction;
+    /// - the card is fitted but the rest of the frame is left black: no dark pixel anywhere off the ink;
+    /// - the rest of the frame is filled with a slightly different white than the card, leaving a visible
+    ///   seam where the card ends: every pixel off the ink within a couple of levels of the frame's corner;
+    /// - the wordmark drifts off-centre on a non-9:16 canvas: the ink box's centre;
+    /// - portrait output changes: the 1080x1920 case pins the asset's own ink box.
+    @MainActor func testOutroWordmarkKeepsThePortraitProportionsOnEveryCanvas() async throws {
+        // The wordmark's ink box in the bundled 1080x1920 card's final frame (measured from the asset).
+        let portraitInkHeight: CGFloat = 248
+        let portraitInkWidth: CGFloat = 560
+        for (width, height) in [(1920, 1080), (1080, 1080), (1080, 1920)] {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let (recipe, urls) = try blackPhotoRecipe(in: directory, width: width, height: height)
+            let output = directory.appendingPathComponent("branded.mp4")
+            _ = try await AVFoundationLocalExporter(
+                stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")))
+                .export(recipe: recipe, assetURLs: urls, outputURL: output)
+            let asset = AVURLAsset(url: output)
+            let duration = try await asset.load(.duration).seconds
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.requestedTimeToleranceBefore = .zero
+            generator.requestedTimeToleranceAfter = .zero
+            let tail = try await generator.image(at: CMTime(seconds: duration - 0.1, preferredTimescale: 600)).image
+            XCTAssertEqual(tail.width, width)
+            XCTAssertEqual(tail.height, height)
+
+            var pixels = [UInt8](repeating: 0, count: width * height * 4)
+            CIContext().render(CIImage(cgImage: tail), toBitmap: &pixels, rowBytes: width * 4,
+                               bounds: CGRect(x: 0, y: 0, width: width, height: height), format: .RGBA8,
+                               colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+            let paper = (Int(pixels[0]), Int(pixels[1]), Int(pixels[2]))
+            XCTAssertGreaterThan(min(paper.0, paper.1, paper.2), 240,
+                                 "\(width)x\(height): the frame's corner should be the card's paper")
+            func difference(_ x: Int, _ y: Int) -> Int {
+                let i = (y * width + x) * 4
+                return abs(Int(pixels[i]) - paper.0) + abs(Int(pixels[i + 1]) - paper.1) + abs(Int(pixels[i + 2]) - paper.2)
+            }
+            var ink = (minX: width, maxX: -1, minY: height, maxY: -1)
+            for y in 0..<height {
+                for x in 0..<width where difference(x, y) > 12 {
+                    ink = (min(ink.minX, x), max(ink.maxX, x), min(ink.minY, y), max(ink.maxY, y))
+                }
+            }
+            XCTAssertGreaterThanOrEqual(ink.maxX, 0, "\(width)x\(height): no wordmark on the outro")
+            let inkBox = CGRect(x: ink.minX, y: ink.minY, width: ink.maxX - ink.minX + 1, height: ink.maxY - ink.minY + 1)
+            // Off the wordmark (and its anti-aliased rim) the frame is one flat paper: no black bars, and no
+            // seam where the card ends.
+            let rim = inkBox.insetBy(dx: -4, dy: -4)
+            var worstOffInk = 0
+            for y in 0..<height {
+                let besideInk = y >= Int(rim.minY) && y < Int(rim.maxY)
+                for x in 0..<width where !(besideInk && x >= Int(rim.minX) && x < Int(rim.maxX)) {
+                    worstOffInk = max(worstOffInk, difference(x, y))
+                }
+            }
+            XCTAssertLessThanOrEqual(worstOffInk, 6, "\(width)x\(height): the frame around the card is not its paper")
+            let fit = min(CGFloat(width) / 1080, CGFloat(height) / 1920)
+            XCTAssertEqual(inkBox.height / CGFloat(height), portraitInkHeight * fit / CGFloat(height), accuracy: 0.01,
+                           "\(width)x\(height): wordmark height \(inkBox.height)px is out of proportion")
+            XCTAssertEqual(inkBox.width, portraitInkWidth * fit, accuracy: 8, "\(width)x\(height): wordmark width")
+            // The wordmark animates in from the left, so its final box is not symmetric about the card's
+            // centre; compare against where the portrait card puts it, scaled and centred.
+            let expectedMidX = CGFloat(width) / 2 + (539.5 - 540) * fit
+            let expectedMidY = CGFloat(height) / 2 + (899.5 - 960) * fit
+            XCTAssertEqual(inkBox.midX, expectedMidX, accuracy: 6, "\(width)x\(height): wordmark off-centre horizontally")
+            XCTAssertEqual(inkBox.midY, expectedMidY, accuracy: 6, "\(width)x\(height): wordmark off-centre vertically")
+        }
     }
 
     /// Pins what the PRODUCTION exporter declares. The server trusts this string

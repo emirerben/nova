@@ -98,13 +98,18 @@ def _words(text: str) -> list[str]:
     return [t for t in re.split(r"[^\w]+", loose_text(text), flags=re.UNICODE) if t]
 
 
+def attribute_key(op: str, attribute: str) -> str:
+    """The category key for ``op`` and ``attribute`` (``include:dodgeball``)."""
+    slug = "-".join(_words(attribute))
+    return f"{op}:{slug}"[:_KEY_MAX]
+
+
 def intent_key(intent: ClipIntent) -> str:
     """Per-category key: normalised op + attribute (``include:dodgeball``).
 
     Stable within a turn only: a re-plan may reword the attribute (see ``_identities``).
     """
-    slug = "-".join(_words(intent.attribute))
-    return f"{intent.op}:{slug}"[:_KEY_MAX]
+    return attribute_key(intent.op, intent.attribute)
 
 
 def _key_attribute_tokens(key: str) -> set[str]:
@@ -395,6 +400,21 @@ class ClipSelections:
                     )
                 )
         return tuple(out)
+
+    def without(self, intent: ClipIntent) -> ClipSelections:
+        """These selections minus every answer that settles ``intent`` (KRI-1125).
+
+        What a typed correction reopens: the beat goes back to the resolver as if nobody had
+        tapped it. Answers for other intents stay.
+        """
+        by_key, by_identity = dict(self.by_key), dict(self.by_identity)
+        for _ in range(len(by_key) + len(by_identity)):
+            entry = ClipSelections(by_key, by_identity).match(intent)
+            if entry is None:
+                break
+            by_key = {k: v for k, v in by_key.items() if v is not entry}
+            by_identity = {k: v for k, v in by_identity.items() if v[1] is not entry}
+        return ClipSelections(by_key, by_identity)
 
     def match(self, intent: ClipIntent) -> SelectionEntry | None:
         """Newest of the same-attribute / identity answers, else token-set similarity.

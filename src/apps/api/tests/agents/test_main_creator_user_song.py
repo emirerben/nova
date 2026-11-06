@@ -74,12 +74,38 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v103 (KRI-1027) teaches the `landscape_fit` fact ("fill" / "fit") for how sideways clips sit in
 # a vertical video: brief-on hashes re-pinned; brief-off unchanged.
 # v105 (KRI-1077): brief-on re-pinned for registry-rendered animation names.
+# v106 (prompt fidelity, animation): the two brief-enabled hashes re-pinned (one added paragraph).
+# v109 (KRI-1161) teaches the `speaker_background` brief fact: the two brief-on hashes re-pinned;
+# brief-off unchanged.
+# v113 (KRI-1177 / KRI-1164) teaches the caption look facts and `audio_intent: no_music`, and
+# KRI-1173 adds the `background_color` brief fact: the two brief-on hashes re-pinned (main had
+# 065dbc15… / 610a0650… before the colour clause); brief-off unchanged.
+# v119 (KRI-1189, was v117 on its branch) teaches `cut_restarts` in the brief section's
+# cleanup sentence: the two brief-on hashes re-pinned (v118's sentence restores ea4b279f /
+# a855f01d); brief-off unchanged.
+# v121 (Qendresa 13) teaches `pauses: "tight"` in the same cleanup sentence, on top of v120
+# (Qendresa 12, `caption_words` / `caption_box`): the two brief-on hashes re-pinned for both
+# (v119's: 10202eb7… / d3a50520…; v120 alone: ad987056 / 6c9afec6); brief-off unchanged.
+# v123 (Qendresa item 17, on top of v121): its paragraph renders only with
+# BACKGROUND_FOLLOWS_TALK_ENABLED and the windows capability, which these renders never have, so
+# all four hashes are v121's, unchanged (the pins cover v121 + v123).
+# v125 (Qendresa item 16): its teachings render only with SPEAKER_FULL_OPENING_ENABLED and the
+# `speaker_full_opening` capability, so the pins cover v125 too (renumbered v133 on top of v131).
+# v128 (Qendresa item 21): its section renders only with CLIP_TEXT_TIKTOK_LOOK_ENABLED, so the
+# pins cover v128 too.
+# v135 (Qendresa item 20): its rule renders only with TITLE_LOOK_ENABLED, so the pins cover
+# v135 too.
+# v136 (Qendresa item 18, was v126 / v132 / v134): its paragraph renders only with
+# BACKGROUND_FOCUS_ENABLED and the `background_focus` capability, so the pins cover v136 too.
+# #2131 (Qendresa says-done cases 6-8) rewords the brief section's caption-count and cleanup
+# sentences: the two brief-on hashes re-pinned (v136's: b4ebb285… / bbccdc91…); brief-off
+# unchanged.
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "c2fae873a6b7a25983107ce6b0fd102c69dc2b8af3579c0d6b11d9136a425b2b",
+    (True, True): "7d7d75bc140c9d5fc3d641fc1324293f141afea76e3c5bd2ae30eccd4f5ff132",
     (True, False): "e3de37c194b88bd906568375111a33a5d8ec8bdab981a29ff6f377162710e87e",
-    (False, True): "313a4d5fb4658c85fb14dfe34f3ed98f424ed6cf5c2ba45619bd967858ac8a5b",
+    (False, True): "1d0026727df973ae2e6c8a7da8d05b0c71a9eb4d79862602c5132bdb9235ca06",
     (False, False): "e804c3135cb2e6eae9093216bee3ee0d97159aa120c2b1eef8e34e61a3d37240",
 }
 
@@ -160,8 +186,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
     assert '"user_song":{"duration_s":187.4,"has_lyrics":true}' in song_prompt
 
 
-def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-30-v105"
+def test_prompt_version_is_wired_into_the_spec() -> None:
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

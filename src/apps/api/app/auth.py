@@ -18,6 +18,8 @@ keep working unchanged.
 """
 
 import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, status
@@ -32,6 +34,50 @@ from app.services.mobile_auth import MobileAuthError, decode_access_token
 SYNTHETIC_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 _INTERNAL_API_KEY_HEADER = "authorization"
+
+
+@dataclass(frozen=True)
+class VerifiedMobilePrincipal:
+    user_id: uuid.UUID
+    family_id: uuid.UUID
+
+
+async def get_verified_mobile_principal(
+    x_user_id: Annotated[str | None, Header(alias="X-User-Id")] = None,
+    authorization: Annotated[str | None, Header()] = None,
+    db: AsyncSession = Depends(get_db),
+) -> VerifiedMobilePrincipal:
+    if (
+        x_user_id is not None
+        or not authorization
+        or not authorization.startswith("Bearer ")
+        or (settings.internal_api_key and authorization == f"Bearer {settings.internal_api_key}")
+    ):
+        raise HTTPException(401, "Mobile authentication required")
+    try:
+        access = decode_access_token(authorization[7:])
+    except MobileAuthError:
+        raise HTTPException(401, "Invalid mobile authentication") from None
+    member = (
+        await db.execute(
+            select(MobileSession)
+            .join(User, User.id == MobileSession.user_id)
+            .where(
+                MobileSession.id == access.session_id,
+                MobileSession.user_id == access.user_id,
+                MobileSession.token_version == access.token_version,
+                MobileSession.revoked_at.is_(None),
+                MobileSession.expires_at > datetime.now(UTC),
+                User.id != SYNTHETIC_USER_ID,
+            )
+        )
+    ).scalar_one_or_none()
+    if member is None:
+        raise HTTPException(401, "Invalid mobile authentication")
+    return VerifiedMobilePrincipal(member.user_id, member.family_id)
+
+
+VerifiedMobile = Annotated[VerifiedMobilePrincipal, Depends(get_verified_mobile_principal)]
 
 
 def ensure_job_owner(job_user_id: uuid.UUID | None, current_user: "User") -> None:
