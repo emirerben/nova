@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.15.0] - 2026-11-06
+
+### Changed
+- feat(kria): replace a Talking take in an existing chat, dark behind MEDIA_REPLACE_ENABLED (KRI-1186) (#2124) <!-- release-pr: 2124 -->
+
 ## [0.88.14.0] - 2026-11-06
 
 ### Changed
