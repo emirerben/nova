@@ -820,11 +820,13 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 await cancel(recordID: record.id)   // also releases the ledger entry
                 return .cancelledUpload
             }
-            // The bytes already reached storage. Let the attach that is in flight land, then treat
-            // it as attached — cancelling now would strand a finished blob.
-            await attachmentTasks[projectID]?.task.value
+            // The bytes already reached storage. Let the attach chain land, then treat it as attached —
+            // cancelling now would strand a finished blob, or report `.cancelledUpload` for a clip whose
+            // attach is still queued, posting or backing off and then lands in Footage (review of 2a5fc19).
+            await awaitAttachChain(projectID: projectID, until: entry.recordID)
             if records.contains(where: { $0.id == entry.recordID }) {
-                await cancel(recordID: entry.recordID)   // attach failed; there is nothing to detach
+                // No attach for it is queued or running: it failed, so there is nothing to detach.
+                await cancel(recordID: entry.recordID)
                 return .cancelledUpload
             }
         }
@@ -837,6 +839,56 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             return .discarded
         }
         return await detach(mediaID: mediaID, role: current.role, projectID: projectID, itemID: itemID, recordID: current.recordID)
+    }
+
+    /// Item 24 "Move to Overlays": takes a Footage clip that was still uploading out of the project, whatever its upload
+    /// did meanwhile. For a clip with no Photos ledger entry (a Files clip); `deselect` covers Photos picks. The move
+    /// copies the file and starts the overlay first, so the upload can finish and attach in between: `cancel(recordID:)`
+    /// then found no record and returned, and the same file stayed in Footage and Overlays. Like `deselect`: a clip still
+    /// sending is cancelled, one whose bytes reached storage may attach and is then detached. `mediaID` is the record's
+    /// reserved media id, as listed when the hint showed.
+    func withdraw(recordID: UUID, mediaID listedMediaID: String?, projectID: UUID) async -> DeselectOutcome {
+        var knownMediaID = listedMediaID
+        if let record = records.first(where: { $0.id == recordID }) {
+            knownMediaID = record.mediaID ?? knownMediaID
+            if record.uploadCompleted != true, (progress[record.id] ?? 0) < 1 {
+                await cancel(recordID: record.id)
+                return .cancelledUpload
+            }
+            // The bytes already reached storage. Let the attach chain land (see `awaitAttachChain`), then treat it as attached.
+            await awaitAttachChain(projectID: projectID, until: recordID)
+            if records.contains(where: { $0.id == recordID }) {
+                // No attach for it is queued or running: it failed or never started, so there is nothing to detach.
+                // `cancel` marks the record before its first wait, so a completion or Retry arriving now can't attach it.
+                await cancel(recordID: recordID)
+                return .cancelledUpload
+            }
+        }
+        guard let mediaID = knownMediaID else { return .notTracked }
+        do {
+            // Left without attaching (removed some other way): nothing is in Footage, and no removal to refuse.
+            let latest = try await api.project(threadID: projectID)
+            guard CreationAttachedMedia.parse(latest.state ?? [:]).contains(where: { $0.id == mediaID }) else { return .discarded }
+        } catch {
+            return .refused("Couldn’t remove it. \(error.localizedDescription)")
+        }
+        return await detach(mediaID: mediaID, role: .clip, projectID: projectID, itemID: nil, recordID: recordID)
+    }
+
+    /// For `deselect` and `withdraw` when the clip's bytes already reached storage: waits on the project's attach chain
+    /// until the record has left `records` or no newer link is queued. Not only the links queued now: the clip's own
+    /// attach can join while this waits (its upload's completion, a Retry), pass its first check when the link before it
+    /// lands, and still be reading the project, posting, or backing off a busy server when this resumes. Cancelling it
+    /// then returned `.cancelledUpload` while the attach carried on into Footage (reviews of 100b8b5 and 2a5fc19). Each
+    /// link awaits the one before it, so the newest covers them all; one that finished but is not unlinked yet is not
+    /// awaited twice. Afterwards a record still listed has no attach queued or running, so cancelling it is truthful:
+    /// `cancel` marks it before its first wait, which stops a completion or Retry arriving later.
+    private func awaitAttachChain(projectID: UUID, until recordID: UUID) async {
+        var awaited: UUID?
+        while records.contains(where: { $0.id == recordID }), let link = attachmentTasks[projectID], link.token != awaited {
+            awaited = link.token
+            await link.task.value
+        }
     }
 
     /// Detaches an attached clip (`remove_media`, which also deletes the blob server-side) or visual.
@@ -1491,11 +1543,16 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         }
     }
 
+    /// The record is still listed and nobody is cancelling it, so its attach may go ahead.
+    private func isStillAttaching(_ recordID: UUID) -> Bool {
+        records.contains(where: { $0.id == recordID }) && !cancellingRecords.contains(recordID)
+    }
+
     private func performAttachment(_ record: UploadRecoveryRecord) async {
         let libraryOwnerAtStart = api.mediaLibraryOwner
         // No `lastError = nil` here: attaches now run concurrently with later enqueues, so a
         // success would erase a sibling clip's failure. Per-clip failures live in `failures`.
-        guard records.contains(where: { $0.id == record.id }), !cancellingRecords.contains(record.id) else { return }
+        guard isStillAttaching(record.id) else { return }
         if record.role == .visual {
             do {
                 guard let itemID = record.itemID, let reservationID = record.visualReservationID,
@@ -1572,28 +1629,41 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         // KRI-189: when/where the clip was filmed. Resolved once, outside the retry loop; nil (and never
         // an error) when the setting is off or nothing could be read.
         let capture = record.role == .clip ? await ClipCaptureWire.forAttach(recordID: record.id) : nil
+        // Every wait before the attach call (the place lookup, the project read, a busy server's backoff) can outlast a
+        // cancel, a deselect or the move to Overlays. Carrying on put the clip the creator just took out into Footage
+        // anyway (review of 100b8b5), so look again after each. The one that cancelled it has already cleaned it up.
+        guard isStillAttaching(record.id) else { return }
         for _ in 0..<2 {
             do {
                 let current = try await retryingTransient { try await api.project(threadID: record.projectID) }
+                guard isStillAttaching(record.id) else { return }
                 // KRI-374: only a song carries a server role; footage and voiceover attach exactly as before.
+                // Each post checks the record first, the retries after a busy server's backoff (429/503) included: the
+                // backoff can outlast a cancel, and a retry that went ahead put the clip in Footage (review of 2a5fc19).
                 let attachedThread: CreationThread
                 if record.role == .song {
-                    attachedThread = try await retryingTransient { try await api.attachProjectMedia(
-                        threadID: record.projectID, mediaID: mediaID, gcsPath: gcsPath, filename: record.filename,
-                        contentType: contentType, expectedRevision: current.revision,
-                        clientEventID: "ios-attach-\(record.id.uuidString)", role: .song
-                    ) }
+                    attachedThread = try await retryingTransient { () async throws -> CreationThread in
+                        guard isStillAttaching(record.id) else { throw CancellationError() }
+                        return try await api.attachProjectMedia(
+                            threadID: record.projectID, mediaID: mediaID, gcsPath: gcsPath, filename: record.filename,
+                            contentType: contentType, expectedRevision: current.revision,
+                            clientEventID: "ios-attach-\(record.id.uuidString)", role: .song
+                        )
+                    }
                 } else {
-                    attachedThread = try await retryingTransient { try await api.attachProjectMedia(
-                        threadID: record.projectID,
-                        mediaID: mediaID,
-                        gcsPath: gcsPath,
-                        filename: record.filename,
-                        contentType: contentType,
-                        expectedRevision: current.revision,
-                        clientEventID: "ios-attach-\(record.id.uuidString)",
-                        capture: capture
-                    ) }
+                    attachedThread = try await retryingTransient { () async throws -> CreationThread in
+                        guard isStillAttaching(record.id) else { throw CancellationError() }
+                        return try await api.attachProjectMedia(
+                            threadID: record.projectID,
+                            mediaID: mediaID,
+                            gcsPath: gcsPath,
+                            filename: record.filename,
+                            contentType: contentType,
+                            expectedRevision: current.revision,
+                            clientEventID: "ios-attach-\(record.id.uuidString)",
+                            capture: capture
+                        )
+                    }
                 }
                 // Publish the authoritative media_count before removing the
                 // pending record so clip capacity never briefly reopens.
@@ -1618,6 +1688,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 remove(record.id, deleteLocalFile: true)
                 return
             } catch {
+                // Cancelled while this attempt waited (the check above threw, or the record went during the call): whoever
+                // took it out has cleaned it up, so it is neither tried again nor reported as a failed upload.
+                guard isStillAttaching(record.id) else { return }
                 lastAttachmentError = error
             }
         }
