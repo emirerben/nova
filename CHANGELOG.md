@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.22.0] - 2026-11-06
+
+### Changed
+- fix(kria): the video does what the brief asked for keep-whole, mute, whole-video text and title holds (Qendresa says-done group B) (#2130) <!-- release-pr: 2130 -->
+
 ## [0.88.21.0] - 2026-11-06
 
 ### Changed
