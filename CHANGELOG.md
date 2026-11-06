@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.34.0] - 2026-11-06
+
+### Added
+- feat(ios): re-record a Talking take from the ready video (KRI-1187) (#2123) <!-- release-pr: 2123 -->
+
 ## [0.88.33.0] - 2026-11-06
 
 ### Changed
