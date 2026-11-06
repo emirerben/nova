@@ -1790,6 +1790,7 @@ extension BackgroundUploadRetryTests {
     private let newClip = "analysis-proxy-new.mp4"
 
     private final class Server {
+        var reservationCalls = 0
         var replaceBodies: [[String: Any]] = []
         var attachCalls = 0
         var replaceStatuses: [(Int, String?)] = []   // consumed in order, then 200
@@ -1913,6 +1914,96 @@ extension BackgroundUploadRetryTests {
         let inFlight = [UUID(): BackgroundUploadCoordinator.InFlightUpload(projectID: project, role: .clip, replacesMediaID: oldClip),
                         UUID(): BackgroundUploadCoordinator.InFlightUpload(projectID: project, role: .clip)]
         XCTAssertEqual(BackgroundUploadCoordinator.reservedCount(projectID: project, role: .clip, inFlight: inFlight, records: [], selections: [:]), 1)
+    }
+
+    private func interruptedReplacement(status: Int = 500, heartbeatAge: TimeInterval = 120, missing: Bool = false) throws
+        -> (coordinator: BackgroundUploadCoordinator, entry: PreparingUpload, server: Server, cleanup: () -> Void) {
+        let key = "kria.test.rerecord-preparing.\(UUID().uuidString)"
+        let staged = FileManager.default.temporaryDirectory.appending(path: "staged-\(UUID().uuidString).mp4")
+        if !missing { try Data([1, 2, 3]).write(to: staged) }
+        let entry = PreparingUpload(id: UUID(), projectID: projectID, localFilePath: staged.path, filename: "take.mp4",
+                                    source: .files, purpose: .cloudRenderSource, role: .clip, itemID: nil,
+                                    replacesMediaID: oldClip, lastHeartbeatAt: Date().addingTimeInterval(-heartbeatAge), launchToken: UUID())
+        UserDefaults.standard.set(try JSONEncoder().encode([entry]), forKey: "\(key).preparing")
+        let server = Server()
+        UploadRetryProtocol.handler = { transport in
+            server.reservationCalls += 1
+            transport.finish(status, Data("{}".utf8))
+        }
+        let configuration = UploadRetryProtocol.configuration()
+        let api = KriaAPI(baseURL: URL(string: "https://uploads.test")!, tokenStore: NativeEditorMemoryTokenStore(), session: URLSession(configuration: configuration))
+        let coordinator = BackgroundUploadCoordinator(api: api, defaultsKey: key, sessionConfiguration: configuration,
+                                                     backgroundActivity: RecordingBackgroundActivityAssertion())
+        let projectDirectory = BackgroundUploadCoordinator.projectDirectory(projectID)
+        return (coordinator, entry, server, {
+            UserDefaults.standard.removeObject(forKey: key)
+            UserDefaults.standard.removeObject(forKey: "\(key).preparing")
+            try? FileManager.default.removeItem(at: staged)
+            try? FileManager.default.removeItem(at: projectDirectory.root)
+        })
+    }
+
+    func testRecoveredReplacementKeepsItsLockThroughPreparationAndRetryBackoff() async throws {
+        let fixture = try interruptedReplacement()
+        defer { fixture.cleanup() }
+        let coordinator = fixture.coordinator
+        let tasks = coordinator.recoverInterruptedPreparations()
+        XCTAssertEqual(tasks.count, 1)
+        XCTAssertEqual(coordinator.inFlight[fixture.entry.id]?.replacesMediaID, oldClip)
+        XCTAssertTrue(BackgroundUploadCoordinator.replacementUnderway(projectID: projectID, inFlight: coordinator.inFlight, records: coordinator.records))
+        XCTAssertEqual(coordinator.reservedCount(projectID: projectID, role: .clip), 0, "the resumed take replaces an occupied slot")
+        for task in tasks { await task.value }
+
+        XCTAssertEqual(fixture.server.reservationCalls, 1, "the transient refusal comes from reservation, after preparation")
+        XCTAssertTrue(coordinator.records.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.entry.localFilePath))
+        XCTAssertEqual(coordinator.inFlight[fixture.entry.id]?.replacesMediaID, oldClip, "a staged retry still owns its replacement target")
+        XCTAssertTrue(coordinator.recoverInterruptedPreparations().isEmpty, "opening the workspace does not bypass retry backoff")
+        XCTAssertTrue(BackgroundUploadCoordinator.replacementUnderway(projectID: projectID, inFlight: coordinator.inFlight, records: coordinator.records))
+        XCTAssertEqual(coordinator.reservedCount(projectID: projectID, role: .clip), 0)
+
+        try FileManager.default.removeItem(atPath: fixture.entry.localFilePath)
+        XCTAssertTrue(coordinator.recoverInterruptedPreparations().isEmpty)
+        XCTAssertNil(coordinator.inFlight[fixture.entry.id], "discarding an unrecoverable staged take releases its lock")
+        XCTAssertFalse(BackgroundUploadCoordinator.replacementUnderway(projectID: projectID, inFlight: coordinator.inFlight, records: coordinator.records))
+        XCTAssertEqual(coordinator.failures.first?.replacesMediaID, oldClip)
+    }
+
+    func testRelaunchedReplacementInBackoffStillLocksTheOldTake() async throws {
+        let fixture = try interruptedReplacement(heartbeatAge: 0)
+        defer { fixture.cleanup() }
+        XCTAssertTrue(fixture.coordinator.recoverInterruptedPreparations().isEmpty)
+        XCTAssertEqual(fixture.coordinator.inFlight[fixture.entry.id]?.replacesMediaID, oldClip)
+        XCTAssertTrue(BackgroundUploadCoordinator.replacementUnderway(projectID: projectID, inFlight: fixture.coordinator.inFlight, records: fixture.coordinator.records))
+        XCTAssertEqual(fixture.coordinator.reservedCount(projectID: projectID, role: .clip), 0)
+        XCTAssertEqual(fixture.server.reservationCalls, 0)
+    }
+
+    func testDefinitiveReplacementResumeFailureNamesTheUnchangedTake() async throws {
+        let fixture = try interruptedReplacement(status: 409)
+        defer { fixture.cleanup() }
+        let tasks = fixture.coordinator.recoverInterruptedPreparations()
+        for task in tasks { await task.value }
+        XCTAssertEqual(fixture.server.reservationCalls, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.entry.localFilePath))
+        XCTAssertNil(fixture.coordinator.inFlight[fixture.entry.id])
+        XCTAssertTrue(fixture.coordinator.records.isEmpty)
+        let failure = try XCTUnwrap(fixture.coordinator.failures.first)
+        XCTAssertEqual(failure.replacesMediaID, oldClip)
+        XCTAssertNotEqual(failure.cause, .uploadFailed, "a definitive refusal must not offer a retry without a staged take")
+        XCTAssertTrue(failure.message.contains("Your current take is unchanged."))
+        XCTAssertNil(fixture.coordinator.attachedThreads[projectID])
+    }
+
+    func testMissingStagedReplacementReportsAReRecordFailure() throws {
+        let fixture = try interruptedReplacement(missing: true)
+        defer { fixture.cleanup() }
+        XCTAssertTrue(fixture.coordinator.recoverInterruptedPreparations().isEmpty)
+        let failure = try XCTUnwrap(fixture.coordinator.failures.first)
+        XCTAssertEqual(failure.replacesMediaID, oldClip)
+        XCTAssertTrue(failure.message.contains("Your current take is unchanged."))
+        XCTAssertNil(fixture.coordinator.inFlight[fixture.entry.id])
+        XCTAssertEqual(fixture.server.reservationCalls, 0)
     }
 
     func testAKillDuringPreparationRemembersWhichClipItReplaces() throws {
