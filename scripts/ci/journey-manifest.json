@@ -1677,6 +1677,7 @@
         "src/apps/api/app/agents/chip_suggester.py",
         "src/apps/api/app/agents/suggestion_agent.py",
         "src/apps/api/app/cli/kria_contracts.py",
+        "src/apps/api/app/kria/request_budget.py",
         "src/apps/api/app/services/creative_copy_gate.py",
         "src/apps/api/app/services/suggestion_chip_copy.py",
         "src/apps/api/app/services/suggestion_chips.py",
