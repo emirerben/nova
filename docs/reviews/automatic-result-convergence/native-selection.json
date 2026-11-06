@@ -1013,7 +1013,7 @@
     "src/apps/ios/Kria/Core/SlidePostAIJournal.swift": "2ce60a214a27dc910b5eb2f22161582193d37b09b4ba5054bab5a8dddf698728",
     "src/apps/ios/Kria/Core/SlidePostSubmissionJournal.swift": "f10b19e23760c4a2af09d1ad609db5bbce641775719314aaedc0d39b2d32336c",
     "src/apps/ios/Kria/Features/NativeEditorSession.swift": "69505b872be6542182479999224bb7a2856b1df21a3d786a36e1706432d92a3d",
-    "src/apps/ios/Kria/Features/NativeEditorView.swift": "b2a299ca7edb21ad29f360908af1ff4c9b207b1d6eea074a7bb2fe5f4b024f74",
+    "src/apps/ios/Kria/Features/NativeEditorView.swift": "f5703dbb5c9a79d04c463d6bfa67c36f7bedc51f41e3abe0f9e09613b314e85b",
     "src/apps/ios/Kria/Features/ChatWorkspaceView.swift": "7d66636be9a7dedf9c57387375de933824ad3c2d1f0f0c070efb46067335fa89",
     "src/apps/ios/Kria/Features/ReviewPlanView.swift": "c5d3b5b9960d46b2245f25fa4abf380d542a29e78befc2c5b6c5af928c91d1c2",
     "src/apps/ios/Kria/Features/SlidePostWorkspaceView.swift": "7e667f4aed16fd4b90b72b34894745d217eda10ebb796e310e67f2c7005bf1b3",

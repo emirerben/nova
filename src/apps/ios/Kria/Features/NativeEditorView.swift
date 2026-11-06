@@ -114,71 +114,80 @@ struct NativeEditorView: View {
 
     var body: some View {
         GeometryReader { viewport in
-            Group {
-                switch session.loadState {
-                case .loaded:
+            editorLifecycle(editorExitControls(editorPresentations(editorSurface(viewport: viewport))))
+        }
+    }
+
+    private func editorSurface(viewport: GeometryProxy) -> some View {
+        Group {
+            switch session.loadState {
+            case .loaded:
+                editor(viewport: viewport)
+            case .idle, .loading:
+                if session.canDisplayCurrentPlayer {
                     editor(viewport: viewport)
-                case .idle, .loading:
-                    if session.canDisplayCurrentPlayer {
-                        editor(viewport: viewport)
-                    } else {
-                        NativeEditorLoadSurface(
-                            title: "Opening the editor…",
-                            detail: session.loadWaitingMessage ?? "Loading the latest cut and its editing controls.",
-                            projectTitle: project.workspaceTitle,
-                            isLoading: true,
-                            onBack: requestBack,
-                            retry: nil
-                        )
-                    }
-                case .failed(let message):
+                } else {
                     NativeEditorLoadSurface(
-                        title: "The editor couldn’t open",
-                        detail: message,
+                        title: "Opening the editor…",
+                        detail: session.loadWaitingMessage ?? "Loading the latest cut and its editing controls.",
                         projectTitle: project.workspaceTitle,
-                        isLoading: false,
+                        isLoading: true,
                         onBack: requestBack,
-                        retry: { Task { await loadEditor() } }
+                        retry: nil
                     )
                 }
+            case .failed(let message):
+                NativeEditorLoadSurface(
+                    title: "The editor couldn’t open",
+                    detail: message,
+                    projectTitle: project.workspaceTitle,
+                    isLoading: false,
+                    onBack: requestBack,
+                    retry: { Task { await loadEditor() } }
+                )
             }
-            .frame(width: viewport.size.width, height: viewport.size.height, alignment: .top)
-            .font(KriaFont.body())
-            .foregroundStyle(KriaColor.ink)
-            .background(KriaColor.paper)
-            .overlay {
-                if previewFullscreen {
-                    fullscreenOverlay(viewport: viewport)
-                }
+        }
+        .frame(width: viewport.size.width, height: viewport.size.height, alignment: .top)
+        .font(KriaFont.body())
+        .foregroundStyle(KriaColor.ink)
+        .background(KriaColor.paper)
+        .overlay {
+            if previewFullscreen {
+                fullscreenOverlay(viewport: viewport)
             }
-            .navigationBarBackButtonHidden(true)
-            .sheet(isPresented: $showsResearchSources) { NativeResearchSourcesView(document: session.document) }
-            .sheet(item: $inspector) { inspector in
-                NativeEditorInspectorView(inspector: inspector, session: session, uploads: model.uploads, projectID: project.id)
-                    // The sheet is its own presentation; hand it the editor's text size explicitly.
-                    .environment(\.dynamicTypeSize, dynamicTypeSize)
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
+        }
+        .navigationBarBackButtonHidden(true)
+        .sheet(isPresented: $showsResearchSources) { NativeResearchSourcesView(document: session.document) }
+        .sheet(item: $inspector) { inspector in
+            NativeEditorInspectorView(inspector: inspector, session: session, uploads: model.uploads, projectID: project.id)
+                // The sheet is its own presentation; hand it the editor's text size explicitly.
+                .environment(\.dynamicTypeSize, dynamicTypeSize)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .onChange(of: session.selectionRequest) { _, _ in routeSelection() }
+        // KRI-1162: the BACKGROUND lane's fill strip and a window's inspector open the Background tool.
+        .onChange(of: session.backgroundToolRequest) { _, _ in
+            inspector = nil
+            changePanel(to: .background)
+        }
+        // A tall panel is a per-session choice: opening a tool later must
+        // never start out covering the preview.
+        .onChange(of: panel == nil) { _, closed in
+            if closed { panelExpansion = 0 }
+        }
+        // A drag on an outgoing panel can't end on it.
+        .onChange(of: panel) { _, _ in panelDismissPull = 0 }
+        .onChange(of: session.pendingText == nil) { _, finished in
+            if finished {
+                resignKeyboard()
+                if case .textCreation = panel { changePanel(to: nil) }
             }
-            .onChange(of: session.selectionRequest) { _, _ in routeSelection() }
-            // KRI-1162: the BACKGROUND lane's fill strip and a window's inspector open the Background tool.
-            .onChange(of: session.backgroundToolRequest) { _, _ in
-                inspector = nil
-                changePanel(to: .background)
-            }
-            // A tall panel is a per-session choice: opening a tool later must
-            // never start out covering the preview.
-            .onChange(of: panel == nil) { _, closed in
-                if closed { panelExpansion = 0 }
-            }
-            // A drag on an outgoing panel can't end on it.
-            .onChange(of: panel) { _, _ in panelDismissPull = 0 }
-            .onChange(of: session.pendingText == nil) { _, finished in
-                if finished {
-                    resignKeyboard()
-                    if case .textCreation = panel { changePanel(to: nil) }
-                }
-            }
+        }
+    }
+
+    private func editorPresentations<Content: View>(_ content: Content) -> some View {
+        content
             .sheet(isPresented: $showsDeviceRender, onDismiss: {
                 if opensRetryConversation {
                     opensRetryConversation = false
@@ -294,6 +303,10 @@ struct NativeEditorView: View {
                         .background(KriaColor.paper)
                 }
             }
+    }
+
+    private func editorExitControls<Content: View>(_ content: Content) -> some View {
+        content
             .sheet(isPresented: $exporter.isSharing, onDismiss: exporter.removeSharedFile) {
                 if let file = exporter.sharedFile { ShareSheetView(url: file) }
             }
@@ -309,6 +322,10 @@ struct NativeEditorView: View {
             } message: {
                 Text("Stay in the editor to keep working, or save before leaving. Discarding loses your unsaved changes.")
             }
+    }
+
+    private func editorLifecycle<Content: View>(_ content: Content) -> some View {
+        content
             .modifier(NativeCaptionGestureScopeModifier(session: session))
             #if DEBUG
             .overlay(alignment: .topLeading) {
@@ -351,7 +368,6 @@ struct NativeEditorView: View {
                 session.pausePlayback()
                 exporter.removeSharedFile()
             }
-        }
     }
 
     @ViewBuilder private func editor(viewport: GeometryProxy) -> some View {
