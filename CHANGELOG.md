@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.12.0] - 2026-11-06
+
+### Changed
+- feat(ios): point screen recordings in Footage to Overlays at upload (item 24) (#2112) <!-- release-pr: 2112 -->
+
 ## [0.88.11.0] - 2026-11-06
 
 ### Changed
