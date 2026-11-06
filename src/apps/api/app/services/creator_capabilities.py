@@ -1800,7 +1800,7 @@ def speaker_background_windows_open(manifest: ResolvedCreatorManifest) -> bool:
 
 
 def speaker_full_opening_open(manifest: ResolvedCreatorManifest) -> bool:
-    """True when the manifest advertises the full-screen opening (windows open, build >= 38)."""
+    """True when the manifest advertises the full-screen opening (windows open, build >= 41)."""
 
     capability = manifest.capabilities.get(CAPABILITY_SPEAKER_FULL_OPENING)
     return (

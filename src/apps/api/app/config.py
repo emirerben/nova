@@ -983,7 +983,7 @@ class Settings(BaseSettings):
     # `...=false` + restart. Design: docs/reviews/speaker-background-windows-failure-modes.md
     # (S70-S82).
     speaker_full_opening_enabled: bool = False
-    speaker_full_opening_min_client_protocol: int = 38
+    speaker_full_opening_min_client_protocol: int = 41
     # KRI-1192: the app bundles Noto Sans KR / Noto Sans Arabic (the script-fallback faces that
     # draw Hangul and Arabic captions) from protocol 35. A phone recipe naming one requires
     # `scriptFonts` (verified in PHONE_RENDER_VERIFIED_FEATURES after the device check) and an

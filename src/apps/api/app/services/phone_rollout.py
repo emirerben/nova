@@ -1049,7 +1049,7 @@ def speaker_background_color_unavailable_reason(
 def speaker_full_opening_client_supported(*, require_client: bool | None = None) -> bool:
     """Does the requesting app build decode ``speaker_background.full_screen_windows``?
 
-    At least ``speaker_full_opening_min_client_protocol`` (38) knows the key; an older build
+    At least ``speaker_full_opening_min_client_protocol`` (41) knows the key; an older build
     refuses the whole layer (strict decoder). Same ``require_client`` contract as
     `speaker_background_client_supported` (Qendresa item 16).
     """

@@ -11497,7 +11497,7 @@ def _speaker_background_color_capability(job: Job, variant: dict) -> bool:
 def _speaker_full_opening_capability(job: Job, variant: dict) -> bool:
     """Qendresa item 16: may the app author ``full_screen_windows``
     (``editor_capabilities.speaker_full_opening``)? The base capability AND the full-opening
-    gate (flag, windows gate, ``speakerFrameWindows`` verified, protocol >= 38)."""
+    gate (flag, windows gate, ``speakerFrameWindows`` verified, protocol >= 41)."""
     from app.services.phone_rollout import speaker_full_opening_supported  # noqa: PLC0415
 
     return bool(

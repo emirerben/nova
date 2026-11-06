@@ -1136,29 +1136,29 @@ _OPENING_ALL = ["speakerBackground", "speakerBackgroundWindows", "speakerFrameWi
 @pytest.mark.parametrize(
     ("enabled", "flag", "features", "protocol", "supported", "reason"),
     [
-        (True, True, _OPENING_ALL, 38, True, None),
-        (True, True, _OPENING_ALL, 39, True, None),
-        (False, True, _OPENING_ALL, 38, False, "disabled"),
-        (True, True, ["speakerFrameWindows"], 38, False, "token_not_verified"),
+        (True, True, _OPENING_ALL, 41, True, None),
+        (True, True, _OPENING_ALL, 42, True, None),
+        (False, True, _OPENING_ALL, 41, False, "disabled"),
+        (True, True, ["speakerFrameWindows"], 41, False, "token_not_verified"),
         (
             True,
             True,
             ["speakerBackground", "speakerFrameWindows"],
-            38,
+            41,
             False,
             "windows_token_not_verified",
         ),
         (True, True, _OPENING_ALL, 31, False, "client_protocol_below_min"),
-        (True, False, _OPENING_ALL, 38, False, "full_opening_disabled"),
+        (True, False, _OPENING_ALL, 41, False, "full_opening_disabled"),
         (
             True,
             True,
             ["speakerBackground", "speakerBackgroundWindows"],
-            38,
+            41,
             False,
             "full_opening_token_not_verified",
         ),
-        (True, True, _OPENING_ALL, 37, False, "client_protocol_below_min"),
+        (True, True, _OPENING_ALL, 40, False, "client_protocol_below_min"),
         (True, True, _OPENING_ALL, None, False, "client_protocol_below_min"),
     ],
 )
@@ -1201,12 +1201,12 @@ def test_speaker_full_opening_client_half_only_applies_inside_a_request(monkeypa
         assert speaker_full_opening_supported(require_client=False) is True
         assert speaker_full_opening_unavailable_reason(require_client=False) is None
         # Inside a request it does, and `require_client=None` follows the request context.
-        set_client_protocol(37)
+        set_client_protocol(40)
         assert speaker_full_opening_client_supported(require_client=True) is False
         assert speaker_full_opening_client_supported() is False
         assert speaker_full_opening_client_supported(require_client=False) is True
         assert speaker_full_opening_unavailable_reason() == "client_protocol_below_min"
-        set_client_protocol(38)
+        set_client_protocol(41)
         assert speaker_full_opening_client_supported() is True
         assert speaker_full_opening_supported() is True
     finally:
@@ -1215,7 +1215,7 @@ def test_speaker_full_opening_client_half_only_applies_inside_a_request(monkeypa
 
 @pytest.mark.parametrize(
     ("protocol", "planned", "reason"),
-    [(37, False, "app_too_old"), (38, True, None), (39, True, None), (None, False, "app_too_old")],
+    [(40, False, "app_too_old"), (41, True, None), (42, True, None), (None, False, "app_too_old")],
 )
 def test_speaker_full_opening_planned_for_the_approving_build(
     monkeypatch, protocol, planned, reason
@@ -1238,19 +1238,19 @@ def test_speaker_full_opening_planned_reasons_for_a_closed_lane(monkeypatch):
     monkeypatch.setattr(settings, "speaker_background_enabled", True)
     monkeypatch.setattr(settings, "phone_render_verified_features", _OPENING_ALL)
     monkeypatch.setattr(settings, "speaker_full_opening_enabled", False)
-    assert speaker_full_opening_planned_reason(38) == "disabled"
+    assert speaker_full_opening_planned_reason(41) == "disabled"
     monkeypatch.setattr(settings, "speaker_full_opening_enabled", True)
     monkeypatch.setattr(
         settings,
         "phone_render_verified_features",
         ["speakerBackground", "speakerBackgroundWindows"],
     )
-    assert speaker_full_opening_planned_reason(38) == "unavailable"
+    assert speaker_full_opening_planned_reason(41) == "unavailable"
     monkeypatch.setattr(settings, "phone_render_verified_features", ["speakerFrameWindows"])
-    assert speaker_full_opening_planned_reason(38) == "unavailable"
+    assert speaker_full_opening_planned_reason(41) == "unavailable"
     monkeypatch.setattr(settings, "speaker_background_enabled", False)
     monkeypatch.setattr(settings, "phone_render_verified_features", _OPENING_ALL)
-    assert speaker_full_opening_planned_reason(38) == "unavailable"
+    assert speaker_full_opening_planned_reason(41) == "unavailable"
 
 
 def test_speaker_full_opening_is_dark_by_default():
@@ -1258,8 +1258,8 @@ def test_speaker_full_opening_is_dark_by_default():
     from app.services.client_protocol import SPEAKER_FULL_OPENING_PROTOCOL
 
     assert Settings.model_fields["speaker_full_opening_enabled"].default is False
-    assert Settings.model_fields["speaker_full_opening_min_client_protocol"].default == 38
-    assert SPEAKER_FULL_OPENING_PROTOCOL == 38
+    assert Settings.model_fields["speaker_full_opening_min_client_protocol"].default == 41
+    assert SPEAKER_FULL_OPENING_PROTOCOL == 41
     assert "speakerFrameWindows" not in Settings.model_fields[
         "phone_render_verified_features"
     ].get_default(call_default_factory=True)

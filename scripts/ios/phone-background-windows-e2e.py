@@ -30,7 +30,7 @@ to copy from the take's own transcript).
 
 Qendresa item 16: ``--opening on`` asks to start full screen (``background_media
 .full_screen_opening``) with ``SPEAKER_FULL_OPENING_ENABLED`` and ``speakerFrameWindows``
-verified, for the app build ``--client-protocol`` (default 38); ``off`` is today's corner from
+verified, for the app build ``--client-protocol`` (default 41); ``off`` is today's corner from
 0 s. ``--title`` adds the Talking hook title row (`talking_title_element`), moved off the face
 by the real `place_talking_title`; the face boxes come from OUT_DIR/face_boxes.json
 (``[[x, y, w, h], ...]`` normalised, top-left origin, e.g. Apple Vision on the take) when
@@ -231,7 +231,7 @@ def main() -> None:
     parser.add_argument("--phrases", choices=("labels", "spoken"), default="labels")
     parser.add_argument("--opening", choices=("on", "off"), default="off")
     parser.add_argument("--title", default=None)
-    parser.add_argument("--client-protocol", type=int, default=38)
+    parser.add_argument("--client-protocol", type=int, default=41)
     args = parser.parse_args()
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)

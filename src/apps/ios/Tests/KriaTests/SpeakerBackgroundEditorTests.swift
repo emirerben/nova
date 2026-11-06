@@ -936,6 +936,6 @@ import KriaMediaEngine
     }
 
     func testTheProtocolDeclaresTheOpeningBuild() {
-        XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, 38, "38 = decodes, draws and round-trips speaker_background.full_screen_windows")
+        XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, 41, "41 = decodes, draws and round-trips speaker_background.full_screen_windows")
     }
 }

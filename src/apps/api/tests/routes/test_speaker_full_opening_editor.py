@@ -2,7 +2,7 @@
 
 Rows S76, S77, S79, S80 (server half) of `docs/reviews/speaker-background-windows-failure-modes.md`:
 the editor document shows ``full_screen_windows`` in cut time, a Save from a build below protocol
-38 never silently drops it (426, nothing committed), a closed gate refuses a SET but never a
+41 never silently drops it (426, nothing committed), a closed gate refuses a SET but never a
 clear, a malformed list has its own code, the copilot background ops keep it, the device poll
 tells an old build to update, and with the flag off nothing about a variant without the field
 changes.
@@ -76,7 +76,7 @@ def opening_job(monkeypatch):
     """A phone Talking variant whose pinned recipe starts full screen, then the corner."""
     job = background_job(monkeypatch, background=_background(PHOTO), pinned=POOL)
     _open(monkeypatch)
-    set_client_protocol(38)
+    set_client_protocol(41)
     save(
         job,
         speaker_background=_document(PHOTO)
@@ -112,7 +112,7 @@ def test_the_recipe_and_the_editor_document_carry_the_opening(monkeypatch) -> No
 def test_a_variant_without_the_field_shows_no_key_anywhere(monkeypatch) -> None:
     job = background_job(monkeypatch, background=_background(PHOTO), pinned=POOL)
     _open(monkeypatch)
-    set_client_protocol(38)
+    set_client_protocol(41)
     save(job, speaker_background=_document(PHOTO))
     assert "full_screen_windows" not in json.dumps(_variant(job))
     assert "full_screen_windows" not in json.dumps(
@@ -126,7 +126,7 @@ def test_a_variant_without_the_field_shows_no_key_anywhere(monkeypatch) -> None:
 
 def test_changing_the_fill_keeps_the_opening(monkeypatch) -> None:
     job = opening_job(monkeypatch)
-    set_client_protocol(38)
+    set_client_protocol(41)
     _resave(
         job,
         speaker_background=_document(SECOND)
@@ -139,7 +139,7 @@ def test_changing_the_fill_keeps_the_opening(monkeypatch) -> None:
 
 def test_a_save_that_leaves_the_background_alone_keeps_it(monkeypatch) -> None:
     job = opening_job(monkeypatch)
-    set_client_protocol(38)
+    set_client_protocol(41)
     _resave(job, sound_effects=[])
     assert _spans(_recipe(job).speaker_background) == [(0.0, 4.0)]
     assert _variant(job)["speaker_background"]["full_screen_windows"] == OPENING
@@ -147,7 +147,7 @@ def test_a_save_that_leaves_the_background_alone_keeps_it(monkeypatch) -> None:
 
 def test_the_save_can_move_and_clear_the_opening(monkeypatch) -> None:
     job = opening_job(monkeypatch)
-    set_client_protocol(38)
+    set_client_protocol(41)
     moved = [{"start_s": 0.0, "end_s": 2.5}, {"start_s": 6.0, "end_s": 7.0}]
     _resave(
         job,
@@ -163,7 +163,7 @@ def test_the_save_can_move_and_clear_the_opening(monkeypatch) -> None:
 
 def test_remove_background_clears_it(monkeypatch) -> None:
     job = opening_job(monkeypatch)
-    set_client_protocol(38)
+    set_client_protocol(41)
     _resave(job, speaker_background=None)
     assert _recipe(job).speaker_background is None
     assert "speaker_background" not in _variant(job)
@@ -179,14 +179,14 @@ def test_save_from_build_37_on_a_variant_carrying_it_is_426_and_commits_nothing(
     job = opening_job(monkeypatch)
     before = device_status(job, "subtitled").request.identity.recipe_revision
     snapshot_before = json.dumps(_variant(job), sort_keys=True, default=str)
-    set_client_protocol(37)
+    set_client_protocol(40)
     with pytest.raises(HTTPException) as refused:
         _resave(job, sound_effects=[])
     assert refused.value.status_code == 426
     assert refused.value.detail == {
         "code": "client_update_required",
         "feature": "speaker_full_opening",
-        "minimum_client_protocol": 38,
+        "minimum_client_protocol": 41,
     }
     assert device_status(job, "subtitled").request.identity.recipe_revision == before
     assert json.dumps(_variant(job), sort_keys=True, default=str) == snapshot_before
@@ -196,7 +196,7 @@ def test_save_from_build_37_on_a_variant_carrying_it_is_426_and_commits_nothing(
 def test_a_build_below_38_setting_it_is_426(monkeypatch) -> None:
     job = background_job(monkeypatch, background=_background(PHOTO), pinned=POOL)
     _open(monkeypatch)
-    set_client_protocol(37)
+    set_client_protocol(40)
     with pytest.raises(HTTPException) as refused:
         save(job, speaker_background=_document(PHOTO) | {"full_screen_windows": OPENING})
     assert refused.value.status_code == 426
@@ -207,7 +207,7 @@ def test_a_build_below_38_setting_it_is_426(monkeypatch) -> None:
 def test_an_old_build_saving_a_variant_without_it_is_not_asked_to_update(monkeypatch) -> None:
     job = background_job(monkeypatch, background=_background(PHOTO), pinned=POOL)
     _open(monkeypatch)
-    set_client_protocol(37)
+    set_client_protocol(40)
     save(job, sound_effects=[])
     assert _recipe(job).speaker_background is not None
 
@@ -226,14 +226,14 @@ def test_device_poll_from_37_on_a_pinned_recipe_with_it_is_426_and_from_38_is_20
         status = SimpleNamespace(request=SimpleNamespace(recipe=_recipe(target)))
         return device_render._client_update_detail(target, record, status)
 
-    assert detail(job, 37) == {
+    assert detail(job, 40) == {
         "code": "client_update_required",
         "feature": "speaker_full_opening",
-        "minimum_client_protocol": 38,
+        "minimum_client_protocol": 41,
     }
-    assert detail(job, 38) is None
-    # A recipe without the opening is not asked to update on 37 (windows protocol is 32).
-    assert detail(plain, 37) is None
+    assert detail(job, 41) is None
+    # A recipe without the opening is not asked to update on 40 (windows protocol is 32).
+    assert detail(plain, 40) is None
 
 
 # --- S77: a closed gate refuses a SET, never a clear --------------------------------------------
@@ -249,7 +249,7 @@ def test_device_poll_from_37_on_a_pinned_recipe_with_it_is_426_and_from_38_is_20
 def test_setting_it_with_a_closed_gate_is_422(monkeypatch, kwargs, reason) -> None:
     job = background_job(monkeypatch, background=_background(PHOTO), pinned=POOL)
     _open(monkeypatch, **kwargs)
-    set_client_protocol(38)
+    set_client_protocol(41)
     with pytest.raises(HTTPException) as dark:
         save(job, speaker_background=_document(PHOTO) | {"full_screen_windows": OPENING})
     assert dark.value.status_code == 422
@@ -263,7 +263,7 @@ def test_setting_it_with_a_closed_gate_is_422(monkeypatch, kwargs, reason) -> No
 def test_clearing_works_with_the_gate_closed(monkeypatch) -> None:
     job = opening_job(monkeypatch)
     _open(monkeypatch, flag=False)
-    set_client_protocol(38)
+    set_client_protocol(41)
     _resave(job, speaker_background=_document(PHOTO) | {"speaker_frame": CORNER})
     assert _recipe(job).speaker_background.full_screen_windows is None
     assert "full_screen_windows" not in _variant(job)["speaker_background"]
@@ -283,7 +283,7 @@ def test_clearing_works_with_the_gate_closed(monkeypatch) -> None:
 )
 def test_a_malformed_list_is_422_invalid(monkeypatch, spans) -> None:
     job = opening_job(monkeypatch)
-    set_client_protocol(38)
+    set_client_protocol(41)
     before = device_status(job, "subtitled").request.identity.recipe_revision
     with pytest.raises(HTTPException) as bad:
         _resave(job, speaker_background=_document(PHOTO) | {"full_screen_windows": spans})
@@ -305,12 +305,12 @@ def test_the_refusal_codes_have_creator_words() -> None:
 @pytest.mark.parametrize(
     ("kwargs", "protocol", "expected"),
     [
-        ({}, 38, True),
-        ({}, 37, False),
+        ({}, 41, True),
+        ({}, 40, False),
         ({}, None, False),
-        ({"flag": False}, 38, False),
-        ({"token": False}, 38, False),
-        ({"windows": False}, 38, False),
+        ({"flag": False}, 41, False),
+        ({"token": False}, 41, False),
+        ({"windows": False}, 41, False),
     ],
 )
 def test_the_capability_key_follows_the_gate(monkeypatch, kwargs, protocol, expected) -> None:
@@ -327,7 +327,7 @@ def test_the_capability_key_follows_the_gate(monkeypatch, kwargs, protocol, expe
 def test_a_cloud_variant_never_advertises_it(monkeypatch) -> None:
     job = background_job(monkeypatch, pinned=POOL)
     _open(monkeypatch)
-    set_client_protocol(38)
+    set_client_protocol(41)
     assert not gj._speaker_full_opening_capability(job, _capability_variant("cloud"))
 
 
@@ -335,7 +335,7 @@ def test_flag_off_leaves_the_capability_map_and_the_variant_dump_byte_identical(
     monkeypatch,
 ) -> None:
     flag_off_job = background_job(monkeypatch, background=_background(PHOTO), pinned=POOL)
-    set_client_protocol(38)
+    set_client_protocol(41)
     monkeypatch.setattr(settings, "speaker_full_opening_enabled", False)
     off = json.dumps(gj._editor_capabilities(flag_off_job, _variant(flag_off_job)), sort_keys=True)
     assert "speaker_full_opening" not in off
@@ -379,7 +379,7 @@ def _pool_rows():
 
 def test_the_snapshot_shows_the_opening_only_while_there_is_one(monkeypatch) -> None:
     job = _chat_job(monkeypatch)
-    set_client_protocol(38)
+    set_client_protocol(41)
     snapshot = _snapshot(job, _base(job), pool=_pool_rows())
     assert snapshot["background"]["full_screen_windows"] == OPENING
     plain = background_job(monkeypatch, background=_background(PHOTO), pinned=POOL)
@@ -403,7 +403,7 @@ def test_the_snapshot_shows_the_opening_only_while_there_is_one(monkeypatch) -> 
 )
 def test_the_background_ops_keep_the_opening(monkeypatch, raw) -> None:
     job = _chat_job(monkeypatch)
-    set_client_protocol(38)
+    set_client_protocol(41)
     base = _base(job)
     snapshot = _snapshot(job, base, pool=_pool_rows())
     (op,), _state = _parse(snapshot, raw)
@@ -417,7 +417,7 @@ def test_the_background_ops_keep_the_opening(monkeypatch, raw) -> None:
 
 def test_remove_background_clears_it_in_chat(monkeypatch) -> None:
     job = _chat_job(monkeypatch)
-    set_client_protocol(38)
+    set_client_protocol(41)
     base = _base(job)
     (op,), _ = _parse(_snapshot(job, base, pool=_pool_rows()), {"op": "remove_background"})
     compiled = compile_editor_ops(job, base, [op])
@@ -435,7 +435,7 @@ def test_a_never_saved_variant_keeps_its_opening_when_the_gate_closed_after_the_
     for key in (PHONE_SUBTITLED_EDITOR_LANES_FIELD, "sound_effects", "media_overlays"):
         _variant(job).pop(key, None)
     _open(monkeypatch, flag=False)
-    set_client_protocol(38)
+    set_client_protocol(41)
     # A fill change that echoes the spans it was shown is not a change to the opening.
     _resave(
         job,
