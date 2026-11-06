@@ -1071,6 +1071,32 @@ extension NativeSplitScreenTests {
 }
 
 extension NativeSplitScreenTests {
+    func testFallbackOnlySplitSurvivesUnrelatedTextEditAndReopen() {
+        let section = EditorSplitScreenSection(id: "fallback", durationS: 4, panelCount: 2)
+        let rows: [JSONValue] = (0..<2).map { panel in
+            .object(["slot_id": .string("member-\(panel)"), "clip_index": .number(Double(panel)),
+                "in_s": .number(0), "duration_s": .number(4), "split_section_id": .string("fallback"),
+                "split_panel_index": .number(Double(panel)), "split_offset_s": .number(0)])
+        }
+        let snapshot: [String: JSONValue] = [
+            "user_timeline": .object(["slots": .array(rows), "split_screen_sections": .array([section.json])]),
+            "text_elements": .array([.object(["id": .string("title"), "text": .string("Before"),
+                "start_s": .number(0), "end_s": .number(2)])])]
+        var document = EditorDocument(snapshot: snapshot)
+        XCTAssertTrue(document.splitScreenIsValid)
+        XCTAssertEqual(document.encodeSnapshot(), snapshot, "Untouched fallback envelope remains identical")
+        let members = document.clips
+        document.textElements[0].text = "After"
+        let encoded = document.encodeSnapshot()
+        let reopened = EditorDocument(snapshot: encoded)
+        XCTAssertEqual(reopened.textElements.first?.text, "After")
+        XCTAssertEqual(reopened.splitScreenSections, [section])
+        XCTAssertEqual(reopened.clips, members)
+        XCTAssertTrue(reopened.splitScreenIsValid)
+        XCTAssertEqual(encoded["split_screen_sections"], .array([section.json]),
+            "A root field must not shadow the fallback with an empty layout")
+    }
+
     func testNativeSplitClearRetainsExplicitFieldWithoutChangingUntouchedLegacySnapshot() {
         let snapshot: [String: JSONValue] = ["editor_payload": .object(["sections": .object([
             "timeline_slots": .array([.object(["slot_id": .string("legacy"), "clip_index": .number(0),

@@ -222,6 +222,10 @@ def copilot_schema():
     }
 
     def field(name):
+        if name == "frame":
+            from app.kria.portable_speaker_background import SpeakerFrame
+
+            return SpeakerFrame.model_json_schema()
         if name == "gap_policy":
             return enum("scale", "close", "fixed")
         if name == "pace":
@@ -403,6 +407,14 @@ def copilot_schema():
                         k: (
                             {"type": "string"}
                             if name == "replace_caption_text" and k == "replace"
+                            else enum(
+                                "small_bottom_right",
+                                "small_bottom_left",
+                                "small_top_right",
+                                "small_top_left",
+                                "inherit",
+                            )
+                            if name == "set_speaker_frame" and k == "preset"
                             else field(k)
                         )
                         for k in sorted(set(fields) - {"integrity"})

@@ -32,7 +32,6 @@ async def test_manual_ai_manual_saves_reopen_independent_panels(monkeypatch, req
 
         set_client_protocol(43)
         monkeypatch.setattr(settings, "speaker_background_enabled", True)
-        fixture.assembly_plan["variants"][0]["resolved_archetype"] = "subtitled"
         request.addfinalizer(clear_request_context)
         fixture.assembly_plan["variants"][0]["speaker_background"] = {
             "kind": "color",

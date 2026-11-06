@@ -812,7 +812,7 @@ struct EditorDocument: Equatable, Sendable {
             // Once this document authors a split, an empty array is an explicit clear.
             // Preserve that field ownership across acknowledgement and render retries.
             if rawSections["split_screen_sections"] == nil, !oldValue.isEmpty || !splitScreenSections.isEmpty {
-                rawSections["split_screen_sections"] = .array([])
+                rawSections["split_screen_sections"] = .array(splitScreenSections.map(\.json))
             }
         }
     }
