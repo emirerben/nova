@@ -187,9 +187,14 @@ extension KriaAPI {
         try await request(path: "me/jobs/\(body.identity.jobID.uuidString)/device-render/uploads", method: "POST", bodyData: RecipeJSON.encoder().encode(body), decode: DeviceExportUploadTarget.self)
     }
     func completeDeviceExport(_ body: DeviceExportCompleteBody) async throws {
-        let result = try await request(path: "me/jobs/\(body.identity.jobID.uuidString)/device-render/complete", method: "POST", bodyData: RecipeJSON.encoder().encode(body), decode: DeviceExportCompletion.self)
+        let result = try await Perf.measureAsync("talk.save.complete") {
+            try await request(path: "me/jobs/\(body.identity.jobID.uuidString)/device-render/complete", method: "POST", bodyData: RecipeJSON.encoder().encode(body), decode: DeviceExportCompletion.self)
+        }
         if result.status == "published" { return }
         guard result.status == "checking" else { throw APIError.invalidResponse }
+        let attemptKey = body.attemptID.uuidString
+        Perf.begin("talk.save.serverChecking", id: attemptKey)
+        defer { Perf.end("talk.save.serverChecking", id: attemptKey) }
         // The committed worker check survives app suspension or a lost HTTP
         // response. Poll only lightweight status reads, never completion POSTs,
         // backing off from 2 s to 30 s. A network failure leaves the local
@@ -383,7 +388,9 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
             do { try await requireOwner(); try await api.completeDeviceExport(complete); try await requireOwner(); return .published }
             catch APIError.conflict { return .superseded }
         }
-        let fingerprint = try await Task.detached { try SHA256Fingerprinter().fingerprint(file: file) }.value
+        let fingerprint = try await Perf.measureAsync("talk.save.publishHash") {
+            try await Task.detached { try SHA256Fingerprinter().fingerprint(file: file) }.value
+        }
         // This attempt's bytes already reached storage (a previous publish of the
         // same file): resume its completion and check instead of re-uploading.
         let marker = file.deletingPathExtension().appendingPathExtension("uploaded")
@@ -408,7 +415,7 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
         var put = URLRequest(url: reservation.uploadURL)
         put.httpMethod = "PUT"
         for (name, value) in reservation.uploadHeaders { put.setValue(value, forHTTPHeaderField: name) }
-        let (_, response) = try await uploadSession.upload(for: put, fromFile: file)
+        let (_, response) = try await Perf.measureAsync("talk.save.publishPut") { try await uploadSession.upload(for: put, fromFile: file) }
         guard let response = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         // A create-only PUT can return 412 after a lost success response. The server validates
         // the generation and checksum before attaching it, so this is safe to reconcile.

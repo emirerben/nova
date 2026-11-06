@@ -90,6 +90,8 @@ import UIKit
     private var lastChannelCount = 0
     private var lastMaxPowerDb: Float?
     private var liveSilenceReported = false
+    /// Set by the first `stopRecording` of a take: ties the three stop-side intervals together and times the file's finalize.
+    private var stopTrace: (id: String, requestedAt: TimeInterval)?
     private var observers: [NSObjectProtocol] = []
     private var operationGeneration = 0
 
@@ -215,6 +217,7 @@ import UIKit
         stopReason = nil
         finalizedCinematic = nil
         takeWantsCinematic = cinematicRequested
+        stopTrace = nil
         startRequested = true
         note("start_requested")
         NotificationCenter.default.post(name: .kriaAudioCaptureWillStart, object: nil)
@@ -257,6 +260,12 @@ import UIKit
         if stopReason == nil {
             stopReason = reason
             note("stop_\(reason.rawValue)")
+        }
+        if stopTrace == nil {
+            let id = UUID().uuidString
+            stopTrace = (id, ProcessInfo.processInfo.systemUptime)
+            Perf.begin("talk.stop.toReview", id: id)
+            Perf.begin("talk.stop.finalize", id: id)
         }
         captureQueue.async { [weak self] in
             guard let self, let output = self.movieOutput else { return }
@@ -586,11 +595,12 @@ import UIKit
 
     /// One log-only report per silent take / live-silent recording so the next occurrence names its own
     /// trigger in the server logs. Labels and numbers only.
-    private func report(_ kind: RecorderDiagnosticReport.Kind, takeDuration: TimeInterval? = nil) {
+    private func report(_ kind: RecorderDiagnosticReport.Kind, takeDuration: TimeInterval? = nil, finalizeMs: Int? = nil,
+                        finishMs: Int? = nil, audioTrackCount: Int? = nil) {
         let audio = AVAudioSession.sharedInstance()
         let origin = phaseHistory.first?.uptime ?? ProcessInfo.processInfo.systemUptime
         let history = phaseHistory.suffix(12).map { "\($0.label)+\(max(0, Int(($0.uptime - origin) * 1000)))" }
-        reportDiagnostic?(RecorderDiagnosticReport(
+        let report = RecorderDiagnosticReport(
             kind: kind,
             audioCategory: audio.category.rawValue,
             audioMode: audio.mode.rawValue,
@@ -603,7 +613,25 @@ import UIKit
             maxPowerDb: lastMaxPowerDb.map { Double(max($0, -200)) },
             takeDurationS: takeDuration,
             appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
-            stopReason: stopReason?.rawValue))
+            stopReason: stopReason?.rawValue,
+            finalizeMs: finalizeMs, finishMs: finishMs,
+            audioSampleRateHz: audio.sampleRate, microphoneMode: Self.microphoneModeLabel(AVCaptureDevice.activeMicrophoneMode),
+            audioTrackCount: audioTrackCount)
+        #if DEBUG
+        if TalkBench.isEnabled, let data = try? JSONEncoder().encode(report) {
+            TalkBench.shared.fact("recorder.\(kind.rawValue)", String(decoding: data, as: UTF8.self))
+        }
+        #endif
+        reportDiagnostic?(report)
+    }
+
+    private static func microphoneModeLabel(_ mode: AVCaptureDevice.MicrophoneMode) -> String {
+        switch mode {
+        case .standard: "standard"
+        case .wideSpectrum: "wide_spectrum"
+        case .voiceIsolation: "voice_isolation"
+        @unknown default: "unknown_\(mode.rawValue)"
+        }
     }
 
     private func activateIdleTimerProtection() {
@@ -708,6 +736,7 @@ extension TeleprompterCamera: AVCaptureFileOutputRecordingDelegate {
             self.recordingStartedAt = ProcessInfo.processInfo.systemUptime
             self.phase = self.phase == .finalizing ? .finalizing : .recording
             self.note("recording")
+            Perf.count("talk.record.started")
             self.startMeter()
             self.activateIdleTimerProtection()
             self.captureQueue.async { [weak self] in
@@ -726,6 +755,15 @@ extension TeleprompterCamera: AVCaptureFileOutputRecordingDelegate {
 
 private extension TeleprompterCamera {
     func finishRecording(_ url: URL, delegateError: (any Error)?) async {
+        let finishStart = ProcessInfo.processInfo.systemUptime
+        // A system-ended take (interruption, route loss) never went through `stopRecording`, so it has no stop trace.
+        let trace = stopTrace
+        stopTrace = nil
+        if let trace {
+            Perf.end("talk.stop.finalize", id: trace.id)
+            Perf.begin("talk.stop.finishRecording", id: trace.id)
+        }
+        let finalizeMs = trace.map { Int((finishStart - $0.requestedAt) * 1000) }
         phase = .finalizing
         stopMeter()
         if stopReason == nil {
@@ -735,13 +773,13 @@ private extension TeleprompterCamera {
         note("finalizing")
         let wasInterrupted = interrupted
         let startedAt = recordingStartedAt
-        let validation = await Self.validateMovie(at: url)
+        let validation = await Perf.measureAsync("talk.stop.validate") { await Self.validateMovie(at: url) }
         // KRI-1160: bake the Cinematic look in before anything measures, saves or plays the take.
         var cinematic: CinematicTakeOutcome?
         if case .valid = validation, takeWantsCinematic {
             applyingCinematic = true
             note("cinematic_bake")
-            let outcome = await CinematicTakeFinisher.finish(movieAt: url) ?? .standard
+            let outcome = await Perf.measureAsync("talk.stop.cinematicBake") { await CinematicTakeFinisher.finish(movieAt: url) } ?? .standard
             applyingCinematic = false
             note("cinematic_\(outcome.rawValue)")
             cinematic = outcome
@@ -750,11 +788,16 @@ private extension TeleprompterCamera {
         takeWantsCinematic = false
         // KRI-653: "has an audio track" is not "has sound". Measure the level of what was written.
         var audioCheck: TakeAudioCheck?
-        if case .valid = validation { audioCheck = await TakeAudioMeasurement.measure(url: url) }
+        if case .valid = validation { audioCheck = await Perf.measureAsync("talk.stop.audioMeasurement") { await TakeAudioMeasurement.measure(url: url) } }
         finalizedAudioCheck = audioCheck
         let seconds = startedAt.map { ProcessInfo.processInfo.systemUptime - $0 }
-        if audioCheck?.verdict == .silent { report(.takeSilent, takeDuration: seconds) }
-        report(.takeFinished, takeDuration: seconds)
+        // Two enabled audio tracks play together, which is one of the sound hypotheses (the bake copies every source track).
+        var trackCount: Int?
+        if case .valid = validation { trackCount = try? await AVURLAsset(url: url).loadTracks(withMediaType: .audio).count }
+        if audioCheck?.verdict == .silent { report(.takeSilent, takeDuration: seconds, audioTrackCount: trackCount) }
+        report(.takeFinished, takeDuration: seconds, finalizeMs: finalizeMs,
+               finishMs: Int((ProcessInfo.processInfo.systemUptime - finishStart) * 1000), audioTrackCount: trackCount)
+        if let trace { Perf.end("talk.stop.finishRecording", id: trace.id) }
         captureQueue.async { [weak self] in
             guard let self else { return }
             self.recordingRequested = false
@@ -782,6 +825,7 @@ private extension TeleprompterCamera {
             phase = .failed
             onFinalized?(nil, message)
         }
+        if let trace { Perf.end("talk.stop.toReview", id: trace.id) }
 
         if stopSessionAfterFinalization {
             stopSessionAfterFinalization = false
@@ -862,7 +906,17 @@ final class LiveFrameRelay: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         lock.lock(); let current = consumer; lock.unlock()
         guard let current, let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         logConnectionOnce(connection)
-        current.consume(buffer, mirrored: LivePreviewOrientation.previewMirrored(connectionIsMirrored: connection.isVideoMirrored))
+        Perf.count("talk.live.delivered")
+        // Capture timestamps are on the host clock, the same scale as `CACurrentMediaTime`.
+        current.consume(buffer, mirrored: LivePreviewOrientation.previewMirrored(connectionIsMirrored: connection.isVideoMirrored),
+                        capturedAt: CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds)
+    }
+
+    /// With `alwaysDiscardsLateVideoFrames` a frame the consumer was too slow for is dropped here, with the reason
+    /// (`FrameWasLate`, `OutOfBuffers`, `Discontinuity`).
+    func captureOutput(_ output: AVCaptureOutput, didDrop sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        let reason = CMGetAttachment(sampleBuffer, key: kCMSampleBufferAttachmentKey_DroppedFrameReason, attachmentModeOut: nil) as? String
+        Perf.count("talk.live.dropped", reason ?? "unknown")
     }
 }
 
