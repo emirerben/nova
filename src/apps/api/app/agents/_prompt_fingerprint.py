@@ -29,6 +29,10 @@ def prompt_fingerprint(prefix: str, sources: Iterable[str], *, root: Path = API_
     """
     digest = hashlib.sha256()
     for rel in sorted(set(sources)):
-        data = (root / rel).read_bytes().replace(b"\r\n", b"\n")
+        path = root / rel
+        # A missing file must not take the API down at import (load_prompt falls back to
+        # inline defaults); it still yields a distinct version, and
+        # tests/agents/test_prompt_fingerprint.py fails on it in CI.
+        data = path.read_bytes().replace(b"\r\n", b"\n") if path.is_file() else b"\0missing"
         digest.update(rel.encode("utf-8") + b"\0" + data + b"\0")
     return f"{prefix}-{digest.hexdigest()[:12]}"

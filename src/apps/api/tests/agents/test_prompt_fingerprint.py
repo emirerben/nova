@@ -111,3 +111,10 @@ def test_specs_stamp_the_fingerprint() -> None:
     )
     assert MAIN_CREATOR_PROMPT_VERSION.startswith("mc-")
     assert BRIEF_EXTRACTOR_PROMPT_VERSION.startswith("be-")
+
+
+def test_a_missing_source_changes_the_version_without_crashing(tmp_path: Path) -> None:
+    (tmp_path / "a.txt").write_text("rule\n")
+    present = fp.prompt_fingerprint("xx", ("a.txt", "gone.txt"), root=tmp_path)
+    (tmp_path / "gone.txt").write_text("")
+    assert fp.prompt_fingerprint("xx", ("a.txt", "gone.txt"), root=tmp_path) != present

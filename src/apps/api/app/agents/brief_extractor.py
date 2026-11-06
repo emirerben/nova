@@ -37,6 +37,7 @@ from app.pipeline.prompt_loader import load_prompt
 BRIEF_EXTRACTOR_PROMPT_SOURCES = (
     "app/agents/brief_extractor.py",
     "app/agents/main_creator.py",
+    "app/kria/brief.py",
     "app/agents/prompt_vocab.py",
     "prompts/brief_extractor.txt",
 )
