@@ -351,6 +351,32 @@ class EndingClipFact:
 
 
 @dataclass(frozen=True)
+class ListLabelFact:
+    """One numbered list label as a phone Talking render handled it (Qendresa item 19)."""
+
+    requirement_id: str
+    # "placed" | "not_heard" | "no_time" | "same_moment" | "too_long" | "error"
+    status: str
+    text: str = ""
+    face_collision: bool = False
+    # What the label's own row on the video reads (`text_elements` by the receipt's
+    # ``element_id``); None = no such row on the video (removed by an edit, or never written),
+    # so a placed label with None is never "met".
+    shown_text: str | None = None
+    # How many items of a typed "1." list the render found on the take (its own first one
+    # included); None = the rest of the list was never looked for. Counted BEFORE placement:
+    # what the video really shows of them is `items_missing` / `items_unaccounted`.
+    list_found: int | None = None
+    # A spoken item of the list (found after the typed one) could not be kept off a face.
+    items_on_face: bool = False
+    # The found items the video does not show (left out: too long, same moment, no time, error,
+    # never heard; or placed but their row is gone from the video), in list order.
+    items_missing: tuple[str, ...] = ()
+    # Found items `list_found` counts that the receipt has no row for (also not shown).
+    items_unaccounted: int = 0
+
+
+@dataclass(frozen=True)
 class SpeakerBackgroundFact:
     """The photo / video behind a phone Talking speaker, as a plan or a render holds it (KRI-1161).
 
@@ -696,6 +722,12 @@ class PlanFacts:
     # (`variant["spoken_text_placement"]`). None = no such receipt (no such ask, a draft,
     # or an older render): nothing is claimed.
     spoken_texts: tuple[SpokenTextFact, ...] | None = None
+    # Item 19: how a phone Talking render handled each numbered list label
+    # (`variant["list_label_placement"]`). None = no such receipt: nothing is claimed.
+    list_labels: tuple[ListLabelFact, ...] | None = None
+    # Item 19: the words naming each planned background recording (`spoken_phrase`), read off a
+    # draft's strategy only while list labels are rolled out; a label that IS one is planned.
+    background_phrases: tuple[str, ...] = ()
     # KRI-724: the creator's server-owned ``speech_occurrence`` answers on the draft's strategy
     # (which time a spoken word was meant), so the draft says the picked time.
     speech_occurrence_answers: tuple[Mapping[str, Any], ...] = ()
@@ -1376,6 +1408,12 @@ def plan_facts_from_strategy(
         extra["take_duration_s"] = _selected_video_seconds(strategy, manifest)
         spoken_cap = manifest.capabilities.get("phone_voiceover_spoken_text")
         extra["phone_voiceover_spoken_text"] = bool(spoken_cap and spoken_cap.available)
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if _talking_list_labels_lane() and _settings.background_follows_talk_enabled:
+        # Item 19: a label follows a recording only with item 17's windows (the worker's rule,
+        # `_phone_list_label_follow`); without them only a marked label is one.
+        extra["background_phrases"] = _background_phrases(strategy)
     edit_format = strategy.get("edit_format")
     caption_style = strategy.get("caption_style")
     audio_strategy = strategy.get("audio_strategy")
@@ -2646,6 +2684,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
         changes["named_cuts"] = tuple(row for row in named if isinstance(row, Mapping))
     changes.update(_title_face_facts(variant))
     changes.update(_spoken_text_facts(variant))
+    changes.update(_list_label_facts(variant))
     changes.update(_protected_text_facts(variant))
     changes.update(_beat_room_facts(variant.get("phone_beat_receipt")))
     changes.update(_timed_card_receipt_facts(variant.get("phone_timed_card_receipt")))
@@ -5875,6 +5914,11 @@ _TALKING_SPOKEN_TEXT_PLAN = (
     "I'll show it the moment you say that word in your take; if I don't hear the word, it "
     "won't appear"
 )
+# Item 19: a numbered list label ("1. Spec-kit") waits for the part of the talk it names.
+_TALKING_LIST_LABEL_PLAN = (
+    "I'll show it when that part of your talk starts; if I don't hear where it starts, it "
+    "won't appear"
+)
 # KRI-793: what a phone Talking draft says about a captions ask naming a language or words
 # to spell: the writer captions everything said in the take (an off-camera voice too), and
 # the reason goes on to name the language and the words (`_caption_words_plan`).
@@ -5943,6 +5987,7 @@ _TALKING_HONEST_EN: tuple[str, ...] = (
     _TALKING_OPENING_CUT_PLAN,
     _TALKING_WINDOW_PLAN,
     _TALKING_SPOKEN_TEXT_PLAN,
+    _TALKING_LIST_LABEL_PLAN,
     _CLOSING_ARROW_PLAN,
     _CLOSING_ARROW_MISSING,
     _TALKING_CAPTIONS_EVERY_VOICE,
@@ -6177,6 +6222,9 @@ _REASON_TR: dict[str, str] = {
     _CLOSING_ARROW_MISSING: "Ok henüz videoda yok; editörde kalemle bir ok çizebilirsin",
     _TALKING_SPOKEN_TEXT_PLAN: (
         "Çekiminde o kelimeyi söylediğin anda yazıyı gösteririm; kelimeyi duymazsam yazı çıkmaz"
+    ),
+    _TALKING_LIST_LABEL_PLAN: (
+        "Konuşmanda o bölüm başladığında gösteririm; nerede başladığını duymazsam çıkmaz"
     ),
     _TALKING_CAPTIONS_EVERY_VOICE: (
         "Çekimindeki her ses altyazıya girer, kamera dışındaki sesler de"
@@ -8956,6 +9004,7 @@ def _with_text_look(
     """Add the look check to a text requirement's presence check (KRI-558)."""
     base = _with_title_face(req, facts, base)
     base = _with_spoken_text_face(req, facts, base)
+    base = _with_list_label_face(req, facts, base)
     if (text_look_facts(req) or asks_text_animation(req)) and base.status == "met":
         look = check_text_look(req, facts)
         # The words are there; whether they look as asked is not visible here (a record or
@@ -9374,6 +9423,195 @@ def _spoken_text_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
             )
         )
     return {"spoken_texts": tuple(facts)}
+
+
+def _list_label_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    receipt = variant.get("list_label_placement")
+    rows = receipt.get("rows") if isinstance(receipt, Mapping) else None
+    if not isinstance(rows, list):
+        return {}
+    # The rows the video draws: a label is judged by its own row, never by the receipt's copy
+    # of the ask (review of #2116: a label cut short on screen kept its whole text there).
+    elements = variant.get("text_elements")
+    drawn = {
+        element["id"]: str(element.get("text") or "")
+        for element in (elements if isinstance(elements, list) else [])
+        if isinstance(element, Mapping)
+        and isinstance(element.get("id"), str)
+        and not element.get("removed")
+    }
+
+    def _shown(row: Mapping[str, Any]) -> str | None:
+        element_id = row.get("element_id")
+        return drawn.get(element_id) if isinstance(element_id, str) else None
+
+    def _found_count(row: Mapping[str, Any]) -> int | None:
+        value = row.get("list_found")
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    # A spoken item of a list found on the take (its row carries ``list_item``) is not a
+    # requirement of its own: it is the typed label's, which is met only when EVERY found item
+    # is on the video (second review of #2116: `list_found` counts before placement).
+    items: dict[str, list[Mapping[str, Any]]] = {}
+    for row in rows:
+        if (
+            isinstance(row, Mapping)
+            and isinstance(row.get("requirement_id"), str)
+            and "list_item" in row
+        ):
+            items.setdefault(row["requirement_id"], []).append(row)
+
+    def _drawn_item(row: Mapping[str, Any]) -> bool:
+        return row.get("status") == "placed" and _shown(row) is not None
+
+    def _item_number(row: Mapping[str, Any]) -> int:
+        number = row.get("list_item")
+        return number if isinstance(number, int) and not isinstance(number, bool) else 0
+
+    def _fact(row: Mapping[str, Any]) -> ListLabelFact:
+        rid = row["requirement_id"]
+        found_items = sorted(items.get(rid, []), key=_item_number)
+        found = _found_count(row)
+        return ListLabelFact(
+            requirement_id=rid,
+            status=str(row.get("status") or "error"),
+            text=str(row.get("text") or ""),
+            face_collision=row.get("face_collision") is True,
+            shown_text=_shown(row),
+            list_found=found,
+            items_on_face=any(
+                _drawn_item(item) and item.get("face_collision") is True for item in found_items
+            ),
+            items_missing=tuple(
+                str(item.get("text") or "") for item in found_items if not _drawn_item(item)
+            ),
+            items_unaccounted=max(0, found - 1 - len(found_items)) if found is not None else 0,
+        )
+
+    return {
+        "list_labels": tuple(
+            _fact(row)
+            for row in rows
+            if isinstance(row, Mapping)
+            and isinstance(row.get("requirement_id"), str)
+            and "list_item" not in row
+        )
+    }
+
+
+def _background_phrases(strategy: Mapping[str, Any]) -> tuple[str, ...]:
+    background = strategy.get("background_media")
+    sequence = background.get("sequence") if isinstance(background, Mapping) else None
+    if not isinstance(sequence, list):
+        return ()
+    return tuple(
+        phrase.strip()
+        for entry in sequence
+        if isinstance(entry, Mapping)
+        and isinstance(phrase := entry.get("spoken_phrase"), str)
+        and phrase.strip()
+    )
+
+
+def _talking_list_labels_lane() -> bool:
+    """Item 19: the phone Talking worker shows numbered list labels (rolled out)."""
+    from app.services.phone_rollout import phone_list_labels_supported  # noqa: PLC0415
+
+    return phone_list_labels_supported()
+
+
+def _is_list_label_candidate(req: BriefRequirement, facts: PlanFacts) -> bool:
+    """A whole-video text with no spoken trigger that the worker would read as a list label:
+    it carries a list marker, or it IS the name of a planned background recording."""
+    from app.kria.spoken_text_ask import requirement_spoken_text  # noqa: PLC0415
+    from app.pipeline import phone_list_labels as labels  # noqa: PLC0415
+
+    # The worker's own rule (`list_label_asks`): only a text with no spoken trigger is its.
+    if requirement_spoken_text(req) is not None:
+        return False
+    return labels.is_list_label_candidate(req, facts.background_phrases)
+
+
+def _list_label_fact(facts: PlanFacts, req: BriefRequirement) -> ListLabelFact | None:
+    return next((f for f in facts.list_labels or () if f.requirement_id == req.id), None)
+
+
+def _list_label_miss(req: BriefRequirement, fact: ListLabelFact) -> RequirementReceipt:
+    """Item 19: why a rendered phone Talking edit shows no label for this ask."""
+    text = f"“{fact.text or req.literal or ''}”"
+    if fact.status == "not_heard":
+        reason = say(
+            en="I didn't hear where that part starts, so the label isn't in",
+            tr="O bölümün nerede başladığını duymadım, o yüzden etiket yok",
+        )
+    elif fact.status == "no_time":
+        reason = say(
+            en="That part starts too close to the end to show the label",
+            tr="O bölüm sona çok yakın başlıyor, etiketi gösteremedim",
+        )
+    elif fact.status == "same_moment":
+        reason = say(
+            en="Another label starts at the same moment, so this one isn't shown",
+            tr="Aynı anda başka bir etiket başlıyor, bu yüzden bu gösterilmedi",
+        )
+    elif fact.status == "too_long":
+        reason = say(
+            en=(
+                "That label is too long to fit on the screen whole, so I left it out instead of "
+                "cutting it"
+            ),
+            tr="Bu etiket ekrana tam sığmayacak kadar uzun; kesmek yerine hiç koymadım",
+        )
+    else:
+        reason = say(
+            en=f"I couldn't place {text} on this video",
+            tr=f"{text} yazısını bu videoya yerleştiremedim",
+        )
+    return _receipt(req, "partial", reason)
+
+
+def _with_list_label_face(
+    req: BriefRequirement, facts: PlanFacts, base: RequirementReceipt
+) -> RequirementReceipt:
+    """Item 19: a label the render could not move off a face is not "met" (KRI-707's rule), and
+    a lone "1." whose list was not found on the take shows only that one."""
+    fact = _list_label_fact(facts, req) if base.status == "met" else None
+    if fact is None or fact.status != "placed":
+        return base
+    if fact.face_collision or fact.items_on_face:
+        text = f"“{fact.text}”"
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"{text} lands on a face; I couldn't find a spot clear of it",
+                tr=f"{text} bir yüzün üstüne denk geliyor; yüzü açıkta bırakan bir yer bulamadım",
+            ),
+        )
+    if fact.list_found == 1:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en="I showed this one, but couldn't find the rest of your list in the take",
+                tr="Bunu gösterdim ama listenin geri kalanını çekiminde bulamadım",
+            ),
+        )
+    missing = len(fact.items_missing) + fact.items_unaccounted
+    if missing:
+        # Second review of #2116: a found item the video does not show (whatever the reason)
+        # keeps the list from "met", and every one of them is named.
+        named = ", ".join(f"“{text}”" for text in fact.items_missing if text)
+        tail = f": {named}" if named else ""
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"I showed this one, but couldn't show {missing} more from your list{tail}",
+                tr=f"Bunu gösterdim ama listenden {missing} maddeyi daha gösteremedim{tail}",
+            ),
+        )
+    return base
 
 
 def _spoken_text_fact(facts: PlanFacts, req: BriefRequirement) -> SpokenTextFact | None:
@@ -11053,6 +11291,37 @@ def render_repair_notes(
 
 
 def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    # Item 19: a numbered list label the render did not place is never "met", whatever other
+    # text happens to contain the same words.
+    label = _list_label_fact(facts, req) if facts.list_labels is not None else None
+    if label is not None and label.status != "placed":
+        return _list_label_miss(req, label)
+    if label is not None and label.shown_text is None:
+        # Second review of #2116: a placed label is judged only by its own row. With that row
+        # gone (removed by an edit, or never written) no other text or caption with the same
+        # words stands in for it.
+        text = f"“{label.text or req.literal or ''}”"
+        return _receipt(
+            req,
+            "partial",
+            say(en=f"{text} isn't on the video", tr=f"{text} videoda yok"),
+        )
+    if (
+        label is not None
+        and label.shown_text is not None
+        and _fold(label.shown_text) != _fold(req.literal or "")
+    ):
+        # Review of #2116: the exact text is checked on the label's own row, so a label drawn
+        # shortened (or reworded) is never "met" because another text holds the same words.
+        shown = f"“{label.shown_text}”"
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"The label on the video reads {shown}, not your exact words",
+                tr=f"Videodaki etiket {shown} yazıyor, tam senin yazdığın gibi değil",
+            ),
+        )
     # A rendered spoken-text receipt must prove timing, not just matching caption copy.
     if _is_voiceover_edit(facts) and _is_spoken_text_cue(req) and facts.rendered_variant:
         spoken = _spoken_text_fact(facts, req)
@@ -11107,6 +11376,16 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         if arrow_reason is not None:
             return _receipt(req, "partial", arrow_reason)
         return _receipt(req, "met", None)
+    # Checked BEFORE the spoken-text branch: a wording cue ("when I talk about them") with no
+    # trigger is the worker's list label, not KRI-791's "tell me the exact word".
+    if (
+        facts.phone_talking
+        and not facts.rendered_variant
+        and _talking_list_labels_lane()
+        and _is_list_label_candidate(req, facts)
+    ):
+        # Item 19: the phone Talking worker shows the label when its part of the talk starts.
+        return _receipt(req, "partial", _TALKING_LIST_LABEL_PLAN)
     if _is_spoken_text_cue(req) and facts.edit_format in {"subtitled", "talking_head"}:
         spoken = _spoken_text_fact(facts, req)
         if spoken is not None:

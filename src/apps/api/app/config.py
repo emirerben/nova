@@ -970,6 +970,14 @@ class Settings(BaseSettings):
     # (api + worker); rollback = `...=false` + restart. Design:
     # docs/reviews/speaker-background-windows-failure-modes.md (S64-S69).
     background_follows_talk_enabled: bool = False
+    # Qendresa item 19: numbered list labels on a phone Talking edit. A brief text ("1. Spec-kit")
+    # with no spoken trigger is shown when its item's part of the talk starts (where its
+    # background recording is introduced, else the take's own words), as an ordinary text row on
+    # the authoredText lane (no new capability, no protocol). Default FALSE: off, no rows, no
+    # variant key, receipts unchanged. Apply: `fly secrets set SPOKEN_LIST_LABELS_ENABLED=true
+    # --app nova-video` + restart (api + worker). Design:
+    # docs/reviews/qendresa-list-labels-failure-modes.md.
+    spoken_list_labels_enabled: bool = False
     # KRI-1192: the app bundles Noto Sans KR / Noto Sans Arabic (the script-fallback faces that
     # draw Hangul and Arabic captions) from protocol 35. A phone recipe naming one requires
     # `scriptFonts` (verified in PHONE_RENDER_VERIFIED_FEATURES after the device check) and an
