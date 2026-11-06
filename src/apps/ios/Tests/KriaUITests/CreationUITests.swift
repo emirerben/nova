@@ -2,6 +2,102 @@ import XCTest
 
 @MainActor
 final class CreationUITests: XCTestCase {
+    func testEditorAIActivityUsesTheLiveRequestAcrossRepeatedPromptsAndBackgrounding() {
+        let app = launchEditorAIActivityFixture(reduceMotion: true)
+        let control = app.buttons["native-editor-conversation"]
+        for index in 1...2 {
+            sendFromEditorConversation("Make the title clearer \(index)", app: app)
+            waitForEditorActivity("Sending your message…", control: control)
+            XCTAssertTrue(app.buttons["native-editor-play-pause"].isEnabled)
+            if index == 1 {
+                attach(app, "Editor AI activity - reduced motion")
+                XCUIDevice.shared.press(.home)
+                app.activate()
+                XCTAssertTrue(control.waitForExistence(timeout: 5))
+            }
+            let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", ""), object: control)
+            XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 40), .completed)
+            XCTAssertTrue(control.isHittable)
+            XCTAssertTrue(app.buttons["native-editor-play-pause"].isEnabled)
+        }
+        // The active control keeps the same action after the work ends.
+        control.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-project-conversation"].firstMatch.waitForExistence(timeout: 5))
+        app.terminate()
+    }
+
+    func testEditorAIActivityStopsOnRejectedPromptAndKeepsTheDraft() {
+        let app = launchEditorAIActivityFixture(reduceMotion: true, rejects: true)
+        let message = "Keep this rejected editor instruction"
+        sendFromEditorConversation(message, app: app)
+        let control = app.buttons["native-editor-conversation"]
+        waitForEditorActivity("Sending your message…", control: control)
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", ""), object: control)
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 40), .completed)
+        control.tap()
+        let composer = app.textFields.matching(NSPredicate(format: "label == %@", "Message Kria")).firstMatch
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        XCTAssertEqual(composer.value as? String, message)
+        app.terminate()
+    }
+
+    func testEditorAIHaloWorkingAndOpaqueAccessibilitySurfaces() {
+        for opaque in [false, true] {
+            let app = launchEditorAIActivityFixture(reduceMotion: false, opaque: opaque, holdsTurn: true)
+            sendFromEditorConversation("Review the title while I keep editing", app: app)
+            let control = app.buttons["native-editor-conversation"]
+            waitForEditorActivity("Kria is working…", control: control)
+            XCTAssertTrue(app.buttons["native-editor-play-pause"].isEnabled)
+            attach(app, opaque ? "Editor AI activity - reduce transparency" : "Editor AI activity - soft moving glass edge")
+            control.tap()
+            XCTAssertTrue(app.descendants(matching: .any)["native-editor-project-conversation"].firstMatch.waitForExistence(timeout: 5))
+            app.terminate()
+        }
+    }
+
+    private func launchEditorAIActivityFixture(reduceMotion: Bool, opaque: Bool = false,
+                                               rejects: Bool = false, holdsTurn: Bool = false) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
+        app.launchEnvironment = [
+            "KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_SEED_THREADS": "3", "KRIA_CHAT_LONG_HISTORY": "12",
+            "KRIA_EDITOR_FIXTURE": "1", "KRIA_CHAT_SEND_DELAY": "15",
+            "UI_TEST_REDUCE_MOTION": reduceMotion ? "1" : "0",
+            "UI_TEST_REDUCE_TRANSPARENCY": opaque ? "1" : "0",
+        ]
+        if rejects { app.launchEnvironment["KRIA_CHAT_SEND_FAILURE"] = "reject" }
+        if holdsTurn {
+            app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_FOLLOWUP"] = "1"
+            app.launchEnvironment["KRIA_CHAT_THOUGHTS"] = "hold"
+        }
+        app.launch()
+        let open = app.buttons["Open editor"]
+        XCTAssertTrue(open.waitForExistence(timeout: 30))
+        open.tap()
+        XCTAssertTrue(app.buttons["native-editor-conversation"].waitForExistence(timeout: 15))
+        return app
+    }
+
+    private func sendFromEditorConversation(_ text: String, app: XCUIApplication) {
+        app.buttons["native-editor-conversation"].tap()
+        let sheet = app.descendants(matching: .any)["native-editor-project-conversation"].firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5))
+        let composer = sheet.textFields["Message Kria"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        composer.tap()
+        composer.typeText(text)
+        sheet.buttons["chat-send-message"].tap()
+        // The creator dismisses the sheet themselves while the POST is still in flight.
+        let handle = sheet.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
+        handle.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)))
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 5))
+    }
+
+    private func waitForEditorActivity(_ title: String, control: XCUIElement) {
+        let active = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", title), object: control)
+        XCTAssertEqual(XCTWaiter.wait(for: [active], timeout: 30), .completed)
+    }
+
     func testFinishedEditLearningChatAcceptAndDismiss() {
         for action in ["accept", "dismiss"] {
             let app = launchConfirmationFixture(["KRIA_CHAT_FINISHED_LEARNING": "1"])

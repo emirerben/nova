@@ -3,6 +3,9 @@
     "creation": [
       "KriaUITests/CreationUITests/testDelayedNewChatAcceptsTypingBeforeItsServerIdentityExists",
       "KriaUITests/SlidePostUITests/testLooksAppearOnThePhotoBeforeSavingWhenDeviceCapabilityIsEnabled",
+      "KriaUITests/CreationUITests/testEditorAIActivityUsesTheLiveRequestAcrossRepeatedPromptsAndBackgrounding",
+      "KriaUITests/CreationUITests/testEditorAIActivityStopsOnRejectedPromptAndKeepsTheDraft",
+      "KriaUITests/CreationUITests/testEditorAIHaloWorkingAndOpaqueAccessibilitySurfaces",
       "KriaUITests/CreationUITests/testChatBubblesPreserveShapeAndWrappingAtAccessibilityTextSize",
       "KriaUITests/CreationUITests/testLongPressCopiesPromptsAndRepliesWithoutBlockingOptionTaps",
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",

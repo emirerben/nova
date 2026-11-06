@@ -11,6 +11,7 @@ struct NativeEditorView: View {
     private let conversationCloseID: UUID?
     /// AI suggestion blocks for this edit, read from the chat that owns the set. Nil = nothing to improve (or no chat).
     private let improve: SuggestionCardsPresentation?
+    private let conversationActivity: NativeEditorAIActivity?
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -85,6 +86,7 @@ struct NativeEditorView: View {
         sharedSession: NativeEditorSession? = nil,
         conversationAcceptedID: UUID? = nil,
         conversationCloseID: UUID? = nil,
+        conversationActivity: NativeEditorAIActivity? = nil,
         conversation: (() -> AnyView)? = nil,
         improve: SuggestionCardsPresentation? = nil,
         onBack: @escaping () -> Void
@@ -96,6 +98,7 @@ struct NativeEditorView: View {
         self.conversationAcceptedID = conversationAcceptedID
         self.conversationCloseID = conversationCloseID
         self.improve = improve
+        self.conversationActivity = conversationActivity
         _session = StateObject(
             wrappedValue: sharedSession ?? initialDraft.map {
                 NativeEditorSession(
@@ -482,7 +485,10 @@ struct NativeEditorView: View {
                 .padding(.vertical, 5)
                 .overlay(alignment: .bottomTrailing) {
                     if conversation != nil, session.pendingText == nil, !lineEditing {
-                        KriaAIButton(identifier: "native-editor-conversation") { showsConversation = true }
+                        KriaAIButton(
+                            identifier: "native-editor-conversation", activity: aiStatus,
+                            animatesActivity: scenePhase == .active && !showsConversation && !previewFullscreen
+                        ) { showsConversation = true }
                     }
                 }
                 .overlay(alignment: .bottomLeading) {
@@ -1030,6 +1036,16 @@ struct NativeEditorView: View {
     private var deviceLocalFile: URL? {
         guard let key = session.deviceRenderKey else { return nil }
         return model.deviceRenders.presentations[key]?.localFile
+    }
+
+    private var aiStatus: NativeEditorAIStatus? {
+        let render = session.deviceRenderKey.flatMap { key in
+            key.projectID == project.id ? model.deviceRenders.presentations[key] : nil
+        }
+        return NativeEditorAIStatus.current(
+            projectID: project.id, conversation: conversationActivity,
+            refresh: session.refreshSync, preview: session.sourcePreviewState, render: render
+        )
     }
 
     private func loadEditor() async {
