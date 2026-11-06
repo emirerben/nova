@@ -1308,7 +1308,8 @@ def _card_placement(
     canvas: Canvas,
 ) -> tuple[float, float, float]:
     """``(width_fraction, x_fraction, y_fraction)`` for a pip card."""
-    y_frac = min(card.y_frac, CAPTION_BAND_TOP_FRAC)
+    # Item 15: a card the layout placed clear of the drawn captions keeps its own y.
+    y_frac = card.y_frac if card.caption_clear else min(card.y_frac, CAPTION_BAND_TOP_FRAC)
     if canvas.width <= canvas.height:
         return card.scale, card.x_frac, y_frac
     return _contain_card_in_canvas(

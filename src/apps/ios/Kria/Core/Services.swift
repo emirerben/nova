@@ -1281,7 +1281,10 @@ enum KriaClientProtocolContract {
     /// round-trips them in the editor. The server offers `editor_capabilities.speaker_full_opening` only to this protocol (and
     /// only with `speakerFrameWindows` verified) and answers 426 `client_update_required` (`speaker_full_opening`) to an
     /// older build polling or saving a recipe that already carries them.
-    static let version = 38
+    /// 39 is reserved for the background-zoom build (Qendresa item 18).
+    /// 40 (Qendresa item 15): the editor keeps a picture card marked `caption_clear` in the top or bottom band instead of
+    /// clamping its centre above y 0.62, matching the cloud recipe. The server places such cards only for this protocol.
+    static let version = 40
     static let header = "X-Kria-Client-Protocol"
 }
 

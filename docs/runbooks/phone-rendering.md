@@ -4013,6 +4013,45 @@ recipe only uses `authoredText`): add it after a device check of the editor box.
 `tests/tasks/test_qendresa_caption_shape_worker.py`. Rollback: `fly secrets set
 PHONE_CAPTION_SHAPE_ENABLED=false` (api + worker) + restart; stored shapes keep compiling.
 
+## Talking card layout (Qendresa item 15)
+
+Screenshot and recording cards on a phone Talking edit take her size and place: up to the full
+width, in the band above her face or the band below her caption row, never on her face or her
+captions; up to 14 cards; a named screenshot may open the video; a recording starts at its best
+moment. The geometry is in `phone_card_layout.py` / `phone_overlay_grounding.py`; the worker
+passes `CardLayoutContext` (the MEASURED caption band from the item-12 reserve compile's
+`_caption_boxes`, plus the title / listed-text windows mapped from the cut take back to source
+seconds, `_take_window_to_source`) only when the layout is open. Closed = the grounding call and
+every card are byte-identical to before.
+
+A card laid out against the measured captions carries `caption_clear` (`SubtitledOverlayCard`),
+so it may sit below y 0.62. The editor projection marks it (`media_overlays[].caption_clear`), a
+Save keeps the mark only for a card the server marked (never the client's value), and a recipe
+derived lane marks a portrait pip card whose centre is below 0.62.
+
+Gate (all required): `TALKING_CARD_LAYOUT_ENABLED` (default off) + `cardLayout` in
+`PHONE_RENDER_VERIFIED_FEATURES` + the approving build (`creator_client_protocol`) >=
+`CARD_LAYOUT_PROTOCOL` (40; older editors pull every card centre up to 0.62, onto the captions)
++ a portrait pip render with no speaker background, no KRI-547 face fill, a "fill" (not "fit")
+take and a source no taller than 9:16 (source face boxes only map exactly in y then). Stays
+today's: alpha stickers, landscape, speaker background, face-filled close-ups, fullscreen
+layouts, old builds. Faces are sampled for every card and must not overlap at all (no IoU
+tolerance); the Kria wordmark the phone draws at the lower left (KRI-548) keeps its corner, so a
+bottom card sits beside it (~0.78 wide for 16:9) or below it, whichever is bigger. Guards:
+`tests/services/test_talking_card_layout_gate.py`, `tests/tasks/test_qendresa_card_layout_worker.py`.
+
+Apply order: iOS build >= protocol 40 shipped -> device check of a card in the bottom band ->
+add `cardLayout` to `PHONE_RENDER_VERIFIED_FEATURES` -> `fly secrets set
+TALKING_CARD_LAYOUT_ENABLED=true` (api + worker) + restart. Rollback: `fly secrets set
+TALKING_CARD_LAYOUT_ENABLED=false` (api + worker) + restart; stored cards keep their spots.
+
+Simulator before/after: `scripts/ios/qendresa-card-layout-e2e.py prepare OUT --foot FOOT`
+(real worker, flag off vs on), render with `KRIA_CARD_LAYOUT_E2E_DIR=OUT` +
+`DeviceTalkingCardLayoutRenderE2ETests`, then `score OUT --kit <Qendresa kit>`: the kit's
+`screen` must flip, `card_hook` (a card's text in the first 3 s; the kit's own `hook` also
+passes on a misread dimmed caption) must flip, `full_speaker` stays, and the rendered-frame face
+check plus its negative control and the watermark check must hold.
+
 ## Actual-export verifier v3 rollout boundary (KRI-832)
 
 `phone-simple-cut-v3` is a forward-only verifier policy. New v3 code accepts the pinned older supported verifier versions; an older server cannot interpret a newly pinned v3 policy and refuses it rather than publishing unchecked output. After v3 policies exist, rolling the API back below v3 can therefore leave those exports blocked. Do not downgrade the pin/minimum verifier or relabel an old report to recover them; preserve the attempt and restore a compatible server before the normal output-check retry.
