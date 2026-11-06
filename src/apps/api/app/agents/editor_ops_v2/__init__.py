@@ -47,6 +47,8 @@ FAMILY_FRAGMENTS: dict[str, str] = {
     "background": "speaker_background.txt",
     # KRI-1162: timed backgrounds + the speaker frame, only while the windows gate is open.
     "background_windows": "speaker_background_windows.txt",
+    # Qendresa item 18: aim / zoom the recordings, only while the focus gate is open.
+    "background_focus": "speaker_background_focus.txt",
 }
 # KRI-1137: fragments appended only while `snapshot["timeline_patch_capabilities"]` opens the named
 # patch_slots field (and the `clip` family is offered), so a closed gate leaves every prompt

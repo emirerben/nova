@@ -200,6 +200,8 @@ struct SpeakerTestBackground {
     var kind: VisualMediaKind = .image
     var sourceStart: Double = 0
     var loop = true
+    /// Qendresa item 18: where the picture is aimed (nil = today's cover-fit centre crop).
+    var focus: SpeakerBackgroundFocus?
 }
 
 /// A timed background (KRI-1162): `url` shows from `start` to `end`.
@@ -209,6 +211,7 @@ struct SpeakerTestWindow {
     var sourceStart: Double = 0
     var start: Double
     var end: Double
+    var focus: SpeakerBackgroundFocus?
 }
 
 /// The Talk-to-camera recipe shape `phone_subtitled_plan.py` compiles: the speaker clip on the
@@ -233,14 +236,14 @@ func speakerRecipe(canvas: Canvas, speaker: URL, duration: Double, transform: Me
     }
     let windowLayers = windows.isEmpty ? nil : windows.enumerated().map { index, window in
         SpeakerBackgroundWindow(assetID: "visual-window-\(index)", mediaKind: window.kind, sourceStart: window.sourceStart,
-                                start: window.start, end: window.end)
+                                start: window.start, end: window.end, focus: window.focus)
     }
     // KRI-1173: a colour fill has no manifest asset (and wins over `background` if both are given).
     let speakerBackgroundLayer: SpeakerBackgroundLayer? = colorBackground.map {
         SpeakerBackgroundLayer.color($0, windows: windowLayers, speakerFrame: speakerFrame, fullScreenWindows: fullScreenWindows)
     } ?? background.map {
         SpeakerBackgroundLayer(assetID: "visual-background", mediaKind: $0.kind, sourceStart: $0.sourceStart, loop: $0.loop,
-                               windows: windowLayers, speakerFrame: speakerFrame, fullScreenWindows: fullScreenWindows)
+                               windows: windowLayers, speakerFrame: speakerFrame, fullScreenWindows: fullScreenWindows, focus: $0.focus)
     }
     let recipe = EditRecipe(
         schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: canvas, assets: assets,

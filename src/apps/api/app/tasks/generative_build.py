@@ -8239,6 +8239,14 @@ def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
         opening_s = raw.get("full_screen_opening_s")
         if isinstance(opening_s, (int, float)) and not isinstance(opening_s, bool):
             request["full_screen_opening_s"] = float(opening_s)
+    # Qendresa item 18: a side / zoom for the recordings, only while the kill switch is on.
+    if settings.background_focus_enabled:
+        side = raw.get("focus")
+        if side in ("left", "center", "right"):
+            request["focus"] = side
+        focus_zoom = raw.get("focus_zoom")
+        if isinstance(focus_zoom, (int, float)) and not isinstance(focus_zoom, bool):
+            request["focus_zoom"] = float(focus_zoom)
     return request
 
 
@@ -8292,6 +8300,7 @@ def _resolve_strategy_background(
     from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
         PhoneSubtitledLaneRequest,
         SubtitledBackground,
+        SubtitledBackgroundFocus,
         SubtitledBackgroundWindow,
         SubtitledFullScreenWindow,
         SubtitledSpeakerFrame,
@@ -8414,6 +8423,14 @@ def _resolve_strategy_background(
                     ),
                 )
 
+    # Qendresa item 18: what the creator named for the recordings (None while nothing is named).
+    named_focus: SubtitledBackgroundFocus | None = None
+    if request.get("focus") is not None or request.get("focus_zoom") is not None:
+        named_x = {"left": 0.0, "center": 0.5, "right": 1.0}.get(str(request.get("focus")))
+        named_zoom = request.get("focus_zoom")
+        if named_x is not None or named_zoom is not None:
+            named_focus = SubtitledBackgroundFocus(x=named_x, zoom=named_zoom)
+
     windows: list[SubtitledBackgroundWindow] = []
     if entry_rows:
         by_index = {index: (entry, row) for index, entry, row in entry_rows}
@@ -8477,6 +8494,7 @@ def _resolve_strategy_background(
                         source_start_s=entry["source_start_s"] if kind == "video" else 0.0,
                         start_s=sequence_mod.to_source_time(placed.start_s, keep_segments),
                         end_s=sequence_mod.to_source_time(placed.end_s, keep_segments, as_end=True),
+                        **({"focus": named_focus} if named_focus is not None else {}),
                     )
                 )
             except ValueError as exc:
@@ -8512,6 +8530,7 @@ def _resolve_strategy_background(
                 windows=tuple(windows),
                 speaker_frame=frame,
                 full_screen_windows=full_screen_windows,
+                **({"focus": named_focus} if named_focus is not None else {}),
             )
     except ValueError as exc:
         lane_drops.append({"lane": "background", "reason": str(exc)[:300]})
@@ -9856,6 +9875,15 @@ def _run_phone_subtitled_job(
                 {"speaker_position_x": speaker_position_x} if speaker_position_x is not None else {}
             )
             framed_compile.update(canvas_compile)
+            # Qendresa item 18: a worker has no request, so the build that approved the plan says
+            # whether the recipe may carry an auto-aimed background (`focus_open` in the compile).
+            from app.services import phone_rollout as _focus_rollout  # noqa: PLC0415
+
+            framed_compile["background_focus_open"] = _focus_rollout.background_focus_planned_for(
+                _focus_rollout.stamped_client_protocol(
+                    all_candidates.get("creator_client_protocol")
+                )
+            )
             framed_grounding: dict[str, Any] = (
                 {"face_box_to_canvas": face_box_to_canvas} if face_box_to_canvas is not None else {}
             )
@@ -11325,6 +11353,7 @@ def _run_phone_subtitled_job(
                                         _sync_session,
                                         job_id=job_id,
                                         pins=background_pins_by_id,
+                                        measure_text=True,
                                     )
                                 except OperationalError:
                                     raise  # transient DB -> Celery autoretry, never a lane drop
@@ -11613,6 +11642,7 @@ def _run_phone_subtitled_job(
                         or _bg.speaker_frame is not None
                         or _bg.uses_color
                         or _bg.uses_full_screen
+                        or _bg.uses_focus
                     ):
                         lane_receipt["background"] = {
                             # KRI-1173: a plain colour names itself; a media fill adds no key.
@@ -11653,6 +11683,24 @@ def _run_phone_subtitled_job(
                         )
                         if _opening_end is not None:
                             lane_receipt["background"]["full_screen_opening_s"] = _opening_end
+                        # Qendresa item 18: only what the creator NAMED (the measure is the
+                        # default and is not an ask); read off the lane that was compiled.
+                        _named = _bg.focus or next(
+                            (w.focus for w in _bg.windows if w.focus is not None), None
+                        )
+                        # ...and only when the compiled recipe really carries an aim: a build
+                        # the focus gate was closed for drops it (traced by the compile), and
+                        # the receipt must not claim it.
+                        if not getattr(
+                            getattr(recipe, "speaker_background", None), "uses_focus", False
+                        ):
+                            _named = None
+                        if _named is not None and _named.x is not None:
+                            _side = {0.0: "left", 0.5: "center", 1.0: "right"}.get(_named.x)
+                            if _side is not None:
+                                lane_receipt["background"]["focus"] = _side
+                        if _named is not None and _named.zoom is not None:
+                            lane_receipt["background"]["focus_zoom"] = _named.zoom
                 try:
                     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 

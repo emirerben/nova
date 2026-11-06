@@ -99,6 +99,7 @@ from app.services.guided_speech_cleanup import (
 from app.services.job_storage_paths import project_media_reference_lock_key
 from app.services.native_activity import record_native_activity
 from app.services.phone_rollout import (
+    background_focus_client_supported,
     card_tilt_client_supported,
     clip_backdrop_media_client_supported,
     clip_tilt_client_supported,
@@ -659,6 +660,19 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "code": "client_update_required",
             "feature": "speaker_full_opening",
             "minimum_client_protocol": settings.speaker_full_opening_min_client_protocol,
+        }
+    if (
+        getattr(recipe, "speaker_background", None) is not None
+        and getattr(recipe.speaker_background, "uses_focus", False)
+        and not background_focus_client_supported()
+    ):
+        # Qendresa item 18: an older build rejects `focus` (and the `backgroundFocus` token) and
+        # would FAIL the job. Compile strips every focus for such a build; this covers a recipe a
+        # newer build or the worker pinned before.
+        return {
+            "code": "client_update_required",
+            "feature": "background_focus",
+            "minimum_client_protocol": settings.background_focus_min_client_protocol,
         }
     if (
         getattr(recipe, "speaker_background", None) is not None

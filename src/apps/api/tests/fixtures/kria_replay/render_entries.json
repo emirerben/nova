@@ -78,7 +78,8 @@
         "additional_speakers",
         "output_orientation",
         "clip_tilts",
-        "inserts"
+        "inserts",
+        "background_focus_open"
       ],
       "recipe": {
         "title_animation": "text_layers[id^=text-].animation_phases.entrance",

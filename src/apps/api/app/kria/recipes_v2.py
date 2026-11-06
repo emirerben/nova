@@ -117,6 +117,9 @@ class EditRecipeV2(EditRecipeV1):
                     raise ValueError("a full-screen window exceeds the timeline")
             if self.speaker_background.uses_full_screen:
                 self.required_capabilities |= {"speakerFrameWindows"}
+            # Qendresa item 18: a background picture aimed at its readable text.
+            if self.speaker_background.uses_focus:
+                self.required_capabilities |= {"backgroundFocus"}
         if set(manifest) != {asset.id for asset in self.assets}:
             raise ValueError("recipe and manifest must name exactly the same assets")
         # KRI-1192: a run drawn in a script-fallback face needs a build that bundles it.
