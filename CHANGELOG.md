@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.6.0] - 2026-11-06
+
+### Changed
+- fix(captions): captions over a speaker background are chosen against it, with an outline when no colour is readable (Green 5) (#2099) <!-- release-pr: 2099 -->
+
 ## [0.88.5.0] - 2026-11-06
 
 ### Changed
