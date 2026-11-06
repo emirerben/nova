@@ -56,6 +56,13 @@ her face reports `over_face: false`.
     the background) keeps its spot: with a bottom corner it sits at the top, clear of her; with a TOP
     corner frame (`small_top_left` / `small_top_right`) it could still meet her face. Not covered here
     (open gap; the captions are re-chosen, titles are not).
+14. **A background dropped after it was registered** (Emir's review on #2127). The compiler registers
+    the corner background and styles the captions before the background media is bound; a bind failure
+    (e.g. a video `source_start` at/past its end) makes the worker drop the lane and compile again with
+    no background. `register_generation_background(None)` must then forget the layout: faces back to
+    the raw full-frame boxes, Green 5's contrast frames back to the take's own frames, caption look
+    chosen again. Guards: `test_a_background_dropped_after_binding_puts_her_face_back_full_frame`,
+    `test_after_a_dropped_background_the_review_judges_the_full_frame_face`.
 13. **The base pass.** The worker compiles once without lanes (`generative_build.py` ~10665), styling the
     captions, then again with the background (~11472). The caption look cached on the first pass must be
     chosen again once her face moves into the frame (the receipt and colour with it), never kept.

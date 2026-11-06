@@ -863,6 +863,10 @@ def register_generation_background(background, canvas=None, focus_for=None) -> N
         # Qendresa case 1: where the speaker is drawn, recorded before the contrast gates below
         # (a colour fill and the contrast switch do not move her out of the corner).
         _record_speaker_layout(policy, background)
+    elif policy:
+        # Review on #2127: a background registered by an earlier compile pass can be dropped (its
+        # media fails to bind) and the worker compiles again without it: she is full-frame again.
+        _forget_speaker_background(policy)
     if (
         not policy
         or background is None
@@ -943,13 +947,39 @@ def _record_speaker_layout(policy: dict, background) -> None:
     if policy.get("_environment_sampled") and "_face_boxes_raw" in policy:
         before = policy.get("_face_boxes")
         policy["_face_boxes"] = _faces_where_drawn(policy["_face_boxes_raw"], policy)
-        if policy["_face_boxes"] != before and policy.get("caption_look") is not None:
+        if policy["_face_boxes"] != before:
             # The worker's base pass styled the captions before this background was known, so
-            # their spot dodged her face where it is NOT drawn. Choose the caption look again on
-            # the next request (same fonts, no new model call): spot, size, colour and the review
-            # are re-judged against the faces and frames the phone really draws.
-            for key in ("caption_look", "_caption_auto_fill", "_caption_look_receipt"):
-                policy.pop(key, None)
+            # their spot dodged her face where it is NOT drawn.
+            _restyle_captions(policy)
+
+
+def _restyle_captions(policy: dict) -> None:
+    """Choose the caption look again on the next request (same fonts, no new model call): spot,
+    size, colour and the review are re-judged against the faces and frames the phone draws."""
+    if policy.get("caption_look") is not None:
+        for key in ("caption_look", "_caption_auto_fill", "_caption_look_receipt"):
+            policy.pop(key, None)
+
+
+def _forget_speaker_background(policy: dict) -> None:
+    """Review on #2127: no background on this compile pass. When an earlier pass registered one
+    (its corner frame, its contrast frames), the speaker is drawn full-frame now: face boxes go back
+    to the raw full-frame samples, the contrast frames back to the take's own frames, and the
+    caption look is chosen again. Nothing was registered: nothing changes (byte-identical)."""
+    layout = policy.pop("_speaker_layout", None)
+    contrast = policy.pop("_speaker_background", None)
+    if (layout is None and contrast is None) or not policy.get("_environment_sampled"):
+        return
+    changed = False
+    if "_face_boxes_raw" in policy:
+        restored = list(policy["_face_boxes_raw"])
+        changed |= restored != policy.get("_face_boxes")
+        policy["_face_boxes"] = restored
+    if contrast is not None and "_take_frames_raw" in policy:
+        policy["_background_frames"] = list(policy["_take_frames_raw"])
+        changed = True
+    if changed:
+        _restyle_captions(policy)
 
 
 def _inside(start: float, end: float, spans: list[dict]) -> list[tuple[float, float]]:
@@ -1275,6 +1305,7 @@ def _ensure_generation_environment(canvas):
             except Exception:  # noqa: BLE001 - no source paths/private text in receipts
                 source_errors += 1
                 continue
+    policy["_take_frames_raw"] = frames
     if policy.get("_speaker_background"):
         frames = _background_frames(policy["_speaker_background"], frames, canvas)
     policy["_face_boxes_raw"] = boxes

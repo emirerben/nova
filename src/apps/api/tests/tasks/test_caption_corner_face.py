@@ -254,3 +254,73 @@ def test_without_a_corner_frame_faces_are_unchanged(monkeypatch):
     assert _recipe(job).speaker_background.speaker_frame is None
     faces = [tuple(f["box"]) for f in captured["faces"]]
     assert faces and all(f == pytest.approx(SIMULATED_FACE, abs=1e-6) for f in faces), faces
+
+
+# --- Review on #2127 (Emir, 2026-11-06): a background that fails to bind after registering ---
+# The compiler registers the corner background (and styles the captions against it) before the
+# background media is bound; a video whose start is at/past its end fails that bind, the worker
+# drops the background lane and compiles again with no background. The final recipe draws the
+# speaker full-frame, so caption placement and the review must use her full-frame face again.
+
+
+def _failed_background_job(monkeypatch, *, requirements=(R1, R4), take_face=SIMULATED_FACE):
+    from tests.tasks.test_kri841_talking_ending_clip import BITE, BITE_S
+
+    captured = _simulate_environment(monkeypatch, take_face)
+    job = _windows_job(
+        monkeypatch,
+        [],
+        speaker_frame=CORNER,
+        media_id=f"asset-{BITE}",
+        source_start_s=BITE_S,  # at the video's end: nothing playable, the bind fails
+    )
+    _finish(job, requirements, "Make it like a green screen. No music.")
+    return job, captured
+
+
+def test_a_background_dropped_after_binding_puts_her_face_back_full_frame(monkeypatch):
+    registered: list[bool] = []
+    original = styling.register_generation_background
+
+    def spy(background, canvas=None, focus_for=None):
+        registered.append(getattr(background, "speaker_frame", None) is not None)
+        return original(background, canvas=canvas, focus_for=focus_for)
+
+    monkeypatch.setattr(styling, "register_generation_background", spy)
+    job, captured = _failed_background_job(monkeypatch)
+    _run(job)
+    # Setup: the corner background was registered, then dropped, and the final recipe has none.
+    assert True in registered, registered
+    assert _recipe(job).speaker_background is None
+    drops = job.assembly_plan["variants"][0]["phone_lane_receipt"]["dropped"]
+    assert any(d.get("lane") == "background" for d in drops), drops
+    faces = [tuple(f["box"]) for f in captured["faces"]]
+    assert faces and all(f == pytest.approx(SIMULATED_FACE, abs=1e-6) for f in faces), faces
+    hits = _hits(captured, SIMULATED_FACE)
+    assert not hits, f"{len(hits)}/{len(captured['boxes'])} caption blocks on her full-frame face"
+
+
+# A take where she sits low in the frame: full-frame, middle captions cross her face; drawn in the
+# corner she would be far from them.
+LOW_FACE = (0.30, 0.42, 0.70, 0.62)
+
+
+def test_after_a_dropped_background_the_review_judges_the_full_frame_face(monkeypatch):
+    """An asked middle spot stays hers (KRI-1177); the review must say it covers her face, which
+    the stale corner box would deny."""
+    captions = BriefRequirement(
+        id="r3",
+        kind="style",
+        scope="global",
+        description="Captions in the middle",
+        facts={"captions": "word_by_word", "caption_position": "middle"},
+    )
+    job, captured = _failed_background_job(
+        monkeypatch, requirements=(R1, captions, R4), take_face=LOW_FACE
+    )
+    _run(job)
+    assert _recipe(job).speaker_background is None
+    assert _hits(captured, LOW_FACE), "setup: middle captions should cross her full-frame face"
+    variant = job.assembly_plan["variants"][0]
+    over_face = (variant.get("caption_look_receipt") or {}).get("over_face")
+    assert over_face is True, f"captions cover her full-frame face, review over_face={over_face!r}"
