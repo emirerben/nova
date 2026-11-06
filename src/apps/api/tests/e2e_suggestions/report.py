@@ -189,12 +189,17 @@ FAMILIES: dict[str, str] = {
     "tap-every-card": "baseline matrix: every kind x footage x language",
     "negative": "negative cases: stale base, switches, KRI-129, copy, mute dark, Undo, ring",
     "first": "first prompt: chips only, planner-read",
-    "save": "native-editor Save, before and after the serve (R5-F)",
+    "save": "native-editor Save and Undo, before and after the serve, in every order (R5-F, R6-O)",
     "lifecycle": "a staged render that never happens (R5-G)",
     "kill": "switches pulled after the freeze (R5-E)",
     "copy": "the on-screen title's decision, every state (R5-A)",
     "turkish": "the creator's own words, Turkish and English (R5-D)",
     "matrix": "mute matrix, held sets, queued taps, coverage (R5-M)",
+    "mark": "the protected-region (mark) gate (R6-M)",
+    "readiness": "approval readiness with an ordinary length ask (R6-R)",
+    "ring": "the ring write is busy (R6-B)",
+    "length": "duplicates and a stated video length (R6-D)",
+    "reoffer": "a tap taken back is an offer again, with and without the brief (R6-U)",
 }
 
 
@@ -756,5 +761,11 @@ def write_if_any() -> Path | None:
         ),
         encoding="utf-8",
     )
-    shutil.rmtree(PARTIALS, ignore_errors=True)
+    # Only this run's partials: another session (or an earlier one that crashed) may share the
+    # directory, and wiping its files would drop cells from the report it is still collecting.
+    shutil.rmtree(PARTIALS / RUN_ID, ignore_errors=True)
+    try:
+        PARTIALS.rmdir()
+    except OSError:
+        pass
     return OUT_DIR / "e2e-report.md"
