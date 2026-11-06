@@ -62,7 +62,7 @@ is said another way, for every phrased entry:
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 MIN_WINDOW_S = 0.5
@@ -97,6 +97,9 @@ class SequenceLayout:
     notes: tuple[dict, ...] = ()
     cadence_s: float = 4.0
     anchored: frozenset[int] = field(default_factory=frozenset)
+    # Item 19: where each anchored entry's words are said (output seconds), for the list labels.
+    # Read-only extra; it never takes part in equality, so a layout compares by windows/notes.
+    anchor_s: Mapping[int, float] = field(default_factory=dict, compare=False)
 
 
 def kept_duration(keep_segments: Sequence[tuple[float, float]] | None, full_s: float) -> float:
@@ -496,6 +499,7 @@ def _lay_out_on_the_word(
         notes=tuple(unique_notes),
         cadence_s=cadence_s,
         anchored=frozenset(anchors),
+        anchor_s=dict(anchors),
     )
 
 
@@ -627,6 +631,7 @@ def lay_out(
         notes=tuple(unique_notes),
         cadence_s=current,
         anchored=frozenset(anchors),
+        anchor_s=dict(anchors),
     )
 
 

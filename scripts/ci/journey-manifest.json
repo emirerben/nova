@@ -1118,6 +1118,14 @@
       ]
     },
     {
+      "id": "qendresa-19-list-labels",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_phone_list_labels.py tests/tasks/test_qendresa_list_labels_worker.py tests/tasks/test_qendresa_spoken_list_worker.py tests/kria/test_item19_list_label_receipts.py tests/services/test_item19_list_label_contract.py",
+      "paths": [
+        "src/apps/api/app/pipeline/phone_list_labels.py"
+      ]
+    },
+    {
       "id": "kri-827-protected-text-regions",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_protected_object_text_e2e.py tests/tasks/test_kri827_protected_text_worker.py tests/kria/test_kri827_protected_targets.py tests/kria/test_kri827_protected_region_turn_postgres.py tests/kria/test_kri901_mark_before_approval_postgres.py",
@@ -3174,6 +3182,20 @@
         "src/apps/api/tests/kria/test_intent_review_qualification.py",
         "src/apps/api/tests/integration/test_intent_review_qualification_postgres.py",
         "docs/reviews/intent-review/QUALIFICATION.md"
+      ]
+    },
+    {
+      "id": "qendresa-23-long-prompts",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_brief_long_request.py tests/kria/test_creative_brief.py tests/evals/test_main_creator_evals.py tests/evals/test_brief_extractor_evals.py",
+      "paths": [
+        "src/apps/api/app/kria/brief.py",
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/agents/brief_extractor.py",
+        "src/apps/api/tests/kria/test_brief_long_request.py",
+        "src/apps/api/tests/fixtures/kria_replay/q2-long-prompt/",
+        "scripts/kria/score_q2_long_prompt.py",
+        "docs/reviews/qendresa-23-long-prompts.md"
       ]
     },
     {
