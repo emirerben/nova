@@ -72,8 +72,13 @@ final class RecipeWriter: @unchecked Sendable {
             var normalizer: LoudnessNormalizer?
             if let loudnessTarget, audio != nil {
                 traceDeviceExportPhase("measure_loudness")
+                let prepass = EngineSignpost.begin("talk.save.loudnessPrepass")
+                defer { prepass.end() }
                 normalizer = LoudnessNormalizer(target: loudnessTarget, meter: try await LoudnessMeter.measure(asset: asset, audioMix: audioMix))
             }
+            // Reader, per-frame compositor (including every SpeakerMatte segmentation) and writer all run inside this one interval.
+            let encode = EngineSignpost.begin("talk.save.encode")
+            defer { encode.end() }
             guard writer.startWriting(), reader.startReading() else { throw writer.error ?? reader.error ?? MediaEngineError.exportFailed }
             traceDeviceExportPhase("started_reading_writing")
             writer.startSession(atSourceTime: .zero)
