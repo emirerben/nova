@@ -14,11 +14,11 @@ plan item:
   no thought-leadership, no cheesy hook voice, no generic motivation, nothing that fits any video.
 
 What this rubric does NOT judge, because deterministic gates already prove it for free
-(`tests/evals/test_suggestion_chips_evals.py` G1 to G9 and G11, `test_chip_suggester_evals.py`
+(`tests/evals/test_suggestion_chips_evals.py` G1 to G9 and G11, `test_suggestion_agent_evals.py`
 G10): that the chip names something real (grounding), that its capability is enabled (flag
 awareness), that it is not already in the edit, that it is executable on the compile path, that
-its message is a member of the closed template set, and that an agent-written label stays inside
-the closed per-kind vocabulary and carries no digits, quotes, hype or footage text. Do not spend judge tokens re-deriving those; if one of them fails the chip never reaches a
+its message and label are members of the closed template set, and that an agent-written `why`
+or hook `copy` carries no digits, quotes, hype, footage text or transcript words. Do not spend judge tokens re-deriving those; if one of them fails the chip never reaches a
 creator.
 
 You are given: the chip `label` (what is shown), its `label_source` (`template` or `agent`), the

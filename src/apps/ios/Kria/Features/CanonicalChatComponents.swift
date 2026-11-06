@@ -1015,6 +1015,9 @@ struct ReadyStage: View {
     /// server owns this row: its chips are sent on tap, and the fixed ones are gone.
     var serverSuggestions: [SuggestionChip]? = nil
     var sendSuggestion: (SuggestionChip) -> Void = { _ in }
+    /// AI suggestion blocks. Non-nil = the server's set carries v2 suggestions: the cards own this row, whatever
+    /// the chips say, and stay quiet (no label, no chips) once the creator has handled them all.
+    var suggestionCards: SuggestionCardsPresentation? = nil
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     /// Re-record: drawn only when the server offers it (`.unavailable` draws nothing, so an old server changes nothing here).
     var rerecord: RerecordPhase = .unavailable
@@ -1076,23 +1079,31 @@ struct ReadyStage: View {
 
             RerecordCard(phase: rerecord, actions: rerecordActions)
 
-            // KRI-769: no chips to offer (capability on, set empty or still loading) = no dangling question either.
-            if serverSuggestions.map({ !$0.isEmpty }) ?? true {
-                Text("What would you like to change?")
-                    .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
-            }
-
-            if let serverSuggestions {
-                // Capability on: the server's chips or nothing. The fixed chips are generic and the server's own
-                // stoplist rejects them, so they must not flash while the set loads or fill in when it is empty.
-                if !serverSuggestions.isEmpty {
-                    SuggestionChipRow(chips: serverSuggestions, send: sendSuggestion)
-                        .accessibilityIdentifier("ready-suggestions")
+            if let suggestionCards {
+                if !suggestionCards.isEmpty {
+                    Text("Ways to improve it")
+                        .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                    SuggestionCardList(presentation: suggestionCards, idPrefix: "suggestion-card")
                 }
             } else {
-                PlanChipFlow(spacing: 8) {
-                    PromptChip(text: "Try a stronger opening", action: suggest)
-                    PromptChip(text: "Make it warmer", action: suggest)
+                // KRI-769: no chips to offer (capability on, set empty or still loading) = no dangling question either.
+                if serverSuggestions.map({ !$0.isEmpty }) ?? true {
+                    Text("What would you like to change?")
+                        .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                }
+
+                if let serverSuggestions {
+                    // Capability on: the server's chips or nothing. The fixed chips are generic and the server's own
+                    // stoplist rejects them, so they must not flash while the set loads or fill in when it is empty.
+                    if !serverSuggestions.isEmpty {
+                        SuggestionChipRow(chips: serverSuggestions, send: sendSuggestion)
+                            .accessibilityIdentifier("ready-suggestions")
+                    }
+                } else {
+                    PlanChipFlow(spacing: 8) {
+                        PromptChip(text: "Try a stronger opening", action: suggest)
+                        PromptChip(text: "Make it warmer", action: suggest)
+                    }
                 }
             }
         }

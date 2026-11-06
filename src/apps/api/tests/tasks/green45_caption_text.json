@@ -1,0 +1,707 @@
+{
+ "_about": "Green 4 / Green 5 (2026-11-04), the same take (IMG_7231, 31.228 s). take_words: every timed caption word of the phone Talking render as whisper + punctuation restore produced them (Green 5 chip job 58c39348: no case ask, so the words are as heard). green4_request / green4_brief_binding: what Green 4 (job 2eccd176) pinned. green5_chip_request: the chip job's request. gemini_transcript: Gemini's own record of the take (nova.video.clip_metadata).",
+ "green4_request": "Full creator request (chronological):\nYorumla episode 9: Kervan x Lumo Pamukkale show. Make the whole video like a green screen: me small at the bottom right in front, and behind me full screen whichever photo or video I'm talking about, changing every 3-5 seconds. Cut the pauses and the sentence I restarted. Captions small, white, lowercase, in the middle. No music.\n\nCreative brief v1 (everything the creator has asked for, still in force):\n- [r1] [style/global] green screen with speaker at bottom right, changing every 3-5 seconds facts={background_changes: true; speaker_background: true; speaker_small: true}\n- [r2] [style/global] cut pauses and restarted sentences facts={cut_restarts: true; speech_cleanup: true}\n- [r3] [style/global] small, white, lowercase captions in the middle facts={caption_case: lower; caption_color: #FFFFFF; caption_position: middle; caption_size: small; captions: on}\n- [r4] [audio/global] no music facts={audio_intent: no_music}\nLatest message: Yorumla episode 9: Kervan x Lumo Pamukkale show. Make the whole video like a green screen: me small at the bottom right in front, and behind me full screen whichever photo or video I'm talking about, changing every 3-5 seconds. Cut the pauses and the sentence I restarted. Captions small, white, lowercase, in the middle. No music.",
+ "green5_chip_request": "Full creator request (chronological):\nSuggest an edit.\n\nSuggest an edit.",
+ "green4_brief_binding": {
+  "brief": {
+   "version": 1,
+   "requirements": [
+    {
+     "id": "r1",
+     "kind": "style",
+     "facts": {
+      "speaker_small": true,
+      "background_changes": true,
+      "speaker_background": true
+     },
+     "scope": "global",
+     "status": "open",
+     "literal": null,
+     "description": "green screen with speaker at bottom right, changing every 3-5 seconds",
+     "source_turn_id": "ba3e1816-663f-499e-bc91-c2ac8156cebb"
+    },
+    {
+     "id": "r2",
+     "kind": "style",
+     "facts": {
+      "cut_restarts": true,
+      "speech_cleanup": true
+     },
+     "scope": "global",
+     "status": "open",
+     "literal": null,
+     "description": "cut pauses and restarted sentences",
+     "source_turn_id": "ba3e1816-663f-499e-bc91-c2ac8156cebb"
+    },
+    {
+     "id": "r3",
+     "kind": "style",
+     "facts": {
+      "captions": "on",
+      "caption_case": "lower",
+      "caption_size": "small",
+      "caption_color": "#FFFFFF",
+      "caption_position": "middle"
+     },
+     "scope": "global",
+     "status": "open",
+     "literal": null,
+     "description": "small, white, lowercase captions in the middle",
+     "source_turn_id": "ba3e1816-663f-499e-bc91-c2ac8156cebb"
+    },
+    {
+     "id": "r4",
+     "kind": "audio",
+     "facts": {
+      "audio_intent": "no_music"
+     },
+     "scope": "global",
+     "status": "open",
+     "literal": null,
+     "description": "no music",
+     "source_turn_id": "ba3e1816-663f-499e-bc91-c2ac8156cebb"
+    }
+   ]
+  },
+  "state": "pinned",
+  "digest": "d77d0bd271bac6ae0ca2c6c2c47d4171ea8f80ca635bfd2425f1012e2bb00096",
+  "thread_id": "bb229f28-f719-44b3-8aa9-a3c3330ee400",
+  "media_snapshot": {
+   "visuals": [
+    {
+     "kind": "image",
+     "capture": {
+      "capture_time": "2026-10-30T06:08:00Z"
+     },
+     "media_id": "asset-10e7a6f3-896a-468a-a85f-be950b9bdb4b",
+     "source_filename": "A4E7F53B-9812-4B82-BB14-AA16EDE73C47-IMG_7122.jpeg"
+    },
+    {
+     "kind": "image",
+     "capture": {
+      "capture_time": "2026-10-30T06:23:00Z"
+     },
+     "media_id": "asset-47501f8d-4cfc-4eac-ba61-c2182f835e73",
+     "source_filename": "634563A5-DF5A-4990-9820-4F7D43947D58-IMG_7127.png"
+    },
+    {
+     "kind": "image",
+     "capture": {
+      "capture_time": "2026-10-30T06:11:00Z"
+     },
+     "media_id": "asset-f139cdc5-dcf4-4d93-bae7-05a220d6367b",
+     "source_filename": "E282EA3E-4839-4DC1-84A9-269B1716F039-IMG_7123.jpeg"
+    },
+    {
+     "kind": "video",
+     "capture": {
+      "capture_time": "2026-10-30T09:17:00Z"
+     },
+     "media_id": "asset-76d47455-4fd1-4cae-b655-1c657f6b1ca0",
+     "source_filename": "B2984E67-4119-4BEB-92BD-D8792A6C79AD-IMG_7125.mp4"
+    },
+    {
+     "kind": "image",
+     "capture": {
+      "capture_time": "2026-10-30T06:02:00Z"
+     },
+     "media_id": "asset-c2724da0-66e9-4346-8a14-d0ee70965f7e",
+     "source_filename": "718DD8EE-B890-4895-916A-201EBA4106CD-IMG_7120.jpeg"
+    },
+    {
+     "kind": "image",
+     "capture": {
+      "capture_time": "2026-10-30T06:29:00Z"
+     },
+     "media_id": "asset-9c230679-d729-48e6-a3ba-484a3413e1c9",
+     "source_filename": "BCBAE425-32CA-4324-921F-7942833CB0EE-IMG_7129.jpeg"
+    }
+   ],
+   "song_path": null,
+   "voiceover": null,
+   "clip_paths": [
+    "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/bb229f28-f719-44b3-8aa9-a3c3330ee400/analysis-proxy-ios-3C07B175-8EE8-4331-8B65-1535A84CBB75.mp4"
+   ],
+   "song_analysis": null,
+   "song_alignment": null,
+   "voiceover_path": null,
+   "song_duration_s": null,
+   "song_generation": null,
+   "clip_assignments": [
+    {
+     "kind": "video",
+     "capture": {
+      "capture_time": "2026-10-30T15:20:00Z"
+     },
+     "shot_id": null,
+     "analysis": {
+      "width": 320,
+      "aspect": 0.5634,
+      "brands": [],
+      "height": 568,
+      "source": "clip_metadata",
+      "pix_fmt": "yuv420p",
+      "subject": "woman speaking to camera",
+      "exposure": {
+       "frames": 24,
+       "version": 1,
+       "mean_luma": 132.9,
+       "near_black_share": 0.0
+      },
+      "duration_s": 31.228345,
+      "transcript": "Okay, we're recording. Kervan celebrated its 10th year with a sunrise fashion show at Pamukkale. And it wasn't alone. Lumo was the show's technology partner. The patterns were drawn on Lumo tablets and the whole show was filmed on Lumo phones mounted on drones. So Lumo took its tech from cold hard... No, again. So Lumo took its tech from cold hardware to a creative space that feeds fashion. In short, it's a real 1+1=3 story. So, what did you think of this collaboration?",
+      "description": "woman introduces fashion show event woman explains Lumo's technology partnership woman describes tech evolution and collaboration",
+      "video_codec": "h264",
+      "best_moments": [
+       {
+        "end_s": 6.8,
+        "energy": 5.0,
+        "start_s": 1.0,
+        "description": "woman introduces fashion show event"
+       },
+       {
+        "end_s": 16.5,
+        "energy": 6.5,
+        "start_s": 6.9,
+        "description": "woman explains Lumo's technology partnership"
+       },
+       {
+        "end_s": 29.5,
+        "energy": 7.5,
+        "start_s": 21.0,
+        "description": "woman describes tech evolution and collaboration"
+       }
+      ],
+      "display_width": 320,
+      "understanding": {
+       "kind": "video",
+       "props": [
+        "small black lavalier microphone",
+        "round-frame eyeglasses"
+       ],
+       "brands": [],
+       "people": {
+        "note": "a woman with short black hair and glasses",
+        "count": 1,
+        "speaks_to_camera": true
+       },
+       "speech": {
+        "language": "en",
+        "segments": [
+         {
+          "text": "Okay, we're recording.",
+          "end_s": 0.96,
+          "start_s": 0.0
+         },
+         {
+          "text": "Curvan celebrated its 10th year with a Sunrise Fashion Show at Pamukkale.",
+          "end_s": 5.46,
+          "start_s": 1.54
+         },
+         {
+          "text": "And it wasn't alone.",
+          "end_s": 7.2,
+          "start_s": 6.1
+         },
+         {
+          "text": "Lumo was the show's technology partner.",
+          "end_s": 9.6,
+          "start_s": 7.9
+         },
+         {
+          "text": "The patterns were drawn on Lumo tablets, and the whole show was filmed on Lumo phones, mounted on drones.",
+          "end_s": 16.28,
+          "start_s": 10.14
+         },
+         {
+          "text": "So Lumo took its tech from cold hard, no again.",
+          "end_s": 19.8,
+          "start_s": 16.88
+         },
+         {
+          "text": "So Lumo took its tech from cold hardware to a creative space that feeds fashion.",
+          "end_s": 24.86,
+          "start_s": 20.26
+         },
+         {
+          "text": "In short, it's a real one plus one equals three story.",
+          "end_s": 28.58,
+          "start_s": 25.06
+         },
+         {
+          "text": "So what did you think of this collaboration?",
+          "end_s": 30.98,
+          "start_s": 28.58
+         }
+        ],
+        "to_camera": true,
+        "has_speech": true,
+        "transcript": "Okay, we're recording. Kervan celebrated its 10th year with a sunrise fashion show at Pamukkale. And it wasn't alone. Lumo was the show's technology partner. The patterns were drawn on Lumo tablets and the whole show was filmed on Lumo phones mounted on drones. So Lumo took its tech from cold hard... No, again. So Lumo took its tech from cold hardware to a creative space that feeds fashion. In short, it's a real 1+1=3 story. So, what did you think of this collaboration?"
+       },
+       "actions": [
+        "woman speaks into microphone",
+        "woman gestures with hand"
+       ],
+       "setting": "indoor, plain light wall background",
+       "subject": "woman speaking to camera",
+       "summary": "A woman explains how Lumo technology partnered with Kervan for its 10th-year fashion show, using tablets for patterns and phones on drones for filming. She concludes it's a synergistic collaboration.",
+       "activity": "speaking to camera while holding a microphone",
+       "audio_type": "dialogue",
+       "content_type": "talking_head",
+       "on_screen_text": "",
+       "visual_quality": "sharp and steady",
+       "notable_moments": [
+        {
+         "end_s": 6.8,
+         "start_s": 1.0,
+         "description": "woman introduces fashion show event"
+        },
+        {
+         "end_s": 16.5,
+         "start_s": 6.9,
+         "description": "woman explains Lumo's technology partnership"
+        },
+        {
+         "end_s": 29.5,
+         "start_s": 21.0,
+         "description": "woman describes tech evolution and collaboration"
+        }
+       ]
+      },
+      "display_height": 568,
+      "on_screen_text": "Okay, we're recording. Kervan celebrated its 10th year with a sunrise fashion show at Pamukkale. And it wasn't alone. Lumo was the show's technology partner. The patterns were drawn on Lumo tablets and the whole show was filmed on Lumo phones mounted on drones. So Lumo took its tech from cold hard... No, again. So Lumo took its tech from cold hardware to a creative space that feeds fashion. In sho",
+      "analysis_version": 8,
+      "rotation_degrees": 0
+     },
+     "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/bb229f28-f719-44b3-8aa9-a3c3330ee400/analysis-proxy-ios-3C07B175-8EE8-4331-8B65-1535A84CBB75.mp4",
+     "media_id": "analysis-proxy-ios-3C07B175-8EE8-4331-8B65-1535A84CBB75.mp4",
+     "has_audio": true,
+     "duration_s": 31.228345,
+     "source_filename": "24687C9B-DB90-4B20-BF79-4B20E69FEC7B-IMG_7231.MOV",
+     "upload_contract": {
+      "proxy": {
+       "width": 320,
+       "height": 568,
+       "original": {
+        "kind": "video",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "e380315811fbd6e062fc5274c5953c1651d0ed8db6ad04dd7013de3c6ed65576",
+        "has_audio": true,
+        "byte_count": 15587647,
+        "duration_s": 31.208333333333332,
+        "orientation_degrees": 0
+       },
+       "duration_s": 31.22833333333333,
+       "frame_rate": 30.0,
+       "timing_version": 1,
+       "orientation_degrees": 0
+      },
+      "purpose": "analysis_proxy"
+     },
+     "library_asset_id": "ed388eac-b3d2-4b80-9402-7c86f7b94456",
+     "library_source_id": "91da7f9e-4fa6-4817-bb54-a7b4579f0e48",
+     "manifest_identity": "analysis-proxy-ios-3C07B175-8EE8-4331-8B65-1535A84CBB75.mp4",
+     "storage_generation": "1793793505479200"
+    }
+   ],
+   "voiceover_duration_s": null,
+   "voiceover_generation": null
+  },
+  "creator_request": "Full creator request (chronological):\nYorumla episode 9: Kervan x Lumo Pamukkale show. Make the whole video like a green screen: me small at the bottom right in front, and behind me full screen whichever photo or video I'm talking about, changing every 3-5 seconds. Cut the pauses and the sentence I restarted. Captions small, white, lowercase, in the middle. No music.\n\nCreative brief v1 (everything the creator has asked for, still in force):\n- [r1] [style/global] green screen with speaker at bottom right, changing every 3-5 seconds facts={background_changes: true; speaker_background: true; speaker_small: true}\n- [r2] [style/global] cut pauses and restarted sentences facts={cut_restarts: true; speech_cleanup: true}\n- [r3] [style/global] small, white, lowercase captions in the middle facts={caption_case: lower; caption_color: #FFFFFF; caption_position: middle; caption_size: small; captions: on}\n- [r4] [audio/global] no music facts={audio_intent: no_music}\nLatest message: Yorumla episode 9: Kervan x Lumo Pamukkale show. Make the whole video like a green screen: me small at the bottom right in front, and behind me full screen whichever photo or video I'm talking about, changing every 3-5 seconds. Cut the pauses and the sentence I restarted. Captions small, white, lowercase, in the middle. No music."
+ },
+ "gemini_transcript": "Okay, we're recording. Kervon celebrated its 10th year with a Sunrise fashion show at Pamukale. And it wasn't alone. Lumo was the show's technology partner. The patterns were drawn on Lumo tablets and the whole show was filmed on Lumo phones, mounted on drones. So Lumo took its tech from cold hard, no again. So Lumo took its tech from Cold Hardware to a creative space that feeds fashion. In short, it's a real 1+1 = 3 story. So what did you think of this collaboration.",
+ "take_duration_s": 31.228,
+ "take_words": [
+  {
+   "text": "Okay,",
+   "start_s": 0.0,
+   "end_s": 0.3
+  },
+  {
+   "text": "we're",
+   "start_s": 0.36,
+   "end_s": 0.6
+  },
+  {
+   "text": "recording.",
+   "start_s": 0.6,
+   "end_s": 0.96
+  },
+  {
+   "text": "Curvan",
+   "start_s": 1.54,
+   "end_s": 1.72
+  },
+  {
+   "text": "celebrated",
+   "start_s": 1.72,
+   "end_s": 2.24
+  },
+  {
+   "text": "its",
+   "start_s": 2.24,
+   "end_s": 2.58
+  },
+  {
+   "text": "10th",
+   "start_s": 2.58,
+   "end_s": 2.98
+  },
+  {
+   "text": "year",
+   "start_s": 2.98,
+   "end_s": 3.14
+  },
+  {
+   "text": "with",
+   "start_s": 3.14,
+   "end_s": 3.32
+  },
+  {
+   "text": "a",
+   "start_s": 3.32,
+   "end_s": 3.56
+  },
+  {
+   "text": "Sunrise",
+   "start_s": 3.56,
+   "end_s": 3.96
+  },
+  {
+   "text": "Fashion",
+   "start_s": 3.96,
+   "end_s": 4.4
+  },
+  {
+   "text": "Show",
+   "start_s": 4.4,
+   "end_s": 4.68
+  },
+  {
+   "text": "at",
+   "start_s": 4.68,
+   "end_s": 4.94
+  },
+  {
+   "text": "Pamukkale.",
+   "start_s": 4.94,
+   "end_s": 5.46
+  },
+  {
+   "text": "And",
+   "start_s": 5.71,
+   "end_s": 5.91
+  },
+  {
+   "text": "it",
+   "start_s": 5.91,
+   "end_s": 6.15
+  },
+  {
+   "text": "wasn't",
+   "start_s": 6.15,
+   "end_s": 6.41
+  },
+  {
+   "text": "alone.",
+   "start_s": 6.41,
+   "end_s": 6.81
+  },
+  {
+   "text": "Lumo",
+   "start_s": 7.286,
+   "end_s": 7.286
+  },
+  {
+   "text": "was",
+   "start_s": 7.286,
+   "end_s": 7.586
+  },
+  {
+   "text": "the",
+   "start_s": 7.586,
+   "end_s": 7.786
+  },
+  {
+   "text": "show's",
+   "start_s": 7.786,
+   "end_s": 8.086
+  },
+  {
+   "text": "technology",
+   "start_s": 8.086,
+   "end_s": 8.646
+  },
+  {
+   "text": "partner.",
+   "start_s": 8.646,
+   "end_s": 8.986
+  },
+  {
+   "text": "The",
+   "start_s": 9.526,
+   "end_s": 9.626
+  },
+  {
+   "text": "patterns",
+   "start_s": 9.626,
+   "end_s": 9.906
+  },
+  {
+   "text": "were",
+   "start_s": 9.906,
+   "end_s": 10.246
+  },
+  {
+   "text": "drawn",
+   "start_s": 10.246,
+   "end_s": 10.506
+  },
+  {
+   "text": "on",
+   "start_s": 10.506,
+   "end_s": 10.926
+  },
+  {
+   "text": "Lumo",
+   "start_s": 10.926,
+   "end_s": 11.086
+  },
+  {
+   "text": "tablets,",
+   "start_s": 11.086,
+   "end_s": 11.566
+  },
+  {
+   "text": "and",
+   "start_s": 11.826,
+   "end_s": 12.026
+  },
+  {
+   "text": "the",
+   "start_s": 12.026,
+   "end_s": 12.126
+  },
+  {
+   "text": "whole",
+   "start_s": 12.126,
+   "end_s": 12.466
+  },
+  {
+   "text": "show",
+   "start_s": 12.466,
+   "end_s": 12.586
+  },
+  {
+   "text": "was",
+   "start_s": 12.586,
+   "end_s": 13.266
+  },
+  {
+   "text": "filmed",
+   "start_s": 13.266,
+   "end_s": 13.266
+  },
+  {
+   "text": "on",
+   "start_s": 13.266,
+   "end_s": 13.646
+  },
+  {
+   "text": "Lumo",
+   "start_s": 13.646,
+   "end_s": 13.926
+  },
+  {
+   "text": "phones,",
+   "start_s": 13.926,
+   "end_s": 14.366
+  },
+  {
+   "text": "mounted",
+   "start_s": 14.686,
+   "end_s": 14.806
+  },
+  {
+   "text": "on",
+   "start_s": 14.806,
+   "end_s": 15.326
+  },
+  {
+   "text": "drones.",
+   "start_s": 15.326,
+   "end_s": 15.666
+  },
+  {
+   "text": "So",
+   "start_s": 15.906,
+   "end_s": 16.166
+  },
+  {
+   "text": "Lumo",
+   "start_s": 16.166,
+   "end_s": 16.466
+  },
+  {
+   "text": "took",
+   "start_s": 16.466,
+   "end_s": 16.666
+  },
+  {
+   "text": "its",
+   "start_s": 16.666,
+   "end_s": 16.866
+  },
+  {
+   "text": "tech",
+   "start_s": 16.866,
+   "end_s": 17.086
+  },
+  {
+   "text": "from",
+   "start_s": 17.086,
+   "end_s": 17.326
+  },
+  {
+   "text": "cold",
+   "start_s": 17.326,
+   "end_s": 17.646
+  },
+  {
+   "text": "hardware",
+   "start_s": 17.646,
+   "end_s": 18.106
+  },
+  {
+   "text": "to",
+   "start_s": 18.106,
+   "end_s": 18.546
+  },
+  {
+   "text": "a",
+   "start_s": 18.546,
+   "end_s": 18.846
+  },
+  {
+   "text": "creative",
+   "start_s": 18.846,
+   "end_s": 19.106
+  },
+  {
+   "text": "space",
+   "start_s": 19.106,
+   "end_s": 19.486
+  },
+  {
+   "text": "that",
+   "start_s": 19.486,
+   "end_s": 20.126
+  },
+  {
+   "text": "feeds",
+   "start_s": 20.126,
+   "end_s": 20.126
+  },
+  {
+   "text": "fashion.",
+   "start_s": 20.126,
+   "end_s": 20.506
+  },
+  {
+   "text": "In",
+   "start_s": 20.706,
+   "end_s": 21.226
+  },
+  {
+   "text": "short,",
+   "start_s": 21.226,
+   "end_s": 21.446
+  },
+  {
+   "text": "it's",
+   "start_s": 21.546,
+   "end_s": 21.806
+  },
+  {
+   "text": "a",
+   "start_s": 21.806,
+   "end_s": 21.926
+  },
+  {
+   "text": "real",
+   "start_s": 21.926,
+   "end_s": 22.146
+  },
+  {
+   "text": "1",
+   "start_s": 22.146,
+   "end_s": 22.486
+  },
+  {
+   "text": "plus",
+   "start_s": 22.486,
+   "end_s": 22.686
+  },
+  {
+   "text": "1",
+   "start_s": 22.686,
+   "end_s": 23.026
+  },
+  {
+   "text": "equals",
+   "start_s": 23.026,
+   "end_s": 23.346
+  },
+  {
+   "text": "3",
+   "start_s": 23.346,
+   "end_s": 23.726
+  },
+  {
+   "text": "story.",
+   "start_s": 23.726,
+   "end_s": 24.226
+  },
+  {
+   "text": "So",
+   "start_s": 24.226,
+   "end_s": 24.966
+  },
+  {
+   "text": "what",
+   "start_s": 24.966,
+   "end_s": 25.226
+  },
+  {
+   "text": "did",
+   "start_s": 25.226,
+   "end_s": 25.366
+  },
+  {
+   "text": "you",
+   "start_s": 25.366,
+   "end_s": 25.566
+  },
+  {
+   "text": "think",
+   "start_s": 25.566,
+   "end_s": 25.766
+  },
+  {
+   "text": "of",
+   "start_s": 25.766,
+   "end_s": 25.946
+  },
+  {
+   "text": "this",
+   "start_s": 25.946,
+   "end_s": 26.126
+  },
+  {
+   "text": "collaboration?",
+   "start_s": 26.126,
+   "end_s": 26.626
+  }
+ ]
+}

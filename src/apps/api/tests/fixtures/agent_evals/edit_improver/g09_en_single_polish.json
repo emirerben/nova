@@ -1,0 +1,45 @@
+{
+  "id": "g09_en_single_polish",
+  "description": "One polish card with a measured reason.",
+  "expect": "pass",
+  "input": {
+    "state": "ready",
+    "language": "en",
+    "creator_request": "",
+    "issued": [
+      {
+        "kind": "music",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e1": {
+        "signal": "mix",
+        "fact": "music over speech in clips 2 and 3"
+      }
+    },
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": []
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "music",
+        "target_ids": [
+          "all"
+        ],
+        "why": "Music sits over speech in clips 2, 3",
+        "copy": null,
+        "rank": 1
+      }
+    ]
+  }
+}

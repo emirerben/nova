@@ -1,0 +1,50 @@
+{
+  "id": "b20_why_quotes_the_footage",
+  "why_bad": "why repeats the speaker's words",
+  "expect": "fail",
+  "expect_failures": [
+    "why_quotes_footage"
+  ],
+  "input": {
+    "state": "ready",
+    "language": "en",
+    "creator_request": "",
+    "issued": [
+      {
+        "kind": "filler_words",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e1": {
+        "signal": "filler",
+        "fact": "4 filler words: um, you know"
+      }
+    },
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": [
+      "um you know what I mean"
+    ]
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "filler_words",
+        "target_ids": [
+          "all"
+        ],
+        "why": "um, you know in 4 places",
+        "copy": null,
+        "rank": 1
+      }
+    ]
+  }
+}

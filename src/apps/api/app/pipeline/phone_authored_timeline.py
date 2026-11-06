@@ -19,7 +19,7 @@ from app.kria.recipes import (
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest
 from app.pipeline.authored_timeline import render_presentation
-from app.pipeline.editor_render_window import effective_source_start
+from app.pipeline.editor_render_window import phone_source_window
 from app.pipeline.phone_captions import (
     caption_font_assets,
     caption_look_from_variant,
@@ -38,6 +38,7 @@ from app.services.authored_editor import explicit_authored_slots
 from app.services.phone_editor_sources import (
     editor_source_bindings,
     editor_visual_bindings,
+    immutable_video_source_duration,
     phone_editor_source_revision,
 )
 from app.services.phone_sources import (
@@ -139,15 +140,21 @@ def compile_phone_authored_timeline(
             hold = max(0.0, duration - source_span / rate)
             hold_duration = hold if hold > 1e-6 else None
         elif not still:
-            start = effective_source_start(
+            start, source_span, hold_duration = phone_source_window(
                 start,
                 duration,
                 rate,
                 source_duration,
                 start_locked=bool(row.get("source_start_locked")),
             )
-            source_span = duration * rate
-            hold_duration = None
+            if hold_duration is not None:
+                # Existing strict windows keep their behavior, but inferred
+                # padding must never choose between ambiguous originals.
+                if (
+                    immutable_video_source_duration(job, variant, row["clip_index"])
+                    != source_duration
+                ):
+                    raise ValueError("authored original source duration is inconsistent")
         else:
             source_span = duration * rate
             hold_duration = None
