@@ -6,7 +6,7 @@ Base: `05d9720d8b3f838f8b91963e183eb7206c34e538`; isolated branch `codex/automat
 
 The current result appears without a refresh/show-new-version tap when its authoritative read succeeds. An unchanged old ready response must not finish a newer update. Responses arriving out of order must not restore an older snapshot. Dirty local work survives status reads. Transient GET failures recover with bounded attempts and backoff; cancellation stops retrying. A render/save/upload/paid request with an uncertain outcome is never blindly repeated. Terminal failures name an actionable next step.
 
-This change is separate from Cunda's unpublished `codex/cunda-editor-recovery`. That owner controls NativeEditorSession, Services, ChatWorkspaceView, NativeEditorView, render/compiler/legacy/banner/header and associated tests. Its pending corrections cover prompt lifetime, reconcile-on-open dirtiness after suspension, and old badge cleanup. Those files are read-only here. Integrate that final audited candidate and this branch through normal review, resolve shared model coverage against the combined tree, then repeat native integration/aggregate gates. Neither branch's isolated results prove the combined build or original Cunda recovery.
+This change is separate from Cunda's unpublished `codex/cunda-editor-recovery`. That owner controls NativeEditorSession, Services, ChatWorkspaceView, NativeEditorView, render/compiler/legacy/banner/header and associated tests. Its corrections cover prompt lifetime, reconcile-on-open dirtiness after suspension, and old badge cleanup. Those files are read-only here. After Cunda is merged into main through its separately authorized process, rebase this branch onto that main, resolve model coverage against the combined tree, then repeat native integration/aggregate gates. Neither branch's isolated results prove the combined build or original Cunda recovery.
 
 ## Why the previous proof did not establish zero friction
 
@@ -66,7 +66,7 @@ Status legend: **risk** = current code review, not reproduced; **historical-fixe
 - Phone model gate is blocked: the pinned URL downloaded a JAR with SHA256 `654aa50197faa48fa0136b41257270de6469d29ef323e7822ead59d2be43ce10`; the verifier requires `fc6878c603f0fdc18b9fe3e5bf51860cb90ab5b1154e3c371660c036d6bdd63e`. The integrity guard was preserved and that binary was not executed. No model-pass claim follows.
 - Physical iPhone, background force-kill/relaunch with real account, multi-device concurrent Save, private Cunda recovery, Photos output and rollout remain untested. No push, PR, merge, deploy or production mutation is authorized or performed.
 
-Final native/DB/preship outcomes will be recorded below after their running checks finish.
+Completed outcomes and final pending native/model gates are recorded below.
 
 
 ### PostgreSQL integration evidence
@@ -129,7 +129,7 @@ Four clock-controlled regression cases were written before this delta: calls at 
 
 ### Mechanical preship receipt
 
-At local implementation commit `9173b61ae22e63688fbd336229f09fbb85847d49`, preship passed scoped Ruff, drift/release ownership, **540 mapped incident checks**, journey mapping (11 selected journeys) and the honest local-fix request-evidence declaration. Some database legs were skipped in that sandbox invocation. Mapping and declaration acceptance are not executed native journey evidence; the actual database runs above are separate. The final backoff delta will receive an updated local commit/declaration and final mechanical check. This does not authorize publication.
+At local implementation commit `9173b61ae22e63688fbd336229f09fbb85847d49`, preship passed scoped Ruff, drift/release ownership, **540 mapped incident checks**, journey mapping (11 selected journeys) and the honest local-fix request-evidence declaration. Some database legs were skipped in that sandbox invocation. Mapping and declaration acceptance are not executed native journey evidence; the actual database runs above are separate. The final backoff delta was committed locally as `7eb6a83982ef4cd04c1907a19ac592b3e4aee8c8`; final preship on that implementation head passed the same 540 mapped checks, mapping and updated honest declaration (`/tmp/nova-auto-preship-head.log`), with database skips explicitly retained. This does not authorize publication.
 
 
 ### Final handoff state
@@ -139,3 +139,5 @@ The private Redis was identity-checked (task PID 13232) and cleanly shut down af
 After Cunda PR #2126 is merged to main through its separately authorized process, rebase this isolated branch on that main and run the combined checks. Do not stack on or mutate the unmerged Cunda branch. Textual path overlap is empty, but its lifetime helpers are an incoming behavioral dependency, so separate branch results do not prove combined behavior. Required pending native selection: all KriaTests with named ReviewPlanTests and SlidePostExportTests execution verified in the xcresult; then the fixture-only `SlidePostUITests/testSlidePostCreationIsTheRichLayoutThenCreateThenKriaPropose` and `SlidePostUITests/testNewlyReadyAssetBecomesASlideWithoutTapping`. Physical output, process-death durability, multi-device merge semantics, the original private Cunda project, and rollout remain outside the completed evidence.
 
 All final native deltas have independent static approval with no remaining static blocker in their stated same-session scope. This is an unpublished local candidate, **not final native verification or request-fulfillment sign-off**. The explicit native coordination hold and pinned model-checker integrity failure remain blockers. No automatic-review rejection or uncertain production action occurred in this task.
+
+This final handoff documentation update changes no application or test source from implementation commit `7eb6a83982ef4cd04c1907a19ac592b3e4aee8c8`. Final source remains uncompiled after the held native corrections.
