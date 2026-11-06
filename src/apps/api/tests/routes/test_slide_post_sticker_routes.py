@@ -276,6 +276,8 @@ def _rows_db(rows: list[uuid.UUID]) -> MagicMock:
     result.scalars.return_value.all.return_value = [SimpleNamespace(id=r) for r in rows]
     db = MagicMock()
     db.execute = AsyncMock(return_value=result)
+    # This fixture has no keyed generation receipt; AsyncSession still exposes run_sync.
+    db.run_sync = AsyncMock(return_value=False)
     db.commit = AsyncMock()
     return db
 

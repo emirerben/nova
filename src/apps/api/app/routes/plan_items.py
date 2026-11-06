@@ -189,6 +189,7 @@ from app.schemas.slide_post import (
     parse_slide_post,
     sticker_asset_ids,
 )
+from app.schemas.slide_post_generation import SlidePostGenerationReceiptOut
 from app.services.ai_usage_headers import paid_call_headers
 from app.services.authored_editor import USER_SONG_CLIP_EDIT_UNSUPPORTED
 from app.services.content_plan_persona import (
@@ -597,6 +598,7 @@ class ClipAssignmentResponse(BaseModel):
 
 
 class PlanItemResponse(BaseModel):
+    generation_receipt: SlidePostGenerationReceiptOut | None = None
     id: str
     # Idea-centric (0055+): day_index and theme are nullable; position is the sort key.
     day_index: int | None
@@ -4352,6 +4354,14 @@ class SlidePostChatEditBody(BaseModel):
 
 class SlidePostGenerateBody(BaseModel):
     expected_version: int = Field(ge=1)
+    client_request_id: uuid.UUID | None = None
+
+
+class SlidePostGenerationRequestBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    expected_version: int = Field(ge=1)
+    client_request_id: uuid.UUID
+    expected_current_job_id: uuid.UUID | None
 
 
 class SlidePostProposalResponse(BaseModel):
@@ -4397,6 +4407,16 @@ class SlidePostValidationError(BaseModel):
 
 
 class SlidePostState(BaseModel):
+    ai_request_delivery_version: Literal[0, 1] = Field(
+        default_factory=lambda: int(settings.slide_post_ai_recovery_enabled)
+    )
+    ai_project_id: uuid.UUID | None = None
+    ai_request_recovery_version: Literal[0, 1] = Field(
+        default_factory=lambda: 1 if settings.slide_post_ai_recovery_enabled else 0
+    )
+    generation_idempotency_version: Literal[0, 1] = Field(
+        default_factory=lambda: int(settings.slide_post_generation_recovery_enabled)
+    )
     schema_version: Literal[1] = 1
     item_id: str
     title: str
@@ -5009,8 +5029,14 @@ async def put_slide_post_draft(
         new_draft = new_draft.model_copy(update={"brief_binding": binding})
     item.slide_post = new_draft.model_dump(mode="json")
     flag_modified(item, "slide_post")
+    from app.services.slide_post_render_revisions import stage_saved_revision
+
+    keyed_save = await db.run_sync(
+        lambda session: stage_saved_revision(session, item, native_client=native_client)
+    )
     await db.commit()
-    await _maybe_rebuild_slide_post(item, user.id, db, native_client=native_client)
+    if not keyed_save:
+        await _maybe_rebuild_slide_post(item, user.id, db, native_client=native_client)
     reloaded = await _load_owned_item(item_id, user.id, db)
     return plan_item_response(reloaded)
 
@@ -5073,8 +5099,12 @@ async def compose_slide_post(
     )
     item.slide_post = composed.model_dump(mode="json")
     flag_modified(item, "slide_post")
+    from app.services.slide_post_render_revisions import stage_saved_revision
+
+    keyed_save = await db.run_sync(lambda session: stage_saved_revision(session, item))
     await db.commit()
-    await _maybe_rebuild_slide_post(item, user.id, db)
+    if not keyed_save:
+        await _maybe_rebuild_slide_post(item, user.id, db)
     reloaded = await _load_owned_item(item_id, user.id, db)
     return plan_item_response(reloaded)
 
@@ -5086,6 +5116,17 @@ async def propose_slide_post(
     body: SlidePostProposeBody,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+) -> SlidePostProposalResponse:
+    return await _propose_slide_post_impl(request, item_id, body, user, db)
+
+
+async def _propose_slide_post_impl(
+    request: Request,
+    item_id: str,
+    body: SlidePostProposeBody,
+    user: CurrentUser,
+    db: AsyncSession,
+    paid_execution=None,
 ) -> SlidePostProposalResponse:
     """Make a read-only AI draft. Acceptance is the subsequent versioned PUT."""
     _require_slide_posts()
@@ -5133,6 +5174,9 @@ async def propose_slide_post(
         request_id=_paid_agent_request_id("slide-post-propose", str(item.id), body),
     )
     run_context.thought_summary_callback = thoughts
+    if paid_execution is not None:
+        run_context.request_id = f"slide-post-ai:{paid_execution.request_id}"
+        run_context.request_id_authoritative = True
     try:
         composed = await propose_slide_post_draft(
             item=item,
@@ -5142,6 +5186,7 @@ async def propose_slide_post(
             current_draft=current,
             instruction=body.instruction,
             run_context=run_context,
+            **({"paid_execution": paid_execution} if paid_execution is not None else {}),
         )
     except Exception:
         if thoughts is not None:
@@ -5207,6 +5252,18 @@ async def chat_edit_slide_post(
     db: AsyncSession = Depends(get_db),
     client_protocol: KriaClientProtocol = None,
 ) -> SlidePostChatEditResponse:
+    return await _chat_edit_slide_post_impl(request, item_id, body, user, db, client_protocol)
+
+
+async def _chat_edit_slide_post_impl(
+    request: Request,
+    item_id: str,
+    body: SlidePostChatEditBody,
+    user: CurrentUser,
+    db: AsyncSession,
+    client_protocol: KriaClientProtocol = None,
+    paid_execution=None,
+) -> SlidePostChatEditResponse:
     """Chat-edit a slide post through the edit copilot. Read-only staging: returns a
     proposed draft (or a clarification/refusal); the client saves it with the PUT."""
     # Chat edit round-trips rich per-slide text: it needs that flag too.
@@ -5224,6 +5281,8 @@ async def chat_edit_slide_post(
         )
     stored = parse_slide_post(item.slide_post)
     server_version = stored.version if stored is not None else 0
+    if paid_execution is not None and body.expected_version != server_version:
+        raise HTTPException(409, "The saved draft changed. Refresh before a new AI request.")
     draft = body.draft if body.draft is not None else stored
     if draft is None or not draft.slides:
         raise HTTPException(
@@ -5322,6 +5381,9 @@ async def chat_edit_slide_post(
         ),
     )
     run_context.thought_summary_callback = thoughts
+    if paid_execution is not None:
+        run_context.request_id = f"slide-post-ai:{paid_execution.request_id}"
+        run_context.request_id_authoritative = True
     try:
         result = await run_slide_post_chat_edit(
             draft=draft,
@@ -5332,6 +5394,7 @@ async def chat_edit_slide_post(
             server_version=server_version,
             brief_binding=brief_binding,
             run_context=run_context,
+            **({"paid_execution": paid_execution} if paid_execution is not None else {}),
             # Size/Fit ops need an app that round-trips them (KRI-606).
             sizes_enabled=bool(
                 settings.slide_post_sizes_enabled
@@ -5359,6 +5422,85 @@ async def chat_edit_slide_post(
     return result
 
 
+@router.get(
+    "/{item_id}/slide-post/generation-requests/{client_request_id}",
+    response_model=SlidePostGenerationReceiptOut,
+)
+async def get_slide_post_generation_receipt(
+    item_id: str,
+    client_request_id: uuid.UUID,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> SlidePostGenerationReceiptOut:
+    """Observe a pinned request after its Job changed or disappeared; never dispatch."""
+    from app.models import SlidePostGenerationReceipt  # noqa: PLC0415
+    from app.services.slide_post_generation_receipts import (  # noqa: PLC0415
+        ReceiptConflict,
+        receipt_output,
+    )
+
+    _require_slide_posts()
+    item, _, _ = await _load_owned_item_context(item_id, user.id, db)
+    receipt = await db.get(SlidePostGenerationReceipt, client_request_id)
+    if receipt is None or receipt.owner_id != user.id or receipt.item_id != item.id:
+        raise HTTPException(status_code=404, detail="Generation request not found")
+    job = await db.get(Job, receipt.job_id)
+    try:
+        return receipt_output(receipt, item=item, job=job)
+    except ReceiptConflict as exc:
+        raise HTTPException(status_code=409, detail={"code": str(exc)}) from exc
+
+
+@router.post("/{item_id}/slide-post/generation-requests", response_model=PlanItemResponse)
+async def request_slide_post_generation(
+    item_id: str,
+    body: SlidePostGenerationRequestBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Replay one durable request; old servers cannot silently ignore this contract."""
+    from anyio import to_thread  # noqa: PLC0415
+
+    from app.services.slide_post_generation_receipts import (  # noqa: PLC0415
+        ReceiptConflict,
+        SlidePostGenerationRequest,
+        dispatch_generation,
+    )
+
+    _require_slide_posts()
+    item, plan, _ = await _load_owned_item_context(item_id, user.id, db)
+    request = SlidePostGenerationRequest(
+        body.client_request_id,
+        user.id,
+        item.id,
+        body.expected_version,
+        body.expected_current_job_id,
+    )
+    try:
+        result = await to_thread.run_sync(
+            dispatch_generation, request, int(plan.ownership_epoch or 0)
+        )
+    except ReceiptConflict as exc:
+        raise HTTPException(status_code=409, detail={"code": str(exc)}) from exc
+    if result.outcome == "slide_post_version_conflict":
+        raise HTTPException(status_code=409, detail={"code": "slide_post_version_conflict"})
+    if result.outcome == "slide_post_invalid":
+        raise HTTPException(status_code=422, detail={"code": "slide_post_invalid"})
+    response = await _respond_to_dispatch_result(result, item_id, user.id, db)
+    if result.generation_receipt is None:
+        raise HTTPException(status_code=409, detail={"code": "slide_post_receipt_unavailable"})
+    # The live item's target can change between the sync transaction and this
+    # reload. The receipt's Job is immutable; never overwrite the live target.
+    receipt = result.generation_receipt.model_copy(
+        update={
+            "is_current_target": str(response.current_job_id or "")
+            == str(result.generation_receipt.job_id)
+            and result.generation_receipt.job_status is not None,
+        }
+    )
+    return response.model_copy(update={"generation_receipt": receipt})
+
+
 @router.post("/{item_id}/slide-post/generate", response_model=PlanItemResponse)
 async def generate_slide_post(
     item_id: str,
@@ -5372,6 +5514,17 @@ async def generate_slide_post(
     slides. The shared dispatcher rechecks format and version under its row
     lock before it mints a job; generic Generate retains its existing guard.
     """
+    if body.client_request_id is not None:
+        return await request_slide_post_generation(
+            item_id,
+            SlidePostGenerationRequestBody(
+                expected_version=body.expected_version,
+                client_request_id=body.client_request_id,
+                expected_current_job_id=None,
+            ),
+            user,
+            db,
+        )
     _require_slide_posts()
     item, plan, _ = await _load_owned_item_context(item_id, user.id, db)
     owner_id = user.id
@@ -5561,6 +5714,36 @@ async def get_slide_post_state(
         for entry in raw_validation.get("errors", [])
         if isinstance(entry, dict) and entry.get("code") and entry.get("message")
     ]
+    revision_status = None
+    if job is not None and draft is not None:
+        from app.models import SlidePostRenderRevision
+
+        revision = await db.scalar(
+            select(SlidePostRenderRevision).where(
+                SlidePostRenderRevision.job_id == job.id,
+                SlidePostRenderRevision.item_id == item.id,
+                SlidePostRenderRevision.owner_id == user.id,
+                SlidePostRenderRevision.draft_version == draft.version,
+            )
+        )
+        if revision is not None:
+            revision_status = {
+                "pending": "rendering",
+                "running": "rendering",
+                "failed": "failed",
+                "blocked": "not_rendered",
+            }.get(revision.state)
+            if revision.state in {"failed", "blocked"}:
+                errors.append(
+                    SlidePostValidationError(
+                        code="slide_post_render_blocked"
+                        if revision.state == "blocked"
+                        else "slide_post_render_failed",
+                        message="Your draft is saved. Render failed; choose Create to retry."
+                        if revision.state == "failed"
+                        else "Your draft is saved. Render this version on a supported device.",
+                    )
+                )
     export_current = _slide_post_job_outputs_allowed(job) and _slide_post_export_is_current(
         draft, variant
     )
@@ -5604,16 +5787,29 @@ async def get_slide_post_state(
             )
         except Exception:  # noqa: BLE001
             pass
+    ai_thread = await _slide_post_thread_for_item(item, user.id, db)
+    ai_project_id = getattr(ai_thread, "id", None)
+    if not isinstance(ai_project_id, uuid.UUID):
+        ai_project_id = None
     return SlidePostState(
+        ai_project_id=ai_project_id,
+        ai_request_recovery_version=int(
+            settings.slide_post_ai_recovery_enabled and ai_project_id is not None
+        ),
         item_id=str(item.id),
         title=str(item.idea or item.theme or "Slide post"),
         job_id=str(job.id) if job else None,
         draft=draft,
         assets=projected_assets,
         render_status=str(
-            job.status
-            if job is not None and not _slide_post_job_outputs_allowed(job)
-            else (variant or {}).get("render_status") or (job.status if job else "not_rendered")
+            "failed"
+            if job is not None and job.status in PLAN_ITEM_JOB_FAILED
+            else revision_status
+            or (
+                job.status
+                if job is not None and not _slide_post_job_outputs_allowed(job)
+                else (variant or {}).get("render_status") or (job.status if job else "not_rendered")
+            )
         ),
         rendered_version=draft.rendered_version if draft else None,
         slides=slides,

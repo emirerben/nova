@@ -18,15 +18,21 @@ struct ReviewPlanPresentation: Identifiable {
 struct ReviewPlanView: View {
     @State private var model: ReviewPlanModel
     let close: () -> Void
+    private let refreshToken: String
     /// KRI-742: pass a controller (only when the server advertises `voice_dictation`) to show the mic.
     var dictation: DictationController? = nil
     var dictationTerms: () -> [String] = { [] }
     @FocusState private var promptFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.scenePhase) private var scenePhase
 
-    init(seed: [PlanBlock], initialFlag: PlanSectionID?, actions: ReviewPlanActions, dictation: DictationController? = nil, dictationTerms: @escaping () -> [String] = { [] }, close: @escaping () -> Void) {
-        _model = State(initialValue: ReviewPlanModel(seed: seed, initialFlag: initialFlag, actions: actions))
+    init(seed: [PlanBlock], initialFlag: PlanSectionID?, actions: ReviewPlanActions, refreshToken: String = "",
+         expectedThreadID: String? = nil, isCurrentScope: @escaping @MainActor () -> Bool = { true },
+         dictation: DictationController? = nil, dictationTerms: @escaping () -> [String] = { [] }, close: @escaping () -> Void) {
+        _model = State(initialValue: ReviewPlanModel(seed: seed, initialFlag: initialFlag, actions: actions,
+            expectedThreadID: expectedThreadID, isCurrentScope: isCurrentScope))
+        self.refreshToken = refreshToken
         self.dictation = dictation
         self.dictationTerms = dictationTerms
         self.close = close
@@ -79,7 +85,9 @@ struct ReviewPlanView: View {
         .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.4, dampingFraction: 0.88), value: model.phase)
         .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.36, dampingFraction: 0.88), value: model.draft.scope)
         .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.4, dampingFraction: 0.88), value: model.showsUpdated)
-        .task { await model.load() }
+        .task(id: "\(refreshToken):\(scenePhase == .active)") {
+            if scenePhase == .active { await model.load() }
+        }
         .onDisappear { model.cancelFollowing(); dictation?.cancel() }
         .onChange(of: model.phase) { _, phase in if phase != .reviewing { promptFocused = false } }
     }

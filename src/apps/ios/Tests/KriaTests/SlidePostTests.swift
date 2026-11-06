@@ -10,7 +10,7 @@ import XCTest
     }
     override func tearDown() {
         NativeEditorURLProtocol.handler = nil
-        defaults.removePersistentDomain(forName: suite); defaults = nil
+        SlidePostTestSubmissionStorage.reset(defaults: defaults); defaults.removePersistentDomain(forName: suite); defaults = nil
         super.tearDown()
     }
     private func fixture(version: Int = 1, rendered: Bool = true) -> SlidePostState {
@@ -95,7 +95,7 @@ import XCTest
         let saved = fixture()
         let response = SlidePostProposal(draft: try XCTUnwrap(saved.draft), baseVersion: 1, fallbackUsed: false, summary: "Review the order")
         var paths: [String] = []
-        NativeEditorURLProtocol.handler = { request in
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { request in
             if request.url!.path.hasSuffix("/thought-summaries") {
                 XCTAssertEqual(request.httpMethod, "GET")
                 var requestID = ""
@@ -127,8 +127,8 @@ import XCTest
             }
             return (200, try JSONEncoder().encode(saved))
         }
-        let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let api = SlidePostTestSubmissionStorage.api()
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await session.refresh(api: api, itemID: itemID)
         await session.propose(api: api, itemID: itemID, instruction: "Lead with the landscape")
         XCTAssertEqual(session.draft, saved.draft)
@@ -138,7 +138,7 @@ import XCTest
         XCTAssertEqual(session.proposalThoughtSummaries.first?.durationLabel, "Thought for 2s")
         XCTAssertEqual(paths.count, 2)
         XCTAssertFalse(session.hasUnsavedChanges)
-        let reopened = SlidePostSession(defaults: defaults)
+        let reopened = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await reopened.refresh(api: api, itemID: itemID)
         XCTAssertEqual(reopened.proposalThoughtSummaries.map(\.text), ["Compared the slide order."])
         XCTAssertEqual(reopened.proposalRequestText, "Lead with the landscape")
@@ -146,10 +146,10 @@ import XCTest
     func testProposalShowsStreamingSummaryBeforeReplyAndCompletesHistory() async throws {
         let saved = fixture()
         let proposal = SlidePostProposal(draft: try XCTUnwrap(saved.draft), baseVersion: 1, fallbackUsed: false, summary: "Review the order")
-        NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(saved)) }
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { _ in (200, try JSONEncoder().encode(saved)) }
         let api = ControlledThoughtProposalClient(proposal: proposal)
-        let session = SlidePostSession(defaults: defaults)
-        await session.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
+        await session.refresh(api: SlidePostTestSubmissionStorage.api(), itemID: itemID)
 
         let request = Task { await session.propose(api: api, itemID: itemID, instruction: "Lead with the landscape") }
         for _ in 0..<600 where session.liveThoughtSummaries.first?.status != .streaming {
@@ -163,13 +163,13 @@ import XCTest
         await request.value
         XCTAssertEqual(session.proposalThoughtSummaries.map(\.text), ["Compared the slide order."])
         XCTAssertEqual(session.proposalThoughtSummaries.first?.status, .completed)
-        let reopened = SlidePostSession(defaults: defaults)
-        await reopened.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
+        let reopened = SlidePostTestSubmissionStorage.session(defaults: defaults)
+        await reopened.refresh(api: SlidePostTestSubmissionStorage.api(), itemID: itemID)
         XCTAssertEqual(reopened.proposalThoughtSummaries.map(\.text), ["Compared the slide order."])
     }
     func testSaveSendsExpectedVersionAndNeverServerOwnedMetadata() async throws {
         let saved = fixture(version: 3)
-        NativeEditorURLProtocol.handler = { request in
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { request in
             XCTAssertEqual(request.httpMethod, "PUT")
             let body = try XCTUnwrap(JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request)) as? [String: Any])
             XCTAssertEqual(body["expected_version"] as? Int, 2)
@@ -177,13 +177,13 @@ import XCTest
             XCTAssertNil(body["user_edited"]); XCTAssertNil(body["job_id"])
             return (200, try JSONSerialization.data(withJSONObject: ["slide_post": JSONSerialization.jsonObject(with: JSONEncoder().encode(saved.draft!))]))
         }
-        let draft = try await NativeEditorTestSupport.api().saveSlidePost(itemID: itemID, request: .init(draft: saved.draft!, expectedVersion: 2))
+        let draft = try await SlidePostTestSubmissionStorage.api().saveSlidePost(itemID: itemID, request: .init(draft: saved.draft!, expectedVersion: 2))
         XCTAssertEqual(draft.version, 3)
     }
     func testPollingKeepsLocalEditsAndSilentlyRebasesOntoNewerServerVersion() async throws {
         var remote = fixture()
         var savedExpectedVersion: Int?
-        NativeEditorURLProtocol.handler = { request in
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { request in
             if request.httpMethod == "PUT" {
                 let body = try XCTUnwrap(JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request)) as? [String: Any])
                 savedExpectedVersion = body["expected_version"] as? Int
@@ -192,8 +192,8 @@ import XCTest
             }
             return (200, try JSONEncoder().encode(remote))
         }
-        let session = SlidePostSession(defaults: defaults)
-        let api = NativeEditorTestSupport.api()
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
+        let api = SlidePostTestSubmissionStorage.api()
         await session.refresh(api: api, itemID: itemID)
         session.setCaption("My unsaved caption")
         await session.refresh(api: api, itemID: itemID)
@@ -201,7 +201,7 @@ import XCTest
         XCTAssertFalse(session.canExport)
         remote = fixture(version: 2)
         await session.refresh(api: api, itemID: itemID)
-        XCTAssertFalse(session.hasConflict, "the local draft always wins; there is no conflict state")
+        XCTAssertFalse(session.hasConflict, "an unchanged remote caption merges automatically")
         XCTAssertNil(session.error)
         XCTAssertEqual(session.draft?.caption, "My unsaved caption")
         XCTAssertTrue(session.hasUnsavedChanges)
@@ -211,29 +211,61 @@ import XCTest
     }
     func testReorderKeepsCoverIdentityAndNavigationKeepsInstruction() async throws {
         let remote = fixture()
-        NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(remote)) }
-        let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { _ in (200, try JSONEncoder().encode(remote)) }
+        let api = SlidePostTestSubmissionStorage.api()
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await session.refresh(api: api, itemID: itemID)
         session.selectedID = "slide-2"
         session.instruction = "Keep the final sunset"
         session.moveSlide(id: "slide-1", offset: 1)
         XCTAssertEqual(session.draft?.coverIndex, 1)
-        let reopened = SlidePostSession(defaults: defaults)
+        let reopened = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await reopened.refresh(api: api, itemID: itemID)
         XCTAssertEqual(reopened.instruction, "Keep the final sunset")
         XCTAssertEqual(reopened.selectedID, "slide-2")
         XCTAssertEqual(reopened.draft?.slides.first?.id, "slide-2")
     }
+    func testConcurrentCaptionRequiresChoiceAndPreservesIndependentRemoteEdit() async throws {
+        var remote = fixture()
+        var puts = 0
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { request in
+            if request.httpMethod == "PUT" {
+                puts += 1
+                let body = try XCTUnwrap(JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request)) as? [String: Any])
+                var saved = try XCTUnwrap(remote.draft); saved.version = 3
+                saved.caption = try XCTUnwrap(body["caption"] as? String)
+                saved.slides = try JSONDecoder().decode([SlidePostSlide].self, from: JSONSerialization.data(withJSONObject: try XCTUnwrap(body["slides"])))
+                return (200, try JSONSerialization.data(withJSONObject: ["slide_post": JSONSerialization.jsonObject(with: JSONEncoder().encode(saved))]))
+            }
+            return (200, try JSONEncoder().encode(remote))
+        }
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
+        let api = SlidePostTestSubmissionStorage.api()
+        await session.refresh(api: api, itemID: itemID)
+        session.setCaption("Local caption")
+        remote.draft?.version = 2
+        remote.draft?.caption = "Other caption"
+        remote.draft?.slides[1].alt = "Other description"
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertTrue(session.hasConflict)
+        XCTAssertEqual(session.draft?.caption, "Local caption")
+        await session.save(api: api, itemID: itemID)
+        XCTAssertEqual(puts, 0, "overlapping edits never authorize an automatic overwrite")
+        await session.resolveConflict(preference: .local, api: api, itemID: itemID)
+        XCTAssertFalse(session.hasConflict)
+        XCTAssertEqual(puts, 1)
+        XCTAssertEqual(session.draft?.caption, "Local caption")
+        XCTAssertEqual(session.draft?.slides[1].alt, "Other description")
+    }
     func testCleanRestoredDraftAdoptsNewServerVersionWithoutConflict() async throws {
         var remote = fixture()
-        NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(remote)) }
-        let api = NativeEditorTestSupport.api()
-        let first = SlidePostSession(defaults: defaults)
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { _ in (200, try JSONEncoder().encode(remote)) }
+        let api = SlidePostTestSubmissionStorage.api()
+        let first = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await first.refresh(api: api, itemID: itemID)
         first.instruction = "Keep this prompt"
         remote = fixture(version: 2)
-        let reopened = SlidePostSession(defaults: defaults)
+        let reopened = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await reopened.refresh(api: api, itemID: itemID)
         XCTAssertEqual(reopened.draft?.version, 2)
         XCTAssertEqual(reopened.instruction, "Keep this prompt")
@@ -241,7 +273,7 @@ import XCTest
     func testStaleSaveRebasesSilentlyAndRePutsTheLocalDraft() async throws {
         let remote = fixture(version: 2)
         var puts: [Int] = []
-        NativeEditorURLProtocol.handler = { request in
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { request in
             if request.httpMethod == "PUT" {
                 let body = try XCTUnwrap(JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request)) as? [String: Any])
                 puts.append(try XCTUnwrap(body["expected_version"] as? Int))
@@ -252,8 +284,8 @@ import XCTest
             }
             return (200, try JSONEncoder().encode(remote))
         }
-        let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let api = SlidePostTestSubmissionStorage.api()
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await session.refresh(api: api, itemID: itemID)
         session.setCaption("Keep this edit")
         await session.save(api: api, itemID: itemID)
@@ -267,11 +299,11 @@ import XCTest
     }
     func testSaveThatKeepsFailingGivesUpButKeepsTheLocalDraft() async throws {
         let remote = fixture()
-        NativeEditorURLProtocol.handler = { request in
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { request in
             request.httpMethod == "PUT" ? (409, Data(#"{"detail":{"code":"slide_post_version_conflict","current_version":2}}"#.utf8)) : (200, try JSONEncoder().encode(remote))
         }
-        let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let api = SlidePostTestSubmissionStorage.api()
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await session.refresh(api: api, itemID: itemID)
         session.setCaption("Keep this edit")
         await session.save(api: api, itemID: itemID)
@@ -283,9 +315,9 @@ import XCTest
     }
     func testOlderRefreshCannotRollBackAcceptedVersionOrExports() async throws {
         var remote = fixture(version: 3, rendered: false)
-        NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(remote)) }
-        let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { _ in (200, try JSONEncoder().encode(remote)) }
+        let api = SlidePostTestSubmissionStorage.api()
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await session.refresh(api: api, itemID: itemID)
         remote = fixture(version: 2)
         await session.refresh(api: api, itemID: itemID)
@@ -295,9 +327,9 @@ import XCTest
     }
     func testExportRevalidationAdoptsRemoteVersionAndRejectsUnavailableOutput() async throws {
         var remote = fixture()
-        NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(remote)) }
-        let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { _ in (200, try JSONEncoder().encode(remote)) }
+        let api = SlidePostTestSubmissionStorage.api()
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await session.refresh(api: api, itemID: itemID)
         remote = fixture(version: 2, rendered: false)
         do {
@@ -306,7 +338,7 @@ import XCTest
         } catch { XCTAssertEqual(error as? APIError, .conflict) }
         XCTAssertEqual(session.draft?.version, 2)
         XCTAssertFalse(session.canExport)
-        NativeEditorURLProtocol.handler = { _ in throw URLError(.notConnectedToInternet) }
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { _ in throw URLError(.notConnectedToInternet) }
         do {
             try await session.revalidateForExport(api: api, itemID: itemID)
             XCTFail("A failed authoritative read must block export")
@@ -316,9 +348,9 @@ import XCTest
 
     private func richSession() async throws -> SlidePostSession {
         let remote = fixture()
-        NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(remote)) }
-        let session = SlidePostSession(defaults: defaults)
-        await session.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { _ in (200, try JSONEncoder().encode(remote)) }
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
+        await session.refresh(api: SlidePostTestSubmissionStorage.api(), itemID: itemID)
         return session
     }
     func testTextCRUDEnforcesFourPerSlideAndMirrorsLegacyText() async throws {
@@ -480,9 +512,9 @@ import XCTest
     }
     func testAdoptingANewerServerDraftClearsUndoHistory() async throws {
         var remote = fixture()
-        NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(remote)) }
-        let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { _ in (200, try JSONEncoder().encode(remote)) }
+        let api = SlidePostTestSubmissionStorage.api()
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await session.refresh(api: api, itemID: itemID)
         session.setLook(slideID: "slide-1", preset: "golden_hour")
         session.undoEdit()  // clean again, but redo now holds a snapshot of the old content
@@ -531,16 +563,201 @@ import XCTest
     }
 
     func testGalleryKeepsSlideItemIdentity() async throws {
-        NativeEditorURLProtocol.handler = { _ in
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { _ in
             (200, Data(#"{"jobs":[{"id":"22222222-2222-2222-2222-222222222222","title":"Weekend","status":"ready","output_variant_id":"slides","content_plan_item_id":"11111111-1111-1111-1111-111111111111","created_at":"2026-09-22T12:00:00Z"}],"next_cursor":null}"#.utf8))
         }
-        let rows = try await NativeEditorTestSupport.api().library()
+        let rows = try await SlidePostTestSubmissionStorage.api().library()
         XCTAssertTrue(try XCTUnwrap(rows.first).isSlidePost)
         XCTAssertEqual(rows.first?.activePlanItemID, itemID)
     }
+    func testUnknownBaselineConflictChoicesSelectCompleteVersionWithoutSaving() async throws {
+        let initial = fixture()
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { _ in (200, try JSONEncoder().encode(initial)) }
+        let first = SlidePostTestSubmissionStorage.session(defaults: defaults)
+        let api = SlidePostTestSubmissionStorage.api()
+        await first.refresh(api: api, itemID: itemID)
+        first.setCaption("Local restored caption")
+        let localScope = SlidePostSubmissionScope(owner: "isolated-unit-test", environment: "https://native-editor.test", itemID: itemID)
+        let localJournal = SlidePostTestSubmissionStorage.journal(defaults: defaults).aiJournal()
+        let data = try XCTUnwrap(localJournal.readLocal(scope: localScope, projectID: SlidePostAIStubTransport.projectID))
+        var stored = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        stored.removeValue(forKey: "baselineDraft")
+        let unknownBase = try JSONSerialization.data(withJSONObject: stored)
+        var remote = fixture(version: 2)
+        remote.draft?.caption = "Remote complete version"
+        remote.draft?.slides[0].alt = "Remote alt"
+        var puts = 0
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { request in
+            if request.httpMethod == "PUT" { puts += 1; return (500, Data()) }
+            return (200, try JSONEncoder().encode(remote))
+        }
+        for preference in [AuthoredJSONMerge.Preference.remote, .local] {
+            try localJournal.writeLocal(unknownBase, scope: localScope, projectID: SlidePostAIStubTransport.projectID)
+            let restored = SlidePostTestSubmissionStorage.session(defaults: defaults)
+            await restored.refresh(api: api, itemID: itemID)
+            XCTAssertTrue(restored.hasConflict)
+            await restored.resolveConflict(preference: preference, api: api, itemID: itemID)
+            XCTAssertFalse(restored.hasConflict)
+            XCTAssertEqual(restored.draft?.version, 2)
+            XCTAssertEqual(restored.draft?.caption, preference == .remote ? "Remote complete version" : "Local restored caption")
+            XCTAssertEqual(restored.draft?.slides[0].alt, preference == .remote ? "Remote alt" : initial.draft?.slides[0].alt)
+        }
+        XCTAssertEqual(puts, 0, "A background conflict choice stages content; it does not initiate a save")
+    }
+
+    func testMatchingConcurrentSaveAfterConflictDoesNotIssueAnotherPut() async throws {
+        var remote = fixture()
+        var puts = 0
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { request in
+            if request.httpMethod == "PUT" {
+                puts += 1
+                remote.draft?.version = 2
+                remote.draft?.caption = "Matching save"
+                return (409, Data())
+            }
+            return (200, try JSONEncoder().encode(remote))
+        }
+        let value = SlidePostTestSubmissionStorage.session(defaults: defaults)
+        let api = SlidePostTestSubmissionStorage.api()
+        await value.refresh(api: api, itemID: itemID)
+        value.setCaption("Matching save")
+        await value.save(api: api, itemID: itemID)
+        XCTAssertEqual(puts, 1)
+        XCTAssertEqual(value.draft?.version, 2)
+        XCTAssertEqual(value.draft?.caption, "Matching save")
+        XCTAssertFalse(value.hasUnsavedChanges)
+        XCTAssertNil(value.error)
+    }
+
+    func testFullyMatchingRemoteCatchupClearsStaleUndoSnapshots() async throws {
+        var remote = fixture()
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { _ in (200, try JSONEncoder().encode(remote)) }
+        let value = SlidePostTestSubmissionStorage.session(defaults: defaults)
+        let api = SlidePostTestSubmissionStorage.api()
+        await value.refresh(api: api, itemID: itemID)
+        var local = try XCTUnwrap(value.draft)
+        local.slides[0].alt = "Shared final alt"
+        value.stageDraft(local)
+        value.setCaption("Shared final caption")
+        XCTAssertTrue(value.canUndoEdit)
+        remote.draft = value.draft
+        remote.draft?.version = 2
+        await value.refresh(api: api, itemID: itemID)
+        XCTAssertFalse(value.canUndoEdit)
+        XCTAssertFalse(value.canRedoEdit)
+        XCTAssertEqual(value.draft?.slides[0].alt, "Shared final alt")
+        XCTAssertEqual(value.draft?.caption, "Shared final caption")
+    }
+
+    func testRemoteCatchupToExistingLocalFieldKeepsThatFieldWhenUndoingRemainingLocalEdit() async throws {
+        var remote = fixture()
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { _ in (200, try JSONEncoder().encode(remote)) }
+        let value = SlidePostTestSubmissionStorage.session(defaults: defaults)
+        let api = SlidePostTestSubmissionStorage.api()
+        await value.refresh(api: api, itemID: itemID)
+        var local = try XCTUnwrap(value.draft)
+        local.slides[0].alt = "Shared alt"
+        value.stageDraft(local)
+        value.setCaption("Unsent caption")
+        remote.draft?.slides[0].alt = "Shared alt"
+        remote.draft?.version = 2
+        await value.refresh(api: api, itemID: itemID)
+        value.undoEdit()
+        XCTAssertEqual(value.draft?.slides[0].alt, "Shared alt")
+        XCTAssertEqual(value.draft?.caption, remote.draft?.caption)
+    }
+
+    func testUndoSavedMergedChangePreservesConcurrentRemoteFields() async throws {
+        var remote = fixture()
+        var puts = 0
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { request in
+            if request.httpMethod == "PUT" {
+                puts += 1
+                let body = try XCTUnwrap(JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request)) as? [String: Any])
+                var saved = try XCTUnwrap(remote.draft)
+                saved.version += 1
+                saved.caption = body["caption"] as! String
+                saved.slides = try JSONDecoder().decode([SlidePostSlide].self, from: JSONSerialization.data(withJSONObject: body["slides"]!))
+                remote.draft = saved
+                return (200, try JSONEncoder().encode(["slide_post": saved]))
+            }
+            return (200, try JSONEncoder().encode(remote))
+        }
+        let value = SlidePostTestSubmissionStorage.session(defaults: defaults)
+        let api = SlidePostTestSubmissionStorage.api()
+        await value.refresh(api: api, itemID: itemID)
+        value.setCaption("My saved caption")
+        remote.draft?.version = 2
+        remote.draft?.slides[0].alt = "Concurrent remote alt"
+        await value.save(api: api, itemID: itemID)
+        XCTAssertEqual(value.draft?.caption, "My saved caption")
+        XCTAssertEqual(value.draft?.slides[0].alt, "Concurrent remote alt")
+        await value.undo(api: api, itemID: itemID)
+        XCTAssertEqual(puts, 2)
+        XCTAssertEqual(value.draft?.caption, "A day outside")
+        XCTAssertEqual(value.draft?.slides[0].alt, "Concurrent remote alt")
+    }
+
+    func testStaleProposalCannotOverwriteRemoteChangesAfterBackgroundRefresh() async throws {
+        var remote = fixture()
+        let value = SlidePostTestSubmissionStorage.session(defaults: defaults)
+        var puts = 0
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { request in
+            if request.httpMethod == "PUT" { puts += 1; return (500, Data()) }
+            return (200, try JSONEncoder().encode(remote))
+        }
+        let api = SlidePostTestSubmissionStorage.api()
+        await value.refresh(api: api, itemID: itemID)
+        var proposed = try XCTUnwrap(remote.draft)
+        proposed.caption = "Proposal based on version one"
+        value.proposal = .init(draft: proposed, baseVersion: 1, fallbackUsed: false, summary: "Proposal")
+        remote.draft?.version = 2
+        remote.draft?.slides[0].alt = "Remote change after proposal"
+        await value.refresh(api: api, itemID: itemID)
+        await value.applyProposal(api: api, itemID: itemID)
+        XCTAssertEqual(puts, 0, "A stale proposal cannot silently replace a remote authored field")
+        XCTAssertTrue(value.hasConflict)
+        XCTAssertEqual(value.state?.draft?.slides[0].alt, "Remote change after proposal")
+    }
+
+    func testAcceptedProposalMergesAgainstItsCapturedBaselineAfterRemoteRefresh() async throws {
+        var remote = fixture()
+        var puts = 0
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { request in
+            if request.httpMethod == "PUT" {
+                puts += 1
+                let body = try XCTUnwrap(JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request)) as? [String: Any])
+                var saved = try XCTUnwrap(remote.draft)
+                saved.version += 1
+                saved.caption = body["caption"] as! String
+                saved.slides = try JSONDecoder().decode([SlidePostSlide].self, from: JSONSerialization.data(withJSONObject: body["slides"]!))
+                remote.draft = saved
+                return (200, try JSONEncoder().encode(["slide_post": saved]))
+            }
+            return (200, try JSONEncoder().encode(remote))
+        }
+        let value = SlidePostTestSubmissionStorage.session(defaults: defaults)
+        let api = SlidePostTestSubmissionStorage.api()
+        await value.refresh(api: api, itemID: itemID)
+        var proposed = try XCTUnwrap(remote.draft)
+        proposed.caption = "Proposed caption"
+        let proposer = ControlledThoughtProposalClient(proposal: .init(draft: proposed, baseVersion: 1, fallbackUsed: false, summary: "New caption"))
+        await proposer.finish()
+        await value.propose(api: proposer, itemID: itemID, instruction: "Change the caption")
+        remote.draft?.version = 2
+        remote.draft?.slides[0].alt = "Remote alt after proposal"
+        await value.refresh(api: api, itemID: itemID)
+        await value.applyProposal(api: api, itemID: itemID)
+        XCTAssertEqual(puts, 1)
+        XCTAssertFalse(value.hasConflict)
+        XCTAssertEqual(value.draft?.caption, "Proposed caption")
+        XCTAssertEqual(value.draft?.slides[0].alt, "Remote alt after proposal")
+        XCTAssertEqual(value.draft?.version, 3)
+    }
+
 }
 
-private actor ControlledThoughtProposalClient: SlidePostProposalClient {
+private actor ControlledThoughtProposalClient: KriaAPIClient {
     let proposal: SlidePostProposal
     private var finished = false
     private var continuation: CheckedContinuation<SlidePostProposal, Never>?
@@ -550,6 +767,13 @@ private actor ControlledThoughtProposalClient: SlidePostProposalClient {
     func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal {
         if finished { return proposal }
         return await withCheckedContinuation { continuation = $0 }
+    }
+
+    func submitSlidePostAI(itemID: String, body: SlidePostAIRequest, expectedOwner: String) async throws -> SlidePostAIReceipt {
+        let value = try await proposeSlidePost(itemID: itemID, request: .init(expectedVersion: proposal.baseVersion, platformProfile: proposal.draft.platformProfile, assetIDs: nil, instruction: "fixture", clientRequestID: body.clientRequestID.uuidString))
+        return .init(clientRequestID: body.clientRequestID, itemID: UUID(uuidString: itemID)!, projectID: body.projectID,
+                     kind: body.kind, inputDigest: "fixture-exact-input", input: body.input, status: .completed,
+                     result: try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(value)))
     }
 
     func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse {
@@ -570,4 +794,5 @@ private actor ControlledThoughtProposalClient: SlidePostProposalClient {
         continuation?.resume(returning: proposal)
         continuation = nil
     }
+
 }

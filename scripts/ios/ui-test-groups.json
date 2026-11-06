@@ -71,6 +71,7 @@
       "KriaUITests/SlidePostUITests/testTappingAnotherTextWhilePanelIsOpenSwitchesToItsEditField",
       "KriaUITests/SlidePostUITests/testSlideTextSelectDragPinchRotateAndDeselect",
       "KriaUITests/SlidePostUITests/testFailedAIRequestShowsAClearMessageAndRetryKeepsTheMessage",
+      "KriaUITests/SlidePostUITests/testAIRecoveryRefusesACompletedReceiptForAnotherRequest",
       "KriaUITests/SlidePostUITests/testGalleryOpenedPostHasOneBackButtonAndNoUnsavedChanges",
       "KriaUITests/SlidePostUITests/testSwitchingSlidesAfterAddingTextNeverShowsTheBlur",
       "KriaUITests/SlidePostUITests/testAddTextStaysHittableWithKeyboardUpAndStagePinnedTo120",

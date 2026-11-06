@@ -25,6 +25,18 @@ from tests.tasks.conftest import FakeJob as _FakeJob
 from tests.tasks.conftest import patch_job_session as _patch_job_session
 
 
+@pytest.fixture
+def unkeyed_orchestrator_job(monkeypatch):
+    """These ordinary-job task fakes have no keyed SlidePost generation receipt.
+
+    Keep the production wrapper active; model only its receipt lookup decision.
+    Keyed claim/durable receipt controls live in the dedicated delivery tests.
+    """
+    from app.services import slide_post_generation_delivery
+
+    monkeypatch.setattr(slide_post_generation_delivery, "claim_first_render", lambda _id: "legacy")
+
+
 @contextmanager
 def _accepted_owned_job_fence(_job_id, **_kwargs):
     yield True
@@ -4325,7 +4337,7 @@ def test_no_rerun_statuses_all_skip(monkeypatch):
 # ── Timeout / redelivery safety (never freeze on "analyzing your clips") ───────
 
 
-def test_softtimelimit_marks_processing_failed_not_frozen(monkeypatch):
+def test_softtimelimit_marks_processing_failed_not_frozen(unkeyed_orchestrator_job, monkeypatch):
     """A soft time-limit during processing must fail the job VISIBLY (processing_failed
     + actionable message), never leave it frozen at status=processing forever
     (prod job d30c61fe)."""
@@ -4350,7 +4362,9 @@ def test_softtimelimit_marks_processing_failed_not_frozen(monkeypatch):
     assert "timed out" in captured["detail"].lower()
 
 
-def test_softtimelimit_reraises_when_required_owner_cannot_terminalize(monkeypatch):
+def test_softtimelimit_reraises_when_required_owner_cannot_terminalize(
+    unkeyed_orchestrator_job, monkeypatch
+):
     """A blocked timeout rollback is a failed task, never a successful task result."""
     from celery.exceptions import SoftTimeLimitExceeded
 
@@ -4366,7 +4380,9 @@ def test_softtimelimit_reraises_when_required_owner_cannot_terminalize(monkeypat
         gb.orchestrate_generative_job.run("22222222-2222-2222-2222-222222222222")
 
 
-def test_softtimelimit_retries_terminalization_after_exact_deadline_skew(monkeypatch):
+def test_softtimelimit_retries_terminalization_after_exact_deadline_skew(
+    unkeyed_orchestrator_job, monkeypatch
+):
     """A near-future lease gets one post-deadline terminalization attempt."""
     from celery.exceptions import SoftTimeLimitExceeded
 
@@ -4392,7 +4408,9 @@ def test_softtimelimit_retries_terminalization_after_exact_deadline_skew(monkeyp
 
 
 @pytest.mark.parametrize("terminalized", [False, True])
-def test_required_speech_failure_requires_terminal_commit(monkeypatch, terminalized):
+def test_required_speech_failure_requires_terminal_commit(
+    unkeyed_orchestrator_job, monkeypatch, terminalized
+):
     """A typed required-speech failure is ACKed only after failure state commits."""
 
     error = gb.SpeechCleanupFailure("analysis_failed")
@@ -4429,7 +4447,9 @@ def test_required_speech_failure_requires_terminal_commit(monkeypatch, terminali
 
 
 @pytest.mark.parametrize("terminalized", [False, True])
-def test_generic_orchestrator_failure_requires_terminal_commit(monkeypatch, terminalized):
+def test_generic_orchestrator_failure_requires_terminal_commit(
+    unkeyed_orchestrator_job, monkeypatch, terminalized
+):
     """An unexpected render failure is ACKed only after failure state commits."""
 
     error = RuntimeError("render failed after required-speech reservation")
@@ -5119,7 +5139,7 @@ def _patch_run_generative_job_failure(monkeypatch, exc):
     monkeypatch.setattr(gb, "_run_generative_job", _raise, raising=False)
 
 
-def test_phase_instrumentation_trunk_order(monkeypatch):
+def test_phase_instrumentation_trunk_order(unkeyed_orchestrator_job, monkeypatch):
     """The task preflights ownership and marks a successful run finished.
 
     mark_started lives inside _run_generative_job, after the locked owner gate;
@@ -5145,7 +5165,7 @@ def test_phase_instrumentation_trunk_order(monkeypatch):
     assert "mark_failed_phase" not in fn_names
 
 
-def test_mark_failed_phase_on_fatal_error(monkeypatch):
+def test_mark_failed_phase_on_fatal_error(unkeyed_orchestrator_job, monkeypatch):
     """A fatal exception in _run_generative_job must trigger mark_failed_phase."""
     import contextlib
 
@@ -5165,7 +5185,9 @@ def test_mark_failed_phase_on_fatal_error(monkeypatch):
     assert "mark_finished" not in fn_names
 
 
-def test_required_speech_busy_retries_after_first_defer_budget(monkeypatch):
+def test_required_speech_busy_retries_after_first_defer_budget(
+    unkeyed_orchestrator_job, monkeypatch
+):
     """A live upload lease is deferred, never ACKed or terminally failed."""
     import contextlib
 
@@ -5204,7 +5226,9 @@ def test_required_speech_busy_retries_after_first_defer_budget(monkeypatch):
     assert "mark_failed_phase" not in [call[0] for call in calls]
 
 
-def test_audio_led_guided_conflict_is_terminal_with_stable_reason(monkeypatch):
+def test_audio_led_guided_conflict_is_terminal_with_stable_reason(
+    unkeyed_orchestrator_job, monkeypatch
+):
     """Mixed-version asset-only jobs fail visibly and never retry guided rendering."""
     import contextlib
 

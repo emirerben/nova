@@ -1086,6 +1086,8 @@ def test_a_decline_raised_once_the_archetype_is_known_keeps_the_typed_failure(
     def _raise(job_id):
         raise error
 
+    # This ordinary-job fixture has no keyed generation receipt; keep the wrapper active.
+    monkeypatch.setattr(generative_build.slide_delivery, "claim_first_render", lambda _id: "legacy")
     monkeypatch.setattr(generative_build, "_run_generative_job", _raise)
     monkeypatch.setattr(generative_build, "job_heartbeat", lambda _id: contextlib.nullcontext())
     monkeypatch.setattr(
