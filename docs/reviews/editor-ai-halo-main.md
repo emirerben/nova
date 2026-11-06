@@ -4,7 +4,7 @@ Tracking: [KRI-1230 — Show AI editing activity in the iPhone editor](https://l
 
 ## Exact integration
 
-- Fetched base: `c078f13b9ad6f0f60d4a5e94f4cd2afac551a76b`, including Cunda merge `70bff5f3738ca8f6873e3a85ddd9fbad374ada49` and #2109 Improve/suggestion cards.
+- Initial fetched base: `c078f13b9ad6f0f60d4a5e94f4cd2afac551a76b`, including Cunda merge `70bff5f3738ca8f6873e3a85ddd9fbad374ada49` and #2109 Improve/suggestion cards. Current source-only integration is described below.
 - Branch/worktree: `codex/editor-ai-halo-main`, `nova-editor-ai-halo-main`.
 - Original source/layout/capture-test commit: `4bc31a31f66735031790daa126b1dc1cf0188a9e`; first native run at `d0c89bb6866da83503b3630de8e0922457c41de3`. The subsequent helper correction changes UI tests only and needs a newly allocated native run.
 - Preserved comparison candidates: standalone `d8c93aa545609c1d272986d623645885487d255e`, prior integration `990f169fd0b0095b482585c149b82c7d3fdedc29`.
@@ -65,3 +65,30 @@ The source-only correction waits for and requires genuine initial idle, stops th
 The recorder stopped and the owned simulator was shut down/deleted. At **14:32:31 UTC**, no native build/test/recording processes remained and about 310 GiB was free. The lane was explicitly released. No second heavy batch, physical phone action, paid call, backend mutation, publication or merge ran.
 
 Actual changed-document cached/uncached retention, paused/playing and superseding readiness/retirement, same-item newly composed-frame admission, retained failure/retry and export negatives remain correctness gates after initial fixture viability. Do not publish or admin-merge this candidate until the corrected native checks and remaining required proof pass.
+
+## Source review after shipping continuation
+
+Freshly fetched main is `dbb260e47ef640b8c0908808df640723e0f8c1a2`, adding #2120 Talk to Camera instrumentation. The isolated halo branch rebased without conflicts to `76490efa8a0b87eddbbcd93fa287c13d376d56c3`; preserved branch `codex/editor-ai-halo-pre-bench-4fcc` retains the earlier helper head. Services, DeviceRendering and upstream media instrumentation remain intact.
+
+Two independent source reviews identified and re-reviewed repairs committed in **`08c20c87f87eb7f086cacaaae52d412c4deafb14`**:
+
+- A paused scrub image could cover a player at an older time. Retention now keeps the existing owned displayed image/time and presents it in both editor and fullscreen. It retains one image reference; it does not capture a new frame for decoration.
+- Changing only the work ticket previously reused an already-ready layer to acknowledge an in-place edit. Paused work now waits for its matching generated image to be published. Playing work needs both a current-revision frame receipt and layer readiness, in either order. The one-shot receipt belongs to the player item's compositor instance, is armed before immutable instruction publication, and finishes only for a successful whole-frame render. Auxiliary image generators and sliced instructions cannot acknowledge playback. No polling, additional render loop or pixel-buffer retention was added. Compositor availability/instance continuity still needs native proof.
+- Full preparation and generation-rebase preparation paused before preserving playback intent. Both now preserve owner/control-epoch-scoped intent before their internal pause. User pause/play/seek and reset invalidate it; private internal positioning and duration clamps preserve it. Newer user controls win over automatic resume.
+
+The existing cached in-place update, audio guards, recipe/export snapshot and current/previous export-authority checks remain. Receipt cancellation, paused-image failure, superseding work, dismissal and target/lifetime reset use the existing guarded terminal paths. A produced compositor frame is not proof of physical display; native inspection remains mandatory.
+
+Three new `NativeEditorPlaybackFrameReceiptTests` were written before the receipt implementation: wrong revision/separate compositor instance, replacement/cancellation/duplicate completion, and reentrant acknowledgment outside the lock. The cancellation control completes the exact cancelled revision. These tests have **not run**. The source failure matrix is retained locally for the next allocated run.
+
+Both reviewers accepted the corrected source with no remaining concrete blocker. Lightweight checks passed: syntax parsing of all 14 changed Swift files (not typechecking), existing parity extraction (298 actions), complete UI inventory (410 cases), existing unmapped-journey check, valid JSON, whitespace and the instruction-size guard. No native build, test, simulator, package resolution or recording ran during this continuation.
+
+### Proposed next bounded slot
+
+Only after explicit parent allocation, fresh native-process/disk/simulator checks, and any required integration with speed's overlapping engine changes:
+
+1. One isolated exact-head build and doctor. Require `KRIA_HALO_EXPECTED_HEAD` to match the reviewed final head.
+2. **28 state/receipt/image-request tests:** the original 14, three new playback-receipt tests, and the 11 existing `NativePreviewImageRequestTests` cancellation/coalescing/old-generation controls.
+3. The same **eight UI cases**: completing normal, reduced-motion and opaque captures; rejected prompt; repeated/background requests; Improve/activity coexistence; shared suggestion/Improve flow; conversation-sheet return.
+4. Preserve all failed results and real source/build-bound captures, inspect actual pixels/motion, and clean up only the owned recorder/simulator on every exit. No automatic retry.
+
+The local command is `KRIA_HALO_EXPECTED_HEAD=<reviewed-final-head> bash .dev/editor-ai-halo/native-slot.sh`. It is prepared, not executed. Native typechecking, actual compositor-instance delivery, paused/playing changed-document handoff, stale callback interruption, manual edits/Undo, retained failure/retry and export-current refusal remain open. The no-op completing capture alone cannot satisfy those changed-content gates.
