@@ -42,7 +42,7 @@ def test_extractor_version_is_the_next_free_name():
     # v48 belongs to the talking-insert-at-mention PR and v49 to generated-image grounding;
     # v50 is #2089, v53 is #2088 (KRI-1173 colour, both merged); v54 is KRI-1189 (#2092; was
     # v52 on its branch). Whichever lands next renumbers.
-    assert BRIEF_EXTRACTOR_PROMPT_VERSION == "2026-11-04-v60"
+    assert BRIEF_EXTRACTOR_PROMPT_VERSION == "2026-11-06-v68"
 
 
 def test_extractor_teaches_generated_images_as_trigger_asks():

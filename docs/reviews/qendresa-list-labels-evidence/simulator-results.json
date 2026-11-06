@@ -1,0 +1,452 @@
+{
+ "item": "Qendresa item 19: numbered labels / list items when each item starts",
+ "how": {
+  "footage": "Stand-in takes (a real person's talking clip looped, macOS TTS voice speaking her V5 and V7 wording, no per-item trigger words), five drawn screen recordings for Q2. Not her raw files.",
+  "render": "scripts/ios/qendresa-list-labels-e2e.py OUT --case q2|q1 --labels off|on, then DeviceMontageRenderE2ETests testSubtitledBackgroundWindowsRenderOnTheIPhone (Q2) / testSubtitledSentenceCaptionsRenderOnTheIPhone (Q1) on an iPhone Air simulator (iOS 26.5), production device resolver and exporter. Item 17's BACKGROUND_FOLLOWS_TALK_ENABLED on in both runs; only SPOKEN_LIST_LABELS_ENABLED differs.",
+  "score": "Qendresa test kit tools/check_result.sh <video> Q1|Q2 --ignore-tail-s 1.6 --labels '<her labels>' (kit outside the repo; OCR 2 fps, whisper.cpp words). New rule 'labels': each numbered label on screen within 1.5 s of its item being said, staying >= 1.5 s or until the next label replaces it; validated on her own V1/V5/V7 (pass), V4 (n/a) and five mistimed controls (fail)."
+ },
+ "q2_screen_walkthrough": {
+  "before": {
+   "passed": 10,
+   "of": 15,
+   "rules": {
+    "length": {
+     "pass": true,
+     "measured": 66.26
+    },
+    "vertical": {
+     "pass": true,
+     "measured": "1080x1920"
+    },
+    "audio": {
+     "pass": true,
+     "measured": true
+    },
+    "speech_en": {
+     "pass": true,
+     "measured": "218 words, lang=en"
+    },
+    "pauses": {
+     "pass": true,
+     "measured": 0.28
+    },
+    "captions_on": {
+     "pass": false,
+     "measured": 0.67
+    },
+    "captions_short": {
+     "pass": false,
+     "measured": 0.53
+    },
+    "captions_height": {
+     "pass": true,
+     "measured": 0.8
+    },
+    "hook": {
+     "pass": true,
+     "measured": true
+    },
+    "screen": {
+     "pass": true,
+     "measured": 1.0
+    },
+    "corner_speaker": {
+     "pass": true,
+     "measured": 1.0
+    },
+    "rhythm": {
+     "pass": false,
+     "measured": 10.05
+    },
+    "cta": {
+     "pass": false,
+     "measured": 0.36
+    },
+    "voice_only": {
+     "pass": true,
+     "measured": -18.2
+    },
+    "labels": {
+     "pass": false,
+     "measured": "0/0 on time; missing: 1. Spec-kit, 2. Impeccable, 3. TradingAgents, 4. Agents, 5. Claude code game studio"
+    }
+   },
+   "labels": [
+    {
+     "label": "1. Spec-kit",
+     "said_s": 8.09,
+     "appear_s": null,
+     "shown_s": null,
+     "status": "missing",
+     "ok": false,
+     "replaced": false
+    },
+    {
+     "label": "2. Impeccable",
+     "said_s": 21.71,
+     "appear_s": null,
+     "shown_s": null,
+     "status": "missing",
+     "ok": false,
+     "replaced": false
+    },
+    {
+     "label": "3. TradingAgents",
+     "said_s": 34.31,
+     "appear_s": null,
+     "shown_s": null,
+     "status": "missing",
+     "ok": false,
+     "replaced": false
+    },
+    {
+     "label": "4. Agents",
+     "said_s": 45.45,
+     "appear_s": null,
+     "shown_s": null,
+     "status": "missing",
+     "ok": false,
+     "replaced": false
+    },
+    {
+     "label": "5. Claude code game studio",
+     "said_s": 54.95,
+     "appear_s": null,
+     "shown_s": null,
+     "status": "missing",
+     "ok": false,
+     "replaced": false
+    }
+   ]
+  },
+  "after": {
+   "passed": 10,
+   "of": 15,
+   "rules": {
+    "length": {
+     "pass": true,
+     "measured": 66.26
+    },
+    "vertical": {
+     "pass": true,
+     "measured": "1080x1920"
+    },
+    "audio": {
+     "pass": true,
+     "measured": true
+    },
+    "speech_en": {
+     "pass": true,
+     "measured": "218 words, lang=en"
+    },
+    "pauses": {
+     "pass": true,
+     "measured": 0.28
+    },
+    "captions_on": {
+     "pass": false,
+     "measured": 0.7
+    },
+    "captions_short": {
+     "pass": false,
+     "measured": 0.59
+    },
+    "captions_height": {
+     "pass": true,
+     "measured": 0.8
+    },
+    "hook": {
+     "pass": true,
+     "measured": true
+    },
+    "screen": {
+     "pass": true,
+     "measured": 1.0
+    },
+    "corner_speaker": {
+     "pass": true,
+     "measured": 1.0
+    },
+    "rhythm": {
+     "pass": false,
+     "measured": 10.05
+    },
+    "cta": {
+     "pass": false,
+     "measured": 0.36
+    },
+    "voice_only": {
+     "pass": true,
+     "measured": -18.2
+    },
+    "labels": {
+     "pass": false,
+     "measured": "4/5 on time; off: 4. Agents"
+    }
+   },
+   "labels": [
+    {
+     "label": "1. Spec-kit",
+     "said_s": 8.09,
+     "appear_s": 9.5,
+     "shown_s": 1.5,
+     "status": "ok",
+     "ok": true,
+     "replaced": false
+    },
+    {
+     "label": "2. Impeccable",
+     "said_s": 21.71,
+     "appear_s": 22.0,
+     "shown_s": 3.0,
+     "status": "ok",
+     "ok": true,
+     "replaced": false
+    },
+    {
+     "label": "3. TradingAgents",
+     "said_s": 34.31,
+     "appear_s": 34.5,
+     "shown_s": 3.0,
+     "status": "ok",
+     "ok": true,
+     "replaced": false
+    },
+    {
+     "label": "4. Agents",
+     "said_s": 45.45,
+     "appear_s": 46.5,
+     "shown_s": 0.5,
+     "status": "off",
+     "ok": false,
+     "replaced": false
+    },
+    {
+     "label": "5. Claude code game studio",
+     "said_s": 54.95,
+     "appear_s": 55.0,
+     "shown_s": 3.0,
+     "status": "ok",
+     "ok": true,
+     "replaced": false
+    }
+   ]
+  }
+ },
+ "q1_talking_head": {
+  "before": {
+   "passed": 8,
+   "of": 15,
+   "rules": {
+    "length": {
+     "pass": false,
+     "measured": 55.67
+    },
+    "vertical": {
+     "pass": true,
+     "measured": "1080x1920"
+    },
+    "audio": {
+     "pass": true,
+     "measured": true
+    },
+    "speech_en": {
+     "pass": true,
+     "measured": "216 words, lang=en"
+    },
+    "pauses": {
+     "pass": true,
+     "measured": 0.28
+    },
+    "captions_on": {
+     "pass": true,
+     "measured": 1.0
+    },
+    "captions_short": {
+     "pass": false,
+     "measured": 0.43
+    },
+    "captions_height": {
+     "pass": false,
+     "measured": 0.78
+    },
+    "hook": {
+     "pass": true,
+     "measured": true
+    },
+    "screen": {
+     "pass": false,
+     "measured": 0.0
+    },
+    "full_speaker": {
+     "pass": true,
+     "measured": 1.0
+    },
+    "rhythm": {
+     "pass": false,
+     "measured": 27.83
+    },
+    "cta": {
+     "pass": false,
+     "measured": 1.35
+    },
+    "voice_only": {
+     "pass": true,
+     "measured": -18.5
+    },
+    "labels": {
+     "pass": false,
+     "measured": "0/0 on time; missing: 1. which company it sends data to?, 2. what it saves on my machine?, 3. what it reads from my browser?, 4. what runs the moment the page loads?"
+    }
+   },
+   "labels": [
+    {
+     "label": "1. which company it sends data to?",
+     "said_s": 24.31,
+     "appear_s": null,
+     "shown_s": null,
+     "status": "missing",
+     "ok": false,
+     "replaced": false
+    },
+    {
+     "label": "2. what it saves on my machine?",
+     "said_s": 26.21,
+     "appear_s": null,
+     "shown_s": null,
+     "status": "missing",
+     "ok": false,
+     "replaced": false
+    },
+    {
+     "label": "3. what it reads from my browser?",
+     "said_s": 27.82,
+     "appear_s": null,
+     "shown_s": null,
+     "status": "missing",
+     "ok": false,
+     "replaced": false
+    },
+    {
+     "label": "4. what runs the moment the page loads?",
+     "said_s": 29.67,
+     "appear_s": null,
+     "shown_s": null,
+     "status": "missing",
+     "ok": false,
+     "replaced": false
+    }
+   ]
+  },
+  "after": {
+   "passed": 9,
+   "of": 15,
+   "rules": {
+    "length": {
+     "pass": false,
+     "measured": 55.67
+    },
+    "vertical": {
+     "pass": true,
+     "measured": "1080x1920"
+    },
+    "audio": {
+     "pass": true,
+     "measured": true
+    },
+    "speech_en": {
+     "pass": true,
+     "measured": "216 words, lang=en"
+    },
+    "pauses": {
+     "pass": true,
+     "measured": 0.28
+    },
+    "captions_on": {
+     "pass": true,
+     "measured": 1.0
+    },
+    "captions_short": {
+     "pass": false,
+     "measured": 0.59
+    },
+    "captions_height": {
+     "pass": false,
+     "measured": 0.78
+    },
+    "hook": {
+     "pass": true,
+     "measured": true
+    },
+    "screen": {
+     "pass": false,
+     "measured": 0.05
+    },
+    "full_speaker": {
+     "pass": true,
+     "measured": 1.0
+    },
+    "rhythm": {
+     "pass": false,
+     "measured": 12.98
+    },
+    "cta": {
+     "pass": false,
+     "measured": 1.35
+    },
+    "voice_only": {
+     "pass": true,
+     "measured": -18.5
+    },
+    "labels": {
+     "pass": true,
+     "measured": "4/4 on time"
+    }
+   },
+   "labels": [
+    {
+     "label": "1. which company it sends data to?",
+     "said_s": 24.31,
+     "appear_s": 24.5,
+     "shown_s": 1.5,
+     "status": "ok",
+     "ok": true,
+     "replaced": true
+    },
+    {
+     "label": "2. what it saves on my machine?",
+     "said_s": 26.21,
+     "appear_s": 26.0,
+     "shown_s": 2.0,
+     "status": "ok",
+     "ok": true,
+     "replaced": true
+    },
+    {
+     "label": "3. what it reads from my browser?",
+     "said_s": 27.82,
+     "appear_s": 28.0,
+     "shown_s": 1.5,
+     "status": "ok",
+     "ok": true,
+     "replaced": true
+    },
+    {
+     "label": "4. what runs the moment the page loads?",
+     "said_s": 29.67,
+     "appear_s": 29.5,
+     "shown_s": 3.0,
+     "status": "ok",
+     "ok": true,
+     "replaced": false
+    }
+   ]
+  }
+ },
+ "notes": [
+  "Q1: labels FAIL (all 4 missing) -> PASS (4/4 on time). No rule that passed before fails.",
+  "Q2: labels FAIL (all 5 missing) -> 4/5 on time. Label 4 ('4. Agents', 44.76-47.76 s) is on screen at its moment (frame q2-after-frames.jpg) but the kit's OCR finds no text over that split README/terminal stand-in recording at 44.5-46.0 s; the rule stays FAIL on this stand-in. No rule that passed before fails.",
+  "Every label row in both recipes starts on its item (labels.json from the harness): Q2 8.22 / 21.86 / 34.44 / 44.76 / 54.97 s vs the item words at the same times; Q1 24.31 / 26.21 / 27.82 / 29.67 s.",
+  "The official before/after waits for her raw files or Yasin's stand-in take."
+ ]
+}
