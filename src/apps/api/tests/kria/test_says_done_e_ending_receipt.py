@@ -3,9 +3,10 @@
 Failure modes, in order:
 
 1. The reviewer's case. The first draft of #2131's Main Creator teaching filed "End with THANK
-   YOU for the last 2 seconds" as `text`/`global` with `facts` {}. #2129's whole-video text receipt reads that as a
-   line meant for the WHOLE video and says "on screen for 2 s of the 11 s video, not the whole
-   video" about an ending that is exactly right. The teaching now files {"closing": "<words>"}.
+   YOU for the last 2 seconds" as `text`/`global` with `facts` {}. #2129's whole-video text receipt
+   reads that as a line meant for the WHOLE video and says "on screen for 2 s of the 11 s video, not
+   the whole video" about an ending that is exactly right. The teaching now files {"closing":
+   "<words>"}.
 2. The contract control. The same words WITHOUT the typed `closing` fact are still read as a
    whole-video line: the typed fact, not the wording, is what separates the two (KRI-667).
 3. The preserved negative control. A genuine whole-video ask held only as a short title is still
