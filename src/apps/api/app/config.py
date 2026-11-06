@@ -2728,6 +2728,14 @@ class Settings(BaseSettings):
     creator_memory_enabled: bool = False
     # KRI-648: stamped only at dispatch; legacy generations are never restyled.
     phone_text_styling_enabled: bool = False
+    # Qendresa case 3 (2026-11-06): a place or colour word in the request styles the text it is
+    # written next to, not a role named elsewhere ("Small white text in the middle, no captions"
+    # styled the captions and her line stayed at the top), and a pinned brief whose typed
+    # `captions` fact is "off" files a caption style under all text. Default TRUE (bug fix);
+    # false = the old whole-message role scan, byte-identical
+    # (`schemas.phone_text_style.explicit_text_rule`, `phone_text_styling.stamp_phone_text_style`).
+    # Apply: fly secret `TEXT_STYLE_SEGMENT_ROLE_ENABLED=false` (api + worker) + restart.
+    text_style_segment_role_enabled: bool = True
     # Green 5 (2026-11-04): on a Talk-to-camera edit with a speaker background the automatic caption
     # colour is judged against the background behind the captions (fill and timed windows, with the
     # speaker take in its frame), not the take alone; when no plain colour reaches 4.5:1 there the

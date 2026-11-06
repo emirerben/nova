@@ -51,8 +51,12 @@ def require_phone_text_style_client(policy, *, require_header=False):
         )
 
 
-def requested_style(strategy: dict, request: str) -> dict:
-    """Read only unambiguous current-video asks, never treating them as memory."""
+def requested_style(strategy: dict, request: str, *, captions_off: bool = False) -> dict:
+    """Read only unambiguous current-video asks, never treating them as memory.
+
+    ``captions_off``: the pinned brief's typed ``captions`` fact is "off" (`_brief_captions_off`).
+    No caption is drawn then, so a caption style from the words is her on-screen text's
+    ("No captions, white text in the middle"; Qendresa case 3)."""
     all_text = {}
     for source, dest in (
         ("font_family", "font_family"),
@@ -65,6 +69,8 @@ def requested_style(strategy: dict, request: str) -> dict:
     from app.schemas.phone_text_style import explicit_text_rule
 
     resolved = explicit_text_rule(request)
+    if captions_off and resolved is not None and resolved[0] == "caption":
+        resolved = ("all_text", resolved[1])
     if resolved is not None and resolved[0] != "all_text":
         # Strategy's legacy knobs have no role field. A scoped wording match
         # supplies that missing scope, rather than leaking the ask to every lane.
@@ -131,7 +137,9 @@ def stamp_phone_text_style(job) -> None:
         "version": PHONE_TEXT_STYLE_VERSION,
         "preferences": preferences,
         "requested": requested_style(
-            candidates.get("creator_strategy") or {}, str(candidates.get("creator_request") or "")
+            candidates.get("creator_strategy") or {},
+            str(candidates.get("creator_request") or ""),
+            captions_off=settings.text_style_segment_role_enabled and _brief_captions_off(current),
         ),
     }
     # KRI-1177: the look the creator typed onto the brief rides beside the parsed `requested`.
@@ -147,6 +155,24 @@ def stamp_phone_text_style(job) -> None:
         stamped["caption_ask"] = ask.as_dict()
     current[PHONE_TEXT_STYLE_FIELD] = stamped
     job.assembly_plan = current
+
+
+def _brief_captions_off(container: dict) -> bool:
+    """The job's pinned brief turns speech captions off: its last live typed ``captions`` fact
+    is "off" (KRI-667: the fact, never the creator's words). An unreadable binding is "not off"."""
+    raw_binding = container.get("creator_brief_binding")
+    if not raw_binding:
+        return False
+    from app.kria.brief_binding import BriefBinding
+    from app.kria.brief_checks import _caption_fact
+
+    try:
+        brief = BriefBinding.model_validate(raw_binding).resolve()
+    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no fact"
+        log.warning("phone_text_style.captions_fact_binding_unreadable", error=str(exc)[:200])
+        return False
+    stated = [fact for req in brief.live() if (fact := _caption_fact(req))] if brief else []
+    return bool(stated) and stated[-1] == "off"
 
 
 def _brief_caption_ask(container: dict):
