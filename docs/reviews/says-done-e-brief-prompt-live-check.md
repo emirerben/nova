@@ -1,6 +1,29 @@
-# Says-done group E: paid live check of the brief-writer teaching (NOT RUN)
+# Says-done group E: paid live check of the brief-writer teaching (RUN 2026-11-06: PASS)
 
-Status: written, not run. Waiting for Emir/Yasin to choose Plan A, Plan B or no live run.
+## Result (run 2026-11-06, approved by Yasin): all 6 Main Creator answers PASS, $0.56 settled
+
+The first attempt (Plan B as written below) made no model call: the cost guard reserves about
+$0.454 before every Main Creator call (`estimate_call_cost_usd` counts the 16,384-token output
+budget twice, as output and as thinking), which is above the 0.25-0.45 per-command caps, so every
+call was refused with `ai_cost_control_policy_error` ($0.016 spent, on the extractor follow-up,
+which PASSED). **Any Main Creator live command needs `--max-cost-usd` >= prior spend in that
+test-run-id + about $0.46.** The re-run used two commands within the approved $1.95:
+
+| Command (test-run-id, cap) | Fixture | Result | Settled |
+|---|---|---|---|
+| `says-done-e-s1-20261106`, $1.20 | Q1 | PASS: one captions row `word_by_word` + `caption_words: 2` + middle + `#FFFFFF`; cleanup `pauses: "tight"` + `cut_restarts`; title `text`/`title`, ending `text`/`global`, no `duration_s` | $0.124 |
+| | Q2 | PASS: one captions row `word_by_word` + `caption_box: "#E5E5E5"` + bottom; cleanup `pauses: "tight"` (action `ask_user`: her recordings are not attached in this shell) | $0.127 |
+| | case 10 control | PASS: title `text`/`title` + `timing`/`global` `duration_s: 30` | $0.071 |
+| | decoy | PASS: `captions: word_by_word` only; plain cleanup (no `pauses`) | $0.086 |
+| `says-done-e-s2-20261106`, $0.70 | Q1 (repeat) | PASS (same facts; action `ask_user`) | $0.079 |
+| | Q2 (repeat) | PASS (same facts) | $0.077 |
+
+Captures: `~/Downloads/kria-qendresa-test/handoff/says_done_e_live/step1/`, `step2/`. Two runs per
+prompt, not three: still a small sample. Not covered: her real footage and the rendered video.
+
+
+Status: run on 2026-11-06 (result above). The plans below are kept as written; their per-command
+caps are too low for Main Creator (see above).
 It spends real money on Gemini, so it needs Yasin's OK first.
 Free checks already done: the replay evals (`pytest tests/evals/`) pass, but replay answers are
 hand-written and the cassette ignores the prompt, so only this live run shows what the model
