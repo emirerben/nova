@@ -38,9 +38,8 @@ import pytest
 from app.config import settings
 from app.services.suggestions.kinds import mute_clip
 from tests.e2e_suggestions import driver as d
-from tests.e2e_suggestions import gaps
 from tests.e2e_suggestions import scenes as s
-from tests.e2e_suggestions.flow import tap_every_card, verify_render_kick
+from tests.e2e_suggestions.flow import ensure_stored, tap_every_card, verify_render_kick
 from tests.e2e_suggestions.report import Recorder
 from tests.e2e_suggestions.threads import EDITOR, SIGNALS, TALKING
 from tests.tasks import kria_pinned_suggestion_harness as h
@@ -287,24 +286,76 @@ async def test_k6_the_master_switch_takes_every_card_and_keeps_the_chips(
 async def test_k7_a_capability_lever_pulled_after_the_serve(
     talking_world, monkeypatch, flag, value
 ):
+    """The lever pulled: the filler card is gone from the next read and the neighbours of the set
+    stay. The lever put back: the same card is served again and executes end to end. On a twin
+    that taps the card it still holds, the tap is a refusal in words with nothing written (a
+    refused card stays spent, so the put-back is read on the thread that did not tap)."""
     rec = Recorder(f"kill K7 capability {flag}")
-    scene = s.build(talking_world, "nermin-matcha-update", TALKING)
+    where = "nermin-matcha-update/talking"
+    key = "nermin-matcha-update"
+    scene = s.build(talking_world, key, TALKING)
     out = await scene.phone.serve()
     card = s.card_of(out, "filler_words")
     assert card is not None
+    original = getattr(settings, flag)
     monkeypatch.setattr(settings, flag, value)
     after = await scene.phone.get()
-    tap = await scene.phone.tap(card, out)
-    served = s.card_of(after, "filler_words") is not None
     rec.negative(
         f"K7 {flag}={value!r}: the filler card is not on the phone for a tap that is refused",
-        "nermin-matcha-update",
-        "not served, or its tap executes",
-        (not served) or s.executed(tap),
-        f"served after: {s.kinds_of(after)}; tap planned={tap.planned} "
-        f"refused={(tap.refused or {}).get('reason')} reply={tap.reply[:60]!r}",
-        gap=gaps.CAPABILITY_LEVER_DEAD_CARD,
+        where,
+        "no filler_words card",
+        s.card_of(after, "filler_words") is None,
+        f"served after: {s.kinds_of(after)}",
     )
+    rec.negative(
+        f"K7 {flag}={value!r}: the cards that do not ride on the lever stay",
+        where,
+        "captions, music and sfx are still served",
+        {"captions", "music", "sfx"} <= set(s.kinds_of(after)),
+        f"served after: {s.kinds_of(after)}",
+    )
+
+    # The phone that still holds the old set taps the card it holds (on a twin: a refusal spends
+    # the card of the thread it happens on).
+    monkeypatch.setattr(settings, flag, original)
+    twin = s.build(talking_world, key, TALKING)
+    held = await twin.phone.serve()
+    monkeypatch.setattr(settings, flag, value)
+    tap = await twin.phone.tap(s.card_of(held, "filler_words"), held)
+    rec.negative(
+        f"K7 {flag}={value!r}: the held card's tap is a typed refusal in words, nothing written",
+        where,
+        "typed refusal, 'no longer fits' in the thread's language, no row written",
+        s.is_refused(tap) and tap.reply == lang_reply(key),
+        f"signal={tap.refused} reply={tap.reply[:70]!r} rows {tap.before} -> {tap.after}",
+    )
+
+    monkeypatch.setattr(settings, flag, original)
+    talking_world.redis.advance(60)
+    back = await scene.phone.serve()
+    rec.negative(
+        f"K7 {flag} put back: the same filler card is offered again, under the same id",
+        where,
+        f"filler_words served as {card.id}",
+        any(c.kind == "filler_words" and c.id == card.id for c in back.suggestions),
+        f"served {[(c.kind, c.id) for c in back.suggestions]} (it was {card.id})",
+    )
+    if s.card_of(back, "filler_words") is not None:
+
+        async def probe(cell, kind):  # noqa: ANN001, ANN202
+            probe_twin = s.build(talking_world, key, TALKING)
+            await verify_render_kick(cell, probe_twin.phone, kind, monkeypatch)
+
+        await tap_every_card(
+            rec,
+            scene.phone,
+            scene.scn,
+            TALKING,
+            expect=s.kinds_of(back),
+            only=frozenset({"filler_words"}),
+            state="lever-pulled-and-restored",
+            probe_render=probe,
+        )
     rec.finish()
 
 
@@ -386,24 +437,35 @@ async def test_k9_a_kind_switched_on_after_the_freeze_is_a_card_the_ring_holds(
     talking_world.redis.advance(25 * 3600)  # the 24 h freeze of the set built without the kind
     out = await scene.phone.serve()
     card = s.card_of(out, kind)
-    if card is None:
-        rec.negative(
-            f"K9 {flag} on: the kind is not served (nothing dead to tap)",
-            where,
-            "card absent, or served and executing",
-            True,
-            f"served {s.kinds_of(out)}",
-            gap=gaps.NEW_KIND_UNRESOLVED_CARD,
-        )
-        rec.finish()
-        return
-    tap = await scene.phone.tap(card, out)
     rec.negative(
-        f"K9 {flag} on after the freeze lapsed: the served {kind} card executes",
+        f"K9 {flag} on after the freeze lapsed: the kind is offered",
         where,
-        "planned (served and the ring can resolve it)",
-        s.executed(tap),
-        f"set {first.set_id} -> {out.set_id}; signal={tap.refused} reply={tap.reply[:60]!r}",
-        gap=gaps.NEW_KIND_UNRESOLVED_CARD,
+        f"{kind} served",
+        card is not None,
+        f"served {s.kinds_of(out)}; set {first.set_id} -> {out.set_id}",
     )
+    if card is not None:
+        rec.negative(
+            f"K9 {flag} on after the freeze lapsed: the ring entry holds every card served",
+            where,
+            "no served card is missing from the ring entry of its set",
+            await ensure_stored(scene.phone, out) == "route",
+            f"served {[c.id for c in out.suggestions]}",
+        )
+
+        async def probe(cell, probed):  # noqa: ANN001, ANN202
+            twin = s.build(talking_world, key, profile)
+            await verify_render_kick(cell, twin.phone, probed, monkeypatch)
+
+        await tap_every_card(
+            rec,
+            scene.phone,
+            scene.scn,
+            profile,
+            expect=s.kinds_of(out),
+            shipped=kind != "mute_clip",
+            only=frozenset({kind}),
+            state="kind-switched-on-after-freeze",
+            probe_render=probe,
+        )
     rec.finish()
