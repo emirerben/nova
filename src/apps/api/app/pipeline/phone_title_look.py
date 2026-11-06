@@ -413,6 +413,8 @@ def _candidates(
     if avoid:
         # Between her face and her captions: the block's bottom just above the captions.
         found.append(("above_captions", min(a.top for a in avoid) - _FACE_GAP - height))
+        # Captions she asked for at the top (or moved up there): the block just under them.
+        found.append(("below_captions", max(a.bottom for a in avoid) + _FACE_GAP))
     return found
 
 

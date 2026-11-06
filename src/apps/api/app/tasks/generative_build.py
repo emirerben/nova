@@ -10162,25 +10162,29 @@ def _run_phone_subtitled_job(
                 **text_canvas,
             )
             if talking_title_text:
-                title_rows, title_receipt = _phone_talking_title_rows(
-                    talking_title_text,
-                    duration_s=talking_title_duration_s,
-                    cues=cues,
-                    binding=binding,
-                    clip_path=clip_path,
-                    keep_segments=speaker_keep_segments,
-                    landscape_fit=framed_fit,
-                    position_x=speaker_position_x or 0.0,
-                    protected=protected_plan,
-                    caption_avoid=protected_caption_avoid,
-                    title_look_plan=snapshot,
-                    reserve_logo=beats_enabled and _asks_title_logo(all_candidates),
-                    look_caption_avoid=(
-                        _title_look_caption_avoid(cues, caption_style=caption_style, **text_canvas)
-                        if settings.title_look_enabled
-                        else None
-                    ),
-                    **text_canvas,
+
+                def _place_title(look_caption_avoid: Any) -> tuple[list[dict], Any]:
+                    return _phone_talking_title_rows(
+                        talking_title_text,
+                        duration_s=talking_title_duration_s,
+                        cues=cues,
+                        binding=binding,
+                        clip_path=clip_path,
+                        keep_segments=speaker_keep_segments,
+                        landscape_fit=framed_fit,
+                        position_x=speaker_position_x or 0.0,
+                        protected=protected_plan,
+                        caption_avoid=protected_caption_avoid,
+                        title_look_plan=snapshot,
+                        reserve_logo=beats_enabled and _asks_title_logo(all_candidates),
+                        look_caption_avoid=look_caption_avoid,
+                        **text_canvas,
+                    )
+
+                title_rows, title_receipt = _place_title(
+                    _title_look_caption_avoid(cues, caption_style=caption_style, **text_canvas)
+                    if settings.title_look_enabled
+                    else None
                 )
 
             # KRI-719: the whole main track -- the first speaker's (cut) span
@@ -10512,6 +10516,16 @@ def _run_phone_subtitled_job(
                     **({"inserts": inserts} if inserts else {}),
                     **framed_compile,
                 )
+                if settings.title_look_enabled and title_rows and protected_caption_avoid is None:
+                    # Item 20: her title keeps clear of the captions as the recipe draws them.
+                    title_rows, title_receipt = _title_on_resolved_captions(
+                        title_rows,
+                        title_receipt,
+                        place=_place_title,
+                        cues=cues,
+                        caption_style=caption_style,
+                        **text_canvas,
+                    )
             if not media_lanes_enabled:
                 if ending_request is not None and ending_source != "footage":
                     # KRI-841: no card / ending-clip lane on this render, so a Visuals video
@@ -12380,23 +12394,73 @@ def _protected_caption_avoid(
     return boxes
 
 
-def _title_look_caption_avoid(cues: list[dict], *, caption_style: str, canvas: Any = None) -> Any:
-    """Item 20: the caption lines on screen during a window (their default look), for her
-    stacked title and its logo to keep clear of; the title look's sibling of
-    `_protected_caption_avoid`, which only reports moved captions."""
+def _title_look_caption_avoid(
+    cues: list[dict], *, caption_style: str, canvas: Any = None, look: Any = None
+) -> Any:
+    """Item 20: the caption lines on screen during a window, for her stacked title and its logo
+    to keep clear of; the title look's sibling of `_protected_caption_avoid`, which only reports
+    moved captions. ``look`` is the caption look the recipe draws (``None``: the default look).
+
+    A pure measurement (Emir's review of #2115): it runs outside the phone text policy, so a
+    peek at the opening captions never resolves or caches the whole edit's caption look, never
+    samples faces before the real timeline is registered and never overwrites the policy's
+    caption boxes. The real look comes from the whole-timeline compile
+    (`_title_on_resolved_captions`)."""
     from app.pipeline.phone_spoken_text import caption_boxes  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.services.phone_text_styling import phone_text_policy_scope  # noqa: PLC0415
 
     canvas = canvas if canvas is not None else _STORY_CANVAS
 
     def boxes(window: tuple[float, float]) -> list[Any]:
         try:
-            return caption_boxes(cues, window=window, caption_style=caption_style, canvas=canvas)
+            with phone_text_policy_scope(None):
+                return caption_boxes(
+                    cues, window=window, caption_style=caption_style, canvas=canvas, look=look
+                )
         except Exception as exc:  # noqa: BLE001 - a placement nicety never blocks a render
             log.warning("phone_title_look.caption_boxes_failed", error=str(exc)[:200])
             return []
 
     return boxes
+
+
+def _title_on_resolved_captions(
+    title_rows: list[dict],
+    title_receipt: Any,
+    *,
+    place: Any,
+    cues: list[dict],
+    caption_style: str,
+    canvas: Any = None,
+) -> tuple[list[dict], Any]:
+    """Item 20 (Emir's review of #2115): under the phone text policy her captions' real look
+    is resolved once, by the whole-timeline compile (all cues, the registered cut / scaled
+    timeline). Her title was placed before that against the default caption look; measure the
+    captions in the title window again with the look the recipe really draws and, when they
+    sit elsewhere (she asked for them at the top), place the title (and its logo room) again.
+
+    ``place(look_caption_avoid)`` re-runs the same `_phone_talking_title_rows` call. Only a
+    title placed by the title look (its receipt names the caption boxes it kept clear of) is
+    re-checked; anything that fails keeps the first placement."""
+    if not title_rows or not isinstance(title_receipt, Mapping):
+        return title_rows, title_receipt
+    if "caption_boxes" not in title_receipt:
+        return title_rows, title_receipt
+    look = (current_phone_text_policy() or {}).get("caption_look")
+    if look is None:
+        return title_rows, title_receipt
+    try:
+        avoid = _title_look_caption_avoid(
+            cues, caption_style=caption_style, canvas=canvas, look=look
+        )
+        window = (float(title_rows[0]["start_s"]), float(title_rows[0]["end_s"]))
+        if [box.as_dict() for box in avoid(window)] == list(title_receipt["caption_boxes"]):
+            return title_rows, title_receipt
+        return place(avoid)
+    except Exception as exc:  # noqa: BLE001 - the first placement still renders
+        log.warning("phone_title_look.resolved_captions_failed", error=str(exc)[:200])
+        return title_rows, title_receipt
 
 
 def _is_title_anchored(beat: Any) -> bool:

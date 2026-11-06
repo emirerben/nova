@@ -303,11 +303,22 @@ def test_captions_in_the_bottom_band_do_not_count_as_overlap():
 
 
 def test_text_the_block_cannot_avoid_is_reported_not_hidden():
-    caption = NormalizedBox(0.0, 0.08, 1.0, 0.30)
+    # Text over the whole usable frame: no spot above, below or between is clear of it.
+    caption = NormalizedBox(0.0, 0.08, 1.0, 0.90)
     _, receipt = _place(_rows(), avoid=[caption])
 
     assert receipt["text_overlap"] is True
     assert receipt["face_collision"] is False
+
+
+def test_captions_she_asked_for_at_the_top_put_the_block_just_under_them():
+    caption = NormalizedBox(0.0, 0.08, 1.0, 0.30)
+    placed, receipt = _place(_rows(), avoid=[caption])
+
+    assert receipt["text_overlap"] is False
+    block = title_block_box(placed, canvas=CANVAS)
+    assert block.top >= caption.bottom
+    assert block.top - caption.bottom < 0.05
 
 
 def test_a_sampler_failure_still_protects_the_fallback_face():
