@@ -156,8 +156,6 @@ class ThroughputTests(unittest.TestCase):
         unit_only = {
             "Run selected iPhone UI scenarios",
             "Verify selected named native unit journeys",
-            "Save Xcode build data for the next run",
-            "Record compiled iPhone input timestamps",
         }
         every_leg = {
             "Build iPhone app and run selected unit tests",
@@ -181,6 +179,13 @@ class ThroughputTests(unittest.TestCase):
         self.assertIn("name: ios-native-test-diagnostics-${{ matrix.leg }}", job)
         self.assertIn("-${{ github.sha }}-${{ matrix.leg }}", job)
         self.assertEqual(job.count("upload-artifact@v4"), 2)
+        # PR runs only restore main's Xcode cache (ios.yml seeds it). Each PR
+        # save (~0.9 GB per push) evicted main's seed from the full 10 GB repo
+        # cache within 30-46 minutes (2026-11-04..06): 70 of 97 PR runs
+        # compiled cold, and only 6 of 27 hits came from a PR's own save.
+        self.assertIn("actions/cache/restore@v4", job)
+        self.assertNotIn("actions/cache/save", job)
+        self.assertNotIn("cache-inputs.py save", job)
 
     def test_selector_starts_only_the_legs_with_selected_journeys(self):
         self.assertEqual(ci.native_legs([]), ["unit"])

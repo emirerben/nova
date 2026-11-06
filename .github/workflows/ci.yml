@@ -1220,21 +1220,11 @@ jobs:
           KRIA_JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
           KRIA_RESTORE_INPUT_TIMES: '1'
         run: bash scripts/ios/verify.sh
-      - name: Record compiled iPhone input timestamps
-        if: matrix.leg == 'unit' && github.event_name == 'pull_request' && (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true')
-        run: python3 scripts/ios/cache-inputs.py save
-      - name: Save Xcode build data for the next run
-        if: matrix.leg == 'unit' && github.event_name == 'pull_request' && (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true') && steps.build-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/Library/Caches/org.swift.swiftpm
-            src/apps/ios/.derived-data/Build
-            src/apps/ios/.derived-data/SourcePackages
-            src/apps/ios/.derived-data/ModuleCache.noindex
-            src/apps/ios/.derived-data/SDKStatCaches.noindex
-            src/apps/ios/.derived-data/CompilationCache.noindex
-          key: ${{ steps.build-cache.outputs.cache-primary-key }}
+      # PR runs restore main's Xcode cache but never save their own. A PR
+      # cache (~0.9 GB per push) is only usable by later pushes to the same PR,
+      # and in the full 10 GB repo cache it evicted main's seed within 30-46
+      # minutes: 70 of 97 PR runs on 2026-11-04..06 compiled cold (+~10 min),
+      # and only 6 of 27 hits came from a PR's own save. ios.yml seeds main.
       - name: Wait for the portable journeys this leg depends on
         if: needs.changes.outputs.journey == 'true'
         env:
